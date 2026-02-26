@@ -17,6 +17,7 @@
 		"@sveltejs/adapter-node": "^5.0.0",
 		"@sveltejs/kit": "^2.50.2",
 		"@sveltejs/vite-plugin-svelte": "^6.2.4",
+		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/svelte": "^5.0.0",
 		"@types/jsonwebtoken": "^9.0.0",
 		"jsdom": "^25.0.0",
