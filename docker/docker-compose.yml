@@ -360,6 +360,35 @@ services:
       opensearch:
         condition: service_healthy
 
+  nettap-grafana:
+    image: grafana/grafana:10.4.2
+    container_name: nettap-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-nettap}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-opensearch-datasource
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    expose:
+      - "3000"
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   nettap-nginx:
     image: nginx:stable-alpine
     container_name: nettap-nginx
@@ -384,6 +413,7 @@ services:
     depends_on:
       - nettap-web
       - nettap-cyberchef
+      - nettap-grafana
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "wget -q --spider --no-check-certificate https://localhost:443/ || exit 1"]
@@ -456,3 +486,4 @@ volumes:
   # NetTap data volumes
   storage-data:
   web-data:
+  grafana-data:

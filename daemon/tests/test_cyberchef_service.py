@@ -172,7 +172,7 @@ class TestIsAvailableRunning(unittest.TestCase):
                 self.assertEqual(result["url"], CYBERCHEF_INTERNAL_URL)
                 self.assertNotIn("error", result)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 class TestIsAvailableNotRunning(unittest.TestCase):
@@ -199,7 +199,7 @@ class TestIsAvailableNotRunning(unittest.TestCase):
                 self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
                 self.assertIsNone(result["url"])
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_is_available_error(self):
         """When docker inspect fails, should return error info."""
@@ -218,7 +218,7 @@ class TestIsAvailableNotRunning(unittest.TestCase):
                 self.assertIn("error", result)
                 self.assertIn("docker not found", result["error"])
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 class TestGetStatusStructure(unittest.TestCase):
