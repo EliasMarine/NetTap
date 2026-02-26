@@ -234,29 +234,30 @@ Browser --> SvelteKit (nettap-web container, port 443)
 
 **Timeline:** Weeks 1-4
 **Estimated Effort:** 50-70 hours
+**Status:** COMPLETE (merged to develop via PRs #1, #2, #3)
 
 ### Task Breakdown
 
-| # | Task | Size | Week | Depends On | Files |
-|---|------|------|------|------------|-------|
-| 1.1 | Enhance `common.sh` utility library | S | 1 | -- | `scripts/common.sh` |
-| 1.2 | Create hardware validation script | M | 1 | 1.1 | `scripts/install/validate-hardware.sh` (new) |
-| 1.3 | Bridge pre-flight validation | S | 1 | 1.1 | `scripts/bridge/setup-bridge.sh` |
-| 1.4 | Bridge performance tuning | S | 1 | 1.3 | `scripts/bridge/setup-bridge.sh` |
-| 1.5 | Bridge persistence (netplan + systemd) | M | 2 | 1.3, 1.4 | `setup-bridge.sh`, netplan template, systemd unit, sysctl conf |
-| 1.6 | Bridge rollback and teardown | M | 2 | 1.3 | `scripts/bridge/setup-bridge.sh` |
-| 1.7 | Bridge connectivity validation | S | 2 | 1.4 | `scripts/bridge/setup-bridge.sh` |
-| 1.8 | Management interface support | S | 2 | 1.5 | `scripts/bridge/setup-bridge.sh` |
-| 1.9 | Pin Malcolm release, document images | S | 3 | -- | `scripts/install/malcolm-versions.conf` (new) |
-| 1.10 | Build standalone docker-compose with Malcolm | L | 3 | 1.9 | `docker/docker-compose.yml` (major rewrite) |
-| 1.11 | Malcolm config patching utility | M | 3 | 1.9 | `scripts/install/malcolm-config.sh` (new) |
-| 1.12 | Malcolm deployment script | L | 3 | 1.9, 1.10, 1.11 | `scripts/install/deploy-malcolm.sh` (new) |
-| 1.13 | Expand install.sh orchestrator | L | 4 | 1.1-1.12 | `scripts/install/install.sh` |
-| 1.14 | Create systemd service unit | S | 4 | 1.12 | `scripts/install/nettap.service` (new) |
-| 1.15 | Configure mDNS/avahi for `nettap.local` | S | 4 | 1.13 | `scripts/install/install.sh` additions |
-| 1.16 | Network namespace test harness | M | 4 | 1.3-1.7 | `tests/shell/test-bridge-namespaces.sh` (new) |
-| 1.17 | Dry-run test suite for all scripts | M | 4 | 1.1-1.13 | `tests/shell/test-phase1.sh` (new) |
-| 1.18 | Update `.env.example` with new variables | S | 4 | 1.9-1.12 | `.env.example` |
+| # | Task | Size | Week | Status | Files |
+|---|------|------|------|--------|-------|
+| 1.1 | Enhance `common.sh` utility library | S | 1 | [x] Done (PR #1) | `scripts/common.sh` |
+| 1.2 | Create hardware validation script | M | 1 | [x] Done (PR #1) | `scripts/install/validate-hardware.sh` |
+| 1.3 | Bridge pre-flight validation | S | 1 | [x] Done (PR #1) | `scripts/bridge/setup-bridge.sh` |
+| 1.4 | Bridge performance tuning | S | 1 | [x] Done (PR #1) | `scripts/bridge/setup-bridge.sh` |
+| 1.5 | Bridge persistence (netplan + systemd) | M | 2 | [x] Done (PR #1) | `setup-bridge.sh`, netplan template, systemd unit, sysctl conf |
+| 1.6 | Bridge rollback and teardown | M | 2 | [x] Done (PR #1) | `scripts/bridge/setup-bridge.sh` |
+| 1.7 | Bridge connectivity validation | S | 2 | [x] Done (PR #1) | `scripts/bridge/setup-bridge.sh` |
+| 1.8 | Management interface support | S | 2 | [x] Done (PR #1) | `scripts/bridge/setup-bridge.sh` |
+| 1.9 | Pin Malcolm release, document images | S | 3 | [x] Done (PR #2) | `scripts/install/malcolm-versions.conf` |
+| 1.10 | Build standalone docker-compose with Malcolm | L | 3 | [x] Done (PR #2) | `docker/docker-compose.yml` |
+| 1.11 | Malcolm config patching utility | M | 3 | [x] Done (PR #2) | `scripts/install/malcolm-config.sh` |
+| 1.12 | Malcolm deployment script | L | 3 | [x] Done (PR #2) | `scripts/install/deploy-malcolm.sh` |
+| 1.13 | Expand install.sh orchestrator | L | 4 | [x] Done (PR #3) | `scripts/install/install.sh` |
+| 1.14 | Create systemd service unit | S | 4 | [x] Done (PR #3) | `scripts/install/nettap.service` |
+| 1.15 | Configure mDNS/avahi for `nettap.local` | S | 4 | [x] Done (PR #3) | `scripts/install/install.sh` |
+| 1.16 | Network namespace test harness | M | 4 | [x] Done (PR #3) | `tests/shell/test-bridge-namespaces.sh` |
+| 1.17 | Dry-run test suite for all scripts | M | 4 | [x] Done (PR #3) | `tests/shell/test-phase1.sh` |
+| 1.18 | Update `.env.example` with new variables | S | 4 | [x] Done (PR #3) | `.env.example` |
 
 ### Task Details
 
@@ -338,23 +339,24 @@ Full step sequence:
 **Timeline:** Weeks 3-5 (overlaps with late Phase 1)
 **Estimated Effort:** 40-55 hours
 **Prerequisite:** OpenSearch running (from Phase 1 task 1.10)
+**Status:** COMPLETE (merged to develop via PR #4)
 
 ### Task Breakdown
 
-| # | Task | Size | Week | Depends On | Files |
-|---|------|------|------|------------|-------|
-| 2.1 | Create `requirements.txt` + `pyproject.toml` | S | 3 | -- | `daemon/requirements.txt`, `daemon/pyproject.toml` (new) |
-| 2.2 | Implement `prune_oldest_indices()` | M | 3 | 2.1, 1.10 | `daemon/storage/manager.py` |
-| 2.3 | Expand ILM policies (warm + cold tiers) | S | 3 | 1.10 | `config/opensearch/ilm-policy.json` |
-| 2.4 | ILM policy auto-application at startup | S | 3 | 2.3 | `scripts/install/apply-ilm.sh` (new) or daemon startup |
-| 2.5 | Tiered pruning logic (cold -> warm -> hot) | M | 4 | 2.2 | `daemon/storage/manager.py` |
-| 2.6 | Expand SMART metrics (TBW, temp, SATA fallback) | M | 4 | -- | `daemon/smart/monitor.py` |
-| 2.7 | SMART alerting output (webhook/log) | S | 4 | 2.6 | `daemon/smart/monitor.py` |
-| 2.8 | Compression config for Zeek/Suricata | S | 4 | 1.10 | `config/zeek/nettap.zeek`, `config/suricata/nettap.yaml` |
-| 2.9 | Daemon signal handling + graceful shutdown | S | 4 | -- | `daemon/main.py` |
-| 2.10 | Add daemon HTTP API (aiohttp) | M | 5 | 2.1 | `daemon/api/` (new), `daemon/main.py` |
-| 2.11 | Write pytest suite for daemon | M | 5 | 2.1-2.7 | `daemon/tests/` (new) |
-| 2.12 | Integration test with real OpenSearch | M | 5 | 2.2, 1.10 | `tests/integration/test_opensearch.py` (new) |
+| # | Task | Size | Week | Status | Files |
+|---|------|------|------|--------|-------|
+| 2.1 | Create `requirements.txt` + `pyproject.toml` | S | 3 | [x] Done (PR #4) | `daemon/requirements.txt`, `daemon/pyproject.toml` |
+| 2.2 | Implement `prune_oldest_indices()` | M | 3 | [x] Done (PR #4) | `daemon/storage/manager.py` |
+| 2.3 | Expand ILM policies (warm + cold tiers) | S | 3 | [x] Done (PR #4) | `config/opensearch/ilm-policy.json` |
+| 2.4 | ILM policy auto-application at startup | S | 3 | [x] Done (PR #4) | `daemon/storage/ilm.py` |
+| 2.5 | Tiered pruning logic (cold -> warm -> hot) | M | 4 | [x] Done (PR #4) | `daemon/storage/manager.py` |
+| 2.6 | Expand SMART metrics (TBW, temp, SATA fallback) | M | 4 | [x] Done (PR #4) | `daemon/smart/monitor.py` |
+| 2.7 | SMART alerting output (webhook/log) | S | 4 | [x] Done (PR #4) | `daemon/smart/monitor.py` |
+| 2.8 | Compression config for Zeek/Suricata | S | 4 | [x] Done (PR #4) | `config/zeek/nettap.zeek`, `config/suricata/nettap.yaml` |
+| 2.9 | Daemon signal handling + graceful shutdown | S | 4 | [x] Done (PR #4) | `daemon/main.py` |
+| 2.10 | Add daemon HTTP API (aiohttp) | M | 5 | [x] Done (PR #4) | `daemon/api/server.py`, `daemon/main.py` |
+| 2.11 | Write pytest suite for daemon | M | 5 | [x] Done (PR #4) | `daemon/tests/` (55 tests) |
+| 2.12 | Integration test with real OpenSearch | M | 5 | [ ] Deferred | Requires running OpenSearch instance |
 
 ### Task Details
 
@@ -407,27 +409,44 @@ Key test files:
 **Timeline:** Weeks 5-8
 **Estimated Effort:** 60-80 hours
 **Prerequisite:** Phase 2 core tasks complete (daemon API running)
+**Status:** COMPLETE (PR #5, pending merge to develop)
 
 ### Task Breakdown
 
-| # | Task | Size | Week | Depends On | Files |
-|---|------|------|------|------------|-------|
-| 3.1 | Initialize SvelteKit project | S | 5 | -- | `web/package.json`, `web/svelte.config.js`, etc. |
-| 3.2 | Update Dockerfile.web for SvelteKit | S | 5 | 3.1 | `docker/Dockerfile.web` |
-| 3.3 | Base layout + CSS design system | M | 5 | 3.1 | `web/src/routes/+layout.svelte`, CSS |
-| 3.4 | Auth backend (argon2, JWT, rate limiting) | M | 5 | 3.1 | `web/src/lib/server/auth.ts` (new) |
-| 3.5 | Login page frontend | S | 6 | 3.3, 3.4 | `web/src/routes/login/+page.svelte` (new) |
-| 3.6 | TLS self-signed cert generation | S | 6 | 3.2 | TLS gen script, Dockerfile mount |
-| 3.7 | NIC detection API | M | 6 | 3.1 | `web/src/routes/api/setup/nics/+server.ts` (new) |
-| 3.8 | Bridge verification API | M | 6 | 3.7 | `web/src/routes/api/setup/bridge/+server.ts` (new) |
-| 3.9 | Storage configuration API | S | 6 | 2.10 | `web/src/routes/api/setup/storage/+server.ts` (new) |
-| 3.10 | Admin account creation API | S | 7 | 3.4 | `web/src/routes/api/setup/admin/+server.ts` (new) |
-| 3.11 | Malcolm health check API | M | 7 | 3.1 | `web/src/routes/api/health/+server.ts` (new) |
-| 3.12 | **Setup wizard UI (all 5 steps)** | L | 7 | 3.7-3.11 | `web/src/routes/setup/` (new) |
-| 3.13 | First-run detection and routing | S | 7 | 3.12 | `web/src/hooks.server.ts` |
-| 3.14 | Admin settings page | M | 8 | 3.4, 2.10 | `web/src/routes/dashboard/settings/` (new) |
-| 3.15 | Nginx reverse proxy config | S | 8 | 3.2 | `docker/nginx.conf` (new) |
-| 3.16 | Vitest setup + component tests | M | 8 | 3.1-3.12 | `web/vitest.config.ts`, test files |
+| # | Task | Size | Week | Status | Files |
+|---|------|------|------|--------|-------|
+| 3.1 | Initialize SvelteKit project | S | 5 | [x] Done (PR #5) | `web/package.json`, `web/svelte.config.js`, etc. |
+| 3.2 | Update Dockerfile.web for SvelteKit | S | 5 | [x] Done (PR #5) | `docker/Dockerfile.web` |
+| 3.3 | Base layout + CSS design system | M | 5 | [x] Done (PR #5) | `web/src/routes/+layout.svelte`, `global.css` |
+| 3.4 | Auth backend (argon2, JWT, rate limiting) | M | 5 | [x] Done (PR #5) | `web/src/lib/server/auth.ts` |
+| 3.5 | Login page frontend | S | 6 | [x] Done (PR #5) | `web/src/routes/login/+page.svelte` |
+| 3.6 | TLS self-signed cert generation | S | 6 | [x] Done (PR #5) | `scripts/generate-cert.sh` |
+| 3.7 | NIC detection API | M | 6 | [x] Done (PR #5) | `web/src/routes/api/setup/nics/+server.ts` |
+| 3.8 | Bridge verification API | M | 6 | [x] Done (PR #5) | `web/src/routes/api/setup/bridge/+server.ts` |
+| 3.9 | Storage configuration API | S | 6 | [x] Done (PR #5) | `web/src/routes/api/setup/storage/+server.ts` |
+| 3.10 | Admin account creation API | S | 7 | [x] Done (PR #5) | `web/src/routes/setup/+page.server.ts` |
+| 3.11 | Malcolm health check API | M | 7 | [x] Done (PR #5) | `web/src/routes/api/health/+server.ts` |
+| 3.12 | **Setup wizard UI (all 5 steps)** | L | 7 | [x] Done (PR #5) | `web/src/routes/setup/+page.svelte` (1745 lines) |
+| 3.13 | First-run detection and routing | S | 7 | [x] Done (PR #5) | `web/src/hooks.server.ts` |
+| 3.14 | Admin settings page | M | 8 | [x] Done (PR #5) | `web/src/routes/settings/+page.svelte` |
+| 3.15 | Nginx reverse proxy config | S | 8 | [x] Done (PR #5) | `docker/nginx.conf`, `scripts/generate-cert.sh` |
+| 3.16 | Vitest setup + component tests | M | 8 | [x] Done (PR #5) | 5 test files, 48 tests passing |
+
+### Additional Deliverables (beyond original plan)
+
+| Feature | Status | Files |
+|---------|--------|-------|
+| TShark containerized packet analysis | [x] Done | `daemon/services/tshark_service.py`, `daemon/api/tshark.py`, `docker/Dockerfile.tshark` |
+| TShark frontend components (4) | [x] Done | `FilterInput`, `PacketTable`, `ProtocolTree`, `AnalysisPanel` |
+| CyberChef containerized data toolkit | [x] Done | `daemon/services/cyberchef_service.py`, `daemon/api/cyberchef.py`, `docker/Dockerfile.cyberchef` |
+| CyberChef frontend page | [x] Done | `web/src/routes/system/cyberchef/+page.svelte` |
+| Connections page (TShark analysis) | [x] Done | `web/src/routes/connections/+page.svelte` |
+| Alerts page with severity filters | [x] Done | `web/src/routes/alerts/+page.svelte` |
+| System health page | [x] Done | `web/src/routes/system/+page.svelte` |
+| 15 SvelteKit proxy routes | [x] Done | `web/src/routes/api/` |
+| GPL compliance documentation | [x] Done | `THIRD-PARTY-LICENSES.md`, `docker/licenses/GPL-2.0.txt` |
+| Daemon TShark tests (25) | [x] Done | `daemon/tests/test_tshark_service.py` |
+| Daemon CyberChef tests (18) | [x] Done | `daemon/tests/test_cyberchef_service.py` |
 
 ### Setup Wizard Flow
 
@@ -525,29 +544,30 @@ GET  /api/health/malcolm
 **Timeline:** Weeks 7-10 (parallel with late Phase 3)
 **Estimated Effort:** 80-100 hours
 **Prerequisite:** SvelteKit project initialized, API layer functional
+**Status:** IN PROGRESS
 
 ### Task Breakdown
 
-| # | Task | Size | Week | Depends On | Files |
-|---|------|------|------|------------|-------|
-| 4.1 | Traffic API endpoints | M | 7 | 3.1 | `web/src/routes/api/traffic/` |
-| 4.2 | Alert API endpoints | M | 7 | 3.1 | `web/src/routes/api/alerts/` |
-| 4.3 | System health API endpoints | S | 7 | 2.10 | `web/src/routes/api/system/` |
-| 4.4 | **Dashboard home page** | L | 8 | 4.1, 4.2, 3.3 | `web/src/routes/dashboard/+page.svelte` |
-| 4.5 | Connections explorer page | M | 8 | 4.1 | `web/src/routes/dashboard/traffic/` |
-| 4.6 | Alerts page with severity filters | M | 8 | 4.2 | `web/src/routes/dashboard/alerts/` |
-| 4.7 | WebSocket real-time alert push | M | 9 | 4.2 | WebSocket endpoint + client toasts |
-| 4.8 | Add Grafana to Docker Compose | S | 7 | -- | `docker/docker-compose.yml` |
-| 4.9 | Grafana: Network Overview dashboard | L | 8 | 4.8 | `config/grafana/dashboards/network-overview.json` |
-| 4.10 | Grafana: GeoIP World Map dashboard | M | 9 | 4.8 | `config/grafana/dashboards/geoip-map.json` |
-| 4.11 | Grafana: Bandwidth Trending dashboard | M | 9 | 4.8 | `config/grafana/dashboards/bandwidth-trending.json` |
-| 4.12 | Grafana: Security Alerts dashboard | M | 9 | 4.8 | `config/grafana/dashboards/security-alerts.json` |
-| 4.13 | Grafana: System Health dashboard | M | 10 | 4.8, 2.10 | `config/grafana/dashboards/system-health.json` |
-| 4.14 | Notification system (email/webhook) | M | 9 | 4.2 | `web/src/lib/server/notifications.ts` (new) |
-| 4.15 | Notification settings page | S | 10 | 4.14, 3.14 | `web/src/routes/dashboard/settings/` |
-| 4.16 | System health page in web UI | M | 10 | 4.3 | `web/src/routes/dashboard/health/` |
-| 4.17 | Grafana embedding/linking | S | 10 | 4.9-4.13 | Links from SvelteKit UI |
-| 4.18 | E2E integration testing | L | 10 | All above | Playwright tests |
+| # | Task | Size | Week | Status | Files |
+|---|------|------|------|--------|-------|
+| 4.1 | Traffic API endpoints (OpenSearch queries) | M | 7 | [ ] Todo | `web/src/routes/api/traffic/`, `daemon/api/traffic.py` |
+| 4.2 | Alert API endpoints (OpenSearch queries) | M | 7 | [ ] Todo | `web/src/routes/api/alerts/`, `daemon/api/alerts.py` |
+| 4.3 | System health API endpoints | S | 7 | [x] Done (Phase 3) | `web/src/routes/api/system/health/+server.ts` |
+| 4.4 | **Dashboard home page** (live stats/charts) | L | 8 | [ ] Todo | `web/src/routes/+page.svelte` |
+| 4.5 | Connections explorer page | M | 8 | [x] Done (Phase 3) | `web/src/routes/connections/+page.svelte` (TShark analysis) |
+| 4.6 | Alerts page with severity filters | M | 8 | [x] Done (Phase 3) | `web/src/routes/alerts/+page.svelte` |
+| 4.7 | WebSocket real-time alert push | M | 9 | [ ] Todo | WebSocket endpoint + client toasts |
+| 4.8 | Add Grafana to Docker Compose | S | 7 | [ ] Todo | `docker/docker-compose.yml` |
+| 4.9 | Grafana: Network Overview dashboard | L | 8 | [ ] Todo | `config/grafana/dashboards/network-overview.json` |
+| 4.10 | Grafana: GeoIP World Map dashboard | M | 9 | [ ] Todo | `config/grafana/dashboards/geoip-map.json` |
+| 4.11 | Grafana: Bandwidth Trending dashboard | M | 9 | [ ] Todo | `config/grafana/dashboards/bandwidth-trending.json` |
+| 4.12 | Grafana: Security Alerts dashboard | M | 9 | [ ] Todo | `config/grafana/dashboards/security-alerts.json` |
+| 4.13 | Grafana: System Health dashboard | M | 10 | [ ] Todo | `config/grafana/dashboards/system-health.json` |
+| 4.14 | Notification system (email/webhook) | M | 9 | [ ] Todo | `web/src/lib/server/notifications.ts` |
+| 4.15 | Notification settings page | S | 10 | [ ] Todo | `web/src/routes/settings/` |
+| 4.16 | System health page in web UI | M | 10 | [x] Done (Phase 3) | `web/src/routes/system/+page.svelte` |
+| 4.17 | Grafana embedding/linking | S | 10 | [ ] Todo | Links from SvelteKit UI |
+| 4.18 | E2E integration testing (Playwright) | L | 10 | [ ] Todo | Playwright tests |
 
 ### Dashboard Home Page Components
 
