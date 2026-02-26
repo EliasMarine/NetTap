@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '$lib/styles/global.css';
 	import { page } from '$app/stores';
+	import NotificationBell from '$components/NotificationBell.svelte';
 
 	let { children } = $props();
 
@@ -106,6 +107,8 @@
 						<span class="status-dot status-online" title="System Online"></span>
 						<span class="status-label">Online</span>
 					</div>
+
+					<NotificationBell />
 
 					<form method="POST" action="/api/auth/logout" class="logout-form">
 						<button type="submit" class="btn btn-secondary btn-sm">Logout</button>
