@@ -1,0 +1,8 @@
+FROM node:22-slim AS build
+
+WORKDIR /app
+# TODO: Add web UI build steps once framework is chosen
+
+FROM nginx:alpine
+# TODO: Copy built web assets and nginx config
+EXPOSE 443

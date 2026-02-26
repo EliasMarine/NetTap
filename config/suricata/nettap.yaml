@@ -1,0 +1,30 @@
+# NetTap Suricata overrides
+# Merged with Malcolm's default suricata.yaml
+
+# Capture interface — the bridge
+af-packet:
+  - interface: br0
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    ring-size: 200000
+
+# Emerging Threats Open ruleset (pre-loaded)
+default-rule-path: /var/lib/suricata/rules
+rule-files:
+  - suricata.rules
+
+# Output to Eve JSON for OpenSearch ingestion
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert
+        - dns
+        - tls
+        - http
+        - files
+        - flow

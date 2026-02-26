@@ -1,0 +1,36 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Node (web UI)
+node_modules/
+web/wizard/dist/
+web/dashboard/dist/
+
+# Docker volumes and runtime data
+data/
+pcap/
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# GeoIP databases (downloaded at runtime)
+config/malcolm/GeoLite2-*.mmdb

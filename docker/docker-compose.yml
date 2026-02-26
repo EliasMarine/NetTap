@@ -1,0 +1,54 @@
+# NetTap Docker Compose
+# Extends Malcolm's docker-compose with NetTap-specific services
+
+version: "3.8"
+
+services:
+  # --------------------------------------------------
+  # Malcolm services are loaded via the Malcolm compose
+  # files. This file defines NetTap additions only.
+  # --------------------------------------------------
+
+  nettap-storage-daemon:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.daemon
+    container_name: nettap-storage-daemon
+    restart: unless-stopped
+    volumes:
+      - ../config:/opt/nettap/config:ro
+      - /dev:/dev:ro  # SMART access
+      - storage-data:/var/lib/nettap
+    environment:
+      - RETENTION_HOT=${RETENTION_HOT:-90}
+      - RETENTION_WARM=${RETENTION_WARM:-180}
+      - RETENTION_COLD=${RETENTION_COLD:-30}
+      - DISK_THRESHOLD_PERCENT=${DISK_THRESHOLD_PERCENT:-80}
+      - OPENSEARCH_URL=http://opensearch:9200
+    networks:
+      - malcolm_default
+
+  nettap-web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    container_name: nettap-web
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-443}:443"
+    volumes:
+      - ../config:/opt/nettap/config:ro
+      - web-data:/var/lib/nettap-web
+    environment:
+      - NETTAP_HOSTNAME=${NETTAP_HOSTNAME:-nettap.local}
+      - OPENSEARCH_URL=http://opensearch:9200
+    networks:
+      - malcolm_default
+
+volumes:
+  storage-data:
+  web-data:
+
+networks:
+  malcolm_default:
+    external: true

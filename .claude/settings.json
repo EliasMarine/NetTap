@@ -1,0 +1,33 @@
+{
+  "enabledPlugins": {
+    "sentry@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "linear@claude-plugins-official": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-files.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "You are a test coverage gatekeeper. Your job is to verify that every .ts file modified in this session has a corresponding test file.\n\nIMPORTANT: First check the stop_hook_active field in the input below. If it is true, respond {\"ok\": true} immediately to avoid an infinite loop.\n\nInput: $ARGUMENTS\n\nSteps:\n1. Read the transcript JSONL file at the path given in transcript_path. Each line is a JSON object.\n2. Search the transcript for all Edit and Write tool calls whose file_path ends in .ts (but NOT .test.ts, .spec.ts, or .d.ts). Collect the unique set of modified .ts file paths.\n3. If no .ts files were modified, respond {\"ok\": true}.\n4. For each modified .ts file, use Glob to check whether a corresponding test file exists. For a file like src/foo/bar.ts, look for src/foo/bar.test.ts and src/foo/bar.spec.ts. Also check for a __tests__/bar.test.ts or __tests__/bar.spec.ts in the same directory.\n5. Collect every .ts file that has NO matching test file.\n6. If all files have tests, respond {\"ok\": true}.\n7. If any are missing, respond with {\"ok\": false, \"reason\": \"Missing test files for the following modified TypeScript files: <list>. Please create the missing test files before finishing.\"}\n\nRespond ONLY with the JSON object, no other text.",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
