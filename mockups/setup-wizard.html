@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Setup Wizard | NetTap</title>
+<style>
+/* ============================================================
+   NetTap Design System — Mockup: Setup Wizard
+   ============================================================ */
+
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --text-link: #58a6ff;
+  --accent: #58a6ff;
+  --accent-hover: #79b8ff;
+  --accent-muted: rgba(88, 166, 255, 0.15);
+  --success: #3fb950;
+  --success-muted: rgba(63, 185, 80, 0.15);
+  --warning: #d29922;
+  --warning-muted: rgba(210, 153, 34, 0.15);
+  --danger: #f85149;
+  --danger-muted: rgba(248, 81, 73, 0.15);
+  --border-default: #30363d;
+  --border-muted: #21262d;
+  --border-accent: #58a6ff;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.4);
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-family: var(--font-sans); font-size: 16px; line-height: var(--leading-normal); color: var(--text-primary); background-color: var(--bg-primary); -webkit-font-smoothing: antialiased; }
+body { min-height: 100vh; background-color: var(--bg-primary); color: var(--text-primary); display: flex; align-items: center; justify-content: center; }
+a { color: var(--text-link); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: var(--radius-full); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-default) var(--bg-secondary); }
+
+.mono { font-family: var(--font-mono); }
+.text-muted { color: var(--text-secondary); }
+.text-success { color: var(--success); }
+.text-danger { color: var(--danger); }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 600; border: 1px solid var(--border-default); border-radius: var(--radius-md); background-color: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; transition: all var(--transition-fast); line-height: 1; white-space: nowrap; text-decoration: none; }
+.btn:hover { background-color: var(--border-default); text-decoration: none; }
+.btn-primary { background-color: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background-color: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-secondary { background-color: transparent; border-color: var(--border-default); color: var(--text-secondary); }
+.btn-secondary:hover { background-color: var(--bg-tertiary); color: var(--text-primary); }
+.btn-lg { padding: var(--space-md) var(--space-lg); font-size: var(--text-base); }
+
+.badge { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 2px 10px; font-size: var(--text-xs); font-weight: 600; border-radius: var(--radius-full); background-color: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border-default); text-transform: uppercase; letter-spacing: 0.05em; }
+.badge-success { background-color: var(--success-muted); color: var(--success); border-color: var(--success); }
+
+.input { width: 100%; padding: var(--space-sm) var(--space-md); font-family: var(--font-sans); font-size: var(--text-sm); color: var(--text-primary); background-color: var(--bg-primary); border: 1px solid var(--border-default); border-radius: var(--radius-md); outline: none; transition: border-color var(--transition-fast); }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-muted); }
+.input::placeholder { color: var(--text-muted); }
+.label { display: block; font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: var(--space-xs); }
+.form-group { margin-bottom: var(--space-md); }
+.field-help { font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-xs); }
+
+.card { background-color: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-lg); padding: var(--space-lg); }
+
+/* Wizard layout */
+.wizard-container { width: 100%; max-width: 780px; margin: var(--space-xl) auto; padding: 0 var(--space-md); }
+
+.wizard-brand { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); margin-bottom: var(--space-xl); }
+.wizard-brand-text { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); letter-spacing: -0.025em; }
+
+/* Step indicator */
+.step-indicator { display: flex; align-items: center; justify-content: center; gap: 0; margin-bottom: var(--space-xl); padding: 0 var(--space-lg); }
+
+.step { display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); position: relative; z-index: 1; }
+
+.step-circle {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-sm); font-weight: 700;
+  border: 2px solid var(--border-default); background-color: var(--bg-primary);
+  color: var(--text-muted); transition: all var(--transition-fast);
+}
+
+.step.completed .step-circle { background-color: var(--success); border-color: var(--success); color: #fff; }
+.step.active .step-circle { background-color: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 0 0 4px var(--accent-muted); }
+
+.step-label { font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; font-weight: 500; }
+.step.active .step-label { color: var(--accent); }
+.step.completed .step-label { color: var(--success); }
+
+.step-connector { flex: 1; height: 2px; background-color: var(--border-default); margin: 0 var(--space-sm); margin-bottom: 20px; }
+.step-connector.completed { background-color: var(--success); }
+
+/* Checkmark SVG in completed steps */
+.step-check { display: none; }
+.step.completed .step-check { display: block; }
+.step.completed .step-number { display: none; }
+.step:not(.completed) .step-check { display: none; }
+.step:not(.completed) .step-number { display: inline; }
+
+/* Wizard card */
+.wizard-card {
+  background-color: var(--bg-secondary); border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl); padding: var(--space-2xl); box-shadow: var(--shadow-lg);
+}
+.wizard-card-title { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); margin-bottom: var(--space-sm); }
+.wizard-card-description { font-size: var(--text-sm); color: var(--text-secondary); margin-bottom: var(--space-lg); line-height: var(--leading-relaxed); }
+
+.wizard-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: var(--space-xl); padding-top: var(--space-lg); border-top: 1px solid var(--border-default);
+}
+
+/* Requirements check */
+.requirements-list { display: flex; flex-direction: column; gap: var(--space-md); margin-bottom: var(--space-lg); }
+.requirement-item { display: flex; align-items: center; gap: var(--space-md); padding: var(--space-md); background-color: var(--bg-primary); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.requirement-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.requirement-icon.pass { background-color: var(--success-muted); color: var(--success); }
+.requirement-text { flex: 1; font-size: var(--text-sm); color: var(--text-primary); }
+.requirement-status { font-size: var(--text-xs); font-weight: 600; }
+
+/* NIC cards */
+.nic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-md); margin-bottom: var(--space-lg); }
+.nic-card { background-color: var(--bg-primary); border: 2px solid var(--border-default); border-radius: var(--radius-lg); padding: var(--space-md); cursor: pointer; transition: all var(--transition-fast); }
+.nic-card:hover { border-color: var(--accent); }
+.nic-card.selected { border-color: var(--accent); background-color: var(--accent-muted); }
+.nic-card.selected-lan { border-color: var(--success); background-color: var(--success-muted); }
+.nic-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-sm); }
+.nic-name { font-size: var(--text-base); font-weight: 700; font-family: var(--font-mono); color: var(--text-primary); }
+.nic-state { display: flex; align-items: center; gap: var(--space-xs); }
+.nic-state-dot { width: 8px; height: 8px; border-radius: 50%; }
+.nic-state-dot.up { background-color: var(--success); box-shadow: 0 0 4px var(--success); }
+.nic-state-text { font-size: var(--text-xs); font-weight: 500; }
+.nic-details { display: flex; flex-direction: column; gap: 4px; }
+.nic-detail { display: flex; justify-content: space-between; font-size: var(--text-xs); }
+.nic-detail-label { color: var(--text-muted); }
+.nic-detail-value { color: var(--text-secondary); font-family: var(--font-mono); }
+.nic-role-badge { display: inline-block; margin-top: var(--space-sm); padding: 2px 8px; font-size: 11px; font-weight: 700; border-radius: var(--radius-full); text-transform: uppercase; letter-spacing: 0.05em; }
+.nic-role-badge.wan { background-color: var(--accent-muted); color: var(--accent); border: 1px solid var(--accent); }
+.nic-role-badge.lan { background-color: var(--success-muted); color: var(--success); border: 1px solid var(--success); }
+
+/* Bridge diagram */
+.bridge-diagram { display: flex; align-items: center; justify-content: center; gap: var(--space-lg); padding: var(--space-xl) 0; margin-bottom: var(--space-lg); }
+.bridge-node { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); }
+.bridge-icon { width: 64px; height: 64px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; }
+.bridge-icon.modem { background-color: var(--accent-muted); border: 2px solid var(--accent); }
+.bridge-icon.nettap { background-color: var(--success-muted); border: 2px solid var(--success); }
+.bridge-icon.router { background-color: var(--warning-muted); border: 2px solid var(--warning); }
+.bridge-label { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
+.bridge-sublabel { font-size: var(--text-xs); color: var(--text-muted); font-family: var(--font-mono); }
+.bridge-arrow { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bridge-arrow-line { width: 60px; height: 2px; background-color: var(--accent); }
+.bridge-arrow-label { font-size: 10px; color: var(--text-muted); font-family: var(--font-mono); }
+
+/* Storage tier */
+.storage-tier { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-md); }
+.tier-label-area { width: 140px; flex-shrink: 0; }
+.tier-label { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
+.tier-sublabel { font-size: var(--text-xs); color: var(--text-muted); }
+.tier-slider-area { flex: 1; }
+.tier-slider { width: 100%; height: 8px; -webkit-appearance: none; appearance: none; background-color: var(--bg-tertiary); border-radius: var(--radius-full); outline: none; }
+.tier-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background-color: var(--accent); cursor: pointer; border: 2px solid #fff; box-shadow: 0 0 4px rgba(0,0,0,0.3); }
+.tier-value { width: 70px; text-align: right; font-size: var(--text-sm); font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); flex-shrink: 0; }
+
+.threshold-section { margin-top: var(--space-lg); padding-top: var(--space-lg); border-top: 1px solid var(--border-muted); }
+.threshold-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-md); }
+.input-with-unit { display: flex; align-items: center; gap: var(--space-sm); }
+.input-with-unit .input { flex: 1; }
+.input-unit { font-size: var(--text-sm); color: var(--text-muted); font-weight: 500; }
+
+.admin-form { max-width: 480px; }
+
+/* Step visibility */
+.wizard-step { display: none; }
+.wizard-step.active { display: block; }
+
+.alert { padding: var(--space-md); border-radius: var(--radius-md); border: 1px solid var(--border-default); font-size: var(--text-sm); }
+.alert-info { background-color: var(--accent-muted); border-color: var(--accent); color: var(--accent); }
+.alert-success { background-color: var(--success-muted); border-color: var(--success); color: var(--success); }
+
+.password-strength { display: flex; gap: 4px; margin-top: var(--space-sm); }
+.strength-bar { flex: 1; height: 4px; border-radius: 2px; background-color: var(--bg-tertiary); }
+.strength-bar.filled { background-color: var(--success); }
+.strength-label { font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-xs); }
+</style>
+</head>
+<body>
+
+<div class="wizard-container">
+  <!-- Brand -->
+  <div class="wizard-brand">
+    <svg viewBox="0 0 32 32" width="36" height="36" fill="none">
+      <rect width="32" height="32" rx="6" fill="#58a6ff" />
+      <path d="M8 16h16M16 8v16M10 10l12 12M22 10L10 22" stroke="#fff" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    <span class="wizard-brand-text">NetTap Setup</span>
+  </div>
+
+  <!-- Step Indicator -->
+  <div class="step-indicator">
+    <div class="step completed" data-step="1">
+      <div class="step-circle">
+        <svg class="step-check" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+        <span class="step-number">1</span>
+      </div>
+      <span class="step-label">Welcome</span>
+    </div>
+    <div class="step-connector completed"></div>
+    <div class="step completed" data-step="2">
+      <div class="step-circle">
+        <svg class="step-check" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+        <span class="step-number">2</span>
+      </div>
+      <span class="step-label">Interfaces</span>
+    </div>
+    <div class="step-connector completed"></div>
+    <div class="step active" data-step="3">
+      <div class="step-circle">
+        <svg class="step-check" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+        <span class="step-number">3</span>
+      </div>
+      <span class="step-label">Bridge</span>
+    </div>
+    <div class="step-connector"></div>
+    <div class="step" data-step="4">
+      <div class="step-circle">
+        <svg class="step-check" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+        <span class="step-number">4</span>
+      </div>
+      <span class="step-label">Storage</span>
+    </div>
+    <div class="step-connector"></div>
+    <div class="step" data-step="5">
+      <div class="step-circle">
+        <svg class="step-check" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+        <span class="step-number">5</span>
+      </div>
+      <span class="step-label">Account</span>
+    </div>
+  </div>
+
+  <!-- Step 1: Welcome -->
+  <div class="wizard-step" id="step-1">
+    <div class="wizard-card">
+      <h2 class="wizard-card-title">Welcome to NetTap</h2>
+      <p class="wizard-card-description">
+        NetTap is a transparent network visibility appliance. This wizard will guide you through
+        configuring your network interfaces, storage, and admin account. Before we start, let's
+        verify your system meets the minimum requirements.
+      </p>
+
+      <div class="requirements-list">
+        <div class="requirement-item">
+          <div class="requirement-icon pass">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+          </div>
+          <span class="requirement-text">Two or more network interfaces detected</span>
+          <span class="requirement-status text-success">3 NICs found</span>
+        </div>
+        <div class="requirement-item">
+          <div class="requirement-icon pass">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+          </div>
+          <span class="requirement-text">Docker is installed and running</span>
+          <span class="requirement-status text-success">Docker 27.4.1</span>
+        </div>
+        <div class="requirement-item">
+          <div class="requirement-icon pass">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+          </div>
+          <span class="requirement-text">Sufficient disk space (100GB+)</span>
+          <span class="requirement-status text-success">931.5 GB available</span>
+        </div>
+      </div>
+
+      <div class="alert alert-success" style="margin-bottom:var(--space-lg)">
+        All system requirements are met. You are ready to proceed.
+      </div>
+
+      <div class="wizard-footer">
+        <div></div>
+        <button class="btn btn-primary btn-lg" onclick="showStep(2)">
+          Get Started
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="8" x2="13" y2="8" /><polyline points="9 4 13 8 9 12" /></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2: Interface Detection -->
+  <div class="wizard-step" id="step-2">
+    <div class="wizard-card">
+      <h2 class="wizard-card-title">Network Interfaces</h2>
+      <p class="wizard-card-description">
+        Select which interface connects to your ISP modem (WAN) and which connects to your router (LAN).
+        The third interface will be used for management access.
+      </p>
+
+      <div class="nic-grid">
+        <div class="nic-card selected">
+          <div class="nic-header">
+            <span class="nic-name">enp1s0</span>
+            <div class="nic-state"><span class="nic-state-dot up"></span><span class="nic-state-text text-success">Up</span></div>
+          </div>
+          <div class="nic-details">
+            <div class="nic-detail"><span class="nic-detail-label">MAC</span><span class="nic-detail-value">00:1a:2b:3c:4d:5e</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">Speed</span><span class="nic-detail-value">2500 Mbps</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">Driver</span><span class="nic-detail-value">igc</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">IPv4</span><span class="nic-detail-value">(none)</span></div>
+          </div>
+          <span class="nic-role-badge wan">WAN (Modem)</span>
+        </div>
+
+        <div class="nic-card selected-lan">
+          <div class="nic-header">
+            <span class="nic-name">enp2s0</span>
+            <div class="nic-state"><span class="nic-state-dot up"></span><span class="nic-state-text text-success">Up</span></div>
+          </div>
+          <div class="nic-details">
+            <div class="nic-detail"><span class="nic-detail-label">MAC</span><span class="nic-detail-value">00:1a:2b:3c:4d:5f</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">Speed</span><span class="nic-detail-value">2500 Mbps</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">Driver</span><span class="nic-detail-value">igc</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">IPv4</span><span class="nic-detail-value">(none)</span></div>
+          </div>
+          <span class="nic-role-badge lan">LAN (Router)</span>
+        </div>
+
+        <div class="nic-card">
+          <div class="nic-header">
+            <span class="nic-name">enp3s0</span>
+            <div class="nic-state"><span class="nic-state-dot up"></span><span class="nic-state-text text-success">Up</span></div>
+          </div>
+          <div class="nic-details">
+            <div class="nic-detail"><span class="nic-detail-label">MAC</span><span class="nic-detail-value">00:1a:2b:3c:4d:60</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">Speed</span><span class="nic-detail-value">1000 Mbps</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">Driver</span><span class="nic-detail-value">r8169</span></div>
+            <div class="nic-detail"><span class="nic-detail-label">IPv4</span><span class="nic-detail-value">192.168.1.50</span></div>
+          </div>
+          <span style="font-size:var(--text-xs);color:var(--text-muted);margin-top:var(--space-sm);display:block">Management interface (auto-detected)</span>
+        </div>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn btn-secondary btn-lg" onclick="showStep(1)">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="13" y1="8" x2="3" y2="8" /><polyline points="7 4 3 8 7 12" /></svg>
+          Back
+        </button>
+        <button class="btn btn-primary btn-lg" onclick="showStep(3)">
+          Next: Bridge Config
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="8" x2="13" y2="8" /><polyline points="9 4 13 8 9 12" /></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: Bridge Configuration (active) -->
+  <div class="wizard-step active" id="step-3">
+    <div class="wizard-card">
+      <h2 class="wizard-card-title">Bridge Configuration</h2>
+      <p class="wizard-card-description">
+        NetTap will create a transparent Layer 2 bridge between your selected WAN and LAN interfaces.
+        This adds no latency to your network and makes the appliance invisible on the data path.
+      </p>
+
+      <div class="bridge-diagram">
+        <div class="bridge-node">
+          <div class="bridge-icon modem">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
+          </div>
+          <span class="bridge-label">ISP Modem</span>
+          <span class="bridge-sublabel">WAN</span>
+        </div>
+        <div class="bridge-arrow">
+          <span class="bridge-arrow-label">enp1s0</span>
+          <div class="bridge-arrow-line"></div>
+        </div>
+        <div class="bridge-node">
+          <div class="bridge-icon nettap">
+            <svg viewBox="0 0 32 32" width="28" height="28" fill="none"><path d="M8 16h16M16 8v16M10 10l12 12M22 10L10 22" stroke="#3fb950" stroke-width="2" stroke-linecap="round" /></svg>
+          </div>
+          <span class="bridge-label">NetTap</span>
+          <span class="bridge-sublabel">br0</span>
+        </div>
+        <div class="bridge-arrow">
+          <span class="bridge-arrow-label">enp2s0</span>
+          <div class="bridge-arrow-line"></div>
+        </div>
+        <div class="bridge-node">
+          <div class="bridge-icon router">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#d29922" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" /><path d="M16.24 7.76a6 6 0 010 8.49M7.76 16.24a6 6 0 010-8.49" /><path d="M19.07 4.93a10 10 0 010 14.14M4.93 19.07a10 10 0 010-14.14" /></svg>
+          </div>
+          <span class="bridge-label">Router</span>
+          <span class="bridge-sublabel">LAN</span>
+        </div>
+      </div>
+
+      <div class="alert alert-info" style="margin-bottom:var(--space-lg)">
+        The bridge interface <strong>br0</strong> will bind <strong>enp1s0</strong> (WAN) and <strong>enp2s0</strong> (LAN) in transparent forwarding mode. All traffic passes through unmodified while NetTap captures a copy for analysis.
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-md); margin-bottom:var(--space-md);">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="label">Bridge Interface</label>
+          <input class="input mono" value="br0" disabled />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="label">Capture Mode</label>
+          <input class="input" value="Promiscuous (passive mirror)" disabled />
+        </div>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn btn-secondary btn-lg" onclick="showStep(2)">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="13" y1="8" x2="3" y2="8" /><polyline points="7 4 3 8 7 12" /></svg>
+          Back
+        </button>
+        <button class="btn btn-primary btn-lg" onclick="showStep(4)">
+          Next: Storage
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="8" x2="13" y2="8" /><polyline points="9 4 13 8 9 12" /></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4: Storage Configuration -->
+  <div class="wizard-step" id="step-4">
+    <div class="wizard-card">
+      <h2 class="wizard-card-title">Storage Configuration</h2>
+      <p class="wizard-card-description">
+        Configure how long NetTap retains captured data across three storage tiers.
+        The daemon automatically manages rolling retention to keep disk usage under control.
+      </p>
+
+      <div class="storage-tier">
+        <div class="tier-label-area"><div class="tier-label">Hot Tier</div><div class="tier-sublabel">Zeek metadata</div></div>
+        <div class="tier-slider-area"><input type="range" class="tier-slider" min="7" max="365" value="90" /></div>
+        <div class="tier-value">90 days</div>
+      </div>
+
+      <div class="storage-tier">
+        <div class="tier-label-area"><div class="tier-label">Warm Tier</div><div class="tier-sublabel">Suricata alerts</div></div>
+        <div class="tier-slider-area"><input type="range" class="tier-slider" min="7" max="730" value="180" /></div>
+        <div class="tier-value">180 days</div>
+      </div>
+
+      <div class="storage-tier">
+        <div class="tier-label-area"><div class="tier-label">Cold Tier</div><div class="tier-sublabel">Raw PCAP files</div></div>
+        <div class="tier-slider-area"><input type="range" class="tier-slider" min="1" max="365" value="30" /></div>
+        <div class="tier-value">30 days</div>
+      </div>
+
+      <div class="threshold-section">
+        <h4 style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-md);font-weight:600;">Disk Thresholds</h4>
+        <div class="threshold-grid">
+          <div class="form-group">
+            <label class="label" for="disk-threshold">Warning Threshold</label>
+            <div class="input-with-unit"><input class="input" id="disk-threshold" type="number" value="80" /><span class="input-unit">%</span></div>
+            <p class="field-help">Start pruning old data when disk exceeds this.</p>
+          </div>
+          <div class="form-group">
+            <label class="label" for="emergency-threshold">Emergency Threshold</label>
+            <div class="input-with-unit"><input class="input" id="emergency-threshold" type="number" value="90" /><span class="input-unit">%</span></div>
+            <p class="field-help">Aggressive pruning regardless of retention tier.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn btn-secondary btn-lg" onclick="showStep(3)">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="13" y1="8" x2="3" y2="8" /><polyline points="7 4 3 8 7 12" /></svg>
+          Back
+        </button>
+        <button class="btn btn-primary btn-lg" onclick="showStep(5)">
+          Next: Admin Account
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="8" x2="13" y2="8" /><polyline points="9 4 13 8 9 12" /></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 5: Admin Account -->
+  <div class="wizard-step" id="step-5">
+    <div class="wizard-card">
+      <h2 class="wizard-card-title">Create Admin Account</h2>
+      <p class="wizard-card-description">
+        Set up your administrator credentials to secure the NetTap dashboard.
+        This account will be used to log in to the web interface.
+      </p>
+
+      <div class="admin-form">
+        <div class="form-group">
+          <label class="label" for="admin-username">Username</label>
+          <input class="input" id="admin-username" type="text" value="admin" />
+          <p class="field-help">Used to log in to the dashboard.</p>
+        </div>
+        <div class="form-group">
+          <label class="label" for="admin-password">Password</label>
+          <input class="input" id="admin-password" type="password" value="strongpassword123" />
+          <div class="password-strength">
+            <div class="strength-bar filled"></div>
+            <div class="strength-bar filled"></div>
+            <div class="strength-bar filled"></div>
+            <div class="strength-bar filled"></div>
+          </div>
+          <p class="strength-label text-success" style="font-weight:600;">Strong</p>
+        </div>
+        <div class="form-group">
+          <label class="label" for="admin-confirm">Confirm Password</label>
+          <input class="input" id="admin-confirm" type="password" value="strongpassword123" />
+          <p class="field-help text-success">Passwords match.</p>
+        </div>
+      </div>
+
+      <div class="wizard-footer">
+        <button class="btn btn-secondary btn-lg" onclick="showStep(4)">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="13" y1="8" x2="3" y2="8" /><polyline points="7 4 3 8 7 12" /></svg>
+          Back
+        </button>
+        <button class="btn btn-primary btn-lg">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 13 4" /></svg>
+          Complete Setup
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Minimal JS for step switching in the mockup
+function showStep(n) {
+  // Hide all steps
+  document.querySelectorAll('.wizard-step').forEach(function(el) {
+    el.classList.remove('active');
+  });
+  // Show target step
+  var target = document.getElementById('step-' + n);
+  if (target) target.classList.add('active');
+
+  // Update step indicator using CSS class toggling (no innerHTML)
+  document.querySelectorAll('.step').forEach(function(el, i) {
+    var stepNum = i + 1;
+    el.classList.remove('active', 'completed');
+    if (stepNum < n) {
+      el.classList.add('completed');
+    } else if (stepNum === n) {
+      el.classList.add('active');
+    }
+  });
+
+  // Update connectors
+  document.querySelectorAll('.step-connector').forEach(function(el, i) {
+    el.classList.remove('completed');
+    if (i < n - 2) {
+      el.classList.add('completed');
+    }
+  });
+}
+</script>
+</body>
+</html>

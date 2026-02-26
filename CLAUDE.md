@@ -228,6 +228,28 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 
 **CRITICAL: After completing any task from `plans/comprehensive-build-plan.md`, you MUST update the task's status in that file.** Mark completed tasks with a `[x]` checkbox prefix and add a completion note. This applies to all phases going forward. When starting a new phase, review the plan to see what's already done.
 
+## SIEM Feature Integration Policy
+
+**Reference:** `plans/siem-features-gameplan.md` contains the full implementation plan for 20 SIEM-inspired features (10 Must-Have + 10 Should-Have).
+
+### Implementation Rules
+
+1. **Every feature must be FULLY integrated** — backend API + frontend UI + tests. No half-built features.
+2. **Every feature must have complete test coverage:**
+   - Daemon: pytest unit tests (mock OpenSearch, test query building, test error handling)
+   - Web API clients: Vitest tests (mock fetch, test params, test responses)
+   - Web components: Vitest + Testing Library (render with mock data, test interactions, test empty/loading/error states)
+3. **ALL tests must pass** (existing + new) before any PR is created. Run `cd daemon && python -m pytest` and `cd web && npx vitest run` and `cd web && npx svelte-check`.
+4. **Follow the dependency order:** Group A (data) → Group B (UI) → Group C (intelligence) → Group D (viz) → Group E (advanced). Do not build UI features before their data layer exists.
+5. **Use existing patterns:** New API endpoints follow the same pattern as `daemon/api/traffic.py`. New pages follow the same layout as `web/src/routes/+page.svelte`. New components use the design system from `web/src/lib/styles/global.css`.
+
+### Three Design Pillars
+
+All SIEM features must embody these principles:
+- **Device-Centric:** Organize data by "what are my devices doing?" — not by log type
+- **Plain English:** Every alert, metric, and detection gets a human-readable explanation
+- **Immediate Value:** Big numbers first, details on click. Progressive disclosure (overview → category → raw logs)
+
 ## Hooks
 
 This project has two Claude Code hooks configured in `.claude/settings.json`:
