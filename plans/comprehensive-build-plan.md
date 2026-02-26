@@ -834,14 +834,14 @@ docs/
 
 | # | Task | Size | Status | Files |
 |---|------|------|--------|-------|
-| 4B.1 | Device Inventory API (auto-discovery from DHCP/ARP/DNS/JA3) | L | [ ] Todo | `daemon/api/devices.py`, `daemon/services/device_fingerprint.py` |
-| 4B.2 | Traffic Categorization API (protocol → human categories) | M | [ ] Todo | `daemon/services/traffic_classifier.py`, `daemon/api/traffic.py` (extend) |
-| 4B.3 | Alert Description Enrichment (Suricata SID → plain English) | M | [ ] Todo | `daemon/services/alert_enrichment.py`, `daemon/data/suricata_descriptions.json` |
-| 4B.4 | GeoIP Lookup Service (MaxMind GeoLite2) | M | [ ] Todo | `daemon/services/geoip_service.py`, `daemon/api/geoip.py` |
-| 4B.5 | Device Inventory API tests | M | [ ] Todo | `daemon/tests/test_devices_api.py`, `daemon/tests/test_device_fingerprint.py` |
-| 4B.6 | Traffic Classifier + GeoIP tests | M | [ ] Todo | `daemon/tests/test_traffic_classifier.py`, `daemon/tests/test_geoip_service.py` |
-| 4B.7 | Alert Enrichment tests | S | [ ] Todo | `daemon/tests/test_alert_enrichment.py` |
-| 4B.8 | Web API clients (devices, geoip) + tests | M | [ ] Todo | `web/src/lib/api/devices.ts`, `devices.test.ts`, `geoip.ts`, `geoip.test.ts` |
+| 4B.1 | Device Inventory API (auto-discovery from DHCP/ARP/DNS/JA3) | L | [x] Done | `daemon/api/devices.py`, `daemon/services/device_fingerprint.py`, `daemon/data/oui.txt` (855 entries) |
+| 4B.2 | Traffic Categorization API (protocol → human categories) | M | [x] Done | `daemon/services/traffic_classifier.py`, `daemon/api/traffic.py` (+categories endpoint) |
+| 4B.3 | Alert Description Enrichment (Suricata SID → plain English) | M | [x] Done | `daemon/services/alert_enrichment.py`, `daemon/data/suricata_descriptions.json` (55 SIDs) |
+| 4B.4 | GeoIP Lookup Service (MaxMind GeoLite2 + fallback) | M | [x] Done | `daemon/services/geoip_service.py`, `daemon/api/geoip.py` (26 well-known IPs) |
+| 4B.5 | Device Inventory API tests | M | [x] Done | `test_devices_api.py` (22 tests), `test_device_fingerprint.py` (24 tests) |
+| 4B.6 | Traffic Classifier + GeoIP tests | M | [x] Done | `test_traffic_classifier.py` (21 tests), `test_geoip_service.py` (37 tests), `test_geoip_api.py` (17 tests) |
+| 4B.7 | Alert Enrichment tests | S | [x] Done | `test_alert_enrichment.py` (26 tests) |
+| 4B.8 | Web API clients (devices, geoip) + tests | M | [x] Done | `devices.ts` + `devices.test.ts` (12), `geoip.ts` + `geoip.test.ts` (12), `traffic.ts` extended (3) |
 
 ### Sprint 2: Core UI Features (Group B)
 
