@@ -1,0 +1,13 @@
+# Default owner
+* @EliasMarine
+
+# Core infrastructure
+scripts/ @EliasMarine
+daemon/ @EliasMarine
+docker/ @EliasMarine
+
+# Web UI
+web/ @EliasMarine
+
+# CI/CD
+.github/ @EliasMarine

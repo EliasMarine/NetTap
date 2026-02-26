@@ -1,0 +1,52 @@
+# ==========================================================================
+# NetTap Stale Issue / PR Cleanup
+# ==========================================================================
+# Runs daily. Marks inactive issues and PRs as stale, and auto-closes
+# issues that remain stale. PRs are labeled but not auto-closed.
+
+name: Stale
+
+on:
+  schedule:
+    # Run daily at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: Mark stale issues and PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run stale action
+        uses: actions/stale@v9
+        with:
+          # Issue settings
+          days-before-issue-stale: 60
+          days-before-issue-close: 7
+          stale-issue-label: stale
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has not
+            had recent activity. It will be closed in 7 days if no further
+            activity occurs. If this issue is still relevant, please leave a
+            comment or remove the stale label.
+          close-issue-message: >
+            This issue has been automatically closed due to inactivity. If you
+            believe this is still relevant, please reopen it with additional
+            context.
+
+          # PR settings
+          days-before-pr-stale: 30
+          days-before-pr-close: -1
+          stale-pr-label: stale
+          stale-pr-message: >
+            This pull request has been automatically marked as stale because it
+            has not had recent activity. Please update or close it if it is no
+            longer needed.
+
+          # Exempt labels — never mark these as stale
+          exempt-issue-labels: pinned,security,bug
+          exempt-pr-labels: pinned,security,bug

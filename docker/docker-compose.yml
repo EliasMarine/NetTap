@@ -11,6 +11,12 @@
 # Prerequisites:
 #   - Run scripts/install/deploy-malcolm.sh first to generate configs/certs
 #   - Bridge (br0) must be configured before starting capture containers
+#
+# Security:
+#   - All services run with no-new-privileges
+#   - Capabilities are dropped by default, added back only where required
+#   - read_only filesystems where possible (with tmpfs for writable dirs)
+#   - Internal services are not exposed to the host network
 # ==========================================================================
 
 x-malcolm-image: &malcolm-registry "ghcr.io/idaholab/malcolm"
@@ -42,6 +48,11 @@ x-healthcheck-defaults: &healthcheck-defaults
   timeout: 15s
   retries: 3
 
+# -- Shared security defaults applied to every non-host-network service ------
+x-security-defaults: &security-defaults
+  security_opt:
+    - no-new-privileges:true
+
 services:
 
   # ========================================================================
@@ -52,6 +63,15 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-opensearch
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "opensearch"
+      com.nettap.component: "data-store"
+      com.nettap.description: "OpenSearch search and analytics engine"
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_RESOURCE      # required for mlockall (bootstrap.memory_lock)
     environment:
       <<: [*process-env, *opensearch-env]
       OPENSEARCH_JAVA_OPTS: "${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}"
@@ -86,6 +106,13 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-dashboards-helper
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "dashboards-helper"
+      com.nettap.component: "dashboards"
+      com.nettap.description: "OpenSearch Dashboards initialization helper"
+    cap_drop:
+      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
@@ -103,6 +130,13 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-dashboards
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "dashboards"
+      com.nettap.component: "dashboards"
+      com.nettap.description: "OpenSearch Dashboards visualization UI"
+    cap_drop:
+      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
     volumes:
@@ -121,6 +155,13 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-logstash
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "logstash"
+      com.nettap.component: "log-pipeline"
+      com.nettap.description: "Logstash log enrichment and forwarding pipeline"
+    cap_drop:
+      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
       LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
@@ -148,6 +189,13 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-filebeat
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "filebeat"
+      com.nettap.component: "log-pipeline"
+      com.nettap.description: "Filebeat log shipper for Zeek and Suricata logs"
+    cap_drop:
+      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
       FILEBEAT_SCAN_FREQUENCY: "10s"
@@ -170,12 +218,23 @@ services:
   # ========================================================================
   # LIVE CAPTURE — These run with host networking for raw NIC access
   # ========================================================================
+  # NOTE: Host-network containers cannot use cap_drop/cap_add together with
+  # network_mode: host in the same way. They need NET_ADMIN + NET_RAW for
+  # packet capture. security_opt: no-new-privileges is still applied.
 
   zeek-live:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-zeek-live
     restart: unless-stopped
     network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.nettap.service: "zeek-live"
+      com.nettap.component: "capture"
+      com.nettap.description: "Zeek network metadata analysis (live capture)"
+    cap_drop:
+      - ALL
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -198,6 +257,14 @@ services:
     container_name: nettap-suricata-live
     restart: unless-stopped
     network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.nettap.service: "suricata-live"
+      com.nettap.component: "capture"
+      com.nettap.description: "Suricata IDS/IPS engine (live capture)"
+    cap_drop:
+      - ALL
     cap_add: *capture-caps
     environment:
       <<: *process-env
@@ -218,6 +285,14 @@ services:
     container_name: nettap-pcap-capture
     restart: unless-stopped
     network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.nettap.service: "pcap-capture"
+      com.nettap.component: "capture"
+      com.nettap.description: "Raw packet capture (netsniff-ng)"
+    cap_drop:
+      - ALL
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *pcap-env]
@@ -233,6 +308,14 @@ services:
     container_name: nettap-arkime-live
     restart: unless-stopped
     network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.nettap.service: "arkime-live"
+      com.nettap.component: "capture"
+      com.nettap.description: "Arkime full packet capture and session indexer"
+    cap_drop:
+      - ALL
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *opensearch-env, *pcap-env]
@@ -253,6 +336,13 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-redis
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "redis"
+      com.nettap.component: "infrastructure"
+      com.nettap.description: "Redis in-memory data store for caching and queues"
+    cap_drop:
+      - ALL
     environment:
       <<: *process-env
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
@@ -269,6 +359,16 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-api
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "api"
+      com.nettap.component: "infrastructure"
+      com.nettap.description: "Malcolm REST API server"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M
     environment:
       <<: [*process-env, *opensearch-env]
     volumes:
@@ -283,8 +383,16 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "nginx-proxy"
+      com.nettap.component: "infrastructure"
+      com.nettap.description: "Malcolm nginx reverse proxy (internal dashboards)"
+    cap_drop:
+      - ALL
     ports:
       - "${MALCOLM_HTTPS_PORT:-9443}:443"
+      # Bind OpenSearch proxy to loopback only — never expose 9200 externally
       - "127.0.0.1:9200:9200"
     environment:
       <<: [*process-env, *opensearch-env]
@@ -315,6 +423,16 @@ services:
     image: nettap/storage-daemon:latest
     container_name: nettap-storage-daemon
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "storage-daemon"
+      com.nettap.component: "nettap"
+      com.nettap.description: "NetTap storage & health daemon — retention, SMART, disk management"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M
     volumes:
       - ../config:/opt/nettap/config:ro
       - /dev:/dev:ro
@@ -327,6 +445,9 @@ services:
       RETENTION_COLD: "${RETENTION_COLD:-30}"
       DISK_THRESHOLD_PERCENT: "${DISK_THRESHOLD_PERCENT:-80}"
       PCAP_DIR: "/opt/nettap/pcap"
+    # Daemon port is internal-only — only the web container needs it
+    expose:
+      - "8880"
     networks:
       - default
     depends_on:
@@ -340,6 +461,16 @@ services:
     image: nettap/web:latest
     container_name: nettap-web
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "web"
+      com.nettap.component: "nettap"
+      com.nettap.description: "NetTap web dashboard — SvelteKit network visibility UI"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M
     # OLD CODE START — port was exposed directly before nginx reverse proxy
     # ports:
     #   - "${DASHBOARD_PORT:-443}:3000"
@@ -364,6 +495,13 @@ services:
     image: grafana/grafana:10.4.2
     container_name: nettap-grafana
     restart: unless-stopped
+    <<: *security-defaults
+    labels:
+      com.nettap.service: "grafana"
+      com.nettap.component: "nettap"
+      com.nettap.description: "Grafana dashboards for enhanced network visualizations"
+    cap_drop:
+      - ALL
     environment:
       - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
@@ -393,6 +531,10 @@ services:
     image: nginx:stable-alpine
     container_name: nettap-nginx
     restart: unless-stopped
+    labels:
+      com.nettap.service: "nginx"
+      com.nettap.component: "nettap"
+      com.nettap.description: "NetTap nginx reverse proxy — TLS termination, routing"
     ports:
       - "443:443"
       - "80:80"
@@ -426,6 +568,10 @@ services:
     image: nettap/tshark:latest
     container_name: nettap-tshark
     restart: unless-stopped
+    labels:
+      com.nettap.service: "tshark"
+      com.nettap.component: "nettap"
+      com.nettap.description: "TShark packet decoder for on-demand PCAP analysis"
     read_only: true
     tmpfs:
       - /tmp:size=100M
@@ -447,6 +593,10 @@ services:
     image: nettap/cyberchef:latest
     container_name: nettap-cyberchef
     restart: unless-stopped
+    labels:
+      com.nettap.service: "cyberchef"
+      com.nettap.component: "nettap"
+      com.nettap.description: "CyberChef data transformation and decoding tool"
     read_only: true
     tmpfs:
       - /tmp:size=10M
