@@ -1,0 +1,29 @@
+FROM debian:bookworm-slim
+
+LABEL maintainer="NetTap Project"
+LABEL description="TShark (Wireshark CLI) for on-demand packet analysis"
+LABEL license="GPL-2.0-only"
+
+# Install TShark only (no GUI components)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        tshark \
+        libcap2-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Include GPLv2 license text (required for GPL compliance)
+COPY docker/licenses/GPL-2.0.txt /usr/share/licenses/tshark/LICENSE
+RUN echo "TShark is part of the Wireshark project (https://www.wireshark.org)" > /usr/share/licenses/tshark/NOTICE && \
+    echo "Source code: https://gitlab.com/wireshark/wireshark" >> /usr/share/licenses/tshark/NOTICE && \
+    echo "Licensed under GNU General Public License v2.0" >> /usr/share/licenses/tshark/NOTICE
+
+# Create non-root user for running tshark
+RUN groupadd -r tshark && useradd -r -g tshark -s /sbin/nologin tshark
+
+# Create results directory
+RUN mkdir -p /tmp/tshark-results && chown tshark:tshark /tmp/tshark-results
+
+USER tshark
+
+# Default entrypoint keeps the container alive for docker exec
+ENTRYPOINT ["tail", "-f", "/dev/null"]

@@ -18,6 +18,7 @@ Endpoints:
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -26,6 +27,10 @@ from aiohttp import web
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
 from storage.ilm import apply_ilm_policies
+from api.tshark import register_tshark_routes
+from api.cyberchef import register_cyberchef_routes
+from services.tshark_service import TSharkService
+from services.cyberchef_service import CyberChefService
 
 logger = logging.getLogger("nettap.api")
 
@@ -314,6 +319,16 @@ def create_app(
     app.router.add_get("/api/indices", handle_indices)
     app.router.add_get("/api/system/health", handle_system_health)
     app.router.add_post("/api/ilm/apply", handle_ilm_apply)
+
+    # TShark integration (containerized packet analysis)
+    pcap_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
+    tshark_service = TSharkService(pcap_base_dir=pcap_dir)
+    register_tshark_routes(app, tshark_service)
+
+    # CyberChef integration (containerized data analysis)
+    cyberchef_url = os.environ.get("CYBERCHEF_URL", "http://nettap-cyberchef:8443")
+    cyberchef_service = CyberChefService(base_url=cyberchef_url)
+    register_cyberchef_routes(app, cyberchef_service)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
