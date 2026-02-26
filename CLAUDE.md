@@ -10,6 +10,104 @@ The project wraps CISA's Malcolm stack (Zeek, Suricata, Arkime, OpenSearch) with
 
 **PRD:** `NetTap_PRD_v1.0.md` contains the full product specification.
 
+## Git Strategy
+
+### Branch Model
+
+- **`main`** — Protected. NEVER push directly. Only receives merges at project completion (v1.0.0).
+- **`develop`** — Integration branch. All feature branches merge here via PR.
+- **Feature branches** — All work happens here. Branch from `develop`, merge back to `develop`.
+
+**Branch naming convention:** `phase-N/short-description`
+```
+phase-1/bridge-hardening
+phase-1/malcolm-integration
+phase-2/ilm-policies
+phase-2/smart-alerting
+phase-3/sveltekit-init
+phase-3/setup-wizard
+phase-4/dashboard-home
+phase-5/ci-pipeline
+```
+
+For cross-cutting work that spans phases: `infra/description` or `chore/description`.
+
+### Workflow
+
+```
+1. git checkout develop
+2. git pull origin develop
+3. git checkout -b phase-N/description
+4. ... work, commit ...
+5. git push -u origin phase-N/description
+6. Create PR: phase-N/description → develop
+7. After merge, delete feature branch
+```
+
+**NEVER push to `main`.** All PRs target `develop`. At project completion, `develop` merges to `main` with the `v1.0.0` tag.
+
+### Commit Convention: Conventional Commits
+
+Every commit message MUST follow this format:
+
+```
+type(scope): short description
+
+Optional body explaining the "why" (not the "what").
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+```
+
+**Types (required):**
+| Type | When to use |
+|------|-------------|
+| `feat` | New feature or capability |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code restructuring, no behavior change |
+| `test` | Adding or updating tests |
+| `chore` | Maintenance, dependencies, config |
+| `ci` | CI/CD pipeline changes |
+| `perf` | Performance improvement |
+| `style` | Formatting, whitespace, no logic change |
+
+**Scope (optional but encouraged):** The component affected.
+```
+feat(bridge): add netplan persistence for br0
+fix(daemon): handle OpenSearch connection timeout in prune cycle
+test(storage): add pytest coverage for disk threshold logic
+docs(readme): update architecture diagram
+chore(docker): pin Malcolm images to v26.02.0
+ci(github): add shellcheck workflow
+```
+
+### Versioning: Phase-Based SemVer
+
+Development versions increment with each phase milestone. Tags are applied on `develop` at phase completion.
+
+| Milestone | Version | Tag on |
+|-----------|---------|--------|
+| Phase 1 complete (Core Infrastructure) | `v0.1.0` | `develop` |
+| Phase 2 complete (Storage Management) | `v0.2.0` | `develop` |
+| Phase 3 complete (Onboarding UX) | `v0.3.0` | `develop` |
+| Phase 4 complete (Dashboard Polish) | `v0.4.0` | `develop` |
+| Phase 5 complete (Community Release) | `v1.0.0` | `main` (after final merge) |
+
+**Patch versions** for hotfixes within a phase: `v0.1.1`, `v0.1.2`, etc.
+**Pre-release versions** for testing: `v1.0.0-alpha.1`, `v1.0.0-beta.1`, `v1.0.0-rc.1`.
+
+### Rules for Claude Code
+
+1. **Always create a new branch** before making code changes. Never commit directly to `develop` or `main`.
+2. **Always use conventional commit format.** No exceptions.
+3. **Push to the feature branch only.** Never push to `develop` or `main`.
+4. **One logical change per commit.** Don't bundle unrelated changes.
+5. **Create PRs targeting `develop`** — never targeting `main`.
+6. **Include the Linear issue ID** in the PR description (e.g., "Closes NET-7").
+7. **Tag phase milestones** only when all tasks for that phase are complete and merged to `develop`.
+
+---
+
 ## Code Preservation Policy
 
 - **Never delete** replaced logic; wrap with `// OLD CODE START/END` and comment why.
