@@ -12,6 +12,7 @@
 		{ href: '/connections', label: 'Connections', icon: 'link' },
 		{ href: '/devices', label: 'Devices', icon: 'monitor' },
 		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
+		{ href: '/investigations', label: 'Investigations', icon: 'clipboard' },
 		{ href: '/system', label: 'System', icon: 'cpu' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' },
 	];
@@ -69,6 +70,8 @@
 								<rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
 							{:else if item.icon === 'bell'}
 								<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" />
+							{:else if item.icon === 'clipboard'}
+								<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" /><rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
 							{:else if item.icon === 'cpu'}
 								<rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
 							{:else if item.icon === 'settings'}
