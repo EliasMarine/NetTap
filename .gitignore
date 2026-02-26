@@ -22,6 +22,11 @@ data/
 pcap/
 logs/
 
+# Generated Malcolm config (certs, auth, docker .env)
+docker/certs/
+docker/auth/
+docker/.env
+
 # OS files
 .DS_Store
 Thumbs.db
