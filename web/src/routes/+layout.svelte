@@ -10,6 +10,7 @@
 	const navItems = [
 		{ href: '/', label: 'Dashboard', icon: 'grid' },
 		{ href: '/connections', label: 'Connections', icon: 'link' },
+		{ href: '/devices', label: 'Devices', icon: 'monitor' },
 		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
 		{ href: '/system', label: 'System', icon: 'cpu' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' },
@@ -64,6 +65,8 @@
 								<rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
 							{:else if item.icon === 'link'}
 								<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+							{:else if item.icon === 'monitor'}
+								<rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
 							{:else if item.icon === 'bell'}
 								<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" />
 							{:else if item.icon === 'cpu'}

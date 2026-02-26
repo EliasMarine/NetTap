@@ -849,14 +849,14 @@ docs/
 
 | # | Task | Size | Status | Files |
 |---|------|------|--------|-------|
-| 4B.9 | Device Inventory page (/devices) | L | [ ] Todo | `web/src/routes/devices/+page.svelte` |
-| 4B.10 | Per-Device Activity page (/devices/[ip]) | L | [ ] Todo | `web/src/routes/devices/[ip]/+page.svelte` |
-| 4B.11 | Alert-to-Detail Pivot panel | M | [ ] Todo | `web/src/lib/components/AlertDetailPanel.svelte` |
-| 4B.12 | Right-Click Context Menus (IP, domain, port) | M | [ ] Todo | `web/src/lib/components/ContextMenu.svelte`, `IPAddress.svelte` |
-| 4B.13 | Enhanced Hero Dashboard (big numbers, trends) | M | [ ] Todo | `web/src/routes/+page.svelte` (rewrite) |
-| 4B.14 | Dashboard Template Variables (device/time/protocol filter bar) | M | [ ] Todo | `web/src/lib/components/DashboardFilters.svelte` |
-| 4B.15 | Threshold color utility + systematic audit | S | [ ] Todo | `web/src/lib/utils/thresholds.ts` |
-| 4B.16 | Component tests for B9-B14 | M | [ ] Todo | 6+ test files |
+| 4B.9 | Device Inventory page (/devices) | L | [x] Done | `web/src/routes/devices/+page.svelte` (sortable, searchable table with auto-refresh) |
+| 4B.10 | Per-Device Activity page (/devices/[ip]) | L | [x] Done | `web/src/routes/devices/[ip]/+page.svelte` (bandwidth chart, destinations, DNS, connections) |
+| 4B.11 | Alert-to-Detail Pivot panel | M | [x] Done | `web/src/lib/components/AlertDetailPanel.svelte` (slide-out with enrichment, acknowledge) |
+| 4B.12 | Right-Click Context Menus (IP, domain, port) | M | [x] Done | `web/src/lib/components/ContextMenu.svelte`, `IPAddress.svelte` (copy, device, geoip, filter) |
+| 4B.13 | Enhanced Hero Dashboard (big numbers, trends) | M | [x] Done | `web/src/routes/+page.svelte` (trend arrows, categories bar, device count, clickable alerts) |
+| 4B.14 | Dashboard Template Variables (device/time/protocol filter bar) | M | [x] Done | `web/src/lib/components/DashboardFilters.svelte` (time range, device, protocol filters) |
+| 4B.15 | Threshold color utility + systematic audit | S | [x] Done | `web/src/lib/utils/thresholds.ts` (5 presets: severity, disk, CPU, risk, device alerts) |
+| 4B.16 | Component tests for B9-B14 | M | [x] Done | 5 test files: AlertDetailPanel (30), ContextMenu (21), IPAddress (16), DashboardFilters (26), thresholds (48) = 141 tests |
 
 ### Sprint 3: Intelligence Layer (Group C)
 

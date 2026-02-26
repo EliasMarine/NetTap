@@ -11,12 +11,18 @@
 
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
 	import DonutChart from '$components/charts/DonutChart.svelte';
-	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTopTalkers } from '$api/traffic';
-	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TopTalker } from '$api/traffic';
+	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTopTalkers, getTrafficCategories } from '$api/traffic';
+	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TopTalker, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getAlerts } from '$api/alerts';
 	import type { AlertCountResponse, Alert } from '$api/alerts';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
+	import { getDevices } from '$api/devices';
+	// DeviceListResponse type is inferred via getDevices() return type
+	import IPAddress from '$components/IPAddress.svelte';
+	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
+	import DashboardFilters from '$components/DashboardFilters.svelte';
+	import type { FilterState } from '$components/DashboardFilters.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -35,26 +41,78 @@
 	let alertCount = $state<AlertCountResponse | null>(null);
 	let recentAlerts = $state<Alert[]>([]);
 	let systemHealth = $state<SystemHealth | null>(null);
+	let categories = $state<TrafficCategory[]>([]);
+	let deviceCount = $state(0);
+
+	// Previous-period data for trend indicators
+	let prevTrafficSummary = $state<TrafficSummary | null>(null);
+	let prevAlertCount = $state<AlertCountResponse | null>(null);
+
+	// Alert detail panel state
+	let selectedAlert = $state<Alert | null>(null);
+
+	// Filter bar state
+	let activeFilters = $state<FilterState>({
+		timeRange: '24h',
+		from: '',
+		to: '',
+		device: '',
+		protocol: '',
+	});
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
+	/**
+	 * Compute the previous-period time range for trend comparison.
+	 * E.g., if current range is 24h ago to now, previous is 48h ago to 24h ago.
+	 */
+	function computePreviousPeriod(from: string, to: string): { from: string; to: string } {
+		const fromMs = new Date(from).getTime();
+		const toMs = new Date(to).getTime();
+		const duration = toMs - fromMs;
+		return {
+			from: new Date(fromMs - duration).toISOString(),
+			to: new Date(fromMs).toISOString(),
+		};
+	}
+
 	async function fetchAllData() {
 		loading = true;
 		error = false;
 
+		// Build time range params from active filters
+		const timeParams: { from?: string; to?: string } = {};
+		if (activeFilters.from && activeFilters.to) {
+			timeParams.from = activeFilters.from;
+			timeParams.to = activeFilters.to;
+		}
+
+		// Compute the previous period for trend comparison
+		let prevTimeParams: { from?: string; to?: string } = {};
+		if (timeParams.from && timeParams.to) {
+			prevTimeParams = computePreviousPeriod(timeParams.from, timeParams.to);
+		}
+
 		try {
-			const [summaryRes, bandwidthRes, protocolsRes, talkersRes, alertCountRes, alertsRes, healthRes] =
-				await Promise.allSettled([
-					getTrafficSummary(),
-					getBandwidthTimeSeries({ interval: '1h' }),
-					getProtocolDistribution(),
-					getTopTalkers({ limit: 10 }),
-					getAlertCount(),
-					getAlerts({ size: 10 }),
-					getSystemHealth(),
-				]);
+			const [
+				summaryRes, bandwidthRes, protocolsRes, talkersRes,
+				alertCountRes, alertsRes, healthRes, categoriesRes,
+				devicesRes, prevSummaryRes, prevAlertCountRes,
+			] = await Promise.allSettled([
+				getTrafficSummary(timeParams),
+				getBandwidthTimeSeries({ ...timeParams, interval: '1h' }),
+				getProtocolDistribution(timeParams),
+				getTopTalkers({ ...timeParams, limit: 10 }),
+				getAlertCount(timeParams),
+				getAlerts({ ...timeParams, size: 10 }),
+				getSystemHealth(),
+				getTrafficCategories(timeParams),
+				getDevices(),
+				getTrafficSummary(prevTimeParams),
+				getAlertCount(prevTimeParams),
+			]);
 
 			trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
 			bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
@@ -63,12 +121,16 @@
 			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
+			categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
+			deviceCount = devicesRes.status === 'fulfilled' ? devicesRes.value.devices.length : 0;
+			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
+			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
 
 			lastUpdated = new Date().toLocaleTimeString();
 
-			// Check if all failed (daemon unreachable)
-			const allFailed = [summaryRes, bandwidthRes, protocolsRes, talkersRes, alertCountRes, alertsRes, healthRes]
-				.every((r) => r.status === 'rejected');
+			// Check if all core fetches failed (daemon unreachable)
+			const coreFetches = [summaryRes, bandwidthRes, protocolsRes, talkersRes, alertCountRes, alertsRes, healthRes];
+			const allFailed = coreFetches.every((r) => r.status === 'rejected');
 			if (allFailed) {
 				error = true;
 			}
@@ -77,6 +139,14 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	/**
+	 * Handle filter bar changes. Updates active filters and re-fetches data.
+	 */
+	function handleFilterChange(filters: FilterState) {
+		activeFilters = filters;
+		fetchAllData();
 	}
 
 	// Auto-refresh effect
@@ -165,6 +235,70 @@
 
 	// Total alert count with fallback
 	let totalAlerts = $derived(alertCount?.counts?.total ?? 0);
+
+	// ---------------------------------------------------------------------------
+	// Trend indicators (compare current vs previous period)
+	// ---------------------------------------------------------------------------
+
+	function trendPercent(current: number, previous: number): { arrow: string; pct: string; direction: 'up' | 'down' | 'flat' } {
+		if (previous === 0 && current === 0) return { arrow: '', pct: '', direction: 'flat' };
+		if (previous === 0) return { arrow: '\u25B2', pct: 'new', direction: 'up' };
+		const change = ((current - previous) / previous) * 100;
+		if (Math.abs(change) < 0.5) return { arrow: '', pct: '', direction: 'flat' };
+		return {
+			arrow: change > 0 ? '\u25B2' : '\u25BC',
+			pct: `${Math.abs(change).toFixed(1)}%`,
+			direction: change > 0 ? 'up' : 'down',
+		};
+	}
+
+	let bandwidthTrend = $derived(
+		trendPercent(
+			trafficSummary?.total_bytes ?? 0,
+			prevTrafficSummary?.total_bytes ?? 0,
+		)
+	);
+
+	let connectionTrend = $derived(
+		trendPercent(
+			trafficSummary?.connection_count ?? 0,
+			prevTrafficSummary?.connection_count ?? 0,
+		)
+	);
+
+	let alertTrend = $derived(
+		trendPercent(
+			alertCount?.counts?.total ?? 0,
+			prevAlertCount?.counts?.total ?? 0,
+		)
+	);
+
+	// ---------------------------------------------------------------------------
+	// Traffic categories (horizontal bar chart data)
+	// ---------------------------------------------------------------------------
+
+	/** Maximum bytes across all categories, used for bar width scaling. */
+	let maxCategoryBytes = $derived(
+		categories.length > 0 ? Math.max(...categories.map((c) => c.total_bytes)) : 1
+	);
+
+	// Category color palette
+	const CATEGORY_COLORS: Record<string, string> = {
+		streaming: '#f85149',
+		social_media: '#58a6ff',
+		gaming: '#bc8cff',
+		productivity: '#3fb950',
+		cloud: '#79c0ff',
+		messaging: '#d29922',
+		news: '#8b949e',
+		shopping: '#f0883e',
+		email: '#56d4dd',
+		other: '#6e7681',
+	};
+
+	function categoryColor(name: string): string {
+		return CATEGORY_COLORS[name.toLowerCase()] || CATEGORY_COLORS['other'];
+	}
 </script>
 
 <svelte:head>
@@ -210,8 +344,16 @@
 		</div>
 	</div>
 
+	<!-- Filter Bar -->
+	<DashboardFilters
+		timeRange={activeFilters.timeRange}
+		device={activeFilters.device}
+		protocol={activeFilters.protocol}
+		onchange={handleFilterChange}
+	/>
+
 	<!-- Row 1: Stat Cards -->
-	<div class="grid grid-cols-4 stat-grid">
+	<div class="grid stat-grid stat-grid-5">
 		<!-- Total Bandwidth (24h) -->
 		<div class="card stat-card">
 			<div class="card-header">
@@ -225,6 +367,11 @@
 			{:else}
 				<div class="card-value">
 					{trafficSummary ? formatBytes(trafficSummary.total_bytes) : '--'}
+					{#if bandwidthTrend.arrow}
+						<span class="trend-indicator trend-{bandwidthTrend.direction}" title="vs previous period">
+							{bandwidthTrend.arrow} {bandwidthTrend.pct}
+						</span>
+					{/if}
 				</div>
 			{/if}
 			<p class="card-description">
@@ -249,6 +396,11 @@
 			{:else}
 				<div class="card-value">
 					{trafficSummary ? formatNumber(trafficSummary.connection_count) : '--'}
+					{#if connectionTrend.arrow}
+						<span class="trend-indicator trend-{connectionTrend.direction}" title="vs previous period">
+							{connectionTrend.arrow} {connectionTrend.pct}
+						</span>
+					{/if}
 				</div>
 			{/if}
 			<p class="card-description">
@@ -273,6 +425,11 @@
 			{:else}
 				<div class="card-value">
 					{totalAlerts > 0 ? formatNumber(totalAlerts) : '--'}
+					{#if alertTrend.arrow}
+						<span class="trend-indicator trend-{alertTrend.direction}" title="vs previous period">
+							{alertTrend.arrow} {alertTrend.pct}
+						</span>
+					{/if}
 				</div>
 			{/if}
 			<p class="card-description">
@@ -305,6 +462,26 @@
 				{:else}
 					Daemon + OpenSearch status
 				{/if}
+			</p>
+		</div>
+
+		<!-- Device Count -->
+		<div class="card stat-card">
+			<div class="card-header">
+				<span class="card-subtitle">Devices</span>
+				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+				</svg>
+			</div>
+			{#if loading && deviceCount === 0}
+				<div class="skeleton skeleton-value"></div>
+			{:else}
+				<div class="card-value">
+					{deviceCount > 0 ? formatNumber(deviceCount) : '--'}
+				</div>
+			{/if}
+			<p class="card-description">
+				Unique devices seen on network
 			</p>
 		</div>
 	</div>
@@ -350,6 +527,30 @@
 		</div>
 	</div>
 
+	<!-- Row 2.5: Traffic Categories -->
+	{#if categories.length > 0}
+		<div class="card categories-card">
+			<div class="card-header">
+				<span class="card-title">Traffic Categories</span>
+				<span class="card-subtitle">Bandwidth by category</span>
+			</div>
+			<div class="categories-chart">
+				{#each categories.slice(0, 8) as cat}
+					<div class="category-row">
+						<span class="category-label" title={cat.label}>{cat.label}</span>
+						<div class="category-bar-track">
+							<div
+								class="category-bar-fill"
+								style="width: {(cat.total_bytes / maxCategoryBytes) * 100}%; background-color: {categoryColor(cat.name)};"
+							></div>
+						</div>
+						<span class="category-value mono">{formatBytesShort(cat.total_bytes)}</span>
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
 	<!-- Row 3: Tables -->
 	<div class="grid grid-cols-2 tables-grid">
 		<!-- Top Talkers -->
@@ -383,7 +584,7 @@
 							{#each topTalkers.slice(0, 10) as talker, i}
 								<tr>
 									<td class="row-num">{i + 1}</td>
-									<td class="mono ip-cell">{talker.ip}</td>
+									<td class="ip-cell"><IPAddress ip={talker.ip} /></td>
 									<td>{formatBytes(talker.total_bytes)}</td>
 									<td>{talker.connection_count.toLocaleString()}</td>
 								</tr>
@@ -422,17 +623,35 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each recentAlerts.slice(0, 10) as alert}
-								{@const sev = severityBadge(alert.alert?.severity)}
-								<tr>
+							{#each recentAlerts.slice(0, 10) as alertItem}
+								{@const sev = severityBadge(alertItem.alert?.severity)}
+								<tr
+									class="alert-row-clickable"
+									onclick={() => (selectedAlert = alertItem)}
+									role="button"
+									tabindex="0"
+									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedAlert = alertItem; } }}
+								>
 									<td>
 										<span class={sev.class}>{sev.label}</span>
 									</td>
-									<td class="signature-cell" title={alert.alert?.signature || 'Unknown'}>
-										{alert.alert?.signature || 'Unknown signature'}
+									<td class="signature-cell" title={alertItem.alert?.signature || 'Unknown'}>
+										{alertItem.alert?.signature || 'Unknown signature'}
 									</td>
-									<td class="mono ip-cell">{alert.src_ip || '--'}</td>
-									<td class="mono ip-cell">{alert.dest_ip || '--'}</td>
+									<td class="ip-cell">
+										{#if alertItem.src_ip}
+											<IPAddress ip={alertItem.src_ip} />
+										{:else}
+											<span class="text-muted">--</span>
+										{/if}
+									</td>
+									<td class="ip-cell">
+										{#if alertItem.dest_ip}
+											<IPAddress ip={alertItem.dest_ip} />
+										{:else}
+											<span class="text-muted">--</span>
+										{/if}
+									</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -442,6 +661,12 @@
 		</div>
 	</div>
 </div>
+
+<!-- Alert Detail Panel (slides in from right) -->
+<AlertDetailPanel
+	alert={selectedAlert}
+	onclose={() => (selectedAlert = null)}
+/>
 
 <style>
 	.dashboard {
@@ -505,9 +730,15 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* Stat cards */
+	/* Stat cards — 5-column grid */
 	.stat-grid {
 		margin-top: var(--space-xs);
+	}
+
+	.stat-grid-5 {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: var(--space-md);
 	}
 
 	.stat-card {
@@ -524,6 +755,89 @@
 	.card-description {
 		font-size: var(--text-xs);
 		color: var(--text-muted);
+	}
+
+	/* Trend indicators */
+	.trend-indicator {
+		font-size: var(--text-xs);
+		font-weight: 600;
+		margin-left: var(--space-sm);
+		white-space: nowrap;
+	}
+
+	.trend-up {
+		color: var(--success);
+	}
+
+	.trend-down {
+		color: var(--danger);
+	}
+
+	/* Traffic Categories */
+	.categories-card {
+		margin-top: var(--space-xs);
+	}
+
+	.categories-chart {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		padding: var(--space-sm) 0;
+	}
+
+	.category-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.category-label {
+		flex-shrink: 0;
+		width: 100px;
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+		text-align: right;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.category-bar-track {
+		flex: 1;
+		height: 20px;
+		background-color: var(--bg-tertiary);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+	}
+
+	.category-bar-fill {
+		height: 100%;
+		border-radius: var(--radius-sm);
+		transition: width 0.4s ease-out;
+		min-width: 2px;
+	}
+
+	.category-value {
+		flex-shrink: 0;
+		width: 60px;
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-align: right;
+	}
+
+	/* Clickable alert rows */
+	.alert-row-clickable {
+		cursor: pointer;
+		transition: background-color var(--transition-fast);
+	}
+
+	.alert-row-clickable:hover {
+		background-color: var(--bg-tertiary);
+	}
+
+	.alert-row-clickable:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
 	}
 
 	/* Charts */
@@ -651,13 +965,38 @@
 	}
 
 	/* Responsive */
+	@media (max-width: 1024px) {
+		.stat-grid-5 {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
 	@media (max-width: 768px) {
 		.dashboard-header {
 			flex-direction: column;
 		}
 
+		.stat-grid-5 {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
 		.signature-cell {
 			max-width: 140px;
+		}
+
+		.category-label {
+			width: 70px;
+			font-size: var(--text-xs);
+		}
+
+		.category-value {
+			width: 50px;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.stat-grid-5 {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>
