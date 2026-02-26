@@ -1,41 +1,241 @@
 {
-  "policy": {
-    "description": "NetTap index lifecycle — rolling retention for Zeek and Suricata indices",
-    "default_state": "hot",
-    "states": [
-      {
-        "name": "hot",
-        "actions": [
-          {
-            "rollover": {
-              "min_index_age": "1d",
-              "min_primary_shard_size": "10gb"
+  "_comment": "NetTap OpenSearch ISM (Index State Management) Policies — Three-Tier Retention",
+  "_old_policy_reference": {
+    "_description": "Previous single-policy version (Phase 1) is preserved below for reference.",
+    "_old_policy": {
+      "description": "NetTap index lifecycle — rolling retention for Zeek and Suricata indices",
+      "default_state": "hot",
+      "states": [
+        {
+          "name": "hot",
+          "actions": [
+            {
+              "rollover": {
+                "min_index_age": "1d",
+                "min_primary_shard_size": "10gb"
+              }
             }
+          ],
+          "transitions": [
+            {
+              "state_name": "delete",
+              "conditions": {
+                "min_index_age": "90d"
+              }
+            }
+          ]
+        },
+        {
+          "name": "delete",
+          "actions": [
+            {
+              "delete": {}
+            }
+          ]
+        }
+      ],
+      "ism_template": [
+        {
+          "index_patterns": ["zeek-*"],
+          "priority": 100
+        }
+      ]
+    }
+  },
+  "policies": {
+    "nettap-hot-policy": {
+      "policy": {
+        "description": "NetTap HOT tier — Zeek metadata logs. Rollover at 10GB or 1 day, delete after 90 days. Zeek generates 300-800MB/day of structured conn, DNS, HTTP, TLS, DHCP, SMTP, and file metadata logs compressed ~8:1 with zstd.",
+        "default_state": "hot",
+        "states": [
+          {
+            "name": "hot",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "rollover": {
+                  "min_primary_shard_size": "10gb",
+                  "min_index_age": "1d"
+                }
+              }
+            ],
+            "transitions": [
+              {
+                "state_name": "delete",
+                "conditions": {
+                  "min_index_age": "90d"
+                }
+              }
+            ]
+          },
+          {
+            "name": "delete",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "delete": {}
+              }
+            ],
+            "transitions": []
           }
         ],
-        "transitions": [
+        "ism_template": [
           {
-            "state_name": "delete",
-            "conditions": {
-              "min_index_age": "90d"
-            }
-          }
-        ]
-      },
-      {
-        "name": "delete",
-        "actions": [
-          {
-            "delete": {}
+            "index_patterns": [
+              "zeek-*"
+            ],
+            "priority": 100
           }
         ]
       }
-    ],
-    "ism_template": [
-      {
-        "index_patterns": ["zeek-*"],
-        "priority": 100
+    },
+    "nettap-warm-policy": {
+      "policy": {
+        "description": "NetTap WARM tier — Suricata IDS alerts. Rollover at 5GB or 1 day, force merge to 1 segment and set read-only after 7 days, delete after 180 days. Suricata generates 10-50MB/day of alert, DNS, TLS, HTTP, file, and flow logs compressed ~6:1 with zstd.",
+        "default_state": "hot",
+        "states": [
+          {
+            "name": "hot",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "rollover": {
+                  "min_primary_shard_size": "5gb",
+                  "min_index_age": "1d"
+                }
+              }
+            ],
+            "transitions": [
+              {
+                "state_name": "warm",
+                "conditions": {
+                  "min_index_age": "7d"
+                }
+              }
+            ]
+          },
+          {
+            "name": "warm",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "force_merge": {
+                  "max_num_segments": 1
+                }
+              },
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "read_only": {}
+              }
+            ],
+            "transitions": [
+              {
+                "state_name": "delete",
+                "conditions": {
+                  "min_index_age": "180d"
+                }
+              }
+            ]
+          },
+          {
+            "name": "delete",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "delete": {}
+              }
+            ],
+            "transitions": []
+          }
+        ],
+        "ism_template": [
+          {
+            "index_patterns": [
+              "suricata-*"
+            ],
+            "priority": 100
+          }
+        ]
       }
-    ]
+    },
+    "nettap-cold-policy": {
+      "policy": {
+        "description": "NetTap COLD tier — Arkime/PCAP indices for alert-triggered raw packet captures. Rollover at 20GB or 1 day, delete after 30 days. PCAP size is variable and depends on alert volume; compressed ~3:1 with zstd.",
+        "default_state": "hot",
+        "states": [
+          {
+            "name": "hot",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "rollover": {
+                  "min_primary_shard_size": "20gb",
+                  "min_index_age": "1d"
+                }
+              }
+            ],
+            "transitions": [
+              {
+                "state_name": "delete",
+                "conditions": {
+                  "min_index_age": "30d"
+                }
+              }
+            ]
+          },
+          {
+            "name": "delete",
+            "actions": [
+              {
+                "retry": {
+                  "count": 3,
+                  "backoff": "exponential",
+                  "delay": "10m"
+                },
+                "delete": {}
+              }
+            ],
+            "transitions": []
+          }
+        ],
+        "ism_template": [
+          {
+            "index_patterns": [
+              "arkime-*",
+              "pcap-*"
+            ],
+            "priority": 100
+          }
+        ]
+      }
+    }
   }
 }
