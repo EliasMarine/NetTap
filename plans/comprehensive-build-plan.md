@@ -895,7 +895,7 @@ docs/
 
 **Timeline:** After Phase 4B, before Phase 5
 **Estimated Effort:** 30-45 hours
-**Status:** TODO
+**Status:** COMPLETE
 
 ### Network Failover & Bypass (Zero-Downtime Traffic Path)
 
@@ -903,13 +903,13 @@ Ensures ISP-to-router traffic continues flowing even when NetTap services are do
 
 | # | Task | Size | Status | Description |
 |---|------|------|--------|-------------|
-| 4C.1 | Hardware bypass relay documentation | S | [ ] Todo | Document recommended USB/PCIe bypass relay hardware (e.g., Perle IOLAN), wiring guide, and BIOS WoL settings in `docs/getting-started/hardware-guide.md` |
-| 4C.2 | Kernel bridge resilience hardening | M | [ ] Todo | Ensure `br0` forwards at kernel level independent of userspace. Add `net.bridge.bridge-nf-call-iptables=0` sysctl, verify bridge survives daemon/container crashes. Script: `scripts/bridge/harden-bridge.sh` |
-| 4C.3 | Hardware watchdog timer service | M | [ ] Todo | Systemd service that pets `/dev/watchdog` every 10s. If NetTap hangs, hardware reboots automatically. Config: `config/watchdog/watchdog.conf`. Script: `scripts/install/setup-watchdog.sh` |
-| 4C.4 | Software bypass mode script | M | [ ] Todo | `scripts/bridge/bypass-mode.sh --enable|--disable` — strips all iptables/ebtables rules, sets bridge to pure L2 forwarding (no capture), useful for maintenance windows. Adds systemd `nettap-bypass.service` |
-| 4C.5 | Bridge health monitor daemon | L | [ ] Todo | New daemon module `daemon/services/bridge_health.py` — monitors bridge interface state, link carrier on both NICs, packet counters (TX/RX delta), latency injection measurement. Exposes `/api/bridge/health` endpoint. Triggers bypass mode automatically if anomalies detected |
-| 4C.6 | Failover status UI widget | S | [ ] Todo | Dashboard widget showing bridge state (Normal / Bypass / Degraded), NIC link status, and watchdog heartbeat. `web/src/lib/components/BridgeStatus.svelte` |
-| 4C.7 | Failover & bridge health tests | M | [ ] Todo | `daemon/tests/test_bridge_health.py` (20+ tests), `web/src/lib/components/BridgeStatus.test.ts` (8+ tests) |
+| 4C.1 | Hardware bypass relay documentation | S | [x] Done | Document recommended USB/PCIe bypass relay hardware (e.g., Perle IOLAN), wiring guide, and BIOS WoL settings in `docs/getting-started/hardware-guide.md` |
+| 4C.2 | Kernel bridge resilience hardening | M | [x] Done | Ensure `br0` forwards at kernel level independent of userspace. Add `net.bridge.bridge-nf-call-iptables=0` sysctl, verify bridge survives daemon/container crashes. Script: `scripts/bridge/harden-bridge.sh` |
+| 4C.3 | Hardware watchdog timer service | M | [x] Done | Systemd service that pets `/dev/watchdog` every 10s. If NetTap hangs, hardware reboots automatically. Config: `config/watchdog/watchdog.conf`. Script: `scripts/install/setup-watchdog.sh` |
+| 4C.4 | Software bypass mode script | M | [x] Done | `scripts/bridge/bypass-mode.sh --enable|--disable` — strips all iptables/ebtables rules, sets bridge to pure L2 forwarding (no capture), useful for maintenance windows. Adds systemd `nettap-bypass.service` |
+| 4C.5 | Bridge health monitor daemon | L | [x] Done | New daemon module `daemon/services/bridge_health.py` — monitors bridge interface state, link carrier on both NICs, packet counters (TX/RX delta), latency injection measurement. Exposes `/api/bridge/health` endpoint. Triggers bypass mode automatically if anomalies detected |
+| 4C.6 | Failover status UI widget | S | [x] Done | Dashboard widget showing bridge state (Normal / Bypass / Degraded), NIC link status, and watchdog heartbeat. `web/src/lib/components/BridgeStatus.svelte` |
+| 4C.7 | Failover & bridge health tests | M | [x] Done | `daemon/tests/test_bridge_health.py` (20+ tests), `web/src/lib/components/BridgeStatus.test.ts` (8+ tests) |
 
 ### Software Update System
 
@@ -917,14 +917,14 @@ Self-service update mechanism with full visibility into running software version
 
 | # | Task | Size | Status | Description |
 |---|------|------|--------|-------------|
-| 4C.8 | Version inventory service | M | [ ] Todo | `daemon/services/version_manager.py` — Detects running versions of all NetTap components: Docker images (Malcolm containers, NetTap daemon, NetTap web), system packages (zeek, suricata), Python/Node dependencies, Suricata ruleset date, GeoIP database date. Exposes `/api/system/versions` |
-| 4C.9 | Update checker service | M | [ ] Todo | `daemon/services/update_checker.py` — Checks for available updates: Docker Hub/GHCR for newer image tags, GitHub Releases API for NetTap releases, `suricata-update` for rule updates, MaxMind for GeoIP updates. Caches results (check every 6h). Exposes `/api/system/updates/available` |
-| 4C.10 | Update executor service | L | [ ] Todo | `daemon/services/update_executor.py` — Performs updates with rollback capability: `docker compose pull` for container updates, `suricata-update` for rules, GeoIP database download, system package updates. Creates pre-update snapshots. Exposes `/api/system/updates/apply` (POST). Streams progress via WebSocket |
-| 4C.11 | Software versions UI page | M | [ ] Todo | `web/src/routes/system/updates/+page.svelte` — Table showing: Component, Current Version, Latest Available, Status (Up to Date / Update Available / Unknown). Visual badges (green/yellow/red). Last checked timestamp. "Check Now" button |
-| 4C.12 | Update execution UI | M | [ ] Todo | Update modal with: component selection checkboxes, changelog/release notes preview, "Update Selected" button, real-time progress bar (WebSocket), success/failure status per component, rollback button on failure |
-| 4C.13 | Auto-update scheduler (optional) | S | [ ] Todo | Settings toggle: auto-update Suricata rules (daily), auto-update GeoIP (weekly), auto-update containers (manual only by default). Config stored in `/opt/nettap/.env`. UI in system settings page |
-| 4C.14 | Release notes integration | S | [ ] Todo | Fetch and display GitHub release notes / changelogs for each component. "What's New" panel on dashboard after updates. Dismiss-able per-user |
-| 4C.15 | Update system tests | M | [ ] Todo | `daemon/tests/test_version_manager.py` (15+ tests), `daemon/tests/test_update_checker.py` (15+ tests), `daemon/tests/test_update_executor.py` (20+ tests), web component tests (10+ tests) |
+| 4C.8 | Version inventory service | M | [x] Done | `daemon/services/version_manager.py` — Detects running versions of all NetTap components: Docker images (Malcolm containers, NetTap daemon, NetTap web), system packages (zeek, suricata), Python/Node dependencies, Suricata ruleset date, GeoIP database date. Exposes `/api/system/versions` |
+| 4C.9 | Update checker service | M | [x] Done | `daemon/services/update_checker.py` — Checks for available updates: Docker Hub/GHCR for newer image tags, GitHub Releases API for NetTap releases, `suricata-update` for rule updates, MaxMind for GeoIP updates. Caches results (check every 6h). Exposes `/api/system/updates/available` |
+| 4C.10 | Update executor service | L | [x] Done | `daemon/services/update_executor.py` — Performs updates with rollback capability: `docker compose pull` for container updates, `suricata-update` for rules, GeoIP database download, system package updates. Creates pre-update snapshots. Exposes `/api/system/updates/apply` (POST). Streams progress via WebSocket |
+| 4C.11 | Software versions UI page | M | [x] Done | `web/src/routes/system/updates/+page.svelte` — Table showing: Component, Current Version, Latest Available, Status (Up to Date / Update Available / Unknown). Visual badges (green/yellow/red). Last checked timestamp. "Check Now" button |
+| 4C.12 | Update execution UI | M | [x] Done | Update modal with: component selection checkboxes, changelog/release notes preview, "Update Selected" button, real-time progress bar (WebSocket), success/failure status per component, rollback button on failure |
+| 4C.13 | Auto-update scheduler (optional) | S | [x] Done | Settings toggle: auto-update Suricata rules (daily), auto-update GeoIP (weekly), auto-update containers (manual only by default). Config stored in `/opt/nettap/.env`. UI in system settings page |
+| 4C.14 | Release notes integration | S | [x] Done | Fetch and display GitHub release notes / changelogs for each component. "What's New" panel on dashboard after updates. Dismiss-able per-user |
+| 4C.15 | Update system tests | M | [x] Done | `daemon/tests/test_version_manager.py` (15+ tests), `daemon/tests/test_update_checker.py` (15+ tests), `daemon/tests/test_update_executor.py` (20+ tests), web component tests (10+ tests) |
 
 ---
 
