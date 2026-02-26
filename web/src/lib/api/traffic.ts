@@ -78,6 +78,25 @@ export interface BandwidthResponse {
 	series: BandwidthPoint[];
 }
 
+export interface TrafficCategoryDomain {
+	domain: string;
+	count: number;
+}
+
+export interface TrafficCategory {
+	name: string;
+	label: string;
+	total_bytes: number;
+	connection_count: number;
+	top_domains: TrafficCategoryDomain[];
+}
+
+export interface CategoriesResponse {
+	from: string;
+	to: string;
+	categories: TrafficCategory[];
+}
+
 export interface Connection {
 	_id: string;
 	_index: string;
@@ -231,6 +250,22 @@ export async function getConnections(
 			total_pages: 0,
 			connections: [],
 		};
+	}
+
+	return res.json();
+}
+
+/**
+ * Get traffic breakdown by human-readable categories (Streaming, Gaming, etc.).
+ */
+export async function getTrafficCategories(
+	opts: TimeRangeParams = {}
+): Promise<CategoriesResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/traffic/categories${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', categories: [] };
 	}
 
 	return res.json();

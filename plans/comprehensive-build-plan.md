@@ -16,6 +16,8 @@
 - [Phase 3: Onboarding UX](#phase-3-onboarding-ux)
 - [Phase 4: Dashboard Polish](#phase-4-dashboard-polish)
 - [Phase 5: Community Release](#phase-5-community-release)
+- [Phase 4C: Network Resilience & Software Update System](#phase-4c-network-resilience--software-update-system)
+- [v2.0 Roadmap: Nice-to-Have Features](#v20-roadmap-nice-to-have-features)
 - [Risk Matrix](#risk-matrix)
 - [Total Effort Summary](#total-effort-summary)
 
@@ -834,14 +836,14 @@ docs/
 
 | # | Task | Size | Status | Files |
 |---|------|------|--------|-------|
-| 4B.1 | Device Inventory API (auto-discovery from DHCP/ARP/DNS/JA3) | L | [ ] Todo | `daemon/api/devices.py`, `daemon/services/device_fingerprint.py` |
-| 4B.2 | Traffic Categorization API (protocol → human categories) | M | [ ] Todo | `daemon/services/traffic_classifier.py`, `daemon/api/traffic.py` (extend) |
-| 4B.3 | Alert Description Enrichment (Suricata SID → plain English) | M | [ ] Todo | `daemon/services/alert_enrichment.py`, `daemon/data/suricata_descriptions.json` |
-| 4B.4 | GeoIP Lookup Service (MaxMind GeoLite2) | M | [ ] Todo | `daemon/services/geoip_service.py`, `daemon/api/geoip.py` |
-| 4B.5 | Device Inventory API tests | M | [ ] Todo | `daemon/tests/test_devices_api.py`, `daemon/tests/test_device_fingerprint.py` |
-| 4B.6 | Traffic Classifier + GeoIP tests | M | [ ] Todo | `daemon/tests/test_traffic_classifier.py`, `daemon/tests/test_geoip_service.py` |
-| 4B.7 | Alert Enrichment tests | S | [ ] Todo | `daemon/tests/test_alert_enrichment.py` |
-| 4B.8 | Web API clients (devices, geoip) + tests | M | [ ] Todo | `web/src/lib/api/devices.ts`, `devices.test.ts`, `geoip.ts`, `geoip.test.ts` |
+| 4B.1 | Device Inventory API (auto-discovery from DHCP/ARP/DNS/JA3) | L | [x] Done | `daemon/api/devices.py`, `daemon/services/device_fingerprint.py`, `daemon/data/oui.txt` (855 entries) |
+| 4B.2 | Traffic Categorization API (protocol → human categories) | M | [x] Done | `daemon/services/traffic_classifier.py`, `daemon/api/traffic.py` (+categories endpoint) |
+| 4B.3 | Alert Description Enrichment (Suricata SID → plain English) | M | [x] Done | `daemon/services/alert_enrichment.py`, `daemon/data/suricata_descriptions.json` (55 SIDs) |
+| 4B.4 | GeoIP Lookup Service (MaxMind GeoLite2 + fallback) | M | [x] Done | `daemon/services/geoip_service.py`, `daemon/api/geoip.py` (26 well-known IPs) |
+| 4B.5 | Device Inventory API tests | M | [x] Done | `test_devices_api.py` (22 tests), `test_device_fingerprint.py` (24 tests) |
+| 4B.6 | Traffic Classifier + GeoIP tests | M | [x] Done | `test_traffic_classifier.py` (21 tests), `test_geoip_service.py` (37 tests), `test_geoip_api.py` (17 tests) |
+| 4B.7 | Alert Enrichment tests | S | [x] Done | `test_alert_enrichment.py` (26 tests) |
+| 4B.8 | Web API clients (devices, geoip) + tests | M | [x] Done | `devices.ts` + `devices.test.ts` (12), `geoip.ts` + `geoip.test.ts` (12), `traffic.ts` extended (3) |
 
 ### Sprint 2: Core UI Features (Group B)
 
@@ -889,6 +891,43 @@ docs/
 
 ---
 
+## Phase 4C: Network Resilience & Software Update System
+
+**Timeline:** After Phase 4B, before Phase 5
+**Estimated Effort:** 30-45 hours
+**Status:** TODO
+
+### Network Failover & Bypass (Zero-Downtime Traffic Path)
+
+Ensures ISP-to-router traffic continues flowing even when NetTap services are down or the appliance is rebooting.
+
+| # | Task | Size | Status | Description |
+|---|------|------|--------|-------------|
+| 4C.1 | Hardware bypass relay documentation | S | [ ] Todo | Document recommended USB/PCIe bypass relay hardware (e.g., Perle IOLAN), wiring guide, and BIOS WoL settings in `docs/getting-started/hardware-guide.md` |
+| 4C.2 | Kernel bridge resilience hardening | M | [ ] Todo | Ensure `br0` forwards at kernel level independent of userspace. Add `net.bridge.bridge-nf-call-iptables=0` sysctl, verify bridge survives daemon/container crashes. Script: `scripts/bridge/harden-bridge.sh` |
+| 4C.3 | Hardware watchdog timer service | M | [ ] Todo | Systemd service that pets `/dev/watchdog` every 10s. If NetTap hangs, hardware reboots automatically. Config: `config/watchdog/watchdog.conf`. Script: `scripts/install/setup-watchdog.sh` |
+| 4C.4 | Software bypass mode script | M | [ ] Todo | `scripts/bridge/bypass-mode.sh --enable|--disable` — strips all iptables/ebtables rules, sets bridge to pure L2 forwarding (no capture), useful for maintenance windows. Adds systemd `nettap-bypass.service` |
+| 4C.5 | Bridge health monitor daemon | L | [ ] Todo | New daemon module `daemon/services/bridge_health.py` — monitors bridge interface state, link carrier on both NICs, packet counters (TX/RX delta), latency injection measurement. Exposes `/api/bridge/health` endpoint. Triggers bypass mode automatically if anomalies detected |
+| 4C.6 | Failover status UI widget | S | [ ] Todo | Dashboard widget showing bridge state (Normal / Bypass / Degraded), NIC link status, and watchdog heartbeat. `web/src/lib/components/BridgeStatus.svelte` |
+| 4C.7 | Failover & bridge health tests | M | [ ] Todo | `daemon/tests/test_bridge_health.py` (20+ tests), `web/src/lib/components/BridgeStatus.test.ts` (8+ tests) |
+
+### Software Update System
+
+Self-service update mechanism with full visibility into running software versions and available updates.
+
+| # | Task | Size | Status | Description |
+|---|------|------|--------|-------------|
+| 4C.8 | Version inventory service | M | [ ] Todo | `daemon/services/version_manager.py` — Detects running versions of all NetTap components: Docker images (Malcolm containers, NetTap daemon, NetTap web), system packages (zeek, suricata), Python/Node dependencies, Suricata ruleset date, GeoIP database date. Exposes `/api/system/versions` |
+| 4C.9 | Update checker service | M | [ ] Todo | `daemon/services/update_checker.py` — Checks for available updates: Docker Hub/GHCR for newer image tags, GitHub Releases API for NetTap releases, `suricata-update` for rule updates, MaxMind for GeoIP updates. Caches results (check every 6h). Exposes `/api/system/updates/available` |
+| 4C.10 | Update executor service | L | [ ] Todo | `daemon/services/update_executor.py` — Performs updates with rollback capability: `docker compose pull` for container updates, `suricata-update` for rules, GeoIP database download, system package updates. Creates pre-update snapshots. Exposes `/api/system/updates/apply` (POST). Streams progress via WebSocket |
+| 4C.11 | Software versions UI page | M | [ ] Todo | `web/src/routes/system/updates/+page.svelte` — Table showing: Component, Current Version, Latest Available, Status (Up to Date / Update Available / Unknown). Visual badges (green/yellow/red). Last checked timestamp. "Check Now" button |
+| 4C.12 | Update execution UI | M | [ ] Todo | Update modal with: component selection checkboxes, changelog/release notes preview, "Update Selected" button, real-time progress bar (WebSocket), success/failure status per component, rollback button on failure |
+| 4C.13 | Auto-update scheduler (optional) | S | [ ] Todo | Settings toggle: auto-update Suricata rules (daily), auto-update GeoIP (weekly), auto-update containers (manual only by default). Config stored in `/opt/nettap/.env`. UI in system settings page |
+| 4C.14 | Release notes integration | S | [ ] Todo | Fetch and display GitHub release notes / changelogs for each component. "What's New" panel on dashboard after updates. Dismiss-able per-user |
+| 4C.15 | Update system tests | M | [ ] Todo | `daemon/tests/test_version_manager.py` (15+ tests), `daemon/tests/test_update_checker.py` (15+ tests), `daemon/tests/test_update_executor.py` (20+ tests), web component tests (10+ tests) |
+
+---
+
 ## v2.0 Roadmap: Nice-to-Have Features
 
 **Status:** Planned for post-v1.0 release. These are ambitious features that push NetTap toward a unique market position.
@@ -914,7 +953,7 @@ docs/
 |------|-----------|--------|------------|
 | Malcolm integration complexity | High | **Blocks everything** | Option C (direct container images) avoids fragile installer scripting |
 | OpenSearch OOM on 16GB | High | System crash | Cap JVM at 4GB, auto-detect RAM in install script, warn if < 12GB |
-| Bridge failure = internet loss | Medium | User-facing outage | Hardware watchdog, netplan persistence, `--validate-only` checks, document failure behavior |
+| Bridge failure = internet loss | Medium | User-facing outage | Phase 4C failover: hardware bypass relay, kernel bridge hardening, watchdog timer, auto-bypass on anomaly detection, bypass mode script for maintenance |
 | SvelteKit memory on N100 | Low | Performance | 40-80MB RSS is safe; benchmark early in Phase 3 |
 | Web UI scope creep | High | Timeline slip | MVP: wizard + overview + alerts + settings. Defer GeoIP/Grafana polish to Phase 4 |
 | Testing network code in CI | Medium | Can't validate bridge | Network namespaces + veth pairs simulate dual-NIC in GitHub Actions |
@@ -933,8 +972,9 @@ docs/
 | Phase 3: Onboarding UX | 16 | 60-80 | 5-8 |
 | Phase 4: Dashboard Polish | 18 | 80-100 | 7-10 |
 | Phase 4B: SIEM Features | 32 | 100-140 | 10-13 |
-| Phase 5: Community Release | 42 | 50-70 | 13-15 |
-| **Total** | **138 tasks** | **~380-515 hours** | **~15 weeks** |
+| Phase 4C: Resilience & Updates | 15 | 30-45 | 13-14 |
+| Phase 5: Community Release | 42 | 50-70 | 14-16 |
+| **Total** | **153 tasks** | **~410-560 hours** | **~16 weeks** |
 
 ### Test Coverage Targets
 
@@ -946,7 +986,8 @@ docs/
 | Phase 4B Sprint 3 (Intelligence) | +60 | +30 | +90 |
 | Phase 4B Sprint 4 (Visualizations) | — | +40 | +40 |
 | Phase 4B Sprint 5 (Advanced) | +40 | +20 | +60 |
-| **Total at completion** | **~320** | **~270** | **~590** |
+| Phase 4C (Resilience & Updates) | +70 | +18 | +88 |
+| **Total at completion** | **~390** | **~288** | **~678** |
 
 ### Sprint Breakdown
 

@@ -1,0 +1,863 @@
+# NetTap OUI Database (trimmed)
+# Format: AA:BB:CC\tManufacturer Name
+# Source: IEEE OUI registry (https://standards-oui.ieee.org/)
+# This is a curated subset of ~200 common consumer/enterprise vendors.
+#
+# Lines starting with # are comments and are ignored.
+# MAC prefixes are uppercase, colon-separated.
+
+00:00:0C	Cisco Systems
+00:01:42	Cisco Systems
+00:03:6B	Cisco Systems
+00:0A:41	Cisco Systems
+00:0D:BC	Cisco Systems
+00:0E:38	Cisco Systems
+00:11:BB	Cisco Systems
+00:14:69	Cisco Systems
+00:16:C7	Cisco Systems
+00:17:94	Cisco Systems
+00:18:73	Cisco Systems
+00:1A:2F	Cisco Systems
+00:1B:0D	Cisco Systems
+00:1D:A1	Cisco Systems
+00:1E:13	Cisco Systems
+00:22:BD	Cisco Systems
+00:23:04	Cisco Systems
+00:23:33	Cisco Systems
+00:24:14	Cisco Systems
+00:25:B4	Cisco Systems
+00:26:0B	Cisco Systems
+00:50:56	VMware
+00:0C:29	VMware
+00:05:69	VMware
+00:1C:14	VMware
+00:03:93	Apple
+00:05:02	Apple
+00:0A:27	Apple
+00:0A:95	Apple
+00:0D:93	Apple
+00:10:FA	Apple
+00:11:24	Apple
+00:14:51	Apple
+00:16:CB	Apple
+00:17:F2	Apple
+00:19:E3	Apple
+00:1B:63	Apple
+00:1C:B3	Apple
+00:1D:4F	Apple
+00:1E:52	Apple
+00:1E:C2	Apple
+00:1F:5B	Apple
+00:1F:F3	Apple
+00:21:E9	Apple
+00:22:41	Apple
+00:23:12	Apple
+00:23:32	Apple
+00:23:6C	Apple
+00:23:DF	Apple
+00:24:36	Apple
+00:25:00	Apple
+00:25:4B	Apple
+00:25:BC	Apple
+00:26:08	Apple
+00:26:4A	Apple
+00:26:B0	Apple
+00:26:BB	Apple
+00:30:65	Apple
+00:3E:E1	Apple
+00:50:E4	Apple
+00:C6:10	Apple
+04:0C:CE	Apple
+04:15:52	Apple
+04:26:65	Apple
+04:DB:56	Apple
+08:00:20	Sun Microsystems
+08:00:27	Oracle VirtualBox
+08:66:98	Apple
+0C:74:C2	Apple
+10:40:F3	Apple
+10:DD:B1	Apple
+14:10:9F	Apple
+14:5A:05	Apple
+18:20:32	Apple
+18:AF:61	Apple
+18:E7:F4	Apple
+1C:36:BB	Apple
+1C:9E:46	Apple
+20:3C:AE	Apple
+20:78:F0	Apple
+24:24:0E	Apple
+24:A0:74	Apple
+28:CF:DA	Apple
+28:E1:4C	Apple
+2C:B4:3A	Apple
+30:10:E4	Apple
+34:08:BC	Apple
+34:12:98	Apple
+34:C0:59	Apple
+38:C9:86	Apple
+3C:07:54	Apple
+3C:15:C2	Apple
+40:33:1A	Apple
+40:A6:D9	Apple
+44:D8:84	Apple
+48:60:BC	Apple
+4C:32:75	Apple
+4C:57:CA	Apple
+4C:8D:79	Apple
+50:32:37	Apple
+50:EA:D6	Apple
+54:26:96	Apple
+54:EA:A8	Apple
+58:55:CA	Apple
+58:B0:35	Apple
+5C:59:48	Apple
+5C:F9:38	Apple
+60:03:08	Apple
+60:33:4B	Apple
+60:69:44	Apple
+60:C5:47	Apple
+60:FA:CD	Apple
+64:76:BA	Apple
+64:A3:CB	Apple
+68:64:4B	Apple
+68:96:7B	Apple
+68:A8:6D	Apple
+6C:40:08	Apple
+6C:70:9F	Apple
+6C:96:CF	Apple
+70:11:24	Apple
+70:56:81	Apple
+70:DE:E2	Apple
+74:E1:B6	Apple
+78:31:C1	Apple
+78:CA:39	Apple
+7C:01:91	Apple
+7C:D1:C3	Apple
+80:00:6E	Apple
+80:49:71	Apple
+80:92:9F	Apple
+84:38:35	Apple
+84:85:06	Apple
+84:FC:FE	Apple
+88:53:95	Apple
+88:66:A5	Apple
+8C:00:6D	Apple
+8C:2D:AA	Apple
+8C:58:77	Apple
+8C:85:90	Apple
+90:8D:6C	Apple
+90:B9:31	Apple
+90:FD:61	Apple
+94:E9:6A	Apple
+98:01:A7	Apple
+98:03:D8	Apple
+98:D6:BB	Apple
+98:FE:94	Apple
+9C:04:EB	Apple
+9C:20:7B	Apple
+9C:35:EB	Apple
+A0:99:9B	Apple
+A0:ED:CD	Apple
+A4:5E:60	Apple
+A4:67:06	Apple
+A4:B1:97	Apple
+A4:D1:8C	Apple
+A8:20:66	Apple
+A8:5C:2C	Apple
+A8:86:DD	Apple
+A8:96:8A	Apple
+A8:BB:CF	Apple
+AC:29:3A	Apple
+AC:3C:0B	Apple
+AC:87:A3	Apple
+B0:34:95	Apple
+B0:65:BD	Apple
+B4:18:D1	Apple
+B4:F0:AB	Apple
+B8:09:8A	Apple
+B8:17:C2	Apple
+B8:41:A4	Apple
+B8:44:D9	Apple
+B8:C7:5D	Apple
+B8:E8:56	Apple
+B8:F6:B1	Apple
+BC:3B:AF	Apple
+BC:52:B7	Apple
+BC:54:36	Apple
+BC:67:78	Apple
+C0:63:94	Apple
+C0:84:7A	Apple
+C0:B6:58	Apple
+C0:CC:F8	Apple
+C4:2C:03	Apple
+C8:1E:E7	Apple
+C8:2A:14	Apple
+C8:33:4B	Apple
+C8:69:CD	Apple
+CC:08:8D	Apple
+CC:20:E8	Apple
+CC:25:EF	Apple
+CC:29:F5	Apple
+D0:25:98	Apple
+D0:33:11	Apple
+D4:61:9D	Apple
+D4:F4:6F	Apple
+D8:1D:72	Apple
+D8:30:62	Apple
+D8:8F:76	Apple
+D8:96:95	Apple
+D8:9E:3F	Apple
+D8:A2:5E	Apple
+D8:BB:2C	Apple
+DC:2B:2A	Apple
+DC:37:14	Apple
+DC:56:E7	Apple
+DC:86:D8	Apple
+DC:A4:CA	Apple
+E0:5F:45	Apple
+E0:66:78	Apple
+E0:B5:2D	Apple
+E0:C7:67	Apple
+E4:25:E7	Apple
+E4:8B:7F	Apple
+E4:C6:3D	Apple
+E4:CE:8F	Apple
+E8:04:0B	Apple
+E8:06:88	Apple
+E8:80:2E	Apple
+EC:35:86	Apple
+EC:85:2F	Apple
+F0:18:98	Apple
+F0:24:75	Apple
+F0:99:B6	Apple
+F0:B4:79	Apple
+F0:C1:F1	Apple
+F0:CB:A1	Apple
+F0:D1:A9	Apple
+F0:DB:E2	Apple
+F4:0F:24	Apple
+F4:1B:A1	Apple
+F4:37:B7	Apple
+F8:1E:DF	Apple
+F8:27:93	Apple
+FC:25:3F	Apple
+FC:E9:98	Apple
+00:15:5D	Microsoft
+00:03:FF	Microsoft
+00:50:F2	Microsoft
+28:18:78	Microsoft
+7C:1E:52	Microsoft
+DC:B4:C4	Microsoft
+00:1D:D8	Microsoft
+00:22:48	Microsoft
+60:45:BD	Microsoft
+B8:31:B5	Microsoft
+C8:3F:26	Intel
+00:1B:21	Intel
+00:1E:64	Intel
+00:1E:67	Intel
+00:15:17	Intel
+3C:A9:F4	Intel
+68:05:CA	Intel
+8C:EC:4B	Intel
+A4:34:D9	Intel
+B4:96:91	Intel
+00:1C:C0	Intel
+00:02:B3	Intel
+00:13:02	Intel
+00:13:20	Intel
+00:19:D1	Intel
+48:51:B7	Intel
+5C:87:9C	Intel
+68:17:29	Intel
+7C:76:35	Intel
+80:86:F2	Intel
+94:65:9C	Intel
+B4:D5:BD	Intel
+F4:8C:50	Intel
+00:E0:4C	Realtek
+52:54:00	Realtek (QEMU)
+00:1F:1F	Edimax Technology
+08:00:28	Texas Instruments
+B8:27:EB	Raspberry Pi Foundation
+DC:A6:32	Raspberry Pi Foundation
+E4:5F:01	Raspberry Pi Foundation
+D8:3A:DD	Raspberry Pi Foundation
+28:CD:C1	Raspberry Pi Foundation
+2C:CF:67	Raspberry Pi Foundation
+00:1A:11	Google
+00:1A:62	Google
+3C:5A:B4	Google
+54:60:09	Google
+94:EB:2C	Google
+A4:77:33	Google
+F4:F5:D8	Google
+F4:F5:E8	Google
+F8:8F:CA	Google
+30:FD:38	Google
+6C:AD:F8	Google
+48:D6:D5	Google
+20:DF:B9	Google
+CC:FA:00	Google
+F0:EF:86	Google
+00:FC:8B	Amazon Technologies
+0C:47:C9	Amazon Technologies
+18:74:2E	Amazon Technologies
+34:D2:70	Amazon Technologies
+40:B4:CD	Amazon Technologies
+44:65:0D	Amazon Technologies
+68:37:E9	Amazon Technologies
+68:54:FD	Amazon Technologies
+74:C2:46	Amazon Technologies
+84:D6:D0	Amazon Technologies
+A0:02:DC	Amazon Technologies
+AC:63:BE	Amazon Technologies
+B0:FC:36	Amazon Technologies
+F0:27:2D	Amazon Technologies
+F0:F0:A4	Amazon Technologies
+FC:65:DE	Amazon Technologies
+FC:A1:83	Amazon Technologies
+00:17:88	Philips Lighting (Hue)
+00:09:B0	Onkyo
+00:1E:E5	Cisco-Linksys
+00:18:F8	Cisco-Linksys
+00:1C:10	Cisco-Linksys
+00:21:29	Cisco-Linksys
+00:22:6B	Cisco-Linksys
+00:23:69	Cisco-Linksys
+00:25:9C	Cisco-Linksys
+58:6D:8F	Cisco-Linksys
+C0:C1:C0	Cisco-Linksys
+00:14:BF	Cisco-Linksys
+00:1A:70	Cisco-Linksys
+C0:56:27	Belkin
+08:86:3B	Belkin
+94:10:3E	Belkin
+B4:75:0E	Belkin
+C4:41:1E	Belkin
+EC:1A:59	Belkin
+00:17:3F	Belkin
+00:1C:DF	Belkin
+30:B5:C2	TP-Link
+50:C7:BF	TP-Link
+54:C8:0F	TP-Link
+60:E3:27	TP-Link
+74:DA:88	TP-Link
+94:D9:B3	TP-Link
+A0:F3:C1	TP-Link
+B0:4E:26	TP-Link
+B0:95:75	TP-Link
+C0:25:E9	TP-Link
+C0:4A:00	TP-Link
+C4:E9:84	TP-Link
+CC:32:E5	TP-Link
+D8:07:B6	TP-Link
+EC:08:6B	TP-Link
+F4:F2:6D	TP-Link
+00:14:6C	Netgear
+00:1B:2F	Netgear
+00:1E:2A	Netgear
+00:1F:33	Netgear
+00:22:3F	Netgear
+00:24:B2	Netgear
+00:26:F2	Netgear
+04:A1:51	Netgear
+08:02:8E	Netgear
+10:0C:6B	Netgear
+10:0D:7F	Netgear
+20:0C:C8	Netgear
+28:C6:8E	Netgear
+2C:B0:5D	Netgear
+30:46:9A	Netgear
+44:94:FC	Netgear
+4C:60:DE	Netgear
+6C:B0:CE	Netgear
+84:1B:5E	Netgear
+9C:3D:CF	Netgear
+A0:04:60	Netgear
+A0:21:B7	Netgear
+A0:40:A0	Netgear
+A4:2B:8C	Netgear
+B0:7F:B9	Netgear
+C0:3F:0E	Netgear
+C4:04:15	Netgear
+CC:40:D0	Netgear
+DC:EF:09	Netgear
+E0:46:9A	Netgear
+E0:91:F5	Netgear
+E4:F4:C6	Netgear
+F8:73:94	Netgear
+10:DA:43	Netgear
+20:E5:2A	Netgear
+00:08:C7	Hewlett-Packard
+00:0D:9D	Hewlett-Packard
+00:0E:7F	Hewlett-Packard
+00:10:83	Hewlett-Packard
+00:11:0A	Hewlett-Packard
+00:12:79	Hewlett-Packard
+00:13:21	Hewlett-Packard
+00:14:38	Hewlett-Packard
+00:15:60	Hewlett-Packard
+00:17:08	Hewlett-Packard
+00:18:71	Hewlett-Packard
+00:19:BB	Hewlett-Packard
+00:1A:4B	Hewlett-Packard
+00:1B:78	Hewlett-Packard
+00:1C:C4	Hewlett-Packard
+00:1E:0B	Hewlett-Packard
+00:21:5A	Hewlett-Packard
+00:22:64	Hewlett-Packard
+00:23:7D	Hewlett-Packard
+00:24:81	Hewlett-Packard
+00:25:B3	Hewlett-Packard
+00:0B:CD	Hewlett-Packard
+00:06:5B	Dell
+00:08:74	Dell
+00:0B:DB	Dell
+00:0D:56	Dell
+00:0F:1F	Dell
+00:11:43	Dell
+00:12:3F	Dell
+00:13:72	Dell
+00:14:22	Dell
+00:15:C5	Dell
+00:18:8B	Dell
+00:19:B9	Dell
+00:1A:A0	Dell
+00:1C:23	Dell
+00:1D:09	Dell
+00:1E:4F	Dell
+00:21:70	Dell
+00:21:9B	Dell
+00:22:19	Dell
+00:23:AE	Dell
+00:24:E8	Dell
+00:25:64	Dell
+00:26:B9	Dell
+14:18:77	Dell
+18:03:73	Dell
+18:A9:9B	Dell
+18:DB:F2	Dell
+1C:40:24	Dell
+24:B6:FD	Dell
+34:17:EB	Dell
+44:A8:42	Dell
+4C:76:25	Dell
+50:9A:4C	Dell
+54:9F:35	Dell
+5C:26:0A	Dell
+74:86:7A	Dell
+78:2B:CB	Dell
+80:18:44	Dell
+84:7B:EB	Dell
+90:B1:1C	Dell
+98:90:96	Dell
+A4:1F:72	Dell
+A4:BA:DB	Dell
+B0:83:FE	Dell
+B4:E1:0F	Dell
+B8:2A:72	Dell
+BC:30:5B	Dell
+C8:1F:66	Dell
+CC:48:3A	Dell
+D0:43:1E	Dell
+D4:AE:52	Dell
+D4:BE:D9	Dell
+E0:DB:55	Dell
+EC:F4:BB	Dell
+F0:1F:AF	Dell
+F4:8E:38	Dell
+F8:B1:56	Dell
+F8:BC:12	Dell
+F8:CA:B8	Dell
+FC:15:B4	Dell
+00:17:31	ASUS
+00:1B:FC	ASUS
+00:1E:8C	ASUS
+00:1F:C6	ASUS
+00:22:15	ASUS
+00:23:54	ASUS
+00:24:8C	ASUS
+00:25:22	ASUS
+00:26:18	ASUS
+04:92:26	ASUS
+08:60:6E	ASUS
+0C:9D:92	ASUS
+10:BF:48	ASUS
+10:C3:7B	ASUS
+14:DA:E9	ASUS
+1C:87:2C	ASUS
+1C:B7:2C	ASUS
+2C:4D:54	ASUS
+2C:56:DC	ASUS
+2C:FD:A1	ASUS
+30:5A:3A	ASUS
+30:85:A9	ASUS
+34:97:F6	ASUS
+38:D5:47	ASUS
+3C:97:0E	ASUS
+40:B0:76	ASUS
+48:5B:39	ASUS
+4C:ED:FB	ASUS
+50:46:5D	ASUS
+54:04:A6	ASUS
+60:45:CB	ASUS
+6C:F0:49	ASUS
+70:8B:CD	ASUS
+74:D0:2B	ASUS
+78:24:AF	ASUS
+88:D7:F6	ASUS
+90:E6:BA	ASUS
+AC:9E:17	ASUS
+B0:6E:BF	ASUS
+BC:AE:C5	ASUS
+C8:60:00	ASUS
+D8:50:E6	ASUS
+E0:3F:49	ASUS
+F0:79:59	ASUS
+F4:6D:04	ASUS
+00:06:1B	Lenovo
+00:09:2D	Lenovo
+00:1A:6B	Lenovo
+00:21:CC	Lenovo
+00:23:15	Lenovo
+00:24:7E	Lenovo
+00:26:2D	Lenovo
+28:D2:44	Lenovo
+34:E6:D7	Lenovo
+3C:97:0E	Lenovo
+40:B0:34	Lenovo
+54:EE:75	Lenovo
+58:20:B1	Lenovo
+70:5A:0F	Lenovo
+78:E7:D1	Lenovo
+8C:16:45	Lenovo
+98:FA:9B	Lenovo
+A4:4C:C8	Lenovo
+BC:54:F9	Lenovo
+C8:5B:76	Lenovo
+D0:57:7B	Lenovo
+EC:89:F5	Lenovo
+F0:03:8C	Lenovo
+FC:F8:AE	Lenovo
+00:1D:BA	Sony
+00:19:63	Sony
+00:13:A9	Sony
+00:1A:80	Sony
+00:24:BE	Sony
+00:EB:2D	Sony
+04:5D:4B	Sony
+10:4F:A8	Sony
+18:00:2D	Sony
+2C:9E:FC	Sony
+30:39:26	Sony
+40:B8:37	Sony
+58:48:22	Sony
+70:2A:D5	Sony
+78:84:3C	Sony
+8C:C8:CD	Sony
+94:CE:2C	Sony
+AC:89:95	Sony
+B4:52:7D	Sony
+C8:63:F1	Sony
+D8:D4:3C	Sony
+FC:0F:E6	Sony
+F8:D0:AC	Sony
+00:1E:75	LG Electronics
+00:1C:62	LG Electronics
+00:19:A1	LG Electronics
+00:22:A9	LG Electronics
+00:26:E2	LG Electronics
+10:68:3F	LG Electronics
+20:3D:BD	LG Electronics
+2C:54:CF	LG Electronics
+30:8C:FB	LG Electronics
+34:4D:F7	LG Electronics
+40:B0:FA	LG Electronics
+48:59:29	LG Electronics
+50:55:27	LG Electronics
+58:3F:54	LG Electronics
+64:99:5D	LG Electronics
+6C:5C:14	LG Electronics
+78:5D:C8	LG Electronics
+7C:1C:68	LG Electronics
+88:C9:D0	LG Electronics
+8C:3A:E3	LG Electronics
+98:D6:F7	LG Electronics
+A0:39:F7	LG Electronics
+A8:23:FE	LG Electronics
+B4:E6:2D	LG Electronics
+C4:36:6C	LG Electronics
+CC:FA:00	LG Electronics
+30:14:4A	Roku
+84:EA:ED	Roku
+AC:3A:7A	Roku
+B0:A7:37	Roku
+B8:3E:59	Roku
+C8:3A:6B	Roku
+CC:6D:A0	Roku
+D0:4D:C6	Roku
+D8:31:34	Roku
+DC:3A:5E	Roku
+18:B4:30	Nest Labs
+64:16:66	Nest Labs
+18:B7:9E	Nest Labs
+00:16:6C	Samsung
+00:1A:8A	Samsung
+00:1B:98	Samsung
+00:1C:43	Samsung
+00:1D:25	Samsung
+00:1D:F6	Samsung
+00:1E:E1	Samsung
+00:1E:E2	Samsung
+00:21:19	Samsung
+00:23:39	Samsung
+00:23:D6	Samsung
+00:24:54	Samsung
+00:24:90	Samsung
+00:24:91	Samsung
+00:25:66	Samsung
+00:25:67	Samsung
+00:26:37	Samsung
+00:26:5D	Samsung
+04:18:0F	Samsung
+08:08:C2	Samsung
+08:21:EF	Samsung
+08:37:3D	Samsung
+08:D4:2B	Samsung
+0C:14:20	Samsung
+0C:71:5D	Samsung
+0C:89:10	Samsung
+10:1D:C0	Samsung
+10:30:47	Samsung
+14:49:E0	Samsung
+14:56:8E	Samsung
+18:26:66	Samsung
+18:3A:2D	Samsung
+18:67:B0	Samsung
+1C:5A:6B	Samsung
+1C:66:AA	Samsung
+1C:AF:05	Samsung
+20:13:E0	Samsung
+20:D3:90	Samsung
+20:D5:BF	Samsung
+24:4B:03	Samsung
+24:92:0E	Samsung
+24:C6:96	Samsung
+24:DB:ED	Samsung
+28:27:BF	Samsung
+28:98:7B	Samsung
+28:BA:B5	Samsung
+28:CC:01	Samsung
+2C:0E:3D	Samsung
+2C:AE:2B	Samsung
+30:C7:AE	Samsung
+30:CD:A7	Samsung
+30:D6:C9	Samsung
+34:23:BA	Samsung
+34:AA:8B	Samsung
+34:BE:00	Samsung
+34:C3:AC	Samsung
+38:01:97	Samsung
+38:0A:94	Samsung
+38:16:D1	Samsung
+38:2D:D1	Samsung
+38:EC:E4	Samsung
+3C:62:00	Samsung
+3C:8B:FE	Samsung
+3C:A1:0D	Samsung
+40:0E:85	Samsung
+40:4E:36	Samsung
+44:4E:1A	Samsung
+44:6D:6C	Samsung
+44:78:3E	Samsung
+48:44:F7	Samsung
+48:A9:D2	Samsung
+4C:3C:16	Samsung
+4C:BC:42	Samsung
+50:01:BB	Samsung
+50:32:75	Samsung
+50:56:BF	Samsung
+50:85:69	Samsung
+50:B7:C3	Samsung
+50:CC:F8	Samsung
+50:F5:20	Samsung
+54:40:AD	Samsung
+54:88:0E	Samsung
+54:92:BE	Samsung
+58:C3:8B	Samsung
+5C:0A:5B	Samsung
+5C:3C:27	Samsung
+60:6B:BD	Samsung
+60:6D:C7	Samsung
+60:A1:0A	Samsung
+64:77:7D	Samsung
+64:B3:10	Samsung
+68:48:98	Samsung
+68:D9:3C	Samsung
+6C:2F:2C	Samsung
+6C:F3:73	Samsung
+70:28:8B	Samsung
+70:F9:27	Samsung
+74:45:CE	Samsung
+74:9E:AF	Samsung
+78:1F:DB	Samsung
+78:25:AD	Samsung
+78:40:E4	Samsung
+78:47:1D	Samsung
+78:52:1A	Samsung
+78:AB:BB	Samsung
+78:BD:BC	Samsung
+7C:0B:C6	Samsung
+7C:B1:5D	Samsung
+80:18:A7	Samsung
+84:11:9E	Samsung
+84:25:DB	Samsung
+84:38:38	Samsung
+84:55:A5	Samsung
+84:B5:41	Samsung
+88:32:9B	Samsung
+88:AD:D2	Samsung
+8C:71:F8	Samsung
+8C:77:12	Samsung
+8C:F5:A3	Samsung
+90:00:DB	Samsung
+90:18:7C	Samsung
+90:F1:AA	Samsung
+94:01:C2	Samsung
+94:35:0A	Samsung
+94:51:03	Samsung
+94:63:46	Samsung
+94:76:B7	Samsung
+98:0C:82	Samsung
+98:52:B1	Samsung
+9C:02:98	Samsung
+9C:3A:AF	Samsung
+9C:65:B0	Samsung
+9C:E6:E7	Samsung
+A0:07:98	Samsung
+A0:0B:BA	Samsung
+A0:82:1F	Samsung
+A0:B4:A5	Samsung
+A0:CC:2B	Samsung
+A0:D3:7A	Samsung
+A4:08:F5	Samsung
+A4:30:7A	Samsung
+A4:44:D1	Samsung
+A4:9A:58	Samsung
+A4:F1:E8	Samsung
+A8:06:00	Samsung
+A8:1B:5A	Samsung
+A8:7C:01	Samsung
+AC:36:13	Samsung
+AC:5F:3E	Samsung
+AC:EE:9E	Samsung
+B0:47:BF	Samsung
+B0:72:BF	Samsung
+B0:C4:E7	Samsung
+B0:EC:71	Samsung
+B4:07:F9	Samsung
+B4:3A:28	Samsung
+B4:79:A7	Samsung
+B4:CE:F6	Samsung
+B4:EF:39	Samsung
+B8:5A:73	Samsung
+B8:D9:CE	Samsung
+BC:14:EF	Samsung
+BC:20:A4	Samsung
+BC:44:86	Samsung
+BC:72:B1	Samsung
+BC:76:70	Samsung
+BC:85:1F	Samsung
+BC:8C:CD	Samsung
+C0:97:27	Samsung
+C0:BD:D1	Samsung
+C4:42:02	Samsung
+C4:57:6E	Samsung
+C4:73:1E	Samsung
+C8:14:51	Samsung
+C8:19:F7	Samsung
+C8:38:70	Samsung
+C8:BA:94	Samsung
+CC:07:AB	Samsung
+CC:3A:61	Samsung
+D0:17:6A	Samsung
+D0:22:BE	Samsung
+D0:25:44	Samsung
+D0:59:E4	Samsung
+D0:66:7B	Samsung
+D0:87:E2	Samsung
+D0:C1:B1	Samsung
+D4:88:90	Samsung
+D4:AE:05	Samsung
+D8:57:EF	Samsung
+D8:90:E8	Samsung
+D8:C4:E9	Samsung
+D8:E0:E1	Samsung
+DC:66:72	Samsung
+E0:99:71	Samsung
+E0:CB:4E	Samsung
+E0:DB:10	Samsung
+E4:12:1D	Samsung
+E4:32:CB	Samsung
+E4:58:B8	Samsung
+E4:7C:F9	Samsung
+E4:92:FB	Samsung
+E4:E0:C5	Samsung
+E8:03:9A	Samsung
+E8:50:8B	Samsung
+EC:0E:C4	Samsung
+EC:1F:72	Samsung
+EC:9B:F3	Samsung
+F0:25:B7	Samsung
+F0:5B:7B	Samsung
+F0:6B:CA	Samsung
+F0:72:8C	Samsung
+F0:E7:7E	Samsung
+F4:09:D8	Samsung
+F4:42:8F	Samsung
+F4:7B:5E	Samsung
+F4:7D:EF	Samsung
+F4:9F:54	Samsung
+F8:04:2E	Samsung
+F8:3F:51	Samsung
+F8:D0:BD	Samsung
+FC:A1:3E	Samsung
+FC:F1:36	Samsung
+18:B0:09	Ring (Amazon)
+34:3E:A4	Ring (Amazon)
+80:6D:97	Ring (Amazon)
+9C:76:13	Ring (Amazon)
+B0:09:DA	Ring (Amazon)
+50:DC:E7	Amazon Lab126
+F0:D2:F1	Amazon Lab126
+B4:7C:9C	Amazon Lab126
+48:8F:5A	Sonos
+5C:AA:FD	Sonos
+78:28:CA	Sonos
+94:9F:3E	Sonos
+B8:E9:37	Sonos
+34:7E:5C	Sonos
+00:0C:43	Ralink Technology
+00:17:A5	Ralink Technology
+00:E0:18	ASUSTek Computer
+18:E8:29	Ubiquiti
+24:A4:3C	Ubiquiti
+44:D9:E7	Ubiquiti
+60:22:32	Ubiquiti
+68:72:51	Ubiquiti
+74:83:C2	Ubiquiti
+74:AC:B9	Ubiquiti
+78:8A:20	Ubiquiti
+80:2A:A8	Ubiquiti
+B4:FB:E4	Ubiquiti
+DC:9F:DB	Ubiquiti
+E0:63:DA	Ubiquiti
+F0:9F:C2	Ubiquiti
+FC:EC:DA	Ubiquiti
+00:27:22	Ubiquiti
+04:18:D6	Ubiquiti
+68:D7:9A	Ubiquiti
+78:45:58	Ubiquiti
+24:5A:4C	Ubiquiti

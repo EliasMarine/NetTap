@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.traffic_classifier import get_category_stats, get_category_label
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.traffic")
@@ -478,6 +479,35 @@ async def handle_connections(request: web.Request) -> web.Response:
     })
 
 
+async def handle_traffic_categories(request: web.Request) -> web.Response:
+    """GET /api/traffic/categories?from=&to=
+
+    Returns traffic data grouped by human-readable categories (Streaming,
+    Gaming, Social Media, etc.) using the TrafficClassifier service.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    try:
+        categories = await get_category_stats(client, from_ts, to_ts)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in traffic/categories: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+    except Exception as exc:
+        logger.error("Error in traffic/categories: %s", exc)
+        return web.json_response(
+            {"error": f"Category classification failed: {exc}"}, status=500
+        )
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "categories": categories,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
@@ -494,4 +524,5 @@ def register_traffic_routes(app: web.Application, storage_manager: StorageManage
     app.router.add_get("/api/traffic/protocols", handle_protocols)
     app.router.add_get("/api/traffic/bandwidth", handle_bandwidth)
     app.router.add_get("/api/traffic/connections", handle_connections)
-    logger.info("Traffic API routes registered (6 endpoints)")
+    app.router.add_get("/api/traffic/categories", handle_traffic_categories)
+    logger.info("Traffic API routes registered (7 endpoints)")

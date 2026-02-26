@@ -16,9 +16,13 @@ from pathlib import Path
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.alert_enrichment import AlertEnrichment
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.alerts")
+
+# Module-level enrichment instance (loaded once, reused across requests)
+_alert_enrichment = AlertEnrichment()
 
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
@@ -183,6 +187,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         source["acknowledged"] = alert_id in acks
         if alert_id in acks:
             source["acknowledged_at"] = acks[alert_id].get("acknowledged_at")
+        # Enrich with plain English description, risk context, and recommendation
+        _alert_enrichment.enrich_alert(source)
         alerts.append(source)
 
     return web.json_response({
@@ -293,6 +299,9 @@ async def handle_alert_detail(request: web.Request) -> web.Response:
     if source["_id"] in acks:
         source["acknowledged_at"] = acks[source["_id"]].get("acknowledged_at")
         source["acknowledged_by"] = acks[source["_id"]].get("acknowledged_by")
+
+    # Enrich with plain English description, risk context, and recommendation
+    _alert_enrichment.enrich_alert(source)
 
     return web.json_response({"alert": source})
 

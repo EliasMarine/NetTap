@@ -31,8 +31,11 @@ from api.tshark import register_tshark_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
 from api.alerts import register_alert_routes
+from api.devices import register_device_routes
+from api.geoip import register_geoip_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
+from services.geoip_service import GeoIPService
 
 logger = logging.getLogger("nettap.api")
 
@@ -337,6 +340,14 @@ def create_app(
 
     # Alert management (OpenSearch suricata-* queries)
     register_alert_routes(app, storage)
+
+    # Device inventory (OpenSearch zeek-*/suricata-* queries + fingerprinting)
+    register_device_routes(app, storage)
+
+    # GeoIP lookup (MaxMind GeoLite2 + fallback)
+    geoip_db = os.environ.get("GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb")
+    geoip_service = GeoIPService(db_path=geoip_db)
+    register_geoip_routes(app, geoip_service)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
