@@ -4,7 +4,7 @@
 	let {
 		title = '',
 		subtitle = '',
-		expanded: initialExpanded = false,
+		expanded = false,
 		badge = '',
 		children,
 	}: {
@@ -15,7 +15,11 @@
 		children: Snippet;
 	} = $props();
 
-	let isExpanded = $state(initialExpanded);
+	let isExpanded = $state(false);
+
+	$effect(() => {
+		isExpanded = expanded;
+	});
 
 	function toggle() {
 		isExpanded = !isExpanded;
