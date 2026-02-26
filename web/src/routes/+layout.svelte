@@ -13,6 +13,7 @@
 		{ href: '/devices', label: 'Devices', icon: 'monitor' },
 		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
 		{ href: '/investigations', label: 'Investigations', icon: 'clipboard' },
+		{ href: '/compliance', label: 'Compliance', icon: 'shield' },
 		{ href: '/system', label: 'System', icon: 'cpu' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' },
 	];
@@ -72,6 +73,8 @@
 								<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" />
 							{:else if item.icon === 'clipboard'}
 								<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" /><rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+							{:else if item.icon === 'shield'}
+								<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
 							{:else if item.icon === 'cpu'}
 								<rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
 							{:else if item.icon === 'settings'}
