@@ -85,6 +85,14 @@
 			<p class="text-muted">Hardware health, storage, and service status</p>
 		</div>
 		<div class="header-actions">
+			<a href="/system/updates" class="btn btn-secondary btn-sm">
+				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+					<polyline points="7 10 12 15 17 10" />
+					<line x1="12" y1="15" x2="12" y2="3" />
+				</svg>
+				Software Updates
+			</a>
 			<button class="btn btn-primary btn-sm" onclick={fetchAll} disabled={loading}>
 				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<polyline points="23 4 23 10 17 10" />

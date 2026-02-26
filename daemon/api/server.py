@@ -42,6 +42,7 @@ from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
 from api.bridge import register_bridge_routes
+from api.updates import register_update_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -53,6 +54,9 @@ from services.nl_search import NLSearchParser
 from services.detection_packs import DetectionPackManager
 from services.report_generator import ReportGenerator
 from services.bridge_health import BridgeHealthMonitor
+from services.version_manager import VersionManager
+from services.update_checker import UpdateChecker
+from services.update_executor import UpdateExecutor
 
 logger = logging.getLogger("nettap.api")
 
@@ -421,6 +425,26 @@ def create_app(
         bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
     )
     register_bridge_routes(app, bridge_health)
+
+    # Software update system (version inventory + update checker + executor)
+    compose_file = os.environ.get(
+        "COMPOSE_FILE", "/opt/nettap/docker/docker-compose.yml"
+    )
+    backup_dir = os.environ.get("BACKUP_DIR", "/opt/nettap/backups")
+    github_repo = os.environ.get("GITHUB_REPO", "EliasMarine/NetTap")
+
+    version_manager = VersionManager(compose_file=compose_file)
+    update_checker = UpdateChecker(github_repo=github_repo)
+    update_executor = UpdateExecutor(
+        compose_file=compose_file, backup_dir=backup_dir
+    )
+
+    # Wire up cross-service references
+    update_checker.set_version_manager(version_manager)
+    update_executor.set_version_manager(version_manager)
+    update_executor.set_update_checker(update_checker)
+
+    register_update_routes(app, version_manager, update_checker, update_executor)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

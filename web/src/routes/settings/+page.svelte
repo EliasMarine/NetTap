@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getSystemHealth } from '$lib/api/system';
 
-	let activeTab = $state<'general' | 'retention' | 'network' | 'api-keys' | 'about'>('general');
+	let activeTab = $state<'general' | 'retention' | 'network' | 'api-keys' | 'updates' | 'about'>('general');
 
 	let retentionConfig = $state({
 		hot_days: 90,
@@ -25,6 +25,15 @@
 	let showMaxMind = $state(false);
 	let showSmtpPassword = $state(false);
 	let showSuricataKey = $state(false);
+
+	// -- Auto Updates state --
+	let autoUpdateConfig = $state({
+		suricata_rules_daily: true,
+		geoip_weekly: true,
+		containers_auto: false,
+	});
+	let autoUpdateSaving = $state(false);
+	let autoUpdateMessage = $state('');
 
 	// API key form values
 	let maxmindKey = $state('');
@@ -102,6 +111,32 @@
 		if (!suricataEtProKey.trim()) return;
 		await saveApiKeys({ SURICATA_ET_PRO_KEY: suricataEtProKey });
 		suricataEtProKey = '';
+	}
+
+	async function saveAutoUpdateConfig() {
+		autoUpdateSaving = true;
+		autoUpdateMessage = '';
+		try {
+			const res = await fetch('/api/settings/api-keys', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					AUTO_UPDATE_SURICATA_RULES: autoUpdateConfig.suricata_rules_daily ? 'true' : 'false',
+					AUTO_UPDATE_GEOIP: autoUpdateConfig.geoip_weekly ? 'true' : 'false',
+					AUTO_UPDATE_CONTAINERS: autoUpdateConfig.containers_auto ? 'true' : 'false',
+				}),
+			});
+			if (res.ok) {
+				autoUpdateMessage = 'Auto-update settings saved successfully.';
+			} else {
+				const data = await res.json();
+				autoUpdateMessage = data.error || 'Failed to save auto-update settings.';
+			}
+		} catch {
+			autoUpdateMessage = 'Failed to connect to server.';
+		} finally {
+			autoUpdateSaving = false;
+		}
 	}
 
 	async function saveRetention() {
@@ -188,6 +223,13 @@
 			onclick={() => (activeTab = 'api-keys')}
 		>
 			API Keys
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'updates'}
+			onclick={() => (activeTab = 'updates')}
+		>
+			Auto Updates
 		</button>
 		<button
 			class="tab"
@@ -448,6 +490,92 @@
 				</button>
 			</div>
 		</div>
+	{:else if activeTab === 'updates'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">Automatic Updates</span>
+				</div>
+
+				{#if autoUpdateMessage}
+					<div class="alert {autoUpdateMessage.includes('success') ? 'alert-success' : 'alert-danger'}" style="margin-bottom: var(--space-md);">
+						{autoUpdateMessage}
+					</div>
+				{/if}
+
+				<div class="auto-update-options">
+					<div class="toggle-row">
+						<label class="toggle-label" for="suricata-rules-toggle">
+							<div class="toggle-text">
+								<span class="toggle-title">Auto-update Suricata rules (daily)</span>
+								<span class="toggle-description">Automatically download and apply the latest Emerging Threats ruleset every day. Keeps IDS signatures current against new threats.</span>
+							</div>
+							<div class="toggle-switch">
+								<input
+									type="checkbox"
+									id="suricata-rules-toggle"
+									class="toggle-input"
+									bind:checked={autoUpdateConfig.suricata_rules_daily}
+								/>
+								<span class="toggle-slider"></span>
+							</div>
+						</label>
+					</div>
+
+					<div class="toggle-row">
+						<label class="toggle-label" for="geoip-toggle">
+							<div class="toggle-text">
+								<span class="toggle-title">Auto-update GeoIP database (weekly)</span>
+								<span class="toggle-description">Automatically download the latest MaxMind GeoIP database each week. Requires a configured MaxMind license key.</span>
+							</div>
+							<div class="toggle-switch">
+								<input
+									type="checkbox"
+									id="geoip-toggle"
+									class="toggle-input"
+									bind:checked={autoUpdateConfig.geoip_weekly}
+								/>
+								<span class="toggle-slider"></span>
+							</div>
+						</label>
+					</div>
+
+					<div class="toggle-row">
+						<label class="toggle-label" for="containers-toggle">
+							<div class="toggle-text">
+								<span class="toggle-title">Auto-update containers</span>
+								<span class="toggle-description">Automatically pull and restart Docker containers when new images are available. Disabled by default to prevent unexpected downtime. Manual updates recommended.</span>
+							</div>
+							<div class="toggle-switch">
+								<input
+									type="checkbox"
+									id="containers-toggle"
+									class="toggle-input"
+									bind:checked={autoUpdateConfig.containers_auto}
+								/>
+								<span class="toggle-slider"></span>
+							</div>
+						</label>
+					</div>
+				</div>
+
+				<button class="btn btn-primary" onclick={saveAutoUpdateConfig} disabled={autoUpdateSaving}>
+					{autoUpdateSaving ? 'Saving...' : 'Save Auto-Update Settings'}
+				</button>
+			</div>
+
+			<div class="card" style="margin-top: var(--space-md);">
+				<div class="card-header">
+					<span class="card-title">Manual Updates</span>
+				</div>
+				<p class="field-help" style="margin-bottom: var(--space-md);">
+					View installed versions, check for updates, and apply them from the Software Updates page.
+				</p>
+				<a href="/system/updates" class="btn btn-secondary">
+					Open Software Updates
+				</a>
+			</div>
+		</div>
 	{:else if activeTab === 'about'}
 		<div class="settings-section">
 			<div class="card">
@@ -647,6 +775,104 @@
 
 	.smtp-full-width {
 		grid-column: 1 / -1;
+	}
+
+	/* Auto Updates tab */
+	.auto-update-options {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-lg);
+	}
+
+	.toggle-row {
+		padding: var(--space-md) 0;
+		border-bottom: 1px solid var(--border-muted);
+	}
+
+	.toggle-row:last-child {
+		border-bottom: none;
+	}
+
+	.toggle-label {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		cursor: pointer;
+	}
+
+	.toggle-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+	}
+
+	.toggle-title {
+		font-size: var(--text-sm);
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.toggle-description {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		line-height: 1.4;
+	}
+
+	.toggle-switch {
+		position: relative;
+		width: 44px;
+		height: 24px;
+		flex-shrink: 0;
+	}
+
+	.toggle-input {
+		opacity: 0;
+		width: 0;
+		height: 0;
+		position: absolute;
+	}
+
+	.toggle-slider {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		border-radius: 12px;
+		transition: all var(--transition-fast);
+		cursor: pointer;
+	}
+
+	.toggle-slider::before {
+		content: '';
+		position: absolute;
+		width: 18px;
+		height: 18px;
+		left: 2px;
+		bottom: 2px;
+		background-color: var(--text-muted);
+		border-radius: 50%;
+		transition: all var(--transition-fast);
+	}
+
+	.toggle-input:checked + .toggle-slider {
+		background-color: var(--accent);
+		border-color: var(--accent);
+	}
+
+	.toggle-input:checked + .toggle-slider::before {
+		transform: translateX(20px);
+		background-color: white;
+	}
+
+	.toggle-input:focus-visible + .toggle-slider {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
 	}
 
 	@media (max-width: 768px) {
