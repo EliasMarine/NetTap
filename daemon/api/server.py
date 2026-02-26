@@ -33,9 +33,17 @@ from api.traffic import register_traffic_routes
 from api.alerts import register_alert_routes
 from api.devices import register_device_routes
 from api.geoip import register_geoip_routes
+from api.risk import register_risk_routes
+from api.baseline import register_baseline_routes
+from api.health_monitor import register_health_monitor_routes
+from api.investigations import register_investigation_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
+from services.risk_scoring import RiskScorer
+from services.device_baseline import DeviceBaseline
+from services.internet_health import InternetHealthMonitor
+from services.investigation_store import InvestigationStore
 
 logger = logging.getLogger("nettap.api")
 
@@ -61,7 +69,7 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
             response = exc
 
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
     response.headers["Access-Control-Max-Age"] = "3600"
 
@@ -348,6 +356,28 @@ def create_app(
     geoip_db = os.environ.get("GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb")
     geoip_service = GeoIPService(db_path=geoip_db)
     register_geoip_routes(app, geoip_service)
+
+    # Risk scoring (per-device 0-100 risk scores from telemetry)
+    risk_scorer = RiskScorer()
+    register_risk_routes(app, risk_scorer, storage)
+
+    # Device baseline (known-device tracking + new device alerts)
+    baseline_file = os.environ.get(
+        "DEVICE_BASELINE_FILE", "/opt/nettap/data/device_baseline.json"
+    )
+    device_baseline = DeviceBaseline(baseline_file=baseline_file)
+    register_baseline_routes(app, device_baseline)
+
+    # Internet health monitoring
+    internet_health = InternetHealthMonitor()
+    register_health_monitor_routes(app, internet_health)
+
+    # Investigation bookmarks/notes
+    investigations_file = os.environ.get(
+        "INVESTIGATIONS_FILE", "/opt/nettap/data/investigations.json"
+    )
+    investigation_store = InvestigationStore(store_file=investigations_file)
+    register_investigation_routes(app, investigation_store)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
