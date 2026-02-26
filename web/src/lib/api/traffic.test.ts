@@ -4,6 +4,7 @@ import {
 	getTopTalkers,
 	getProtocolDistribution,
 	getBandwidthTimeSeries,
+	getTrafficCategories,
 } from './traffic';
 
 // ---------------------------------------------------------------------------
@@ -176,6 +177,72 @@ describe('traffic API client', () => {
 			const result = await getBandwidthTimeSeries();
 
 			expect(result.series).toEqual([]);
+		});
+	});
+
+	// -- getTrafficCategories ------------------------------------------------
+
+	describe('getTrafficCategories', () => {
+		it('returns parsed categories on success', async () => {
+			const expected = {
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+				categories: [
+					{
+						name: 'streaming',
+						label: 'Streaming',
+						total_bytes: 5000000,
+						connection_count: 1200,
+						top_domains: [
+							{ domain: 'www.netflix.com', count: 500 },
+							{ domain: 'cdn.netflix.com', count: 300 },
+						],
+					},
+					{
+						name: 'web',
+						label: 'Web Browsing',
+						total_bytes: 3000000,
+						connection_count: 800,
+						top_domains: [],
+					},
+				],
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getTrafficCategories();
+
+			expect(fetch).toHaveBeenCalledWith('/api/traffic/categories');
+			expect(result.categories).toHaveLength(2);
+			expect(result.categories[0].name).toBe('streaming');
+			expect(result.categories[0].label).toBe('Streaming');
+			expect(result.categories[0].total_bytes).toBe(5000000);
+			expect(result.categories[0].top_domains).toHaveLength(2);
+		});
+
+		it('passes time range parameters', async () => {
+			mockFetchSuccess({ from: '', to: '', categories: [] });
+
+			await getTrafficCategories({
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+			});
+
+			expect(fetch).toHaveBeenCalledWith(
+				expect.stringContaining('/api/traffic/categories?')
+			);
+			const calledUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(calledUrl).toContain('from=');
+			expect(calledUrl).toContain('to=');
+		});
+
+		it('returns empty categories on HTTP error', async () => {
+			mockFetchFailure(502);
+
+			const result = await getTrafficCategories();
+
+			expect(result.categories).toEqual([]);
+			expect(result.from).toBe('');
+			expect(result.to).toBe('');
 		});
 	});
 });
