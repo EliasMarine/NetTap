@@ -1,54 +1,376 @@
-# NetTap Docker Compose
-# Extends Malcolm's docker-compose with NetTap-specific services
+# ==========================================================================
+# NetTap Docker Compose — Unified Malcolm + NetTap stack
+# ==========================================================================
+# This is the single source of truth for all NetTap services.
+# It uses Malcolm's published container images directly (Option C strategy)
+# rather than depending on Malcolm's own docker-compose.
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# Prerequisites:
+#   - Run scripts/install/deploy-malcolm.sh first to generate configs/certs
+#   - Bridge (br0) must be configured before starting capture containers
+# ==========================================================================
 
-version: "3.8"
+x-malcolm-image: &malcolm-registry "ghcr.io/idaholab/malcolm"
+x-malcolm-tag: &malcolm-tag "26.02.0"
+
+x-process-env: &process-env
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
+
+x-pcap-env: &pcap-env
+  PCAP_IFACE: ${PCAP_IFACE:-br0}
+  PCAP_IFACE_TWEAK: "true"
+
+x-opensearch-env: &opensearch-env
+  OPENSEARCH_URL: "https://opensearch:9200"
+  OPENSEARCH_PRIMARY: "opensearch-local"
+  OPENSEARCH_SSL_CERTIFICATE_VERIFICATION: "false"
+  OPENSEARCH_COMPOSE_PROJECT: "nettap"
+
+x-capture-caps: &capture-caps
+  - IPC_LOCK
+  - SYS_RESOURCE
+  - NET_ADMIN
+  - NET_RAW
+  - SYS_NICE
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 15s
+  retries: 3
 
 services:
-  # --------------------------------------------------
-  # Malcolm services are loaded via the Malcolm compose
-  # files. This file defines NetTap additions only.
-  # --------------------------------------------------
+
+  # ========================================================================
+  # DATA STORE
+  # ========================================================================
+
+  opensearch:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-opensearch
+    restart: unless-stopped
+    environment:
+      <<: [*process-env, *opensearch-env]
+      OPENSEARCH_JAVA_OPTS: "${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}"
+      discovery.type: "single-node"
+      bootstrap.memory_lock: "true"
+      CLUSTER_MAX_SHARDS_PER_NODE: "2500"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "${OPENSEARCH_ADMIN_PASSWORD:-N3tT@p_0p3n}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+      - opensearch-backup:/opt/opensearch/backup
+      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/opensearch/config/certificates:ro
+    networks:
+      - default
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -skf https://localhost:9200/_cluster/health || exit 1"]
+      start_period: 180s
+
+  # ========================================================================
+  # DASHBOARDS
+  # ========================================================================
+
+  dashboards-helper:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-dashboards-helper
+    restart: unless-stopped
+    environment:
+      <<: [*process-env, *opensearch-env]
+      DASHBOARDS_URL: "http://dashboards:5601/dashboards"
+      DASHBOARDS_DARKMODE: "true"
+      DASHBOARDS_TIMEPICKER_FROM: "now-24h"
+    volumes:
+      - dashboards-helper-data:/opt/dashboards-helper
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  dashboards:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-dashboards
+    restart: unless-stopped
+    environment:
+      <<: [*process-env, *opensearch-env]
+    volumes:
+      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/opensearch-dashboards/config/certificates:ro
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  # ========================================================================
+  # LOG PIPELINE
+  # ========================================================================
+
+  logstash:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-logstash
+    restart: unless-stopped
+    environment:
+      <<: [*process-env, *opensearch-env]
+      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
+      pipeline.workers: "${LOGSTASH_WORKERS:-2}"
+      pipeline.batch.size: "125"
+      LOGSTASH_OUI_LOOKUP: "true"
+      LOGSTASH_SEVERITY_SCORING: "true"
+      LOGSTASH_REVERSE_DNS: "false"
+      BEATS_SSL: "false"
+      LOGSTASH_HOST: "logstash:5044"
+    volumes:
+      - logstash-persistent-queue:/usr/share/logstash/data/queue
+      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/logstash/config/certificates:ro
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -sf http://localhost:9600/_node/pipelines || exit 1"]
+      start_period: 600s
+
+  filebeat:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-filebeat
+    restart: unless-stopped
+    environment:
+      <<: [*process-env, *opensearch-env]
+      FILEBEAT_SCAN_FREQUENCY: "10s"
+      FILEBEAT_CLOSE_EOF: "true"
+      FILEBEAT_CLEAN_INACTIVE: "180m"
+      LOG_CLEANUP_MINUTES: "360"
+      LOGSTASH_HOST: "logstash:5044"
+      BEATS_SSL: "false"
+    volumes:
+      - zeek-live-logs:/zeek/live:ro
+      - suricata-live-logs:/var/log/suricata:ro
+      - filebeat-registry:/usr/share/filebeat/data
+      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/filebeat/config/certificates:ro
+    networks:
+      - default
+    depends_on:
+      logstash:
+        condition: service_healthy
+
+  # ========================================================================
+  # LIVE CAPTURE — These run with host networking for raw NIC access
+  # ========================================================================
+
+  zeek-live:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-zeek-live
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    environment:
+      <<: *process-env
+      ZEEK_LIVE_CAPTURE: "true"
+      PCAP_IFACE: "${PCAP_IFACE:-br0}"
+      PCAP_IFACE_TWEAK: "true"
+      ZEEK_LOG_PATH: "/zeek/live"
+      ZEEK_EXTRACTOR_MODE: "none"
+      ZEEK_LOCAL_NETS: "${ZEEK_LOCAL_NETS:-192.168.0.0/16,10.0.0.0/8,172.16.0.0/12}"
+      ZEEK_ROTATED_PCAP: "false"
+    volumes:
+      - zeek-live-logs:/zeek/live
+      - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+
+  suricata-live:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-suricata-live
+    restart: unless-stopped
+    network_mode: host
+    cap_add: *capture-caps
+    environment:
+      <<: *process-env
+      SURICATA_LIVE_CAPTURE: "true"
+      PCAP_IFACE: "${PCAP_IFACE:-br0}"
+      PCAP_IFACE_TWEAK: "true"
+      SURICATA_RUNMODE: "workers"
+      SURICATA_UPDATE_RULES: "true"
+      SURICATA_UPDATE_ETOPEN: "true"
+      SURICATA_ROTATED_PCAP: "false"
+    volumes:
+      - suricata-live-logs:/var/log/suricata
+      - suricata-rules:/var/lib/suricata/rules
+      - ../config/suricata/nettap.yaml:/etc/suricata/nettap.yaml:ro
+
+  pcap-capture:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-pcap-capture
+    restart: unless-stopped
+    network_mode: host
+    cap_add: *capture-caps
+    environment:
+      <<: [*process-env, *pcap-env]
+      PCAP_ENABLE_NETSNIFF: "true"
+      PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-4096}"
+      PCAP_ROTATE_MINUTES: "${PCAP_ROTATE_MIN:-10}"
+      PCAP_FILTER: ""
+    volumes:
+      - pcap-data:/pcap
+
+  arkime-live:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-arkime-live
+    restart: unless-stopped
+    network_mode: host
+    cap_add: *capture-caps
+    environment:
+      <<: [*process-env, *opensearch-env, *pcap-env]
+      ARKIME_LIVE_CAPTURE: "true"
+      ARKIME_VIEWER_PORT: "8005"
+      ARKIME_ROTATE_INDEX: "daily"
+      ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"
+      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+    volumes:
+      - pcap-data:/data/pcap
+      - ${MALCOLM_CERTS_DIR:-./certs}:/opt/arkime/config/certificates:ro
+
+  # ========================================================================
+  # INFRASTRUCTURE
+  # ========================================================================
+
+  redis:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-redis
+    restart: unless-stopped
+    environment:
+      <<: *process-env
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+    volumes:
+      - redis-data:/data
+    networks:
+      - default
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 30s
+
+  api:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-api
+    restart: unless-stopped
+    environment:
+      <<: [*process-env, *opensearch-env]
+    volumes:
+      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/api/config/certificates:ro
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  nginx-proxy:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "${MALCOLM_HTTPS_PORT:-9443}:443"
+      - "127.0.0.1:9200:9200"
+    environment:
+      <<: [*process-env, *opensearch-env]
+      NGINX_SSL: "true"
+      NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
+      NGINX_LOG_ACCESS_AND_ERRORS: "false"
+    volumes:
+      - ${MALCOLM_CERTS_DIR:-./certs}:/etc/nginx/certs:ro
+      - ${MALCOLM_AUTH_DIR:-./auth}:/etc/nginx/auth:ro
+    networks:
+      - default
+    depends_on:
+      - api
+      - dashboards
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -skf https://localhost:443 || exit 1"]
+      start_period: 120s
+
+  # ========================================================================
+  # NETTAP SERVICES
+  # ========================================================================
 
   nettap-storage-daemon:
     build:
       context: ..
       dockerfile: docker/Dockerfile.daemon
+    image: nettap/storage-daemon:latest
     container_name: nettap-storage-daemon
     restart: unless-stopped
     volumes:
       - ../config:/opt/nettap/config:ro
-      - /dev:/dev:ro  # SMART access
+      - /dev:/dev:ro
       - storage-data:/var/lib/nettap
     environment:
-      - RETENTION_HOT=${RETENTION_HOT:-90}
-      - RETENTION_WARM=${RETENTION_WARM:-180}
-      - RETENTION_COLD=${RETENTION_COLD:-30}
-      - DISK_THRESHOLD_PERCENT=${DISK_THRESHOLD_PERCENT:-80}
-      - OPENSEARCH_URL=http://opensearch:9200
+      <<: *opensearch-env
+      RETENTION_HOT: "${RETENTION_HOT:-90}"
+      RETENTION_WARM: "${RETENTION_WARM:-180}"
+      RETENTION_COLD: "${RETENTION_COLD:-30}"
+      DISK_THRESHOLD_PERCENT: "${DISK_THRESHOLD_PERCENT:-80}"
     networks:
-      - malcolm_default
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
 
   nettap-web:
     build:
       context: ..
       dockerfile: docker/Dockerfile.web
+    image: nettap/web:latest
     container_name: nettap-web
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_PORT:-443}:443"
+      - "${DASHBOARD_PORT:-443}:3000"
     volumes:
       - ../config:/opt/nettap/config:ro
       - web-data:/var/lib/nettap-web
     environment:
-      - NETTAP_HOSTNAME=${NETTAP_HOSTNAME:-nettap.local}
-      - OPENSEARCH_URL=http://opensearch:9200
+      <<: *opensearch-env
+      NETTAP_HOSTNAME: "${NETTAP_HOSTNAME:-nettap.local}"
+      DAEMON_URL: "http://nettap-storage-daemon:8880"
     networks:
-      - malcolm_default
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
 
+# ==========================================================================
+# VOLUMES
+# ==========================================================================
 volumes:
+  # Malcolm data volumes
+  opensearch-data:
+  opensearch-backup:
+  dashboards-helper-data:
+  logstash-persistent-queue:
+  filebeat-registry:
+  redis-data:
+  pcap-data:
+
+  # Shared log volumes (written by capture, read by filebeat)
+  zeek-live-logs:
+  suricata-live-logs:
+  suricata-rules:
+
+  # NetTap data volumes
   storage-data:
   web-data:
-
-networks:
-  malcolm_default:
-    external: true
