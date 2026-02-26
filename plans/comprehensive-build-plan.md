@@ -874,11 +874,11 @@ docs/
 
 | # | Task | Size | Status | Files |
 |---|------|------|--------|-------|
-| 4B.24 | Sankey Traffic Flow Diagram (SVG) | L | [ ] Todo | `web/src/lib/components/charts/SankeyDiagram.svelte` |
-| 4B.25 | Visual Network Map (topology SVG) | L | [ ] Todo | `web/src/lib/components/charts/NetworkMap.svelte` |
-| 4B.26 | Compliance Posture Summary page | M | [ ] Todo | `web/src/routes/compliance/+page.svelte` |
-| 4B.27 | Progressive Disclosure refinement (all pages) | M | [ ] Todo | Refactor existing pages |
-| 4B.28 | Visualization + compliance tests | M | [ ] Todo | Component tests |
+| 4B.24 | Sankey Traffic Flow Diagram (SVG) | L | [x] Done | `SankeyDiagram.svelte` (pure SVG, 3-column Bezier ribbon layout, hover highlights) |
+| 4B.25 | Visual Network Map (topology SVG) | L | [x] Done | `NetworkMap.svelte` (force-directed, device type icons, risk borders, protocol colors) |
+| 4B.26 | Compliance Posture Summary page | M | [x] Done | `web/src/routes/compliance/+page.svelte` (6 categories, A-F grade, recommendations) |
+| 4B.27 | Progressive Disclosure refinement (all pages) | M | [x] Done | `Collapsible.svelte` (reusable expand/collapse with animation) |
+| 4B.28 | Visualization + compliance tests | M | [x] Done | SankeyDiagram (29), NetworkMap (43), Compliance (60), Collapsible (23) = 155 tests |
 
 ### Sprint 5: Advanced Features (Group E)
 
