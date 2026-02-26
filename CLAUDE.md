@@ -10,6 +10,37 @@ The project wraps CISA's Malcolm stack (Zeek, Suricata, Arkime, OpenSearch) with
 
 **PRD:** `NetTap_PRD_v1.0.md` contains the full product specification.
 
+## Code Preservation Policy
+
+- **Never delete** replaced logic; wrap with `// OLD CODE START/END` and comment why.
+- Don't remove commented blocks unless explicitly approved and stable for 3+ cycles.
+- **Never checkout/pull `main`** without instruction.
+
+## Tracking (Mandatory — DO NOT SKIP)
+
+### Linear (primary tracker)
+
+**CRITICAL: If you changed ANY code, you MUST create a Linear issue before responding that the task is done.** This is non-negotiable. No code change is complete without a corresponding Linear issue. Forgetting this is a failure condition.
+
+- **Team:** NetTap
+- **Labels:** `Bug`, `Feature`, `Improvement`, or `Info`
+- **Priority:** 1=Urgent, 2=High, 3=Normal, 4=Low
+- **Title format:** `type: short description` (e.g., `fix: NotificationProvider import causes build failure`)
+- **Description must include:** Problem, Root Cause, Fix/Solution, Files Changed, Branch/PR link, Lessons Learned
+- **Set state:** `Done` if already fixed, `In Progress` if actively working, `Todo` if planned
+- **Link PRs** using the `links` parameter: `[{"url": "https://github.com/EliasMarine/NetTap/pull/N", "title": "PR #N: Description"}]`
+
+**Workflow**: Implement → **Create/update Linear issue** → Update tracking doc → Verify.
+
+### Tracking Docs (secondary)
+
+Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature**:
+- What changed, root cause, steps/solution, files touched, status, test results, lessons, next steps.
+- Key trackers:
+  - Create new per feature/bugfix/chore as needed
+
+---
+
 ## Project Structure
 
 ```
