@@ -224,6 +224,10 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 4. **Dashboard Polish** — Custom Grafana dashboards, GeoIP maps, bandwidth trending, notifications
 5. **Community Release** — Docs, install script, community setup
 
+## Build Plan Task Tracking
+
+**CRITICAL: After completing any task from `plans/comprehensive-build-plan.md`, you MUST update the task's status in that file.** Mark completed tasks with a `[x]` checkbox prefix and add a completion note. This applies to all phases going forward. When starting a new phase, review the plan to see what's already done.
+
 ## Hooks
 
 This project has two Claude Code hooks configured in `.claude/settings.json`:

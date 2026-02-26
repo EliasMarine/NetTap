@@ -319,12 +319,14 @@ services:
       - ../config:/opt/nettap/config:ro
       - /dev:/dev:ro
       - storage-data:/var/lib/nettap
+      - pcap-data:/opt/nettap/pcap:ro
     environment:
       <<: *opensearch-env
       RETENTION_HOT: "${RETENTION_HOT:-90}"
       RETENTION_WARM: "${RETENTION_WARM:-180}"
       RETENTION_COLD: "${RETENTION_COLD:-30}"
       DISK_THRESHOLD_PERCENT: "${DISK_THRESHOLD_PERCENT:-80}"
+      PCAP_DIR: "/opt/nettap/pcap"
     networks:
       - default
     depends_on:
@@ -338,8 +340,12 @@ services:
     image: nettap/web:latest
     container_name: nettap-web
     restart: unless-stopped
-    ports:
-      - "${DASHBOARD_PORT:-443}:3000"
+    # OLD CODE START — port was exposed directly before nginx reverse proxy
+    # ports:
+    #   - "${DASHBOARD_PORT:-443}:3000"
+    # OLD CODE END — now nginx handles external TLS termination on 443
+    expose:
+      - "3000"
     volumes:
       - ../config:/opt/nettap/config:ro
       - web-data:/var/lib/nettap-web
@@ -347,11 +353,87 @@ services:
       <<: *opensearch-env
       NETTAP_HOSTNAME: "${NETTAP_HOSTNAME:-nettap.local}"
       DAEMON_URL: "http://nettap-storage-daemon:8880"
+      CYBERCHEF_URL: "http://nettap-cyberchef:8443"
     networks:
       - default
     depends_on:
       opensearch:
         condition: service_healthy
+
+  nettap-nginx:
+    image: nginx:stable-alpine
+    container_name: nettap-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=50M
+      - /var/run:size=1M
+      - /tmp:size=10M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+    depends_on:
+      - nettap-web
+      - nettap-cyberchef
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -q --spider --no-check-certificate https://localhost:443/ || exit 1"]
+      start_period: 15s
+
+  nettap-tshark:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tshark
+    image: nettap/tshark:latest
+    container_name: nettap-tshark
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+    volumes:
+      - pcap-data:/pcap:ro
+    mem_limit: 512m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+
+  nettap-cyberchef:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cyberchef
+    image: nettap/cyberchef:latest
+    container_name: nettap-cyberchef
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M
+      - /var/cache/nginx:size=50M
+      - /var/run:size=1M
+    mem_limit: 128m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/health || exit 1"]
+      start_period: 10s
 
 # ==========================================================================
 # VOLUMES
