@@ -340,8 +340,12 @@ services:
     image: nettap/web:latest
     container_name: nettap-web
     restart: unless-stopped
-    ports:
-      - "${DASHBOARD_PORT:-443}:3000"
+    # OLD CODE START — port was exposed directly before nginx reverse proxy
+    # ports:
+    #   - "${DASHBOARD_PORT:-443}:3000"
+    # OLD CODE END — now nginx handles external TLS termination on 443
+    expose:
+      - "3000"
     volumes:
       - ../config:/opt/nettap/config:ro
       - web-data:/var/lib/nettap-web
@@ -355,6 +359,35 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+
+  nettap-nginx:
+    image: nginx:stable-alpine
+    container_name: nettap-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=50M
+      - /var/run:size=1M
+      - /tmp:size=10M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+    depends_on:
+      - nettap-web
+      - nettap-cyberchef
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -q --spider --no-check-certificate https://localhost:443/ || exit 1"]
+      start_period: 15s
 
   nettap-tshark:
     build:
