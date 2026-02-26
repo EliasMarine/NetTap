@@ -862,13 +862,13 @@ docs/
 
 | # | Task | Size | Status | Files |
 |---|------|------|--------|-------|
-| 4B.17 | Device Risk Scoring (0-100 per device) | M | [ ] Todo | `daemon/services/risk_scoring.py` |
-| 4B.18 | New Device Alerts (baseline + notifications) | M | [ ] Todo | `daemon/services/device_baseline.py` |
-| 4B.19 | Internet Health Monitor (latency/DNS/packet loss) | M | [ ] Todo | `daemon/services/internet_health.py` |
-| 4B.20 | Investigation Bookmarks/Notes (lightweight case mgmt) | M | [ ] Todo | `daemon/api/investigations.py`, `web/src/routes/investigations/+page.svelte` |
-| 4B.21 | Risk scoring + device baseline tests | M | [ ] Todo | `daemon/tests/test_risk_scoring.py`, `test_device_baseline.py` |
-| 4B.22 | Internet health + investigations tests | M | [ ] Todo | `daemon/tests/test_internet_health.py`, `test_investigations.py` |
-| 4B.23 | Web tests for C features | M | [ ] Todo | API client + component tests |
+| 4B.17 | Device Risk Scoring (0-100 per device) | M | [x] Done | `daemon/services/risk_scoring.py` (5 factors, 4 risk levels), `daemon/api/risk.py` |
+| 4B.18 | New Device Alerts (baseline + notifications) | M | [x] Done | `daemon/services/device_baseline.py` (MAC-based, file-backed), `daemon/api/baseline.py` |
+| 4B.19 | Internet Health Monitor (latency/DNS/packet loss) | M | [x] Done | `daemon/services/internet_health.py` (async ping/DNS/loss), `daemon/api/health_monitor.py` |
+| 4B.20 | Investigation Bookmarks/Notes (lightweight case mgmt) | M | [x] Done | `daemon/services/investigation_store.py`, `daemon/api/investigations.py` (12 endpoints), `web/src/routes/investigations/+page.svelte` |
+| 4B.21 | Risk scoring + device baseline tests | M | [x] Done | `test_risk_scoring.py` (59), `test_device_baseline.py` (29), `test_risk_api.py` (18), `test_baseline_api.py` (19) = 125 tests |
+| 4B.22 | Internet health + investigations tests | M | [x] Done | `test_internet_health.py` (42), `test_internet_health_api.py` (13), `test_investigation_store.py` (50), `test_investigations_api.py` (26) = 131 tests |
+| 4B.23 | Web tests for C features | M | [x] Done | `risk.test.ts` (11), `internet-health.test.ts` (12), `investigations.test.ts` (22) = 45 tests |
 
 ### Sprint 4: Visualizations & Polish (Group D)
 
