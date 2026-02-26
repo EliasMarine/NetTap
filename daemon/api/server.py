@@ -29,6 +29,8 @@ from smart.monitor import SmartMonitor
 from storage.ilm import apply_ilm_policies
 from api.tshark import register_tshark_routes
 from api.cyberchef import register_cyberchef_routes
+from api.traffic import register_traffic_routes
+from api.alerts import register_alert_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 
@@ -329,6 +331,12 @@ def create_app(
     cyberchef_url = os.environ.get("CYBERCHEF_URL", "http://nettap-cyberchef:8443")
     cyberchef_service = CyberChefService(base_url=cyberchef_url)
     register_cyberchef_routes(app, cyberchef_service)
+
+    # Traffic analysis (OpenSearch zeek-* queries)
+    register_traffic_routes(app, storage)
+
+    # Alert management (OpenSearch suricata-* queries)
+    register_alert_routes(app, storage)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
