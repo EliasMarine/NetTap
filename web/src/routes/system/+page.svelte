@@ -5,6 +5,7 @@
 	import type { SystemHealth, StorageStatus, SmartHealth } from '$api/system.js';
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
+	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -161,6 +162,9 @@
 				</div>
 			</div>
 		</div>
+
+		<!-- Bridge & Failover Status -->
+		<BridgeStatus />
 
 		<!-- Storage card (full width) -->
 		<div class="card">

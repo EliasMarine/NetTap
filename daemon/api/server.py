@@ -41,6 +41,7 @@ from api.settings import register_settings_routes
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
+from api.bridge import register_bridge_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -51,6 +52,7 @@ from services.investigation_store import InvestigationStore
 from services.nl_search import NLSearchParser
 from services.detection_packs import DetectionPackManager
 from services.report_generator import ReportGenerator
+from services.bridge_health import BridgeHealthMonitor
 
 logger = logging.getLogger("nettap.api")
 
@@ -410,6 +412,15 @@ def create_app(
         reports_dir=reports_dir, schedules_file=schedules_file
     )
     register_report_routes(app, report_generator)
+
+    # Bridge health monitoring (inline tap bridge state + NIC carrier)
+    bridge_name = os.environ.get("BRIDGE_NAME", "br0")
+    wan_iface = os.environ.get("WAN_IFACE", "eth0")
+    lan_iface = os.environ.get("LAN_IFACE", "eth1")
+    bridge_health = BridgeHealthMonitor(
+        bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
+    )
+    register_bridge_routes(app, bridge_health)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
