@@ -1,16 +1,31 @@
 <script lang="ts">
-	interface Alert {
-		id: string;
-		severity: 'critical' | 'high' | 'medium' | 'low';
-		title: string;
-		source_ip: string;
-		dest_ip: string;
-		protocol: string;
-		timestamp: string;
-		category: string;
-	}
+	import { getAlerts, getAlertCount } from '$api/alerts';
+	import type { Alert, AlertsListResponse, AlertCountResponse } from '$api/alerts';
+	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
+	import IPAddress from '$components/IPAddress.svelte';
 
-	type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
+	// ---------------------------------------------------------------------------
+	// Types
+	// ---------------------------------------------------------------------------
+
+	// OLD CODE START — replaced local Alert interface with imported type from $api/alerts
+	// interface Alert {
+	// 	id: string;
+	// 	severity: 'critical' | 'high' | 'medium' | 'low';
+	// 	title: string;
+	// 	source_ip: string;
+	// 	dest_ip: string;
+	// 	protocol: string;
+	// 	timestamp: string;
+	// 	category: string;
+	// }
+	// OLD CODE END
+
+	type SeverityFilter = 'all' | 'high' | 'medium' | 'low';
+
+	// ---------------------------------------------------------------------------
+	// State
+	// ---------------------------------------------------------------------------
 
 	let alerts = $state<Alert[]>([]);
 	let loading = $state(false);
@@ -18,32 +33,70 @@
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
+	// Alert counts from the /api/alerts/count endpoint
+	let alertCounts = $state({ total: 0, high: 0, medium: 0, low: 0 });
+
+	// Pagination
+	let currentPage = $state(1);
+	let totalPages = $state(0);
+	let totalAlerts = $state(0);
+	const pageSize = 50;
+
+	// Detail panel
+	let selectedAlert = $state<Alert | null>(null);
+
+	// ---------------------------------------------------------------------------
+	// Severity filter tabs
+	// ---------------------------------------------------------------------------
+
 	const severityFilters: { value: SeverityFilter; label: string }[] = [
 		{ value: 'all', label: 'All' },
-		{ value: 'critical', label: 'Critical' },
 		{ value: 'high', label: 'High' },
 		{ value: 'medium', label: 'Medium' },
 		{ value: 'low', label: 'Low' },
 	];
 
-	let filteredAlerts = $derived(
-		activeFilter === 'all'
-			? alerts
-			: alerts.filter((a) => a.severity === activeFilter)
-	);
-
-	function severityBadgeClass(severity: string): string {
-		switch (severity) {
-			case 'critical':
-				return 'badge badge-danger';
+	// Map filter values to API severity numbers
+	function severityFilterToNumber(filter: SeverityFilter): number | undefined {
+		switch (filter) {
 			case 'high':
-				return 'badge badge-warning';
+				return 1;
 			case 'medium':
-				return 'badge badge-accent';
+				return 2;
 			case 'low':
-				return 'badge badge-muted';
+				return 3;
+			default:
+				return undefined;
+		}
+	}
+
+	// ---------------------------------------------------------------------------
+	// Display helpers
+	// ---------------------------------------------------------------------------
+
+	function severityBadgeClass(severity: number | undefined): string {
+		switch (severity) {
+			case 1:
+				return 'badge badge-danger';
+			case 2:
+				return 'badge badge-warning';
+			case 3:
+				return 'badge badge-accent';
 			default:
 				return 'badge';
+		}
+	}
+
+	function severityLabel(severity: number | undefined): string {
+		switch (severity) {
+			case 1:
+				return 'HIGH';
+			case 2:
+				return 'MEDIUM';
+			case 3:
+				return 'LOW';
+			default:
+				return 'INFO';
 		}
 	}
 
@@ -56,32 +109,112 @@
 		}
 	}
 
-	async function fetchAlerts() {
+	function filterCountForTab(filter: SeverityFilter): number {
+		switch (filter) {
+			case 'all':
+				return alertCounts.total;
+			case 'high':
+				return alertCounts.high;
+			case 'medium':
+				return alertCounts.medium;
+			case 'low':
+				return alertCounts.low;
+		}
+	}
+
+	// ---------------------------------------------------------------------------
+	// Data fetching — uses real API calls
+	// ---------------------------------------------------------------------------
+
+	async function fetchAlerts(page: number = 1) {
 		loading = true;
 		try {
-			// Alerts will come from OpenSearch/Suricata once the pipeline is running.
-			// For now this is a placeholder that returns an empty array.
-			// Future implementation: const res = await fetch('/api/alerts');
-			alerts = [];
+			const severity = severityFilterToNumber(activeFilter);
+			const response: AlertsListResponse = await getAlerts({
+				severity,
+				page,
+				size: pageSize,
+			});
+			alerts = response.alerts;
+			currentPage = response.page;
+			totalPages = response.total_pages;
+			totalAlerts = response.total;
 		} catch {
 			alerts = [];
+			totalPages = 0;
+			totalAlerts = 0;
 		} finally {
 			loading = false;
 		}
 	}
 
+	async function fetchCounts() {
+		try {
+			const response: AlertCountResponse = await getAlertCount();
+			alertCounts = response.counts;
+		} catch {
+			alertCounts = { total: 0, high: 0, medium: 0, low: 0 };
+		}
+	}
+
+	async function fetchAll() {
+		await Promise.all([fetchAlerts(1), fetchCounts()]);
+	}
+
+	// ---------------------------------------------------------------------------
+	// Pagination
+	// ---------------------------------------------------------------------------
+
+	function goToPage(page: number) {
+		if (page < 1 || page > totalPages) return;
+		fetchAlerts(page);
+	}
+
+	// ---------------------------------------------------------------------------
+	// Auto-refresh
+	// ---------------------------------------------------------------------------
+
 	function toggleAutoRefresh() {
 		autoRefresh = !autoRefresh;
 		if (autoRefresh) {
-			refreshInterval = setInterval(fetchAlerts, 15_000);
+			refreshInterval = setInterval(fetchAll, 15_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
 		}
 	}
 
+	// ---------------------------------------------------------------------------
+	// Alert selection / detail panel
+	// ---------------------------------------------------------------------------
+
+	function openAlertDetail(alert: Alert) {
+		selectedAlert = alert;
+	}
+
+	function closeAlertDetail() {
+		selectedAlert = null;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Filter change triggers refetch
+	// ---------------------------------------------------------------------------
+
+	let prevFilter: SeverityFilter | null = null;
+
 	$effect(() => {
-		fetchAlerts();
+		if (prevFilter !== null && prevFilter !== activeFilter) {
+			fetchAlerts(1);
+		}
+		prevFilter = activeFilter;
+	});
+
+	// ---------------------------------------------------------------------------
+	// Initial fetch
+	// ---------------------------------------------------------------------------
+
+	$effect(() => {
+		fetchAll();
 		return () => {
 			if (refreshInterval) {
 				clearInterval(refreshInterval);
@@ -113,7 +246,7 @@
 				</svg>
 				{autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh'}
 			</button>
-			<button class="btn btn-primary btn-sm" onclick={fetchAlerts} disabled={loading}>
+			<button class="btn btn-primary btn-sm" onclick={() => fetchAll()} disabled={loading}>
 				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<polyline points="23 4 23 10 17 10" />
 					<polyline points="1 20 1 14 7 14" />
@@ -133,13 +266,9 @@
 				onclick={() => (activeFilter = filter.value)}
 			>
 				{filter.label}
-				{#if filter.value !== 'all'}
-					<span class="filter-count">
-						{alerts.filter((a) => a.severity === filter.value).length}
-					</span>
-				{:else}
-					<span class="filter-count">{alerts.length}</span>
-				{/if}
+				<span class="filter-count">
+					{filterCountForTab(filter.value)}
+				</span>
 			</button>
 		{/each}
 	</div>
@@ -150,7 +279,7 @@
 			<div class="spinner"></div>
 			<p class="text-muted">Loading alerts...</p>
 		</div>
-	{:else if filteredAlerts.length === 0}
+	{:else if alerts.length === 0}
 		<div class="empty-state">
 			<div class="empty-icon">
 				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -167,33 +296,87 @@
 		</div>
 	{:else}
 		<div class="alert-list">
-			{#each filteredAlerts as alert (alert.id)}
-				<div class="card alert-card">
+			{#each alerts as alert (alert._id)}
+				<button
+					class="card alert-card"
+					class:alert-acknowledged={alert.acknowledged}
+					onclick={() => openAlertDetail(alert)}
+				>
 					<div class="alert-card-header">
-						<span class={severityBadgeClass(alert.severity)}>
-							{alert.severity}
+						<span class={severityBadgeClass(alert.alert?.severity)}>
+							{severityLabel(alert.alert?.severity)}
 						</span>
-						<span class="alert-timestamp mono">{formatTimestamp(alert.timestamp)}</span>
+						<div class="alert-card-header-right">
+							{#if alert.acknowledged}
+								<span class="badge badge-success ack-badge">ACK</span>
+							{/if}
+							<span class="alert-timestamp mono">{formatTimestamp(alert.timestamp)}</span>
+						</div>
 					</div>
 					<div class="alert-card-body">
-						<h4 class="alert-title">{alert.title}</h4>
+						<h4 class="alert-title">{alert.alert?.signature || 'Unknown Alert'}</h4>
+						{#if alert.plain_description}
+							<p class="alert-description text-muted">{alert.plain_description}</p>
+						{/if}
 						<div class="alert-meta">
 							<div class="alert-flow">
-								<span class="mono alert-ip">{alert.source_ip}</span>
+								{#if alert.src_ip}
+									<IPAddress ip={alert.src_ip} />
+								{:else}
+									<span class="mono text-muted">--</span>
+								{/if}
 								<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 									<line x1="5" y1="12" x2="19" y2="12" />
 									<polyline points="12 5 19 12 12 19" />
 								</svg>
-								<span class="mono alert-ip">{alert.dest_ip}</span>
+								{#if alert.dest_ip}
+									<IPAddress ip={alert.dest_ip} />
+								{:else}
+									<span class="mono text-muted">--</span>
+								{/if}
 							</div>
-							<span class="badge">{alert.protocol}</span>
+							<div class="alert-badges">
+								{#if alert.proto}
+									<span class="badge">{alert.proto.toUpperCase()}</span>
+								{/if}
+								{#if alert.alert?.category}
+									<span class="badge">{alert.alert.category}</span>
+								{/if}
+							</div>
 						</div>
 					</div>
-				</div>
+				</button>
 			{/each}
 		</div>
+
+		<!-- Pagination -->
+		{#if totalPages > 1}
+			<div class="pagination">
+				<button
+					class="btn btn-secondary btn-sm"
+					disabled={currentPage <= 1 || loading}
+					onclick={() => goToPage(currentPage - 1)}
+				>
+					Previous
+				</button>
+				<span class="pagination-info">
+					Page {currentPage} of {totalPages}
+					<span class="text-muted">({totalAlerts.toLocaleString()} total)</span>
+				</span>
+				<button
+					class="btn btn-secondary btn-sm"
+					disabled={currentPage >= totalPages || loading}
+					onclick={() => goToPage(currentPage + 1)}
+				>
+					Next
+				</button>
+			</div>
+		{/if}
 	{/if}
 </div>
+
+<!-- Alert detail slide-out panel -->
+<AlertDetailPanel alert={selectedAlert} onclose={closeAlertDetail} />
 
 <style>
 	.alerts-page {
@@ -349,6 +532,24 @@
 
 	.alert-card {
 		padding: var(--space-md);
+		cursor: pointer;
+		text-align: left;
+		width: 100%;
+		font-family: var(--font-sans);
+		transition: border-color var(--transition-fast), background-color var(--transition-fast);
+	}
+
+	.alert-card:hover {
+		border-color: var(--accent);
+		background-color: var(--bg-tertiary);
+	}
+
+	.alert-card.alert-acknowledged {
+		opacity: 0.7;
+	}
+
+	.alert-card.alert-acknowledged:hover {
+		opacity: 1;
 	}
 
 	.alert-card-header {
@@ -356,6 +557,17 @@
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: var(--space-sm);
+	}
+
+	.alert-card-header-right {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.ack-badge {
+		font-size: 10px;
+		padding: 1px 6px;
 	}
 
 	.alert-timestamp {
@@ -375,6 +587,16 @@
 		color: var(--text-primary);
 	}
 
+	.alert-description {
+		font-size: var(--text-sm);
+		line-height: var(--leading-normal);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
 	.alert-meta {
 		display: flex;
 		align-items: center;
@@ -390,15 +612,30 @@
 		color: var(--text-secondary);
 	}
 
-	.alert-ip {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
+	.alert-badges {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
 	}
 
 	.badge-muted {
 		background-color: var(--bg-tertiary);
 		color: var(--text-muted);
 		border-color: var(--border-default);
+	}
+
+	/* Pagination */
+	.pagination {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-md);
+		padding: var(--space-md) 0;
+	}
+
+	.pagination-info {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
 	}
 
 	@media (max-width: 640px) {
