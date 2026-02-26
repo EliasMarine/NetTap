@@ -823,6 +823,91 @@ docs/
 
 ---
 
+## Phase 4B: SIEM-Inspired Features (Must-Have + Should-Have)
+
+**Timeline:** After Phase 4, before Phase 5
+**Estimated Effort:** 100-140 hours
+**Reference:** `plans/siem-features-gameplan.md` for full implementation details
+**Status:** TODO
+
+### Sprint 1: Data Foundation (Group A)
+
+| # | Task | Size | Status | Files |
+|---|------|------|--------|-------|
+| 4B.1 | Device Inventory API (auto-discovery from DHCP/ARP/DNS/JA3) | L | [ ] Todo | `daemon/api/devices.py`, `daemon/services/device_fingerprint.py` |
+| 4B.2 | Traffic Categorization API (protocol → human categories) | M | [ ] Todo | `daemon/services/traffic_classifier.py`, `daemon/api/traffic.py` (extend) |
+| 4B.3 | Alert Description Enrichment (Suricata SID → plain English) | M | [ ] Todo | `daemon/services/alert_enrichment.py`, `daemon/data/suricata_descriptions.json` |
+| 4B.4 | GeoIP Lookup Service (MaxMind GeoLite2) | M | [ ] Todo | `daemon/services/geoip_service.py`, `daemon/api/geoip.py` |
+| 4B.5 | Device Inventory API tests | M | [ ] Todo | `daemon/tests/test_devices_api.py`, `daemon/tests/test_device_fingerprint.py` |
+| 4B.6 | Traffic Classifier + GeoIP tests | M | [ ] Todo | `daemon/tests/test_traffic_classifier.py`, `daemon/tests/test_geoip_service.py` |
+| 4B.7 | Alert Enrichment tests | S | [ ] Todo | `daemon/tests/test_alert_enrichment.py` |
+| 4B.8 | Web API clients (devices, geoip) + tests | M | [ ] Todo | `web/src/lib/api/devices.ts`, `devices.test.ts`, `geoip.ts`, `geoip.test.ts` |
+
+### Sprint 2: Core UI Features (Group B)
+
+| # | Task | Size | Status | Files |
+|---|------|------|--------|-------|
+| 4B.9 | Device Inventory page (/devices) | L | [ ] Todo | `web/src/routes/devices/+page.svelte` |
+| 4B.10 | Per-Device Activity page (/devices/[ip]) | L | [ ] Todo | `web/src/routes/devices/[ip]/+page.svelte` |
+| 4B.11 | Alert-to-Detail Pivot panel | M | [ ] Todo | `web/src/lib/components/AlertDetailPanel.svelte` |
+| 4B.12 | Right-Click Context Menus (IP, domain, port) | M | [ ] Todo | `web/src/lib/components/ContextMenu.svelte`, `IPAddress.svelte` |
+| 4B.13 | Enhanced Hero Dashboard (big numbers, trends) | M | [ ] Todo | `web/src/routes/+page.svelte` (rewrite) |
+| 4B.14 | Dashboard Template Variables (device/time/protocol filter bar) | M | [ ] Todo | `web/src/lib/components/DashboardFilters.svelte` |
+| 4B.15 | Threshold color utility + systematic audit | S | [ ] Todo | `web/src/lib/utils/thresholds.ts` |
+| 4B.16 | Component tests for B9-B14 | M | [ ] Todo | 6+ test files |
+
+### Sprint 3: Intelligence Layer (Group C)
+
+| # | Task | Size | Status | Files |
+|---|------|------|--------|-------|
+| 4B.17 | Device Risk Scoring (0-100 per device) | M | [ ] Todo | `daemon/services/risk_scoring.py` |
+| 4B.18 | New Device Alerts (baseline + notifications) | M | [ ] Todo | `daemon/services/device_baseline.py` |
+| 4B.19 | Internet Health Monitor (latency/DNS/packet loss) | M | [ ] Todo | `daemon/services/internet_health.py` |
+| 4B.20 | Investigation Bookmarks/Notes (lightweight case mgmt) | M | [ ] Todo | `daemon/api/investigations.py`, `web/src/routes/investigations/+page.svelte` |
+| 4B.21 | Risk scoring + device baseline tests | M | [ ] Todo | `daemon/tests/test_risk_scoring.py`, `test_device_baseline.py` |
+| 4B.22 | Internet health + investigations tests | M | [ ] Todo | `daemon/tests/test_internet_health.py`, `test_investigations.py` |
+| 4B.23 | Web tests for C features | M | [ ] Todo | API client + component tests |
+
+### Sprint 4: Visualizations & Polish (Group D)
+
+| # | Task | Size | Status | Files |
+|---|------|------|--------|-------|
+| 4B.24 | Sankey Traffic Flow Diagram (SVG) | L | [ ] Todo | `web/src/lib/components/charts/SankeyDiagram.svelte` |
+| 4B.25 | Visual Network Map (topology SVG) | L | [ ] Todo | `web/src/lib/components/charts/NetworkMap.svelte` |
+| 4B.26 | Compliance Posture Summary page | M | [ ] Todo | `web/src/routes/compliance/+page.svelte` |
+| 4B.27 | Progressive Disclosure refinement (all pages) | M | [ ] Todo | Refactor existing pages |
+| 4B.28 | Visualization + compliance tests | M | [ ] Todo | Component tests |
+
+### Sprint 5: Advanced Features (Group E)
+
+| # | Task | Size | Status | Files |
+|---|------|------|--------|-------|
+| 4B.29 | Natural Language Search (query parser + UI) | L | [ ] Todo | `daemon/services/nl_search.py`, search component |
+| 4B.30 | Community Detection Packs (install/manage/update) | L | [ ] Todo | `daemon/services/detection_packs.py`, settings UI |
+| 4B.31 | Scheduled PDF/Email Reports (weekly/monthly) | L | [ ] Todo | `daemon/services/report_generator.py`, settings UI |
+| 4B.32 | Advanced feature tests | M | [ ] Todo | All test files for E1-E3 |
+
+---
+
+## v2.0 Roadmap: Nice-to-Have Features
+
+**Status:** Planned for post-v1.0 release. These are ambitious features that push NetTap toward a unique market position.
+
+| # | Feature | Inspired By | Description | Complexity |
+|---|---------|-------------|-------------|------------|
+| R1 | ML Anomaly Detection | Elastic/Splunk UEBA | Baseline normal behavior per device, alert on deviations (DNS tunneling, beaconing, unusual data volumes). Uses OpenSearch ML. | Very High |
+| R2 | MITRE ATT&CK Coverage Map | Elastic Security | Visual grid showing which MITRE techniques NetTap's active rules detect. Educates users about threat landscape. | Medium |
+| R3 | Investigation Timeline | Elastic/Security Onion | Drag-and-drop timeline workspace for assembling events from different log sources into chronological incident narratives. | High |
+| R4 | Threat Intelligence Feed Integration | Splunk/Wazuh | Automated IOC matching against MISP, OTX, Abuse.ch feeds. Flag connections to known-malicious IPs/domains/hashes in real-time. | Medium |
+| R5 | Multi-Site Dashboard | PRTG/Splunk | Centralized view across multiple NetTap deployments for MSP/consultant users. Requires secure log forwarding. | Very High |
+| R6 | Mobile-Responsive Dashboard | Firewalla | Fully responsive web UI optimized for phones/tablets. Web push notifications for critical alerts. | Medium |
+| R7 | Vulnerability Detection from Traffic | Wazuh/ntopng | Identify vulnerable devices from passive traffic: outdated TLS versions, weak ciphers, HTTP User-Agent indicating unpatched software, JA3 matching. | High |
+| R8 | Device Fingerprint Database | PRTG/Firewalla | Community-maintained database of device fingerprints (MAC OUI + DHCP + UA + JA3) to auto-identify device make/model/firmware. | High |
+| R9 | Embedded CyberChef Enhancement | Security Onion | Deep CyberChef integration: right-click extracted artifact → decode/deobfuscate in-place. Currently iframe only. | Low |
+| R10 | Gamified Security Score | Pi-hole/Wazuh | Persistent A-F network security grade that improves as users address findings. "Fix 3 issues to improve from B to A." | Medium |
+
+---
+
 ## Risk Matrix
 
 | Risk | Likelihood | Impact | Mitigation |
@@ -847,8 +932,21 @@ docs/
 | Phase 2: Storage Management | 12 | 40-55 | 3-5 |
 | Phase 3: Onboarding UX | 16 | 60-80 | 5-8 |
 | Phase 4: Dashboard Polish | 18 | 80-100 | 7-10 |
-| Phase 5: Community Release | 42 | 50-70 | 9-11 |
-| **Total** | **106 tasks** | **~280-375 hours** | **~11 weeks** |
+| Phase 4B: SIEM Features | 32 | 100-140 | 10-13 |
+| Phase 5: Community Release | 42 | 50-70 | 13-15 |
+| **Total** | **138 tasks** | **~380-515 hours** | **~15 weeks** |
+
+### Test Coverage Targets
+
+| Phase | Daemon Tests | Web Tests | Total |
+|-------|-------------|-----------|-------|
+| Phases 1-4 (current) | 140 | 80 | 220 |
+| Phase 4B Sprint 1 (Data Foundation) | +80 | +40 | +120 |
+| Phase 4B Sprint 2 (Core UI) | — | +60 | +60 |
+| Phase 4B Sprint 3 (Intelligence) | +60 | +30 | +90 |
+| Phase 4B Sprint 4 (Visualizations) | — | +40 | +40 |
+| Phase 4B Sprint 5 (Advanced) | +40 | +20 | +60 |
+| **Total at completion** | **~320** | **~270** | **~590** |
 
 ### Sprint Breakdown
 
