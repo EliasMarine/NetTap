@@ -53,6 +53,48 @@
 		selectedWan !== '' && selectedLan !== '' && selectedWan !== selectedLan
 	);
 
+	// ----- NIC Identification (LED blink) -----
+	let blinkingInterface = $state('');
+	let blinkCountdown = $state(0);
+	let blinkError = $state('');
+
+	async function identifyNic(interfaceName: string): Promise<void> {
+		if (blinkingInterface) return; // Already blinking
+		blinkError = '';
+		blinkingInterface = interfaceName;
+		blinkCountdown = 15;
+
+		try {
+			const res = await fetch('/api/setup/nics/identify', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ interface: interfaceName, duration: 15 }),
+			});
+			if (!res.ok) {
+				const data = await res.json();
+				blinkError = data.error || 'Failed to identify interface';
+				blinkingInterface = '';
+				blinkCountdown = 0;
+				return;
+			}
+		} catch {
+			blinkError = 'Failed to connect to server';
+			blinkingInterface = '';
+			blinkCountdown = 0;
+			return;
+		}
+
+		// Countdown timer
+		const timer = setInterval(() => {
+			blinkCountdown--;
+			if (blinkCountdown <= 0) {
+				clearInterval(timer);
+				blinkingInterface = '';
+				blinkCountdown = 0;
+			}
+		}, 1000);
+	}
+
 	// ----- Step 3: Bridge Configuration -----
 	interface BridgeConfig {
 		config_preview: string;
@@ -569,14 +611,42 @@
 									WAN Interface
 									<span class="text-muted">(connects to modem)</span>
 								</label>
-								<select id="wan-select" class="input" bind:value={selectedWan}>
-									<option value="">-- Select WAN interface --</option>
-									{#each selectableInterfaces as iface}
-										<option value={iface.name} disabled={iface.name === selectedLan}>
-											{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
-										</option>
-									{/each}
-								</select>
+								<div class="nic-select-row">
+									<select id="wan-select" class="input" bind:value={selectedWan}>
+										<option value="">-- Select WAN interface --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name} disabled={iface.name === selectedLan}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+											</option>
+										{/each}
+									</select>
+									<button
+										class="btn btn-sm btn-secondary btn-identify"
+										class:btn-identify-active={blinkingInterface === selectedWan}
+										type="button"
+										disabled={!selectedWan || (blinkingInterface !== '' && blinkingInterface !== selectedWan)}
+										onclick={() => identifyNic(selectedWan)}
+										title="Blink the physical port LEDs to identify this interface"
+									>
+										{#if blinkingInterface === selectedWan}
+											<span class="identify-icon pulse">
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+													<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>
+													<path d="M15 9a3 3 0 1 0-6 0c0 2 2 3 2 5h2c0-2 2-3 2-5z" fill="currentColor" opacity="0.3"/>
+												</svg>
+											</span>
+											Blinking... ({blinkCountdown}s)
+										{:else}
+											<span class="identify-icon">
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+													<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>
+													<path d="M15 9a3 3 0 1 0-6 0c0 2 2 3 2 5h2c0-2 2-3 2-5z"/>
+												</svg>
+											</span>
+											Identify
+										{/if}
+									</button>
+								</div>
 								{#if selectedWanDetails}
 									<div class="nic-details">
 										<span class="badge badge-accent">{selectedWanDetails.driver || 'unknown'}</span>
@@ -596,14 +666,42 @@
 									LAN Interface
 									<span class="text-muted">(connects to router)</span>
 								</label>
-								<select id="lan-select" class="input" bind:value={selectedLan}>
-									<option value="">-- Select LAN interface --</option>
-									{#each selectableInterfaces as iface}
-										<option value={iface.name} disabled={iface.name === selectedWan}>
-											{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
-										</option>
-									{/each}
-								</select>
+								<div class="nic-select-row">
+									<select id="lan-select" class="input" bind:value={selectedLan}>
+										<option value="">-- Select LAN interface --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name} disabled={iface.name === selectedWan}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+											</option>
+										{/each}
+									</select>
+									<button
+										class="btn btn-sm btn-secondary btn-identify"
+										class:btn-identify-active={blinkingInterface === selectedLan}
+										type="button"
+										disabled={!selectedLan || (blinkingInterface !== '' && blinkingInterface !== selectedLan)}
+										onclick={() => identifyNic(selectedLan)}
+										title="Blink the physical port LEDs to identify this interface"
+									>
+										{#if blinkingInterface === selectedLan}
+											<span class="identify-icon pulse">
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+													<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>
+													<path d="M15 9a3 3 0 1 0-6 0c0 2 2 3 2 5h2c0-2 2-3 2-5z" fill="currentColor" opacity="0.3"/>
+												</svg>
+											</span>
+											Blinking... ({blinkCountdown}s)
+										{:else}
+											<span class="identify-icon">
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+													<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>
+													<path d="M15 9a3 3 0 1 0-6 0c0 2 2 3 2 5h2c0-2 2-3 2-5z"/>
+												</svg>
+											</span>
+											Identify
+										{/if}
+									</button>
+								</div>
 								{#if selectedLanDetails}
 									<div class="nic-details">
 										<span class="badge badge-accent">{selectedLanDetails.driver || 'unknown'}</span>
@@ -619,11 +717,27 @@
 							</div>
 						</div>
 
+						{#if blinkError}
+							<div class="alert alert-warning" style="margin-bottom: var(--space-sm);">
+								{blinkError}
+							</div>
+						{/if}
+
 						{#if selectedWan && selectedLan && selectedWan === selectedLan}
 							<div class="alert alert-danger">
 								WAN and LAN interfaces must be different.
 							</div>
 						{/if}
+
+						<div class="identify-tip">
+							<svg class="tip-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+								<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>
+								<path d="M15 9a3 3 0 1 0-6 0c0 2 2 3 2 5h2c0-2 2-3 2-5z"/>
+							</svg>
+							<span class="text-muted">
+								Tip: Click "Identify" to blink the physical port LEDs for 15 seconds, making it easy to find the right Ethernet jack on your device.
+							</span>
+						</div>
 
 						<button class="btn btn-sm btn-secondary" onclick={fetchNics} type="button" style="margin-top: var(--space-sm);">
 							Refresh Interfaces
@@ -1363,6 +1477,75 @@
 		.diagram-arrow {
 			display: none;
 		}
+	}
+
+	.nic-select-row {
+		display: flex;
+		gap: var(--space-sm);
+		align-items: stretch;
+	}
+
+	.nic-select-row select {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.btn-identify {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-size: var(--text-xs);
+		padding: var(--space-xs) var(--space-sm);
+	}
+
+	.btn-identify:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.btn-identify-active {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.identify-icon {
+		display: inline-flex;
+		align-items: center;
+		line-height: 0;
+	}
+
+	.identify-icon.pulse {
+		animation: identify-pulse 1s ease-in-out infinite;
+	}
+
+	@keyframes identify-pulse {
+		0%, 100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.3;
+		}
+	}
+
+	.identify-tip {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		background-color: var(--bg-tertiary);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--radius-md);
+		margin-top: var(--space-md);
+		margin-bottom: var(--space-sm);
+		font-size: var(--text-xs);
+		line-height: var(--leading-relaxed);
+	}
+
+	.tip-icon {
+		flex-shrink: 0;
+		margin-top: 1px;
 	}
 
 	.nic-details {
