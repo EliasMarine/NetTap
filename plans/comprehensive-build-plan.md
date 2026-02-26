@@ -544,29 +544,29 @@ GET  /api/health/malcolm
 **Timeline:** Weeks 7-10 (parallel with late Phase 3)
 **Estimated Effort:** 80-100 hours
 **Prerequisite:** SvelteKit project initialized, API layer functional
-**Status:** IN PROGRESS
+**Status:** COMPLETE (PR #7, pending merge to develop)
 
 ### Task Breakdown
 
 | # | Task | Size | Week | Status | Files |
 |---|------|------|------|--------|-------|
-| 4.1 | Traffic API endpoints (OpenSearch queries) | M | 7 | [ ] Todo | `web/src/routes/api/traffic/`, `daemon/api/traffic.py` |
-| 4.2 | Alert API endpoints (OpenSearch queries) | M | 7 | [ ] Todo | `web/src/routes/api/alerts/`, `daemon/api/alerts.py` |
+| 4.1 | Traffic API endpoints (OpenSearch queries) | M | 7 | [x] Done (PR #7) | `daemon/api/traffic.py`, `web/src/routes/api/traffic/`, `web/src/lib/api/traffic.ts` |
+| 4.2 | Alert API endpoints (OpenSearch queries) | M | 7 | [x] Done (PR #7) | `daemon/api/alerts.py`, `web/src/routes/api/alerts/`, `web/src/lib/api/alerts.ts` |
 | 4.3 | System health API endpoints | S | 7 | [x] Done (Phase 3) | `web/src/routes/api/system/health/+server.ts` |
-| 4.4 | **Dashboard home page** (live stats/charts) | L | 8 | [ ] Todo | `web/src/routes/+page.svelte` |
+| 4.4 | **Dashboard home page** (live stats/charts) | L | 8 | [x] Done (PR #7) | `web/src/routes/+page.svelte`, SVG chart components |
 | 4.5 | Connections explorer page | M | 8 | [x] Done (Phase 3) | `web/src/routes/connections/+page.svelte` (TShark analysis) |
 | 4.6 | Alerts page with severity filters | M | 8 | [x] Done (Phase 3) | `web/src/routes/alerts/+page.svelte` |
-| 4.7 | WebSocket real-time alert push | M | 9 | [ ] Todo | WebSocket endpoint + client toasts |
-| 4.8 | Add Grafana to Docker Compose | S | 7 | [ ] Todo | `docker/docker-compose.yml` |
-| 4.9 | Grafana: Network Overview dashboard | L | 8 | [ ] Todo | `config/grafana/dashboards/network-overview.json` |
-| 4.10 | Grafana: GeoIP World Map dashboard | M | 9 | [ ] Todo | `config/grafana/dashboards/geoip-map.json` |
-| 4.11 | Grafana: Bandwidth Trending dashboard | M | 9 | [ ] Todo | `config/grafana/dashboards/bandwidth-trending.json` |
-| 4.12 | Grafana: Security Alerts dashboard | M | 9 | [ ] Todo | `config/grafana/dashboards/security-alerts.json` |
-| 4.13 | Grafana: System Health dashboard | M | 10 | [ ] Todo | `config/grafana/dashboards/system-health.json` |
-| 4.14 | Notification system (email/webhook) | M | 9 | [ ] Todo | `web/src/lib/server/notifications.ts` |
-| 4.15 | Notification settings page | S | 10 | [ ] Todo | `web/src/routes/settings/` |
+| 4.7 | WebSocket real-time alert push | M | 9 | [~] Partial — NotificationBell with polling (PR #7) | `web/src/lib/components/NotificationBell.svelte` |
+| 4.8 | Add Grafana to Docker Compose | S | 7 | [x] Done (PR #7) | `docker/docker-compose.yml` |
+| 4.9 | Grafana: Network Overview dashboard | L | 8 | [x] Done (PR #7) | `config/grafana/dashboards/network-overview.json` |
+| 4.10 | Grafana: GeoIP World Map dashboard | M | 9 | [x] Done (PR #7) | `config/grafana/dashboards/geoip-map.json` |
+| 4.11 | Grafana: Bandwidth Trending dashboard | M | 9 | [x] Done (PR #7) | `config/grafana/dashboards/bandwidth-trending.json` |
+| 4.12 | Grafana: Security Alerts dashboard | M | 9 | [x] Done (PR #7) | `config/grafana/dashboards/security-alerts.json` |
+| 4.13 | Grafana: System Health dashboard | M | 10 | [x] Done (PR #7) | `config/grafana/dashboards/system-health.json` |
+| 4.14 | Notification system (email/webhook) | M | 9 | [x] Done (PR #7) | `web/src/lib/server/notifications.ts` |
+| 4.15 | Notification settings page | S | 10 | [x] Done (PR #7) | `web/src/routes/settings/notifications/+page.svelte` |
 | 4.16 | System health page in web UI | M | 10 | [x] Done (Phase 3) | `web/src/routes/system/+page.svelte` |
-| 4.17 | Grafana embedding/linking | S | 10 | [ ] Todo | Links from SvelteKit UI |
+| 4.17 | Grafana embedding/linking | S | 10 | [x] Done (PR #7) | nginx proxy + compose config |
 | 4.18 | E2E integration testing (Playwright) | L | 10 | [ ] Todo | Playwright tests |
 
 ### Dashboard Home Page Components

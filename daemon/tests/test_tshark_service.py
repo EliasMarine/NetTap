@@ -266,7 +266,7 @@ class TestAnalyze(unittest.TestCase):
                     self.assertEqual(result.tshark_version, "TShark 4.2.2")
                     self.assertFalse(result.truncated)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_analyze_timeout(self):
         """Mock timeout and verify TSharkValidationError is raised."""
@@ -283,7 +283,7 @@ class TestAnalyze(unittest.TestCase):
                     await self.svc.analyze(req)
                 self.assertIn("timed out", str(ctx.exception).lower())
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 class TestIsAvailable(unittest.TestCase):
@@ -311,7 +311,7 @@ class TestIsAvailable(unittest.TestCase):
                     self.assertTrue(result["container_running"])
                     self.assertEqual(result["version"], "TShark 4.2.2")
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_is_available_not_running(self):
         """Mock docker inspect returning 'false' -- should report unavailable."""
@@ -331,7 +331,7 @@ class TestIsAvailable(unittest.TestCase):
                 self.assertFalse(result["container_running"])
                 self.assertEqual(result["version"], "unknown")
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
 
 if __name__ == "__main__":
