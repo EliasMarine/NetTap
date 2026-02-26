@@ -14,6 +14,7 @@ Endpoints:
     GET  /api/indices            OpenSearch index listing
     GET  /api/system/health      Combined system health
     POST /api/ilm/apply          Apply ILM policies
+    POST /api/setup/nics/identify Blink NIC LEDs for physical identification
 """
 
 import asyncio
@@ -43,6 +44,7 @@ from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
 from api.bridge import register_bridge_routes
 from api.updates import register_update_routes
+from api.nic_identify import register_nic_identify_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -445,6 +447,9 @@ def create_app(
     update_executor.set_update_checker(update_checker)
 
     register_update_routes(app, version_manager, update_checker, update_executor)
+
+    # NIC LED identification (setup wizard physical port blink)
+    register_nic_identify_routes(app)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
