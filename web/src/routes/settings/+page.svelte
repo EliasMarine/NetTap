@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getSystemHealth } from '$lib/api/system';
 
-	let activeTab = $state<'general' | 'retention' | 'network' | 'about'>('general');
+	let activeTab = $state<'general' | 'retention' | 'network' | 'api-keys' | 'about'>('general');
 
 	let retentionConfig = $state({
 		hot_days: 90,
@@ -14,6 +14,95 @@
 	let saving = $state(false);
 	let saveMessage = $state('');
 	let version = $state('0.3.0');
+
+	// -- API Keys state --
+	let apiKeyStatus = $state<Record<string, boolean>>({});
+	let apiKeySaving = $state(false);
+	let apiKeySaveMessage = $state('');
+	let apiKeySaveError = $state(false);
+
+	// Password visibility toggles
+	let showMaxMind = $state(false);
+	let showSmtpPassword = $state(false);
+	let showSuricataKey = $state(false);
+
+	// API key form values
+	let maxmindKey = $state('');
+	let smtpHost = $state('');
+	let smtpPort = $state('587');
+	let smtpUsername = $state('');
+	let smtpPassword = $state('');
+	let smtpSenderEmail = $state('');
+	let webhookUrl = $state('');
+	let suricataEtProKey = $state('');
+
+	async function loadApiKeyStatus() {
+		try {
+			const res = await fetch('/api/settings/api-keys');
+			if (res.ok) {
+				const data = await res.json();
+				apiKeyStatus = data.keys || {};
+			}
+		} catch {
+			// Silently fail — status indicators will show as "Not Set"
+		}
+	}
+
+	async function saveApiKeys(keys: Record<string, string>) {
+		apiKeySaving = true;
+		apiKeySaveMessage = '';
+		apiKeySaveError = false;
+		try {
+			const res = await fetch('/api/settings/api-keys', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(keys),
+			});
+			const data = await res.json();
+			if (res.ok) {
+				apiKeySaveMessage = 'API keys saved successfully.';
+				apiKeySaveError = false;
+				apiKeyStatus = data.keys || apiKeyStatus;
+			} else {
+				apiKeySaveMessage = data.error || 'Failed to save API keys.';
+				apiKeySaveError = true;
+			}
+		} catch {
+			apiKeySaveMessage = 'Failed to connect to server.';
+			apiKeySaveError = true;
+		} finally {
+			apiKeySaving = false;
+		}
+	}
+
+	async function saveMaxMindKey() {
+		if (!maxmindKey.trim()) return;
+		await saveApiKeys({ MAXMIND_LICENSE_KEY: maxmindKey });
+		maxmindKey = '';
+	}
+
+	async function saveSmtpSettings() {
+		const keys: Record<string, string> = {};
+		if (smtpHost.trim()) keys.SMTP_HOST = smtpHost;
+		if (smtpPort.trim()) keys.SMTP_PORT = smtpPort;
+		if (smtpUsername.trim()) keys.SMTP_USERNAME = smtpUsername;
+		if (smtpPassword.trim()) keys.SMTP_PASSWORD = smtpPassword;
+		if (smtpSenderEmail.trim()) keys.SMTP_SENDER_EMAIL = smtpSenderEmail;
+		if (Object.keys(keys).length === 0) return;
+		await saveApiKeys(keys);
+		smtpPassword = '';
+	}
+
+	async function saveWebhookUrl() {
+		if (!webhookUrl.trim()) return;
+		await saveApiKeys({ WEBHOOK_URL: webhookUrl });
+	}
+
+	async function saveSuricataKey() {
+		if (!suricataEtProKey.trim()) return;
+		await saveApiKeys({ SURICATA_ET_PRO_KEY: suricataEtProKey });
+		suricataEtProKey = '';
+	}
 
 	async function saveRetention() {
 		saving = true;
@@ -56,6 +145,8 @@
 				}
 			})
 			.catch(() => {});
+
+		loadApiKeyStatus();
 	});
 </script>
 
@@ -90,6 +181,13 @@
 			onclick={() => (activeTab = 'network')}
 		>
 			Network
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'api-keys'}
+			onclick={() => (activeTab = 'api-keys')}
+		>
+			API Keys
 		</button>
 		<button
 			class="tab"
@@ -209,6 +307,145 @@
 					<label class="label" for="mgmt-iface">Management Interface</label>
 					<p class="field-help" id="mgmt-iface">The management interface is auto-detected. Access the dashboard via any IP assigned to this appliance on a non-bridge interface.</p>
 				</div>
+			</div>
+		</div>
+	{:else if activeTab === 'api-keys'}
+		<div class="settings-section">
+			{#if apiKeySaveMessage}
+				<div class="alert {apiKeySaveError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+					{apiKeySaveMessage}
+				</div>
+			{/if}
+
+			<!-- MaxMind GeoIP License Key -->
+			<div class="card" style="margin-bottom: var(--space-md);">
+				<div class="card-header">
+					<span class="card-title">MaxMind GeoIP License Key</span>
+					{#if apiKeyStatus.MAXMIND_LICENSE_KEY}
+						<span class="badge badge-success">Configured</span>
+					{:else}
+						<span class="badge badge-muted">Not Set</span>
+					{/if}
+				</div>
+				<div class="form-group">
+					<label class="label" for="maxmind-key">License Key</label>
+					<div class="password-field">
+						<input
+							class="input"
+							id="maxmind-key"
+							type={showMaxMind ? 'text' : 'password'}
+							bind:value={maxmindKey}
+							placeholder={apiKeyStatus.MAXMIND_LICENSE_KEY ? '********** (configured)' : 'Enter license key'}
+						/>
+						<button class="btn-toggle" type="button" onclick={() => (showMaxMind = !showMaxMind)}>
+							{showMaxMind ? 'Hide' : 'Show'}
+						</button>
+					</div>
+					<p class="field-help">Get a free license key at <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">maxmind.com/en/geolite2/signup</a></p>
+				</div>
+				<button class="btn btn-primary" onclick={saveMaxMindKey} disabled={apiKeySaving || !maxmindKey.trim()}>
+					{apiKeySaving ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+
+			<!-- SMTP Settings -->
+			<div class="card" style="margin-bottom: var(--space-md);">
+				<div class="card-header">
+					<span class="card-title">SMTP Settings</span>
+					{#if apiKeyStatus.SMTP_HOST && apiKeyStatus.SMTP_USERNAME}
+						<span class="badge badge-success">Configured</span>
+					{:else}
+						<span class="badge badge-muted">Not Set</span>
+					{/if}
+				</div>
+				<p class="field-help" style="margin-bottom: var(--space-md);">Required for email notifications and scheduled reports.</p>
+				<div class="smtp-grid">
+					<div class="form-group">
+						<label class="label" for="smtp-host">SMTP Host</label>
+						<input class="input" id="smtp-host" type="text" bind:value={smtpHost} placeholder={apiKeyStatus.SMTP_HOST ? '(configured)' : 'smtp.example.com'} />
+					</div>
+					<div class="form-group">
+						<label class="label" for="smtp-port">SMTP Port</label>
+						<input class="input" id="smtp-port" type="number" bind:value={smtpPort} min={1} max={65535} />
+					</div>
+					<div class="form-group">
+						<label class="label" for="smtp-username">SMTP Username</label>
+						<input class="input" id="smtp-username" type="text" bind:value={smtpUsername} placeholder={apiKeyStatus.SMTP_USERNAME ? '(configured)' : 'user@example.com'} />
+					</div>
+					<div class="form-group">
+						<label class="label" for="smtp-password">SMTP Password</label>
+						<div class="password-field">
+							<input
+								class="input"
+								id="smtp-password"
+								type={showSmtpPassword ? 'text' : 'password'}
+								bind:value={smtpPassword}
+								placeholder={apiKeyStatus.SMTP_PASSWORD ? '********** (configured)' : 'Enter password'}
+							/>
+							<button class="btn-toggle" type="button" onclick={() => (showSmtpPassword = !showSmtpPassword)}>
+								{showSmtpPassword ? 'Hide' : 'Show'}
+							</button>
+						</div>
+					</div>
+					<div class="form-group smtp-full-width">
+						<label class="label" for="smtp-sender">Sender Email</label>
+						<input class="input" id="smtp-sender" type="email" bind:value={smtpSenderEmail} placeholder={apiKeyStatus.SMTP_SENDER_EMAIL ? '(configured)' : 'nettap@example.com'} />
+					</div>
+				</div>
+				<button class="btn btn-primary" onclick={saveSmtpSettings} disabled={apiKeySaving}>
+					{apiKeySaving ? 'Saving...' : 'Save SMTP Settings'}
+				</button>
+			</div>
+
+			<!-- Webhook URL -->
+			<div class="card" style="margin-bottom: var(--space-md);">
+				<div class="card-header">
+					<span class="card-title">Webhook URL</span>
+					{#if apiKeyStatus.WEBHOOK_URL}
+						<span class="badge badge-success">Configured</span>
+					{:else}
+						<span class="badge badge-muted">Not Set</span>
+					{/if}
+				</div>
+				<div class="form-group">
+					<label class="label" for="webhook-url">Webhook Endpoint</label>
+					<input class="input" id="webhook-url" type="url" bind:value={webhookUrl} placeholder={apiKeyStatus.WEBHOOK_URL ? '(configured)' : 'https://hooks.example.com/nettap'} />
+					<p class="field-help">POST JSON payloads will be sent to this URL for alerts.</p>
+				</div>
+				<button class="btn btn-primary" onclick={saveWebhookUrl} disabled={apiKeySaving || !webhookUrl.trim()}>
+					{apiKeySaving ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+
+			<!-- Suricata Rule Update Token -->
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">Suricata Rule Update Token</span>
+					{#if apiKeyStatus.SURICATA_ET_PRO_KEY}
+						<span class="badge badge-success">Configured</span>
+					{:else}
+						<span class="badge badge-muted">Not Set</span>
+					{/if}
+				</div>
+				<div class="form-group">
+					<label class="label" for="suricata-key">ET Pro Key</label>
+					<div class="password-field">
+						<input
+							class="input"
+							id="suricata-key"
+							type={showSuricataKey ? 'text' : 'password'}
+							bind:value={suricataEtProKey}
+							placeholder={apiKeyStatus.SURICATA_ET_PRO_KEY ? '********** (configured)' : 'Enter ET Pro key'}
+						/>
+						<button class="btn-toggle" type="button" onclick={() => (showSuricataKey = !showSuricataKey)}>
+							{showSuricataKey ? 'Hide' : 'Show'}
+						</button>
+					</div>
+					<p class="field-help">Optional. Only needed for Emerging Threats Pro ruleset.</p>
+				</div>
+				<button class="btn btn-primary" onclick={saveSuricataKey} disabled={apiKeySaving || !suricataEtProKey.trim()}>
+					{apiKeySaving ? 'Saving...' : 'Save'}
+				</button>
 			</div>
 		</div>
 	{:else if activeTab === 'about'}
@@ -357,12 +594,71 @@
 		color: var(--text-primary);
 	}
 
+	/* API Keys tab */
+	.password-field {
+		display: flex;
+		gap: var(--space-xs);
+		align-items: center;
+	}
+
+	.password-field .input {
+		flex: 1;
+	}
+
+	.btn-toggle {
+		padding: var(--space-xs) var(--space-sm);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		white-space: nowrap;
+		transition: all var(--transition-fast);
+	}
+
+	.btn-toggle:hover {
+		color: var(--text-primary);
+		background: var(--bg-secondary);
+	}
+
+	.card-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.badge-muted {
+		font-size: var(--text-xs);
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		background: var(--bg-tertiary);
+		color: var(--text-muted);
+		font-weight: 500;
+	}
+
+	.smtp-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: var(--space-md);
+		margin-bottom: var(--space-lg);
+	}
+
+	.smtp-full-width {
+		grid-column: 1 / -1;
+	}
+
 	@media (max-width: 768px) {
 		.retention-grid {
 			grid-template-columns: 1fr;
 		}
 
 		.threshold-section {
+			grid-template-columns: 1fr;
+		}
+
+		.smtp-grid {
 			grid-template-columns: 1fr;
 		}
 	}

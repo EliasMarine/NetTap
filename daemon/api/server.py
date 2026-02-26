@@ -37,6 +37,10 @@ from api.risk import register_risk_routes
 from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
+from api.settings import register_settings_routes
+from api.search import register_search_routes
+from api.detection_packs import register_detection_pack_routes
+from api.reports import register_report_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -44,6 +48,9 @@ from services.risk_scoring import RiskScorer
 from services.device_baseline import DeviceBaseline
 from services.internet_health import InternetHealthMonitor
 from services.investigation_store import InvestigationStore
+from services.nl_search import NLSearchParser
+from services.detection_packs import DetectionPackManager
+from services.report_generator import ReportGenerator
 
 logger = logging.getLogger("nettap.api")
 
@@ -378,6 +385,31 @@ def create_app(
     )
     investigation_store = InvestigationStore(store_file=investigations_file)
     register_investigation_routes(app, investigation_store)
+
+    # Settings (API keys, env file management)
+    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/.env")
+    register_settings_routes(app, env_file=env_file)
+
+    # Natural language search (query parser + OpenSearch execution)
+    nl_search_parser = NLSearchParser()
+    register_search_routes(app, nl_search_parser, storage)
+
+    # Community detection packs (Suricata rule pack management)
+    packs_dir = os.environ.get(
+        "DETECTION_PACKS_DIR", "/opt/nettap/data/detection-packs"
+    )
+    detection_pack_manager = DetectionPackManager(packs_dir=packs_dir)
+    register_detection_pack_routes(app, detection_pack_manager)
+
+    # Scheduled reports (periodic network summary reports)
+    reports_dir = os.environ.get("REPORTS_DIR", "/opt/nettap/data/reports")
+    schedules_file = os.environ.get(
+        "REPORT_SCHEDULES_FILE", "/opt/nettap/data/report_schedules.json"
+    )
+    report_generator = ReportGenerator(
+        reports_dir=reports_dir, schedules_file=schedules_file
+    )
+    register_report_routes(app, report_generator)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

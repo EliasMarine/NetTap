@@ -884,10 +884,10 @@ docs/
 
 | # | Task | Size | Status | Files |
 |---|------|------|--------|-------|
-| 4B.29 | Natural Language Search (query parser + UI) | L | [ ] Todo | `daemon/services/nl_search.py`, search component |
-| 4B.30 | Community Detection Packs (install/manage/update) | L | [ ] Todo | `daemon/services/detection_packs.py`, settings UI |
-| 4B.31 | Scheduled PDF/Email Reports (weekly/monthly) | L | [ ] Todo | `daemon/services/report_generator.py`, settings UI |
-| 4B.32 | Advanced feature tests | M | [ ] Todo | All test files for E1-E3 |
+| 4B.29 | Natural Language Search (query parser + UI) | L | [x] Done | `nl_search.py` (13 patterns), `SearchBar.svelte` (typeahead, keyboard nav) |
+| 4B.30 | Community Detection Packs (install/manage/update) | L | [x] Done | `detection_packs.py` (5 builtin packs), 9 API endpoints |
+| 4B.31 | Scheduled PDF/Email Reports (weekly/monthly) | L | [x] Done | `report_generator.py` (daily/weekly/monthly, 5 sections, 3 formats) |
+| 4B.32 | Advanced feature tests + API Key Settings | M | [x] Done | 203 daemon tests + 36 web tests + API Keys settings tab |
 
 ---
 
