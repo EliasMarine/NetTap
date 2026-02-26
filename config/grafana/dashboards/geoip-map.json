@@ -1,0 +1,392 @@
+{
+  "uid": "nettap-geoip-map",
+  "title": "GeoIP World Map",
+  "description": "Geographic visualization of network connections — country distribution, ASN analysis, and connection origins.",
+  "tags": ["nettap", "geoip", "map", "security"],
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+  },
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Connection Origins — World Map",
+      "type": "geomap",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 14 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#73BF69", "value": null },
+              { "color": "#FADE2A", "value": 50 },
+              { "color": "#FF9830", "value": 200 },
+              { "color": "#F2495C", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "view": {
+          "id": "zero",
+          "lat": 20,
+          "lon": 0,
+          "zoom": 2
+        },
+        "basemap": {
+          "type": "dark",
+          "name": "Dark"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "Connections",
+            "config": {
+              "showLegend": true,
+              "style": {
+                "color": {
+                  "field": "Count",
+                  "fixed": "#F2495C"
+                },
+                "opacity": 0.7,
+                "size": {
+                  "field": "Count",
+                  "min": 4,
+                  "max": 30
+                },
+                "symbol": {
+                  "fixed": "img/icons/marker/circle.svg"
+                }
+              }
+            },
+            "location": {
+              "mode": "auto"
+            }
+          }
+        ],
+        "controls": {
+          "showZoom": true,
+          "mouseWheelZoom": true,
+          "showAttribution": false,
+          "showScale": true
+        },
+        "tooltip": {
+          "mode": "details"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "_exists_:destination.geo.location",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "geohash_grid",
+              "field": "destination.geo.location",
+              "settings": {
+                "precision": "3"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Top Countries",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 14, "w": 8, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "donut",
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": ["value", "percent"]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "_exists_:destination.geo.country_name",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "destination.geo.country_name",
+              "settings": {
+                "size": "15",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Top ASNs",
+      "type": "bargauge",
+      "gridPos": { "x": 8, "y": 14, "w": 8, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-BlYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "_exists_:destination.as.organization.name",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "destination.as.organization.name",
+              "settings": {
+                "size": "15",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Connections by Country",
+      "type": "table",
+      "gridPos": { "x": 16, "y": 14, "w": 8, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "destination.geo.country_name" },
+            "properties": [
+              { "id": "displayName", "value": "Country" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Count" },
+            "properties": [
+              { "id": "displayName", "value": "Connections" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Sum orig_bytes" },
+            "properties": [
+              { "id": "displayName", "value": "Bytes Sent" },
+              { "id": "unit", "value": "decbytes" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Sum resp_bytes" },
+            "properties": [
+              { "id": "displayName", "value": "Bytes Received" },
+              { "id": "unit", "value": "decbytes" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "Connections",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "_exists_:destination.geo.country_name",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            },
+            {
+              "id": "2",
+              "type": "sum",
+              "field": "orig_bytes"
+            },
+            {
+              "id": "3",
+              "type": "sum",
+              "field": "resp_bytes"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "4",
+              "type": "terms",
+              "field": "destination.geo.country_name",
+              "settings": {
+                "size": "25",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_OPENSEARCH_ZEEK",
+        "type": "datasource",
+        "query": "grafana-opensearch-datasource",
+        "current": {
+          "text": "OpenSearch-Zeek",
+          "value": "OpenSearch-Zeek"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": "/.*Zeek.*/"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  }
+}
