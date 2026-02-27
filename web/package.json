@@ -20,7 +20,7 @@
 		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/svelte": "^5.0.0",
 		"@types/jsonwebtoken": "^9.0.0",
-		"jsdom": "^25.0.0",
+		"jsdom": "^28.1.0",
 		"svelte": "^5.51.0",
 		"svelte-check": "^4.3.6",
 		"tslib": "^2.7.0",
