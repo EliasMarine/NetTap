@@ -111,8 +111,9 @@ services:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      # Use curlrc for authentication — Malcolm's security plugin requires credentials
-      test: ["CMD-SHELL", "curl -sf -K /var/local/curlrc/.opensearch.primary.curlrc https://localhost:9200/_cluster/health || exit 1"]
+      # Use Malcolm's built-in health script — it reads OPENSEARCH_CREDS_CONFIG_FILE,
+      # adds --insecure explicitly, and checks the right endpoint.
+      test: ["CMD", "/usr/local/bin/container_health.sh"]
       start_period: 180s
 
   # ========================================================================

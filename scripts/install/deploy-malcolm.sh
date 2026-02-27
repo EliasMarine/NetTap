@@ -160,16 +160,21 @@ start_services() {
 
     log "Containers starting. Waiting for OpenSearch to be healthy..."
 
-    # Wait for OpenSearch (it takes the longest to start)
+    # Wait for OpenSearch (it takes the longest to start).
+    # Uses Malcolm's built-in container_health.sh which reads the curlrc for auth
+    # and uses --insecure for self-signed certs.
     if ! retry 60 10 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-        curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
+        /usr/local/bin/container_health.sh > /dev/null 2>&1; then
 
-        # Fallback: check from host via nginx-proxy on localhost:9200
-        if ! retry 30 10 curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
+        # Fallback: check via curlrc auth from inside the container
+        if ! retry 30 10 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+            curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+            --insecure --silent --output /dev/null --fail \
+            "https://localhost:9200" > /dev/null 2>&1; then
             warn "OpenSearch did not become healthy within expected time."
             warn "It may still be initializing. Check with: docker logs nettap-opensearch"
         else
-            log "OpenSearch is healthy (via nginx-proxy)"
+            log "OpenSearch is healthy (via fallback curl)"
         fi
     else
         log "OpenSearch is healthy"
