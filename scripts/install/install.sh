@@ -473,28 +473,28 @@ step_verify() {
         # Docker check
         if docker info &>/dev/null; then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} Docker is running"
-            (( checks_passed++ ))
+            (( ++checks_passed ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} Docker is not running"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
 
         # Systemd check
         if systemctl is-enabled nettap.service &>/dev/null; then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} nettap.service enabled"
-            (( checks_passed++ ))
+            (( ++checks_passed ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} nettap.service not enabled"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
 
         # mDNS check
         if systemctl is-active avahi-daemon &>/dev/null; then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
-            (( checks_passed++ ))
+            (( ++checks_passed ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} Avahi mDNS not running"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
 
         # Kernel tuning check
@@ -502,10 +502,10 @@ step_verify() {
         map_count=$(sysctl -n vm.max_map_count 2>/dev/null) || map_count=0
         if (( map_count >= 262144 )); then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} vm.max_map_count = ${map_count}"
-            (( checks_passed++ ))
+            (( ++checks_passed ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} vm.max_map_count = ${map_count} (should be >= 262144)"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
 
         local elapsed=$(( $(date +%s) - INSTALL_START_TIME ))
@@ -562,23 +562,23 @@ step_verify() {
     # Bridge check
     if ip link show br0 &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge br0 exists"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         if [[ "$SKIP_BRIDGE" == "true" ]]; then
             echo "${_CLR_YLW}[SKIP]${_CLR_RST} Bridge check skipped"
         else
             echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge br0 not found"
-            (( checks_failed++ ))
+            (( ++checks_failed ))
         fi
     fi
 
     # Docker check
     if docker info &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Docker is running"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_RED}[FAIL]${_CLR_RST} Docker is not running"
-        (( checks_failed++ ))
+        (( ++checks_failed ))
     fi
 
     # Container check
@@ -587,10 +587,10 @@ step_verify() {
         running=$(docker compose -f "${PROJECT_ROOT}/docker/docker-compose.yml" ps -q 2>/dev/null | wc -l) || running=0
         if (( running > 0 )); then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${running} container(s) running"
-            (( checks_passed++ ))
+            (( ++checks_passed ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} No containers detected (may still be starting)"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
 
         # OpenSearch check
@@ -599,33 +599,33 @@ step_verify() {
             health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
             if [[ "$health" == "green" || "$health" == "yellow" ]]; then
                 echo "${_CLR_GRN}[ OK ]${_CLR_RST} OpenSearch cluster health: ${health}"
-                (( checks_passed++ ))
+                (( ++checks_passed ))
             else
                 echo "${_CLR_YLW}[WARN]${_CLR_RST} OpenSearch cluster health: ${health}"
-                (( checks_warned++ ))
+                (( ++checks_warned ))
             fi
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} OpenSearch not responding yet (may need a few minutes)"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
     fi
 
     # Systemd check
     if systemctl is-enabled nettap.service &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} nettap.service enabled"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} nettap.service not enabled"
-        (( checks_warned++ ))
+        (( ++checks_warned ))
     fi
 
     # mDNS check
     if systemctl is-active avahi-daemon &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Avahi mDNS not running"
-        (( checks_warned++ ))
+        (( ++checks_warned ))
     fi
 
     # Kernel tuning check
@@ -633,10 +633,10 @@ step_verify() {
     map_count=$(sysctl -n vm.max_map_count 2>/dev/null) || map_count=0
     if (( map_count >= 262144 )); then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} vm.max_map_count = ${map_count}"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} vm.max_map_count = ${map_count} (should be >= 262144)"
-        (( checks_warned++ ))
+        (( ++checks_warned ))
     fi
 
     # Summary

@@ -108,7 +108,7 @@ validate_cables() {
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${role} (${iface}): cable detected"
         else
             echo "${_CLR_RED}[FAIL]${_CLR_RST} ${role} (${iface}): no cable detected"
-            (( failed++ ))
+            (( ++failed ))
         fi
     done
 
@@ -190,10 +190,10 @@ verify() {
 
     # Bridge validation
     if "${SCRIPT_DIR}/../bridge/setup-bridge.sh" --validate-only 2>/dev/null; then
-        (( ok++ ))
+        (( ++ok ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Bridge validation reported issues (see above)"
-        (( fail++ ))
+        (( ++fail ))
     fi
 
     # Container count (only if services were started)
@@ -202,10 +202,10 @@ verify() {
         running=$(docker compose -f "$COMPOSE_FILE" ps -q 2>/dev/null | wc -l) || running=0
         if (( running > 0 )); then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${running} container(s) running"
-            (( ok++ ))
+            (( ++ok ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} No containers detected yet"
-            (( fail++ ))
+            (( ++fail ))
         fi
     fi
 
