@@ -15,7 +15,7 @@
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.0.0",
-		"@sveltejs/kit": "^2.50.2",
+		"@sveltejs/kit": "^2.53.3",
 		"@sveltejs/vite-plugin-svelte": "^6.2.4",
 		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/svelte": "^5.0.0",
@@ -31,5 +31,8 @@
 	"dependencies": {
 		"argon2": "^0.41.0",
 		"jsonwebtoken": "^9.0.0"
+	},
+	"overrides": {
+		"cookie": "^0.7.0"
 	}
 }
