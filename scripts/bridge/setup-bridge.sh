@@ -513,9 +513,12 @@ NM_EOF
 
     # ---- Drop-in override for netplan-generated bridge config ----
     # netplan generates /run/systemd/network/10-netplan-br0.network.
-    # Drop-in directories in /etc/ override matching files in /run/.
-    # This ensures ConfigureWithoutCarrier=yes + RequiredForOnline=no
-    # are applied even if netplan regenerates its file.
+    # Drop-in directories in /etc/ layer on top of matching files in /run/.
+    #
+    # ConfigureWithoutCarrier=yes alone only means "don't drop config when
+    # carrier is lost" — it does NOT keep the admin state UP. We need
+    # ActivationPolicy=always-up to explicitly tell networkd to keep the
+    # bridge link UP regardless of carrier state.
     dropin_dir="/etc/systemd/network/10-netplan-${BRIDGE_NAME}.network.d"
     mkdir -p "$dropin_dir"
     cat > "${dropin_dir}/nettap.conf" <<DROPIN_EOF
@@ -527,43 +530,65 @@ LinkLocalAddressing=no
 
 [Link]
 RequiredForOnline=no
+ActivationPolicy=always-up
 DROPIN_EOF
     log "networkd drop-in override installed at ${dropin_dir}/nettap.conf"
 
     # ---- Apply netplan ----
-    # netplan apply restarts systemd-networkd asynchronously.
-    # We must wait for networkd to settle before checking bridge state.
+    # netplan apply regenerates /run/systemd/network/ files and restarts
+    # networkd asynchronously. We then explicitly restart networkd to
+    # guarantee the drop-in override in /etc/ is fully re-read.
     run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
 
-    # ---- Wait for networkd to settle after async restart ----
+    # Force networkd to fully re-read all configs including our drop-in.
+    # netplan apply may only trigger a reload, which might not pick up
+    # new drop-in directories.
+    debug "Restarting systemd-networkd to apply drop-in override..."
+    systemctl restart systemd-networkd 2>/dev/null || true
+
+    # ---- Wait for networkd to settle after restart ----
     log "Waiting for systemd-networkd to settle..."
     settle_ok="false"
-    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
         # networkctl shows "configuring" while still processing
         nctl_state=""
         nctl_state=$(networkctl status "$BRIDGE_NAME" 2>/dev/null \
             | grep -i "state:" | head -1 \
             | sed 's/.*State: *//;s/ .*//' ) || nctl_state="unknown"
-        debug "networkd settle attempt ${attempt}: bridge state='${nctl_state}'"
+
+        # Also check admin state via ip link
+        admin_state=""
+        admin_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || admin_state="UNKNOWN"
+        debug "networkd settle attempt ${attempt}: networkctl='${nctl_state}' admin='${admin_state}'"
 
         if [[ "$nctl_state" != "configuring" && "$nctl_state" != "pending" ]]; then
             settle_ok="true"
-            break
+            # If already UP or UNKNOWN (no-carrier but UP), we're done
+            if [[ "$admin_state" == "UP" || "$admin_state" == "UNKNOWN" ]]; then
+                debug "Bridge is already UP after networkd settle"
+                break
+            fi
+            # networkd settled but bridge still DOWN — give it a couple more seconds
+            # as ActivationPolicy=always-up may take a moment to apply
+            if (( attempt >= 3 )); then
+                break
+            fi
         fi
         sleep 1
     done
 
     if [[ "$settle_ok" != "true" ]]; then
-        warn "networkd did not fully settle within 10s — continuing anyway"
+        warn "networkd did not fully settle within 15s — continuing anyway"
     fi
 
     # ---- Bring bridge UP with retry ----
     # After networkd settles, explicitly ensure the bridge is UP.
-    # networkd may have set it DOWN during its reconfiguration cycle.
+    # With ActivationPolicy=always-up, networkd should keep it UP,
+    # but we double-check and retry in case of timing issues.
     bridge_up="false"
     for attempt in 1 2 3 4 5; do
         ip link set "$BRIDGE_NAME" up 2>/dev/null || true
-        sleep 0.5
+        sleep 1
         current_state=""
         current_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || current_state="MISSING"
         debug "Bridge UP attempt ${attempt}: state='${current_state}'"
@@ -576,6 +601,11 @@ DROPIN_EOF
 
     if [[ "$bridge_up" != "true" ]]; then
         warn "Bridge may not be fully UP yet — final validation will check"
+        # Last resort: dump diagnostics for debugging
+        debug "networkctl status ${BRIDGE_NAME}:"
+        networkctl status "$BRIDGE_NAME" 2>/dev/null | while IFS= read -r line; do debug "  $line"; done || true
+        debug "Drop-in content:"
+        cat "${dropin_dir}/nettap.conf" 2>/dev/null | while IFS= read -r line; do debug "  $line"; done || true
     fi
 
     log "Persistence configuration complete — bridge will survive reboot"
