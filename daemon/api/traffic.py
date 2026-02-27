@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from services.traffic_classifier import get_category_stats, get_category_label
+from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.traffic")

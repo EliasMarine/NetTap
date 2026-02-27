@@ -5,7 +5,6 @@ Registers TShark-related endpoints with the aiohttp application.
 These endpoints provide on-demand packet analysis via the containerized TShark service.
 """
 
-import asyncio
 import logging
 from aiohttp import web
 

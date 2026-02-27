@@ -5,8 +5,6 @@ Provides mocked OpenSearch clients, sample index data, retention configs,
 sample smartctl JSON outputs, and filesystem helpers.
 """
 
-import json
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest

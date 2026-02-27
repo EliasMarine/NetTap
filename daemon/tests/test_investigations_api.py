@@ -6,7 +6,6 @@ all CRUD endpoints, notes management, alert linking, device linking,
 and statistics.
 """
 
-import json
 import os
 import tempfile
 import unittest

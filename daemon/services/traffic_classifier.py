@@ -412,7 +412,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     # Classify by service (for bytes aggregation)
     for bucket in service_buckets:
         service_name = bucket.get("key", "")
-        doc_count = bucket.get("doc_count", 0)
+        bucket.get("doc_count", 0)
         total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
         cat = classify_by_service(service_name)
 

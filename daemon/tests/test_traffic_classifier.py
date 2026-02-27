@@ -22,10 +22,6 @@ from services.traffic_classifier import (
     classify_connection,
     get_category_label,
     get_category_stats,
-    CATEGORIES,
-    DOMAIN_RULES,
-    PORT_RULES,
-    SERVICE_RULES,
 )
 
 

@@ -11,7 +11,7 @@ import asyncio
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import MagicMock
 from datetime import datetime, timezone
 
 # Ensure the daemon package is importable

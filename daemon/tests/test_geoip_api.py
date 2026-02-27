@@ -6,9 +6,7 @@ Tests cover single IP lookup, batch lookup, validation, error handling,
 and edge cases.
 """
 
-import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
 
 import sys
 import os
