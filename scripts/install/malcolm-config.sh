@@ -211,12 +211,29 @@ calculate_heap_sizes() {
 generate_compose_env() {
     local env_file="${PROJECT_ROOT}/docker/.env"
 
+    # If existing .env has PUID=0, it was generated under sudo and needs
+    # regeneration — OpenSearch refuses to run as root.
+    if [[ -f "$env_file" ]] && grep -q '^PUID=0$' "$env_file"; then
+        warn "Existing .env has PUID=0 (root) — regenerating with non-root UID"
+        rm -f "$env_file"
+    fi
+
     if [[ -f "$env_file" ]]; then
         log "Docker .env already exists at ${env_file}, skipping generation"
         return 0
     fi
 
     calculate_heap_sizes
+
+    # Determine non-root UID/GID for container processes.
+    # Install runs under sudo, so id -u returns 0. Use SUDO_UID (the real
+    # user who invoked sudo) or fall back to 1000 (Malcolm's default).
+    local puid="${SUDO_UID:-1000}"
+    local pgid="${SUDO_GID:-1000}"
+    if (( puid == 0 )); then
+        puid=1000
+        pgid=1000
+    fi
 
     log "Generating docker-compose .env file..."
     cat > "$env_file" <<ENVEOF
@@ -229,9 +246,9 @@ generate_compose_env() {
 MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
 MALCOLM_IMAGE_TAG=26.02.0
 
-# Process ownership
-PUID=$(id -u 2>/dev/null || echo 1000)
-PGID=$(id -g 2>/dev/null || echo 1000)
+# Process ownership (must be non-root — OpenSearch refuses to run as UID 0)
+PUID=${puid}
+PGID=${pgid}
 
 # Network capture interface
 PCAP_IFACE=${PCAP_IFACE:-br0}
