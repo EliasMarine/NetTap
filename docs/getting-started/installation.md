@@ -2,7 +2,7 @@
 
 This guide walks through the full NetTap installation process using the automated install script.
 
-NetTap uses a three-phase workflow: **Install** (with internet) → **Rewire** (physical cables) → **Activate** (bridge + capture). This ensures you maintain internet access throughout the software installation.
+NetTap uses a two-phase workflow: **Install** (with internet, bridge activates automatically) → **Rewire** (physical cables, traffic flows immediately). The bridge activates during install with no cables — it sits idle until you plug in. This means you never lose your management connection.
 
 ---
 
@@ -83,8 +83,8 @@ Then the installer runs through its steps automatically:
 | **0. Pre-flight** | Validates root access, OS version, architecture, and hardware (CPU, RAM, disk, NICs) |
 | **1. Dependencies** | Installs Docker, bridge-utils, net-tools, ethtool, smartmontools, Python 3, Avahi |
 | **2. Kernel tuning** | Sets `vm.max_map_count=262144` (required by OpenSearch), increases network buffer sizes |
-| **3. Bridge setup** | **Deferred** by default — bridge activates after cable rewiring |
-| **4. Malcolm deploy** | Pulls Malcolm container images and generates TLS certificates (services not started yet) |
+| **3. Bridge setup** | Creates the transparent `br0` bridge between WAN and LAN NICs (no cables needed yet) |
+| **4. Malcolm deploy** | Pulls Malcolm container images, generates TLS certificates, and starts services |
 | **5. Systemd** | Installs and enables `nettap.service` for automatic start on boot |
 | **6. mDNS** | Configures Avahi so the dashboard is accessible at `nettap.local` |
 | **7. Firewall** | Adds UFW rules for the dashboard port, Malcolm port, and mDNS (if UFW is active) |
@@ -94,19 +94,22 @@ At the end, the installer prints rewiring instructions:
 
 ```
 ==========================================
-  NEXT STEPS — Physical Rewiring
+  INSTALL COMPLETE — Now Rewire Cables
 ==========================================
+
+The bridge is active and services are running.
+Plug in your cables — traffic will flow immediately.
 
 1. Plug ISP modem  --> enp2s0 (WAN)
 2. Plug enp3s0 (LAN) --> Router WAN port
-3. Keep enp1s0 (MGMT) connected for dashboard
+3. Keep enp1s0 (MGMT) connected for dashboard access
 
    [ISP Modem] --> [enp2s0] ==BRIDGE== [enp3s0] --> [Router]
                             NetTap
    [enp1s0 MGMT] --> dashboard at https://nettap.local
-
-Then run:  sudo scripts/install/activate-bridge.sh
 ```
+
+No additional commands are needed — just plug in the cables and traffic flows.
 
 ### Installer Options
 
@@ -116,7 +119,7 @@ sudo scripts/install/install.sh [OPTIONS]
 
 | Option | Description |
 |---|---|
-| `--immediate-bridge` | Activate bridge during install (old behavior, skips defer) |
+| `--defer-bridge` | Defer bridge activation until after cable rewiring (requires `activate-bridge.sh`) |
 | `--non-interactive` | Auto-assign NICs without prompts |
 | `--reconfigure-nics` | Force NIC re-discovery even if `.env` has values |
 | `--skip-bridge` | Skip bridge configuration entirely |
@@ -130,11 +133,13 @@ sudo scripts/install/install.sh [OPTIONS]
 
 ## Phase 2: Rewire (physical cables)
 
-After the installer completes, physically rewire your cables according to the diagram printed at the end of installation:
+After the installer completes, physically rewire your cables according to the diagram printed at the end of installation. The bridge is already active, so traffic flows immediately when both cables are connected:
 
 1. **ISP modem** → plug into the **WAN** NIC
 2. **LAN** NIC → plug into the **router's WAN** port
-3. Keep the **MGMT** NIC connected for dashboard access
+3. Keep the **MGMT** NIC (or Wi-Fi) connected for dashboard access
+
+Wi-Fi downtime is only the ~30 seconds it takes to physically swap two cables.
 
 !!! tip "Identifying ports"
     During NIC discovery, you can blink a NIC's LEDs to identify which physical port it corresponds to. If you missed this step, run:
@@ -145,45 +150,9 @@ After the installer completes, physically rewire your cables according to the di
 
 ---
 
-## Phase 3: Activate (bridge + capture)
-
-After rewiring cables, activate the bridge and start services:
-
-```bash
-sudo scripts/install/activate-bridge.sh
-```
-
-This will:
-
-1. **Validate cables** — checks carrier status on WAN and LAN NICs
-2. **Activate bridge** — creates the transparent `br0` bridge between WAN and LAN
-3. **Start services** — launches Docker containers and waits for OpenSearch health
-
-```
-[ OK ] WAN (enp2s0): cable detected
-[ OK ] LAN (enp3s0): cable detected
-[ OK ] MGMT (enp1s0): cable detected
-Activating bridge... done.
-Starting services... done.
-
-NetTap is now capturing traffic!
-Dashboard: https://nettap.local
-```
-
-### Activate Bridge Options
-
-| Option | Description |
-|---|---|
-| `--force` | Skip cable carrier validation |
-| `--skip-services` | Activate bridge only, don't start Docker services |
-| `--dry-run` | Log actions without executing |
-| `-v, --verbose` | Enable debug output |
-
----
-
 ## Verify Installation
 
-After activation, you should see all services running:
+After rewiring, you should see all services running:
 
 ```bash
 docker compose -f docker/docker-compose.yml ps
@@ -260,6 +229,33 @@ Or during a full re-install:
 ```bash
 sudo scripts/install/install.sh --reconfigure-nics
 ```
+
+---
+
+## Deferred Bridge Mode (Advanced)
+
+If you prefer the old three-phase workflow (install → rewire → activate), use `--defer-bridge`:
+
+```bash
+sudo scripts/install/install.sh --defer-bridge
+```
+
+This defers bridge activation and service startup until you explicitly run:
+
+```bash
+sudo scripts/install/activate-bridge.sh
+```
+
+The activation script validates cable carrier status, creates the bridge, and starts all services. Options:
+
+| Option | Description |
+|---|---|
+| `--force` | Skip cable carrier validation |
+| `--skip-services` | Activate bridge only, don't start Docker services |
+| `--dry-run` | Log actions without executing |
+| `-v, --verbose` | Enable debug output |
+
+`activate-bridge.sh` is also useful for troubleshooting — if you need to re-create the bridge or restart services after the initial install.
 
 ---
 

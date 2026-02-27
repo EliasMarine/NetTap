@@ -23,14 +23,15 @@ The installer will:
 1. **Discover your NICs** — shows a table of all interfaces with speed, MAC, and link status
 2. **Let you assign roles** — pick which NIC is WAN (modem side), LAN (router side), and Management (dashboard). You can blink LEDs to identify ports.
 3. **Install everything** — system dependencies, Docker images (~5 GB), systemd services, mDNS
-4. **Print a wiring diagram** — tells you exactly which cable goes where
+4. **Activate the bridge** — the bridge starts immediately (with no cables, it just sits idle)
+5. **Print a wiring diagram** — tells you exactly which cable goes where
 
 !!! tip "Only have 2 wired NICs?"
     If your box has Wi-Fi, NetTap automatically uses it as the management interface. Both wired NICs go to the bridge — no third Ethernet port required.
 
 ## 2. Rewire Cables
 
-Follow the wiring diagram printed by the installer:
+Follow the wiring diagram printed by the installer. Traffic flows immediately when both cables are plugged in — no additional commands needed:
 
 ```
 [ISP Modem] --> [WAN NIC] ==BRIDGE== [LAN NIC] --> [Router]
@@ -42,15 +43,9 @@ Follow the wiring diagram printed by the installer:
 2. Plug the **LAN** NIC into your router's WAN port
 3. Keep your **MGMT** NIC (or Wi-Fi) connected for dashboard access
 
-## 3. Activate
+Wi-Fi downtime is only the ~30 seconds it takes to physically swap two cables.
 
-```bash
-sudo scripts/install/activate-bridge.sh
-```
-
-This validates your cables are plugged in, activates the bridge, and starts all services.
-
-## 4. Access the Dashboard
+## 3. Access the Dashboard
 
 Open your browser to:
 
@@ -63,7 +58,7 @@ Or use the management IP (e.g., `https://192.168.1.100`).
 !!! note
     Accept the self-signed certificate warning in your browser. The [Setup Wizard](first-run-wizard.md) will guide you through any remaining configuration.
 
-## 5. Wait for Data
+## 4. Wait for Data
 
 Give the system 5--10 minutes to start collecting and indexing data. You should see:
 
@@ -76,15 +71,17 @@ Give the system 5--10 minutes to start collecting and indexing data. You should 
 
 ## What Just Happened?
 
-The installer and activation scripts:
+The installer:
 
 1. Discovered your NICs and assigned roles (MGMT, WAN, LAN)
 2. Installed Docker, bridge utilities, and Python dependencies
 3. Tuned kernel parameters for OpenSearch and high-throughput packet capture
-4. Pulled and deployed 15+ containers (Zeek, Suricata, Arkime, OpenSearch, and more)
-5. Created a transparent Layer 2 bridge (`br0`) between your WAN and LAN NICs
+4. Created a transparent Layer 2 bridge (`br0`) between your WAN and LAN NICs
+5. Pulled and deployed 15+ containers (Zeek, Suricata, Arkime, OpenSearch, and more)
 6. Registered `nettap.service` in systemd for automatic startup on boot
 7. Configured mDNS so you can reach the dashboard at `nettap.local`
+
+When you plugged in the cables, the bridge immediately began forwarding traffic and the capture services started collecting data.
 
 ---
 
@@ -124,6 +121,9 @@ This is normal for a single-node deployment. Yellow means all primary shards are
 ```bash
 # Validate the bridge
 sudo scripts/bridge/setup-bridge.sh --validate-only
+
+# Re-activate the bridge and restart services
+sudo scripts/install/activate-bridge.sh
 ```
 
 See [Troubleshooting](../admin-guide/troubleshooting.md) for more.

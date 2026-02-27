@@ -52,25 +52,20 @@ NetTap creates a transparent Layer 2 bridge between two NICs. Traffic flows thro
 
 ## Quick Start
 
-NetTap uses a three-phase install so you keep internet access throughout:
-
 ```bash
-# 1. INSTALL — clone, install deps, pull Docker images (internet required)
+# 1. INSTALL — clone, install deps, activate bridge (internet required)
 git clone https://github.com/EliasMarine/NetTap.git
 cd NetTap
 sudo scripts/install/install.sh
 
 # The installer discovers your NICs, lets you assign roles (MGMT/WAN/LAN),
-# installs everything, then prints a wiring diagram.
+# installs everything, activates the bridge, and prints a wiring diagram.
 
-# 2. REWIRE — plug cables per the diagram:
+# 2. REWIRE — plug cables per the diagram. Traffic flows immediately.
 #    ISP Modem → WAN NIC → [NetTap bridge] → LAN NIC → Router
-
-# 3. ACTIVATE — start the bridge and services
-sudo scripts/install/activate-bridge.sh
 ```
 
-The installer auto-detects your NICs (with LED blink to identify ports), assigns them to roles, and defers bridge activation until after you rewire cables. Access the dashboard at `https://nettap.local`.
+The installer auto-detects your NICs (with LED blink to identify ports), assigns them to roles, and activates the bridge during install. A bridge with no cables just sits idle — the moment you plug in both cables, traffic flows immediately. Access the dashboard at `https://nettap.local`.
 
 ## Tech Stack
 
