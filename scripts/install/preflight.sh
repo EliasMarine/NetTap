@@ -166,12 +166,16 @@ print_rewiring_guide() {
     echo "  2. Plug ${lan} (LAN) --> Router WAN port"
     if [[ -n "$mgmt" ]]; then
         echo "  3. Keep ${mgmt} (MGMT) connected for dashboard"
+    else
+        echo "  3. Keep Wi-Fi connected — it's your dashboard access"
     fi
     echo ""
     echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
     echo "                              NetTap"
     if [[ -n "$mgmt" ]]; then
         echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    else
+        echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
     fi
     echo ""
     echo "  Then run:  sudo scripts/install/activate-bridge.sh"
