@@ -150,7 +150,13 @@ generate_config() {
 start_services() {
     log "Starting NetTap services..."
 
-    # Start the stack
+    # Build custom images first (with visible progress)
+    # BuildKit hides output by default — use plain progress so users can
+    # see what npm/pip/apt are doing during long builds.
+    log "Building custom NetTap images (web, daemon, tshark, cyberchef)..."
+    BUILDKIT_PROGRESS=plain run docker compose -f "$COMPOSE_FILE" build
+
+    # Start the stack (images already built, this just creates containers)
     run docker compose -f "$COMPOSE_FILE" up -d
 
     log "Containers starting. Waiting for OpenSearch to be healthy..."
