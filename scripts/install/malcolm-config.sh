@@ -166,7 +166,12 @@ user: "malcolm_internal:${os_password}"
 insecure
 CURLRC
 
-    chmod 600 "$curlrc_file"
+    # File must be world-readable: Malcolm's entrypoint drops privileges to the
+    # opensearch user (PUID) BEFORE reading this file via setup-internal-users.sh.
+    # With root:root 600, the opensearch user cannot read the credentials, causing
+    # the security plugin to initialize without valid certs or users.
+    # The file is already in a gitignored directory and mounted :ro in containers.
+    chmod 644 "$curlrc_file"
     log "OpenSearch credentials generated in ${curlrc_dir}"
 }
 
