@@ -167,9 +167,19 @@ step_dependencies() {
 
     run apt-get update -qq
 
-    # Core packages (without compose — handled separately below)
+    # Docker — detect if docker-ce (official repo) is already installed.
+    # docker-ce and docker.io conflict; install whichever isn't present.
+    if dpkg -l docker-ce 2>/dev/null | grep -q "^ii"; then
+        log "Docker CE (official) already installed, skipping docker.io"
+    elif dpkg -l docker.io 2>/dev/null | grep -q "^ii"; then
+        log "docker.io already installed"
+    else
+        # Neither installed — prefer docker.io (Ubuntu native)
+        run apt-get install -y -qq docker.io
+    fi
+
+    # Non-Docker core packages
     run apt-get install -y -qq \
-        docker.io \
         bridge-utils \
         net-tools \
         ethtool \
@@ -185,10 +195,14 @@ step_dependencies() {
         gnupg
 
     # Docker Compose plugin — package name varies by source:
-    #   docker-compose-plugin  (Docker official repo)
-    #   docker-compose-v2      (Ubuntu 24.04+ universe)
-    # Try both; at least one must succeed.
-    if ! apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+    #   docker-compose-plugin  (Docker official repo / docker-ce)
+    #   docker-compose-v2      (Ubuntu 24.04+ universe / docker.io)
+    # Skip if already available (docker-ce bundles it).
+    if docker compose version &>/dev/null; then
+        debug "Docker Compose already available, skipping plugin install"
+    elif apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+        true  # installed from Docker official repo
+    else
         log "docker-compose-plugin not found, trying docker-compose-v2..."
         run apt-get install -y -qq docker-compose-v2
     fi
