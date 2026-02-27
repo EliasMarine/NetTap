@@ -686,6 +686,32 @@ Deduplication: In-memory LRU cache keyed by `${signature_id}:${src_ip}:${dest_ip
 
 **Timeline:** Weeks 9-11
 **Estimated Effort:** 50-70 hours
+**Status:** COMPLETE
+
+### Completion Summary
+
+| # | Task | Status |
+|---|------|--------|
+| 5.1 | CI workflow: `ci.yml` (shellcheck, ruff, eslint, pytest, vitest, docker build) | [x] Done |
+| 5.2 | CI workflow: `integration.yml` (OpenSearch service, integration tests) | [x] Done |
+| 5.3 | CI workflow: `release.yml` (tag-triggered Docker + GitHub Release) | [x] Done |
+| 5.4 | CI workflow: `security.yml` (pip-audit, npm audit, Trivy, gitleaks) | [x] Done |
+| 5.5 | CI workflow: `docs.yml` (MkDocs build + GitHub Pages deploy) | [x] Done |
+| 5.6 | CI workflow: `stale.yml` (auto-close stale issues/PRs) | [x] Done |
+| 5.7 | `dependabot.yml` (weekly dependency updates) | [x] Done |
+| 5.8 | MkDocs Material documentation site (28 pages, 5 sections) | [x] Done |
+| 5.9 | GitHub issue templates (bug, feature, hardware report) | [x] Done |
+| 5.10 | `PULL_REQUEST_TEMPLATE.md` | [x] Done |
+| 5.11 | `CODEOWNERS` | [x] Done |
+| 5.12 | `CONTRIBUTING.md` | [x] Done |
+| 5.13 | `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1) | [x] Done |
+| 5.14 | `SECURITY.md` (vulnerability reporting policy) | [x] Done |
+| 5.15 | `cliff.toml` (git-cliff changelog automation) | [x] Done |
+| 5.16 | Docker security: non-root user, no-new-privileges, cap_drop ALL | [x] Done |
+| 5.17 | Docker: OCI metadata labels, bookworm-slim base images | [x] Done |
+| 5.18 | `scripts/generate-secrets.sh` (cryptographic secret generation) | [x] Done |
+| 5.19 | `scripts/install/setup-firewall.sh` (UFW management rules) | [x] Done |
+| 5.20 | `.gitleaks.toml` (secret scanning config) | [x] Done |
 
 ### CI/CD Pipeline (GitHub Actions)
 

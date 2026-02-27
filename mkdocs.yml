@@ -1,0 +1,110 @@
+site_name: NetTap Documentation
+site_url: https://eliasmarine.github.io/NetTap/
+site_description: >-
+  Open-source network visibility appliance for home and small business.
+  Enterprise-grade telemetry without the complexity.
+site_author: Elias Marine
+repo_url: https://github.com/EliasMarine/NetTap
+repo_name: EliasMarine/NetTap
+edit_uri: edit/develop/docs/
+
+copyright: Copyright &copy; 2024-2026 NetTap Contributors
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.mark
+  - pymdownx.keys
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - tables
+  - def_list
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/EliasMarine/NetTap
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/requirements.md
+    - getting-started/hardware-guide.md
+    - getting-started/installation.md
+    - getting-started/first-run-wizard.md
+    - getting-started/quick-start.md
+  - User Guide:
+    - user-guide/dashboard-overview.md
+    - user-guide/alerts.md
+    - user-guide/traffic-analysis.md
+    - user-guide/storage-management.md
+    - user-guide/notifications.md
+    - user-guide/siem-forwarding.md
+  - Admin Guide:
+    - admin-guide/configuration.md
+    - admin-guide/updating.md
+    - admin-guide/backup-restore.md
+    - admin-guide/tls-certificates.md
+    - admin-guide/performance-tuning.md
+    - admin-guide/troubleshooting.md
+  - Developer Guide:
+    - developer-guide/architecture.md
+    - developer-guide/contributing.md
+    - developer-guide/dev-setup.md
+    - developer-guide/testing.md
+    - developer-guide/release-process.md
+    - developer-guide/api-reference.md
+  - Reference:
+    - reference/env-reference.md
+    - reference/cli-reference.md
+    - reference/config-files.md
+    - reference/hardware-compat.md

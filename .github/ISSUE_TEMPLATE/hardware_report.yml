@@ -1,0 +1,97 @@
+name: Hardware Compatibility Report
+description: Report a tested hardware configuration
+labels: ["Info"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting your hardware compatibility results! This helps the community identify known-good configurations for running NetTap.
+
+  - type: input
+    id: hardware-model
+    attributes:
+      label: Hardware Model
+      description: The make and model of the device.
+      placeholder: "e.g., Beelink EQ12 Pro"
+    validations:
+      required: true
+
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      description: The processor model.
+      placeholder: "e.g., Intel N100 (4C/4T, 3.4 GHz boost)"
+    validations:
+      required: true
+
+  - type: input
+    id: ram
+    attributes:
+      label: RAM
+      description: Memory type and capacity.
+      placeholder: "e.g., 16 GB DDR5 4800 MHz"
+    validations:
+      required: true
+
+  - type: input
+    id: storage
+    attributes:
+      label: Storage
+      description: Storage type and capacity.
+      placeholder: "e.g., 1 TB NVMe SSD (Samsung 980 Pro)"
+    validations:
+      required: true
+
+  - type: input
+    id: nic
+    attributes:
+      label: NIC Chipset / Driver
+      description: The network interface chipset and Linux driver used.
+      placeholder: "e.g., 2x Intel i226-V (igc driver)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: network-performance
+    attributes:
+      label: Network Performance
+      description: Observed throughput, latency overhead, and packet loss results.
+      placeholder: |
+        Throughput: 940 Mbps (iperf3, TCP, single stream)
+        Latency overhead: <0.3 ms added
+        Packet loss: 0% at 500 Mbps sustained (24h test)
+    validations:
+      required: false
+
+  - type: textarea
+    id: config-tweaks
+    attributes:
+      label: Configuration Tweaks Needed
+      description: Any special configuration, driver parameters, or workarounds required to get NetTap working on this hardware.
+      placeholder: |
+        e.g., Had to disable TSO on igc driver:
+        ethtool -K eth0 tso off
+    validations:
+      required: false
+
+  - type: dropdown
+    id: overall-rating
+    attributes:
+      label: Overall Rating
+      description: How well does this hardware work with NetTap?
+      options:
+        - Excellent - Works perfectly out of the box
+        - Good - Works well with minor tweaks
+        - Fair - Functional but with notable limitations
+        - Poor - Significant issues or not recommended
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-notes
+    attributes:
+      label: Additional Notes
+      description: Any other observations, tips, or recommendations for this hardware.
+    validations:
+      required: false

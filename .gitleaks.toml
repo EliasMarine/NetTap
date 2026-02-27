@@ -1,0 +1,158 @@
+# ==========================================================================
+# NetTap — Gitleaks configuration
+# ==========================================================================
+# Prevents secrets from being committed to the repository.
+# Run:  gitleaks detect --config .gitleaks.toml
+# CI:   gitleaks detect --config .gitleaks.toml --source . --verbose
+# ==========================================================================
+
+title = "NetTap gitleaks config"
+
+# ---------------------------------------------------------------------------
+# Global allowlist — paths and patterns that are always safe
+# ---------------------------------------------------------------------------
+[allowlist]
+  description = "Global allowlist"
+
+  # Placeholder / example files are safe
+  paths = [
+    '''\.env\.example$''',
+    '''\.env\.sample$''',
+    '''\.env\.template$''',
+  ]
+
+  # Common false-positive patterns (placeholder values, not real secrets)
+  regexes = [
+    '''N3tT@p_0p3n''',
+    '''NetTap_Redis_Secret''',
+    '''NetTap_Arkime_Secret''',
+    '''CHANGE_ME''',
+    '''placeholder''',
+    '''example\.com''',
+  ]
+
+# ---------------------------------------------------------------------------
+# Path exclusions — directories that may contain generated/binary data
+# ---------------------------------------------------------------------------
+[[rules]]
+  id = "nettap-path-exclusions"
+  description = "Exclude data and config directories with generated content"
+  path = '''(daemon/data/|config/grafana/dashboards/|config/opensearch/|node_modules/|\.git/)'''
+  [rules.allowlist]
+    paths = [
+      '''daemon/data/''',
+      '''config/''',
+      '''node_modules/''',
+      '''\.git/''',
+    ]
+
+# ---------------------------------------------------------------------------
+# Test file exclusions — test fixtures may contain fake secrets
+# ---------------------------------------------------------------------------
+[[rules]]
+  id = "nettap-test-exclusions"
+  description = "Allow fake secrets in test files"
+  path = '''(test|tests|__tests__|spec|__mocks__|fixtures|\.test\.|\.spec\.)'''
+  [rules.allowlist]
+    paths = [
+      '''\.test\.''',
+      '''\.spec\.''',
+      '''__tests__/''',
+      '''__mocks__/''',
+      '''tests/''',
+      '''test/''',
+      '''fixtures/''',
+    ]
+
+# ---------------------------------------------------------------------------
+# Custom rules — project-specific secret patterns
+# ---------------------------------------------------------------------------
+
+[[rules]]
+  id = "nettap-opensearch-password"
+  description = "OpenSearch admin password"
+  regex = '''OPENSEARCH_ADMIN_PASSWORD\s*=\s*["']?([^"'\s]{16,})["']?'''
+  tags = ["password", "opensearch"]
+  [rules.allowlist]
+    regexes = [
+      '''N3tT@p_0p3n''',
+      '''CHANGE_ME''',
+      '''\$\{.*\}''',
+    ]
+
+[[rules]]
+  id = "nettap-grafana-password"
+  description = "Grafana admin password"
+  regex = '''GRAFANA_ADMIN_PASSWORD\s*=\s*["']?([^"'\s]{16,})["']?'''
+  tags = ["password", "grafana"]
+  [rules.allowlist]
+    regexes = [
+      '''nettap''',
+      '''CHANGE_ME''',
+      '''\$\{.*\}''',
+    ]
+
+[[rules]]
+  id = "nettap-jwt-secret"
+  description = "JWT signing secret"
+  regex = '''JWT_SECRET\s*=\s*["']?([A-Za-z0-9+/=]{32,})["']?'''
+  tags = ["secret", "jwt"]
+  [rules.allowlist]
+    regexes = [
+      '''CHANGE_ME''',
+      '''\$\{.*\}''',
+    ]
+
+[[rules]]
+  id = "nettap-api-key-salt"
+  description = "API key salt"
+  regex = '''API_KEY_SALT\s*=\s*["']?([A-Za-z0-9+/=]{32,})["']?'''
+  tags = ["secret", "api"]
+  [rules.allowlist]
+    regexes = [
+      '''CHANGE_ME''',
+      '''\$\{.*\}''',
+    ]
+
+[[rules]]
+  id = "nettap-redis-password"
+  description = "Redis password"
+  regex = '''REDIS_PASSWORD\s*=\s*["']?([^"'\s]{16,})["']?'''
+  tags = ["password", "redis"]
+  [rules.allowlist]
+    regexes = [
+      '''NetTap_Redis_Secret''',
+      '''CHANGE_ME''',
+      '''\$\{.*\}''',
+    ]
+
+[[rules]]
+  id = "nettap-arkime-secret"
+  description = "Arkime password secret"
+  regex = '''ARKIME_SECRET\s*=\s*["']?([^"'\s]{16,})["']?'''
+  tags = ["secret", "arkime"]
+  [rules.allowlist]
+    regexes = [
+      '''NetTap_Arkime_Secret''',
+      '''CHANGE_ME''',
+      '''\$\{.*\}''',
+    ]
+
+[[rules]]
+  id = "generic-private-key"
+  description = "Private key file content"
+  regex = '''-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'''
+  tags = ["key", "private"]
+
+[[rules]]
+  id = "generic-api-key"
+  description = "Generic API key pattern"
+  regex = '''(?i)(api[_-]?key|apikey)\s*[:=]\s*["']?([A-Za-z0-9_\-]{32,})["']?'''
+  tags = ["key", "api"]
+  [rules.allowlist]
+    regexes = [
+      '''CHANGE_ME''',
+      '''placeholder''',
+      '''example''',
+      '''\$\{.*\}''',
+    ]
