@@ -159,7 +159,7 @@ print_rewiring_guide() {
 
     echo ""
     echo "  =========================================="
-    echo "    NEXT STEPS — Physical Rewiring"
+    echo "    NIC Roles Assigned — Wiring Reference"
     echo "  =========================================="
     echo ""
     echo "  1. Plug ISP modem  --> ${wan} (WAN)"
@@ -177,8 +177,6 @@ print_rewiring_guide() {
     else
         echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
     fi
-    echo ""
-    echo "  Then run:  sudo scripts/install/activate-bridge.sh"
     echo ""
 }
 

@@ -167,10 +167,9 @@ step_dependencies() {
 
     run apt-get update -qq
 
-    # Core packages
+    # Core packages (without compose — handled separately below)
     run apt-get install -y -qq \
         docker.io \
-        docker-compose-plugin \
         bridge-utils \
         net-tools \
         ethtool \
@@ -185,9 +184,24 @@ step_dependencies() {
         ca-certificates \
         gnupg
 
+    # Docker Compose plugin — package name varies by source:
+    #   docker-compose-plugin  (Docker official repo)
+    #   docker-compose-v2      (Ubuntu 24.04+ universe)
+    # Try both; at least one must succeed.
+    if ! apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+        log "docker-compose-plugin not found, trying docker-compose-v2..."
+        run apt-get install -y -qq docker-compose-v2
+    fi
+
     # Enable Docker
     run systemctl enable --now docker
     log "Docker enabled and running"
+
+    # Verify docker compose is available
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose plugin not available. Install docker-compose-plugin or docker-compose-v2."
+    fi
+    debug "Docker Compose $(docker compose version --short 2>/dev/null) available"
 
     # Configure Docker daemon (log rotation, overlay2)
     if [[ ! -f /etc/docker/daemon.json ]]; then
