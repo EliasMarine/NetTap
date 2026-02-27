@@ -280,4 +280,4 @@ An agent hook that fires when Claude tries to stop. It reads the session transcr
 
 ## Licensing
 
-All core components use permissive open-source licenses (Apache 2.0, BSD, GPLv2). Grafana is AGPLv3. The project itself should use a compatible open-source license.
+NetTap is released under the NetTap Personal Use License — free for personal use, commercial use/modification/redistribution requires a separate license. Third-party components (Zeek, Suricata, Arkime, OpenSearch, Grafana) retain their original open-source licenses. See THIRD-PARTY-LICENSES.md for details.

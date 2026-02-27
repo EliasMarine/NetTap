@@ -19,7 +19,7 @@ LABEL maintainer="NetTap Contributors <https://github.com/EliasMarine/NetTap>"
 LABEL org.opencontainers.image.title="nettap-web"
 LABEL org.opencontainers.image.description="NetTap web dashboard — SvelteKit-based network visibility UI"
 LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
-LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.licenses="LicenseRef-NetTap-Personal-Use"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
