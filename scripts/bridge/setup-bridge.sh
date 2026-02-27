@@ -121,6 +121,10 @@ if [[ "$MODE_TEARDOWN" == "true" ]]; then
         run systemctl reload NetworkManager 2>/dev/null || true
         log "Removed NetworkManager unmanaged config"
     fi
+    if [[ -f /etc/systemd/network/10-nettap-bridge.network ]]; then
+        run rm -f /etc/systemd/network/10-nettap-bridge.network
+        log "Removed networkd bridge override"
+    fi
 
     log "Teardown complete. Interfaces restored to default state."
     exit 0
@@ -491,11 +495,29 @@ NM_EOF
         sleep 1
     fi
 
+    # ---- networkd override: keep bridge UP without carrier ----
+    # systemd-networkd will set the bridge DOWN if no member port has
+    # carrier. ConfigureWithoutCarrier=yes prevents this — the bridge
+    # stays UP and starts forwarding the moment cables are plugged in.
+    mkdir -p /etc/systemd/network
+    cat > /etc/systemd/network/10-nettap-bridge.network <<NETWORKD_EOF
+[Match]
+Name=${BRIDGE_NAME}
+
+[Network]
+ConfigureWithoutCarrier=yes
+LinkLocalAddressing=no
+DHCP=no
+
+[Link]
+RequiredForOnline=no
+NETWORKD_EOF
+    log "networkd override: bridge will stay UP without carrier"
+
     # Apply netplan (non-destructive — only applies our file)
     run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
 
-    # netplan apply hands the bridge to systemd-networkd, which may reset
-    # its state. Re-bring the bridge up to ensure it's ready for traffic.
+    # Ensure bridge is up after netplan apply
     ip link set "$BRIDGE_NAME" up 2>/dev/null || true
     log "Persistence configuration complete — bridge will survive reboot"
 fi
