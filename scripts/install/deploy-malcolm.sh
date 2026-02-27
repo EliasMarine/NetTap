@@ -62,7 +62,6 @@ preflight() {
     log "Running deployment pre-flight checks..."
 
     check_command docker
-    check_command docker
 
     # Verify Docker is running
     if ! docker info &>/dev/null; then
