@@ -52,6 +52,16 @@ x-healthcheck-defaults: &healthcheck-defaults
   timeout: 15s
   retries: 3
 
+# -- Shared log rotation to prevent disk fill on 1TB SSD appliance -----------
+# Malcolm uses driver: local with 200m/2 files. We match that to prevent
+# verbose OpenSearch/Logstash logs from consuming the NVMe over months.
+x-logging-defaults: &logging-defaults
+  logging:
+    driver: local
+    options:
+      max-size: "200m"
+      max-file: "2"
+
 # -- Shared security defaults applied to every non-host-network service ------
 x-security-defaults: &security-defaults
   security_opt:
@@ -67,7 +77,11 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-opensearch
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
+    # Protect OpenSearch from the Linux OOM killer. On 16GB target hardware
+    # with 4g heap + Logstash + Zeek + Suricata, memory pressure is real.
+    # Malcolm sets this to -500; we match that.
+    oom_score_adj: -500
     labels:
       com.nettap.service: "opensearch"
       com.nettap.component: "data-store"
@@ -124,7 +138,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-dashboards-helper
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "dashboards-helper"
       com.nettap.component: "dashboards"
@@ -147,15 +161,17 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-dashboards
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "dashboards"
       com.nettap.component: "dashboards"
       com.nettap.description: "OpenSearch Dashboards visualization UI"
     environment:
       <<: [*process-env, *opensearch-env]
+    # NOTE: Dashboards does NOT need host-side cert mounts. It connects to
+    # OpenSearch via HTTPS with OPENSEARCH_SSL_CERTIFICATE_VERIFICATION=false
+    # and uses curlrc credentials. No TLS cert files are referenced.
     volumes:
-      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/opensearch-dashboards/config/certificates:ro
       - ./curlrc:/var/local/curlrc:ro
     networks:
       - default
@@ -171,7 +187,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-logstash
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "logstash"
       com.nettap.component: "log-pipeline"
@@ -186,9 +202,11 @@ services:
       LOGSTASH_REVERSE_DNS: "false"
       BEATS_SSL: "false"
       LOGSTASH_HOST: "logstash:5044"
+    # NOTE: No cert mount needed — BEATS_SSL is false, so logstash accepts
+    # plaintext beats input. If BEATS_SSL is enabled in the future, mount
+    # logstash-specific certs at /certs/ (ca.crt, server.crt, server.key).
     volumes:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
-      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/logstash/config/certificates:ro
       - ./curlrc:/var/local/curlrc:ro
     networks:
       - default
@@ -204,7 +222,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-filebeat
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "filebeat"
       com.nettap.component: "log-pipeline"
@@ -217,11 +235,12 @@ services:
       LOG_CLEANUP_MINUTES: "360"
       LOGSTASH_HOST: "logstash:5044"
       BEATS_SSL: "false"
+    # NOTE: No cert mount needed — BEATS_SSL is false. If enabled in the future,
+    # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
       - zeek-live-logs:/zeek/live:ro
       - suricata-live-logs:/var/log/suricata:ro
       - filebeat-registry:/usr/share/filebeat/data
-      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/filebeat/config/certificates:ro
       - ./curlrc:/var/local/curlrc:ro
     networks:
       - default
@@ -241,6 +260,7 @@ services:
     container_name: nettap-zeek-live
     restart: unless-stopped
     network_mode: host
+    <<: *logging-defaults
     security_opt:
       - no-new-privileges:true
     labels:
@@ -271,6 +291,7 @@ services:
     container_name: nettap-suricata-live
     restart: unless-stopped
     network_mode: host
+    <<: *logging-defaults
     security_opt:
       - no-new-privileges:true
     labels:
@@ -299,6 +320,7 @@ services:
     container_name: nettap-pcap-capture
     restart: unless-stopped
     network_mode: host
+    <<: *logging-defaults
     security_opt:
       - no-new-privileges:true
     labels:
@@ -322,6 +344,7 @@ services:
     container_name: nettap-arkime-live
     restart: unless-stopped
     network_mode: host
+    <<: *logging-defaults
     security_opt:
       - no-new-privileges:true
     labels:
@@ -338,9 +361,10 @@ services:
       ARKIME_ROTATE_INDEX: "daily"
       ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"
       ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+    # NOTE: Arkime self-generates viewer.crt/viewer.key inside the container
+    # at startup via initarkime.sh. No host-side cert mount needed.
     volumes:
       - pcap-data:/data/pcap
-      - ${MALCOLM_CERTS_DIR:-./certs}:/opt/arkime/config/certificates:ro
 
   # ========================================================================
   # INFRASTRUCTURE
@@ -350,7 +374,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-redis
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "redis"
       com.nettap.component: "infrastructure"
@@ -371,15 +395,17 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-api
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "api"
       com.nettap.component: "infrastructure"
       com.nettap.description: "Malcolm REST API server"
     environment:
       <<: [*process-env, *opensearch-env]
+    # NOTE: API service does not need host-side certs. It connects to OpenSearch
+    # via curlrc credentials with SSL verification disabled, and is accessed
+    # through nginx-proxy (not directly over TLS).
     volumes:
-      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/api/config/certificates:ro
       - ./curlrc:/var/local/curlrc:ro
     networks:
       - default
@@ -391,7 +417,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
@@ -430,7 +456,7 @@ services:
     image: nettap/storage-daemon:latest
     container_name: nettap-storage-daemon
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "storage-daemon"
       com.nettap.component: "nettap"
@@ -468,7 +494,7 @@ services:
     image: nettap/web:latest
     container_name: nettap-web
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "web"
       com.nettap.component: "nettap"
@@ -502,7 +528,7 @@ services:
     image: grafana/grafana:10.4.2
     container_name: nettap-grafana
     restart: unless-stopped
-    <<: *security-defaults
+    <<: [*security-defaults, *logging-defaults]
     labels:
       com.nettap.service: "grafana"
       com.nettap.component: "nettap"
@@ -538,6 +564,7 @@ services:
     image: nginx:stable-alpine
     container_name: nettap-nginx
     restart: unless-stopped
+    <<: *logging-defaults
     labels:
       com.nettap.service: "nginx"
       com.nettap.component: "nettap"
@@ -575,6 +602,7 @@ services:
     image: nettap/tshark:latest
     container_name: nettap-tshark
     restart: unless-stopped
+    <<: *logging-defaults
     labels:
       com.nettap.service: "tshark"
       com.nettap.component: "nettap"
@@ -600,6 +628,7 @@ services:
     image: nettap/cyberchef:latest
     container_name: nettap-cyberchef
     restart: unless-stopped
+    <<: *logging-defaults
     labels:
       com.nettap.service: "cyberchef"
       com.nettap.component: "nettap"
