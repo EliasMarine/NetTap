@@ -135,6 +135,43 @@ print('{SSHA}' + base64.b64encode(h + salt).decode())
 }
 
 # ---------------------------------------------------------------------------
+# Generate OpenSearch internal credentials (curlrc format)
+# Malcolm's entrypoint reads this file to set up the admin user and hashes
+# the password into internal_users.yml via setup-internal-users.sh.
+# ---------------------------------------------------------------------------
+generate_curlrc() {
+    local curlrc_dir="${PROJECT_ROOT}/docker/curlrc"
+    local curlrc_file="${curlrc_dir}/.opensearch.primary.curlrc"
+
+    if [[ -f "$curlrc_file" ]]; then
+        log "OpenSearch credentials already exist, skipping"
+        return 0
+    fi
+
+    mkdir -p "$curlrc_dir"
+
+    local os_password
+    os_password=$(openssl rand -base64 48 | tr -d '=/+' | head -c 36)
+
+    log "Generating OpenSearch internal credentials..."
+    cat > "$curlrc_file" <<CURLRC
+user: "malcolm_internal:${os_password}"
+insecure
+CURLRC
+
+    chmod 600 "$curlrc_file"
+    log "OpenSearch credentials generated in ${curlrc_dir}"
+}
+
+# ---------------------------------------------------------------------------
+# Create support directories required by Malcolm containers
+# ---------------------------------------------------------------------------
+create_support_dirs() {
+    # ca-trust: mounted into containers for custom CA certificate import
+    mkdir -p "${PROJECT_ROOT}/docker/ca-trust"
+}
+
+# ---------------------------------------------------------------------------
 # Detect available RAM and tune JVM heap sizes
 # ---------------------------------------------------------------------------
 calculate_heap_sizes() {
@@ -210,7 +247,6 @@ DASHBOARD_PORT=${DASHBOARD_PORT:-443}
 
 # Auth
 NGINX_AUTH_MODE=basic
-OPENSEARCH_ADMIN_PASSWORD=${OPENSEARCH_ADMIN_PASSWORD:-N3tT@p_0p3n}
 ARKIME_SECRET=${ARKIME_SECRET:-$(openssl rand -hex 16 2>/dev/null || echo "NetTap_Arkime_Secret")}
 REDIS_PASSWORD=${REDIS_PASSWORD:-$(openssl rand -hex 16 2>/dev/null || echo "NetTap_Redis_Secret")}
 
@@ -252,11 +288,14 @@ configure_malcolm() {
 
     generate_certs "$CERTS_DIR"
     generate_auth "$AUTH_DIR"
+    generate_curlrc
+    create_support_dirs
     generate_compose_env
 
     log "Malcolm configuration complete"
     log "  Certificates: ${CERTS_DIR}"
     log "  Auth files:   ${AUTH_DIR}"
+    log "  Credentials:  ${PROJECT_ROOT}/docker/curlrc/"
     log "  Compose env:  ${PROJECT_ROOT}/docker/.env"
 }
 
