@@ -156,34 +156,22 @@ start_services() {
     BUILDKIT_PROGRESS=plain run docker compose -f "$COMPOSE_FILE" build
 
     # Start the stack (images already built, this just creates containers)
+    log "Creating and starting containers..."
     run docker compose -f "$COMPOSE_FILE" up -d
 
-    log "Containers starting. Waiting for OpenSearch to be healthy..."
+    log ""
+    log "Containers launched. Monitoring startup progress..."
+    log ""
 
-    # Wait for OpenSearch (it takes the longest to start).
-    # Uses Malcolm's built-in container_health.sh which reads the curlrc for auth
-    # and uses --insecure for self-signed certs.
-    if ! retry 60 10 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-        /usr/local/bin/container_health.sh > /dev/null 2>&1; then
+    # ---------------------------------------------------------------------------
+    # Verbose startup monitoring — show per-service status as they come up
+    # ---------------------------------------------------------------------------
+    monitor_startup
 
-        # Fallback: check via curlrc auth from inside the container
-        if ! retry 30 10 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-            curl --config /var/local/curlrc/.opensearch.primary.curlrc \
-            --insecure --silent --output /dev/null --fail \
-            "https://localhost:9200" > /dev/null 2>&1; then
-            warn "OpenSearch did not become healthy within expected time."
-            warn "It may still be initializing. Check with: docker logs nettap-opensearch"
-        else
-            log "OpenSearch is healthy (via fallback curl)"
-        fi
-    else
-        log "OpenSearch is healthy"
-    fi
-
-    # Apply ILM policy
+    # Apply ILM policy once OpenSearch is confirmed healthy
     apply_ilm_policy
 
-    # Brief status report
+    # Final status report
     log ""
     log "=========================================="
     log "  NetTap Deployment Status"
@@ -197,7 +185,177 @@ start_services() {
 }
 
 # ---------------------------------------------------------------------------
-# Apply OpenSearch ILM policy
+# Monitor container startup — verbose per-service progress
+# ---------------------------------------------------------------------------
+# Shows real-time status of each service as it transitions through
+# Created → Starting → Healthy/Running/Error states.
+# ---------------------------------------------------------------------------
+monitor_startup() {
+    local max_wait=600  # 10 minutes max
+    local poll_interval=10
+    local elapsed=0
+
+    # Services to monitor (in dependency order)
+    local -a critical_services=(opensearch)
+    local -a dependent_services=(dashboards-helper dashboards logstash)
+    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    local -a infra_services=(redis api nginx-proxy)
+    local -a nettap_services=(nettap-storage-daemon nettap-web nettap-grafana nettap-nginx nettap-tshark nettap-cyberchef)
+
+    # Phase 1: Wait for OpenSearch (everything depends on it)
+    log "--- Phase 1: OpenSearch (all services depend on this) ---"
+    _wait_for_service "opensearch" "$max_wait" "$poll_interval" || {
+        warn "OpenSearch failed to become healthy. Dumping last 30 log lines:"
+        docker logs --tail 30 nettap-opensearch 2>&1 | while IFS= read -r line; do
+            warn "  $line"
+        done
+        warn ""
+        warn "Common causes:"
+        warn "  - curlrc permissions (should be 644, not 600)"
+        warn "  - PUID=0 in .env (should be 1000)"
+        warn "  - Insufficient memory (need 4g+ free for JVM heap)"
+        warn "  - Port 9200 already in use"
+        warn ""
+        warn "Debug commands:"
+        warn "  docker logs -f nettap-opensearch"
+        warn "  docker inspect nettap-opensearch | jq '.[0].State'"
+        return 1
+    }
+
+    # Phase 2: Log pipeline (needs OpenSearch healthy)
+    log ""
+    log "--- Phase 2: Log pipeline ---"
+    for svc in "${dependent_services[@]}"; do
+        _show_service_status "$svc"
+    done
+
+    # Phase 3: Capture services (host network)
+    log ""
+    log "--- Phase 3: Capture services ---"
+    for svc in "${pipeline_services[@]}"; do
+        _show_service_status "$svc"
+    done
+
+    # Phase 4: Infrastructure
+    log ""
+    log "--- Phase 4: Infrastructure ---"
+    for svc in "${infra_services[@]}"; do
+        _show_service_status "$svc"
+    done
+
+    # Phase 5: NetTap services
+    log ""
+    log "--- Phase 5: NetTap services ---"
+    for svc in "${nettap_services[@]}"; do
+        _show_service_status "$svc"
+    done
+
+    # Wait for logstash (has 600s start_period, slowest after OpenSearch)
+    log ""
+    log "--- Waiting for Logstash pipeline (this can take several minutes) ---"
+    _wait_for_service "logstash" 660 15 || {
+        warn "Logstash did not become healthy. Check: docker logs nettap-logstash"
+    }
+
+    # Final check: show any unhealthy/restarting containers
+    log ""
+    log "--- Final health check ---"
+    local unhealthy
+    unhealthy=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Name}}\t{{.Status}}' 2>/dev/null \
+        | grep -iE '(unhealthy|restarting|exit)' || true)
+
+    if [[ -n "$unhealthy" ]]; then
+        warn "Some services are not healthy:"
+        echo "$unhealthy" | while IFS= read -r line; do
+            warn "  $line"
+        done
+    else
+        log "All services are running"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Wait for a specific service to become healthy
+# ---------------------------------------------------------------------------
+_wait_for_service() {
+    local service="$1"
+    local max_wait="${2:-300}"
+    local interval="${3:-10}"
+    local elapsed=0
+
+    while (( elapsed < max_wait )); do
+        local status
+        status=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Status}}' "$service" 2>/dev/null | head -1) || true
+
+        case "$status" in
+            *healthy*)
+                log "  [OK] ${service} is healthy (${elapsed}s)"
+                return 0
+                ;;
+            *starting*|*Starting*)
+                log "  [..] ${service} starting... (${elapsed}s)"
+                ;;
+            *unhealthy*|*Unhealthy*)
+                warn "  [!!] ${service} is unhealthy (${elapsed}s)"
+                ;;
+            *Exit*|*exited*|*Restarting*)
+                warn "  [XX] ${service} has exited/crashed (${elapsed}s)"
+                # Show last few log lines for immediate context
+                docker logs --tail 5 "nettap-${service}" 2>&1 | while IFS= read -r line; do
+                    warn "       $line"
+                done
+                ;;
+            *Up*|*running*)
+                # Running but no healthcheck defined
+                log "  [OK] ${service} is running (${elapsed}s)"
+                return 0
+                ;;
+            "")
+                debug "  [??] ${service} status unknown (container may not exist yet)"
+                ;;
+            *)
+                debug "  [??] ${service} status: ${status} (${elapsed}s)"
+                ;;
+        esac
+
+        sleep "$interval"
+        (( elapsed += interval ))
+    done
+
+    warn "  [TIMEOUT] ${service} did not become healthy within ${max_wait}s"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Show current status of a service (non-blocking, single check)
+# ---------------------------------------------------------------------------
+_show_service_status() {
+    local service="$1"
+    local status
+    status=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Status}}' "$service" 2>/dev/null | head -1) || true
+
+    if [[ -z "$status" ]]; then
+        debug "  [--] ${service}: not started yet"
+    elif [[ "$status" == *healthy* ]]; then
+        log "  [OK] ${service}: ${status}"
+    elif [[ "$status" == *Exit* || "$status" == *exited* ]]; then
+        warn "  [XX] ${service}: ${status}"
+    else
+        log "  [..] ${service}: ${status}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Apply OpenSearch ISM (Index State Management) policies
+# ---------------------------------------------------------------------------
+# The ILM JSON contains 3 separate policies under .policies.*:
+#   - nettap-hot-policy   (Zeek metadata, 90-day retention)
+#   - nettap-warm-policy  (Suricata alerts, 180-day retention)
+#   - nettap-cold-policy  (Arkime/PCAP, 30-day retention)
+#
+# Each must be applied individually via the ISM API. We exec into the
+# opensearch container to bypass nginx-proxy auth and use the curlrc
+# credentials that Malcolm's entrypoint already configured.
 # ---------------------------------------------------------------------------
 apply_ilm_policy() {
     local ilm_file="${PROJECT_ROOT}/config/opensearch/ilm-policy.json"
@@ -207,20 +365,90 @@ apply_ilm_policy() {
         return 0
     fi
 
-    log "Applying OpenSearch ILM policy..."
-
-    # Try via the nginx-proxy localhost endpoint
-    local opensearch_url="https://localhost:9200"
-
-    if retry 3 5 curl -skf -XPUT \
-        "${opensearch_url}/_plugins/_ism/policies/nettap-retention" \
-        -H "Content-Type: application/json" \
-        -d "@${ilm_file}" > /dev/null 2>&1; then
-        log "ILM policy applied successfully"
-    else
-        warn "Could not apply ILM policy. OpenSearch may not be ready yet."
-        warn "Apply manually later: curl -XPUT '${opensearch_url}/_plugins/_ism/policies/nettap-retention' -d @${ilm_file}"
+    # Verify python3 is available (needed to extract individual policies from JSON)
+    if ! command -v python3 &>/dev/null; then
+        warn "python3 not found — cannot parse ILM policies. Skipping ISM setup."
+        return 0
     fi
+
+    log "Applying OpenSearch ISM policies..."
+
+    # Extract policy names from the JSON
+    local policy_names
+    policy_names=$(python3 -c "
+import json, sys
+with open('${ilm_file}') as f:
+    data = json.load(f)
+for name in data.get('policies', {}):
+    print(name)
+")
+
+    if [[ -z "$policy_names" ]]; then
+        warn "No policies found in ${ilm_file}"
+        return 0
+    fi
+
+    local applied=0 failed=0
+
+    while IFS= read -r policy_name; do
+        # Extract this policy's JSON body (the value under .policies.<name>)
+        local policy_body
+        policy_body=$(python3 -c "
+import json, sys
+with open('${ilm_file}') as f:
+    data = json.load(f)
+policy = data['policies']['${policy_name}']
+print(json.dumps(policy))
+")
+
+        log "  Applying ISM policy: ${policy_name}..."
+
+        # Exec into opensearch container — this bypasses nginx-proxy auth entirely
+        # and uses the internal https://localhost:9200 endpoint with curlrc auth.
+        if retry 3 5 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+            curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+            --insecure --silent --output /dev/null --fail \
+            -XPUT "https://localhost:9200/_plugins/_ism/policies/${policy_name}" \
+            -H "Content-Type: application/json" \
+            -d "${policy_body}" 2>/dev/null; then
+            log "  ${policy_name} applied successfully"
+            (( applied++ ))
+        else
+            # Policy may already exist — try update (requires seq_no + primary_term)
+            local existing
+            existing=$(docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+                curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+                --insecure --silent \
+                "https://localhost:9200/_plugins/_ism/policies/${policy_name}" 2>/dev/null) || true
+
+            local seq_no primary_term
+            seq_no=$(echo "$existing" | python3 -c "import json,sys; print(json.load(sys.stdin).get('_seq_no',''))" 2>/dev/null) || true
+            primary_term=$(echo "$existing" | python3 -c "import json,sys; print(json.load(sys.stdin).get('_primary_term',''))" 2>/dev/null) || true
+
+            if [[ -n "$seq_no" && -n "$primary_term" ]]; then
+                if docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+                    curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+                    --insecure --silent --output /dev/null --fail \
+                    -XPUT "https://localhost:9200/_plugins/_ism/policies/${policy_name}?if_seq_no=${seq_no}&if_primary_term=${primary_term}" \
+                    -H "Content-Type: application/json" \
+                    -d "${policy_body}" 2>/dev/null; then
+                    log "  ${policy_name} updated successfully"
+                    (( applied++ ))
+                else
+                    warn "  Failed to update ${policy_name}"
+                    (( failed++ ))
+                fi
+            else
+                warn "  Failed to apply ${policy_name}"
+                (( failed++ ))
+            fi
+        fi
+    done <<< "$policy_names"
+
+    if (( failed > 0 )); then
+        warn "${failed} ISM policy(ies) failed. Check OpenSearch logs."
+    fi
+    log "ISM policies applied: ${applied}, failed: ${failed}"
 }
 
 # ---------------------------------------------------------------------------
