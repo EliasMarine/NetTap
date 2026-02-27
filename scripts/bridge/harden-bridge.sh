@@ -51,8 +51,8 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)     MODE_CHECK="true"; shift ;;
-        --dry-run)   NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose) NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)   NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose) NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)   usage ;;
         *)           echo "Unknown option: $1"; usage ;;
     esac
@@ -163,7 +163,6 @@ if [[ "$MODE_CHECK" == "true" ]]; then
     if ip link show "$BRIDGE_NAME" &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge ${BRIDGE_NAME} exists"
         # Verify STP is off
-        local stp_state
         stp_state=$(cat "/sys/class/net/${BRIDGE_NAME}/bridge/stp_state" 2>/dev/null) || stp_state="unknown"
         if [[ "$stp_state" == "0" ]]; then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} STP disabled on ${BRIDGE_NAME}"

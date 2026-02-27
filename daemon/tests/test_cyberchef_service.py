@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.cyberchef_service import (
     CyberChefService,
-    CyberChefRecipe,
     BUILTIN_RECIPES,
     CYBERCHEF_CONTAINER,
     CYBERCHEF_INTERNAL_URL,
@@ -156,9 +155,7 @@ class TestIsAvailableRunning(unittest.TestCase):
         async def run():
             svc = CyberChefService()
             mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b"true\n", b"")
-            )
+            mock_process.communicate = AsyncMock(return_value=(b"true\n", b""))
             mock_process.returncode = 0
 
             with patch(
@@ -184,9 +181,7 @@ class TestIsAvailableNotRunning(unittest.TestCase):
         async def run():
             svc = CyberChefService()
             mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b"false\n", b"")
-            )
+            mock_process.communicate = AsyncMock(return_value=(b"false\n", b""))
             mock_process.returncode = 0
 
             with patch(

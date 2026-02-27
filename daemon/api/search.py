@@ -20,6 +20,7 @@ logger = logging.getLogger("nettap.api.search")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_search(request: web.Request) -> web.Response:
     """GET /api/search?q={query}&size={size}
 
@@ -52,23 +53,23 @@ async def handle_search(request: web.Request) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch search error: %s", exc)
-        return web.json_response(
-            {"error": f"Search failed: {exc}"}, status=502
-        )
+        return web.json_response({"error": f"Search failed: {exc}"}, status=502)
 
     hits = result.get("hits", {})
     total = hits.get("total", {})
     total_count = total.get("value", 0) if isinstance(total, dict) else total
     documents = [hit.get("_source", {}) for hit in hits.get("hits", [])]
 
-    return web.json_response({
-        "query": query_text,
-        "description": parsed["description"],
-        "index": parsed["index"],
-        "total": total_count,
-        "count": len(documents),
-        "results": documents,
-    })
+    return web.json_response(
+        {
+            "query": query_text,
+            "description": parsed["description"],
+            "index": parsed["index"],
+            "total": total_count,
+            "count": len(documents),
+            "results": documents,
+        }
+    )
 
 
 async def handle_search_suggest(request: web.Request) -> web.Response:
@@ -81,15 +82,18 @@ async def handle_search_suggest(request: web.Request) -> web.Response:
 
     suggestions = parser.suggest(partial)
 
-    return web.json_response({
-        "query": partial,
-        "suggestions": suggestions,
-    })
+    return web.json_response(
+        {
+            "query": partial,
+            "suggestions": suggestions,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_search_routes(
     app: web.Application,

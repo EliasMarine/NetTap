@@ -21,6 +21,7 @@ logger = logging.getLogger("nettap.api.updates")
 # Version inventory handlers (4C.8)
 # ---------------------------------------------------------------------------
 
+
 async def handle_get_versions(request: web.Request) -> web.Response:
     """GET /api/system/versions
 
@@ -82,6 +83,7 @@ async def handle_scan_versions(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Update checker handlers (4C.9)
 # ---------------------------------------------------------------------------
+
 
 async def handle_get_available_updates(request: web.Request) -> web.Response:
     """GET /api/system/updates/available
@@ -146,6 +148,7 @@ async def handle_get_update_for_component(
 # ---------------------------------------------------------------------------
 # Update executor handlers (4C.10)
 # ---------------------------------------------------------------------------
+
 
 async def handle_apply_updates(request: web.Request) -> web.Response:
     """POST /api/system/updates/apply
@@ -254,6 +257,7 @@ async def handle_rollback(request: web.Request) -> web.Response:
 # Route registration
 # ---------------------------------------------------------------------------
 
+
 def register_update_routes(
     app: web.Application,
     version_manager: VersionManager,
@@ -276,40 +280,22 @@ def register_update_routes(
     app["update_executor"] = update_executor
 
     # Version inventory (4C.8)
-    app.router.add_get(
-        "/api/system/versions", handle_get_versions
-    )
-    app.router.add_get(
-        "/api/system/versions/{name}", handle_get_version_component
-    )
-    app.router.add_post(
-        "/api/system/versions/scan", handle_scan_versions
-    )
+    app.router.add_get("/api/system/versions", handle_get_versions)
+    app.router.add_get("/api/system/versions/{name}", handle_get_version_component)
+    app.router.add_post("/api/system/versions/scan", handle_scan_versions)
 
     # Update checker (4C.9)
-    app.router.add_get(
-        "/api/system/updates/available", handle_get_available_updates
-    )
-    app.router.add_post(
-        "/api/system/updates/check", handle_check_updates
-    )
+    app.router.add_get("/api/system/updates/available", handle_get_available_updates)
+    app.router.add_post("/api/system/updates/check", handle_check_updates)
     app.router.add_get(
         "/api/system/updates/available/{component}",
         handle_get_update_for_component,
     )
 
     # Update executor (4C.10)
-    app.router.add_post(
-        "/api/system/updates/apply", handle_apply_updates
-    )
-    app.router.add_get(
-        "/api/system/updates/status", handle_get_update_status
-    )
-    app.router.add_get(
-        "/api/system/updates/history", handle_get_update_history
-    )
-    app.router.add_post(
-        "/api/system/updates/rollback", handle_rollback
-    )
+    app.router.add_post("/api/system/updates/apply", handle_apply_updates)
+    app.router.add_get("/api/system/updates/status", handle_get_update_status)
+    app.router.add_get("/api/system/updates/history", handle_get_update_history)
+    app.router.add_post("/api/system/updates/rollback", handle_rollback)
 
     logger.info("Software update system API routes registered (10 endpoints)")

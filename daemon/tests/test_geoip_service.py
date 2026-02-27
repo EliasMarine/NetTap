@@ -7,7 +7,7 @@ MaxMind integration (mocked), batch lookups, and graceful degradation.
 """
 
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import sys
 import os
@@ -270,8 +270,15 @@ class TestGeoIPResult(unittest.TestCase):
         )
         d = result.to_dict()
         expected_keys = {
-            "ip", "country", "country_code", "city",
-            "latitude", "longitude", "asn", "organization", "is_private",
+            "ip",
+            "country",
+            "country_code",
+            "city",
+            "latitude",
+            "longitude",
+            "asn",
+            "organization",
+            "is_private",
         }
         self.assertEqual(set(d.keys()), expected_keys)
         self.assertEqual(d["ip"], "8.8.8.8")
@@ -306,6 +313,7 @@ class TestServiceInit(unittest.TestCase):
             # Simulate __init__ logic where import fails
             try:
                 import maxminddb  # noqa: F401 -- will be None
+
                 # This would raise TypeError since None is not a module
                 raise ImportError("mocked")
             except (ImportError, TypeError):

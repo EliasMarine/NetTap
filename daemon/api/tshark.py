@@ -5,7 +5,6 @@ Registers TShark-related endpoints with the aiohttp application.
 These endpoints provide on-demand packet analysis via the containerized TShark service.
 """
 
-import asyncio
 import logging
 from aiohttp import web
 
@@ -41,9 +40,7 @@ async def handle_tshark_analyze(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=400)
     except Exception as exc:
         logger.exception("TShark analysis failed")
-        return web.json_response(
-            {"error": f"Analysis failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"Analysis failed: {exc}"}, status=500)
 
 
 async def handle_tshark_protocols(request: web.Request) -> web.Response:

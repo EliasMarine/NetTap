@@ -5,9 +5,7 @@ All tests use mocks -- no real network access required. Tests cover
 all four internet health monitor API endpoints.
 """
 
-import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone, timedelta
 
 import sys
@@ -144,9 +142,15 @@ class TestHealthStatsEndpoint(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/internet/stats")
         data = await resp.json()
         expected_keys = {
-            "avg_latency_ms", "p95_latency_ms", "min_latency_ms",
-            "max_latency_ms", "avg_dns_ms", "avg_packet_loss_pct",
-            "uptime_pct", "total_checks", "history_span_hours",
+            "avg_latency_ms",
+            "p95_latency_ms",
+            "min_latency_ms",
+            "max_latency_ms",
+            "avg_dns_ms",
+            "avg_packet_loss_pct",
+            "uptime_pct",
+            "total_checks",
+            "history_span_hours",
         }
         self.assertEqual(set(data.keys()), expected_keys)
 
@@ -159,6 +163,7 @@ class TestHealthCheckEndpoint(AioHTTPTestCase):
             ping_targets=["8.8.8.8"],
             dns_targets=["google.com"],
         )
+
         # Mock the actual network calls
         async def mock_latency(target, timeout=5.0):
             return 25.0

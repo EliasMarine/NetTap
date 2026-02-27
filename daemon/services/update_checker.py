@@ -8,7 +8,6 @@ cached and refreshed every 6 hours.
 
 import logging
 import re
-import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -22,14 +21,14 @@ logger = logging.getLogger("nettap.services.update_checker")
 class AvailableUpdate:
     """Describes an available update for a NetTap component."""
 
-    component: str          # Component name matching VersionManager
+    component: str  # Component name matching VersionManager
     current_version: str
     latest_version: str
-    update_type: str        # "major", "minor", "patch", "unknown"
-    release_url: str        # Link to release notes
-    release_date: str       # ISO timestamp
-    changelog: str          # Brief changelog/description
-    size_mb: float          # Estimated download size
+    update_type: str  # "major", "minor", "patch", "unknown"
+    release_url: str  # Link to release notes
+    release_date: str  # ISO timestamp
+    changelog: str  # Brief changelog/description
+    size_mb: float  # Estimated download size
     requires_restart: bool  # Whether component restart is needed
 
     def to_dict(self) -> dict:
@@ -190,23 +189,26 @@ class UpdateChecker:
 
             # Get current version from VersionManager or fallback
             from services.version_manager import NETTAP_VERSION
+
             current = NETTAP_VERSION
 
             update_type = await self._compare_versions(current, latest_version)
             if update_type == "same":
                 return results
 
-            results.append(AvailableUpdate(
-                component="nettap-daemon",
-                current_version=current,
-                latest_version=latest_version,
-                update_type=update_type,
-                release_url=data.get("html_url", ""),
-                release_date=data.get("published_at", ""),
-                changelog=data.get("body", "")[:500],
-                size_mb=self._estimate_release_size(data),
-                requires_restart=True,
-            ))
+            results.append(
+                AvailableUpdate(
+                    component="nettap-daemon",
+                    current_version=current,
+                    latest_version=latest_version,
+                    update_type=update_type,
+                    release_url=data.get("html_url", ""),
+                    release_date=data.get("published_at", ""),
+                    changelog=data.get("body", "")[:500],
+                    size_mb=self._estimate_release_size(data),
+                    requires_restart=True,
+                )
+            )
         except Exception as exc:
             logger.debug("GitHub release check failed: %s", exc)
 
@@ -273,24 +275,24 @@ class UpdateChecker:
                         total_size = tag_info.get("full_size", 0) or 0
                         size_mb = round(total_size / (1024 * 1024), 1)
 
-                        results.append(AvailableUpdate(
-                            component=component,
-                            current_version=current,
-                            latest_version=tag_name,
-                            update_type=update_type,
-                            release_url=(
-                                f"https://hub.docker.com/r/{image_name}/tags"
-                            ),
-                            release_date=tag_info.get("last_updated", ""),
-                            changelog=f"Docker image {image_name} updated",
-                            size_mb=size_mb,
-                            requires_restart=True,
-                        ))
+                        results.append(
+                            AvailableUpdate(
+                                component=component,
+                                current_version=current,
+                                latest_version=tag_name,
+                                update_type=update_type,
+                                release_url=(
+                                    f"https://hub.docker.com/r/{image_name}/tags"
+                                ),
+                                release_date=tag_info.get("last_updated", ""),
+                                changelog=f"Docker image {image_name} updated",
+                                size_mb=size_mb,
+                                requires_restart=True,
+                            )
+                        )
                         break  # Only report the latest newer tag
             except Exception as exc:
-                logger.debug(
-                    "Docker Hub check failed for %s: %s", component, exc
-                )
+                logger.debug("Docker Hub check failed for %s: %s", component, exc)
 
         return results
 
@@ -383,9 +385,7 @@ class UpdateChecker:
 
         return None
 
-    async def _compare_versions(
-        self, current: str, latest: str
-    ) -> str:
+    async def _compare_versions(self, current: str, latest: str) -> str:
         """Compare two semver-style version strings.
 
         Args:
@@ -448,9 +448,7 @@ class UpdateChecker:
                     if resp.status == 200:
                         return await resp.json()
                     else:
-                        logger.debug(
-                            "HTTP %d from %s", resp.status, url
-                        )
+                        logger.debug("HTTP %d from %s", resp.status, url)
                         return {}
         except aiohttp.ClientError as exc:
             logger.debug("HTTP request failed for %s: %s", url, exc)

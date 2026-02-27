@@ -199,7 +199,9 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
     @patch("api.nic_identify.asyncio.create_subprocess_exec")
-    async def test_valid_interface_with_hyphens_underscores(self, mock_exec, mock_which):
+    async def test_valid_interface_with_hyphens_underscores(
+        self, mock_exec, mock_which
+    ):
         """Interface names with hyphens and underscores should be accepted."""
         mock_process = AsyncMock()
         mock_process.wait = AsyncMock(side_effect=TimeoutError)
@@ -252,7 +254,10 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
 
     @unittest_run_loop
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
-    @patch("api.nic_identify.asyncio.create_subprocess_exec", side_effect=OSError("Permission denied"))
+    @patch(
+        "api.nic_identify.asyncio.create_subprocess_exec",
+        side_effect=OSError("Permission denied"),
+    )
     async def test_oserror_starting_ethtool_returns_500(self, mock_exec, mock_which):
         """OSError when starting ethtool should return 500."""
         resp = await self.client.request(

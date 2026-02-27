@@ -6,7 +6,6 @@ report generation with all section types, validation, and edge cases.
 All tests are self-contained with no external dependencies.
 """
 
-import json
 import os
 import unittest
 import tempfile
@@ -62,7 +61,10 @@ class TestReportScheduleDataclass(unittest.TestCase):
     def test_schedule_default_values(self):
         """Default field values are sensible."""
         sched = ReportSchedule(
-            id="t", name="T", frequency="daily", format="json",
+            id="t",
+            name="T",
+            frequency="daily",
+            format="json",
             created_at="2026-01-01",
         )
         self.assertEqual(sched.recipients, [])
@@ -89,7 +91,9 @@ class TestReportGeneratorInit(unittest.TestCase):
             sfile = os.path.join(tmpdir, "schedules.json")
             gen = ReportGenerator(reports_dir=tmpdir, schedules_file=sfile)
             gen.create_schedule(
-                name="Test", frequency="daily", format="json",
+                name="Test",
+                frequency="daily",
+                format="json",
                 sections=["alerts"],
             )
 
@@ -103,9 +107,7 @@ class TestCreateSchedule(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.sfile = os.path.join(self.tmpdir, "schedules.json")
-        self.gen = ReportGenerator(
-            reports_dir=self.tmpdir, schedules_file=self.sfile
-        )
+        self.gen = ReportGenerator(reports_dir=self.tmpdir, schedules_file=self.sfile)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -160,7 +162,9 @@ class TestCreateSchedule(unittest.TestCase):
         """Invalid frequency raises ValueError."""
         with self.assertRaises(ValueError) as ctx:
             self.gen.create_schedule(
-                name="Bad", frequency="hourly", format="json",
+                name="Bad",
+                frequency="hourly",
+                format="json",
                 sections=["alerts"],
             )
         self.assertIn("Invalid frequency", str(ctx.exception))
@@ -169,7 +173,9 @@ class TestCreateSchedule(unittest.TestCase):
         """Invalid format raises ValueError."""
         with self.assertRaises(ValueError) as ctx:
             self.gen.create_schedule(
-                name="Bad", frequency="daily", format="pdf",
+                name="Bad",
+                frequency="daily",
+                format="pdf",
                 sections=["alerts"],
             )
         self.assertIn("Invalid format", str(ctx.exception))
@@ -178,7 +184,9 @@ class TestCreateSchedule(unittest.TestCase):
         """Invalid section raises ValueError."""
         with self.assertRaises(ValueError) as ctx:
             self.gen.create_schedule(
-                name="Bad", frequency="daily", format="json",
+                name="Bad",
+                frequency="daily",
+                format="json",
                 sections=["nonexistent_section"],
             )
         self.assertIn("Invalid section", str(ctx.exception))
@@ -187,7 +195,9 @@ class TestCreateSchedule(unittest.TestCase):
         """Empty sections list raises ValueError."""
         with self.assertRaises(ValueError) as ctx:
             self.gen.create_schedule(
-                name="Bad", frequency="daily", format="json",
+                name="Bad",
+                frequency="daily",
+                format="json",
                 sections=[],
             )
         self.assertIn("At least one section", str(ctx.exception))
@@ -196,7 +206,9 @@ class TestCreateSchedule(unittest.TestCase):
         """Empty name raises ValueError."""
         with self.assertRaises(ValueError) as ctx:
             self.gen.create_schedule(
-                name="", frequency="daily", format="json",
+                name="",
+                frequency="daily",
+                format="json",
                 sections=["alerts"],
             )
         self.assertIn("name is required", str(ctx.exception))
@@ -204,7 +216,9 @@ class TestCreateSchedule(unittest.TestCase):
     def test_create_schedule_has_id(self):
         """Created schedule has a UUID id."""
         sched = self.gen.create_schedule(
-            name="Test", frequency="daily", format="json",
+            name="Test",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         self.assertTrue(len(sched.id) > 0)
@@ -216,9 +230,7 @@ class TestListAndGetSchedule(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.sfile = os.path.join(self.tmpdir, "schedules.json")
-        self.gen = ReportGenerator(
-            reports_dir=self.tmpdir, schedules_file=self.sfile
-        )
+        self.gen = ReportGenerator(reports_dir=self.tmpdir, schedules_file=self.sfile)
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -230,11 +242,15 @@ class TestListAndGetSchedule(unittest.TestCase):
     def test_list_after_create(self):
         """list_schedules() returns created schedules."""
         self.gen.create_schedule(
-            name="R1", frequency="daily", format="json",
+            name="R1",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         self.gen.create_schedule(
-            name="R2", frequency="weekly", format="html",
+            name="R2",
+            frequency="weekly",
+            format="html",
             sections=["devices"],
         )
         schedules = self.gen.list_schedules()
@@ -243,7 +259,9 @@ class TestListAndGetSchedule(unittest.TestCase):
     def test_get_existing_schedule(self):
         """get_schedule() returns the schedule if it exists."""
         sched = self.gen.create_schedule(
-            name="Test", frequency="daily", format="json",
+            name="Test",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         found = self.gen.get_schedule(sched.id)
@@ -261,11 +279,11 @@ class TestUpdateSchedule(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.sfile = os.path.join(self.tmpdir, "schedules.json")
-        self.gen = ReportGenerator(
-            reports_dir=self.tmpdir, schedules_file=self.sfile
-        )
+        self.gen = ReportGenerator(reports_dir=self.tmpdir, schedules_file=self.sfile)
         self.sched = self.gen.create_schedule(
-            name="Original", frequency="daily", format="json",
+            name="Original",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
 
@@ -311,11 +329,11 @@ class TestDeleteSchedule(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.sfile = os.path.join(self.tmpdir, "schedules.json")
-        self.gen = ReportGenerator(
-            reports_dir=self.tmpdir, schedules_file=self.sfile
-        )
+        self.gen = ReportGenerator(reports_dir=self.tmpdir, schedules_file=self.sfile)
         self.sched = self.gen.create_schedule(
-            name="To Delete", frequency="daily", format="json",
+            name="To Delete",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
 
@@ -340,11 +358,11 @@ class TestEnableDisableSchedule(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.sfile = os.path.join(self.tmpdir, "schedules.json")
-        self.gen = ReportGenerator(
-            reports_dir=self.tmpdir, schedules_file=self.sfile
-        )
+        self.gen = ReportGenerator(reports_dir=self.tmpdir, schedules_file=self.sfile)
         self.sched = self.gen.create_schedule(
-            name="Test", frequency="daily", format="json",
+            name="Test",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
 
@@ -381,9 +399,7 @@ class TestGenerateReport(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.sfile = os.path.join(self.tmpdir, "schedules.json")
-        self.gen = ReportGenerator(
-            reports_dir=self.tmpdir, schedules_file=self.sfile
-        )
+        self.gen = ReportGenerator(reports_dir=self.tmpdir, schedules_file=self.sfile)
         self.sched = self.gen.create_schedule(
             name="Full Report",
             frequency="daily",
@@ -413,7 +429,9 @@ class TestGenerateReport(unittest.TestCase):
 
     def test_generate_report_updates_next_run(self):
         """Generating a report updates next_run."""
-        old_next = self.sched.next_run
+        # OLD CODE START — old_next was assigned but never used (F841)
+        # old_next = self.sched.next_run
+        # OLD CODE END
         self.gen.generate_report(self.sched.id)
         sched = self.gen.get_schedule(self.sched.id)
         # next_run should be updated (may or may not differ depending on timing)

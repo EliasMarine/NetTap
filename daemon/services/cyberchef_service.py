@@ -19,6 +19,7 @@ CYBERCHEF_INTERNAL_URL = "http://nettap-cyberchef:8443"
 @dataclass
 class CyberChefRecipe:
     """A pre-built CyberChef recipe with URL fragment."""
+
     name: str
     description: str
     category: str  # "decode", "crypto", "network", "forensic"
@@ -100,8 +101,11 @@ class CyberChefService:
         """Check if the CyberChef container is running."""
         try:
             cmd = [
-                "docker", "inspect", "--format",
-                "{{.State.Running}}", CYBERCHEF_CONTAINER,
+                "docker",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                CYBERCHEF_CONTAINER,
             ]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -147,6 +151,7 @@ class CyberChefService:
         if input_data:
             # CyberChef accepts input via the &input= parameter (base64 encoded)
             import base64
+
             encoded = base64.b64encode(input_data.encode()).decode()
             if "&input=" not in url:
                 url += f"&input={encoded}"

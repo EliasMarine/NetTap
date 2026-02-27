@@ -26,25 +26,34 @@ class NLSearchParser:
     # Each tuple: (compiled regex, method name)
     PATTERNS = [
         # Time patterns
-        (r'(?:in the )?last (\d+)\s*(hours?|days?|weeks?|minutes?|mins?)', '_parse_time_range'),
-        (r'\btoday\b', '_parse_today'),
-        (r'\byesterday\b', '_parse_yesterday'),
+        (
+            r"(?:in the )?last (\d+)\s*(hours?|days?|weeks?|minutes?|mins?)",
+            "_parse_time_range",
+        ),
+        (r"\btoday\b", "_parse_today"),
+        (r"\byesterday\b", "_parse_yesterday"),
         # IP patterns
-        (r'\bfrom\s+((?:\d{1,3}\.){3}\d{1,3})\b', '_parse_source_ip'),
-        (r'\bto\s+((?:\d{1,3}\.){3}\d{1,3})\b', '_parse_dest_ip'),
-        (r'(?:ip|address)\s+((?:\d{1,3}\.){3}\d{1,3})', '_parse_any_ip'),
+        (r"\bfrom\s+((?:\d{1,3}\.){3}\d{1,3})\b", "_parse_source_ip"),
+        (r"\bto\s+((?:\d{1,3}\.){3}\d{1,3})\b", "_parse_dest_ip"),
+        (r"(?:ip|address)\s+((?:\d{1,3}\.){3}\d{1,3})", "_parse_any_ip"),
         # Protocol patterns
-        (r'(?:using |over |protocol )(tcp|udp|http|https|dns|ssh|smtp|tls)', '_parse_protocol'),
+        (
+            r"(?:using |over |protocol )(tcp|udp|http|https|dns|ssh|smtp|tls)",
+            "_parse_protocol",
+        ),
         # Port patterns
-        (r'(?:on )?port\s+(\d+)', '_parse_port'),
+        (r"(?:on )?port\s+(\d+)", "_parse_port"),
         # Alert patterns
-        (r'(?:high|critical)\s+(?:severity\s+)?alerts?', '_parse_high_alerts'),
-        (r'alerts?\s+(?:from|for)\s+((?:\d{1,3}\.){3}\d{1,3})', '_parse_alert_ip'),
+        (r"(?:high|critical)\s+(?:severity\s+)?alerts?", "_parse_high_alerts"),
+        (r"alerts?\s+(?:from|for)\s+((?:\d{1,3}\.){3}\d{1,3})", "_parse_alert_ip"),
         # Device patterns
-        (r'(?:device|host)\s+((?:\d{1,3}\.){3}\d{1,3}|[\w.-]+)', '_parse_device'),
+        (r"(?:device|host)\s+((?:\d{1,3}\.){3}\d{1,3}|[\w.-]+)", "_parse_device"),
         # Traffic patterns
-        (r'(?:large|big|heavy)\s+(?:traffic|transfers?|uploads?)', '_parse_large_traffic'),
-        (r'dns\s+(?:queries?|lookups?)\s+(?:for|to)\s+([\w.-]+)', '_parse_dns_query'),
+        (
+            r"(?:large|big|heavy)\s+(?:traffic|transfers?|uploads?)",
+            "_parse_large_traffic",
+        ),
+        (r"dns\s+(?:queries?|lookups?)\s+(?:for|to)\s+([\w.-]+)", "_parse_dns_query"),
     ]
 
     # Pre-compiled patterns for performance
@@ -204,14 +213,16 @@ class NLSearchParser:
         if not time_filter_set:
             now = datetime.now(timezone.utc)
             from_time = (now - timedelta(hours=24)).isoformat()
-            filters.append({
-                "range": {
-                    "@timestamp": {
-                        "gte": from_time,
-                        "lte": now.isoformat(),
+            filters.append(
+                {
+                    "range": {
+                        "@timestamp": {
+                            "gte": from_time,
+                            "lte": now.isoformat(),
+                        }
                     }
                 }
-            })
+            )
             descriptions.append("in the last 24 hours")
 
         # Build the query body
@@ -417,9 +428,7 @@ class NLSearchParser:
     def _parse_high_alerts(self, match: re.Match) -> dict:
         """Parse 'high/critical severity alerts'."""
         return {
-            "filter": {
-                "range": {"alert.severity": {"lte": 2}}
-            },
+            "filter": {"range": {"alert.severity": {"lte": 2}}},
             "description": "high/critical severity alerts",
             "is_alert": True,
             "index": "suricata-*",
@@ -447,7 +456,7 @@ class NLSearchParser:
         """Parse 'device/host <IP or hostname>'."""
         device = match.group(1)
         # Check if it looks like an IP
-        ip_pattern = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$')
+        ip_pattern = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
         if ip_pattern.match(device):
             return {
                 "must": {

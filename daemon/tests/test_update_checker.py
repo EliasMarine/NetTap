@@ -9,10 +9,8 @@ checking, version comparison, caching, and graceful error handling.
 import asyncio
 import os
 import sys
-import time
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -38,9 +36,15 @@ class TestAvailableUpdateDataclass(unittest.TestCase):
         )
         d = update.to_dict()
         expected_keys = {
-            "component", "current_version", "latest_version",
-            "update_type", "release_url", "release_date",
-            "changelog", "size_mb", "requires_restart",
+            "component",
+            "current_version",
+            "latest_version",
+            "update_type",
+            "release_url",
+            "release_date",
+            "changelog",
+            "size_mb",
+            "requires_restart",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -323,9 +327,7 @@ class TestCompareVersions(unittest.TestCase):
 
     def test_version_with_prerelease(self):
         """Version with pre-release suffix should parse correctly."""
-        result = asyncio.run(
-            self.uc._compare_versions("1.0.0-alpha", "1.0.0")
-        )
+        result = asyncio.run(self.uc._compare_versions("1.0.0-alpha", "1.0.0"))
         self.assertEqual(result, "same")
 
 
@@ -388,7 +390,7 @@ class TestEstimateReleaseSize(unittest.TestCase):
         data = {
             "assets": [
                 {"size": 1024 * 1024 * 10},  # 10 MB
-                {"size": 1024 * 1024 * 5},   # 5 MB
+                {"size": 1024 * 1024 * 5},  # 5 MB
             ]
         }
         result = UpdateChecker._estimate_release_size(data)

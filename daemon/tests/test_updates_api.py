@@ -9,7 +9,7 @@ software update system API endpoints using AioHTTPTestCase.
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -134,6 +134,7 @@ def _make_apply_result():
 # Version inventory endpoint tests (4C.8)
 # ---------------------------------------------------------------------------
 
+
 class TestGetVersionsEndpoint(AioHTTPTestCase):
     """Tests for GET /api/system/versions."""
 
@@ -151,18 +152,14 @@ class TestGetVersionsEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_versions_returns_200(self):
         """GET /api/system/versions should return 200."""
-        self.mock_vm.get_versions = AsyncMock(
-            return_value=_make_versions_result()
-        )
+        self.mock_vm.get_versions = AsyncMock(return_value=_make_versions_result())
         resp = await self.client.request("GET", "/api/system/versions")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
     async def test_get_versions_returns_correct_structure(self):
         """Response should contain expected keys."""
-        self.mock_vm.get_versions = AsyncMock(
-            return_value=_make_versions_result()
-        )
+        self.mock_vm.get_versions = AsyncMock(return_value=_make_versions_result())
         resp = await self.client.request("GET", "/api/system/versions")
         data = await resp.json()
         self.assertIn("versions", data)
@@ -172,9 +169,7 @@ class TestGetVersionsEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_versions_error_returns_500(self):
         """Internal error should return 500."""
-        self.mock_vm.get_versions = AsyncMock(
-            side_effect=RuntimeError("test error")
-        )
+        self.mock_vm.get_versions = AsyncMock(side_effect=RuntimeError("test error"))
         resp = await self.client.request("GET", "/api/system/versions")
         self.assertEqual(resp.status, 500)
         data = await resp.json()
@@ -198,27 +193,25 @@ class TestGetVersionComponentEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_component_returns_200(self):
         """Known component should return 200."""
-        self.mock_vm.get_component = AsyncMock(return_value={
-            "name": "zeek",
-            "category": "docker",
-            "current_version": "v26.02.0",
-            "install_type": "docker",
-            "last_checked": "2026-02-26T12:00:00+00:00",
-            "status": "ok",
-            "details": {},
-        })
-        resp = await self.client.request(
-            "GET", "/api/system/versions/zeek"
+        self.mock_vm.get_component = AsyncMock(
+            return_value={
+                "name": "zeek",
+                "category": "docker",
+                "current_version": "v26.02.0",
+                "install_type": "docker",
+                "last_checked": "2026-02-26T12:00:00+00:00",
+                "status": "ok",
+                "details": {},
+            }
         )
+        resp = await self.client.request("GET", "/api/system/versions/zeek")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
     async def test_get_component_returns_404_for_unknown(self):
         """Unknown component should return 404."""
         self.mock_vm.get_component = AsyncMock(return_value=None)
-        resp = await self.client.request(
-            "GET", "/api/system/versions/nonexistent"
-        )
+        resp = await self.client.request("GET", "/api/system/versions/nonexistent")
         self.assertEqual(resp.status, 404)
 
 
@@ -239,9 +232,7 @@ class TestScanVersionsEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_scan_versions_returns_200(self):
         """POST /api/system/versions/scan should return 200."""
-        self.mock_vm.scan_versions = AsyncMock(
-            return_value=_make_versions_result()
-        )
+        self.mock_vm.scan_versions = AsyncMock(return_value=_make_versions_result())
         resp = await self.client.request("POST", "/api/system/versions/scan")
         self.assertEqual(resp.status, 200)
 
@@ -249,6 +240,7 @@ class TestScanVersionsEndpoint(AioHTTPTestCase):
 # ---------------------------------------------------------------------------
 # Update checker endpoint tests (4C.9)
 # ---------------------------------------------------------------------------
+
 
 class TestGetAvailableUpdatesEndpoint(AioHTTPTestCase):
     """Tests for GET /api/system/updates/available."""
@@ -267,23 +259,15 @@ class TestGetAvailableUpdatesEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_available_returns_200(self):
         """GET /api/system/updates/available should return 200."""
-        self.mock_uc.get_available = AsyncMock(
-            return_value=_make_updates_result()
-        )
-        resp = await self.client.request(
-            "GET", "/api/system/updates/available"
-        )
+        self.mock_uc.get_available = AsyncMock(return_value=_make_updates_result())
+        resp = await self.client.request("GET", "/api/system/updates/available")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
     async def test_get_available_returns_updates_list(self):
         """Response should contain updates list."""
-        self.mock_uc.get_available = AsyncMock(
-            return_value=_make_updates_result()
-        )
-        resp = await self.client.request(
-            "GET", "/api/system/updates/available"
-        )
+        self.mock_uc.get_available = AsyncMock(return_value=_make_updates_result())
+        resp = await self.client.request("GET", "/api/system/updates/available")
         data = await resp.json()
         self.assertIn("updates", data)
         self.assertIn("has_updates", data)
@@ -307,12 +291,8 @@ class TestCheckUpdatesEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_check_updates_returns_200(self):
         """POST /api/system/updates/check should return 200."""
-        self.mock_uc.check_updates = AsyncMock(
-            return_value=_make_updates_result()
-        )
-        resp = await self.client.request(
-            "POST", "/api/system/updates/check"
-        )
+        self.mock_uc.check_updates = AsyncMock(return_value=_make_updates_result())
+        resp = await self.client.request("POST", "/api/system/updates/check")
         self.assertEqual(resp.status, 200)
 
 
@@ -333,15 +313,15 @@ class TestGetUpdateForComponentEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_update_for_known_returns_200(self):
         """Known component with update should return 200."""
-        self.mock_uc.get_update_for = AsyncMock(return_value={
-            "component": "zeek",
-            "current_version": "v26.02.0",
-            "latest_version": "v26.03.0",
-            "update_type": "minor",
-        })
-        resp = await self.client.request(
-            "GET", "/api/system/updates/available/zeek"
+        self.mock_uc.get_update_for = AsyncMock(
+            return_value={
+                "component": "zeek",
+                "current_version": "v26.02.0",
+                "latest_version": "v26.03.0",
+                "update_type": "minor",
+            }
         )
+        resp = await self.client.request("GET", "/api/system/updates/available/zeek")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
@@ -357,6 +337,7 @@ class TestGetUpdateForComponentEndpoint(AioHTTPTestCase):
 # ---------------------------------------------------------------------------
 # Update executor endpoint tests (4C.10)
 # ---------------------------------------------------------------------------
+
 
 class TestApplyUpdatesEndpoint(AioHTTPTestCase):
     """Tests for POST /api/system/updates/apply."""
@@ -375,11 +356,10 @@ class TestApplyUpdatesEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_apply_updates_returns_200(self):
         """POST /api/system/updates/apply should return 200."""
-        self.mock_ue.apply_update = AsyncMock(
-            return_value=_make_apply_result()
-        )
+        self.mock_ue.apply_update = AsyncMock(return_value=_make_apply_result())
         resp = await self.client.request(
-            "POST", "/api/system/updates/apply",
+            "POST",
+            "/api/system/updates/apply",
             json={"components": ["zeek"]},
         )
         self.assertEqual(resp.status, 200)
@@ -388,7 +368,8 @@ class TestApplyUpdatesEndpoint(AioHTTPTestCase):
     async def test_apply_updates_invalid_body_returns_400(self):
         """Invalid JSON body should return 400."""
         resp = await self.client.request(
-            "POST", "/api/system/updates/apply",
+            "POST",
+            "/api/system/updates/apply",
             data="not json",
             headers={"Content-Type": "application/json"},
         )
@@ -398,7 +379,8 @@ class TestApplyUpdatesEndpoint(AioHTTPTestCase):
     async def test_apply_updates_missing_components_returns_400(self):
         """Missing 'components' field should return 400."""
         resp = await self.client.request(
-            "POST", "/api/system/updates/apply",
+            "POST",
+            "/api/system/updates/apply",
             json={"not_components": []},
         )
         self.assertEqual(resp.status, 400)
@@ -407,7 +389,8 @@ class TestApplyUpdatesEndpoint(AioHTTPTestCase):
     async def test_apply_updates_wrong_type_returns_400(self):
         """Non-list 'components' field should return 400."""
         resp = await self.client.request(
-            "POST", "/api/system/updates/apply",
+            "POST",
+            "/api/system/updates/apply",
             json={"components": "zeek"},
         )
         self.assertEqual(resp.status, 400)
@@ -430,27 +413,27 @@ class TestGetUpdateStatusEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_status_returns_200(self):
         """GET /api/system/updates/status should return 200."""
-        self.mock_ue.get_status = AsyncMock(return_value={
-            "status": "idle",
-            "current_update": None,
-            "last_completed": None,
-        })
-        resp = await self.client.request(
-            "GET", "/api/system/updates/status"
+        self.mock_ue.get_status = AsyncMock(
+            return_value={
+                "status": "idle",
+                "current_update": None,
+                "last_completed": None,
+            }
         )
+        resp = await self.client.request("GET", "/api/system/updates/status")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
     async def test_get_status_returns_correct_structure(self):
         """Response should contain status key."""
-        self.mock_ue.get_status = AsyncMock(return_value={
-            "status": "idle",
-            "current_update": None,
-            "last_completed": None,
-        })
-        resp = await self.client.request(
-            "GET", "/api/system/updates/status"
+        self.mock_ue.get_status = AsyncMock(
+            return_value={
+                "status": "idle",
+                "current_update": None,
+                "last_completed": None,
+            }
         )
+        resp = await self.client.request("GET", "/api/system/updates/status")
         data = await resp.json()
         self.assertIn("status", data)
 
@@ -473,18 +456,14 @@ class TestGetUpdateHistoryEndpoint(AioHTTPTestCase):
     async def test_get_history_returns_200(self):
         """GET /api/system/updates/history should return 200."""
         self.mock_ue.get_history = AsyncMock(return_value=[])
-        resp = await self.client.request(
-            "GET", "/api/system/updates/history"
-        )
+        resp = await self.client.request("GET", "/api/system/updates/history")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
     async def test_get_history_returns_list(self):
         """Response should contain history list."""
         self.mock_ue.get_history = AsyncMock(return_value=[])
-        resp = await self.client.request(
-            "GET", "/api/system/updates/history"
-        )
+        resp = await self.client.request("GET", "/api/system/updates/history")
         data = await resp.json()
         self.assertIn("history", data)
         self.assertIn("count", data)
@@ -508,13 +487,16 @@ class TestRollbackEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_rollback_success_returns_200(self):
         """Successful rollback should return 200."""
-        self.mock_ue.rollback = AsyncMock(return_value={
-            "success": True,
-            "component": "zeek",
-            "message": "Rolled back successfully",
-        })
+        self.mock_ue.rollback = AsyncMock(
+            return_value={
+                "success": True,
+                "component": "zeek",
+                "message": "Rolled back successfully",
+            }
+        )
         resp = await self.client.request(
-            "POST", "/api/system/updates/rollback",
+            "POST",
+            "/api/system/updates/rollback",
             json={"component": "zeek"},
         )
         self.assertEqual(resp.status, 200)
@@ -522,13 +504,16 @@ class TestRollbackEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_rollback_failure_returns_404(self):
         """Failed rollback (no backup) should return 404."""
-        self.mock_ue.rollback = AsyncMock(return_value={
-            "success": False,
-            "component": "zeek",
-            "message": "No backup available",
-        })
+        self.mock_ue.rollback = AsyncMock(
+            return_value={
+                "success": False,
+                "component": "zeek",
+                "message": "No backup available",
+            }
+        )
         resp = await self.client.request(
-            "POST", "/api/system/updates/rollback",
+            "POST",
+            "/api/system/updates/rollback",
             json={"component": "zeek"},
         )
         self.assertEqual(resp.status, 404)
@@ -537,7 +522,8 @@ class TestRollbackEndpoint(AioHTTPTestCase):
     async def test_rollback_invalid_body_returns_400(self):
         """Invalid JSON body should return 400."""
         resp = await self.client.request(
-            "POST", "/api/system/updates/rollback",
+            "POST",
+            "/api/system/updates/rollback",
             data="not json",
             headers={"Content-Type": "application/json"},
         )
@@ -547,7 +533,8 @@ class TestRollbackEndpoint(AioHTTPTestCase):
     async def test_rollback_missing_component_returns_400(self):
         """Missing 'component' field should return 400."""
         resp = await self.client.request(
-            "POST", "/api/system/updates/rollback",
+            "POST",
+            "/api/system/updates/rollback",
             json={"not_component": "zeek"},
         )
         self.assertEqual(resp.status, 400)
@@ -556,7 +543,8 @@ class TestRollbackEndpoint(AioHTTPTestCase):
     async def test_rollback_empty_component_returns_400(self):
         """Empty 'component' string should return 400."""
         resp = await self.client.request(
-            "POST", "/api/system/updates/rollback",
+            "POST",
+            "/api/system/updates/rollback",
             json={"component": ""},
         )
         self.assertEqual(resp.status, 400)
@@ -587,39 +575,45 @@ class TestRouteRegistration(AioHTTPTestCase):
     async def test_all_routes_registered(self):
         """All 10 update routes should be registered (not 404)."""
         # Set up mocks for all endpoints
-        self.mock_vm.get_versions = AsyncMock(
-            return_value=_make_versions_result()
+        self.mock_vm.get_versions = AsyncMock(return_value=_make_versions_result())
+        self.mock_vm.get_component = AsyncMock(
+            return_value={
+                "name": "zeek",
+                "category": "docker",
+                "current_version": "v26",
+                "install_type": "docker",
+                "last_checked": "ts",
+                "status": "ok",
+                "details": {},
+            }
         )
-        self.mock_vm.get_component = AsyncMock(return_value={
-            "name": "zeek", "category": "docker",
-            "current_version": "v26", "install_type": "docker",
-            "last_checked": "ts", "status": "ok", "details": {},
-        })
-        self.mock_vm.scan_versions = AsyncMock(
-            return_value=_make_versions_result()
+        self.mock_vm.scan_versions = AsyncMock(return_value=_make_versions_result())
+        self.mock_uc.get_available = AsyncMock(return_value=_make_updates_result())
+        self.mock_uc.check_updates = AsyncMock(return_value=_make_updates_result())
+        self.mock_uc.get_update_for = AsyncMock(
+            return_value={
+                "component": "zeek",
+                "current_version": "v26",
+                "latest_version": "v27",
+                "update_type": "major",
+            }
         )
-        self.mock_uc.get_available = AsyncMock(
-            return_value=_make_updates_result()
+        self.mock_ue.apply_update = AsyncMock(return_value=_make_apply_result())
+        self.mock_ue.get_status = AsyncMock(
+            return_value={
+                "status": "idle",
+                "current_update": None,
+                "last_completed": None,
+            }
         )
-        self.mock_uc.check_updates = AsyncMock(
-            return_value=_make_updates_result()
-        )
-        self.mock_uc.get_update_for = AsyncMock(return_value={
-            "component": "zeek", "current_version": "v26",
-            "latest_version": "v27", "update_type": "major",
-        })
-        self.mock_ue.apply_update = AsyncMock(
-            return_value=_make_apply_result()
-        )
-        self.mock_ue.get_status = AsyncMock(return_value={
-            "status": "idle", "current_update": None,
-            "last_completed": None,
-        })
         self.mock_ue.get_history = AsyncMock(return_value=[])
-        self.mock_ue.rollback = AsyncMock(return_value={
-            "success": True, "component": "zeek",
-            "message": "Rolled back",
-        })
+        self.mock_ue.rollback = AsyncMock(
+            return_value={
+                "success": True,
+                "component": "zeek",
+                "message": "Rolled back",
+            }
+        )
 
         routes_to_check = [
             ("GET", "/api/system/versions"),
@@ -635,19 +629,22 @@ class TestRouteRegistration(AioHTTPTestCase):
         for method, path in routes_to_check:
             resp = await self.client.request(method, path)
             self.assertNotEqual(
-                resp.status, 404,
+                resp.status,
+                404,
                 f"Route {method} {path} returned 404 -- not registered",
             )
 
         # POST routes with body
         resp = await self.client.request(
-            "POST", "/api/system/updates/apply",
+            "POST",
+            "/api/system/updates/apply",
             json={"components": ["zeek"]},
         )
         self.assertNotEqual(resp.status, 404)
 
         resp = await self.client.request(
-            "POST", "/api/system/updates/rollback",
+            "POST",
+            "/api/system/updates/rollback",
             json={"component": "zeek"},
         )
         self.assertNotEqual(resp.status, 404)

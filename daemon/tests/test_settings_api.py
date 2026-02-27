@@ -6,7 +6,6 @@ env file parsing, saving, unknown key handling, validation, and
 edge cases.
 """
 
-import json
 import os
 import tempfile
 import unittest
@@ -62,9 +61,14 @@ class TestGetApiKeys(AioHTTPTestCase):
         data = await resp.json()
         keys = data["keys"]
         expected_fields = [
-            "MAXMIND_LICENSE_KEY", "SMTP_HOST", "SMTP_PORT",
-            "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_SENDER_EMAIL",
-            "WEBHOOK_URL", "SURICATA_ET_PRO_KEY",
+            "MAXMIND_LICENSE_KEY",
+            "SMTP_HOST",
+            "SMTP_PORT",
+            "SMTP_USERNAME",
+            "SMTP_PASSWORD",
+            "SMTP_SENDER_EMAIL",
+            "WEBHOOK_URL",
+            "SURICATA_ET_PRO_KEY",
         ]
         for field in expected_fields:
             self.assertIn(field, keys)
@@ -121,7 +125,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_new_key(self):
         """POST /api/settings/api-keys saves a new key."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             json={"WEBHOOK_URL": "https://hooks.example.com/nettap"},
         )
         self.assertEqual(resp.status, 200)
@@ -133,7 +138,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_updates_existing_key(self):
         """POST /api/settings/api-keys updates an existing key in-place."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             json={"MAXMIND_LICENSE_KEY": "new-key-456"},
         )
         self.assertEqual(resp.status, 200)
@@ -147,7 +153,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_multiple_keys_at_once(self):
         """POST /api/settings/api-keys saves multiple keys in one request."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             json={
                 "SMTP_HOST": "smtp.gmail.com",
                 "SMTP_PORT": "587",
@@ -165,7 +172,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_unknown_keys_are_ignored_with_warning(self):
         """POST /api/settings/api-keys ignores unknown keys and warns."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             json={
                 "MAXMIND_LICENSE_KEY": "valid",
                 "RANDOM_KEY": "should-be-ignored",
@@ -181,7 +189,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_empty_body_returns_400(self):
         """POST /api/settings/api-keys with no valid keys returns 400."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             json={"UNKNOWN_FIELD": "value"},
         )
         self.assertEqual(resp.status, 400)
@@ -192,7 +201,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_invalid_json_returns_400(self):
         """POST /api/settings/api-keys with invalid JSON returns 400."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             data="not json",
             headers={"Content-Type": "application/json"},
         )
@@ -202,7 +212,8 @@ class TestSaveApiKeys(AioHTTPTestCase):
     async def test_save_non_object_body_returns_400(self):
         """POST /api/settings/api-keys with array body returns 400."""
         resp = await self.client.request(
-            "POST", "/api/settings/api-keys",
+            "POST",
+            "/api/settings/api-keys",
             json=["MAXMIND_LICENSE_KEY"],
         )
         self.assertEqual(resp.status, 400)
@@ -239,6 +250,7 @@ class TestEnvFileHelpers(unittest.TestCase):
             self.assertEqual(env["MY_KEY"], "my_value")
         finally:
             import shutil
+
             shutil.rmtree(tmp_dir)
 
 

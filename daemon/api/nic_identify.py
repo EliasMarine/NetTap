@@ -29,6 +29,7 @@ _MIN_DURATION = 1
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_nic_identify(request: web.Request) -> web.Response:
     """POST /api/setup/nics/identify
 
@@ -64,7 +65,9 @@ async def handle_nic_identify(request: web.Request) -> web.Response:
     interface = interface.strip()
     if not _VALID_IFACE_RE.match(interface):
         return web.json_response(
-            {"error": f"Invalid interface name: '{interface}'. Only alphanumeric characters, hyphens, and underscores are allowed."},
+            {
+                "error": f"Invalid interface name: '{interface}'. Only alphanumeric characters, hyphens, and underscores are allowed."
+            },
             status=400,
         )
 
@@ -101,7 +104,10 @@ async def handle_nic_identify(request: web.Request) -> web.Response:
     # elements, never interpolated into a shell string.
     try:
         process = await asyncio.create_subprocess_exec(
-            ethtool_path, "-p", interface, str(duration),
+            ethtool_path,
+            "-p",
+            interface,
+            str(duration),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -140,16 +146,19 @@ async def handle_nic_identify(request: web.Request) -> web.Response:
 
     logger.info("NIC identify: blinking %s for %ds", interface, duration)
 
-    return web.json_response({
-        "result": "blinking",
-        "interface": interface,
-        "duration": duration,
-    })
+    return web.json_response(
+        {
+            "result": "blinking",
+            "interface": interface,
+            "duration": duration,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_nic_identify_routes(app: web.Application) -> None:
     """Register NIC identification API routes on the given aiohttp application."""

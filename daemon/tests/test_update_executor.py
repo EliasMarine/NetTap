@@ -13,7 +13,7 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import MagicMock
 from datetime import datetime, timezone
 
 # Ensure the daemon package is importable
@@ -39,8 +39,14 @@ class TestUpdateResultDataclass(unittest.TestCase):
         )
         d = result.to_dict()
         expected_keys = {
-            "component", "success", "old_version", "new_version",
-            "started_at", "completed_at", "error", "rollback_available",
+            "component",
+            "success",
+            "old_version",
+            "new_version",
+            "started_at",
+            "completed_at",
+            "error",
+            "rollback_available",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -114,16 +120,18 @@ class TestApplyUpdate(unittest.TestCase):
         async def mock_update_docker(components):
             results = []
             for comp in components:
-                results.append(UpdateResult(
-                    component=comp,
-                    success=success,
-                    old_version="1.0.0",
-                    new_version="1.1.0" if success else "1.0.0",
-                    started_at=datetime.now(timezone.utc).isoformat(),
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    error=None if success else "Update failed",
-                    rollback_available=True,
-                ))
+                results.append(
+                    UpdateResult(
+                        component=comp,
+                        success=success,
+                        old_version="1.0.0",
+                        new_version="1.1.0" if success else "1.0.0",
+                        started_at=datetime.now(timezone.utc).isoformat(),
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        error=None if success else "Update failed",
+                        rollback_available=True,
+                    )
+                )
             return results
 
         async def mock_update_rules():
@@ -224,9 +232,7 @@ class TestApplyUpdate(unittest.TestCase):
     def test_apply_update_mixed_components(self):
         """apply_update() should handle mixed component types."""
         ue = self._make_executor_with_mocks()
-        result = asyncio.run(
-            ue.apply_update(["zeek", "suricata-rules", "geoip-db"])
-        )
+        result = asyncio.run(ue.apply_update(["zeek", "suricata-rules", "geoip-db"]))
 
         self.assertEqual(result["total"], 3)
         self.assertEqual(result["succeeded"], 3)
@@ -263,12 +269,18 @@ class TestConcurrentUpdatePrevention(unittest.TestCase):
         ue = UpdateExecutor()
 
         async def mock_update_docker(components):
-            return [UpdateResult(
-                component=components[0], success=True,
-                old_version="1.0", new_version="1.1",
-                started_at="ts1", completed_at="ts2",
-                error=None, rollback_available=True,
-            )]
+            return [
+                UpdateResult(
+                    component=components[0],
+                    success=True,
+                    old_version="1.0",
+                    new_version="1.1",
+                    started_at="ts1",
+                    completed_at="ts2",
+                    error=None,
+                    rollback_available=True,
+                )
+            ]
 
         ue._update_docker_images = mock_update_docker
 
@@ -364,12 +376,18 @@ class TestHistoryBounding(unittest.TestCase):
         ue._max_history = 5
 
         async def mock_update_docker(components):
-            return [UpdateResult(
-                component=components[0], success=True,
-                old_version="1.0", new_version="1.1",
-                started_at="ts1", completed_at="ts2",
-                error=None, rollback_available=True,
-            )]
+            return [
+                UpdateResult(
+                    component=components[0],
+                    success=True,
+                    old_version="1.0",
+                    new_version="1.1",
+                    started_at="ts1",
+                    completed_at="ts2",
+                    error=None,
+                    rollback_available=True,
+                )
+            ]
 
         ue._update_docker_images = mock_update_docker
 
@@ -388,7 +406,7 @@ class TestHistoryBounding(unittest.TestCase):
 
         # Simulate trimming logic
         if len(ue._update_history) > ue._max_history:
-            ue._update_history = ue._update_history[-ue._max_history:]
+            ue._update_history = ue._update_history[-ue._max_history :]
 
         self.assertEqual(len(ue._update_history), 3)
         self.assertEqual(ue._update_history[0]["id"], 2)
@@ -478,9 +496,7 @@ class TestRunCommand(unittest.TestCase):
     def test_run_command_handles_missing_command(self):
         """_run_command() should handle missing commands gracefully."""
         ue = UpdateExecutor()
-        output, code = asyncio.run(
-            ue._run_command(["nonexistent_cmd_xyz"])
-        )
+        output, code = asyncio.run(ue._run_command(["nonexistent_cmd_xyz"]))
 
         self.assertNotEqual(code, 0)
         self.assertIn("not found", output.lower())
@@ -494,9 +510,7 @@ class TestRunCommand(unittest.TestCase):
     def test_run_command_captures_stderr(self):
         """_run_command() should capture stderr in output."""
         ue = UpdateExecutor()
-        output, code = asyncio.run(
-            ue._run_command(["ls", "/nonexistent_path_xyz"])
-        )
+        output, code = asyncio.run(ue._run_command(["ls", "/nonexistent_path_xyz"]))
         # ls should fail and stderr should be captured
         self.assertNotEqual(code, 0)
 

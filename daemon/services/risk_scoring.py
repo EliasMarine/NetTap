@@ -31,8 +31,22 @@ class RiskScorer:
 
     # Common/safe ports that are expected in normal network traffic
     SAFE_PORTS = {
-        80, 443, 53, 22, 21, 25, 110, 143, 993, 995,
-        587, 465, 8080, 8443, 3389, 5900,
+        80,
+        443,
+        53,
+        22,
+        21,
+        25,
+        110,
+        143,
+        993,
+        995,
+        587,
+        465,
+        8080,
+        8443,
+        3389,
+        5900,
     }
 
     # Weight / max points per factor
@@ -72,12 +86,14 @@ class RiskScorer:
         alert_points, alert_desc = self.score_alert_count(
             device_stats.get("alert_count", 0)
         )
-        factors.append({
-            "name": "alert_count",
-            "score": alert_points,
-            "max": self.WEIGHT_ALERT_COUNT,
-            "description": alert_desc,
-        })
+        factors.append(
+            {
+                "name": "alert_count",
+                "score": alert_points,
+                "max": self.WEIGHT_ALERT_COUNT,
+                "description": alert_desc,
+            }
+        )
 
         # Factor 2: Connection volume anomaly
         conn_points, conn_desc = self.score_connection_anomaly(
@@ -85,47 +101,55 @@ class RiskScorer:
             device_stats.get("network_avg_connections", 0.0),
             device_stats.get("network_stddev_connections", 0.0),
         )
-        factors.append({
-            "name": "connection_anomaly",
-            "score": conn_points,
-            "max": self.WEIGHT_CONNECTION_ANOMALY,
-            "description": conn_desc,
-        })
+        factors.append(
+            {
+                "name": "connection_anomaly",
+                "score": conn_points,
+                "max": self.WEIGHT_CONNECTION_ANOMALY,
+                "description": conn_desc,
+            }
+        )
 
         # Factor 3: External connection ratio
         ext_points, ext_desc = self.score_external_ratio(
             device_stats.get("external_connection_count", 0),
             device_stats.get("total_connection_count", 0),
         )
-        factors.append({
-            "name": "external_ratio",
-            "score": ext_points,
-            "max": self.WEIGHT_EXTERNAL_RATIO,
-            "description": ext_desc,
-        })
+        factors.append(
+            {
+                "name": "external_ratio",
+                "score": ext_points,
+                "max": self.WEIGHT_EXTERNAL_RATIO,
+                "description": ext_desc,
+            }
+        )
 
         # Factor 4: Suspicious port usage
         port_points, port_desc = self.score_suspicious_ports(
             device_stats.get("ports_used", [])
         )
-        factors.append({
-            "name": "suspicious_ports",
-            "score": port_points,
-            "max": self.WEIGHT_SUSPICIOUS_PORTS,
-            "description": port_desc,
-        })
+        factors.append(
+            {
+                "name": "suspicious_ports",
+                "score": port_points,
+                "max": self.WEIGHT_SUSPICIOUS_PORTS,
+                "description": port_desc,
+            }
+        )
 
         # Factor 5: Data exfiltration signal
         exfil_points, exfil_desc = self.score_data_exfiltration(
             device_stats.get("orig_bytes", 0),
             device_stats.get("resp_bytes", 0),
         )
-        factors.append({
-            "name": "data_exfiltration",
-            "score": exfil_points,
-            "max": self.WEIGHT_DATA_EXFILTRATION,
-            "description": exfil_desc,
-        })
+        factors.append(
+            {
+                "name": "data_exfiltration",
+                "score": exfil_points,
+                "max": self.WEIGHT_DATA_EXFILTRATION,
+                "description": exfil_desc,
+            }
+        )
 
         total_score = sum(f["score"] for f in factors)
         # Clamp to 0-100 range
@@ -171,11 +195,20 @@ class RiskScorer:
         if deviation <= 1.0:
             return (0, f"Connection count within normal range ({count} conns)")
         elif deviation <= 2.0:
-            return (10, f"Slightly elevated connection count ({count} conns, {deviation:.1f} stddev)")
+            return (
+                10,
+                f"Slightly elevated connection count ({count} conns, {deviation:.1f} stddev)",
+            )
         elif deviation <= 3.0:
-            return (15, f"Elevated connection count ({count} conns, {deviation:.1f} stddev)")
+            return (
+                15,
+                f"Elevated connection count ({count} conns, {deviation:.1f} stddev)",
+            )
         else:
-            return (20, f"Anomalous connection volume ({count} conns, {deviation:.1f} stddev)")
+            return (
+                20,
+                f"Anomalous connection volume ({count} conns, {deviation:.1f} stddev)",
+            )
 
     def score_external_ratio(self, external: int, total: int) -> tuple[int, str]:
         """Score based on the ratio of external to total connections.

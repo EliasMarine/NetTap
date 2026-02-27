@@ -6,7 +6,7 @@ ARG CYBERCHEF_VERSION=10.19.4
 WORKDIR /app
 
 # Download and extract CyberChef release
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip && \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && \
     curl -fsSL "https://github.com/gchq/CyberChef/releases/download/v${CYBERCHEF_VERSION}/CyberChef_v${CYBERCHEF_VERSION}.zip" \
       -o /tmp/cyberchef.zip && \
     unzip /tmp/cyberchef.zip -d /app/cyberchef && \

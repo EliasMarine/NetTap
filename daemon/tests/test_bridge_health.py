@@ -10,10 +10,7 @@ determination, and graceful degradation when sysfs files are absent.
 import asyncio
 import os
 import sys
-import time
 import unittest
-from collections import deque
-from unittest.mock import AsyncMock, patch, MagicMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -44,10 +41,20 @@ class TestBridgeHealthCheckDataclass(unittest.TestCase):
         )
         d = check.to_dict()
         expected_keys = {
-            "bridge_state", "wan_link", "lan_link", "bypass_active",
-            "watchdog_active", "latency_us", "rx_bytes_delta", "tx_bytes_delta",
-            "rx_packets_delta", "tx_packets_delta", "uptime_seconds",
-            "health_status", "issues", "last_check",
+            "bridge_state",
+            "wan_link",
+            "lan_link",
+            "bypass_active",
+            "watchdog_active",
+            "latency_us",
+            "rx_bytes_delta",
+            "tx_bytes_delta",
+            "rx_packets_delta",
+            "tx_packets_delta",
+            "uptime_seconds",
+            "health_status",
+            "issues",
+            "last_check",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -188,7 +195,9 @@ class TestCalculateDeltas(unittest.TestCase):
     def test_first_check_returns_zeros(self):
         """First check with no previous counters should return zeros."""
         monitor = BridgeHealthMonitor()
-        result = monitor._calculate_deltas({"rx_bytes": 100, "tx_bytes": 200, "rx_packets": 10, "tx_packets": 20})
+        result = monitor._calculate_deltas(
+            {"rx_bytes": 100, "tx_bytes": 200, "rx_packets": 10, "tx_packets": 20}
+        )
         self.assertEqual(result, (0, 0, 0, 0))
 
     def test_delta_calculation(self):
@@ -226,7 +235,9 @@ class TestCalculateDeltas(unittest.TestCase):
 class TestCheckHealth(unittest.TestCase):
     """Tests for check_health() with mocked sysfs/system calls."""
 
-    def _make_monitor_with_mocks(self, bridge_state="up", wan_carrier=True, lan_carrier=True):
+    def _make_monitor_with_mocks(
+        self, bridge_state="up", wan_carrier=True, lan_carrier=True
+    ):
         """Create a monitor with mocked internal methods."""
         monitor = BridgeHealthMonitor()
 
@@ -239,7 +250,12 @@ class TestCheckHealth(unittest.TestCase):
             return lan_carrier
 
         async def mock_stats(iface):
-            return {"rx_bytes": 1000, "tx_bytes": 2000, "rx_packets": 10, "tx_packets": 20}
+            return {
+                "rx_bytes": 1000,
+                "tx_bytes": 2000,
+                "rx_packets": 10,
+                "tx_packets": 20,
+            }
 
         async def mock_watchdog():
             return False
@@ -259,10 +275,20 @@ class TestCheckHealth(unittest.TestCase):
         result = asyncio.run(monitor.check_health())
 
         expected_keys = {
-            "bridge_state", "wan_link", "lan_link", "bypass_active",
-            "watchdog_active", "latency_us", "rx_bytes_delta", "tx_bytes_delta",
-            "rx_packets_delta", "tx_packets_delta", "uptime_seconds",
-            "health_status", "issues", "last_check",
+            "bridge_state",
+            "wan_link",
+            "lan_link",
+            "bypass_active",
+            "watchdog_active",
+            "latency_us",
+            "rx_bytes_delta",
+            "tx_bytes_delta",
+            "rx_packets_delta",
+            "tx_packets_delta",
+            "uptime_seconds",
+            "health_status",
+            "issues",
+            "last_check",
         }
         self.assertEqual(set(result.keys()), expected_keys)
 

@@ -19,6 +19,7 @@ logger = logging.getLogger("nettap.api.detection_packs")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_list_packs(request: web.Request) -> web.Response:
     """GET /api/detection-packs
 
@@ -26,10 +27,12 @@ async def handle_list_packs(request: web.Request) -> web.Response:
     """
     manager: DetectionPackManager = request.app["detection_pack_manager"]
     packs = manager.list_packs()
-    return web.json_response({
-        "packs": [p.to_dict() for p in packs],
-        "count": len(packs),
-    })
+    return web.json_response(
+        {
+            "packs": [p.to_dict() for p in packs],
+            "count": len(packs),
+        }
+    )
 
 
 async def handle_get_pack(request: web.Request) -> web.Response:
@@ -123,10 +126,12 @@ async def handle_check_updates(request: web.Request) -> web.Response:
     """
     manager: DetectionPackManager = request.app["detection_pack_manager"]
     updates = manager.check_updates()
-    return web.json_response({
-        "updates": updates,
-        "count": len(updates),
-    })
+    return web.json_response(
+        {
+            "updates": updates,
+            "count": len(updates),
+        }
+    )
 
 
 async def handle_pack_stats(request: web.Request) -> web.Response:
@@ -145,15 +150,18 @@ async def handle_available_packs(request: web.Request) -> web.Response:
     """
     manager: DetectionPackManager = request.app["detection_pack_manager"]
     available = manager.get_available_packs()
-    return web.json_response({
-        "packs": available,
-        "count": len(available),
-    })
+    return web.json_response(
+        {
+            "packs": available,
+            "count": len(available),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_detection_pack_routes(
     app: web.Application,

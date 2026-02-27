@@ -86,7 +86,9 @@ class DeviceBaseline:
             )
             raise
 
-    def check_devices(self, current_devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def check_devices(
+        self, current_devices: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Compare current device list against baseline.
 
         Args:
@@ -139,15 +141,17 @@ class DeviceBaseline:
                 else:
                     message = f"New device detected: {mac_normalised} at {ip}"
 
-                alerts.append({
-                    "type": "new_device",
-                    "mac": mac_normalised,
-                    "ip": ip,
-                    "hostname": hostname,
-                    "manufacturer": manufacturer,
-                    "first_seen": first_seen,
-                    "message": message,
-                })
+                alerts.append(
+                    {
+                        "type": "new_device",
+                        "mac": mac_normalised,
+                        "ip": ip,
+                        "hostname": hostname,
+                        "manufacturer": manufacturer,
+                        "first_seen": first_seen,
+                        "message": message,
+                    }
+                )
 
         return alerts
 

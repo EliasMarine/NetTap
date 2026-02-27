@@ -110,6 +110,8 @@ acquire_lock() {
     fi
     echo $$ > "$lock"
     # Remove lock on exit regardless of success/failure
+    # Intentional: expand $lock now to capture current lock file path
+    # shellcheck disable=SC2064
     trap "rm -f '$lock'" EXIT
 }
 

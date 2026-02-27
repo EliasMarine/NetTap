@@ -5,13 +5,11 @@ All tests use mocks -- no OpenSearch connection required.
 Tests cover query building, response formatting, error handling, and edge cases.
 """
 
-import asyncio
 import json
 import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timezone
 
 import sys
 
@@ -23,11 +21,9 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.alerts import (
     register_alert_routes,
-    _parse_time_range,
     _time_range_filter,
     _load_acks,
     _save_acks,
-    SURICATA_INDEX,
 )
 from storage.manager import StorageManager, RetentionConfig
 
@@ -61,9 +57,7 @@ class TestAckFileHelpers(unittest.TestCase):
 
     def test_save_and_load_roundtrip(self):
         """Save and load should roundtrip correctly."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             tmp_path = f.name
 
         try:
@@ -81,9 +75,7 @@ class TestAckFileHelpers(unittest.TestCase):
 
     def test_load_corrupt_file(self):
         """Loading a corrupt JSON file returns empty dict."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not valid json{{{")
             tmp_path = f.name
 
@@ -169,8 +161,7 @@ class TestAlertsListHandler(AioHTTPTestCase):
         body = call_args.kwargs.get("body") or call_args[1].get("body")
         filters = body["query"]["bool"]["filter"]
         has_severity = any(
-            "term" in f and "alert.severity" in f.get("term", {})
-            for f in filters
+            "term" in f and "alert.severity" in f.get("term", {}) for f in filters
         )
         self.assertTrue(has_severity)
 
@@ -208,7 +199,12 @@ class TestAlertsListHandler(AioHTTPTestCase):
     async def test_alerts_list_with_acknowledged(self):
         """Acknowledged alerts are annotated correctly."""
         # Write an ack to the file
-        acks = {"alert-1": {"acknowledged_at": "2026-02-26T12:00:00Z", "acknowledged_by": "admin"}}
+        acks = {
+            "alert-1": {
+                "acknowledged_at": "2026-02-26T12:00:00Z",
+                "acknowledged_by": "admin",
+            }
+        }
         with open(self.tmp_ack_file.name, "w") as f:
             json.dump(acks, f)
 
@@ -273,9 +269,7 @@ class TestAlertCountHandler(AioHTTPTestCase):
         """Zero alerts returns all-zero counts."""
         self.mock_client.search.return_value = {
             "hits": {"total": {"value": 0}},
-            "aggregations": {
-                "by_severity": {"buckets": []}
-            },
+            "aggregations": {"by_severity": {"buckets": []}},
         }
 
         resp = await self.client.request("GET", "/api/alerts/count")
@@ -344,9 +338,7 @@ class TestAlertDetailHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_not_found(self):
         """Non-existent alert returns 404."""
-        self.mock_client.search.return_value = {
-            "hits": {"hits": []}
-        }
+        self.mock_client.search.return_value = {"hits": {"hits": []}}
 
         resp = await self.client.request("GET", "/api/alerts/nonexistent")
         self.assertEqual(resp.status, 404)

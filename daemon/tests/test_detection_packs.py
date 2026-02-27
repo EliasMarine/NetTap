@@ -6,7 +6,6 @@ update checking, statistics, and edge cases. All tests are self-contained
 with no external dependencies.
 """
 
-import json
 import os
 import unittest
 
@@ -69,9 +68,16 @@ class TestDetectionPackDataclass(unittest.TestCase):
     def test_pack_default_tags(self):
         """Default tags is an empty list."""
         pack = DetectionPack(
-            id="t", name="T", description="", version="1",
-            author="A", rule_count=0, enabled=False,
-            installed_at="", updated_at="", category="custom",
+            id="t",
+            name="T",
+            description="",
+            version="1",
+            author="A",
+            rule_count=0,
+            enabled=False,
+            installed_at="",
+            updated_at="",
+            category="custom",
         )
         self.assertEqual(pack.tags, [])
         self.assertEqual(pack.source_url, "")
@@ -85,9 +91,12 @@ class TestDetectionPackManagerInit(unittest.TestCase):
         manager = DetectionPackManager(packs_dir="/tmp/nonexistent-packs-dir-test")
         self.assertEqual(len(manager.list_packs()), 0)
 
-    def test_init_with_temp_dir(self, ):
+    def test_init_with_temp_dir(
+        self,
+    ):
         """Manager can be initialized with a temp directory."""
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = DetectionPackManager(packs_dir=tmpdir)
             self.assertEqual(len(manager.list_packs()), 0)
@@ -95,6 +104,7 @@ class TestDetectionPackManagerInit(unittest.TestCase):
     def test_persistence_round_trip(self):
         """Installed packs survive reload from disk."""
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = DetectionPackManager(packs_dir=tmpdir)
             manager.install_pack("et-open")
@@ -110,11 +120,13 @@ class TestInstallPack(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_install_et_open(self):
@@ -171,12 +183,14 @@ class TestUninstallPack(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
         self.manager.install_pack("et-open")
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_uninstall_installed_pack(self):
@@ -202,12 +216,14 @@ class TestEnableDisablePack(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
         self.manager.install_pack("et-open")
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_disable_pack(self):
@@ -241,11 +257,13 @@ class TestListAndGetPack(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_list_empty(self):
@@ -277,11 +295,13 @@ class TestCheckUpdates(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_check_updates_returns_empty_list(self):
@@ -296,11 +316,13 @@ class TestGetStats(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_stats_empty(self):
@@ -352,11 +374,13 @@ class TestGetAvailablePacks(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+
         self.tmpdir = tempfile.mkdtemp()
         self.manager = DetectionPackManager(packs_dir=self.tmpdir)
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_all_available_before_install(self):
@@ -379,8 +403,16 @@ class TestBuiltinPacks(unittest.TestCase):
 
     def test_all_builtins_have_required_fields(self):
         """Each builtin definition has all required fields."""
-        required_keys = {"id", "name", "description", "version", "author",
-                         "rule_count", "category", "tags"}
+        required_keys = {
+            "id",
+            "name",
+            "description",
+            "version",
+            "author",
+            "rule_count",
+            "category",
+            "tags",
+        }
         for bdef in BUILTIN_PACK_DEFS:
             for key in required_keys:
                 self.assertIn(key, bdef, f"Missing '{key}' in {bdef['id']}")

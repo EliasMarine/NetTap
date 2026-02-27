@@ -6,9 +6,7 @@ Tests cover single IP lookup, batch lookup, validation, error handling,
 and edge cases.
 """
 
-import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
 
 import sys
 import os
@@ -117,8 +115,15 @@ class TestGeoIPLookupHandler(AioHTTPTestCase):
         data = await resp.json()
 
         expected_keys = {
-            "ip", "country", "country_code", "city",
-            "latitude", "longitude", "asn", "organization", "is_private",
+            "ip",
+            "country",
+            "country_code",
+            "city",
+            "latitude",
+            "longitude",
+            "asn",
+            "organization",
+            "is_private",
         }
         self.assertEqual(set(data.keys()), expected_keys)
 
@@ -138,9 +143,7 @@ class TestGeoIPBatchHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_batch_success(self):
         """GET /api/geoip/batch?ips=8.8.8.8,1.1.1.1 returns results array."""
-        resp = await self.client.request(
-            "GET", "/api/geoip/batch?ips=8.8.8.8,1.1.1.1"
-        )
+        resp = await self.client.request("GET", "/api/geoip/batch?ips=8.8.8.8,1.1.1.1")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
 
@@ -183,9 +186,7 @@ class TestGeoIPBatchHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_batch_all_invalid(self):
         """Batch with all invalid IPs returns 400."""
-        resp = await self.client.request(
-            "GET", "/api/geoip/batch?ips=foo,bar,baz"
-        )
+        resp = await self.client.request("GET", "/api/geoip/batch?ips=foo,bar,baz")
         self.assertEqual(resp.status, 400)
         data = await resp.json()
         self.assertIn("error", data)
@@ -195,9 +196,7 @@ class TestGeoIPBatchHandler(AioHTTPTestCase):
     async def test_batch_caps_at_50(self):
         """Batch with >50 IPs should only return 50 results."""
         ips = ",".join(f"93.184.{i // 256}.{i % 256}" for i in range(60))
-        resp = await self.client.request(
-            "GET", f"/api/geoip/batch?ips={ips}"
-        )
+        resp = await self.client.request("GET", f"/api/geoip/batch?ips={ips}")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
 
@@ -219,9 +218,7 @@ class TestGeoIPBatchHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_batch_single_ip(self):
         """Batch with a single IP still works."""
-        resp = await self.client.request(
-            "GET", "/api/geoip/batch?ips=9.9.9.9"
-        )
+        resp = await self.client.request("GET", "/api/geoip/batch?ips=9.9.9.9")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
 
@@ -244,9 +241,7 @@ class TestRouteRegistration(AioHTTPTestCase):
     @unittest_run_loop
     async def test_batch_not_captured_by_ip_route(self):
         """The /batch route should not be captured by the /{ip} route."""
-        resp = await self.client.request(
-            "GET", "/api/geoip/batch?ips=8.8.8.8"
-        )
+        resp = await self.client.request("GET", "/api/geoip/batch?ips=8.8.8.8")
         # Should get 200 from batch handler, not 400 from IP validation
         self.assertEqual(resp.status, 200)
         data = await resp.json()

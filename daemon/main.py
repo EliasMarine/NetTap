@@ -80,6 +80,7 @@ logger = logging.getLogger("nettap")
 # Environment variable parsing
 # ---------------------------------------------------------------------------
 
+
 def _env_int(name: str, default: int) -> int:
     """Read an integer from an environment variable with a fallback default."""
     raw = os.environ.get(name)
@@ -151,6 +152,7 @@ def load_config() -> dict[str, Any]:
 # Logging setup
 # ---------------------------------------------------------------------------
 
+
 def configure_logging(level_name: str) -> None:
     """Configure root logging with the NetTap format and the given level."""
     numeric_level = getattr(logging, level_name, logging.INFO)
@@ -165,6 +167,7 @@ def configure_logging(level_name: str) -> None:
 # Async monitoring loops
 # ---------------------------------------------------------------------------
 
+
 async def storage_loop(
     storage: StorageManager,
     interval: int,
@@ -174,9 +177,7 @@ async def storage_loop(
 
     Exits cleanly when *shutdown_event* is set.
     """
-    logger.info(
-        "Storage monitor loop started (interval=%ds)", interval
-    )
+    logger.info("Storage monitor loop started (interval=%ds)", interval)
     while not shutdown_event.is_set():
         try:
             storage.run_cycle()
@@ -185,9 +186,7 @@ async def storage_loop(
 
         # Wait for the interval OR until shutdown is requested
         try:
-            await asyncio.wait_for(
-                shutdown_event.wait(), timeout=interval
-            )
+            await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
             # If we get here, shutdown was requested
             break
         except asyncio.TimeoutError:
@@ -206,9 +205,7 @@ async def smart_loop(
 
     Exits cleanly when *shutdown_event* is set.
     """
-    logger.info(
-        "SMART monitor loop started (interval=%ds)", interval
-    )
+    logger.info("SMART monitor loop started (interval=%ds)", interval)
     while not shutdown_event.is_set():
         try:
             smart.check_health()
@@ -216,9 +213,7 @@ async def smart_loop(
             logger.exception("Unhandled error in SMART check")
 
         try:
-            await asyncio.wait_for(
-                shutdown_event.wait(), timeout=interval
-            )
+            await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
             break
         except asyncio.TimeoutError:
             pass
@@ -229,6 +224,7 @@ async def smart_loop(
 # ---------------------------------------------------------------------------
 # Main async entry point
 # ---------------------------------------------------------------------------
+
 
 async def async_main() -> None:
     """Async entry point: parse config, wire up subsystems, run loops."""
@@ -242,8 +238,12 @@ async def async_main() -> None:
     logger.info("NetTap daemon starting")
     logger.info("=" * 60)
     logger.info("  OpenSearch URL:         %s", cfg["opensearch_url"])
-    logger.info("  Retention (hot/warm/cold): %d / %d / %d days",
-                cfg["retention_hot"], cfg["retention_warm"], cfg["retention_cold"])
+    logger.info(
+        "  Retention (hot/warm/cold): %d / %d / %d days",
+        cfg["retention_hot"],
+        cfg["retention_warm"],
+        cfg["retention_cold"],
+    )
     logger.info("  Disk threshold:         %.0f%%", cfg["disk_threshold"] * 100)
     logger.info("  Emergency threshold:    %.0f%%", cfg["emergency_threshold"] * 100)
     logger.info("  Storage check interval: %ds", cfg["storage_check_interval"])
@@ -320,6 +320,7 @@ async def async_main() -> None:
 # ---------------------------------------------------------------------------
 # Synchronous entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Entry point — run the async main loop."""

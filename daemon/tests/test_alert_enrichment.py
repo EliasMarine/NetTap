@@ -12,7 +12,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -195,9 +194,7 @@ class TestAlertEnrichment(unittest.TestCase):
 
     def _make_descriptions_file(self, data: dict) -> str:
         """Create a temporary descriptions JSON file and return the path."""
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         json.dump(data, tmp)
         tmp.close()
         return tmp.name
@@ -230,7 +227,10 @@ class TestAlertEnrichment(unittest.TestCase):
 
             result = enricher.enrich_alert(alert)
 
-            self.assertEqual(result["plain_description"], "A test malware was detected on your network.")
+            self.assertEqual(
+                result["plain_description"],
+                "A test malware was detected on your network.",
+            )
             self.assertEqual(result["risk_context"], "This is a test risk context.")
             self.assertEqual(result["recommendation"], "This is a test recommendation.")
         finally:
@@ -252,7 +252,11 @@ class TestAlertEnrichment(unittest.TestCase):
 
             result = enricher.enrich_alert(alert)
 
-            self.assertTrue(result["plain_description"].startswith("Potential malware activity detected:"))
+            self.assertTrue(
+                result["plain_description"].startswith(
+                    "Potential malware activity detected:"
+                )
+            )
             self.assertIn("Unknown Variant Activity", result["plain_description"])
             self.assertIsInstance(result["risk_context"], str)
             self.assertIsInstance(result["recommendation"], str)
@@ -275,7 +279,11 @@ class TestAlertEnrichment(unittest.TestCase):
 
             result = enricher.enrich_alert(alert)
 
-            self.assertTrue(result["plain_description"].startswith("Network security event detected:"))
+            self.assertTrue(
+                result["plain_description"].startswith(
+                    "Network security event detected:"
+                )
+            )
             self.assertIsInstance(result["risk_context"], str)
             self.assertIsInstance(result["recommendation"], str)
         finally:
@@ -368,13 +376,15 @@ class TestAlertEnrichment(unittest.TestCase):
             },
         }
         result = enricher.enrich_alert(alert)
-        self.assertTrue(result["plain_description"].startswith("Trojan horse communication detected:"))
+        self.assertTrue(
+            result["plain_description"].startswith(
+                "Trojan horse communication detected:"
+            )
+        )
 
     def test_corrupt_json_file_graceful_fallback(self):
         """AlertEnrichment handles corrupt JSON file gracefully."""
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         tmp.write("not valid json{{{")
         tmp.close()
         try:
@@ -390,7 +400,9 @@ class TestAlertEnrichment(unittest.TestCase):
                 },
             }
             result = enricher.enrich_alert(alert)
-            self.assertTrue(result["plain_description"].startswith("Exploit attempt detected:"))
+            self.assertTrue(
+                result["plain_description"].startswith("Exploit attempt detected:")
+            )
         finally:
             os.unlink(tmp.name)
 

@@ -92,6 +92,7 @@ class TestSearchEndpoint(AioHTTPTestCase):
     async def test_search_opensearch_error(self):
         """OpenSearch failure returns 502."""
         from opensearchpy import OpenSearchException
+
         self.mock_storage._client.search.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/search?q=test")
         self.assertEqual(resp.status, 502)

@@ -1,0 +1,5 @@
+# npm bundles minimatch@10.2.2; fixes need 10.2.3+ which npm hasn't released.
+# These are ReDoS in npm's internal glob matching — not exploitable in our
+# production runtime (node build). Remove once npm ships the fix.
+CVE-2026-27903
+CVE-2026-27904

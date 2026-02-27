@@ -67,6 +67,7 @@ logger = logging.getLogger("nettap.api")
 # Middleware
 # ---------------------------------------------------------------------------
 
+
 @web.middleware
 async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
     """Add CORS headers to every response for LAN-only dashboard access.
@@ -131,14 +132,17 @@ async def logging_middleware(request: web.Request, handler) -> web.StreamRespons
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_health(request: web.Request) -> web.Response:
     """GET /api/health -- Simple liveness check."""
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
-    return web.json_response({
-        "status": "ok",
-        "uptime": round(uptime, 2),
-    })
+    return web.json_response(
+        {
+            "status": "ok",
+            "uptime": round(uptime, 2),
+        }
+    )
 
 
 async def handle_storage_status(request: web.Request) -> web.Response:
@@ -179,10 +183,12 @@ async def handle_storage_prune(request: web.Request) -> web.Response:
         await loop.run_in_executor(None, storage.run_cycle)
         # Return current status after the prune cycle completes
         status = storage.get_status()
-        return web.json_response({
-            "result": "prune_cycle_complete",
-            "storage_status": status,
-        })
+        return web.json_response(
+            {
+                "result": "prune_cycle_complete",
+                "storage_status": status,
+            }
+        )
     except Exception as exc:
         logger.exception("Error during manual prune cycle")
         return web.json_response(
@@ -240,7 +246,9 @@ async def handle_system_health(request: web.Request) -> web.Response:
     """
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
-    opensearch_url: str = request.app["opensearch_url"]
+    # OLD CODE START — opensearch_url was fetched but never used (F841)
+    # opensearch_url: str = request.app["opensearch_url"]
+    # OLD CODE END
 
     result: dict = {
         "uptime": round(uptime, 2),
@@ -278,7 +286,7 @@ async def handle_system_health(request: web.Request) -> web.Response:
     try:
         storage_mgr: StorageManager = request.app["storage"]
         loop = asyncio.get_running_loop()
-        info = await loop.run_in_executor(None, storage_mgr._client.info)
+        await loop.run_in_executor(None, storage_mgr._client.info)
         result["opensearch_reachable"] = True
     except Exception as exc:
         logger.warning("System health: OpenSearch unreachable: %s", exc)
@@ -293,13 +301,13 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
     try:
         opensearch_url: str = request.app["opensearch_url"]
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None, apply_ilm_policies, opensearch_url
+        results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
+        return web.json_response(
+            {
+                "result": "ilm_policies_applied",
+                "policies": results,
+            }
         )
-        return web.json_response({
-            "result": "ilm_policies_applied",
-            "policies": results,
-        })
     except Exception as exc:
         logger.exception("Error applying ILM policies")
         return web.json_response(
@@ -311,6 +319,7 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
+
 
 def create_app(
     storage: StorageManager,
@@ -437,9 +446,7 @@ def create_app(
 
     version_manager = VersionManager(compose_file=compose_file)
     update_checker = UpdateChecker(github_repo=github_repo)
-    update_executor = UpdateExecutor(
-        compose_file=compose_file, backup_dir=backup_dir
-    )
+    update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
 
     # Wire up cross-service references
     update_checker.set_version_manager(version_manager)
@@ -459,6 +466,7 @@ def create_app(
 # ---------------------------------------------------------------------------
 # Server lifecycle
 # ---------------------------------------------------------------------------
+
 
 async def start_api(
     storage: StorageManager,

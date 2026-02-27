@@ -37,6 +37,7 @@ _ALLOWED_SORT_FIELDS = {"bytes", "connections", "alerts", "last_seen", "first_se
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps.
 
@@ -105,6 +106,7 @@ def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_device_list(request: web.Request) -> web.Response:
     """GET /api/devices?from=&to=&sort=bytes&order=desc&limit=100
 
@@ -139,11 +141,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
             "devices": {
                 "terms": {
@@ -160,9 +158,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "protocols": {
-                        "terms": {"field": "proto", "size": 10}
-                    },
+                    "protocols": {"terms": {"field": "proto", "size": 10}},
                     "first_seen": {"min": {"field": "ts"}},
                     "last_seen": {"max": {"field": "ts"}},
                 },
@@ -191,21 +187,27 @@ async def handle_device_list(request: web.Request) -> web.Response:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                        {
+                            "range": {
+                                "timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
                         {"terms": {"src_ip": device_ips}},
                     ]
                 }
             },
-            "aggs": {
-                "by_ip": {
-                    "terms": {"field": "src_ip", "size": len(device_ips)}
-                }
-            },
+            "aggs": {"by_ip": {"terms": {"field": "src_ip", "size": len(device_ips)}}},
         }
 
         try:
             alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
-            for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+            for ab in (
+                alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+            ):
                 alert_counts[ab["key"]] = ab["doc_count"]
         except OpenSearchException as exc:
             logger.warning("Alert count query failed: %s", exc)
@@ -228,19 +230,21 @@ async def handle_device_list(request: web.Request) -> web.Response:
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
         os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
-        devices.append({
-            "ip": ip,
-            "mac": mac,
-            "hostname": hostname,
-            "manufacturer": manufacturer,
-            "os_hint": os_hint,
-            "first_seen": first_seen,
-            "last_seen": last_seen,
-            "total_bytes": total_bytes,
-            "connection_count": connection_count,
-            "protocols": protocols,
-            "alert_count": alert_count,
-        })
+        devices.append(
+            {
+                "ip": ip,
+                "mac": mac,
+                "hostname": hostname,
+                "manufacturer": manufacturer,
+                "os_hint": os_hint,
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "total_bytes": total_bytes,
+                "connection_count": connection_count,
+                "protocols": protocols,
+                "alert_count": alert_count,
+            }
+        )
 
     # Post-query sort by alerts if requested
     if sort_field == "alerts":
@@ -252,12 +256,14 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # Apply limit after post-sort
     devices = devices[:limit]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "limit": limit,
-        "devices": devices,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "limit": limit,
+            "devices": devices,
+        }
+    )
 
 
 async def handle_device_detail(request: web.Request) -> web.Response:
@@ -291,9 +297,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     }
                 }
             },
-            "protocols": {
-                "terms": {"field": "proto", "size": 10}
-            },
+            "protocols": {"terms": {"field": "proto", "size": 10}},
             "first_seen": {"min": {"field": "ts"}},
             "last_seen": {"max": {"field": "ts"}},
             "top_destinations": {
@@ -343,7 +347,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
-    connection_count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    connection_count = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     total_bytes = aggs.get("total_bytes", {}).get("value", 0) or 0
     first_seen = aggs.get("first_seen", {}).get("value_as_string", "")
@@ -383,20 +389,17 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 ]
             }
         },
-        "aggs": {
-            "dns_queries": {
-                "terms": {"field": "query", "size": 50}
-            }
-        },
+        "aggs": {"dns_queries": {"terms": {"field": "query", "size": 50}}},
     }
 
     dns_queries = []
     try:
         dns_result = client.search(index=ZEEK_DNS_INDEX, body=dns_query)
-        dns_buckets = dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
+        dns_buckets = (
+            dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
+        )
         dns_queries = [
-            {"domain": db["key"], "count": db["doc_count"]}
-            for db in dns_buckets
+            {"domain": db["key"], "count": db["doc_count"]} for db in dns_buckets
         ]
     except OpenSearchException as exc:
         logger.warning("DNS query lookup failed for %s: %s", ip, exc)
@@ -407,7 +410,15 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         "query": {
             "bool": {
                 "filter": [
-                    {"range": {"timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                    {
+                        "range": {
+                            "timestamp": {
+                                "gte": from_ts,
+                                "lte": to_ts,
+                                "format": "strict_date_optional_time",
+                            }
+                        }
+                    },
                     {"term": {"src_ip": ip}},
                 ]
             }
@@ -418,7 +429,11 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     try:
         alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
         alert_total = alert_result.get("hits", {}).get("total", {})
-        alert_count = alert_total.get("value", 0) if isinstance(alert_total, dict) else alert_total
+        alert_count = (
+            alert_total.get("value", 0)
+            if isinstance(alert_total, dict)
+            else alert_total
+        )
     except OpenSearchException as exc:
         logger.warning("Alert count lookup failed for %s: %s", ip, exc)
 
@@ -428,24 +443,26 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     manufacturer = fingerprint.get_manufacturer(mac) if mac else None
     os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
-    return web.json_response({
-        "device": {
-            "ip": ip,
-            "mac": mac,
-            "hostname": hostname,
-            "manufacturer": manufacturer,
-            "os_hint": os_hint,
-            "first_seen": first_seen,
-            "last_seen": last_seen,
-            "total_bytes": total_bytes,
-            "connection_count": connection_count,
-            "protocols": protocols,
-            "alert_count": alert_count,
-            "top_destinations": top_destinations,
-            "dns_queries": dns_queries,
-            "bandwidth_series": bandwidth_series,
+    return web.json_response(
+        {
+            "device": {
+                "ip": ip,
+                "mac": mac,
+                "hostname": hostname,
+                "manufacturer": manufacturer,
+                "os_hint": os_hint,
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "total_bytes": total_bytes,
+                "connection_count": connection_count,
+                "protocols": protocols,
+                "alert_count": alert_count,
+                "top_destinations": top_destinations,
+                "dns_queries": dns_queries,
+                "bandwidth_series": bandwidth_series,
+            }
         }
-    })
+    )
 
 
 async def handle_device_connections(request: web.Request) -> web.Response:
@@ -503,23 +520,28 @@ async def handle_device_connections(request: web.Request) -> web.Response:
         source["_index"] = hit.get("_index", "")
         connections.append(source)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "ip": ip,
-        "page": page,
-        "size": size,
-        "total": total,
-        "total_pages": (total + size - 1) // size if size > 0 else 0,
-        "connections": connections,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "ip": ip,
+            "page": page,
+            "size": size,
+            "total": total,
+            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            "connections": connections,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
-def register_device_routes(app: web.Application, storage_manager: StorageManager) -> None:
+
+def register_device_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     """Register all device inventory API routes on the given aiohttp application.
 
     Creates and stores a DeviceFingerprint instance on the app for use

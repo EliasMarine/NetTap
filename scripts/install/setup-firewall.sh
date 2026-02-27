@@ -73,8 +73,8 @@ while [[ $# -gt 0 ]]; do
         --mgmt)         MGMT_IFACE="$2"; shift 2 ;;
         --ssh-port)     SSH_PORT="$2"; shift 2 ;;
         --https-port)   HTTPS_PORT="$2"; shift 2 ;;
-        --dry-run)      NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)   NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)      NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)   NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)      usage ;;
         *)              echo "Unknown option: $1"; usage ;;
     esac

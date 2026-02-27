@@ -22,10 +22,6 @@ from services.traffic_classifier import (
     classify_connection,
     get_category_label,
     get_category_stats,
-    CATEGORIES,
-    DOMAIN_RULES,
-    PORT_RULES,
-    SERVICE_RULES,
 )
 
 
@@ -181,9 +177,7 @@ class TestClassifyConnection(unittest.TestCase):
 
     def test_domain_takes_priority_over_service(self):
         """Domain classification has priority over service classification."""
-        result = classify_connection(
-            service="http", domain="www.netflix.com", port=443
-        )
+        result = classify_connection(service="http", domain="www.netflix.com", port=443)
         self.assertEqual(result, "streaming")
 
     def test_service_fallback_when_domain_is_other(self):
@@ -405,9 +399,7 @@ class TestGetCategoryStats(unittest.TestCase):
 
         if len(result) >= 2:
             # First result should have the most bytes
-            self.assertGreaterEqual(
-                result[0]["total_bytes"], result[1]["total_bytes"]
-            )
+            self.assertGreaterEqual(result[0]["total_bytes"], result[1]["total_bytes"])
 
 
 if __name__ == "__main__":

@@ -15,7 +15,6 @@ import ipaddress
 import logging
 import os
 from functools import lru_cache
-from typing import Optional
 
 logger = logging.getLogger("nettap.geoip")
 
@@ -26,48 +25,204 @@ logger = logging.getLogger("nettap.geoip")
 
 WELL_KNOWN_IPS: dict[str, dict] = {
     # Google Public DNS
-    "8.8.8.8": {"country": "United States", "country_code": "US", "city": "Mountain View", "org": "Google LLC", "asn": 15169},
-    "8.8.4.4": {"country": "United States", "country_code": "US", "city": "Mountain View", "org": "Google LLC", "asn": 15169},
+    "8.8.8.8": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Mountain View",
+        "org": "Google LLC",
+        "asn": 15169,
+    },
+    "8.8.4.4": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Mountain View",
+        "org": "Google LLC",
+        "asn": 15169,
+    },
     # Cloudflare DNS
-    "1.1.1.1": {"country": "United States", "country_code": "US", "city": "San Francisco", "org": "Cloudflare, Inc.", "asn": 13335},
-    "1.0.0.1": {"country": "United States", "country_code": "US", "city": "San Francisco", "org": "Cloudflare, Inc.", "asn": 13335},
+    "1.1.1.1": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "San Francisco",
+        "org": "Cloudflare, Inc.",
+        "asn": 13335,
+    },
+    "1.0.0.1": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "San Francisco",
+        "org": "Cloudflare, Inc.",
+        "asn": 13335,
+    },
     # Cisco OpenDNS
-    "208.67.222.222": {"country": "United States", "country_code": "US", "city": "San Francisco", "org": "Cisco OpenDNS", "asn": 36692},
-    "208.67.220.220": {"country": "United States", "country_code": "US", "city": "San Francisco", "org": "Cisco OpenDNS", "asn": 36692},
+    "208.67.222.222": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "San Francisco",
+        "org": "Cisco OpenDNS",
+        "asn": 36692,
+    },
+    "208.67.220.220": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "San Francisco",
+        "org": "Cisco OpenDNS",
+        "asn": 36692,
+    },
     # Quad9
-    "9.9.9.9": {"country": "United States", "country_code": "US", "city": "Berkeley", "org": "Quad9", "asn": 19281},
-    "149.112.112.112": {"country": "United States", "country_code": "US", "city": "Berkeley", "org": "Quad9", "asn": 19281},
+    "9.9.9.9": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Berkeley",
+        "org": "Quad9",
+        "asn": 19281,
+    },
+    "149.112.112.112": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Berkeley",
+        "org": "Quad9",
+        "asn": 19281,
+    },
     # Comodo Secure DNS
-    "8.26.56.26": {"country": "United States", "country_code": "US", "city": "Jersey City", "org": "Comodo Group", "asn": 30060},
-    "8.20.247.20": {"country": "United States", "country_code": "US", "city": "Jersey City", "org": "Comodo Group", "asn": 30060},
+    "8.26.56.26": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Jersey City",
+        "org": "Comodo Group",
+        "asn": 30060,
+    },
+    "8.20.247.20": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Jersey City",
+        "org": "Comodo Group",
+        "asn": 30060,
+    },
     # AdGuard DNS
-    "94.140.14.14": {"country": "Cyprus", "country_code": "CY", "city": "Limassol", "org": "AdGuard Software Ltd", "asn": 212772},
-    "94.140.15.15": {"country": "Cyprus", "country_code": "CY", "city": "Limassol", "org": "AdGuard Software Ltd", "asn": 212772},
+    "94.140.14.14": {
+        "country": "Cyprus",
+        "country_code": "CY",
+        "city": "Limassol",
+        "org": "AdGuard Software Ltd",
+        "asn": 212772,
+    },
+    "94.140.15.15": {
+        "country": "Cyprus",
+        "country_code": "CY",
+        "city": "Limassol",
+        "org": "AdGuard Software Ltd",
+        "asn": 212772,
+    },
     # CleanBrowsing DNS
-    "185.228.168.9": {"country": "United States", "country_code": "US", "city": None, "org": "CleanBrowsing", "asn": 398085},
-    "185.228.169.9": {"country": "United States", "country_code": "US", "city": None, "org": "CleanBrowsing", "asn": 398085},
+    "185.228.168.9": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "CleanBrowsing",
+        "asn": 398085,
+    },
+    "185.228.169.9": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "CleanBrowsing",
+        "asn": 398085,
+    },
     # Verisign Public DNS
-    "64.6.64.6": {"country": "United States", "country_code": "US", "city": "Reston", "org": "Verisign, Inc.", "asn": 7342},
-    "64.6.65.6": {"country": "United States", "country_code": "US", "city": "Reston", "org": "Verisign, Inc.", "asn": 7342},
+    "64.6.64.6": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Reston",
+        "org": "Verisign, Inc.",
+        "asn": 7342,
+    },
+    "64.6.65.6": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Reston",
+        "org": "Verisign, Inc.",
+        "asn": 7342,
+    },
     # Level3 DNS
-    "4.2.2.1": {"country": "United States", "country_code": "US", "city": None, "org": "Level 3 Communications", "asn": 3356},
-    "4.2.2.2": {"country": "United States", "country_code": "US", "city": None, "org": "Level 3 Communications", "asn": 3356},
+    "4.2.2.1": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "Level 3 Communications",
+        "asn": 3356,
+    },
+    "4.2.2.2": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "Level 3 Communications",
+        "asn": 3356,
+    },
     # Akamai CDN common anycast
-    "23.0.0.1": {"country": "United States", "country_code": "US", "city": None, "org": "Akamai Technologies", "asn": 16625},
+    "23.0.0.1": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "Akamai Technologies",
+        "asn": 16625,
+    },
     # Amazon AWS us-east-1 common IP
-    "54.239.28.85": {"country": "United States", "country_code": "US", "city": "Ashburn", "org": "Amazon.com, Inc.", "asn": 16509},
+    "54.239.28.85": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Ashburn",
+        "org": "Amazon.com, Inc.",
+        "asn": 16509,
+    },
     # Microsoft Azure front
-    "13.107.4.50": {"country": "United States", "country_code": "US", "city": "Redmond", "org": "Microsoft Corporation", "asn": 8075},
+    "13.107.4.50": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Redmond",
+        "org": "Microsoft Corporation",
+        "asn": 8075,
+    },
     # Apple
-    "17.253.144.10": {"country": "United States", "country_code": "US", "city": "Cupertino", "org": "Apple Inc.", "asn": 714},
+    "17.253.144.10": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Cupertino",
+        "org": "Apple Inc.",
+        "asn": 714,
+    },
     # Facebook / Meta
-    "157.240.1.35": {"country": "United States", "country_code": "US", "city": "Menlo Park", "org": "Meta Platforms, Inc.", "asn": 32934},
+    "157.240.1.35": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "Menlo Park",
+        "org": "Meta Platforms, Inc.",
+        "asn": 32934,
+    },
     # Twitter / X
-    "104.244.42.1": {"country": "United States", "country_code": "US", "city": "San Francisco", "org": "X Corp.", "asn": 13414},
+    "104.244.42.1": {
+        "country": "United States",
+        "country_code": "US",
+        "city": "San Francisco",
+        "org": "X Corp.",
+        "asn": 13414,
+    },
     # Fastly CDN
-    "151.101.1.69": {"country": "United States", "country_code": "US", "city": None, "org": "Fastly, Inc.", "asn": 54113},
+    "151.101.1.69": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "Fastly, Inc.",
+        "asn": 54113,
+    },
     # Let's Encrypt OCSP
-    "23.43.125.82": {"country": "United States", "country_code": "US", "city": None, "org": "Akamai Technologies", "asn": 16625},
+    "23.43.125.82": {
+        "country": "United States",
+        "country_code": "US",
+        "city": None,
+        "org": "Akamai Technologies",
+        "asn": 16625,
+    },
 }
 
 

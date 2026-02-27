@@ -16,7 +16,6 @@ Security:
 import asyncio
 import json
 import logging
-import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -71,6 +70,7 @@ class TSharkResult:
 
 class TSharkValidationError(Exception):
     """Raised when request validation fails."""
+
     pass
 
 
@@ -134,9 +134,7 @@ class TSharkService:
 
         # Check for shell metacharacters
         if SHELL_METACHAR_PATTERN.search(display_filter):
-            raise TSharkValidationError(
-                "Display filter contains forbidden characters"
-            )
+            raise TSharkValidationError("Display filter contains forbidden characters")
 
         # Length limit
         if len(display_filter) > 500:
@@ -333,11 +331,13 @@ class TSharkService:
                 for line in stdout.strip().split("\n"):
                     parts = line.split("\t")
                     if len(parts) >= 3:
-                        protocols.append({
-                            "name": parts[0],
-                            "short_name": parts[1],
-                            "filter_name": parts[2],
-                        })
+                        protocols.append(
+                            {
+                                "name": parts[0],
+                                "short_name": parts[1],
+                                "filter_name": parts[2],
+                            }
+                        )
                 self._protocols_cache = protocols
                 return protocols
         except Exception as e:
@@ -364,7 +364,10 @@ class TSharkService:
                             "protocol": parts[1] if len(parts) > 1 else "",
                             "description": parts[0] if len(parts) > 0 else "",
                         }
-                        if not protocol or entry["protocol"].lower() == protocol.lower():
+                        if (
+                            not protocol
+                            or entry["protocol"].lower() == protocol.lower()
+                        ):
                             fields.append(entry)
                 self._fields_cache[cache_key] = fields
                 return fields
@@ -375,7 +378,13 @@ class TSharkService:
     async def is_available(self) -> dict:
         """Check if TShark container is running and accessible."""
         try:
-            cmd = ["docker", "inspect", "--format", "{{.State.Running}}", TSHARK_CONTAINER]
+            cmd = [
+                "docker",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                TSHARK_CONTAINER,
+            ]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -408,8 +417,14 @@ class TSharkService:
         self.validate_display_filter(display_filter)  # Basic sanitization first
         try:
             cmd = [
-                "docker", "exec", TSHARK_CONTAINER,
-                "tshark", "-Y", display_filter, "-r", "/dev/null"
+                "docker",
+                "exec",
+                TSHARK_CONTAINER,
+                "tshark",
+                "-Y",
+                display_filter,
+                "-r",
+                "/dev/null",
             ]
             _, stderr, rc = await self._exec_tshark(cmd)
             # tshark returns 0 for valid filters (even with no packets)

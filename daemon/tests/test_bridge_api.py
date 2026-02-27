@@ -9,7 +9,7 @@ using AioHTTPTestCase.
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -70,25 +70,31 @@ class TestBridgeHealthEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_health_returns_200(self):
         """GET /api/bridge/health should return 200."""
-        self.mock_monitor.check_health = AsyncMock(
-            return_value=_make_health_result()
-        )
+        self.mock_monitor.check_health = AsyncMock(return_value=_make_health_result())
         resp = await self.client.request("GET", "/api/bridge/health")
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
     async def test_health_returns_correct_structure(self):
         """Response should contain expected keys."""
-        self.mock_monitor.check_health = AsyncMock(
-            return_value=_make_health_result()
-        )
+        self.mock_monitor.check_health = AsyncMock(return_value=_make_health_result())
         resp = await self.client.request("GET", "/api/bridge/health")
         data = await resp.json()
         expected_keys = {
-            "bridge_state", "wan_link", "lan_link", "bypass_active",
-            "watchdog_active", "latency_us", "rx_bytes_delta", "tx_bytes_delta",
-            "rx_packets_delta", "tx_packets_delta", "uptime_seconds",
-            "health_status", "issues", "last_check",
+            "bridge_state",
+            "wan_link",
+            "lan_link",
+            "bypass_active",
+            "watchdog_active",
+            "latency_us",
+            "rx_bytes_delta",
+            "tx_bytes_delta",
+            "rx_packets_delta",
+            "tx_packets_delta",
+            "uptime_seconds",
+            "health_status",
+            "issues",
+            "last_check",
         }
         self.assertEqual(set(data.keys()), expected_keys)
 
@@ -353,27 +359,35 @@ class TestRouteRegistration(AioHTTPTestCase):
     async def test_all_routes_registered(self):
         """All 6 bridge routes should be registered."""
         # Verify routes exist by checking they do not return 404
-        self.mock_monitor.check_health = AsyncMock(
-            return_value=_make_health_result()
-        )
+        self.mock_monitor.check_health = AsyncMock(return_value=_make_health_result())
         self.mock_monitor.get_history = AsyncMock(return_value=[])
-        self.mock_monitor.get_statistics = AsyncMock(return_value={
-            "average_latency_us": None,
-            "total_rx_bytes": 0,
-            "total_tx_bytes": 0,
-            "total_rx_packets": 0,
-            "total_tx_packets": 0,
-            "uptime_percentage": None,
-            "longest_downtime_seconds": 0,
-            "total_checks": 0,
-            "status_counts": {"normal": 0, "degraded": 0, "bypass": 0, "down": 0},
-        })
-        self.mock_monitor.trigger_bypass = AsyncMock(return_value={
-            "bypass_active": True, "activated_at": "ts", "message": "ok",
-        })
-        self.mock_monitor.disable_bypass = AsyncMock(return_value={
-            "bypass_active": False, "deactivated_at": "ts", "message": "ok",
-        })
+        self.mock_monitor.get_statistics = AsyncMock(
+            return_value={
+                "average_latency_us": None,
+                "total_rx_bytes": 0,
+                "total_tx_bytes": 0,
+                "total_rx_packets": 0,
+                "total_tx_packets": 0,
+                "uptime_percentage": None,
+                "longest_downtime_seconds": 0,
+                "total_checks": 0,
+                "status_counts": {"normal": 0, "degraded": 0, "bypass": 0, "down": 0},
+            }
+        )
+        self.mock_monitor.trigger_bypass = AsyncMock(
+            return_value={
+                "bypass_active": True,
+                "activated_at": "ts",
+                "message": "ok",
+            }
+        )
+        self.mock_monitor.disable_bypass = AsyncMock(
+            return_value={
+                "bypass_active": False,
+                "deactivated_at": "ts",
+                "message": "ok",
+            }
+        )
 
         routes_to_check = [
             ("GET", "/api/bridge/health"),
@@ -386,7 +400,8 @@ class TestRouteRegistration(AioHTTPTestCase):
         for method, path in routes_to_check:
             resp = await self.client.request(method, path)
             self.assertNotEqual(
-                resp.status, 404,
+                resp.status,
+                404,
                 f"Route {method} {path} returned 404 -- not registered",
             )
 

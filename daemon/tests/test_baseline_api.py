@@ -5,11 +5,9 @@ All tests use mocks -- no file I/O or external dependencies required.
 Tests cover the device baseline API endpoints using AioHTTPTestCase.
 """
 
-import json
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
 
 import sys
 
@@ -40,6 +38,7 @@ class TestGetBaselineEndpoint(AioHTTPTestCase):
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     @unittest_run_loop
@@ -87,6 +86,7 @@ class TestCheckBaselineGetEndpoint(AioHTTPTestCase):
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     @unittest_run_loop
@@ -129,6 +129,7 @@ class TestCheckBaselinePostEndpoint(AioHTTPTestCase):
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     @unittest_run_loop
@@ -192,15 +193,14 @@ class TestAddToBaselineEndpoint(AioHTTPTestCase):
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     @unittest_run_loop
     async def test_add_device_success(self):
         """POST /api/devices/baseline/add adds a device."""
         body = {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.10", "hostname": "laptop"}
-        resp = await self.client.request(
-            "POST", "/api/devices/baseline/add", json=body
-        )
+        resp = await self.client.request("POST", "/api/devices/baseline/add", json=body)
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertEqual(data["result"], "added")
@@ -211,9 +211,7 @@ class TestAddToBaselineEndpoint(AioHTTPTestCase):
     async def test_add_device_missing_mac(self):
         """POST add without MAC returns 400."""
         body = {"ip": "192.168.1.10"}
-        resp = await self.client.request(
-            "POST", "/api/devices/baseline/add", json=body
-        )
+        resp = await self.client.request("POST", "/api/devices/baseline/add", json=body)
         self.assertEqual(resp.status, 400)
 
     @unittest_run_loop
@@ -231,9 +229,7 @@ class TestAddToBaselineEndpoint(AioHTTPTestCase):
     async def test_add_device_empty_mac(self):
         """POST add with empty MAC returns 400."""
         body = {"mac": "", "ip": "192.168.1.10"}
-        resp = await self.client.request(
-            "POST", "/api/devices/baseline/add", json=body
-        )
+        resp = await self.client.request("POST", "/api/devices/baseline/add", json=body)
         self.assertEqual(resp.status, 400)
 
 
@@ -255,6 +251,7 @@ class TestRemoveFromBaselineEndpoint(AioHTTPTestCase):
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     @unittest_run_loop
@@ -305,6 +302,7 @@ class TestBaselineRouteRegistration(AioHTTPTestCase):
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     @unittest_run_loop

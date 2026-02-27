@@ -5,8 +5,6 @@ Provides mocked OpenSearch clients, sample index data, retention configs,
 sample smartctl JSON outputs, and filesystem helpers.
 """
 
-import json
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,6 +15,7 @@ from storage.manager import RetentionConfig
 # ---------------------------------------------------------------------------
 # OpenSearch client mock
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_opensearch_client():
@@ -36,6 +35,7 @@ def mock_opensearch_client():
 # ---------------------------------------------------------------------------
 # Sample index data
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sample_indices():
@@ -106,6 +106,7 @@ def sample_indices():
 # Retention configuration
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def retention_config():
     """Return a RetentionConfig with shortened test values."""
@@ -122,6 +123,7 @@ def retention_config():
 # ---------------------------------------------------------------------------
 # Sample smartctl JSON outputs
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_smartctl_nvme():
@@ -229,6 +231,7 @@ def mock_smartctl_sata():
 # ---------------------------------------------------------------------------
 # Filesystem helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_dir(tmp_path):

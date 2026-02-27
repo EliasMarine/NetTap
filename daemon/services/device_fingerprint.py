@@ -44,9 +44,7 @@ class DeviceFingerprint:
 
     def __init__(self, oui_path: str | None = None):
         self._oui_db: dict[str, str] = {}  # MAC prefix (AA:BB:CC) -> manufacturer
-        default_path = os.path.join(
-            os.path.dirname(__file__), "..", "data", "oui.txt"
-        )
+        default_path = os.path.join(os.path.dirname(__file__), "..", "data", "oui.txt")
         self._load_oui(oui_path or default_path)
 
     def _load_oui(self, path: str) -> None:
@@ -68,7 +66,10 @@ class DeviceFingerprint:
                             self._oui_db[prefix] = manufacturer
             logger.info("Loaded %d OUI entries from %s", len(self._oui_db), path)
         except FileNotFoundError:
-            logger.warning("OUI file not found: %s — manufacturer lookups will return 'Unknown'", path)
+            logger.warning(
+                "OUI file not found: %s — manufacturer lookups will return 'Unknown'",
+                path,
+            )
         except Exception as exc:
             logger.error("Error loading OUI file %s: %s", path, exc)
 
@@ -100,7 +101,9 @@ class DeviceFingerprint:
 
         return self._oui_db.get(prefix.upper(), "Unknown")
 
-    def get_hostname_for_ip(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
+    def get_hostname_for_ip(
+        self, client, ip: str, from_ts: str, to_ts: str
+    ) -> str | None:
         """Query zeek-dns-* for the most common hostname resolving to this IP.
 
         Looks at DNS answer records where the resolved IP matches the target.
@@ -111,21 +114,29 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                        {
+                            "range": {
+                                "ts": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
                         {"term": {"answers": ip}},
                     ]
                 }
             },
-            "aggs": {
-                "top_hostname": {
-                    "terms": {"field": "query", "size": 1}
-                }
-            },
+            "aggs": {"top_hostname": {"terms": {"field": "query", "size": 1}}},
         }
 
         try:
             result = client.search(index="zeek-dns-*", body=query)
-            buckets = result.get("aggregations", {}).get("top_hostname", {}).get("buckets", [])
+            buckets = (
+                result.get("aggregations", {})
+                .get("top_hostname", {})
+                .get("buckets", [])
+            )
             if buckets:
                 return buckets[0]["key"]
         except Exception as exc:
@@ -145,7 +156,15 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                        {
+                            "range": {
+                                "ts": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
                         {"term": {"client_addr": ip}},
                     ]
                 }
@@ -170,7 +189,15 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                        {
+                            "range": {
+                                "ts": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
                         {"term": {"id.orig_h": ip}},
                         {"exists": {"field": "orig_l2_addr"}},
                     ]
@@ -205,22 +232,28 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                        {
+                            "range": {
+                                "ts": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
                         {"term": {"id.orig_h": ip}},
                         {"exists": {"field": "user_agent"}},
                     ]
                 }
             },
-            "aggs": {
-                "top_ua": {
-                    "terms": {"field": "user_agent", "size": 5}
-                }
-            },
+            "aggs": {"top_ua": {"terms": {"field": "user_agent", "size": 5}}},
         }
 
         try:
             result = client.search(index="zeek-http-*", body=ua_query)
-            buckets = result.get("aggregations", {}).get("top_ua", {}).get("buckets", [])
+            buckets = (
+                result.get("aggregations", {}).get("top_ua", {}).get("buckets", [])
+            )
             for bucket in buckets:
                 ua_string = bucket.get("key", "")
                 for pattern, os_name in _OS_PATTERNS:
@@ -235,22 +268,28 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
+                        {
+                            "range": {
+                                "ts": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
                         {"term": {"id.orig_h": ip}},
                         {"exists": {"field": "ja3"}},
                     ]
                 }
             },
-            "aggs": {
-                "top_ja3": {
-                    "terms": {"field": "ja3", "size": 1}
-                }
-            },
+            "aggs": {"top_ja3": {"terms": {"field": "ja3", "size": 1}}},
         }
 
         try:
             result = client.search(index="zeek-ssl-*", body=ja3_query)
-            buckets = result.get("aggregations", {}).get("top_ja3", {}).get("buckets", [])
+            buckets = (
+                result.get("aggregations", {}).get("top_ja3", {}).get("buckets", [])
+            )
             if buckets:
                 # JA3 hash present but we don't have a lookup table yet.
                 # Return a generic hint so the caller knows TLS was seen.

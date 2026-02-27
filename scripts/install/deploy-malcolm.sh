@@ -48,8 +48,8 @@ while [[ $# -gt 0 ]]; do
         --start-only)   DO_PULL="false"; DO_CONFIG="false"; shift ;;
         --no-start)     DO_START="false"; shift ;;
         --skip-pull)    DO_PULL="false"; shift ;;
-        --dry-run)      NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)   NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)      NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)   NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)      usage ;;
         *)              echo "Unknown option: $1"; usage ;;
     esac

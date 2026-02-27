@@ -8,7 +8,6 @@ of common ET (Emerging Threats) signature prefixes.
 
 import json
 import logging
-import os
 from pathlib import Path
 
 logger = logging.getLogger("nettap.services.alert_enrichment")
@@ -35,7 +34,11 @@ _PREFIX_PATTERNS: list[tuple[str, str, str]] = [
     ("ET WEB_CLIENT", "web_client", "Web client vulnerability activity: {}"),
     ("ET HUNTING", "hunting", "Threat hunting indicator detected: {}"),
     ("ET CURRENT_EVENTS", "current_events", "Current threat campaign activity: {}"),
-    ("ET ATTACK_RESPONSE", "attack_response", "Attack response or successful compromise indicator: {}"),
+    (
+        "ET ATTACK_RESPONSE",
+        "attack_response",
+        "Attack response or successful compromise indicator: {}",
+    ),
     ("ET DOS", "dos", "Denial of service activity detected: {}"),
     ("ET DROP", "drop", "Traffic from known malicious source: {}"),
     ("GPL", "gpl", "Known threat signature matched: {}"),
@@ -158,6 +161,7 @@ _DEFAULT_RISK_NOTES: dict[int, str] = {
 # AlertEnrichment class
 # ---------------------------------------------------------------------------
 
+
 class AlertEnrichment:
     """Enriches Suricata alerts with plain English descriptions, risk context,
     and actionable recommendations.
@@ -167,7 +171,9 @@ class AlertEnrichment:
     """
 
     def __init__(self, descriptions_file: str | Path | None = None):
-        self._descriptions_file = Path(descriptions_file) if descriptions_file else _DESCRIPTIONS_FILE
+        self._descriptions_file = (
+            Path(descriptions_file) if descriptions_file else _DESCRIPTIONS_FILE
+        )
         self._sid_descriptions: dict[str, dict] = {}
         self._prefix_descriptions: dict[str, str] = {}
         self._load_descriptions()
@@ -243,6 +249,7 @@ class AlertEnrichment:
 # Module-level utility functions
 # ---------------------------------------------------------------------------
 
+
 def generate_description(signature: str) -> str:
     """Generate a plain English description from a Suricata signature name.
 
@@ -262,7 +269,7 @@ def generate_description(signature: str) -> str:
     for prefix, _category, template in _PREFIX_PATTERNS:
         if signature.upper().startswith(prefix.upper()):
             # Extract the descriptive part after the prefix
-            detail = signature[len(prefix):].strip()
+            detail = signature[len(prefix) :].strip()
             if not detail:
                 detail = signature
             return template.format(detail)
