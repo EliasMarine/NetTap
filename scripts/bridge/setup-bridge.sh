@@ -245,13 +245,13 @@ validate_bridge() {
         done
         if [[ "$any_carrier" == "true" ]]; then
             echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is DOWN but member NICs have carrier"
-            (( issues++ ))
+            (( ++issues ))
         else
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is DOWN (no carrier — will activate when cables are connected)"
         fi
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Bridge state: ${link_state}"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     # Check STP is disabled
@@ -261,7 +261,7 @@ validate_bridge() {
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} STP disabled"
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} STP state: ${stp_state} (should be 0 for inline tap)"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     # Check each interface is enslaved
@@ -274,11 +274,11 @@ validate_bridge() {
                 echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${iface} attached to ${BRIDGE_NAME}"
             else
                 echo "${_CLR_RED}[FAIL]${_CLR_RST} ${iface} attached to ${actual_bridge} instead of ${BRIDGE_NAME}"
-                (( issues++ ))
+                (( ++issues ))
             fi
         else
             echo "${_CLR_RED}[FAIL]${_CLR_RST} ${iface} not attached to any bridge"
-            (( issues++ ))
+            (( ++issues ))
         fi
 
         # Check promiscuous mode
@@ -286,7 +286,7 @@ validate_bridge() {
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${iface} promiscuous mode on"
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} ${iface} promiscuous mode not confirmed"
-            (( issues++ ))
+            (( ++issues ))
         fi
     done
 
@@ -297,7 +297,7 @@ validate_bridge() {
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Forward delay: 0 (optimal)"
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Forward delay: ${fwd_delay} (should be 0 for inline tap)"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     echo ""

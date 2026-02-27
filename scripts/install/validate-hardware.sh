@@ -176,7 +176,7 @@ detect_nics() {
         speed=$(get_nic_speed "$nic")
         if nic_has_carrier "$nic"; then carrier_str="link up"; else carrier_str="no link"; fi
         echo "  [${idx}] ${nic} — ${driver}, ${speed}, ${carrier_str}"
-        (( idx++ ))
+        (( ++idx ))
     done
 
     echo ""
@@ -202,12 +202,12 @@ validate_hardware() {
 
     # Run each check and capture its exit code without triggering set -e
     local rc
-    check_cpu;            rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_ram;            rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_disk;           rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_nics;           rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_kernel;         rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_virtualization; rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
+    check_cpu;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_ram;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_disk;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_nics;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_kernel;         rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_virtualization; rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
 
     echo ""
     echo "------------------------------------------"

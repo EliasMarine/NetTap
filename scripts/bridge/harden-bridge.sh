@@ -135,10 +135,10 @@ if [[ "$MODE_CHECK" == "true" ]]; then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${SYSCTL_KEY} = ${current}"
         elif [[ "$current" == "UNAVAILABLE" ]]; then
             echo "${_CLR_YLW}[SKIP]${_CLR_RST} ${SYSCTL_KEY} — sysctl not available (module not loaded?)"
-            (( issues++ ))
+            (( ++issues ))
         else
             echo "${_CLR_RED}[FAIL]${_CLR_RST} ${SYSCTL_KEY} = ${current} (expected: ${SYSCTL_VAL})"
-            (( issues++ ))
+            (( ++issues ))
         fi
     done
 
@@ -148,7 +148,7 @@ if [[ "$MODE_CHECK" == "true" ]]; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Persistent config exists: ${SYSCTL_CONF}"
     else
         echo "${_CLR_RED}[FAIL]${_CLR_RST} Persistent config missing: ${SYSCTL_CONF}"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     # Check br_netfilter is set to auto-load
@@ -156,7 +156,7 @@ if [[ "$MODE_CHECK" == "true" ]]; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} br_netfilter auto-load configured"
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} br_netfilter auto-load not configured (may not persist across reboot)"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     # Check bridge exists and is forwarding
@@ -168,7 +168,7 @@ if [[ "$MODE_CHECK" == "true" ]]; then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} STP disabled on ${BRIDGE_NAME}"
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} STP state: ${stp_state} (should be 0)"
-            (( issues++ ))
+            (( ++issues ))
         fi
     else
         echo "${_CLR_YLW}[INFO]${_CLR_RST} Bridge ${BRIDGE_NAME} not present (hardening still applies at boot)"

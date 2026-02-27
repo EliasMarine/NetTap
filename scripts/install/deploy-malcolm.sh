@@ -116,7 +116,7 @@ pull_images() {
     local failed=0
 
     for img in "${images[@]}"; do
-        (( count++ ))
+        (( ++count ))
         local full_image="${MALCOLM_IMAGE_REGISTRY}/${img}:${MALCOLM_IMAGE_TAG}"
         log "[${count}/${total}] Pulling ${img}..."
 
@@ -124,7 +124,7 @@ pull_images() {
             debug "  Pulled ${full_image}"
         else
             warn "  Failed to pull ${full_image}"
-            (( failed++ ))
+            (( ++failed ))
         fi
     done
 
