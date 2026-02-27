@@ -428,26 +428,52 @@ SYSD_EOF
     run systemctl enable nettap-bridge-promisc.service
     log "Systemd promisc unit installed and enabled"
 
-    # ---- Management interface (if specified) ----
+    # ---- Management interface ----
+    # The management interface (especially Wi-Fi) stays under NetworkManager.
+    # We do NOT add it to the networkd netplan config — NM is already managing
+    # it and networkd cannot handle Wi-Fi. Only wired mgmt interfaces with a
+    # static IP get added to netplan (under ethernets:, not bridges:).
     if [[ -n "$MGMT_INTERFACE" ]]; then
         mgmt_ip="${MGMT_IP:-}"
-        mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
-        if [[ -n "$mgmt_ip" ]]; then
-            # Append management NIC to netplan with static IP
-            cat >> "$local_netplan" <<MGMT_EOF
+        # Only add wired mgmt interfaces with explicit static IPs to netplan
+        if [[ -n "$mgmt_ip" ]] && [[ ! "$MGMT_INTERFACE" =~ ^wl ]]; then
+            mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
+            # Re-write netplan to include mgmt under ethernets (not bridges)
+            cat > "$local_netplan" <<NETPLAN_MGMT_EOF
+# NetTap bridge configuration — managed by setup-bridge.sh
+# Do not edit manually; re-run setup-bridge.sh --persist to regenerate.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${WAN_INTERFACE}:
+      dhcp4: false
+      dhcp6: false
+      optional: true
+    ${LAN_INTERFACE}:
+      dhcp4: false
+      dhcp6: false
+      optional: true
     ${MGMT_INTERFACE}:
       dhcp4: false
       addresses:
         - ${mgmt_ip}/$(mask_to_cidr "$mgmt_netmask" 2>/dev/null || echo "24")
-MGMT_EOF
+  bridges:
+    ${BRIDGE_NAME}:
+      interfaces:
+        - ${WAN_INTERFACE}
+        - ${LAN_INTERFACE}
+      dhcp4: false
+      dhcp6: false
+      parameters:
+        stp: false
+        forward-delay: 0
+NETPLAN_MGMT_EOF
+            chmod 600 "$local_netplan"
+            log "Management interface ${MGMT_INTERFACE} (static IP) added to netplan"
         else
-            # DHCP on management interface
-            cat >> "$local_netplan" <<MGMT_EOF
-    ${MGMT_INTERFACE}:
-      dhcp4: true
-MGMT_EOF
+            debug "Management interface ${MGMT_INTERFACE} left under NetworkManager (Wi-Fi or DHCP)"
         fi
-        log "Management interface ${MGMT_INTERFACE} added to netplan"
     fi
 
     # ---- Tell NetworkManager to leave bridge interfaces alone ----
