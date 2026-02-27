@@ -8,7 +8,6 @@ of common ET (Emerging Threats) signature prefixes.
 
 import json
 import logging
-import os
 from pathlib import Path
 
 logger = logging.getLogger("nettap.services.alert_enrichment")

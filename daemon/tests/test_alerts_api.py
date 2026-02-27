@@ -5,13 +5,11 @@ All tests use mocks -- no OpenSearch connection required.
 Tests cover query building, response formatting, error handling, and edge cases.
 """
 
-import asyncio
 import json
 import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timezone
 
 import sys
 
@@ -23,11 +21,9 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.alerts import (
     register_alert_routes,
-    _parse_time_range,
     _time_range_filter,
     _load_acks,
     _save_acks,
-    SURICATA_INDEX,
 )
 from storage.manager import StorageManager, RetentionConfig
 

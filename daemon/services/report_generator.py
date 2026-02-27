@@ -9,8 +9,6 @@ All schedule metadata is persisted to a local JSON file. Report output
 files are stored in a configurable directory.
 """
 
-import csv
-import io
 import json
 import logging
 import os

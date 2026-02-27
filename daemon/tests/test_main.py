@@ -7,9 +7,7 @@ isolation and avoid leaking state between tests.
 """
 
 import logging
-import os
 
-import pytest
 
 
 # We import the module-level functions directly. Note: main.py uses
@@ -27,7 +25,7 @@ _daemon_dir = str(pathlib.Path(__file__).resolve().parent.parent)
 if _daemon_dir not in sys.path:
     sys.path.insert(0, _daemon_dir)
 
-from main import _env_int, _env_float, _env_str, load_config, configure_logging
+from main import _env_int, _env_float, _env_str, load_config, configure_logging  # noqa: E402
 
 
 # =========================================================================

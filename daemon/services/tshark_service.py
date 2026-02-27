@@ -16,7 +16,6 @@ Security:
 import asyncio
 import json
 import logging
-import os
 import re
 import shlex
 from dataclasses import dataclass, field

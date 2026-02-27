@@ -9,7 +9,6 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch, mock_open
 
 import sys
 

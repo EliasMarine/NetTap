@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.cyberchef_service import (
     CyberChefService,
-    CyberChefRecipe,
     BUILTIN_RECIPES,
     CYBERCHEF_CONTAINER,
     CYBERCHEF_INTERNAL_URL,

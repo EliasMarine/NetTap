@@ -25,7 +25,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import Any
 
 logger = logging.getLogger("nettap.services.bridge_health")
 

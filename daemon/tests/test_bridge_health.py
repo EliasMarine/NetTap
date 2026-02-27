@@ -10,10 +10,7 @@ determination, and graceful degradation when sysfs files are absent.
 import asyncio
 import os
 import sys
-import time
 import unittest
-from collections import deque
-from unittest.mock import AsyncMock, patch, MagicMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

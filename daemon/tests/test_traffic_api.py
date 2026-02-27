@@ -5,10 +5,9 @@ All tests use mocks -- no OpenSearch connection required.
 Tests cover query building, response formatting, error handling, and edge cases.
 """
 
-import asyncio
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
-from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+from datetime import datetime
 
 import sys
 import os

@@ -12,7 +12,6 @@ threat intelligence, TGreen hunting rules, and NetTap defaults.
 import json
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 

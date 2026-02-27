@@ -7,7 +7,7 @@ All tests use mocks -- no Docker or TShark binary required.
 import asyncio
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import sys
 import os
@@ -18,11 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from services.tshark_service import (
     TSharkService,
     TSharkRequest,
-    TSharkResult,
     TSharkValidationError,
     MAX_PACKETS,
-    MAX_OUTPUT_BYTES,
-    PCAP_MOUNT_PATH,
 )
 
 

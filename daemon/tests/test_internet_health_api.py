@@ -5,9 +5,7 @@ All tests use mocks -- no real network access required. Tests cover
 all four internet health monitor API endpoints.
 """
 
-import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone, timedelta
 
 import sys

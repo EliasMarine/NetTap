@@ -11,7 +11,6 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
