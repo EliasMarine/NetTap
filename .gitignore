@@ -22,9 +22,11 @@ data/
 pcap/
 logs/
 
-# Generated Malcolm config (certs, auth, docker .env)
+# Generated Malcolm config (certs, auth, credentials, docker .env)
 docker/certs/
 docker/auth/
+docker/curlrc/
+docker/ca-trust/
 docker/.env
 
 # Generated TLS certificates for nginx reverse proxy

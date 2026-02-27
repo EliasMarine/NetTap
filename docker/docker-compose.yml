@@ -38,6 +38,7 @@ x-opensearch-env: &opensearch-env
   OPENSEARCH_PRIMARY: "opensearch-local"
   OPENSEARCH_SSL_CERTIFICATE_VERIFICATION: "false"
   OPENSEARCH_COMPOSE_PROJECT: "nettap"
+  OPENSEARCH_CREDS_CONFIG_FILE: "/var/local/curlrc/.opensearch.primary.curlrc"
 
 x-capture-caps: &capture-caps
   - IPC_LOCK
@@ -75,7 +76,8 @@ services:
     # (docker-uid-gid-setup.sh → setup-internal-users.sh → self_signed_key_gen.sh)
     # needs standard capabilities for UID/GID setup and cert generation.
     cap_add:
-      - SYS_RESOURCE      # required for mlockall (bootstrap.memory_lock)
+      - IPC_LOCK           # required for memory locking
+      - SYS_RESOURCE       # required for mlockall (bootstrap.memory_lock)
     environment:
       <<: [*process-env, *opensearch-env]
       OPENSEARCH_JAVA_OPTS: "${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}"
@@ -83,7 +85,15 @@ services:
       bootstrap.memory_lock: "true"
       CLUSTER_MAX_SHARDS_PER_NODE: "2500"
       DISABLE_INSTALL_DEMO_CONFIG: "true"
-      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "${OPENSEARCH_ADMIN_PASSWORD:-N3tT@p_0p3n}"
+      # Malcolm entrypoint configuration
+      PUSER_RLIMIT_UNLOCK: "true"
+      PUSER_CA_TRUST: "/var/local/ca-trust"
+      MAX_LOCKED_MEMORY: "unlimited"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      cluster.routing.allocation.node_initial_primaries_recoveries: "8"
+      indices.query.bool.max_clause_count: "8192"
+      path.repo: "/opt/opensearch/backup"
+      logger.level: "WARN"
     ulimits:
       memlock:
         soft: -1
@@ -94,13 +104,15 @@ services:
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - opensearch-backup:/opt/opensearch/backup
-      # Malcolm generates its own certs internally at /usr/share/opensearch/config/certs/
-      # via setup-internal-users.sh → self_signed_key_gen.sh. No host mount needed.
+      # Malcolm reads credentials from curlrc to set up internal users + security
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
+      - ./ca-trust:/var/local/ca-trust:ro
     networks:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -skf https://localhost:9200/_cluster/health || exit 1"]
+      # Use curlrc for authentication — Malcolm's security plugin requires credentials
+      test: ["CMD-SHELL", "curl -sf -K /var/local/curlrc/.opensearch.primary.curlrc https://localhost:9200/_cluster/health || exit 1"]
       start_period: 180s
 
   # ========================================================================
@@ -123,6 +135,7 @@ services:
       DASHBOARDS_TIMEPICKER_FROM: "now-24h"
     volumes:
       - dashboards-helper-data:/opt/dashboards-helper
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
     networks:
       - default
     depends_on:
@@ -142,6 +155,7 @@ services:
       <<: [*process-env, *opensearch-env]
     volumes:
       - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/opensearch-dashboards/config/certificates:ro
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
     networks:
       - default
     depends_on:
@@ -174,6 +188,7 @@ services:
     volumes:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
       - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/logstash/config/certificates:ro
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
     networks:
       - default
     depends_on:
@@ -206,6 +221,7 @@ services:
       - suricata-live-logs:/var/log/suricata:ro
       - filebeat-registry:/usr/share/filebeat/data
       - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/filebeat/config/certificates:ro
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
     networks:
       - default
     depends_on:
@@ -363,6 +379,7 @@ services:
       <<: [*process-env, *opensearch-env]
     volumes:
       - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/api/config/certificates:ro
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
     networks:
       - default
     depends_on:
@@ -390,6 +407,7 @@ services:
     volumes:
       - ${MALCOLM_CERTS_DIR:-./certs}:/etc/nginx/certs:ro
       - ${MALCOLM_AUTH_DIR:-./auth}:/etc/nginx/auth:ro
+      - ./curlrc/.opensearch.primary.curlrc:/var/local/curlrc/.opensearch.primary.curlrc:ro
     networks:
       - default
     depends_on:
