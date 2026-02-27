@@ -45,7 +45,7 @@ generate_certs() {
 
     # Create SAN extension file for modern TLS
     cat > "${certs_dir}/server-ext.cnf" <<EXTEOF
-authorityKeyIdentifier=keyIdentifier,issuerSerialNumber
+authorityKeyIdentifier=keyid,issuer
 basicConstraints=CA:FALSE
 keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
 subjectAltName = @alt_names

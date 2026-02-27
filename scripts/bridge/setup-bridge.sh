@@ -203,11 +203,19 @@ validate_bridge() {
     fi
     echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge ${BRIDGE_NAME} exists"
 
-    # Check bridge is up
-    if ip link show "$BRIDGE_NAME" | grep -q "state UP"; then
+    # Check bridge is up (or at least not administratively DOWN)
+    # With no cables attached, bridge state is UNKNOWN — that's expected and fine.
+    local link_state
+    link_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || link_state="UNKNOWN"
+    if [[ "$link_state" == "UP" ]]; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is UP"
+    elif [[ "$link_state" == "UNKNOWN" ]]; then
+        echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is UP (no carrier — waiting for cables)"
+    elif [[ "$link_state" == "DOWN" ]]; then
+        echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is administratively DOWN"
+        (( issues++ ))
     else
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is not UP"
+        echo "${_CLR_YLW}[WARN]${_CLR_RST} Bridge state: ${link_state}"
         (( issues++ ))
     fi
 
