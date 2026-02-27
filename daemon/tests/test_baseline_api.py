@@ -5,11 +5,9 @@ All tests use mocks -- no file I/O or external dependencies required.
 Tests cover the device baseline API endpoints using AioHTTPTestCase.
 """
 
-import json
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
 
 import sys
 

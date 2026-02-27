@@ -7,10 +7,8 @@ isolation and avoid leaking state between tests.
 """
 
 import logging
-import os
-
-import pytest
-
+import sys
+import pathlib
 
 # We import the module-level functions directly. Note: main.py uses
 # relative imports like ``from storage.manager import ...`` which are
@@ -19,15 +17,12 @@ import pytest
 # tests (conftest or pytest configuration) or run pytest from daemon/.
 # The conftest.py already sets up the path correctly.
 
-import sys
-import pathlib
-
 # Ensure daemon/ is on sys.path so main.py's imports resolve
 _daemon_dir = str(pathlib.Path(__file__).resolve().parent.parent)
 if _daemon_dir not in sys.path:
     sys.path.insert(0, _daemon_dir)
 
-from main import _env_int, _env_float, _env_str, load_config, configure_logging
+from main import _env_int, _env_float, _env_str, load_config, configure_logging  # noqa: E402
 
 
 # =========================================================================

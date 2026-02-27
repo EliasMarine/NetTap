@@ -7,11 +7,9 @@ tiered pruning, emergency pruning, run_cycle behaviour, and status
 reporting.
 """
 
-import os
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager

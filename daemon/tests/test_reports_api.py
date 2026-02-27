@@ -6,7 +6,6 @@ no external dependencies required. Tests cover all scheduled report
 API endpoints.
 """
 
-import json
 import unittest
 import tempfile
 import shutil

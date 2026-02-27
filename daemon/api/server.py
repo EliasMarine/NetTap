@@ -240,7 +240,9 @@ async def handle_system_health(request: web.Request) -> web.Response:
     """
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
-    opensearch_url: str = request.app["opensearch_url"]
+    # OLD CODE START — opensearch_url was fetched but never used (F841)
+    # opensearch_url: str = request.app["opensearch_url"]
+    # OLD CODE END
 
     result: dict = {
         "uptime": round(uptime, 2),
@@ -278,7 +280,7 @@ async def handle_system_health(request: web.Request) -> web.Response:
     try:
         storage_mgr: StorageManager = request.app["storage"]
         loop = asyncio.get_running_loop()
-        info = await loop.run_in_executor(None, storage_mgr._client.info)
+        await loop.run_in_executor(None, storage_mgr._client.info)
         result["opensearch_reachable"] = True
     except Exception as exc:
         logger.warning("System health: OpenSearch unreachable: %s", exc)

@@ -6,7 +6,6 @@ update checking, statistics, and edge cases. All tests are self-contained
 with no external dependencies.
 """
 
-import json
 import os
 import unittest
 

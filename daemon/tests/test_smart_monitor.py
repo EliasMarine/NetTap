@@ -7,9 +7,8 @@ backward-compatible check_health, and JSON-serializable status output.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from smart.monitor import (
     AlertLevel,

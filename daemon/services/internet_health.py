@@ -15,7 +15,7 @@ import re
 import socket
 import statistics
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
 logger = logging.getLogger("nettap.internet_health")

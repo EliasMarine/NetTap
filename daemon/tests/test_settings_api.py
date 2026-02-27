@@ -6,7 +6,6 @@ env file parsing, saving, unknown key handling, validation, and
 edge cases.
 """
 
-import json
 import os
 import tempfile
 import unittest

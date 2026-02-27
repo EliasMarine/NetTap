@@ -9,7 +9,6 @@ history management.
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone, timedelta
 
 import sys

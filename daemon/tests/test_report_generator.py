@@ -6,7 +6,6 @@ report generation with all section types, validation, and edge cases.
 All tests are self-contained with no external dependencies.
 """
 
-import json
 import os
 import unittest
 import tempfile
@@ -413,7 +412,9 @@ class TestGenerateReport(unittest.TestCase):
 
     def test_generate_report_updates_next_run(self):
         """Generating a report updates next_run."""
-        old_next = self.sched.next_run
+        # OLD CODE START — old_next was assigned but never used (F841)
+        # old_next = self.sched.next_run
+        # OLD CODE END
         self.gen.generate_report(self.sched.id)
         sched = self.gen.get_schedule(self.sched.id)
         # next_run should be updated (may or may not differ depending on timing)

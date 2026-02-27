@@ -7,7 +7,7 @@ MaxMind integration (mocked), batch lookups, and graceful degradation.
 """
 
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import sys
 import os
