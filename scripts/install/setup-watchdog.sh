@@ -69,8 +69,8 @@ while [[ $# -gt 0 ]]; do
         --enable)    MODE_ENABLE="true"; shift ;;
         --disable)   MODE_DISABLE="true"; shift ;;
         --status)    MODE_STATUS="true"; shift ;;
-        --dry-run)   NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose) NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)   NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose) NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)   usage ;;
         *)           echo "Unknown option: $1"; usage ;;
     esac

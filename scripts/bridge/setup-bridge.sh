@@ -60,8 +60,8 @@ while [[ $# -gt 0 ]]; do
         --validate-only)  MODE_VALIDATE_ONLY="true"; shift ;;
         --teardown)       MODE_TEARDOWN="true"; shift ;;
         --detect)         MODE_DETECT="true"; shift ;;
-        --dry-run)        NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)     NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)        NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)     NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)        usage ;;
         *)                echo "Unknown option: $1"; usage ;;
     esac
@@ -417,8 +417,8 @@ SYSD_EOF
 
     # ---- Management interface (if specified) ----
     if [[ -n "$MGMT_INTERFACE" ]]; then
-        local mgmt_ip="${MGMT_IP:-}"
-        local mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
+        mgmt_ip="${MGMT_IP:-}"
+        mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
         if [[ -n "$mgmt_ip" ]]; then
             # Append management NIC to netplan with static IP
             cat >> "$local_netplan" <<MGMT_EOF

@@ -71,8 +71,8 @@ while [[ $# -gt 0 ]]; do
         --immediate-bridge)  DEFER_BRIDGE="false"; shift ;;
         --non-interactive)   NON_INTERACTIVE="true"; shift ;;
         --reconfigure-nics)  RECONFIGURE_NICS="true"; shift ;;
-        --dry-run)           NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)        NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)           NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)        NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)           usage ;;
         *)                   echo "Unknown option: $1"; usage ;;
     esac

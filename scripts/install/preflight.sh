@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
         --env-file)           ENV_FILE="$2"; shift 2 ;;
         --non-interactive)    NON_INTERACTIVE="true"; shift ;;
         --reconfigure-nics)   RECONFIGURE="true"; shift ;;
-        --dry-run)            NETTAP_DRY_RUN="true"; shift ;;
+        --dry-run)            NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
         -v|--verbose)         NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)            usage ;;
         *)                    echo "Unknown option: $1"; usage ;;

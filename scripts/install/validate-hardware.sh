@@ -234,8 +234,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --detect)     detect_nics; exit 0 ;;
-            -v|--verbose) NETTAP_VERBOSE="true"; shift ;;
-            --color)      NETTAP_COLOR="$2"; _setup_colors; shift 2 ;;
+            -v|--verbose) NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
+            --color)      NETTAP_COLOR="$2"; export NETTAP_COLOR; _setup_colors; shift 2 ;;
             -h|--help)
                 echo "Usage: $0 [OPTIONS]"
                 echo ""

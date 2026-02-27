@@ -266,8 +266,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         case "$1" in
             --certs-dir)  CERTS_DIR="$2"; shift 2 ;;
             --auth-dir)   AUTH_DIR="$2"; shift 2 ;;
-            --dry-run)    NETTAP_DRY_RUN="true"; shift ;;
-            -v|--verbose) NETTAP_VERBOSE="true"; shift ;;
+            --dry-run)    NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+            -v|--verbose) NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
             -h|--help)
                 echo "Usage: $0 [OPTIONS]"
                 echo "Generates SSL certs, auth files, and .env for Malcolm containers."

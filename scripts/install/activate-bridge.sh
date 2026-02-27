@@ -61,8 +61,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)           FORCE="true"; shift ;;
         --skip-services)   SKIP_SERVICES="true"; shift ;;
-        --dry-run)         NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)      NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)         NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)      NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)         usage ;;
         *)                 echo "Unknown option: $1"; usage ;;
     esac
