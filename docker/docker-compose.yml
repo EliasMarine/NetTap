@@ -14,7 +14,10 @@
 #
 # Security:
 #   - All services run with no-new-privileges
-#   - Capabilities are dropped by default, added back only where required
+#   - Malcolm images use Docker-default capabilities (their entrypoint scripts
+#     need CHOWN, SETUID, SETGID, DAC_OVERRIDE for UID/GID setup, cert gen, etc.)
+#   - Capture services use cap_drop: ALL + explicit cap_add (NET_ADMIN, NET_RAW)
+#   - NetTap custom services use cap_drop: ALL (simple entrypoints we control)
 #   - read_only filesystems where possible (with tmpfs for writable dirs)
 #   - Internal services are not exposed to the host network
 # ==========================================================================
@@ -68,8 +71,9 @@ services:
       com.nettap.service: "opensearch"
       com.nettap.component: "data-store"
       com.nettap.description: "OpenSearch search and analytics engine"
-    cap_drop:
-      - ALL
+    # NOTE: Do not use cap_drop: ALL on Malcolm images — their entrypoint chain
+    # (docker-uid-gid-setup.sh → setup-internal-users.sh → self_signed_key_gen.sh)
+    # needs standard capabilities for UID/GID setup and cert generation.
     cap_add:
       - SYS_RESOURCE      # required for mlockall (bootstrap.memory_lock)
     environment:
@@ -90,7 +94,8 @@ services:
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - opensearch-backup:/opt/opensearch/backup
-      - ${MALCOLM_CERTS_DIR:-./certs}:/usr/share/opensearch/config/certificates:ro
+      # Malcolm generates its own certs internally at /usr/share/opensearch/config/certs/
+      # via setup-internal-users.sh → self_signed_key_gen.sh. No host mount needed.
     networks:
       - default
     healthcheck:
@@ -111,8 +116,6 @@ services:
       com.nettap.service: "dashboards-helper"
       com.nettap.component: "dashboards"
       com.nettap.description: "OpenSearch Dashboards initialization helper"
-    cap_drop:
-      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
@@ -135,8 +138,6 @@ services:
       com.nettap.service: "dashboards"
       com.nettap.component: "dashboards"
       com.nettap.description: "OpenSearch Dashboards visualization UI"
-    cap_drop:
-      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
     volumes:
@@ -160,8 +161,6 @@ services:
       com.nettap.service: "logstash"
       com.nettap.component: "log-pipeline"
       com.nettap.description: "Logstash log enrichment and forwarding pipeline"
-    cap_drop:
-      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
       LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
@@ -194,8 +193,6 @@ services:
       com.nettap.service: "filebeat"
       com.nettap.component: "log-pipeline"
       com.nettap.description: "Filebeat log shipper for Zeek and Suricata logs"
-    cap_drop:
-      - ALL
     environment:
       <<: [*process-env, *opensearch-env]
       FILEBEAT_SCAN_FREQUENCY: "10s"
@@ -341,8 +338,6 @@ services:
       com.nettap.service: "redis"
       com.nettap.component: "infrastructure"
       com.nettap.description: "Redis in-memory data store for caching and queues"
-    cap_drop:
-      - ALL
     environment:
       <<: *process-env
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
@@ -364,11 +359,6 @@ services:
       com.nettap.service: "api"
       com.nettap.component: "infrastructure"
       com.nettap.description: "Malcolm REST API server"
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=50M
     environment:
       <<: [*process-env, *opensearch-env]
     volumes:
@@ -388,8 +378,6 @@ services:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
       com.nettap.description: "Malcolm nginx reverse proxy (internal dashboards)"
-    cap_drop:
-      - ALL
     ports:
       - "${MALCOLM_HTTPS_PORT:-9443}:443"
       # Bind OpenSearch proxy to loopback only — never expose 9200 externally
