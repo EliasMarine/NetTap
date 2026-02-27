@@ -217,7 +217,12 @@ step_dependencies() {
     fi
     debug "Docker Compose $(docker compose version --short 2>/dev/null) available"
 
-    # Configure Docker daemon (log rotation, overlay2)
+    # Configure Docker daemon (log rotation, overlay2, DNS)
+    # Ubuntu 24.04 uses systemd-resolved with a stub at 127.0.0.53.
+    # Docker build containers can't reach the stub (different network
+    # namespace), causing DNS timeouts during image builds. We always
+    # ensure daemon.json has explicit DNS servers.
+    local docker_needs_restart="false"
     if [[ ! -f /etc/docker/daemon.json ]]; then
         log "Configuring Docker daemon..."
         cat > /etc/docker/daemon.json <<'DAEMONJSON'
@@ -227,13 +232,25 @@ step_dependencies() {
         "max-size": "10m",
         "max-file": "3"
     },
-    "storage-driver": "overlay2"
+    "storage-driver": "overlay2",
+    "dns": ["9.9.9.9", "149.112.112.112"]
 }
 DAEMONJSON
-        run systemctl restart docker
-        log "Docker daemon configured with log rotation"
+        docker_needs_restart="true"
+        log "Docker daemon configured with log rotation and DNS"
+    elif ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
+        log "Adding DNS servers to existing Docker daemon config..."
+        # Use jq to add dns key without clobbering existing config
+        local tmp_json
+        tmp_json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' /etc/docker/daemon.json)
+        echo "$tmp_json" > /etc/docker/daemon.json
+        docker_needs_restart="true"
+        log "DNS servers added to daemon.json"
     else
-        debug "Docker daemon.json already exists, skipping"
+        debug "Docker daemon.json already has DNS configured"
+    fi
+    if [[ "$docker_needs_restart" == "true" ]]; then
+        run systemctl restart docker
     fi
 
     log "System dependencies installed"
