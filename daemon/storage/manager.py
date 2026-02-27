@@ -93,12 +93,12 @@ _TIER_PREFIXES = {
 class RetentionConfig:
     """Configuration for tiered retention policies and disk thresholds."""
 
-    hot_days: int = 90            # Zeek metadata retention (days)
-    warm_days: int = 180          # Suricata alert retention (days)
-    cold_days: int = 30           # Raw PCAP / Arkime retention (days)
+    hot_days: int = 90  # Zeek metadata retention (days)
+    warm_days: int = 180  # Suricata alert retention (days)
+    cold_days: int = 30  # Raw PCAP / Arkime retention (days)
     disk_threshold: float = 0.80  # Trigger pruning at 80%
     emergency_threshold: float = 0.90  # Aggressive pruning at 90%
-    check_path: str = "/"         # Filesystem path for disk usage checks
+    check_path: str = "/"  # Filesystem path for disk usage checks
 
 
 class StorageManager:
@@ -200,13 +200,15 @@ class StorageManager:
             tier = self._parse_index_tier(name)
             parsed_date = self._parse_index_date(name)
 
-            indices.append({
-                "name": name,
-                "size": size_str,
-                "creation_date": creation,
-                "tier": tier,
-                "parsed_date": parsed_date,
-            })
+            indices.append(
+                {
+                    "name": name,
+                    "size": size_str,
+                    "creation_date": creation,
+                    "tier": tier,
+                    "parsed_date": parsed_date,
+                }
+            )
 
         return indices
 
@@ -274,9 +276,9 @@ class StorageManager:
         match = _DATE_PATTERN_COMPACT.search(index_name)
         if match:
             try:
-                return datetime.strptime(
-                    match.group(1), "%y%m%d"
-                ).replace(tzinfo=timezone.utc)
+                return datetime.strptime(match.group(1), "%y%m%d").replace(
+                    tzinfo=timezone.utc
+                )
             except ValueError:
                 pass
 
@@ -351,9 +353,7 @@ class StorageManager:
             cutoff = self._cutoff_date_for_tier(tier)
 
             # Sort oldest first
-            dated = [
-                idx for idx in group if idx["parsed_date"] is not None
-            ]
+            dated = [idx for idx in group if idx["parsed_date"] is not None]
             dated.sort(key=lambda x: x["parsed_date"])
 
             for idx in dated:
@@ -376,9 +376,7 @@ class StorageManager:
                     )
                     return deleted
 
-        logger.info(
-            "Tiered prune complete: deleted %d indices", deleted
-        )
+        logger.info("Tiered prune complete: deleted %d indices", deleted)
         return deleted
 
     # ------------------------------------------------------------------
@@ -405,9 +403,7 @@ class StorageManager:
             return 0
 
         # Collect all dated indices, sort oldest first globally
-        dated = [
-            idx for idx in indices if idx["parsed_date"] is not None
-        ]
+        dated = [idx for idx in indices if idx["parsed_date"] is not None]
         dated.sort(key=lambda x: x["parsed_date"])
 
         deleted = 0
@@ -420,8 +416,7 @@ class StorageManager:
             usage = self.check_disk_usage()
             if usage < self.config.disk_threshold:
                 logger.info(
-                    "Emergency prune brought disk to %.1f%%; "
-                    "deleted %d indices total",
+                    "Emergency prune brought disk to %.1f%%; deleted %d indices total",
                     usage * 100,
                     deleted,
                 )
@@ -472,8 +467,7 @@ class StorageManager:
 
         elif usage >= self.config.disk_threshold:
             logger.warning(
-                "Disk usage %.1f%% >= threshold %.1f%% — "
-                "starting tiered prune",
+                "Disk usage %.1f%% >= threshold %.1f%% — starting tiered prune",
                 usage * 100,
                 self.config.disk_threshold * 100,
             )
@@ -482,8 +476,7 @@ class StorageManager:
 
         else:
             logger.debug(
-                "Disk usage %.1f%% within threshold (%.1f%%); "
-                "no action needed",
+                "Disk usage %.1f%% within threshold (%.1f%%); no action needed",
                 usage * 100,
                 self.config.disk_threshold * 100,
             )

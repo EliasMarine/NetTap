@@ -23,8 +23,8 @@ from smart.monitor import (
 # Device type detection
 # =========================================================================
 
-class TestDetectDeviceType:
 
+class TestDetectDeviceType:
     def test_detect_device_type_nvme_from_field(self, mock_smartctl_nvme):
         """Mock smartctl with device.type='nvme' and verify detection."""
         monitor = SmartMonitor(device="/dev/sda")  # path is intentionally not nvme
@@ -57,8 +57,8 @@ class TestDetectDeviceType:
 # NVMe metric extraction
 # =========================================================================
 
-class TestExtractNvmeMetrics:
 
+class TestExtractNvmeMetrics:
     def test_extract_nvme_metrics_temperature(self, mock_smartctl_nvme):
         """Verify temperature extraction from NVMe data."""
         monitor = SmartMonitor()
@@ -84,8 +84,8 @@ class TestExtractNvmeMetrics:
 # SATA metric extraction
 # =========================================================================
 
-class TestExtractSataMetrics:
 
+class TestExtractSataMetrics:
     def test_extract_sata_metrics_temperature(self, mock_smartctl_sata):
         """Verify attribute 194 temperature extraction."""
         monitor = SmartMonitor(device="/dev/sda")
@@ -134,12 +134,10 @@ class TestExtractSataMetrics:
 # get_metrics / check_health
 # =========================================================================
 
-class TestGetMetrics:
 
+class TestGetMetrics:
     @patch.object(SmartMonitor, "get_raw_data")
-    def test_get_metrics_returns_smart_metrics(
-        self, mock_get_raw, mock_smartctl_nvme
-    ):
+    def test_get_metrics_returns_smart_metrics(self, mock_get_raw, mock_smartctl_nvme):
         """Verify get_metrics returns a SmartMetrics instance with expected fields."""
         mock_get_raw.return_value = mock_smartctl_nvme
 
@@ -156,9 +154,7 @@ class TestGetMetrics:
         assert metrics.healthy is True
 
     @patch.object(SmartMonitor, "get_raw_data")
-    def test_check_health_backward_compat(
-        self, mock_get_raw, mock_smartctl_nvme
-    ):
+    def test_check_health_backward_compat(self, mock_get_raw, mock_smartctl_nvme):
         """Verify check_health returns SmartMetrics (not bool) for backward compat."""
         mock_get_raw.return_value = mock_smartctl_nvme
 
@@ -173,8 +169,8 @@ class TestGetMetrics:
 # Alert evaluation
 # =========================================================================
 
-class TestAlerts:
 
+class TestAlerts:
     def _make_metrics(self, **overrides):
         """Helper to create a SmartMetrics with sensible defaults."""
         defaults = {
@@ -284,12 +280,10 @@ class TestAlerts:
 # get_status (JSON serialisation)
 # =========================================================================
 
-class TestGetStatus:
 
+class TestGetStatus:
     @patch.object(SmartMonitor, "get_raw_data")
-    def test_get_status_serializable(
-        self, mock_get_raw, mock_smartctl_nvme
-    ):
+    def test_get_status_serializable(self, mock_get_raw, mock_smartctl_nvme):
         """Verify get_status returns a JSON-serializable dict."""
         mock_get_raw.return_value = mock_smartctl_nvme
 

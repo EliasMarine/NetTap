@@ -19,8 +19,8 @@ from storage.manager import RetentionConfig, StorageManager
 # RetentionConfig
 # =========================================================================
 
-class TestRetentionConfig:
 
+class TestRetentionConfig:
     def test_retention_config_defaults(self):
         """Verify default values match the PRD-specified retention periods."""
         cfg = RetentionConfig()
@@ -53,8 +53,8 @@ class TestRetentionConfig:
 # Disk usage
 # =========================================================================
 
-class TestDiskUsage:
 
+class TestDiskUsage:
     @patch("storage.manager.shutil.disk_usage")
     def test_check_disk_usage_returns_fraction(self, mock_disk_usage, retention_config):
         """Mock shutil.disk_usage and verify result is in 0.0-1.0 range."""
@@ -78,8 +78,8 @@ class TestDiskUsage:
 # Index tier classification
 # =========================================================================
 
-class TestParseIndexTier:
 
+class TestParseIndexTier:
     def test_parse_index_tier_hot(self):
         """Zeek indices should be classified as hot tier."""
         assert StorageManager._parse_index_tier("zeek-conn-2026.02.25") == "hot"
@@ -112,8 +112,8 @@ class TestParseIndexTier:
 # Index date parsing
 # =========================================================================
 
-class TestParseIndexDate:
 
+class TestParseIndexDate:
     def test_parse_index_date_dot_format(self):
         """Test YYYY.MM.DD (dot-separated) date parsing."""
         result = StorageManager._parse_index_date("zeek-conn-2026.02.25")
@@ -142,8 +142,8 @@ class TestParseIndexDate:
 # list_indices
 # =========================================================================
 
-class TestListIndices:
 
+class TestListIndices:
     def test_list_indices_filters_system(
         self, retention_config, mock_opensearch_client, sample_indices
     ):
@@ -186,8 +186,8 @@ class TestListIndices:
 # Tiered pruning
 # =========================================================================
 
-class TestPruneOldestIndices:
 
+class TestPruneOldestIndices:
     def _make_manager(self, retention_config, mock_client):
         """Helper to construct a StorageManager without hitting real OpenSearch."""
         mgr = StorageManager.__new__(StorageManager)
@@ -232,9 +232,7 @@ class TestPruneOldestIndices:
 
         # The expired cold index should be deleted
         assert deleted >= 1
-        mock_opensearch_client.indices.delete.assert_called_with(
-            index=old_cold_name
-        )
+        mock_opensearch_client.indices.delete.assert_called_with(index=old_cold_name)
 
     def test_prune_oldest_indices_respects_tier_order(
         self, retention_config, mock_opensearch_client
@@ -278,7 +276,11 @@ class TestPruneOldestIndices:
         assert deleted == 3
         # Verify deletion order: cold first, then warm, then hot
         calls = mock_opensearch_client.indices.delete.call_args_list
-        deleted_names = [call.kwargs.get("index") or call[1].get("index", call[0][0] if call[0] else None) for call in calls]
+        deleted_names = [
+            call.kwargs.get("index")
+            or call[1].get("index", call[0][0] if call[0] else None)
+            for call in calls
+        ]
         # Use the call keyword arg "index"
         deleted_names = []
         for call in calls:
@@ -322,7 +324,9 @@ class TestPruneOldestIndices:
         # First check returns above threshold; after first deletion, below
         disk_values = iter([0.70])
         with patch.object(
-            mgr, "check_disk_usage", side_effect=lambda *a, **kw: next(disk_values, 0.70)
+            mgr,
+            "check_disk_usage",
+            side_effect=lambda *a, **kw: next(disk_values, 0.70),
         ):
             deleted = mgr.prune_oldest_indices()
 
@@ -334,8 +338,8 @@ class TestPruneOldestIndices:
 # Emergency pruning
 # =========================================================================
 
-class TestPruneEmergency:
 
+class TestPruneEmergency:
     def test_prune_emergency_deletes_all_tiers(
         self, retention_config, mock_opensearch_client
     ):
@@ -387,8 +391,8 @@ class TestPruneEmergency:
 # run_cycle
 # =========================================================================
 
-class TestRunCycle:
 
+class TestRunCycle:
     def _make_manager(self, retention_config, mock_client):
         mgr = StorageManager.__new__(StorageManager)
         mgr.config = retention_config
@@ -402,37 +406,39 @@ class TestRunCycle:
         """Mock disk at 50% and verify no prune method is called."""
         mgr = self._make_manager(retention_config, mock_opensearch_client)
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.50), \
-             patch.object(mgr, "prune_oldest_indices") as mock_prune, \
-             patch.object(mgr, "prune_emergency") as mock_emergency:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "prune_oldest_indices") as mock_prune,
+            patch.object(mgr, "prune_emergency") as mock_emergency,
+        ):
             mgr.run_cycle()
 
         mock_prune.assert_not_called()
         mock_emergency.assert_not_called()
 
-    def test_run_cycle_normal_prune(
-        self, retention_config, mock_opensearch_client
-    ):
+    def test_run_cycle_normal_prune(self, retention_config, mock_opensearch_client):
         """Mock disk at 85% and verify prune_oldest_indices is called."""
         mgr = self._make_manager(retention_config, mock_opensearch_client)
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.85), \
-             patch.object(mgr, "prune_oldest_indices", return_value=2) as mock_prune, \
-             patch.object(mgr, "prune_emergency") as mock_emergency:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.85),
+            patch.object(mgr, "prune_oldest_indices", return_value=2) as mock_prune,
+            patch.object(mgr, "prune_emergency") as mock_emergency,
+        ):
             mgr.run_cycle()
 
         mock_prune.assert_called_once()
         mock_emergency.assert_not_called()
 
-    def test_run_cycle_emergency_prune(
-        self, retention_config, mock_opensearch_client
-    ):
+    def test_run_cycle_emergency_prune(self, retention_config, mock_opensearch_client):
         """Mock disk at 95% and verify prune_emergency is called."""
         mgr = self._make_manager(retention_config, mock_opensearch_client)
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.95), \
-             patch.object(mgr, "prune_oldest_indices") as mock_prune, \
-             patch.object(mgr, "prune_emergency", return_value=5) as mock_emergency:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.95),
+            patch.object(mgr, "prune_oldest_indices") as mock_prune,
+            patch.object(mgr, "prune_emergency", return_value=5) as mock_emergency,
+        ):
             mgr.run_cycle()
 
         mock_emergency.assert_called_once()
@@ -443,8 +449,8 @@ class TestRunCycle:
 # get_status
 # =========================================================================
 
-class TestGetStatus:
 
+class TestGetStatus:
     def test_get_status_structure(
         self, retention_config, mock_opensearch_client, sample_indices
     ):

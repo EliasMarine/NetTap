@@ -90,8 +90,10 @@ logger = logging.getLogger("nettap.smart")
 # Data models
 # ---------------------------------------------------------------------------
 
+
 class AlertLevel(Enum):
     """Severity levels for SMART health alerts."""
+
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
@@ -100,6 +102,7 @@ class AlertLevel(Enum):
 @dataclass
 class SmartAlert:
     """Represents a single SMART health alert."""
+
     level: AlertLevel
     message: str
     metric_name: str
@@ -122,6 +125,7 @@ class SmartAlert:
 @dataclass
 class SmartMetrics:
     """Structured SMART health metrics for NVMe or SATA drives."""
+
     device: str
     device_type: str  # "nvme" or "sata"
     model: str
@@ -150,6 +154,7 @@ class SmartMetrics:
 # Built-in alert callback
 # ---------------------------------------------------------------------------
 
+
 def log_alert(alert: SmartAlert) -> None:
     """Default alert callback — logs the alert at the appropriate severity."""
     log_level_map = {
@@ -173,9 +178,11 @@ def log_alert(alert: SmartAlert) -> None:
 # Alert thresholds configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AlertThresholds:
     """Configurable thresholds for SMART metric alerting."""
+
     temp_warn_c: int = 70
     temp_crit_c: int = 80
     wear_warn_pct: int = 80
@@ -187,6 +194,7 @@ class AlertThresholds:
 # ---------------------------------------------------------------------------
 # Main monitor class
 # ---------------------------------------------------------------------------
+
 
 class SmartMonitor:
     """Monitors NVMe and SATA/SSD health using smartmontools.
@@ -430,9 +438,7 @@ class SmartMonitor:
             lbas = lbas_written_attr.get("raw", {}).get("value")
             if lbas is not None:
                 # Determine sector size; default to 512 bytes
-                sector_size = (
-                    data.get("logical_block_size", 512)
-                )
+                sector_size = data.get("logical_block_size", 512)
                 total_bytes_written = lbas * sector_size
 
         # Total bytes read — attribute 242 (Total_LBAs_Read)
@@ -470,11 +476,7 @@ class SmartMonitor:
         Returns:
             Tuple of (model_name, serial_number). Uses "Unknown" as fallback.
         """
-        model = (
-            data.get("model_name")
-            or data.get("model_family")
-            or "Unknown"
-        )
+        model = data.get("model_name") or data.get("model_family") or "Unknown"
         serial = data.get("serial_number", "Unknown")
         return model, serial
 
@@ -501,85 +503,95 @@ class SmartMonitor:
         # --- Temperature alerts ---
         if metrics.temperature_c is not None:
             if metrics.temperature_c > self.thresholds.temp_crit_c:
-                alerts.append(SmartAlert(
-                    level=AlertLevel.CRITICAL,
-                    message=(
-                        f"Drive temperature {metrics.temperature_c}C exceeds "
-                        f"critical threshold {self.thresholds.temp_crit_c}C"
-                    ),
-                    metric_name="temperature_c",
-                    value=metrics.temperature_c,
-                    threshold=self.thresholds.temp_crit_c,
-                    timestamp=now,
-                ))
+                alerts.append(
+                    SmartAlert(
+                        level=AlertLevel.CRITICAL,
+                        message=(
+                            f"Drive temperature {metrics.temperature_c}C exceeds "
+                            f"critical threshold {self.thresholds.temp_crit_c}C"
+                        ),
+                        metric_name="temperature_c",
+                        value=metrics.temperature_c,
+                        threshold=self.thresholds.temp_crit_c,
+                        timestamp=now,
+                    )
+                )
             elif metrics.temperature_c > self.thresholds.temp_warn_c:
-                alerts.append(SmartAlert(
-                    level=AlertLevel.WARNING,
-                    message=(
-                        f"Drive temperature {metrics.temperature_c}C exceeds "
-                        f"warning threshold {self.thresholds.temp_warn_c}C"
-                    ),
-                    metric_name="temperature_c",
-                    value=metrics.temperature_c,
-                    threshold=self.thresholds.temp_warn_c,
-                    timestamp=now,
-                ))
+                alerts.append(
+                    SmartAlert(
+                        level=AlertLevel.WARNING,
+                        message=(
+                            f"Drive temperature {metrics.temperature_c}C exceeds "
+                            f"warning threshold {self.thresholds.temp_warn_c}C"
+                        ),
+                        metric_name="temperature_c",
+                        value=metrics.temperature_c,
+                        threshold=self.thresholds.temp_warn_c,
+                        timestamp=now,
+                    )
+                )
 
         # --- Wear level alerts ---
         if metrics.percentage_used is not None:
             if metrics.percentage_used >= self.thresholds.wear_crit_pct:
-                alerts.append(SmartAlert(
-                    level=AlertLevel.CRITICAL,
-                    message=(
-                        f"SSD wear level {metrics.percentage_used}% exceeds "
-                        f"critical threshold {self.thresholds.wear_crit_pct}%"
-                    ),
-                    metric_name="percentage_used",
-                    value=metrics.percentage_used,
-                    threshold=self.thresholds.wear_crit_pct,
-                    timestamp=now,
-                ))
+                alerts.append(
+                    SmartAlert(
+                        level=AlertLevel.CRITICAL,
+                        message=(
+                            f"SSD wear level {metrics.percentage_used}% exceeds "
+                            f"critical threshold {self.thresholds.wear_crit_pct}%"
+                        ),
+                        metric_name="percentage_used",
+                        value=metrics.percentage_used,
+                        threshold=self.thresholds.wear_crit_pct,
+                        timestamp=now,
+                    )
+                )
             elif metrics.percentage_used >= self.thresholds.wear_warn_pct:
-                alerts.append(SmartAlert(
-                    level=AlertLevel.WARNING,
-                    message=(
-                        f"SSD wear level {metrics.percentage_used}% exceeds "
-                        f"warning threshold {self.thresholds.wear_warn_pct}%"
-                    ),
-                    metric_name="percentage_used",
-                    value=metrics.percentage_used,
-                    threshold=self.thresholds.wear_warn_pct,
-                    timestamp=now,
-                ))
+                alerts.append(
+                    SmartAlert(
+                        level=AlertLevel.WARNING,
+                        message=(
+                            f"SSD wear level {metrics.percentage_used}% exceeds "
+                            f"warning threshold {self.thresholds.wear_warn_pct}%"
+                        ),
+                        metric_name="percentage_used",
+                        value=metrics.percentage_used,
+                        threshold=self.thresholds.wear_warn_pct,
+                        timestamp=now,
+                    )
+                )
 
         # --- NVMe media errors ---
         if metrics.media_errors is not None:
             if metrics.media_errors > self.thresholds.media_errors_warn:
-                alerts.append(SmartAlert(
-                    level=AlertLevel.WARNING,
-                    message=(
-                        f"NVMe media errors detected: {metrics.media_errors}"
-                    ),
-                    metric_name="media_errors",
-                    value=metrics.media_errors,
-                    threshold=self.thresholds.media_errors_warn,
-                    timestamp=now,
-                ))
+                alerts.append(
+                    SmartAlert(
+                        level=AlertLevel.WARNING,
+                        message=(f"NVMe media errors detected: {metrics.media_errors}"),
+                        metric_name="media_errors",
+                        value=metrics.media_errors,
+                        threshold=self.thresholds.media_errors_warn,
+                        timestamp=now,
+                    )
+                )
 
         # --- SATA reallocated sectors ---
         if metrics.reallocated_sectors is not None:
             if metrics.reallocated_sectors > self.thresholds.reallocated_sectors_warn:
-                alerts.append(SmartAlert(
-                    level=AlertLevel.WARNING,
-                    message=(
-                        f"Reallocated sector count {metrics.reallocated_sectors} "
-                        f"exceeds threshold {self.thresholds.reallocated_sectors_warn}"
-                    ),
-                    metric_name="reallocated_sectors",
-                    value=metrics.reallocated_sectors,
-                    threshold=self.thresholds.reallocated_sectors_warn,
-                    timestamp=now,
-                ))
+                alerts.append(
+                    SmartAlert(
+                        level=AlertLevel.WARNING,
+                        message=(
+                            f"Reallocated sector count {metrics.reallocated_sectors} "
+                            f"exceeds threshold {self.thresholds.reallocated_sectors_warn}"
+                        ),
+                        metric_name="reallocated_sectors",
+                        value=metrics.reallocated_sectors,
+                        threshold=self.thresholds.reallocated_sectors_warn,
+                        timestamp=now,
+                    )
+                )
 
         # Dispatch alerts to all registered callbacks
         for alert in alerts:

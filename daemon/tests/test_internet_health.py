@@ -33,7 +33,13 @@ class TestHealthCheckDataclass(unittest.TestCase):
             status="healthy",
         )
         d = hc.to_dict()
-        expected_keys = {"timestamp", "latency_ms", "dns_resolve_ms", "packet_loss_pct", "status"}
+        expected_keys = {
+            "timestamp",
+            "latency_ms",
+            "dns_resolve_ms",
+            "packet_loss_pct",
+            "status",
+        }
         self.assertEqual(set(d.keys()), expected_keys)
 
     def test_to_dict_values(self):
@@ -389,12 +395,10 @@ class TestHistorySizeLimit(unittest.TestCase):
         base = datetime(2026, 2, 26, 0, 0, 0, tzinfo=timezone.utc)
         for i in range(5):
             ts = (base + timedelta(minutes=i)).isoformat()
-            monitor._history.append(
-                HealthCheck(ts, float(i), float(i), 0.0, "healthy")
-            )
+            monitor._history.append(HealthCheck(ts, float(i), float(i), 0.0, "healthy"))
         # Trim like run_check does
         if len(monitor._history) > monitor._history_size:
-            monitor._history = monitor._history[-monitor._history_size:]
+            monitor._history = monitor._history[-monitor._history_size :]
 
         self.assertEqual(len(monitor._history), 3)
         # Should be entries 2, 3, 4
@@ -415,12 +419,8 @@ class TestGetCurrentStatus(unittest.TestCase):
     def test_returns_last_check(self):
         """Should return the most recent health check."""
         monitor = InternetHealthMonitor()
-        monitor._history.append(
-            HealthCheck("ts1", 10.0, 20.0, 0.0, "healthy")
-        )
-        monitor._history.append(
-            HealthCheck("ts2", 200.0, 600.0, 10.0, "degraded")
-        )
+        monitor._history.append(HealthCheck("ts1", 10.0, 20.0, 0.0, "healthy"))
+        monitor._history.append(HealthCheck("ts2", 200.0, 600.0, 10.0, "degraded"))
         status = monitor.get_current_status()
         self.assertEqual(status["status"], "degraded")
         self.assertEqual(status["timestamp"], "ts2")
@@ -437,9 +437,7 @@ class TestGetHistory(unittest.TestCase):
     def test_returns_dicts(self):
         """History entries should be dicts."""
         monitor = InternetHealthMonitor()
-        monitor._history.append(
-            HealthCheck("ts1", 10.0, 20.0, 0.0, "healthy")
-        )
+        monitor._history.append(HealthCheck("ts1", 10.0, 20.0, 0.0, "healthy"))
         history = monitor.get_history()
         self.assertIsInstance(history[0], dict)
 

@@ -18,6 +18,7 @@ logger = logging.getLogger("nettap.api.investigations")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_list_investigations(request: web.Request) -> web.Response:
     """GET /api/investigations?status=&severity=
 
@@ -30,20 +31,26 @@ async def handle_list_investigations(request: web.Request) -> web.Response:
     # Validate filters if provided
     if status and status not in InvestigationStore.VALID_STATUSES:
         return web.json_response(
-            {"error": f"Invalid status: {status}. Must be one of {InvestigationStore.VALID_STATUSES}"},
+            {
+                "error": f"Invalid status: {status}. Must be one of {InvestigationStore.VALID_STATUSES}"
+            },
             status=400,
         )
     if severity and severity not in InvestigationStore.VALID_SEVERITIES:
         return web.json_response(
-            {"error": f"Invalid severity: {severity}. Must be one of {InvestigationStore.VALID_SEVERITIES}"},
+            {
+                "error": f"Invalid severity: {severity}. Must be one of {InvestigationStore.VALID_SEVERITIES}"
+            },
             status=400,
         )
 
     investigations = store.list_all(status=status, severity=severity)
-    return web.json_response({
-        "investigations": [inv.to_dict() for inv in investigations],
-        "count": len(investigations),
-    })
+    return web.json_response(
+        {
+            "investigations": [inv.to_dict() for inv in investigations],
+            "count": len(investigations),
+        }
+    )
 
 
 async def handle_create_investigation(request: web.Request) -> web.Response:
@@ -173,7 +180,9 @@ async def handle_update_note(request: web.Request) -> web.Response:
 
     note = store.update_note(inv_id, note_id, content)
     if note is None:
-        return web.json_response({"error": "Note or investigation not found"}, status=404)
+        return web.json_response(
+            {"error": "Note or investigation not found"}, status=404
+        )
 
     return web.json_response(note.to_dict())
 
@@ -263,6 +272,7 @@ async def handle_investigation_stats(request: web.Request) -> web.Response:
 # Route registration
 # ---------------------------------------------------------------------------
 
+
 def register_investigation_routes(
     app: web.Application, store: InvestigationStore
 ) -> None:
@@ -279,8 +289,12 @@ def register_investigation_routes(
     app.router.add_delete("/api/investigations/{id}", handle_delete_investigation)
     app.router.add_post("/api/investigations/{id}/notes", handle_add_note)
     app.router.add_put("/api/investigations/{id}/notes/{note_id}", handle_update_note)
-    app.router.add_delete("/api/investigations/{id}/notes/{note_id}", handle_delete_note)
+    app.router.add_delete(
+        "/api/investigations/{id}/notes/{note_id}", handle_delete_note
+    )
     app.router.add_post("/api/investigations/{id}/alerts", handle_link_alert)
-    app.router.add_delete("/api/investigations/{id}/alerts/{alert_id}", handle_unlink_alert)
+    app.router.add_delete(
+        "/api/investigations/{id}/alerts/{alert_id}", handle_unlink_alert
+    )
     app.router.add_post("/api/investigations/{id}/devices", handle_link_device)
     logger.info("Investigation API routes registered (12 endpoints)")

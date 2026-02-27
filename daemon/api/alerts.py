@@ -30,14 +30,13 @@ _DEFAULT_RANGE_HOURS = 24
 SURICATA_INDEX = "suricata-*"
 
 # Path for storing acknowledgement data (local JSON file)
-_ACK_FILE = os.environ.get(
-    "ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json"
-)
+_ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps.
@@ -126,6 +125,7 @@ def _save_acks(acks: dict, ack_file: str | None = None) -> None:
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_alerts_list(request: web.Request) -> web.Response:
     """GET /api/alerts?from=&to=&severity=&page=1&size=50
 
@@ -190,15 +190,17 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         _alert_enrichment.enrich_alert(source)
         alerts.append(source)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "page": page,
-        "size": size,
-        "total": total,
-        "total_pages": (total + size - 1) // size if size > 0 else 0,
-        "alerts": alerts,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "page": page,
+            "size": size,
+            "total": total,
+            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            "alerts": alerts,
+        }
+    )
 
 
 async def handle_alerts_count(request: web.Request) -> web.Response:
@@ -211,15 +213,9 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
-            "by_severity": {
-                "terms": {"field": "alert.severity", "size": 10}
-            },
+            "by_severity": {"terms": {"field": "alert.severity", "size": 10}},
         },
     }
 
@@ -249,11 +245,13 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
         label = severity_map.get(key, f"severity_{key}")
         counts[label] = b.get("doc_count", 0)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "counts": counts,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "counts": counts,
+        }
+    )
 
 
 async def handle_alert_detail(request: web.Request) -> web.Response:
@@ -270,9 +268,7 @@ async def handle_alert_detail(request: web.Request) -> web.Response:
     # Search across all suricata indices for the document by _id
     query = {
         "size": 1,
-        "query": {
-            "ids": {"values": [alert_id]}
-        },
+        "query": {"ids": {"values": [alert_id]}},
     }
 
     try:
@@ -338,19 +334,24 @@ async def handle_alert_acknowledge(request: web.Request) -> web.Response:
             {"error": f"Failed to save acknowledgement: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "result": "acknowledged",
-        "alert_id": alert_id,
-        "acknowledged_at": acks[alert_id]["acknowledged_at"],
-        "acknowledged_by": acknowledged_by,
-    })
+    return web.json_response(
+        {
+            "result": "acknowledged",
+            "alert_id": alert_id,
+            "acknowledged_at": acks[alert_id]["acknowledged_at"],
+            "acknowledged_by": acknowledged_by,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
-def register_alert_routes(app: web.Application, storage_manager: StorageManager) -> None:
+
+def register_alert_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     """Register all alert API routes on the given aiohttp application.
 
     The StorageManager is expected to already be stored in app['storage']

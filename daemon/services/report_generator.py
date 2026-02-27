@@ -116,9 +116,7 @@ class ReportGenerator:
             next_dt = now + timedelta(days=30)
         else:
             next_dt = now + timedelta(days=1)
-        return next_dt.replace(
-            hour=6, minute=0, second=0, microsecond=0
-        ).isoformat()
+        return next_dt.replace(hour=6, minute=0, second=0, microsecond=0).isoformat()
 
     def create_schedule(
         self,
@@ -143,8 +141,7 @@ class ReportGenerator:
 
         if format not in self.VALID_FORMATS:
             raise ValueError(
-                f"Invalid format: {format}. "
-                f"Must be one of {self.VALID_FORMATS}"
+                f"Invalid format: {format}. Must be one of {self.VALID_FORMATS}"
             )
 
         if not sections:
@@ -153,8 +150,7 @@ class ReportGenerator:
         for section in sections:
             if section not in self.VALID_SECTIONS:
                 raise ValueError(
-                    f"Invalid section: {section}. "
-                    f"Must be one of {self.VALID_SECTIONS}"
+                    f"Invalid section: {section}. Must be one of {self.VALID_SECTIONS}"
                 )
 
         now = datetime.now(timezone.utc).isoformat()
@@ -184,9 +180,7 @@ class ReportGenerator:
         """Get a specific schedule by ID."""
         return self._schedules.get(schedule_id)
 
-    def update_schedule(
-        self, schedule_id: str, **kwargs
-    ) -> ReportSchedule | None:
+    def update_schedule(self, schedule_id: str, **kwargs) -> ReportSchedule | None:
         """Update schedule fields.
 
         Allowed fields: name, frequency, format, sections, recipients, enabled.
@@ -198,7 +192,12 @@ class ReportGenerator:
             return None
 
         allowed_fields = {
-            "name", "frequency", "format", "sections", "recipients", "enabled"
+            "name",
+            "frequency",
+            "format",
+            "sections",
+            "recipients",
+            "enabled",
         }
 
         for key, value in kwargs.items():
@@ -214,8 +213,7 @@ class ReportGenerator:
             elif key == "format":
                 if value not in self.VALID_FORMATS:
                     raise ValueError(
-                        f"Invalid format: {value}. "
-                        f"Must be one of {self.VALID_FORMATS}"
+                        f"Invalid format: {value}. Must be one of {self.VALID_FORMATS}"
                     )
             elif key == "sections":
                 if not value:

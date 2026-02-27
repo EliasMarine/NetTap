@@ -41,8 +41,13 @@ class TestComponentVersionDataclass(unittest.TestCase):
         )
         d = cv.to_dict()
         expected_keys = {
-            "name", "category", "current_version", "install_type",
-            "last_checked", "status", "details",
+            "name",
+            "category",
+            "current_version",
+            "install_type",
+            "last_checked",
+            "status",
+            "details",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -87,9 +92,7 @@ class TestVersionManagerInitialization(unittest.TestCase):
     def test_default_parameters(self):
         """Default init should use expected compose file path."""
         vm = VersionManager()
-        self.assertEqual(
-            vm._compose_file, "/opt/nettap/docker/docker-compose.yml"
-        )
+        self.assertEqual(vm._compose_file, "/opt/nettap/docker/docker-compose.yml")
         self.assertEqual(vm._versions, {})
         self.assertIsNone(vm._last_scan)
         self.assertFalse(vm._scanning)
@@ -128,39 +131,69 @@ class TestScanVersions(unittest.TestCase):
         now = datetime.now(timezone.utc).isoformat()
 
         async def mock_scan_core():
-            return [ComponentVersion(
-                name="nettap-daemon", category="core",
-                current_version=NETTAP_VERSION, install_type="pip",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="nettap-daemon",
+                    category="core",
+                    current_version=NETTAP_VERSION,
+                    install_type="pip",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         async def mock_scan_docker():
-            return [ComponentVersion(
-                name="zeek", category="docker",
-                current_version="v26.02.0", install_type="docker",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="zeek",
+                    category="docker",
+                    current_version="v26.02.0",
+                    install_type="docker",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         async def mock_scan_system():
-            return [ComponentVersion(
-                name="python3", category="system",
-                current_version="3.10.12", install_type="apt",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="python3",
+                    category="system",
+                    current_version="3.10.12",
+                    install_type="apt",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         async def mock_scan_databases():
-            return [ComponentVersion(
-                name="opensearch", category="database",
-                current_version="2.11.0", install_type="docker",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="opensearch",
+                    category="database",
+                    current_version="2.11.0",
+                    install_type="docker",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         async def mock_scan_os():
-            return [ComponentVersion(
-                name="os", category="os",
-                current_version="22.04", install_type="builtin",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="os",
+                    category="os",
+                    current_version="22.04",
+                    install_type="builtin",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         vm._scan_core = mock_scan_core
         vm._scan_docker_images = mock_scan_docker
@@ -256,11 +289,17 @@ class TestGetVersions(unittest.TestCase):
         now = datetime.now(timezone.utc).isoformat()
 
         async def mock_scan_core():
-            return [ComponentVersion(
-                name="nettap-daemon", category="core",
-                current_version=NETTAP_VERSION, install_type="pip",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="nettap-daemon",
+                    category="core",
+                    current_version=NETTAP_VERSION,
+                    install_type="pip",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         async def mock_empty():
             return []
@@ -279,10 +318,13 @@ class TestGetVersions(unittest.TestCase):
         """get_versions() should return cached data if not stale."""
         vm = VersionManager()
         cv = ComponentVersion(
-            name="test", category="core",
-            current_version="1.0.0", install_type="pip",
+            name="test",
+            category="core",
+            current_version="1.0.0",
+            install_type="pip",
             last_checked=datetime.now(timezone.utc).isoformat(),
-            status="ok", details={},
+            status="ok",
+            details={},
         )
         vm._versions = {"test": cv}
         vm._last_scan = datetime.now(timezone.utc).isoformat()
@@ -301,11 +343,17 @@ class TestGetComponent(unittest.TestCase):
         now = datetime.now(timezone.utc).isoformat()
 
         async def mock_scan_core():
-            return [ComponentVersion(
-                name="nettap-daemon", category="core",
-                current_version=NETTAP_VERSION, install_type="pip",
-                last_checked=now, status="ok", details={},
-            )]
+            return [
+                ComponentVersion(
+                    name="nettap-daemon",
+                    category="core",
+                    current_version=NETTAP_VERSION,
+                    install_type="pip",
+                    last_checked=now,
+                    status="ok",
+                    details={},
+                )
+            ]
 
         async def mock_empty():
             return []
@@ -323,10 +371,13 @@ class TestGetComponent(unittest.TestCase):
         """get_component() should return a dict for known components."""
         vm = VersionManager()
         cv = ComponentVersion(
-            name="zeek", category="docker",
-            current_version="v26.02.0", install_type="docker",
+            name="zeek",
+            category="docker",
+            current_version="v26.02.0",
+            install_type="docker",
             last_checked=datetime.now(timezone.utc).isoformat(),
-            status="ok", details={"image": "malcolm/zeek"},
+            status="ok",
+            details={"image": "malcolm/zeek"},
         )
         vm._versions = {"zeek": cv}
 
@@ -344,13 +395,9 @@ class TestScanCore(unittest.TestCase):
         vm = VersionManager()
         results = asyncio.run(vm._scan_core())
 
-        daemon_versions = [
-            cv for cv in results if cv.name == "nettap-daemon"
-        ]
+        daemon_versions = [cv for cv in results if cv.name == "nettap-daemon"]
         self.assertEqual(len(daemon_versions), 1)
-        self.assertEqual(
-            daemon_versions[0].current_version, NETTAP_VERSION
-        )
+        self.assertEqual(daemon_versions[0].current_version, NETTAP_VERSION)
         self.assertEqual(daemon_versions[0].status, "ok")
 
     def test_scan_core_includes_web_and_config(self):
@@ -409,6 +456,7 @@ class TestCacheStaleness(unittest.TestCase):
         vm._versions = {"test": MagicMock()}
         # Set last scan to a time well before the TTL
         from datetime import timedelta
+
         old_time = datetime.now(timezone.utc) - timedelta(
             seconds=_CACHE_TTL_SECONDS + 100
         )
@@ -433,27 +481,37 @@ class TestCategoryFiltering(unittest.TestCase):
 
         vm._versions = {
             "daemon": ComponentVersion(
-                name="daemon", category="core",
-                current_version="0.4.0", install_type="pip",
-                last_checked=now, status="ok", details={},
+                name="daemon",
+                category="core",
+                current_version="0.4.0",
+                install_type="pip",
+                last_checked=now,
+                status="ok",
+                details={},
             ),
             "zeek": ComponentVersion(
-                name="zeek", category="docker",
-                current_version="v26", install_type="docker",
-                last_checked=now, status="ok", details={},
+                name="zeek",
+                category="docker",
+                current_version="v26",
+                install_type="docker",
+                last_checked=now,
+                status="ok",
+                details={},
             ),
             "python3": ComponentVersion(
-                name="python3", category="system",
-                current_version="3.10", install_type="apt",
-                last_checked=now, status="ok", details={},
+                name="python3",
+                category="system",
+                current_version="3.10",
+                install_type="apt",
+                last_checked=now,
+                status="ok",
+                details={},
             ),
         }
         vm._last_scan = now
 
         result = asyncio.run(vm.get_versions())
-        docker_only = [
-            v for v in result["versions"] if v["category"] == "docker"
-        ]
+        docker_only = [v for v in result["versions"] if v["category"] == "docker"]
         self.assertEqual(len(docker_only), 1)
         self.assertEqual(docker_only[0]["name"], "zeek")
 

@@ -19,6 +19,7 @@ logger = logging.getLogger("nettap.api.bridge")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_bridge_health(request: web.Request) -> web.Response:
     """GET /api/bridge/health
 
@@ -121,14 +122,17 @@ async def handle_bypass_status(request: web.Request) -> web.Response:
     Return the current bypass mode status.
     """
     monitor: BridgeHealthMonitor = request.app["bridge_health"]
-    return web.json_response({
-        "bypass_active": monitor._bypass_active,
-    })
+    return web.json_response(
+        {
+            "bypass_active": monitor._bypass_active,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_bridge_routes(
     app: web.Application, bridge_health_monitor: BridgeHealthMonitor

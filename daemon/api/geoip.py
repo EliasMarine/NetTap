@@ -21,6 +21,7 @@ logger = logging.getLogger("nettap.api.geoip")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_geoip_lookup(request: web.Request) -> web.Response:
     """GET /api/geoip/{ip}
 
@@ -33,9 +34,7 @@ async def handle_geoip_lookup(request: web.Request) -> web.Response:
     try:
         ipaddress.ip_address(raw_ip)
     except ValueError:
-        return web.json_response(
-            {"error": f"Invalid IP address: {raw_ip}"}, status=400
-        )
+        return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
     geoip: GeoIPService = request.app["geoip"]
     result = geoip.lookup(raw_ip)
@@ -87,6 +86,7 @@ async def handle_geoip_batch(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_geoip_routes(app: web.Application, geoip_service: GeoIPService) -> None:
     """Register all GeoIP API routes on the given aiohttp application."""

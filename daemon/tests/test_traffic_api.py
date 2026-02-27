@@ -54,23 +54,25 @@ class TestParseTimeRange(unittest.TestCase):
         # Both should be valid ISO timestamps
         from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
         to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
-        self.assertAlmostEqual(
-            (to_dt - from_dt).total_seconds(), 24 * 3600, delta=5
-        )
+        self.assertAlmostEqual((to_dt - from_dt).total_seconds(), 24 * 3600, delta=5)
 
     def test_valid_params_preserved(self):
         """Valid ISO timestamps should be passed through."""
-        req = self._make_request({
-            "from": "2026-02-25T00:00:00+00:00",
-            "to": "2026-02-26T00:00:00+00:00",
-        })
+        req = self._make_request(
+            {
+                "from": "2026-02-25T00:00:00+00:00",
+                "to": "2026-02-26T00:00:00+00:00",
+            }
+        )
         from_ts, to_ts = _parse_time_range(req)
         self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
         self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
 
     def test_invalid_from_falls_back_to_default(self):
         """Invalid from param should fall back to default."""
-        req = self._make_request({"from": "not-a-date", "to": "2026-02-26T00:00:00+00:00"})
+        req = self._make_request(
+            {"from": "not-a-date", "to": "2026-02-26T00:00:00+00:00"}
+        )
         from_ts, to_ts = _parse_time_range(req)
         self.assertNotEqual(from_ts, "not-a-date")
         self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
@@ -159,7 +161,13 @@ class TestTrafficSummaryHandler(AioHTTPTestCase):
         # Verify search was called with ZEEK_INDEX
         self.mock_client.search.assert_called_once()
         call_kwargs = self.mock_client.search.call_args
-        self.assertEqual(call_kwargs.kwargs.get("index") or call_kwargs[1].get("index", call_kwargs[0][0] if call_kwargs[0] else None), ZEEK_INDEX)
+        self.assertEqual(
+            call_kwargs.kwargs.get("index")
+            or call_kwargs[1].get(
+                "index", call_kwargs[0][0] if call_kwargs[0] else None
+            ),
+            ZEEK_INDEX,
+        )
 
     @unittest_run_loop
     async def test_summary_with_time_params(self):
@@ -308,7 +316,9 @@ class TestTopDestinationsHandler(AioHTTPTestCase):
             }
         }
 
-        resp = await self.client.request("GET", "/api/traffic/top-destinations?limit=10")
+        resp = await self.client.request(
+            "GET", "/api/traffic/top-destinations?limit=10"
+        )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertEqual(len(data["top_destinations"]), 1)
@@ -472,9 +482,7 @@ class TestConnectionsHandler(AioHTTPTestCase):
             "hits": {"total": {"value": 0}, "hits": []}
         }
 
-        resp = await self.client.request(
-            "GET", "/api/traffic/connections?q=dns"
-        )
+        resp = await self.client.request("GET", "/api/traffic/connections?q=dns")
         self.assertEqual(resp.status, 200)
 
         # Verify the query_string was used
@@ -490,9 +498,7 @@ class TestConnectionsHandler(AioHTTPTestCase):
             "hits": {"total": {"value": 0}, "hits": []}
         }
 
-        resp = await self.client.request(
-            "GET", "/api/traffic/connections?size=500"
-        )
+        resp = await self.client.request("GET", "/api/traffic/connections?size=500")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertEqual(data["size"], 200)

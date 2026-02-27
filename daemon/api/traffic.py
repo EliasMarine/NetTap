@@ -29,6 +29,7 @@ ZEEK_INDEX = "zeek-*"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps.
 
@@ -92,6 +93,7 @@ def _get_client(request: web.Request):
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_traffic_summary(request: web.Request) -> web.Response:
     """GET /api/traffic/summary?from=&to=
 
@@ -103,19 +105,13 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
             "total_orig_bytes": {"sum": {"field": "orig_bytes", "missing": 0}},
             "total_resp_bytes": {"sum": {"field": "resp_bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "orig_pkts", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "resp_pkts", "missing": 0}},
-            "top_protocol": {
-                "terms": {"field": "proto", "size": 1}
-            },
+            "top_protocol": {"terms": {"field": "proto", "size": 1}},
         },
     }
 
@@ -129,7 +125,9 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
-    connection_count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    connection_count = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
     resp_bytes = aggs.get("total_resp_bytes", {}).get("value", 0) or 0
@@ -139,16 +137,18 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     top_protocol_buckets = aggs.get("top_protocol", {}).get("buckets", [])
     top_protocol = top_protocol_buckets[0]["key"] if top_protocol_buckets else "unknown"
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "total_bytes": orig_bytes + resp_bytes,
-        "orig_bytes": orig_bytes,
-        "resp_bytes": resp_bytes,
-        "packet_count": orig_pkts + resp_pkts,
-        "connection_count": connection_count,
-        "top_protocol": top_protocol,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "total_bytes": orig_bytes + resp_bytes,
+            "orig_bytes": orig_bytes,
+            "resp_bytes": resp_bytes,
+            "packet_count": orig_pkts + resp_pkts,
+            "connection_count": connection_count,
+            "top_protocol": top_protocol,
+        }
+    )
 
 
 async def handle_top_talkers(request: web.Request) -> web.Response:
@@ -162,11 +162,7 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
             "top_sources": {
                 "terms": {"field": "id.orig_h", "size": limit},
@@ -180,9 +176,7 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
                         }
                     },
                     "bucket_sort": {
-                        "bucket_sort": {
-                            "sort": [{"total_bytes": {"order": "desc"}}]
-                        }
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
                     },
                 },
             }
@@ -207,12 +201,14 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
         for b in buckets
     ]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "limit": limit,
-        "top_talkers": talkers,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "limit": limit,
+            "top_talkers": talkers,
+        }
+    )
 
 
 async def handle_top_destinations(request: web.Request) -> web.Response:
@@ -226,11 +222,7 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
             "top_destinations": {
                 "terms": {"field": "id.resp_h", "size": limit},
@@ -244,9 +236,7 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
                         }
                     },
                     "bucket_sort": {
-                        "bucket_sort": {
-                            "sort": [{"total_bytes": {"order": "desc"}}]
-                        }
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
                     },
                 },
             }
@@ -261,7 +251,9 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    buckets = result.get("aggregations", {}).get("top_destinations", {}).get("buckets", [])
+    buckets = (
+        result.get("aggregations", {}).get("top_destinations", {}).get("buckets", [])
+    )
     destinations = [
         {
             "ip": b["key"],
@@ -271,12 +263,14 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
         for b in buckets
     ]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "limit": limit,
-        "top_destinations": destinations,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "limit": limit,
+            "top_destinations": destinations,
+        }
+    )
 
 
 async def handle_protocols(request: web.Request) -> web.Response:
@@ -290,15 +284,9 @@ async def handle_protocols(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
-            "by_proto": {
-                "terms": {"field": "proto", "size": 50}
-            },
+            "by_proto": {"terms": {"field": "proto", "size": 50}},
             "by_service": {
                 "terms": {"field": "service", "size": 50, "missing": "unknown"}
             },
@@ -318,21 +306,17 @@ async def handle_protocols(request: web.Request) -> web.Response:
     proto_buckets = aggs.get("by_proto", {}).get("buckets", [])
     service_buckets = aggs.get("by_service", {}).get("buckets", [])
 
-    protocols = [
-        {"name": b["key"], "count": b["doc_count"]}
-        for b in proto_buckets
-    ]
-    services = [
-        {"name": b["key"], "count": b["doc_count"]}
-        for b in service_buckets
-    ]
+    protocols = [{"name": b["key"], "count": b["doc_count"]} for b in proto_buckets]
+    services = [{"name": b["key"], "count": b["doc_count"]} for b in service_buckets]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "protocols": protocols,
-        "services": services,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "protocols": protocols,
+            "services": services,
+        }
+    )
 
 
 async def handle_bandwidth(request: web.Request) -> web.Response:
@@ -352,11 +336,7 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
         "aggs": {
             "bandwidth_over_time": {
                 "date_histogram": {
@@ -385,9 +365,7 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
         )
 
     buckets = (
-        result.get("aggregations", {})
-        .get("bandwidth_over_time", {})
-        .get("buckets", [])
+        result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
     )
 
     series = [
@@ -402,12 +380,14 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
         for b in buckets
     ]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "interval": interval,
-        "series": series,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "series": series,
+        }
+    )
 
 
 async def handle_connections(request: web.Request) -> web.Response:
@@ -429,13 +409,15 @@ async def handle_connections(request: web.Request) -> web.Response:
     filter_clauses: list[dict] = [_time_range_filter(from_ts, to_ts)]
 
     if search_query:
-        must_clauses.append({
-            "query_string": {
-                "query": search_query,
-                "default_operator": "AND",
-                "analyze_wildcard": True,
+        must_clauses.append(
+            {
+                "query_string": {
+                    "query": search_query,
+                    "default_operator": "AND",
+                    "analyze_wildcard": True,
+                }
             }
-        })
+        )
 
     query = {
         "size": size,
@@ -468,15 +450,17 @@ async def handle_connections(request: web.Request) -> web.Response:
         source["_index"] = hit.get("_index", "")
         connections.append(source)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "page": page,
-        "size": size,
-        "total": total,
-        "total_pages": (total + size - 1) // size if size > 0 else 0,
-        "connections": connections,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "page": page,
+            "size": size,
+            "total": total,
+            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            "connections": connections,
+        }
+    )
 
 
 async def handle_traffic_categories(request: web.Request) -> web.Response:
@@ -501,18 +485,23 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
             {"error": f"Category classification failed: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "categories": categories,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "categories": categories,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
-def register_traffic_routes(app: web.Application, storage_manager: StorageManager) -> None:
+
+def register_traffic_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     """Register all traffic API routes on the given aiohttp application.
 
     The StorageManager is expected to already be stored in app['storage']

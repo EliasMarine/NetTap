@@ -244,9 +244,7 @@ class BridgeHealthMonitor:
             }
 
         latencies = [h.latency_us for h in self._history if h.latency_us > 0]
-        avg_latency = (
-            round(sum(latencies) / len(latencies), 2) if latencies else None
-        )
+        avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else None
 
         total_rx_bytes = sum(h.rx_bytes_delta for h in self._history)
         total_tx_bytes = sum(h.tx_bytes_delta for h in self._history)
@@ -340,9 +338,7 @@ class BridgeHealthMonitor:
         Returns:
             "up", "down", or "unknown" if sysfs is not accessible.
         """
-        operstate_path = os.path.join(
-            _SYSFS_NET, self._bridge_name, "operstate"
-        )
+        operstate_path = os.path.join(_SYSFS_NET, self._bridge_name, "operstate")
         try:
             loop = asyncio.get_running_loop()
             content = await loop.run_in_executor(
@@ -400,9 +396,7 @@ class BridgeHealthMonitor:
             loop = asyncio.get_running_loop()
             for key in result:
                 path = os.path.join(stats_dir, key)
-                content = await loop.run_in_executor(
-                    None, self._read_sysfs_file, path
-                )
+                content = await loop.run_in_executor(None, self._read_sysfs_file, path)
                 if content is not None:
                     try:
                         result[key] = int(content.strip())
@@ -518,7 +512,9 @@ class BridgeHealthMonitor:
         """
         try:
             proc = await asyncio.create_subprocess_exec(
-                "systemctl", "is-active", "nettap-watchdog",
+                "systemctl",
+                "is-active",
+                "nettap-watchdog",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

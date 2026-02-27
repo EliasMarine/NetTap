@@ -35,23 +35,22 @@ def _device_list_response(buckets=None):
     """Build a mock OpenSearch response for the device list aggregation."""
     if buckets is None:
         buckets = []
-    return {
-        "aggregations": {
-            "devices": {"buckets": buckets}
-        }
-    }
+    return {"aggregations": {"devices": {"buckets": buckets}}}
 
 
 def _empty_alert_response():
     """Build a mock empty alert count response."""
-    return {
-        "aggregations": {
-            "by_ip": {"buckets": []}
-        }
-    }
+    return {"aggregations": {"by_ip": {"buckets": []}}}
 
 
-def _device_bucket(ip, doc_count=100, total_bytes=50000, protocols=None, first_seen=None, last_seen=None):
+def _device_bucket(
+    ip,
+    doc_count=100,
+    total_bytes=50000,
+    protocols=None,
+    first_seen=None,
+    last_seen=None,
+):
     """Build a single device aggregation bucket."""
     if protocols is None:
         protocols = [{"key": "tcp", "doc_count": 80}, {"key": "udp", "doc_count": 20}]
@@ -78,10 +77,16 @@ class TestDeviceListHandler(AioHTTPTestCase):
         register_device_routes(app, self.storage)
         return app
 
-    def _setup_search_responses(self, device_response, alert_response=None,
-                                dhcp_response=None, conn_mac_response=None,
-                                dns_response=None, http_response=None,
-                                ssl_response=None):
+    def _setup_search_responses(
+        self,
+        device_response,
+        alert_response=None,
+        dhcp_response=None,
+        conn_mac_response=None,
+        dns_response=None,
+        http_response=None,
+        ssl_response=None,
+    ):
         """Configure mock_client.search to return different responses per index.
 
         The device list handler makes multiple search calls:
@@ -102,7 +107,13 @@ class TestDeviceListHandler(AioHTTPTestCase):
         # get_os_hint: HTTP then SSL
         # We'll provide generic empty responses for fingerprint lookups
         empty_hits = {"hits": {"hits": []}}
-        empty_aggs = {"aggregations": {"top_hostname": {"buckets": []}, "top_ua": {"buckets": []}, "top_ja3": {"buckets": []}}}
+        empty_aggs = {
+            "aggregations": {
+                "top_hostname": {"buckets": []},
+                "top_ua": {"buckets": []},
+                "top_ja3": {"buckets": []},
+            }
+        }
 
         # Add enough empty responses for fingerprint calls
         for _ in range(50):
@@ -115,10 +126,12 @@ class TestDeviceListHandler(AioHTTPTestCase):
     async def test_device_list_success(self):
         """Returns device list with aggregated stats."""
         self._setup_search_responses(
-            _device_list_response([
-                _device_bucket("192.168.1.100", doc_count=500, total_bytes=1500000),
-                _device_bucket("192.168.1.101", doc_count=300, total_bytes=800000),
-            ])
+            _device_list_response(
+                [
+                    _device_bucket("192.168.1.100", doc_count=500, total_bytes=1500000),
+                    _device_bucket("192.168.1.101", doc_count=300, total_bytes=800000),
+                ]
+            )
         )
 
         resp = await self.client.request("GET", "/api/devices")
@@ -139,11 +152,13 @@ class TestDeviceListHandler(AioHTTPTestCase):
     async def test_device_list_with_limit(self):
         """Limit parameter caps device count."""
         self._setup_search_responses(
-            _device_list_response([
-                _device_bucket("192.168.1.100"),
-                _device_bucket("192.168.1.101"),
-                _device_bucket("192.168.1.102"),
-            ])
+            _device_list_response(
+                [
+                    _device_bucket("192.168.1.100"),
+                    _device_bucket("192.168.1.101"),
+                    _device_bucket("192.168.1.102"),
+                ]
+            )
         )
 
         resp = await self.client.request("GET", "/api/devices?limit=2")
@@ -176,6 +191,7 @@ class TestDeviceListHandler(AioHTTPTestCase):
     async def test_device_list_opensearch_error(self):
         """OpenSearch error returns 502."""
         from opensearchpy import ConnectionError as OSConnectionError
+
         self.mock_client.search.side_effect = OSConnectionError(
             "N/A", "Connection refused", Exception("refused")
         )
@@ -190,7 +206,9 @@ class TestDeviceListHandler(AioHTTPTestCase):
         """Sort=connections passes _count sort to OpenSearch."""
         self._setup_search_responses(_device_list_response([]))
 
-        resp = await self.client.request("GET", "/api/devices?sort=connections&order=asc")
+        resp = await self.client.request(
+            "GET", "/api/devices?sort=connections&order=asc"
+        )
         self.assertEqual(resp.status, 200)
 
         # Verify the aggregation sort was set correctly
@@ -231,8 +249,7 @@ class TestDeviceListHandler(AioHTTPTestCase):
         self._setup_search_responses(_device_list_response([]))
 
         resp = await self.client.request(
-            "GET",
-            "/api/devices?from=2026-02-25T00:00:00Z&to=2026-02-26T00:00:00Z"
+            "GET", "/api/devices?from=2026-02-25T00:00:00Z&to=2026-02-26T00:00:00Z"
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -252,10 +269,12 @@ class TestDeviceListHandler(AioHTTPTestCase):
             }
         }
         self._setup_search_responses(
-            _device_list_response([
-                _device_bucket("192.168.1.100"),
-                _device_bucket("192.168.1.101"),
-            ]),
+            _device_list_response(
+                [
+                    _device_bucket("192.168.1.100"),
+                    _device_bucket("192.168.1.101"),
+                ]
+            ),
             alert_response=alert_response,
         )
 
@@ -282,8 +301,9 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         register_device_routes(app, self.storage)
         return app
 
-    def _setup_detail_responses(self, conn_response, dns_response=None,
-                                alert_response=None):
+    def _setup_detail_responses(
+        self, conn_response, dns_response=None, alert_response=None
+    ):
         """Configure mock search responses for device detail.
 
         Calls:
@@ -306,7 +326,13 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
 
         # Fingerprint empty responses
         empty_hits = {"hits": {"hits": []}}
-        empty_aggs = {"aggregations": {"top_hostname": {"buckets": []}, "top_ua": {"buckets": []}, "top_ja3": {"buckets": []}}}
+        empty_aggs = {
+            "aggregations": {
+                "top_hostname": {"buckets": []},
+                "top_ua": {"buckets": []},
+                "top_ja3": {"buckets": []},
+            }
+        }
         for _ in range(20):
             responses.append(empty_hits)
             responses.append(empty_aggs)
@@ -316,27 +342,45 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_device_detail_success(self):
         """Returns full device detail with aggregations."""
-        self._setup_detail_responses({
-            "hits": {"total": {"value": 500}},
-            "aggregations": {
-                "total_bytes": {"value": 1500000},
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 400}]},
-                "first_seen": {"value_as_string": "2026-02-25T00:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-02-25T23:59:59.000Z"},
-                "top_destinations": {
-                    "buckets": [
-                        {"key": "8.8.8.8", "doc_count": 50, "bytes": {"value": 200000}},
-                        {"key": "1.1.1.1", "doc_count": 30, "bytes": {"value": 100000}},
-                    ]
+        self._setup_detail_responses(
+            {
+                "hits": {"total": {"value": 500}},
+                "aggregations": {
+                    "total_bytes": {"value": 1500000},
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 400}]},
+                    "first_seen": {"value_as_string": "2026-02-25T00:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-02-25T23:59:59.000Z"},
+                    "top_destinations": {
+                        "buckets": [
+                            {
+                                "key": "8.8.8.8",
+                                "doc_count": 50,
+                                "bytes": {"value": 200000},
+                            },
+                            {
+                                "key": "1.1.1.1",
+                                "doc_count": 30,
+                                "bytes": {"value": 100000},
+                            },
+                        ]
+                    },
+                    "bandwidth_series": {
+                        "buckets": [
+                            {
+                                "key_as_string": "2026-02-25T00:00:00.000Z",
+                                "doc_count": 10,
+                                "bytes": {"value": 5000},
+                            },
+                            {
+                                "key_as_string": "2026-02-25T00:05:00.000Z",
+                                "doc_count": 15,
+                                "bytes": {"value": 7000},
+                            },
+                        ]
+                    },
                 },
-                "bandwidth_series": {
-                    "buckets": [
-                        {"key_as_string": "2026-02-25T00:00:00.000Z", "doc_count": 10, "bytes": {"value": 5000}},
-                        {"key_as_string": "2026-02-25T00:05:00.000Z", "doc_count": 15, "bytes": {"value": 7000}},
-                    ]
-                },
-            },
-        })
+            }
+        )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
         self.assertEqual(resp.status, 200)
@@ -373,21 +417,42 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
             },
         }
         # DNS query response
-        dns_resp = {"aggregations": {"dns_queries": {"buckets": [{"key": "example.com", "doc_count": 5}]}}}
+        dns_resp = {
+            "aggregations": {
+                "dns_queries": {"buckets": [{"key": "example.com", "doc_count": 5}]}
+            }
+        }
         # Alert response
         alert_resp = {"hits": {"total": {"value": 2}}}
         # Fingerprint: DHCP returns MAC
         dhcp_resp = {"hits": {"hits": [{"_source": {"mac": "00:03:93:11:22:33"}}]}}
         # Fingerprint: DNS hostname
-        hostname_resp = {"aggregations": {"top_hostname": {"buckets": [{"key": "myphone.local", "doc_count": 3}]}}}
+        hostname_resp = {
+            "aggregations": {
+                "top_hostname": {"buckets": [{"key": "myphone.local", "doc_count": 3}]}
+            }
+        }
         # Fingerprint: HTTP User-Agent
-        ua_resp = {"aggregations": {"top_ua": {"buckets": [{"key": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15", "doc_count": 20}]}}}
+        ua_resp = {
+            "aggregations": {
+                "top_ua": {
+                    "buckets": [
+                        {
+                            "key": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15",
+                            "doc_count": 20,
+                        }
+                    ]
+                }
+            }
+        }
 
         responses = [
-            conn_resp, dns_resp, alert_resp,
-            dhcp_resp,       # get_mac_for_ip: DHCP
-            hostname_resp,   # get_hostname_for_ip: DNS
-            ua_resp,         # get_os_hint: HTTP
+            conn_resp,
+            dns_resp,
+            alert_resp,
+            dhcp_resp,  # get_mac_for_ip: DHCP
+            hostname_resp,  # get_hostname_for_ip: DNS
+            ua_resp,  # get_os_hint: HTTP
         ]
         # Add extra empty responses for any additional calls
         for _ in range(20):
@@ -411,17 +476,19 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_device_detail_not_found_returns_empty(self):
         """Non-existent device IP returns empty device data (not 404)."""
-        self._setup_detail_responses({
-            "hits": {"total": {"value": 0}},
-            "aggregations": {
-                "total_bytes": {"value": 0},
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": ""},
-                "last_seen": {"value_as_string": ""},
-                "top_destinations": {"buckets": []},
-                "bandwidth_series": {"buckets": []},
-            },
-        })
+        self._setup_detail_responses(
+            {
+                "hits": {"total": {"value": 0}},
+                "aggregations": {
+                    "total_bytes": {"value": 0},
+                    "protocols": {"buckets": []},
+                    "first_seen": {"value_as_string": ""},
+                    "last_seen": {"value_as_string": ""},
+                    "top_destinations": {"buckets": []},
+                    "bandwidth_series": {"buckets": []},
+                },
+            }
+        )
 
         resp = await self.client.request("GET", "/api/devices/10.99.99.99")
         self.assertEqual(resp.status, 200)
@@ -438,6 +505,7 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
     async def test_device_detail_opensearch_error(self):
         """OpenSearch error returns 502."""
         from opensearchpy import ConnectionError as OSConnectionError
+
         self.mock_client.search.side_effect = OSConnectionError(
             "N/A", "Connection refused", Exception("refused")
         )
@@ -518,9 +586,7 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
             "hits": {"total": {"value": 0}, "hits": []}
         }
 
-        resp = await self.client.request(
-            "GET", "/api/devices/10.0.0.99/connections"
-        )
+        resp = await self.client.request("GET", "/api/devices/10.0.0.99/connections")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertEqual(data["total"], 0)
@@ -569,9 +635,7 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
             "hits": {"total": {"value": 0}, "hits": []}
         }
 
-        await self.client.request(
-            "GET", "/api/devices/192.168.1.100/connections"
-        )
+        await self.client.request("GET", "/api/devices/192.168.1.100/connections")
 
         call_args = self.mock_client.search.call_args
         body = call_args.kwargs.get("body") or call_args[1].get("body")
@@ -584,13 +648,16 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
                 should_clause = f["bool"]["should"]
                 break
 
-        self.assertIsNotNone(should_clause, "Should clause for bidirectional matching not found")
+        self.assertIsNotNone(
+            should_clause, "Should clause for bidirectional matching not found"
+        )
         self.assertEqual(len(should_clause), 2)
 
     @unittest_run_loop
     async def test_connections_opensearch_error(self):
         """OpenSearch error returns 502."""
         from opensearchpy import ConnectionError as OSConnectionError
+
         self.mock_client.search.side_effect = OSConnectionError(
             "N/A", "Connection refused", Exception("refused")
         )
@@ -626,7 +693,7 @@ class TestDeviceTimeRange(AioHTTPTestCase):
         resp = await self.client.request(
             "GET",
             "/api/devices/192.168.1.1/connections"
-            "?from=2026-02-25T00:00:00Z&to=2026-02-26T00:00:00Z"
+            "?from=2026-02-25T00:00:00Z&to=2026-02-26T00:00:00Z",
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -641,8 +708,7 @@ class TestDeviceTimeRange(AioHTTPTestCase):
         }
 
         resp = await self.client.request(
-            "GET",
-            "/api/devices/192.168.1.1/connections?from=bad-date&to=also-bad"
+            "GET", "/api/devices/192.168.1.1/connections?from=bad-date&to=also-bad"
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()

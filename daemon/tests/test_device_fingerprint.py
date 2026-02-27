@@ -165,8 +165,7 @@ class TestGetHostnameForIP(unittest.TestCase):
         }
 
         result = self.fp.get_hostname_for_ip(
-            mock_client, "192.168.1.100",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.100", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "mydevice.local")
         mock_client.search.assert_called_once()
@@ -175,14 +174,11 @@ class TestGetHostnameForIP(unittest.TestCase):
         """Returns None when no DNS records match."""
         mock_client = MagicMock()
         mock_client.search.return_value = {
-            "aggregations": {
-                "top_hostname": {"buckets": []}
-            }
+            "aggregations": {"top_hostname": {"buckets": []}}
         }
 
         result = self.fp.get_hostname_for_ip(
-            mock_client, "10.0.0.1",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "10.0.0.1", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertIsNone(result)
 
@@ -192,8 +188,7 @@ class TestGetHostnameForIP(unittest.TestCase):
         mock_client.search.side_effect = Exception("connection refused")
 
         result = self.fp.get_hostname_for_ip(
-            mock_client, "192.168.1.1",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.1", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertIsNone(result)
 
@@ -214,16 +209,11 @@ class TestGetMacForIP(unittest.TestCase):
         """Returns MAC from DHCP logs when available."""
         mock_client = MagicMock()
         mock_client.search.return_value = {
-            "hits": {
-                "hits": [
-                    {"_source": {"mac": "AA:BB:CC:DD:EE:FF"}}
-                ]
-            }
+            "hits": {"hits": [{"_source": {"mac": "AA:BB:CC:DD:EE:FF"}}]}
         }
 
         result = self.fp.get_mac_for_ip(
-            mock_client, "192.168.1.50",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.50", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "AA:BB:CC:DD:EE:FF")
 
@@ -237,8 +227,7 @@ class TestGetMacForIP(unittest.TestCase):
         ]
 
         result = self.fp.get_mac_for_ip(
-            mock_client, "192.168.1.50",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.50", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "11:22:33:44:55:66")
         self.assertEqual(mock_client.search.call_count, 2)
@@ -252,8 +241,7 @@ class TestGetMacForIP(unittest.TestCase):
         ]
 
         result = self.fp.get_mac_for_ip(
-            mock_client, "10.0.0.99",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "10.0.0.99", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertIsNone(result)
 
@@ -287,8 +275,7 @@ class TestGetOSHint(unittest.TestCase):
         }
 
         result = self.fp.get_os_hint(
-            mock_client, "192.168.1.100",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.100", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "Windows 10/11")
 
@@ -309,8 +296,7 @@ class TestGetOSHint(unittest.TestCase):
         }
 
         result = self.fp.get_os_hint(
-            mock_client, "192.168.1.101",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.101", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "macOS")
 
@@ -331,8 +317,7 @@ class TestGetOSHint(unittest.TestCase):
         }
 
         result = self.fp.get_os_hint(
-            mock_client, "192.168.1.102",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.102", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "Android")
 
@@ -353,8 +338,7 @@ class TestGetOSHint(unittest.TestCase):
         }
 
         result = self.fp.get_os_hint(
-            mock_client, "192.168.1.103",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.103", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertEqual(result, "iOS")
 
@@ -368,8 +352,7 @@ class TestGetOSHint(unittest.TestCase):
         ]
 
         result = self.fp.get_os_hint(
-            mock_client, "10.0.0.1",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "10.0.0.1", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertIsNone(result)
 
@@ -379,8 +362,7 @@ class TestGetOSHint(unittest.TestCase):
         mock_client.search.side_effect = Exception("timeout")
 
         result = self.fp.get_os_hint(
-            mock_client, "192.168.1.1",
-            "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+            mock_client, "192.168.1.1", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
         )
         self.assertIsNone(result)
 

@@ -117,6 +117,7 @@ def _check_configured(env_vars: dict[str, str]) -> dict[str, bool]:
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_get_api_keys(request: web.Request) -> web.Response:
     """GET /api/settings/api-keys
 
@@ -189,6 +190,7 @@ async def handle_save_api_keys(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_settings_routes(app: web.Application, env_file: str | None = None) -> None:
     """Register settings API routes on the aiohttp application.

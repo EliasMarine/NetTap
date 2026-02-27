@@ -32,9 +32,7 @@ class TestBaselineInit(unittest.TestCase):
             "AA:BB:CC:DD:EE:FF": {"ip": "192.168.1.10", "hostname": "laptop"},
             "11:22:33:44:55:66": {"ip": "192.168.1.20", "hostname": "phone"},
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(data, f)
             f.flush()
             temp_path = f.name
@@ -47,9 +45,7 @@ class TestBaselineInit(unittest.TestCase):
 
     def test_init_with_corrupt_file(self):
         """Initializing with a corrupt JSON file starts empty."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not valid json{{{")
             f.flush()
             temp_path = f.name
@@ -62,9 +58,7 @@ class TestBaselineInit(unittest.TestCase):
 
     def test_init_with_non_dict_file(self):
         """Initializing with a JSON file containing a list starts empty."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(["not", "a", "dict"], f)
             f.flush()
             temp_path = f.name
@@ -160,9 +154,7 @@ class TestCheckDevices(unittest.TestCase):
 
     def test_new_device_message_without_manufacturer(self):
         """Alert message shows MAC when no manufacturer provided."""
-        devices = [
-            {"mac": "FF:EE:DD:CC:BB:AA", "ip": "192.168.1.30"}
-        ]
+        devices = [{"mac": "FF:EE:DD:CC:BB:AA", "ip": "192.168.1.30"}]
         alerts = self.baseline.check_devices(devices)
         self.assertEqual(len(alerts), 1)
         self.assertIn("FF:EE:DD:CC:BB:AA", alerts[0]["message"])

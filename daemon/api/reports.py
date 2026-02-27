@@ -19,6 +19,7 @@ logger = logging.getLogger("nettap.api.reports")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_list_schedules(request: web.Request) -> web.Response:
     """GET /api/reports/schedules
 
@@ -26,10 +27,12 @@ async def handle_list_schedules(request: web.Request) -> web.Response:
     """
     generator: ReportGenerator = request.app["report_generator"]
     schedules = generator.list_schedules()
-    return web.json_response({
-        "schedules": [s.to_dict() for s in schedules],
-        "count": len(schedules),
-    })
+    return web.json_response(
+        {
+            "schedules": [s.to_dict() for s in schedules],
+            "count": len(schedules),
+        }
+    )
 
 
 async def handle_create_schedule(request: web.Request) -> web.Response:
@@ -78,9 +81,7 @@ async def handle_get_schedule(request: web.Request) -> web.Response:
 
     schedule = generator.get_schedule(schedule_id)
     if schedule is None:
-        return web.json_response(
-            {"error": "Schedule not found"}, status=404
-        )
+        return web.json_response({"error": "Schedule not found"}, status=404)
 
     return web.json_response(schedule.to_dict())
 
@@ -105,9 +106,7 @@ async def handle_update_schedule(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
 
     if schedule is None:
-        return web.json_response(
-            {"error": "Schedule not found"}, status=404
-        )
+        return web.json_response({"error": "Schedule not found"}, status=404)
 
     return web.json_response(schedule.to_dict())
 
@@ -122,9 +121,7 @@ async def handle_delete_schedule(request: web.Request) -> web.Response:
 
     if generator.delete_schedule(schedule_id):
         return web.json_response({"result": "deleted", "id": schedule_id})
-    return web.json_response(
-        {"error": "Schedule not found"}, status=404
-    )
+    return web.json_response({"error": "Schedule not found"}, status=404)
 
 
 async def handle_enable_schedule(request: web.Request) -> web.Response:
@@ -138,9 +135,7 @@ async def handle_enable_schedule(request: web.Request) -> web.Response:
     if generator.enable_schedule(schedule_id):
         schedule = generator.get_schedule(schedule_id)
         return web.json_response(schedule.to_dict())
-    return web.json_response(
-        {"error": "Schedule not found"}, status=404
-    )
+    return web.json_response({"error": "Schedule not found"}, status=404)
 
 
 async def handle_disable_schedule(request: web.Request) -> web.Response:
@@ -154,9 +149,7 @@ async def handle_disable_schedule(request: web.Request) -> web.Response:
     if generator.disable_schedule(schedule_id):
         schedule = generator.get_schedule(schedule_id)
         return web.json_response(schedule.to_dict())
-    return web.json_response(
-        {"error": "Schedule not found"}, status=404
-    )
+    return web.json_response({"error": "Schedule not found"}, status=404)
 
 
 async def handle_generate_report(request: web.Request) -> web.Response:
@@ -178,6 +171,7 @@ async def handle_generate_report(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_report_routes(
     app: web.Application,

@@ -131,7 +131,9 @@ class TestInstallPackEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_install_unknown_pack(self):
         """Installing an unknown pack returns 400."""
-        resp = await self.client.request("POST", "/api/detection-packs/unknown-pack/install")
+        resp = await self.client.request(
+            "POST", "/api/detection-packs/unknown-pack/install"
+        )
         self.assertEqual(resp.status, 400)
 
 

@@ -212,6 +212,7 @@ ZEEK_CONN_INDEX = "zeek-*"
 # Classification functions
 # ---------------------------------------------------------------------------
 
+
 def classify_domain(domain: str) -> str:
     """Match a domain against DOMAIN_RULES using glob-style matching.
 
@@ -317,11 +318,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     # Step 1: Get top domains with their query counts from DNS logs
     dns_query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [time_filter]
-            }
-        },
+        "query": {"bool": {"filter": [time_filter]}},
         "aggs": {
             "top_domains": {
                 "terms": {
@@ -339,19 +336,13 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         return []
 
     domain_buckets = (
-        dns_result.get("aggregations", {})
-        .get("top_domains", {})
-        .get("buckets", [])
+        dns_result.get("aggregations", {}).get("top_domains", {}).get("buckets", [])
     )
 
     # Step 2: Also get connection-level stats with service and port info
     conn_query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [time_filter]
-            }
-        },
+        "query": {"bool": {"filter": [time_filter]}},
         "aggs": {
             "by_service": {
                 "terms": {"field": "service", "size": 50, "missing": "unknown"},
@@ -379,9 +370,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         return []
 
     service_buckets = (
-        conn_result.get("aggregations", {})
-        .get("by_service", {})
-        .get("buckets", [])
+        conn_result.get("aggregations", {}).get("by_service", {}).get("buckets", [])
     )
 
     # Step 3: Build category aggregation
@@ -402,7 +391,11 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         cat = classify_domain(domain)
 
         if cat not in category_data:
-            category_data[cat] = {"total_bytes": 0, "connection_count": 0, "top_domains": {}}
+            category_data[cat] = {
+                "total_bytes": 0,
+                "connection_count": 0,
+                "top_domains": {},
+            }
 
         category_data[cat]["connection_count"] += count
         category_data[cat]["top_domains"][domain] = (
@@ -419,7 +412,11 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         cat = classify_by_service(service_name)
 
         if cat not in category_data:
-            category_data[cat] = {"total_bytes": 0, "connection_count": 0, "top_domains": {}}
+            category_data[cat] = {
+                "total_bytes": 0,
+                "connection_count": 0,
+                "top_domains": {},
+            }
 
         category_data[cat]["total_bytes"] += total_bytes
 
@@ -434,15 +431,15 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
             data["top_domains"].items(), key=lambda x: x[1], reverse=True
         )[:10]
 
-        result.append({
-            "name": cat_key,
-            "label": get_category_label(cat_key),
-            "total_bytes": data["total_bytes"],
-            "connection_count": data["connection_count"],
-            "top_domains": [
-                {"domain": d, "count": c} for d, c in sorted_domains
-            ],
-        })
+        result.append(
+            {
+                "name": cat_key,
+                "label": get_category_label(cat_key),
+                "total_bytes": data["total_bytes"],
+                "connection_count": data["connection_count"],
+                "top_domains": [{"domain": d, "count": c} for d, c in sorted_domains],
+            }
+        )
 
     # Sort by total_bytes descending
     result.sort(key=lambda x: x["total_bytes"], reverse=True)

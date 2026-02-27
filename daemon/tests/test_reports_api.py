@@ -56,7 +56,9 @@ class TestListSchedulesEndpoint(AioHTTPTestCase):
     async def test_list_after_create(self):
         """GET /api/reports/schedules lists created schedules."""
         self.generator.create_schedule(
-            name="Test", frequency="daily", format="json",
+            name="Test",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         resp = await self.client.request("GET", "/api/reports/schedules")
@@ -153,7 +155,9 @@ class TestGetScheduleEndpoint(AioHTTPTestCase):
             reports_dir=self.tmpdir, schedules_file=self.sfile
         )
         self.schedule = self.generator.create_schedule(
-            name="Test", frequency="daily", format="json",
+            name="Test",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         super().setUp()
@@ -180,9 +184,7 @@ class TestGetScheduleEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_get_nonexistent(self):
         """GET /api/reports/schedules/{id} returns 404 for unknown."""
-        resp = await self.client.request(
-            "GET", "/api/reports/schedules/nonexistent-id"
-        )
+        resp = await self.client.request("GET", "/api/reports/schedules/nonexistent-id")
         self.assertEqual(resp.status, 404)
 
 
@@ -196,7 +198,9 @@ class TestUpdateScheduleEndpoint(AioHTTPTestCase):
             reports_dir=self.tmpdir, schedules_file=self.sfile
         )
         self.schedule = self.generator.create_schedule(
-            name="Original", frequency="daily", format="json",
+            name="Original",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         super().setUp()
@@ -243,7 +247,9 @@ class TestDeleteScheduleEndpoint(AioHTTPTestCase):
             reports_dir=self.tmpdir, schedules_file=self.sfile
         )
         self.schedule = self.generator.create_schedule(
-            name="To Delete", frequency="daily", format="json",
+            name="To Delete",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         super().setUp()
@@ -270,9 +276,7 @@ class TestDeleteScheduleEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_delete_nonexistent(self):
         """DELETE nonexistent returns 404."""
-        resp = await self.client.request(
-            "DELETE", "/api/reports/schedules/nonexistent"
-        )
+        resp = await self.client.request("DELETE", "/api/reports/schedules/nonexistent")
         self.assertEqual(resp.status, 404)
 
 
@@ -286,7 +290,9 @@ class TestEnableDisableScheduleEndpoints(AioHTTPTestCase):
             reports_dir=self.tmpdir, schedules_file=self.sfile
         )
         self.schedule = self.generator.create_schedule(
-            name="Test", frequency="daily", format="json",
+            name="Test",
+            frequency="daily",
+            format="json",
             sections=["alerts"],
         )
         super().setUp()
@@ -380,9 +386,7 @@ class TestGenerateReportEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_generate_nonexistent(self):
         """Generating report for unknown schedule returns 404."""
-        resp = await self.client.request(
-            "POST", "/api/reports/generate/nonexistent"
-        )
+        resp = await self.client.request("POST", "/api/reports/generate/nonexistent")
         self.assertEqual(resp.status, 404)
 
 

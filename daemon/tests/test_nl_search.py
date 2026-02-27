@@ -359,9 +359,7 @@ class TestEdgeCases(unittest.TestCase):
     def test_sort_is_timestamp_desc(self):
         """Default sort is @timestamp descending."""
         result = self.parser.parse("connections")
-        self.assertEqual(
-            result["sort"], [{"@timestamp": {"order": "desc"}}]
-        )
+        self.assertEqual(result["sort"], [{"@timestamp": {"order": "desc"}}])
 
     def test_default_size_is_50(self):
         """Default size is 50."""
@@ -453,9 +451,7 @@ class TestParserInstantiation(unittest.TestCase):
     def test_patterns_match_count(self):
         """Number of compiled patterns matches PATTERNS list."""
         parser = NLSearchParser()
-        self.assertEqual(
-            len(parser._COMPILED_PATTERNS), len(parser.PATTERNS)
-        )
+        self.assertEqual(len(parser._COMPILED_PATTERNS), len(parser.PATTERNS))
 
 
 if __name__ == "__main__":
