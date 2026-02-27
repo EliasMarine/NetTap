@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: NetTap
+    orgId: 1
+    folder: NetTap
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

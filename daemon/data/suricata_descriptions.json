@@ -1,0 +1,352 @@
+{
+  "descriptions": {
+    "2024792": {
+      "signature": "ET MALWARE Win32/Emotet Activity",
+      "description": "A device on your network may be infected with Emotet, a dangerous banking trojan that steals credentials and spreads to other computers.",
+      "risk_context": "Emotet is one of the most destructive malware families. It can steal passwords, banking credentials, and install additional malware like ransomware.",
+      "recommendation": "Immediately isolate the affected device from your network. Run a full antivirus scan. Change all passwords that were used on this device."
+    },
+    "2025391": {
+      "signature": "ET MALWARE Possible Trickbot Activity",
+      "description": "A device may be infected with Trickbot, a banking trojan that targets financial credentials and can deploy ransomware.",
+      "risk_context": "Trickbot is often used as a precursor to ransomware attacks (Ryuk, Conti). It spreads laterally across networks.",
+      "recommendation": "Isolate the affected device immediately. Scan all network devices. Check for unauthorized file changes and credential theft."
+    },
+    "2027865": {
+      "signature": "ET MALWARE Cobalt Strike Beacon Activity",
+      "description": "A device appears to be communicating with a Cobalt Strike command-and-control server, indicating a sophisticated targeted attack.",
+      "risk_context": "Cobalt Strike is a commercial penetration testing tool frequently abused by threat actors for advanced persistent threat (APT) operations.",
+      "recommendation": "This is a critical incident. Isolate the device, engage your incident response team, and preserve forensic evidence."
+    },
+    "2024897": {
+      "signature": "ET MALWARE QBot/Qakbot Activity",
+      "description": "A device may be infected with QBot (Qakbot), a banking trojan that steals financial data and email conversations.",
+      "risk_context": "QBot can hijack email threads to spread to contacts, steal banking credentials, and deploy ransomware.",
+      "recommendation": "Isolate the device. Check for suspicious emails sent from the user's account. Change all financial and email passwords."
+    },
+    "2014726": {
+      "signature": "ET TROJAN DNS Query for Known Ransomware Domain",
+      "description": "A device looked up a domain associated with ransomware activity, which may indicate an infection attempting to communicate with its operators.",
+      "risk_context": "Ransomware can encrypt all files on a device and across network shares, demanding payment for recovery.",
+      "recommendation": "Immediately isolate the device. Check for encrypted files. Ensure backups are intact and not connected to the network."
+    },
+    "2016150": {
+      "signature": "ET INFO Observed DNS Query to .onion TLD",
+      "description": "A device attempted to resolve a Tor hidden service (.onion) address through regular DNS, which may indicate Tor usage or malware communication.",
+      "risk_context": "While Tor has legitimate uses, malware frequently uses .onion addresses for command-and-control to evade detection.",
+      "recommendation": "Investigate the device to determine if Tor usage is authorized. Check for malware if Tor access is unexpected."
+    },
+    "2013028": {
+      "signature": "ET POLICY curl User-Agent Outbound",
+      "description": "A device is making HTTP requests using the curl command-line tool, which could indicate automated scripts or tools running.",
+      "risk_context": "While curl is a common tool, automated curl requests from unexpected devices may indicate scripted data exfiltration or C2 communication.",
+      "recommendation": "Verify that curl usage from this device is expected and authorized. Check for unknown cron jobs or scripts."
+    },
+    "2010935": {
+      "signature": "ET SCAN Nmap Scripting Engine User-Agent Detected",
+      "description": "Network scanning tool Nmap was detected actively scanning your network, which could be unauthorized reconnaissance.",
+      "risk_context": "Nmap scanning often precedes attacks. An attacker maps open ports and services before exploiting vulnerabilities.",
+      "recommendation": "Identify the source device. If scanning is unauthorized, investigate for compromise. Block the scanning source if external."
+    },
+    "2002910": {
+      "signature": "ET SCAN Potential SSH Scan",
+      "description": "Multiple SSH connection attempts were detected, suggesting someone is scanning for open SSH ports or attempting to brute-force credentials.",
+      "risk_context": "SSH brute-force attacks try common usernames and passwords. A successful attack gives full remote access to the compromised system.",
+      "recommendation": "Ensure SSH uses key-based authentication. Consider fail2ban or similar rate limiting. Block the scanning IP if external."
+    },
+    "2002911": {
+      "signature": "ET SCAN Potential VNC Scan",
+      "description": "Multiple VNC connection attempts were detected, suggesting someone is scanning for open remote desktop ports.",
+      "risk_context": "VNC provides graphical remote access. Unsecured VNC servers are a common entry point for attackers.",
+      "recommendation": "Ensure VNC is password-protected and not exposed to the internet. Consider using a VPN for remote access instead."
+    },
+    "2010937": {
+      "signature": "ET SCAN Suspicious inbound to MSSQL port 1433",
+      "description": "Inbound connections to the Microsoft SQL Server port were detected, which may indicate database scanning or attack attempts.",
+      "risk_context": "Database servers exposed to the internet are prime targets. SQL injection and brute-force attacks can lead to data breaches.",
+      "recommendation": "Ensure MSSQL is not exposed to the internet. Use strong authentication and keep the server updated."
+    },
+    "2010936": {
+      "signature": "ET SCAN Suspicious inbound to MySQL port 3306",
+      "description": "Inbound connections to the MySQL database port were detected, suggesting database scanning or unauthorized access attempts.",
+      "risk_context": "Exposed MySQL servers are frequently targeted for data theft. Attackers may attempt SQL injection or credential brute-force.",
+      "recommendation": "Ensure MySQL is bound to localhost or behind a firewall. Use strong passwords and limit remote access."
+    },
+    "2100498": {
+      "signature": "GPL ATTACK_RESPONSE id check returned root",
+      "description": "A system returned a response indicating root-level access, suggesting a successful privilege escalation attack.",
+      "risk_context": "Root access means complete control over a system. An attacker with root can install backdoors, steal data, and pivot to other systems.",
+      "recommendation": "This is critical. Immediately isolate the system, investigate the attack vector, and rebuild the system from known-good backups."
+    },
+    "2019284": {
+      "signature": "ET EXPLOIT Possible Apache Struts OGNL Injection",
+      "description": "An attempt to exploit an Apache Struts vulnerability was detected. This can allow remote code execution on the web server.",
+      "risk_context": "Apache Struts vulnerabilities (like the one behind the Equifax breach) allow attackers to execute arbitrary commands on the server.",
+      "recommendation": "Immediately update Apache Struts to the latest version. Review web server logs for signs of successful exploitation."
+    },
+    "2024364": {
+      "signature": "ET EXPLOIT Apache Log4j RCE Attempt",
+      "description": "An attempt to exploit the Log4Shell (Log4j) vulnerability was detected. This critical vulnerability allows remote code execution.",
+      "risk_context": "Log4Shell (CVE-2021-44228) is one of the most critical vulnerabilities discovered. It allows complete system takeover.",
+      "recommendation": "Update all Java applications using Log4j immediately. Check for signs of exploitation in server logs."
+    },
+    "2034700": {
+      "signature": "ET EXPLOIT Possible Spring4Shell Exploit Attempt",
+      "description": "An attempt to exploit the Spring4Shell vulnerability in Spring Framework was detected, potentially allowing remote code execution.",
+      "risk_context": "Spring4Shell allows attackers to achieve remote code execution on Spring Framework applications under certain conditions.",
+      "recommendation": "Update Spring Framework to patched versions. Review application logs for exploitation indicators."
+    },
+    "2027369": {
+      "signature": "ET EXPLOIT Possible Microsoft Exchange ProxyShell Exploit",
+      "description": "An attempt to exploit Microsoft Exchange ProxyShell vulnerabilities was detected, which can lead to remote code execution.",
+      "risk_context": "ProxyShell allows unauthenticated attackers to execute arbitrary commands on Exchange servers, often leading to web shells or ransomware.",
+      "recommendation": "Apply all Exchange security updates immediately. Check for web shells or unauthorized mailbox access."
+    },
+    "2014169": {
+      "signature": "ET DNS Non-DNS or Non-Compliant DNS traffic on DNS port",
+      "description": "Non-standard traffic was detected on the DNS port (53). This may indicate DNS tunneling used for data exfiltration or C2 communication.",
+      "risk_context": "DNS tunneling encodes data within DNS queries to bypass firewalls. It is commonly used by malware to exfiltrate data covertly.",
+      "recommendation": "Inspect the DNS traffic for unusual patterns (long subdomains, high query volume). Consider DNS filtering or monitoring tools."
+    },
+    "2025012": {
+      "signature": "ET DNS Query for Suspicious Newly Observed Domain",
+      "description": "A device queried a recently registered domain. Newly created domains are frequently used in phishing and malware campaigns.",
+      "risk_context": "Attackers often register new domains for short-lived campaigns. Legitimate services rarely use brand-new domains.",
+      "recommendation": "Investigate why this domain was accessed. Check if any user received a phishing email. Block the domain if suspicious."
+    },
+    "2027863": {
+      "signature": "ET DNS Query to a *.top domain",
+      "description": "A device queried a .top domain. This TLD has a high rate of abuse in phishing and malware campaigns.",
+      "risk_context": "The .top TLD is inexpensive and popular among malicious actors for throwaway domains used in scams and malware distribution.",
+      "recommendation": "Review the specific domain. If it's not a known legitimate service, investigate the device that made the query."
+    },
+    "2013504": {
+      "signature": "ET POLICY GNU/Linux APT User-Agent Outbound",
+      "description": "A Linux device is performing package manager updates. This is typically normal system maintenance activity.",
+      "risk_context": "APT package manager traffic is normal for Linux systems. However, unexpected apt activity may indicate unauthorized software installation.",
+      "recommendation": "Verify this is an authorized Linux system performing routine updates. No action needed if expected."
+    },
+    "2016338": {
+      "signature": "ET POLICY Dropbox Client Broadcasting",
+      "description": "A Dropbox client was detected broadcasting on the local network for LAN sync. This is normal Dropbox behavior.",
+      "risk_context": "Dropbox LAN sync allows faster file sharing between local computers. It may expose file-sharing activity to network monitoring.",
+      "recommendation": "Verify Dropbox usage is authorized on your network. Consider if cloud storage use aligns with your data policies."
+    },
+    "2013505": {
+      "signature": "ET POLICY Python-urllib User-Agent Outbound",
+      "description": "A device is making HTTP requests using Python's urllib library, indicating automated scripts or applications.",
+      "risk_context": "While Python scripts are common, unexpected urllib traffic may indicate automated data collection or malicious scripts.",
+      "recommendation": "Identify the source application. Verify the Python scripts running on this device are authorized."
+    },
+    "2019714": {
+      "signature": "ET POLICY External IP Lookup via api.ipify.org",
+      "description": "A device is checking its external IP address via ipify.org. Malware frequently checks external IPs to determine network location.",
+      "risk_context": "While checking external IPs is not inherently malicious, malware uses this technique to fingerprint the network before reporting to C2.",
+      "recommendation": "Determine which application is performing the lookup. If unexpected, investigate the device for malware."
+    },
+    "2023756": {
+      "signature": "ET MALWARE Win32/IcedID Banking Trojan",
+      "description": "A device may be infected with IcedID (BokBot), a banking trojan that targets financial institutions and steals credentials.",
+      "risk_context": "IcedID uses web injection attacks to steal banking credentials and can deploy additional malware including ransomware.",
+      "recommendation": "Isolate the affected device. Change all banking credentials. Monitor financial accounts for unauthorized transactions."
+    },
+    "2019232": {
+      "signature": "ET MALWARE Possible Dridex Activity",
+      "description": "A device may be infected with Dridex, a banking trojan known for stealing financial credentials and distributing ransomware.",
+      "risk_context": "Dridex targets online banking and can deploy BitPaymer or DoppelPaymer ransomware on enterprise networks.",
+      "recommendation": "Isolate the device. Check for unusual financial transactions. Scan all network endpoints for Dridex indicators."
+    },
+    "2025019": {
+      "signature": "ET MALWARE Possible Raccoon Stealer Activity",
+      "description": "A device may be infected with Raccoon Stealer, malware that harvests passwords, browser cookies, and cryptocurrency wallets.",
+      "risk_context": "Raccoon Stealer targets saved browser credentials, autofill data, and cryptocurrency wallets across multiple applications.",
+      "recommendation": "Isolate the device. Change all passwords stored in browsers. Check cryptocurrency wallets for unauthorized access."
+    },
+    "2027371": {
+      "signature": "ET MALWARE Possible AsyncRAT C2 Communication",
+      "description": "A device appears to be communicating with an AsyncRAT command-and-control server, giving an attacker remote access.",
+      "risk_context": "AsyncRAT provides attackers with keylogging, screen capture, credential theft, and full remote control capabilities.",
+      "recommendation": "Immediately isolate the device. Check for keylogger artifacts. Change all credentials used on this device."
+    },
+    "2028401": {
+      "signature": "ET MALWARE AgentTesla Activity",
+      "description": "A device may be infected with Agent Tesla, a spyware that captures keystrokes, screenshots, and credentials.",
+      "risk_context": "Agent Tesla is a popular information stealer sold on underground forums. It captures everything typed and can access saved credentials.",
+      "recommendation": "Isolate the device. Change all credentials. Check email for phishing messages that may have delivered the malware."
+    },
+    "2031711": {
+      "signature": "ET MALWARE Possible RedLine Stealer Activity",
+      "description": "A device may be infected with RedLine Stealer, malware that extracts passwords, cookies, and cryptocurrency data from browsers.",
+      "risk_context": "RedLine is one of the most prevalent info-stealers. It targets browser data, FTP credentials, and cryptocurrency wallets.",
+      "recommendation": "Isolate the device. Change all browser-saved passwords. Enable 2FA on all critical accounts."
+    },
+    "2014411": {
+      "signature": "ET TROJAN Possible Zeus GameOver Activity",
+      "description": "A device may be part of the Zeus GameOver botnet, one of the most sophisticated banking trojans ever created.",
+      "risk_context": "Zeus GameOver uses peer-to-peer communication to resist takedown and can steal banking credentials with high effectiveness.",
+      "recommendation": "Isolate the device. Contact your bank about potential credential compromise. Run comprehensive malware removal tools."
+    },
+    "2018959": {
+      "signature": "ET TROJAN CryptoLocker Ransomware Activity",
+      "description": "A device may be infected with CryptoLocker ransomware, which encrypts personal files and demands payment for decryption.",
+      "risk_context": "CryptoLocker encrypts documents, photos, and other files using strong encryption. Without backups, file recovery may be impossible.",
+      "recommendation": "Immediately disconnect the device. Do NOT pay the ransom. Check backup integrity. Consult a cybersecurity professional."
+    },
+    "2024218": {
+      "signature": "ET TROJAN Observed Possible WannaCry Ransomware Activity",
+      "description": "Activity consistent with WannaCry ransomware was detected. WannaCry can spread automatically across networks via SMB.",
+      "risk_context": "WannaCry exploits the EternalBlue vulnerability to spread without user interaction. It can encrypt an entire network in minutes.",
+      "recommendation": "Apply MS17-010 patch immediately. Block SMB ports at the firewall. Isolate affected devices and check all endpoints."
+    },
+    "2016149": {
+      "signature": "ET INFO Possible Bitcoin Mining Activity",
+      "description": "A device may be performing cryptocurrency mining, which consumes significant CPU/GPU resources and electricity.",
+      "risk_context": "Unauthorized crypto mining (cryptojacking) wastes resources, increases electricity costs, and shortens hardware lifespan.",
+      "recommendation": "Identify the mining process. If unauthorized, check for cryptojacking malware. Block mining pool connections at the firewall."
+    },
+    "2023882": {
+      "signature": "ET INFO Observed Cryptocurrency Mining Stratum Protocol",
+      "description": "Cryptocurrency mining protocol traffic was detected, indicating a device is actively mining cryptocurrency.",
+      "risk_context": "Stratum protocol is used by mining software to communicate with mining pools. This consumes resources and bandwidth.",
+      "recommendation": "Investigate whether mining is authorized. If not, scan the device for mining malware and block mining pool addresses."
+    },
+    "2024449": {
+      "signature": "ET SCAN Masscan Activity Detected",
+      "description": "High-speed network scanning from the Masscan tool was detected. Masscan can scan the entire internet in under 6 minutes.",
+      "risk_context": "Masscan is extremely aggressive. When used without authorization, it indicates serious reconnaissance for attack planning.",
+      "recommendation": "Identify the source immediately. If external, block the IP. If internal, investigate the device for compromise."
+    },
+    "2009358": {
+      "signature": "ET SCAN Nmap SYN Scan",
+      "description": "An Nmap SYN scan was detected, a common technique to discover open ports on network devices.",
+      "risk_context": "SYN scanning is a stealthy technique that doesn't complete TCP handshakes. It's the most popular scanning method for attackers.",
+      "recommendation": "Identify the scanning source. Verify if this is an authorized security assessment. Block unauthorized scanners."
+    },
+    "2010934": {
+      "signature": "ET SCAN NMAP -sS window 1024",
+      "description": "An Nmap stealth SYN scan with a specific TCP window size was detected, a technique used to fingerprint network services.",
+      "risk_context": "This specific Nmap signature indicates a deliberate attempt to discover services while minimizing detection.",
+      "recommendation": "Investigate the scanner. If unauthorized, block the source and review affected hosts for vulnerabilities."
+    },
+    "2100366": {
+      "signature": "GPL ICMP Information Reply",
+      "description": "An ICMP information reply was detected. While often benign, this can be used for network reconnaissance.",
+      "risk_context": "ICMP information requests are legacy protocols sometimes used to map network topology.",
+      "recommendation": "Consider filtering unnecessary ICMP types at your firewall. No immediate action typically required."
+    },
+    "2100368": {
+      "signature": "GPL ICMP Timestamp Reply",
+      "description": "An ICMP timestamp reply was detected. This can reveal system uptime and clock skew information.",
+      "risk_context": "ICMP timestamp replies can reveal when systems were last rebooted and help fingerprint operating systems.",
+      "recommendation": "Consider blocking ICMP timestamp requests at the firewall if not needed for legitimate purposes."
+    },
+    "2101411": {
+      "signature": "GPL SNMP public access udp",
+      "description": "A device is responding to SNMP queries with the default 'public' community string, exposing system information.",
+      "risk_context": "Default SNMP community strings allow anyone to read device configuration, network details, and system information.",
+      "recommendation": "Change SNMP community strings from defaults. Restrict SNMP access to authorized management stations only."
+    },
+    "2027757": {
+      "signature": "ET WEB_SERVER SQL Injection Attack Detected",
+      "description": "An SQL injection attack was detected against a web server on your network, attempting to manipulate database queries.",
+      "risk_context": "SQL injection can allow attackers to read, modify, or delete database content, potentially accessing all user data.",
+      "recommendation": "Review web application code for SQL injection vulnerabilities. Use parameterized queries. Apply a web application firewall."
+    },
+    "2027758": {
+      "signature": "ET WEB_SERVER Cross-Site Scripting (XSS) Attempt",
+      "description": "A cross-site scripting (XSS) attack was detected against a web server, attempting to inject malicious scripts.",
+      "risk_context": "XSS attacks can steal user session cookies, redirect users to malicious sites, or deface web applications.",
+      "recommendation": "Implement input validation and output encoding. Use Content Security Policy (CSP) headers. Update web frameworks."
+    },
+    "2027759": {
+      "signature": "ET WEB_SERVER Directory Traversal Attempt",
+      "description": "A directory traversal attack was detected, attempting to access files outside the web server's intended directory.",
+      "risk_context": "Successful directory traversal can expose configuration files, credentials, or system files to attackers.",
+      "recommendation": "Validate and sanitize file paths in web applications. Apply web server configuration hardening."
+    },
+    "2013926": {
+      "signature": "ET WEB_CLIENT Java Class Download Attempt",
+      "description": "A device attempted to download a Java class file, which could be a drive-by download exploit attempt.",
+      "risk_context": "Malicious Java applets have historically been used to exploit browser vulnerabilities and install malware.",
+      "recommendation": "Disable Java browser plugins if not needed. Keep Java updated. Investigate the source URL for malicious content."
+    },
+    "2016141": {
+      "signature": "ET WEB_CLIENT Suspicious PDF Download with Embedded JavaScript",
+      "description": "A PDF file containing embedded JavaScript was downloaded, which could contain exploit code.",
+      "risk_context": "Malicious PDFs can exploit vulnerabilities in PDF readers to install malware when opened.",
+      "recommendation": "Scan the downloaded PDF with antivirus. Update PDF reader software. Warn users about suspicious PDF attachments."
+    },
+    "2024291": {
+      "signature": "ET HUNTING Possible Phishing Domain Observed",
+      "description": "A device accessed a domain that resembles a known brand, potentially a phishing site designed to steal credentials.",
+      "risk_context": "Phishing domains mimic legitimate websites to trick users into entering passwords, credit card numbers, or personal information.",
+      "recommendation": "Warn the user. Check if any credentials were entered on the suspicious site. Change passwords for any compromised accounts."
+    },
+    "2027300": {
+      "signature": "ET HUNTING External IP Lookup via ip-api.com",
+      "description": "A device checked its external IP and geolocation via ip-api.com. This is sometimes done by malware to fingerprint the network.",
+      "risk_context": "While IP lookups can be benign, malware uses geolocation to determine if it should activate based on the victim's location.",
+      "recommendation": "Identify the application making the request. If unexpected, investigate the device for potential malware."
+    },
+    "2024320": {
+      "signature": "ET DOS Possible NTP DDoS Amplification Attack",
+      "description": "An NTP amplification attack pattern was detected, where NTP servers are abused to flood a target with traffic.",
+      "risk_context": "NTP amplification can multiply attack traffic by 500x, overwhelming the target's bandwidth and causing service outages.",
+      "recommendation": "Configure NTP servers to disable monlist. Rate-limit NTP responses. Block suspicious NTP traffic at the firewall."
+    },
+    "2024322": {
+      "signature": "ET DOS Possible DNS Amplification Attack",
+      "description": "A DNS amplification attack pattern was detected, where open DNS resolvers are abused to flood a target.",
+      "risk_context": "DNS amplification can multiply attack traffic by 50-70x, causing severe bandwidth exhaustion at the target.",
+      "recommendation": "Ensure your DNS servers are not open resolvers. Implement response rate limiting (RRL) on DNS servers."
+    },
+    "2023549": {
+      "signature": "ET DROP Spamhaus DROP Listed Traffic Inbound",
+      "description": "Traffic from an IP on the Spamhaus DROP (Don't Route Or Peer) list was detected. This IP is known to be malicious.",
+      "risk_context": "The Spamhaus DROP list contains IP ranges allocated to known cybercriminals. All traffic from these IPs is considered hostile.",
+      "recommendation": "Block all traffic from this IP range at the firewall. Investigate any internal devices that communicated with this source."
+    },
+    "2400000": {
+      "signature": "ET DROP Dshield Block Listed Source",
+      "description": "Traffic from an IP on the DShield block list was detected. This IP has been reported for malicious activity.",
+      "risk_context": "DShield aggregates firewall logs from around the world. Listed IPs are consistently attacking internet-connected systems.",
+      "recommendation": "Block the source IP. Check for any successful connections from this IP to internal services."
+    },
+    "2210000": {
+      "signature": "SURICATA STREAM excessive retransmissions",
+      "description": "Excessive TCP retransmissions were detected, which may indicate network congestion, packet loss, or a SYN flood attack.",
+      "risk_context": "While retransmissions can indicate network issues, excessive retransmissions from a single source may be a denial-of-service attack.",
+      "recommendation": "Check network health and bandwidth utilization. If from an external source, consider rate limiting or blocking."
+    },
+    "2210020": {
+      "signature": "SURICATA TLS invalid record type",
+      "description": "Invalid TLS record types were detected, which may indicate a TLS implementation bug, downgrade attack, or traffic manipulation.",
+      "risk_context": "Invalid TLS records can indicate attempts to intercept or manipulate encrypted connections (man-in-the-middle).",
+      "recommendation": "Investigate the connection endpoints. Ensure all TLS implementations are up to date. Check for network equipment issues."
+    },
+    "2260001": {
+      "signature": "SURICATA HTTP unable to match response to request",
+      "description": "HTTP response data could not be matched to a request, which may indicate evasion techniques or protocol violations.",
+      "risk_context": "This can indicate HTTP smuggling or desync attacks used to bypass security controls.",
+      "recommendation": "Review web server configurations. Check for HTTP smuggling vulnerabilities in reverse proxies and load balancers."
+    }
+  },
+  "prefix_descriptions": {
+    "ET MALWARE": "Potential malware communication detected",
+    "ET TROJAN": "Trojan horse activity detected",
+    "ET SCAN": "Network scanning or reconnaissance activity",
+    "ET EXPLOIT": "Exploitation attempt detected",
+    "ET POLICY": "Network policy violation or notable activity",
+    "ET INFO": "Informational network event",
+    "ET DNS": "Suspicious or notable DNS activity",
+    "ET WEB_SERVER": "Web server targeted attack",
+    "ET WEB_CLIENT": "Web client-side threat activity",
+    "ET HUNTING": "Threat hunting indicator",
+    "ET CURRENT_EVENTS": "Current active threat campaign",
+    "ET ATTACK_RESPONSE": "Possible successful attack indicator",
+    "ET DOS": "Denial of service activity",
+    "ET DROP": "Traffic from known malicious source",
+    "GPL": "General public license signature match",
+    "SURICATA": "Suricata protocol analysis event"
+  }
+}

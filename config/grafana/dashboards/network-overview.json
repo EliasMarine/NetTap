@@ -1,0 +1,686 @@
+{
+  "uid": "nettap-network-overview",
+  "title": "Network Overview",
+  "description": "NetTap home dashboard — bandwidth, connections, alerts, and protocol distribution at a glance.",
+  "tags": ["nettap", "overview", "network"],
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d"]
+  },
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Bandwidth (24h)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 4 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#73BF69", "value": null },
+              { "color": "#FF9830", "value": 10737418240 },
+              { "color": "#F2495C", "value": 107374182400 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "orig_bytes"
+            },
+            {
+              "id": "2",
+              "type": "sum",
+              "field": "resp_bytes"
+            }
+          ],
+          "bucketAggs": [],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            },
+            "binary": {
+              "left": "Sum orig_bytes",
+              "operator": "+",
+              "right": "Sum resp_bytes"
+            },
+            "alias": "Total Bytes"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Active Connections (5m)",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 4 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#73BF69", "value": null },
+              { "color": "#FF9830", "value": 500 },
+              { "color": "#F2495C", "value": 2000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "ts:[now-5m TO now]",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active Alerts (24h)",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 4 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_SURICATA}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#73BF69", "value": null },
+              { "color": "#FF9830", "value": 10 },
+              { "color": "#F2495C", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_SURICATA}"
+          },
+          "query": "event_type:alert AND timestamp:[now-24h TO now]",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [],
+          "timeField": "timestamp",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Bandwidth Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "none"
+            },
+            "gradientMode": "opacity"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Sum orig_bytes" },
+            "properties": [
+              { "id": "displayName", "value": "Upload (orig_bytes)" },
+              { "id": "color", "value": { "fixedColor": "#8AB8FF", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Sum resp_bytes" },
+            "properties": [
+              { "id": "displayName", "value": "Download (resp_bytes)" },
+              { "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": ["sum", "mean", "max"]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "orig_bytes"
+            },
+            {
+              "id": "2",
+              "type": "sum",
+              "field": "resp_bytes"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "ts",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0",
+                "trimEdges": "0"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Protocol Distribution",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "donut",
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": ["value", "percent"]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "service",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Top 10 Source IPs",
+      "type": "bargauge",
+      "gridPos": { "x": 8, "y": 12, "w": 8, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "continuous-BlYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "orig_bytes"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "id.orig_h",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Top 10 Destinations",
+      "type": "bargauge",
+      "gridPos": { "x": 16, "y": 12, "w": 8, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "continuous-BlYlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["sum"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "sum",
+              "field": "resp_bytes"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "id.resp_h",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "1",
+                "min_doc_count": "1"
+              }
+            }
+          ],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Recent Connections",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "${DS_OPENSEARCH_ZEEK}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ts" },
+            "properties": [
+              { "id": "displayName", "value": "Time" },
+              { "id": "custom.width", "value": 180 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "id.orig_h" },
+            "properties": [
+              { "id": "displayName", "value": "Source IP" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "id.orig_p" },
+            "properties": [
+              { "id": "displayName", "value": "Src Port" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "id.resp_h" },
+            "properties": [
+              { "id": "displayName", "value": "Dest IP" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "id.resp_p" },
+            "properties": [
+              { "id": "displayName", "value": "Dst Port" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "service" },
+            "properties": [
+              { "id": "displayName", "value": "Protocol" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "orig_bytes" },
+            "properties": [
+              { "id": "displayName", "value": "Sent" },
+              { "id": "unit", "value": "decbytes" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "resp_bytes" },
+            "properties": [
+              { "id": "displayName", "value": "Received" },
+              { "id": "unit", "value": "decbytes" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "duration" },
+            "properties": [
+              { "id": "displayName", "value": "Duration" },
+              { "id": "unit", "value": "s" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "Time",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "${DS_OPENSEARCH_ZEEK}"
+          },
+          "query": "",
+          "alias": "",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "raw_data",
+              "settings": {
+                "size": "50"
+              }
+            }
+          ],
+          "bucketAggs": [],
+          "timeField": "ts",
+          "queryType": "lucene"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_OPENSEARCH_ZEEK",
+        "type": "datasource",
+        "query": "grafana-opensearch-datasource",
+        "current": {
+          "text": "OpenSearch-Zeek",
+          "value": "OpenSearch-Zeek"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": "/.*Zeek.*/"
+      },
+      {
+        "name": "DS_OPENSEARCH_SURICATA",
+        "type": "datasource",
+        "query": "grafana-opensearch-datasource",
+        "current": {
+          "text": "OpenSearch-Suricata",
+          "value": "OpenSearch-Suricata"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": "/.*Suricata.*/"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  }
+}

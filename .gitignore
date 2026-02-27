@@ -22,6 +22,14 @@ data/
 pcap/
 logs/
 
+# Generated Malcolm config (certs, auth, docker .env)
+docker/certs/
+docker/auth/
+docker/.env
+
+# Generated TLS certificates for nginx reverse proxy
+docker/ssl/
+
 # OS files
 .DS_Store
 Thumbs.db

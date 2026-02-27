@@ -21,6 +21,19 @@ outputs:
       enabled: yes
       filetype: regular
       filename: eve.json
+      # ---------------------------------------------------------------
+      # Log rotation and compression
+      # ---------------------------------------------------------------
+      # Suricata writes uncompressed eve.json logs to disk.
+      # Actual zstd compression (~6:1 for Suricata alert JSON) is handled
+      # by Malcolm's filebeat/logstash pipeline, which picks up rotated
+      # logs and applies zstd compression before shipping to OpenSearch.
+      #
+      # This keeps Suricata's capture path CPU-efficient — compression
+      # happens asynchronously in the log shipping pipeline rather than
+      # on the real-time packet processing thread.
+      # ---------------------------------------------------------------
+      rotate-interval: day
       types:
         - alert
         - dns

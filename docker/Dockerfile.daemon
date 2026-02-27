@@ -1,10 +1,37 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
+
+# -- Metadata ----------------------------------------------------------------
+LABEL maintainer="NetTap Contributors <https://github.com/EliasMarine/NetTap>"
+LABEL org.opencontainers.image.title="nettap-storage-daemon"
+LABEL org.opencontainers.image.description="NetTap storage & health daemon — rolling retention, SMART monitoring, disk management"
+LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     smartmontools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/nettap/daemon
+
+# Install Python dependencies first (layer caching)
+COPY daemon/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY daemon/ .
 
+# Create non-root user (mirrors the web Dockerfile pattern)
+RUN groupadd -r nettap && useradd -r -g nettap -s /sbin/nologin nettap
+RUN chown -R nettap:nettap /opt/nettap
+USER nettap
+
+# Expose the HTTP API port
+EXPOSE 8880
+
+# Health check via the daemon's own API
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8880/api/health')" || exit 1
+
+# NOTE: Run with --cap-drop=ALL in docker-compose.yml.
+# The daemon only needs read access to /dev for SMART monitoring;
+# no elevated capabilities are required.
 CMD ["python3", "main.py"]

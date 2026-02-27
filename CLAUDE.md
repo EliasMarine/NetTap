@@ -10,6 +10,104 @@ The project wraps CISA's Malcolm stack (Zeek, Suricata, Arkime, OpenSearch) with
 
 **PRD:** `NetTap_PRD_v1.0.md` contains the full product specification.
 
+## Git Strategy
+
+### Branch Model
+
+- **`main`** — Protected. NEVER push directly. Only receives merges at project completion (v1.0.0).
+- **`develop`** — Integration branch. All feature branches merge here via PR.
+- **Feature branches** — All work happens here. Branch from `develop`, merge back to `develop`.
+
+**Branch naming convention:** `phase-N/short-description`
+```
+phase-1/bridge-hardening
+phase-1/malcolm-integration
+phase-2/ilm-policies
+phase-2/smart-alerting
+phase-3/sveltekit-init
+phase-3/setup-wizard
+phase-4/dashboard-home
+phase-5/ci-pipeline
+```
+
+For cross-cutting work that spans phases: `infra/description` or `chore/description`.
+
+### Workflow
+
+```
+1. git checkout develop
+2. git pull origin develop
+3. git checkout -b phase-N/description
+4. ... work, commit ...
+5. git push -u origin phase-N/description
+6. Create PR: phase-N/description → develop
+7. After merge, delete feature branch
+```
+
+**NEVER push to `main`.** All PRs target `develop`. At project completion, `develop` merges to `main` with the `v1.0.0` tag.
+
+### Commit Convention: Conventional Commits
+
+Every commit message MUST follow this format:
+
+```
+type(scope): short description
+
+Optional body explaining the "why" (not the "what").
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+```
+
+**Types (required):**
+| Type | When to use |
+|------|-------------|
+| `feat` | New feature or capability |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code restructuring, no behavior change |
+| `test` | Adding or updating tests |
+| `chore` | Maintenance, dependencies, config |
+| `ci` | CI/CD pipeline changes |
+| `perf` | Performance improvement |
+| `style` | Formatting, whitespace, no logic change |
+
+**Scope (optional but encouraged):** The component affected.
+```
+feat(bridge): add netplan persistence for br0
+fix(daemon): handle OpenSearch connection timeout in prune cycle
+test(storage): add pytest coverage for disk threshold logic
+docs(readme): update architecture diagram
+chore(docker): pin Malcolm images to v26.02.0
+ci(github): add shellcheck workflow
+```
+
+### Versioning: Phase-Based SemVer
+
+Development versions increment with each phase milestone. Tags are applied on `develop` at phase completion.
+
+| Milestone | Version | Tag on |
+|-----------|---------|--------|
+| Phase 1 complete (Core Infrastructure) | `v0.1.0` | `develop` |
+| Phase 2 complete (Storage Management) | `v0.2.0` | `develop` |
+| Phase 3 complete (Onboarding UX) | `v0.3.0` | `develop` |
+| Phase 4 complete (Dashboard Polish) | `v0.4.0` | `develop` |
+| Phase 5 complete (Community Release) | `v1.0.0` | `main` (after final merge) |
+
+**Patch versions** for hotfixes within a phase: `v0.1.1`, `v0.1.2`, etc.
+**Pre-release versions** for testing: `v1.0.0-alpha.1`, `v1.0.0-beta.1`, `v1.0.0-rc.1`.
+
+### Rules for Claude Code
+
+1. **Always create a new branch** before making code changes. Never commit directly to `develop` or `main`.
+2. **Always use conventional commit format.** No exceptions.
+3. **Push to the feature branch only.** Never push to `develop` or `main`.
+4. **One logical change per commit.** Don't bundle unrelated changes.
+5. **Create PRs targeting `develop`** — never targeting `main`.
+6. **Include the Linear issue ID** in the PR description (e.g., "Closes NET-7").
+7. **Tag phase milestones** only when all tasks for that phase are complete and merged to `develop`.
+
+---
+
 ## Code Preservation Policy
 
 - **Never delete** replaced logic; wrap with `// OLD CODE START/END` and comment why.
@@ -125,6 +223,32 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 3. **Onboarding UX** — Setup wizard, NIC auto-detection, admin UI
 4. **Dashboard Polish** — Custom Grafana dashboards, GeoIP maps, bandwidth trending, notifications
 5. **Community Release** — Docs, install script, community setup
+
+## Build Plan Task Tracking
+
+**CRITICAL: After completing any task from `plans/comprehensive-build-plan.md`, you MUST update the task's status in that file.** Mark completed tasks with a `[x]` checkbox prefix and add a completion note. This applies to all phases going forward. When starting a new phase, review the plan to see what's already done.
+
+## SIEM Feature Integration Policy
+
+**Reference:** `plans/siem-features-gameplan.md` contains the full implementation plan for 20 SIEM-inspired features (10 Must-Have + 10 Should-Have).
+
+### Implementation Rules
+
+1. **Every feature must be FULLY integrated** — backend API + frontend UI + tests. No half-built features.
+2. **Every feature must have complete test coverage:**
+   - Daemon: pytest unit tests (mock OpenSearch, test query building, test error handling)
+   - Web API clients: Vitest tests (mock fetch, test params, test responses)
+   - Web components: Vitest + Testing Library (render with mock data, test interactions, test empty/loading/error states)
+3. **ALL tests must pass** (existing + new) before any PR is created. Run `cd daemon && python -m pytest` and `cd web && npx vitest run` and `cd web && npx svelte-check`.
+4. **Follow the dependency order:** Group A (data) → Group B (UI) → Group C (intelligence) → Group D (viz) → Group E (advanced). Do not build UI features before their data layer exists.
+5. **Use existing patterns:** New API endpoints follow the same pattern as `daemon/api/traffic.py`. New pages follow the same layout as `web/src/routes/+page.svelte`. New components use the design system from `web/src/lib/styles/global.css`.
+
+### Three Design Pillars
+
+All SIEM features must embody these principles:
+- **Device-Centric:** Organize data by "what are my devices doing?" — not by log type
+- **Plain English:** Every alert, metric, and detection gets a human-readable explanation
+- **Immediate Value:** Big numbers first, details on click. Progressive disclosure (overview → category → raw logs)
 
 ## Hooks
 

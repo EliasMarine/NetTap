@@ -1,8 +1,49 @@
-FROM node:22-slim AS build
+# Stage 1: Build the SvelteKit app
+FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
-# TODO: Add web UI build steps once framework is chosen
 
-FROM nginx:alpine
-# TODO: Copy built web assets and nginx config
-EXPOSE 443
+# Install dependencies first (layer caching)
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+# Copy source and build
+COPY web/ .
+RUN npm run build
+
+# Stage 2: Production runtime
+FROM node:22-bookworm-slim
+
+# -- Metadata ----------------------------------------------------------------
+LABEL maintainer="NetTap Contributors <https://github.com/EliasMarine/NetTap>"
+LABEL org.opencontainers.image.title="nettap-web"
+LABEL org.opencontainers.image.description="NetTap web dashboard — SvelteKit-based network visibility UI"
+LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built SvelteKit app
+COPY --from=build /app/build ./build
+COPY --from=build /app/package.json .
+COPY --from=build /app/node_modules ./node_modules
+
+# Create non-root user
+RUN groupadd -r nettap && useradd -r -g nettap -s /sbin/nologin nettap
+RUN chown -R nettap:nettap /app
+USER nettap
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:3000/api/health || exit 1
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOST=0.0.0.0
+
+CMD ["node", "build"]

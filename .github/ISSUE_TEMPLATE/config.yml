@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discord Community
+    url: https://discord.gg/nettap
+    about: Join the NetTap Discord for questions, discussions, and community support.
+  - name: Documentation
+    url: https://docs.nettap.dev
+    about: Check the documentation for setup guides, troubleshooting, and FAQs.
