@@ -121,9 +121,16 @@ if [[ "$MODE_TEARDOWN" == "true" ]]; then
         run systemctl reload NetworkManager 2>/dev/null || true
         log "Removed NetworkManager unmanaged config"
     fi
+    # OLD CODE START — standalone override was shadowed by netplan's file
     if [[ -f /etc/systemd/network/10-nettap-bridge.network ]]; then
         run rm -f /etc/systemd/network/10-nettap-bridge.network
-        log "Removed networkd bridge override"
+        log "Removed legacy networkd bridge override"
+    fi
+    # OLD CODE END
+    # Remove drop-in override directory for netplan-generated bridge config
+    if [[ -d /etc/systemd/network/10-netplan-br0.network.d ]]; then
+        run rm -rf /etc/systemd/network/10-netplan-br0.network.d
+        log "Removed networkd drop-in override for bridge"
     fi
 
     log "Teardown complete. Interfaces restored to default state."
@@ -495,35 +502,90 @@ NM_EOF
         sleep 1
     fi
 
-    # ---- networkd override: keep bridge UP without carrier ----
-    # systemd-networkd will set the bridge DOWN if no member port has
-    # carrier. ConfigureWithoutCarrier=yes prevents this — the bridge
-    # stays UP and starts forwarding the moment cables are plugged in.
-    mkdir -p /etc/systemd/network
-    cat > /etc/systemd/network/10-nettap-bridge.network <<NETWORKD_EOF
-[Match]
-Name=${BRIDGE_NAME}
+    # ---- Remove legacy standalone networkd override (it was shadowed) ----
+    # Previous versions wrote /etc/systemd/network/10-nettap-bridge.network
+    # but netplan generates /run/systemd/network/10-netplan-br0.network
+    # which wins alphabetically. The standalone file was never read.
+    if [[ -f /etc/systemd/network/10-nettap-bridge.network ]]; then
+        rm -f /etc/systemd/network/10-nettap-bridge.network
+        debug "Removed legacy standalone networkd override (was shadowed by netplan)"
+    fi
 
+    # ---- Drop-in override for netplan-generated bridge config ----
+    # netplan generates /run/systemd/network/10-netplan-br0.network.
+    # Drop-in directories in /etc/ override matching files in /run/.
+    # This ensures ConfigureWithoutCarrier=yes + RequiredForOnline=no
+    # are applied even if netplan regenerates its file.
+    dropin_dir="/etc/systemd/network/10-netplan-${BRIDGE_NAME}.network.d"
+    mkdir -p "$dropin_dir"
+    cat > "${dropin_dir}/nettap.conf" <<DROPIN_EOF
+# NetTap: keep bridge UP without carrier so traffic flows
+# immediately when cables are plugged in.
 [Network]
 ConfigureWithoutCarrier=yes
 LinkLocalAddressing=no
-DHCP=no
 
 [Link]
 RequiredForOnline=no
-NETWORKD_EOF
-    log "networkd override: bridge will stay UP without carrier"
+DROPIN_EOF
+    log "networkd drop-in override installed at ${dropin_dir}/nettap.conf"
 
-    # Apply netplan (non-destructive — only applies our file)
+    # ---- Apply netplan ----
+    # netplan apply restarts systemd-networkd asynchronously.
+    # We must wait for networkd to settle before checking bridge state.
     run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
 
-    # Ensure bridge is up after netplan apply
-    ip link set "$BRIDGE_NAME" up 2>/dev/null || true
+    # ---- Wait for networkd to settle after async restart ----
+    log "Waiting for systemd-networkd to settle..."
+    settle_ok="false"
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        # networkctl shows "configuring" while still processing
+        nctl_state=""
+        nctl_state=$(networkctl status "$BRIDGE_NAME" 2>/dev/null \
+            | grep -i "state:" | head -1 \
+            | sed 's/.*State: *//;s/ .*//' ) || nctl_state="unknown"
+        debug "networkd settle attempt ${attempt}: bridge state='${nctl_state}'"
+
+        if [[ "$nctl_state" != "configuring" && "$nctl_state" != "pending" ]]; then
+            settle_ok="true"
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ "$settle_ok" != "true" ]]; then
+        warn "networkd did not fully settle within 10s — continuing anyway"
+    fi
+
+    # ---- Bring bridge UP with retry ----
+    # After networkd settles, explicitly ensure the bridge is UP.
+    # networkd may have set it DOWN during its reconfiguration cycle.
+    bridge_up="false"
+    for attempt in 1 2 3 4 5; do
+        ip link set "$BRIDGE_NAME" up 2>/dev/null || true
+        sleep 0.5
+        current_state=""
+        current_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || current_state="MISSING"
+        debug "Bridge UP attempt ${attempt}: state='${current_state}'"
+        if [[ "$current_state" == "UP" || "$current_state" == "UNKNOWN" ]]; then
+            bridge_up="true"
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ "$bridge_up" != "true" ]]; then
+        warn "Bridge may not be fully UP yet — final validation will check"
+    fi
+
     log "Persistence configuration complete — bridge will survive reboot"
 fi
 
 # ===========================================================================
 # FINAL VALIDATION
 # ===========================================================================
+# Brief delay to let networkd finish any remaining state transitions
+sleep 2
+
 log ""
 validate_bridge || true
