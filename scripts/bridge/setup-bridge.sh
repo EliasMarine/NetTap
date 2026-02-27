@@ -116,6 +116,11 @@ if [[ "$MODE_TEARDOWN" == "true" ]]; then
         run rm -f /etc/sysctl.d/99-nettap-bridge.conf
         log "Removed sysctl config"
     fi
+    if [[ -f /etc/NetworkManager/conf.d/99-nettap-unmanaged.conf ]]; then
+        run rm -f /etc/NetworkManager/conf.d/99-nettap-unmanaged.conf
+        run systemctl reload NetworkManager 2>/dev/null || true
+        log "Removed NetworkManager unmanaged config"
+    fi
 
     log "Teardown complete. Interfaces restored to default state."
     exit 0
@@ -445,12 +450,27 @@ MGMT_EOF
         log "Management interface ${MGMT_INTERFACE} added to netplan"
     fi
 
+    # ---- Tell NetworkManager to leave bridge interfaces alone ----
+    if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+        nm_conf="/etc/NetworkManager/conf.d/99-nettap-unmanaged.conf"
+        cat > "$nm_conf" <<NM_EOF
+# NetTap: prevent NetworkManager from managing bridge interfaces
+[keyfile]
+unmanaged-devices=interface-name:${BRIDGE_NAME};interface-name:${WAN_INTERFACE};interface-name:${LAN_INTERFACE}
+NM_EOF
+        run systemctl reload NetworkManager 2>/dev/null || \
+            run systemctl restart NetworkManager 2>/dev/null || true
+        log "NetworkManager configured to ignore bridge interfaces"
+        # Give NM a moment to release the interfaces
+        sleep 1
+    fi
+
     # Apply netplan (non-destructive — only applies our file)
     run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
 
     # netplan apply hands the bridge to systemd-networkd, which may reset
     # its state. Re-bring the bridge up to ensure it's ready for traffic.
-    run ip link set "$BRIDGE_NAME" up 2>/dev/null || true
+    ip link set "$BRIDGE_NAME" up 2>/dev/null || true
     log "Persistence configuration complete — bridge will survive reboot"
 fi
 
