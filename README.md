@@ -48,22 +48,29 @@ NetTap creates a transparent Layer 2 bridge between two NICs. Traffic flows thro
 | Form factor | Mini PC (Topton, Beelink, etc.) | |
 | **Total BOM** | | **~$150-200** |
 
+**Only have 2 NICs?** No problem. If your box has Wi-Fi (or you add a USB Wi-Fi adapter), NetTap uses Wi-Fi as the management interface for dashboard access while both wired NICs go to the bridge. No third Ethernet port required.
+
 ## Quick Start
 
+NetTap uses a three-phase install so you keep internet access throughout:
+
 ```bash
-# Clone the repo
+# 1. INSTALL — clone, install deps, pull Docker images (internet required)
 git clone https://github.com/EliasMarine/NetTap.git
 cd NetTap
-
-# Copy and configure environment
-cp .env.example .env
-# Edit .env with your NIC names and preferences
-
-# Run the installer (Ubuntu Server 22.04, as root)
 sudo scripts/install/install.sh
+
+# The installer discovers your NICs, lets you assign roles (MGMT/WAN/LAN),
+# installs everything, then prints a wiring diagram.
+
+# 2. REWIRE — plug cables per the diagram:
+#    ISP Modem → WAN NIC → [NetTap bridge] → LAN NIC → Router
+
+# 3. ACTIVATE — start the bridge and services
+sudo scripts/install/activate-bridge.sh
 ```
 
-The installer configures the network bridge, deploys the Malcolm stack via Docker Compose, and starts all services. Access the dashboard at `https://nettap.local`.
+The installer auto-detects your NICs (with LED blink to identify ports), assigns them to roles, and defers bridge activation until after you rewire cables. Access the dashboard at `https://nettap.local`.
 
 ## Tech Stack
 
