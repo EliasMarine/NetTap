@@ -235,8 +235,20 @@ validate_bridge() {
     elif [[ "$link_state" == "UNKNOWN" ]]; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is UP (no carrier — waiting for cables)"
     elif [[ "$link_state" == "DOWN" ]]; then
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is administratively DOWN"
-        (( issues++ ))
+        # Check if any member NIC has carrier — if not, DOWN is expected
+        local any_carrier=false
+        for member in "$WAN_INTERFACE" "$LAN_INTERFACE"; do
+            if [[ "$(cat "/sys/class/net/${member}/carrier" 2>/dev/null)" == "1" ]]; then
+                any_carrier=true
+                break
+            fi
+        done
+        if [[ "$any_carrier" == "true" ]]; then
+            echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is DOWN but member NICs have carrier"
+            (( issues++ ))
+        else
+            echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is DOWN (no carrier — will activate when cables are connected)"
+        fi
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Bridge state: ${link_state}"
         (( issues++ ))
@@ -452,7 +464,7 @@ WantedBy=multi-user.target
 SYSD_EOF
 
     # Clean up legacy service name if it exists
-    if systemctl is-enabled nettap-bridge-promisc.service 2>/dev/null; then
+    if systemctl is-enabled nettap-bridge-promisc.service >/dev/null 2>&1; then
         systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
         rm -f /etc/systemd/system/nettap-bridge-promisc.service
         debug "Migrated legacy nettap-bridge-promisc.service → nettap-bridge.service"
@@ -534,37 +546,23 @@ NM_EOF
         debug "Removed legacy standalone networkd override (was shadowed by netplan)"
     fi
 
-    # ---- Drop-in override for netplan-generated bridge config ----
-    # netplan generates /run/systemd/network/10-netplan-br0.network.
-    # Drop-in directories in /etc/ layer on top of matching files in /run/.
-    dropin_dir="/etc/systemd/network/10-netplan-${BRIDGE_NAME}.network.d"
-    mkdir -p "$dropin_dir"
-    cat > "${dropin_dir}/nettap.conf" <<DROPIN_EOF
-# NetTap: keep bridge UP without carrier so traffic flows
-# immediately when cables are plugged in.
-[Network]
-ConfigureWithoutCarrier=yes
-LinkLocalAddressing=no
+    # OLD CODE START — drop-in override was proven ineffective across 3 attempts.
+    # networkd reads it and reports ActivationPolicy=always-up, but still
+    # brings the bridge DOWN after netplan apply. Removed in favor of the
+    # nettap-bridge.service workaround.
+    # OLD CODE END
 
-[Link]
-RequiredForOnline=no
-ActivationPolicy=always-up
-DROPIN_EOF
-    log "networkd drop-in override written"
+    # ---- Do NOT run `netplan apply` here ----
+    # The netplan YAML written above is for boot persistence — netplan reads
+    # it automatically on next boot. Running `netplan apply` during install
+    # triggers an async networkd reconfiguration that brings the bridge DOWN
+    # (systemd #425, #25067, LP#1874022, LP#2078955). The bridge is already
+    # UP from the ip link commands above. Don't fight networkd.
 
-    # ---- Apply netplan (writes to /run/systemd/network/) ----
-    run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
-
-    # ---- Force bridge UP via our systemd service ----
-    # netplan/networkd have a known bug (systemd #425, #25067) where
-    # bridges without carrier end up admin DOWN despite ActivationPolicy.
-    # The proven fix: force UP via a dedicated systemd service.
-    log "Forcing bridge UP via nettap-bridge.service..."
+    # ---- Activate bridge service (promisc mode during install) ----
+    log "Enabling promisc mode via nettap-bridge.service..."
     run systemctl start nettap-bridge.service 2>/dev/null || \
         ip link set "$BRIDGE_NAME" up 2>/dev/null || true
-
-    # Brief settle time for kernel state to propagate
-    sleep 2
 
     log "Persistence configuration complete — bridge will survive reboot"
 fi
@@ -572,8 +570,5 @@ fi
 # ===========================================================================
 # FINAL VALIDATION
 # ===========================================================================
-# Brief delay to let networkd finish any remaining state transitions
-sleep 2
-
 log ""
 validate_bridge || true
