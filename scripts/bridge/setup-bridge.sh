@@ -107,10 +107,17 @@ if [[ "$MODE_TEARDOWN" == "true" ]]; then
         run rm -f /etc/netplan/10-nettap-bridge.yaml
         log "Removed netplan config"
     fi
+    # Remove bridge service (current name)
+    if [[ -f /etc/systemd/system/nettap-bridge.service ]]; then
+        run systemctl disable nettap-bridge.service 2>/dev/null || true
+        run rm -f /etc/systemd/system/nettap-bridge.service
+        log "Removed bridge systemd unit"
+    fi
+    # Remove legacy promisc-only service (old name)
     if [[ -f /etc/systemd/system/nettap-bridge-promisc.service ]]; then
         run systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
         run rm -f /etc/systemd/system/nettap-bridge-promisc.service
-        log "Removed promisc systemd unit"
+        log "Removed legacy promisc systemd unit"
     fi
     if [[ -f /etc/sysctl.d/99-nettap-bridge.conf ]]; then
         run rm -f /etc/sysctl.d/99-nettap-bridge.conf
@@ -419,25 +426,41 @@ net.ipv6.conf.${BRIDGE_NAME}.disable_ipv6 = 1
 SYSCTL_EOF
     log "Sysctl config written to /etc/sysctl.d/99-nettap-bridge.conf"
 
-    # ---- Systemd unit for promiscuous mode (netplan can't set this) ----
-    cat > /etc/systemd/system/nettap-bridge-promisc.service <<SYSD_EOF
+    # ---- Systemd unit for bridge UP + promiscuous mode ----
+    # netplan/networkd have a known issue (systemd #425, #25067, LP#1874022)
+    # where bridges without carrier end up admin DOWN despite
+    # ActivationPolicy=always-up. This oneshot service is the proven
+    # workaround: force the bridge UP after networkd settles on boot.
+    cat > /etc/systemd/system/nettap-bridge.service <<SYSD_EOF
 [Unit]
-Description=NetTap bridge promiscuous mode
-After=network-online.target sys-subsystem-net-devices-${BRIDGE_NAME}.device
+Description=NetTap bridge UP and promiscuous mode
+After=systemd-networkd.service network-online.target
+After=sys-subsystem-net-devices-${BRIDGE_NAME}.device
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Force bridge UP (workaround for networkd not honoring always-up without carrier)
+ExecStart=/usr/sbin/ip link set ${BRIDGE_NAME} up
+# Enable promiscuous mode for packet capture (netplan can't set this)
 ExecStart=/usr/sbin/ip link set ${WAN_INTERFACE} promisc on
 ExecStart=/usr/sbin/ip link set ${LAN_INTERFACE} promisc on
 
 [Install]
 WantedBy=multi-user.target
 SYSD_EOF
+
+    # Clean up legacy service name if it exists
+    if systemctl is-enabled nettap-bridge-promisc.service 2>/dev/null; then
+        systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
+        rm -f /etc/systemd/system/nettap-bridge-promisc.service
+        debug "Migrated legacy nettap-bridge-promisc.service → nettap-bridge.service"
+    fi
+
     run systemctl daemon-reload
-    run systemctl enable nettap-bridge-promisc.service
-    log "Systemd promisc unit installed and enabled"
+    run systemctl enable nettap-bridge.service
+    log "Systemd bridge service installed and enabled"
 
     # ---- Management interface ----
     # The management interface (especially Wi-Fi) stays under NetworkManager.
@@ -514,11 +537,6 @@ NM_EOF
     # ---- Drop-in override for netplan-generated bridge config ----
     # netplan generates /run/systemd/network/10-netplan-br0.network.
     # Drop-in directories in /etc/ layer on top of matching files in /run/.
-    #
-    # ConfigureWithoutCarrier=yes alone only means "don't drop config when
-    # carrier is lost" — it does NOT keep the admin state UP. We need
-    # ActivationPolicy=always-up to explicitly tell networkd to keep the
-    # bridge link UP regardless of carrier state.
     dropin_dir="/etc/systemd/network/10-netplan-${BRIDGE_NAME}.network.d"
     mkdir -p "$dropin_dir"
     cat > "${dropin_dir}/nettap.conf" <<DROPIN_EOF
@@ -532,81 +550,21 @@ LinkLocalAddressing=no
 RequiredForOnline=no
 ActivationPolicy=always-up
 DROPIN_EOF
-    log "networkd drop-in override installed at ${dropin_dir}/nettap.conf"
+    log "networkd drop-in override written"
 
-    # ---- Apply netplan ----
-    # netplan apply regenerates /run/systemd/network/ files and restarts
-    # networkd asynchronously. We then explicitly restart networkd to
-    # guarantee the drop-in override in /etc/ is fully re-read.
+    # ---- Apply netplan (writes to /run/systemd/network/) ----
     run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
 
-    # Force networkd to fully re-read all configs including our drop-in.
-    # netplan apply may only trigger a reload, which might not pick up
-    # new drop-in directories.
-    debug "Restarting systemd-networkd to apply drop-in override..."
-    systemctl restart systemd-networkd 2>/dev/null || true
-
-    # ---- Wait for networkd to settle after restart ----
-    log "Waiting for systemd-networkd to settle..."
-    settle_ok="false"
-    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-        # networkctl shows "configuring" while still processing
-        nctl_state=""
-        nctl_state=$(networkctl status "$BRIDGE_NAME" 2>/dev/null \
-            | grep -i "state:" | head -1 \
-            | sed 's/.*State: *//;s/ .*//' ) || nctl_state="unknown"
-
-        # Also check admin state via ip link
-        admin_state=""
-        admin_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || admin_state="UNKNOWN"
-        debug "networkd settle attempt ${attempt}: networkctl='${nctl_state}' admin='${admin_state}'"
-
-        if [[ "$nctl_state" != "configuring" && "$nctl_state" != "pending" ]]; then
-            settle_ok="true"
-            # If already UP or UNKNOWN (no-carrier but UP), we're done
-            if [[ "$admin_state" == "UP" || "$admin_state" == "UNKNOWN" ]]; then
-                debug "Bridge is already UP after networkd settle"
-                break
-            fi
-            # networkd settled but bridge still DOWN — give it a couple more seconds
-            # as ActivationPolicy=always-up may take a moment to apply
-            if (( attempt >= 3 )); then
-                break
-            fi
-        fi
-        sleep 1
-    done
-
-    if [[ "$settle_ok" != "true" ]]; then
-        warn "networkd did not fully settle within 15s — continuing anyway"
-    fi
-
-    # ---- Bring bridge UP with retry ----
-    # After networkd settles, explicitly ensure the bridge is UP.
-    # With ActivationPolicy=always-up, networkd should keep it UP,
-    # but we double-check and retry in case of timing issues.
-    bridge_up="false"
-    for attempt in 1 2 3 4 5; do
+    # ---- Force bridge UP via our systemd service ----
+    # netplan/networkd have a known bug (systemd #425, #25067) where
+    # bridges without carrier end up admin DOWN despite ActivationPolicy.
+    # The proven fix: force UP via a dedicated systemd service.
+    log "Forcing bridge UP via nettap-bridge.service..."
+    run systemctl start nettap-bridge.service 2>/dev/null || \
         ip link set "$BRIDGE_NAME" up 2>/dev/null || true
-        sleep 1
-        current_state=""
-        current_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || current_state="MISSING"
-        debug "Bridge UP attempt ${attempt}: state='${current_state}'"
-        if [[ "$current_state" == "UP" || "$current_state" == "UNKNOWN" ]]; then
-            bridge_up="true"
-            break
-        fi
-        sleep 1
-    done
 
-    if [[ "$bridge_up" != "true" ]]; then
-        warn "Bridge may not be fully UP yet — final validation will check"
-        # Last resort: dump diagnostics for debugging
-        debug "networkctl status ${BRIDGE_NAME}:"
-        networkctl status "$BRIDGE_NAME" 2>/dev/null | while IFS= read -r line; do debug "  $line"; done || true
-        debug "Drop-in content:"
-        cat "${dropin_dir}/nettap.conf" 2>/dev/null | while IFS= read -r line; do debug "  $line"; done || true
-    fi
+    # Brief settle time for kernel state to propagate
+    sleep 2
 
     log "Persistence configuration complete — bridge will survive reboot"
 fi
