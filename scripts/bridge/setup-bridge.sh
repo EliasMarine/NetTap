@@ -447,6 +447,10 @@ MGMT_EOF
 
     # Apply netplan (non-destructive — only applies our file)
     run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
+
+    # netplan apply hands the bridge to systemd-networkd, which may reset
+    # its state. Re-bring the bridge up to ensure it's ready for traffic.
+    run ip link set "$BRIDGE_NAME" up 2>/dev/null || true
     log "Persistence configuration complete — bridge will survive reboot"
 fi
 
