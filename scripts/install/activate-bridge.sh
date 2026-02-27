@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # ==========================================================================
-# NetTap — Post-rewire bridge activation
+# NetTap — Bridge activation & post-rewire verification
 # ==========================================================================
-# Run this after physically rewiring cables. Validates carrier status on
-# WAN/LAN NICs, activates the bridge via setup-bridge.sh, and starts
-# Docker services.
+# This script is only needed if:
+#   - You ran install.sh with --defer-bridge (bridge was not activated
+#     during install)
+#   - You need to re-activate the bridge after troubleshooting
+#   - You want to verify cable carrier status and restart services
+#
+# By default, install.sh activates the bridge during install so traffic
+# flows immediately when cables are plugged in — no separate activation
+# step required.
 #
 # Usage:
 #   sudo scripts/install/activate-bridge.sh [OPTIONS]
@@ -38,11 +44,13 @@ usage() {
 Usage: sudo $0 [OPTIONS]
 
 Activates the NetTap network bridge and starts services.
-Run this after physically rewiring cables per the install instructions.
+
+This script is only needed if you used --defer-bridge during install,
+or if you need to re-activate the bridge for troubleshooting.
 
 Prerequisites:
   - NIC assignments in .env (WAN_INTERFACE, LAN_INTERFACE)
-  - Cables plugged into WAN and LAN ports
+  - Cables plugged into WAN and LAN ports (or use --force to skip check)
 
 Options:
   --force            Skip cable carrier validation

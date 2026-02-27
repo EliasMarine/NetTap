@@ -13,7 +13,8 @@
 #   --skip-pull          Skip Docker image pull (use cached images)
 #   --skip-malcolm       Skip Malcolm deployment (bridge + deps only)
 #   --persist-bridge     Write netplan/systemd for bridge persistence
-#   --immediate-bridge   Activate bridge during install (old behavior)
+#   --defer-bridge       Defer bridge activation until after cable rewiring
+#   --immediate-bridge   (No-op, kept for backwards compatibility)
 #   --non-interactive    Skip interactive prompts (auto-assign NICs)
 #   --reconfigure-nics   Force NIC re-discovery even if .env has values
 #   --dry-run            Log all actions without executing
@@ -33,7 +34,7 @@ SKIP_BRIDGE="false"
 SKIP_PULL="false"
 SKIP_MALCOLM="false"
 PERSIST_BRIDGE="true"
-DEFER_BRIDGE="true"
+DEFER_BRIDGE="false"
 NON_INTERACTIVE="false"
 RECONFIGURE_NICS="false"
 INSTALL_START_TIME=$(date +%s)
@@ -52,7 +53,8 @@ Options:
   --skip-pull          Skip Docker image pull (use cached)
   --skip-malcolm       Skip Malcolm deployment entirely
   --no-persist-bridge  Don't write persistent bridge config
-  --immediate-bridge   Activate bridge during install (skips defer)
+  --defer-bridge       Defer bridge activation until after cable rewiring
+  --immediate-bridge   (No-op, kept for backwards compatibility)
   --non-interactive    Auto-assign NICs without prompts
   --reconfigure-nics   Force NIC re-discovery even if .env has values
   --dry-run            Log without executing
@@ -68,7 +70,8 @@ while [[ $# -gt 0 ]]; do
         --skip-pull)         SKIP_PULL="true"; shift ;;
         --skip-malcolm)      SKIP_MALCOLM="true"; shift ;;
         --no-persist-bridge) PERSIST_BRIDGE="false"; shift ;;
-        --immediate-bridge)  DEFER_BRIDGE="false"; shift ;;
+        --defer-bridge)      DEFER_BRIDGE="true"; shift ;;
+        --immediate-bridge)  shift ;;  # No-op, bridge activates by default now
         --non-interactive)   NON_INTERACTIVE="true"; shift ;;
         --reconfigure-nics)  RECONFIGURE_NICS="true"; shift ;;
         --dry-run)           NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
@@ -164,10 +167,9 @@ step_dependencies() {
 
     run apt-get update -qq
 
-    # Core packages
+    # Core packages (without compose — handled separately below)
     run apt-get install -y -qq \
         docker.io \
-        docker-compose-plugin \
         bridge-utils \
         net-tools \
         ethtool \
@@ -182,9 +184,24 @@ step_dependencies() {
         ca-certificates \
         gnupg
 
+    # Docker Compose plugin — package name varies by source:
+    #   docker-compose-plugin  (Docker official repo)
+    #   docker-compose-v2      (Ubuntu 24.04+ universe)
+    # Try both; at least one must succeed.
+    if ! apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+        log "docker-compose-plugin not found, trying docker-compose-v2..."
+        run apt-get install -y -qq docker-compose-v2
+    fi
+
     # Enable Docker
     run systemctl enable --now docker
     log "Docker enabled and running"
+
+    # Verify docker compose is available
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose plugin not available. Install docker-compose-plugin or docker-compose-v2."
+    fi
+    debug "Docker Compose $(docker compose version --short 2>/dev/null) available"
 
     # Configure Docker daemon (log rotation, overlay2)
     if [[ ! -f /etc/docker/daemon.json ]]; then
@@ -252,7 +269,7 @@ step_bridge() {
     fi
 
     if [[ "$DEFER_BRIDGE" == "true" ]]; then
-        log "[Step 3/8] Bridge activation DEFERRED (will run after cable rewiring)"
+        log "[Step 3/8] Bridge activation DEFERRED (--defer-bridge)"
         log "  Run 'sudo scripts/install/activate-bridge.sh' after rewiring cables."
         return 0
     fi
@@ -636,6 +653,40 @@ step_verify() {
     echo "  Manage services:     systemctl {start|stop|restart} nettap"
     echo "  View logs:           journalctl -u nettap -f"
     echo "  Container status:    docker compose -f docker/docker-compose.yml ps"
+    echo "=========================================="
+    echo ""
+
+    # Print rewiring instructions (bridge is active, just needs cables)
+    load_env "${PROJECT_ROOT}/.env"
+    local wan="${WAN_INTERFACE:-eth0}"
+    local lan="${LAN_INTERFACE:-eth1}"
+    local mgmt="${MGMT_INTERFACE:-}"
+
+    echo "  =========================================="
+    echo "    INSTALL COMPLETE — Now Rewire Cables"
+    echo "  =========================================="
+    echo ""
+    echo "  The bridge is active and services are running."
+    echo "  Plug in your cables — traffic will flow immediately."
+    echo ""
+    echo "  1. Plug ISP modem  --> ${wan} (WAN)"
+    echo "  2. Plug ${lan} (LAN) --> Router WAN port"
+    if [[ -n "$mgmt" ]]; then
+        echo "  3. Keep ${mgmt} (MGMT) connected for dashboard access"
+    else
+        echo "  3. Keep Wi-Fi connected for dashboard access"
+    fi
+    echo ""
+    echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
+    echo "                              NetTap"
+    if [[ -n "$mgmt" ]]; then
+        echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    else
+        echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    fi
+    echo ""
+    echo "  Dashboard: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
+    echo ""
     echo "=========================================="
     echo ""
 }
