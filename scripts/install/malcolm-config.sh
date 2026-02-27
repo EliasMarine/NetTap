@@ -148,6 +148,13 @@ generate_curlrc() {
         return 0
     fi
 
+    # Docker creates missing bind-mount sources as directories. If a previous
+    # failed run left .opensearch.primary.curlrc as a directory, remove it.
+    if [[ -d "$curlrc_file" ]]; then
+        warn "Removing stale directory artifact at ${curlrc_file}"
+        rm -rf "$curlrc_file"
+    fi
+
     mkdir -p "$curlrc_dir"
 
     local os_password
