@@ -251,6 +251,21 @@ print('logstash: correctly omits no-new-privileges')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: logstash has PUSER_PRIV_DROP=false (supervisord needs root for /dev/fd/1)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['logstash']
+env = svc.get('environment', {})
+priv_drop = env.get('PUSER_PRIV_DROP', 'not set')
+assert priv_drop == 'false', f'PUSER_PRIV_DROP should be false, got: {priv_drop}'
+print('logstash: PUSER_PRIV_DROP=false (correct)')
+"
+    [ "$status" -eq 0 ]
+}
+
 # ==========================================================================
 # Cert mounts
 # ==========================================================================
