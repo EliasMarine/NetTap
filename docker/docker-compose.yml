@@ -187,7 +187,13 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-logstash
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
+    # NOTE: Logstash intentionally does NOT use *security-defaults (no-new-privileges:true).
+    # Malcolm's logstash uses supervisord with stdout_logfile=/dev/fd/1. After the entrypoint
+    # drops privileges from root to UID 1000 (via docker-uid-gid-setup.sh + gosu), the
+    # no-new-privileges flag restricts /proc/self/fd access, causing supervisord to fail with
+    # "EACCES" when opening /dev/fd/1 for the logstash program dispatcher.
+    # Security is maintained by running as non-root UID 1000 inside the container.
     labels:
       com.nettap.service: "logstash"
       com.nettap.component: "log-pipeline"

@@ -210,22 +210,43 @@ print('${svc}: OK')
 # Security: no-new-privileges
 # ==========================================================================
 
-@test "compose: all services have no-new-privileges" {
+@test "compose: all services have no-new-privileges (except logstash)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
+    # Logstash is intentionally exempt: Malcolm's supervisord uses stdout_logfile=/dev/fd/1,
+    # which fails with EACCES after the entrypoint privilege drop when no-new-privileges is set.
     run _compose_query "
 services = data.get('services', {})
+exempt = {'logstash'}
 missing = []
 for name, svc in services.items():
+    if name in exempt:
+        continue
     sec_opt = svc.get('security_opt', [])
     if 'no-new-privileges:true' not in sec_opt:
         missing.append(name)
 if missing:
     print('Services missing no-new-privileges: ' + ', '.join(missing))
     sys.exit(1)
-print('All services have no-new-privileges')
+print('All non-exempt services have no-new-privileges')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: logstash does NOT have no-new-privileges (supervisord compat)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['logstash']
+sec_opt = svc.get('security_opt', [])
+if 'no-new-privileges:true' in sec_opt:
+    print('logstash has no-new-privileges — will break supervisord /dev/fd/1 access')
+    sys.exit(1)
+print('logstash: correctly omits no-new-privileges')
 "
     [ "$status" -eq 0 ]
 }
