@@ -341,6 +341,36 @@ print('OK: all actions have retry config')
     grep -q "^_show_service_status()" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
 }
 
+@test "deploy: _wait_for_opensearch_http function is defined" {
+    grep -q "^_wait_for_opensearch_http()" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+}
+
+@test "deploy: starts opensearch alone before full stack" {
+    # start_services must run 'up -d opensearch' before the general 'up -d'
+    local os_line
+    os_line=$(grep -n "up -d opensearch" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | head -1 | cut -d: -f1)
+    local full_line
+    full_line=$(grep -n 'up -d$' "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | head -1 | cut -d: -f1)
+    [ -n "$os_line" ]
+    [ -n "$full_line" ]
+    [ "$os_line" -lt "$full_line" ]
+}
+
+@test "deploy: bootstrap runs after opensearch HTTP wait, before full stack" {
+    local http_wait_line
+    http_wait_line=$(grep -n "_wait_for_opensearch_http" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "_wait_for_opensearch_http()" | head -1 | cut -d: -f1)
+    local bootstrap_line
+    bootstrap_line=$(grep -n "bootstrap_opensearch_security" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "bootstrap_opensearch_security()" | head -1 | cut -d: -f1)
+    local full_up_line
+    full_up_line=$(grep -n 'up -d$' "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | head -1 | cut -d: -f1)
+    [ -n "$http_wait_line" ]
+    [ -n "$bootstrap_line" ]
+    [ -n "$full_up_line" ]
+    # Order: wait_for_http → bootstrap → full up
+    [ "$http_wait_line" -lt "$bootstrap_line" ]
+    [ "$bootstrap_line" -lt "$full_up_line" ]
+}
+
 # ==========================================================================
 # OpenSearch security bootstrap
 # ==========================================================================
