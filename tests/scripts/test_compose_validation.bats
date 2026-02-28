@@ -251,15 +251,15 @@ print('logstash: correctly omits no-new-privileges')
     [ "$status" -eq 0 ]
 }
 
-@test "compose: all Malcolm services have PUSER_PRIV_DROP=false (supervisord compat)" {
+@test "compose: Malcolm services have PUSER_PRIV_DROP=false (except opensearch)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    # All Malcolm services that use docker-uid-gid-setup.sh need PUSER_PRIV_DROP=false
-    # to prevent the su heredoc from breaking supervisord's /dev/fd/1 access.
-    local malcolm_services=(
-        opensearch
+    # Malcolm services using supervisord need PUSER_PRIV_DROP=false to prevent
+    # the su heredoc from breaking supervisord's /dev/fd/1 access.
+    # OpenSearch is exempt: it explicitly refuses to run as root (JVM safety).
+    local services_need_false=(
         dashboards-helper
         dashboards
         logstash
@@ -268,7 +268,7 @@ print('logstash: correctly omits no-new-privileges')
         nginx-proxy
     )
 
-    for svc in "${malcolm_services[@]}"; do
+    for svc in "${services_need_false[@]}"; do
         run _compose_query "
 svc = data['services']['${svc}']
 env = svc.get('environment', {})
@@ -278,6 +278,21 @@ print('${svc}: PUSER_PRIV_DROP=false (correct)')
 "
         [ "$status" -eq 0 ]
     done
+}
+
+@test "compose: opensearch has PUSER_PRIV_DROP=true (refuses to run as root)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['opensearch']
+env = svc.get('environment', {})
+priv_drop = env.get('PUSER_PRIV_DROP', 'not set')
+assert priv_drop == 'true', f'opensearch: PUSER_PRIV_DROP must be true, got: {priv_drop}'
+print('opensearch: PUSER_PRIV_DROP=true (correct — refuses root)')
+"
+    [ "$status" -eq 0 ]
 }
 
 # ==========================================================================
