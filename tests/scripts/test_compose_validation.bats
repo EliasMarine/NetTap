@@ -251,19 +251,33 @@ print('logstash: correctly omits no-new-privileges')
     [ "$status" -eq 0 ]
 }
 
-@test "compose: logstash has PUSER_PRIV_DROP=false (supervisord needs root for /dev/fd/1)" {
+@test "compose: all Malcolm services have PUSER_PRIV_DROP=false (supervisord compat)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    run _compose_query "
-svc = data['services']['logstash']
+    # All Malcolm services that use docker-uid-gid-setup.sh need PUSER_PRIV_DROP=false
+    # to prevent the su heredoc from breaking supervisord's /dev/fd/1 access.
+    local malcolm_services=(
+        opensearch
+        dashboards-helper
+        dashboards
+        logstash
+        filebeat
+        api
+        nginx-proxy
+    )
+
+    for svc in "${malcolm_services[@]}"; do
+        run _compose_query "
+svc = data['services']['${svc}']
 env = svc.get('environment', {})
 priv_drop = env.get('PUSER_PRIV_DROP', 'not set')
-assert priv_drop == 'false', f'PUSER_PRIV_DROP should be false, got: {priv_drop}'
-print('logstash: PUSER_PRIV_DROP=false (correct)')
+assert priv_drop == 'false', f'${svc}: PUSER_PRIV_DROP should be false, got: {priv_drop}'
+print('${svc}: PUSER_PRIV_DROP=false (correct)')
 "
-    [ "$status" -eq 0 ]
+        [ "$status" -eq 0 ]
+    done
 }
 
 # ==========================================================================
