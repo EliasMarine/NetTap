@@ -28,10 +28,6 @@ x-malcolm-tag: &malcolm-tag "26.02.0"
 x-process-env: &process-env
   PUID: ${PUID:-1000}
   PGID: ${PGID:-1000}
-  # Malcolm's docker-uid-gid-setup.sh uses `su` heredoc to drop privileges.
-  # This breaks supervisord's stdout_logfile=/dev/fd/1 (EACCES). Disabling
-  # the privilege drop lets supervisord run as root inside the container.
-  PUSER_PRIV_DROP: "false"
 
 x-pcap-env: &pcap-env
   PCAP_IFACE: ${PCAP_IFACE:-br0}
@@ -98,9 +94,6 @@ services:
       - SYS_RESOURCE       # required for mlockall (bootstrap.memory_lock)
     environment:
       <<: [*process-env, *opensearch-env]
-      # OpenSearch explicitly refuses to run as root (JVM safety check).
-      # Override the global PUSER_PRIV_DROP=false to keep the privilege drop.
-      PUSER_PRIV_DROP: "true"
       OPENSEARCH_JAVA_OPTS: "${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}"
       discovery.type: "single-node"
       bootstrap.memory_lock: "true"
@@ -152,6 +145,9 @@ services:
       com.nettap.description: "OpenSearch Dashboards initialization helper"
     environment:
       <<: [*process-env, *opensearch-env]
+      # Malcolm's supervisord uses stdout_logfile=/dev/fd/1 and the entrypoint's
+      # `su` heredoc privilege drop breaks fd access. Disable privilege drop here.
+      PUSER_PRIV_DROP: "false"
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
       DASHBOARDS_DARKMODE: "true"
       DASHBOARDS_TIMEPICKER_FROM: "now-24h"
@@ -197,13 +193,16 @@ services:
     <<: *logging-defaults
     # NOTE: Logstash intentionally does NOT use *security-defaults (no-new-privileges:true).
     # Malcolm's supervisord uses stdout_logfile=/dev/fd/1, and the entrypoint's `su` heredoc
-    # privilege drop breaks fd access. PUSER_PRIV_DROP=false is set globally in x-process-env.
+    # privilege drop breaks fd access. PUSER_PRIV_DROP=false disables the drop for this service.
     labels:
       com.nettap.service: "logstash"
       com.nettap.component: "log-pipeline"
       com.nettap.description: "Logstash log enrichment and forwarding pipeline"
     environment:
       <<: [*process-env, *opensearch-env]
+      # Malcolm's supervisord uses stdout_logfile=/dev/fd/1 and the entrypoint's
+      # `su` heredoc privilege drop breaks fd access. Disable privilege drop here.
+      PUSER_PRIV_DROP: "false"
       LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
       pipeline.workers: "${LOGSTASH_WORKERS:-2}"
       pipeline.batch.size: "125"

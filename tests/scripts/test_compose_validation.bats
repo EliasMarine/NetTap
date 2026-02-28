@@ -251,21 +251,16 @@ print('logstash: correctly omits no-new-privileges')
     [ "$status" -eq 0 ]
 }
 
-@test "compose: Malcolm services have PUSER_PRIV_DROP=false (except opensearch)" {
+@test "compose: supervisord services have PUSER_PRIV_DROP=false" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    # Malcolm services using supervisord need PUSER_PRIV_DROP=false to prevent
-    # the su heredoc from breaking supervisord's /dev/fd/1 access.
-    # OpenSearch is exempt: it explicitly refuses to run as root (JVM safety).
+    # Only logstash and dashboards-helper use supervisord with stdout_logfile=/dev/fd/1.
+    # The su heredoc privilege drop breaks fd access, so these two need PUSER_PRIV_DROP=false.
     local services_need_false=(
-        dashboards-helper
-        dashboards
         logstash
-        filebeat
-        api
-        nginx-proxy
+        dashboards-helper
     )
 
     for svc in "${services_need_false[@]}"; do
@@ -280,19 +275,32 @@ print('${svc}: PUSER_PRIV_DROP=false (correct)')
     done
 }
 
-@test "compose: opensearch has PUSER_PRIV_DROP=true (refuses to run as root)" {
+@test "compose: non-supervisord Malcolm services do NOT set PUSER_PRIV_DROP=false" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    run _compose_query "
-svc = data['services']['opensearch']
+    # Most Malcolm services (OpenSearch, Dashboards, Redis, etc.) refuse to run as root.
+    # They must NOT have PUSER_PRIV_DROP=false — the default privilege drop must stay enabled.
+    local services_must_not_be_false=(
+        opensearch
+        dashboards
+        filebeat
+        api
+        nginx-proxy
+        redis
+    )
+
+    for svc in "${services_must_not_be_false[@]}"; do
+        run _compose_query "
+svc = data['services']['${svc}']
 env = svc.get('environment', {})
 priv_drop = env.get('PUSER_PRIV_DROP', 'not set')
-assert priv_drop == 'true', f'opensearch: PUSER_PRIV_DROP must be true, got: {priv_drop}'
-print('opensearch: PUSER_PRIV_DROP=true (correct — refuses root)')
+assert priv_drop != 'false', f'${svc}: PUSER_PRIV_DROP must NOT be false (service refuses root), got: {priv_drop}'
+print('${svc}: PUSER_PRIV_DROP={} (correct — not false)'.format(priv_drop))
 "
-    [ "$status" -eq 0 ]
+        [ "$status" -eq 0 ]
+    done
 }
 
 # ==========================================================================
