@@ -340,3 +340,39 @@ print('OK: all actions have retry config')
 @test "deploy: _show_service_status function is defined" {
     grep -q "^_show_service_status()" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
 }
+
+# ==========================================================================
+# OpenSearch security bootstrap
+# ==========================================================================
+
+@test "deploy: bootstrap_opensearch_security function is defined" {
+    grep -q "^bootstrap_opensearch_security()" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+}
+
+@test "deploy: bootstrap writes roles_mapping.yml with all_access mapping" {
+    grep -q "all_access" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    grep -q "admin" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    grep -q "roles_mapping.yml" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+}
+
+@test "deploy: bootstrap runs securityadmin.sh with admin certs" {
+    grep -q "securityadmin.sh" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    grep -q "admin.crt" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    grep -q "admin.key" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+}
+
+@test "deploy: bootstrap verifies auth after security push" {
+    grep -q "Verifying malcolm_internal authentication" \
+        "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+}
+
+@test "deploy: bootstrap runs before apply_ilm_policy in start_services" {
+    # bootstrap_opensearch_security must appear before apply_ilm_policy
+    local bootstrap_line
+    bootstrap_line=$(grep -n "bootstrap_opensearch_security" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*bootstrap_opensearch_security()" | head -1 | cut -d: -f1)
+    local ilm_line
+    ilm_line=$(grep -n "apply_ilm_policy" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*apply_ilm_policy()" | head -1 | cut -d: -f1)
+    [ -n "$bootstrap_line" ]
+    [ -n "$ilm_line" ]
+    [ "$bootstrap_line" -lt "$ilm_line" ]
+}
