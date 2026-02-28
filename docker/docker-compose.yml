@@ -13,11 +13,11 @@
 #   - Bridge (br0) must be configured before starting capture containers
 #
 # Security:
-#   - All services run with no-new-privileges
-#   - Malcolm images use Docker-default capabilities (their entrypoint scripts
-#     need CHOWN, SETUID, SETGID, DAC_OVERRIDE for UID/GID setup, cert gen, etc.)
-#   - Capture services use cap_drop: ALL + explicit cap_add (NET_ADMIN, NET_RAW)
-#   - NetTap custom services use cap_drop: ALL (simple entrypoints we control)
+#   - Malcolm images must NOT have no-new-privileges or cap_drop: ALL — their
+#     entrypoint (docker-uid-gid-setup.sh) uses `su` (setuid binary) for privilege
+#     drop. no-new-privileges silently blocks setuid, cap_drop: ALL removes SETGID.
+#   - NetTap custom services use no-new-privileges + cap_drop: ALL (we control entrypoints)
+#   - Nginx-based containers need cap_add: CHOWN for cache dir ownership
 #   - read_only filesystems where possible (with tmpfs for writable dirs)
 #   - Internal services are not exposed to the host network
 # ==========================================================================
@@ -62,7 +62,9 @@ x-logging-defaults: &logging-defaults
       max-size: "200m"
       max-file: "2"
 
-# -- Shared security defaults applied to every non-host-network service ------
+# -- Security defaults for NetTap custom services only -------------------------
+# Malcolm images must NOT use this — their entrypoint uses `su` (setuid binary)
+# which silently fails with no-new-privileges, causing services to exit code 0.
 x-security-defaults: &security-defaults
   security_opt:
     - no-new-privileges:true
@@ -77,7 +79,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-opensearch
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     # Protect OpenSearch from the Linux OOM killer. On 16GB target hardware
     # with 4g heap + Logstash + Zeek + Suricata, memory pressure is real.
     # Malcolm sets this to -500; we match that.
@@ -138,7 +140,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-dashboards-helper
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     labels:
       com.nettap.service: "dashboards-helper"
       com.nettap.component: "dashboards"
@@ -164,7 +166,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-dashboards
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     labels:
       com.nettap.service: "dashboards"
       com.nettap.component: "dashboards"
@@ -231,7 +233,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-filebeat
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     labels:
       com.nettap.service: "filebeat"
       com.nettap.component: "log-pipeline"
@@ -260,9 +262,9 @@ services:
   # ========================================================================
   # LIVE CAPTURE — These run with host networking for raw NIC access
   # ========================================================================
-  # NOTE: Host-network containers cannot use cap_drop/cap_add together with
-  # network_mode: host in the same way. They need NET_ADMIN + NET_RAW for
-  # packet capture. security_opt: no-new-privileges is still applied.
+  # NOTE: Malcolm capture images must NOT have no-new-privileges or cap_drop: ALL.
+  # Their entrypoint uses `su` (setuid binary) for privilege drop, which silently
+  # fails with no-new-privileges. cap_add provides the capture capabilities needed.
 
   zeek-live:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -270,14 +272,10 @@ services:
     restart: unless-stopped
     network_mode: host
     <<: *logging-defaults
-    security_opt:
-      - no-new-privileges:true
     labels:
       com.nettap.service: "zeek-live"
       com.nettap.component: "capture"
       com.nettap.description: "Zeek network metadata analysis (live capture)"
-    cap_drop:
-      - ALL
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -301,14 +299,10 @@ services:
     restart: unless-stopped
     network_mode: host
     <<: *logging-defaults
-    security_opt:
-      - no-new-privileges:true
     labels:
       com.nettap.service: "suricata-live"
       com.nettap.component: "capture"
       com.nettap.description: "Suricata IDS/IPS engine (live capture)"
-    cap_drop:
-      - ALL
     cap_add: *capture-caps
     environment:
       <<: *process-env
@@ -330,14 +324,10 @@ services:
     restart: unless-stopped
     network_mode: host
     <<: *logging-defaults
-    security_opt:
-      - no-new-privileges:true
     labels:
       com.nettap.service: "pcap-capture"
       com.nettap.component: "capture"
       com.nettap.description: "Raw packet capture (netsniff-ng)"
-    cap_drop:
-      - ALL
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *pcap-env]
@@ -354,14 +344,10 @@ services:
     restart: unless-stopped
     network_mode: host
     <<: *logging-defaults
-    security_opt:
-      - no-new-privileges:true
     labels:
       com.nettap.service: "arkime-live"
       com.nettap.component: "capture"
       com.nettap.description: "Arkime full packet capture and session indexer"
-    cap_drop:
-      - ALL
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *opensearch-env, *pcap-env]
@@ -383,7 +369,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-redis
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     labels:
       com.nettap.service: "redis"
       com.nettap.component: "infrastructure"
@@ -404,7 +390,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-api
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     labels:
       com.nettap.service: "api"
       com.nettap.component: "infrastructure"
@@ -426,7 +412,7 @@ services:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
     restart: unless-stopped
-    <<: [*security-defaults, *logging-defaults]
+    <<: *logging-defaults
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
@@ -593,6 +579,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN            # nginx needs to chown cache directories
+      - NET_BIND_SERVICE # nginx binds to ports 443 and 80
+      - SETUID           # nginx master needs to switch to worker user
+      - SETGID           # nginx master needs to set worker group
     networks:
       - default
     depends_on:
@@ -653,6 +644,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN            # nginx needs to chown cache directories
+      - SETUID           # nginx master needs to switch to worker user
+      - SETGID           # nginx master needs to set worker group
     networks:
       - default
     healthcheck:

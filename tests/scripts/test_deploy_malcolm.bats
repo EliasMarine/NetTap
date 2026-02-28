@@ -406,3 +406,17 @@ print('OK: all actions have retry config')
     [ -n "$ilm_line" ]
     [ "$bootstrap_line" -lt "$ilm_line" ]
 }
+
+@test "deploy: bootstrap_index_templates function is defined" {
+    grep -q "^bootstrap_index_templates()" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+}
+
+@test "deploy: index templates bootstrap runs before full stack start" {
+    local template_line
+    template_line=$(grep -n "bootstrap_index_templates" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*bootstrap_index_templates()" | head -1 | cut -d: -f1)
+    local full_up_line
+    full_up_line=$(grep -n 'up -d$' "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | head -1 | cut -d: -f1)
+    [ -n "$template_line" ]
+    [ -n "$full_up_line" ]
+    [ "$template_line" -lt "$full_up_line" ]
+}

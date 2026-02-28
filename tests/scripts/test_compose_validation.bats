@@ -156,7 +156,9 @@ print('${svc}: OK')
     done
 }
 
-@test "compose: capture services have cap_drop: ALL + explicit cap_add" {
+@test "compose: capture services have cap_add for packet capture (no cap_drop: ALL)" {
+    # Capture services are Malcolm images — must NOT have cap_drop: ALL because
+    # their entrypoint needs standard capabilities (SETUID, SETGID, etc.)
     local capture_services=(
         zeek-live
         suricata-live
@@ -173,12 +175,34 @@ print('${svc}: OK')
 svc = data['services']['${svc}']
 cap_drop = svc.get('cap_drop', [])
 cap_add = svc.get('cap_add', [])
-assert 'ALL' in cap_drop, '${svc} should have cap_drop: ALL'
+assert 'ALL' not in cap_drop, '${svc} must NOT have cap_drop: ALL (Malcolm entrypoint needs su)'
 assert len(cap_add) > 0, '${svc} should have explicit cap_add'
-# Must have NET_ADMIN and NET_RAW for packet capture
 assert 'NET_ADMIN' in cap_add, '${svc} needs NET_ADMIN'
 assert 'NET_RAW' in cap_add, '${svc} needs NET_RAW'
-print('${svc}: OK (cap_drop ALL + cap_add ' + str(cap_add) + ')')
+print('${svc}: OK (cap_add ' + str(cap_add) + ')')
+"
+        [ "$status" -eq 0 ]
+    done
+}
+
+@test "compose: nginx containers have required capabilities (CHOWN, SETUID, SETGID)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    local nginx_services=(
+        nettap-cyberchef
+        nettap-nginx
+    )
+
+    for svc in "${nginx_services[@]}"; do
+        run _compose_query "
+svc = data['services']['${svc}']
+cap_add = svc.get('cap_add', [])
+assert 'CHOWN' in cap_add, '${svc} needs CHOWN for cache dir ownership'
+assert 'SETUID' in cap_add, '${svc} needs SETUID for worker process'
+assert 'SETGID' in cap_add, '${svc} needs SETGID for worker group'
+print('${svc}: has required nginx capabilities')
 "
         [ "$status" -eq 0 ]
     done
@@ -210,45 +234,68 @@ print('${svc}: OK')
 # Security: no-new-privileges
 # ==========================================================================
 
-@test "compose: all services have no-new-privileges (except logstash)" {
+@test "compose: NetTap custom services have no-new-privileges" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    # Logstash is intentionally exempt: Malcolm's supervisord uses stdout_logfile=/dev/fd/1,
-    # which fails with EACCES after the entrypoint privilege drop when no-new-privileges is set.
-    run _compose_query "
-services = data.get('services', {})
-exempt = {'logstash'}
-missing = []
-for name, svc in services.items():
-    if name in exempt:
-        continue
-    sec_opt = svc.get('security_opt', [])
-    if 'no-new-privileges:true' not in sec_opt:
-        missing.append(name)
-if missing:
-    print('Services missing no-new-privileges: ' + ', '.join(missing))
-    sys.exit(1)
-print('All non-exempt services have no-new-privileges')
+    # Only NetTap services (which we control) should have no-new-privileges.
+    # Malcolm services use `su` (setuid binary) in their entrypoint which
+    # silently fails with no-new-privileges, causing services to exit code 0.
+    local nettap_services=(
+        nettap-storage-daemon
+        nettap-web
+        nettap-grafana
+        nettap-tshark
+        nettap-cyberchef
+        nettap-nginx
+    )
+
+    for svc in "${nettap_services[@]}"; do
+        run _compose_query "
+svc = data['services']['${svc}']
+sec_opt = svc.get('security_opt', [])
+assert 'no-new-privileges:true' in sec_opt, '${svc} should have no-new-privileges'
+print('${svc}: has no-new-privileges (correct)')
 "
-    [ "$status" -eq 0 ]
+        [ "$status" -eq 0 ]
+    done
 }
 
-@test "compose: logstash does NOT have no-new-privileges (supervisord compat)" {
+@test "compose: Malcolm services do NOT have no-new-privileges (entrypoint uses su)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    run _compose_query "
-svc = data['services']['logstash']
+    # Malcolm's docker-uid-gid-setup.sh uses `su` (setuid binary) for privilege
+    # drop. no-new-privileges silently blocks the setuid bit, causing the service
+    # process to never start (container exits 0 with no error output).
+    local malcolm_services=(
+        opensearch
+        dashboards-helper
+        dashboards
+        logstash
+        filebeat
+        redis
+        api
+        nginx-proxy
+        zeek-live
+        suricata-live
+        pcap-capture
+        arkime-live
+    )
+
+    for svc in "${malcolm_services[@]}"; do
+        run _compose_query "
+svc = data['services']['${svc}']
 sec_opt = svc.get('security_opt', [])
 if 'no-new-privileges:true' in sec_opt:
-    print('logstash has no-new-privileges — will break supervisord /dev/fd/1 access')
+    print('${svc} has no-new-privileges — will break Malcolm entrypoint su')
     sys.exit(1)
-print('logstash: correctly omits no-new-privileges')
+print('${svc}: correctly omits no-new-privileges')
 "
-    [ "$status" -eq 0 ]
+        [ "$status" -eq 0 ]
+    done
 }
 
 @test "compose: supervisord services have PUSER_PRIV_DROP=false" {
