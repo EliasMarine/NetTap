@@ -175,6 +175,11 @@ start_services() {
     # Bootstrap security (idempotent — safe on existing deployments too)
     bootstrap_opensearch_security
 
+    # Bootstrap index templates — dashboards-helper's idxinit has a 180s sleep
+    # and waits for logs that don't exist yet on fresh deploys, creating a deadlock
+    # with logstash (which waits for malcolm_template). Push templates directly.
+    bootstrap_index_templates
+
     # Now start the full stack — OpenSearch should pass healthchecks
     log "Starting remaining services..."
     run docker compose -f "$COMPOSE_FILE" up -d
@@ -447,6 +452,76 @@ bootstrap_opensearch_security() {
         log "  Authentication verified — malcolm_internal has cluster access"
     else
         warn "  Authentication verification failed — check roles_mapping"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Bootstrap OpenSearch index templates
+# ---------------------------------------------------------------------------
+# On fresh deployments, dashboards-helper's idxinit process creates the
+# malcolm_template index template. However, it has a 180s sleep followed by
+# a wait for "logs" (which don't exist yet), creating a deadlock:
+#   idxinit → waits for logs → logs need logstash → logstash waits for
+#   malcolm_template → malcolm_template needs idxinit → deadlock.
+#
+# Fix: push the component templates and malcolm_template directly from the
+# dashboards-helper container (which has the template files baked in).
+# This is idempotent — existing templates are overwritten with the same data.
+# ---------------------------------------------------------------------------
+bootstrap_index_templates() {
+    log "Bootstrapping OpenSearch index templates..."
+
+    # Start dashboards-helper temporarily to access template files
+    run docker compose -f "$COMPOSE_FILE" up -d dashboards-helper
+    sleep 5  # wait for container to be ready
+
+    local os_creds
+    os_creds=$(cat "${PROJECT_ROOT}/docker/curlrc/.opensearch.primary.curlrc" | grep -oP 'user:\s*"\K[^"]+' || echo "")
+    if [[ -z "$os_creds" ]]; then
+        warn "  Could not read OpenSearch credentials, skipping template bootstrap"
+        return 0
+    fi
+
+    # Push ECS component templates
+    local ecs_count=0
+    for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/ecs-templates-os/composable/component -name "*.json" 2>/dev/null); do
+        local name="ecs_$(basename "$f" .json)"
+        local code
+        code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
+            -H "Content-Type: application/json" -d @"$f" -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+        if [[ "$code" == "200" ]]; then
+            ecs_count=$((ecs_count + 1))
+        fi
+    done
+    log "  Pushed ${ecs_count} ECS component templates"
+
+    # Push custom component templates
+    local custom_count=0
+    for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/templates/composable/component -name "*.json" 2>/dev/null); do
+        local name="custom_$(basename "$f" .json)"
+        local code
+        code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
+            -H "Content-Type: application/json" -d @"$f" -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+        if [[ "$code" == "200" ]]; then
+            custom_count=$((custom_count + 1))
+        fi
+    done
+    log "  Pushed ${custom_count} custom component templates"
+
+    # Push malcolm_template index template
+    local template_code
+    template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
+        -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+        -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+
+    if [[ "$template_code" == "200" ]]; then
+        log "  malcolm_template index template created successfully"
+    else
+        warn "  Failed to create malcolm_template (HTTP ${template_code})"
+        warn "  Logstash may wait for dashboards-helper's idxinit to create it"
     fi
 }
 
