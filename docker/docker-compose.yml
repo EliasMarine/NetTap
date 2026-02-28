@@ -28,6 +28,10 @@ x-malcolm-tag: &malcolm-tag "26.02.0"
 x-process-env: &process-env
   PUID: ${PUID:-1000}
   PGID: ${PGID:-1000}
+  # Malcolm's docker-uid-gid-setup.sh uses `su` heredoc to drop privileges.
+  # This breaks supervisord's stdout_logfile=/dev/fd/1 (EACCES). Disabling
+  # the privilege drop lets supervisord run as root inside the container.
+  PUSER_PRIV_DROP: "false"
 
 x-pcap-env: &pcap-env
   PCAP_IFACE: ${PCAP_IFACE:-br0}
@@ -189,18 +193,14 @@ services:
     restart: unless-stopped
     <<: *logging-defaults
     # NOTE: Logstash intentionally does NOT use *security-defaults (no-new-privileges:true).
-    # Malcolm's entrypoint (docker-uid-gid-setup.sh) uses `su -s /bin/bash -p logstash << EOF`
-    # to drop privileges before running supervisord. Supervisord then tries to open
-    # stdout_logfile=/dev/fd/1, which fails with EACCES because the `su` heredoc changes
-    # the fd context. Setting PUSER_PRIV_DROP=false keeps supervisord running as root
-    # (which can open /dev/fd/1), while the container itself remains isolated by Docker.
+    # Malcolm's supervisord uses stdout_logfile=/dev/fd/1, and the entrypoint's `su` heredoc
+    # privilege drop breaks fd access. PUSER_PRIV_DROP=false is set globally in x-process-env.
     labels:
       com.nettap.service: "logstash"
       com.nettap.component: "log-pipeline"
       com.nettap.description: "Logstash log enrichment and forwarding pipeline"
     environment:
       <<: [*process-env, *opensearch-env]
-      PUSER_PRIV_DROP: "false"
       LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
       pipeline.workers: "${LOGSTASH_WORKERS:-2}"
       pipeline.batch.size: "125"
