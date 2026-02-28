@@ -155,8 +155,28 @@ start_services() {
     log "Building custom NetTap images (web, daemon, tshark, cyberchef)..."
     BUILDKIT_PROGRESS=plain run docker compose -f "$COMPOSE_FILE" build
 
-    # Start the stack (images already built, this just creates containers)
-    log "Creating and starting containers..."
+    # ---------------------------------------------------------------------------
+    # Phase 0: Bootstrap OpenSearch security before starting dependent services
+    # ---------------------------------------------------------------------------
+    # On fresh deployments, the .opendistro_security index doesn't exist.
+    # The healthcheck (curl + auth) fails → Docker marks OpenSearch unhealthy →
+    # dependent services (logstash, dashboards, etc.) refuse to start.
+    #
+    # Fix: start OpenSearch alone, wait for its HTTP API to respond (even 401),
+    # run securityadmin.sh to create the security index, THEN start everything.
+    # ---------------------------------------------------------------------------
+    log "Starting OpenSearch first (security bootstrap required before other services)..."
+    run docker compose -f "$COMPOSE_FILE" up -d opensearch
+
+    # Wait for OpenSearch HTTP API to respond (even "Unauthorized" is fine —
+    # it means the REST API is up and ready for securityadmin.sh)
+    _wait_for_opensearch_http
+
+    # Bootstrap security (idempotent — safe on existing deployments too)
+    bootstrap_opensearch_security
+
+    # Now start the full stack — OpenSearch should pass healthchecks
+    log "Starting remaining services..."
     run docker compose -f "$COMPOSE_FILE" up -d
 
     log ""
@@ -167,9 +187,6 @@ start_services() {
     # Verbose startup monitoring — show per-service status as they come up
     # ---------------------------------------------------------------------------
     monitor_startup
-
-    # Bootstrap security (roles_mapping + securityadmin) before any API calls
-    bootstrap_opensearch_security
 
     # Apply ILM policy once OpenSearch is confirmed healthy and auth works
     apply_ilm_policy
@@ -275,6 +292,40 @@ monitor_startup() {
     else
         log "All services are running"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Wait for OpenSearch HTTP API to respond (any status, even 401/403)
+# ---------------------------------------------------------------------------
+# Used during bootstrap: we need securityadmin.sh to create the
+# .opendistro_security index, but OpenSearch's REST API must be up first.
+# The healthcheck (which requires auth) will fail until after bootstrap,
+# so we check for ANY HTTP response instead.
+# ---------------------------------------------------------------------------
+_wait_for_opensearch_http() {
+    local max_wait=120
+    local interval=5
+    local elapsed=0
+
+    log "  Waiting for OpenSearch HTTP API..."
+    while (( elapsed < max_wait )); do
+        # Any HTTP response means the REST API is ready (even 401 "Unauthorized")
+        local http_code
+        http_code=$(docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+            curl -sk -o /dev/null -w '%{http_code}' https://localhost:9200/ 2>/dev/null) || true
+
+        if [[ "$http_code" =~ ^[0-9]+$ ]] && (( http_code > 0 )); then
+            log "  OpenSearch HTTP API responding (HTTP ${http_code}, ${elapsed}s)"
+            return 0
+        fi
+
+        sleep "$interval"
+        (( elapsed += interval ))
+        log "  Waiting for OpenSearch HTTP... (${elapsed}s)"
+    done
+
+    warn "  OpenSearch HTTP API did not respond within ${max_wait}s"
+    return 1
 }
 
 # ---------------------------------------------------------------------------
