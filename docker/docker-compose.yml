@@ -98,6 +98,9 @@ services:
       - SYS_RESOURCE       # required for mlockall (bootstrap.memory_lock)
     environment:
       <<: [*process-env, *opensearch-env]
+      # OpenSearch explicitly refuses to run as root (JVM safety check).
+      # Override the global PUSER_PRIV_DROP=false to keep the privilege drop.
+      PUSER_PRIV_DROP: "true"
       OPENSEARCH_JAVA_OPTS: "${OPENSEARCH_JAVA_OPTS:--Xms4g -Xmx4g}"
       discovery.type: "single-node"
       bootstrap.memory_lock: "true"
