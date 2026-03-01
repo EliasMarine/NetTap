@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-01
-> **Status:** 11 issues tracked. PR #65 was WRONG (jvm.options.d/ is Elasticsearch-only). PR #66 (NET-58) fixes it properly.
+> **Status:** 12 issues tracked. PR #66 had a race condition. PR #67 (NET-59) fixes it with autostart=false + supervisorctl + LS_JAVA_OPTS belt-and-suspenders.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -27,7 +27,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
 | Logstash (6/7 pipelines) | OK | input, output, filescan, suricata, beats, enrichment |
-| Logstash (malcolm-zeek) | PENDING VERIFY | PR #65 was WRONG (jvm.options.d/ is ES-only). PR #66 injects -Xss8m into actual jvm.options — awaiting host test |
+| Logstash (malcolm-zeek) | PENDING VERIFY | PR #66 had race condition. PR #67 uses autostart=false + supervisorctl + LS_JAVA_OPTS — awaiting host test |
 | Zeek, Suricata, Arkime | OK | Capture services running after no-new-privileges removal |
 | Redis, API, Filebeat | OK | Depend on logstash/opensearch chain |
 | nginx-proxy, CyberChef | OK | Needed CHOWN/SETUID caps after security restructuring |
@@ -46,8 +46,8 @@ CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
 CHAIN 2: Privilege Drop & Service Startup (NET-48 → NET-50 → NET-51 → NET-52 → NET-53 → NET-54 → NET-55)
   PR #54 → PR #56 → PR #57 → PR #58 → PR #59 → PR #60 → PR #61 → PR #62 → PR #63
 
-CHAIN 3: Logstash JVM / Pipeline Compilation (NET-56 → NET-57 → NET-58)
-  PR #64 → PR #65 → PR #66
+CHAIN 3: Logstash JVM / Pipeline Compilation (NET-56 → NET-57 → NET-58 → NET-59)
+  PR #64 → PR #65 → PR #66 → PR #67
 ```
 
 ---
@@ -379,7 +379,51 @@ Look for:
 1. Edit the `jvm.options` file directly (before JVM starts)
 2. Inject at container startup via a pre-logstash init script
 
-`LS_JAVA_OPTS` filters `-Xss`. `jvm.options.d/` doesn't exist in Logstash. Don't assume Elastic stack features are shared.
+`jvm.options.d/` doesn't exist in Logstash. Don't assume Elastic stack features are shared.
+
+---
+
+### NET-59 — Race condition: logstash starts before fix-perms completes
+| Field | Value |
+|---|---|
+| **Linear** | [NET-59](https://linear.app/nettap/issue/NET-59) |
+| **PR** | [#67](https://github.com/EliasMarine/NetTap/pull/67) |
+| **Status** | Done — AWAITING HOST VERIFICATION |
+| **Severity** | Urgent |
+| **Date** | 2026-03-01 |
+
+**Symptom:** StackOverflowError persists after PR #66 deployed. The `-Xss8m` injection into `jvm.options` had no effect — the JVM still started with default thread stack size.
+
+**Root Cause:** Three bugs in PR #66's approach:
+
+1. **Race condition:** Supervisord's priority system only controls start ORDER, not completion order. With `startsecs=0`, supervisord considers fix-perms "started" immediately upon `fork()`. Logstash starts milliseconds later — before fix-perms finishes the `chown -R` and `echo -Xss8m >>` operations. The JVM reads `jvm.options` before our injection completes.
+
+2. **LS_JAVA_OPTS override potential:** Malcolm's default environment includes `-Xss1536k` in `LS_JAVA_OPTS`. `JvmOptionsParser` processes `LS_JAVA_OPTS` AFTER `jvm.options` entries, so the last `-Xss` value wins — 1.5m overrides our 8m.
+
+3. **Shell operator precedence:** `cmd1 && cmd2 || cmd3` runs `cmd3` when `cmd1` fails, masking chown failures.
+
+**Fix (Two-Part):**
+1. **Eliminate race:** Logstash set to `autostart=false` in supervisord. fix-perms does all init tasks (chown + jvm.options inject), then explicitly starts logstash via `supervisorctl start logstash`. This GUARANTEES init is complete before the JVM starts.
+2. **Belt-and-suspenders:** Append `-Xss8m` to `LS_JAVA_OPTS` in docker-compose.yml after env expansion, ensuring it's always the last `-Xss` flag regardless of what the environment sets.
+3. **Shell logic fix:** Replaced `&&`/`||` chain with proper `if ! grep; then echo; fi`.
+
+**Files Changed:**
+- `config/logstash/supervisord.conf` — logstash `autostart=false`, fix-perms starts it via supervisorctl
+- `docker/docker-compose.yml` — `-Xss8m` appended to LS_JAVA_OPTS, dead comments removed
+
+**Verification Steps (on nettap host):**
+```bash
+cd ~/NetTap && git pull origin develop
+docker compose -f docker/docker-compose.yml up -d --force-recreate logstash
+# Check fix-perms completed before logstash started
+docker logs nettap-logstash 2>&1 | grep -E 'fix-perms|starting logstash'
+# Verify -Xss8m in jvm.options
+docker exec nettap-logstash cat /usr/share/logstash/config/jvm.options | grep Xss
+# Verify malcolm-zeek pipeline compiles
+docker logs -f nettap-logstash 2>&1 | head -200
+```
+
+**Key Insight:** For one-shot init tasks that MUST complete before another program starts, use `autostart=false` on the dependent program and start it via `supervisorctl` from the init task. Supervisord priority alone is NOT sufficient — it's start order, not a completion barrier.
 
 ---
 
@@ -389,8 +433,8 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#66 (all 11) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, jvm.options.d mount REMOVED, LS_JAVA_OPTS=-Xmx2g -Xms2g |
-| `config/logstash/supervisord.conf` | #62, #63, #66 | Custom: fix-perms (chown + -Xss8m inject, priority 1) + logstash with user=logstash (priority 999) |
+| `docker/docker-compose.yml` | #54-#67 (all 12) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m |
+| `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
@@ -418,12 +462,17 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 11. **`jvm.options.d/` is Elasticsearch-only** — Logstash's `JvmOptionsParser.java` reads only a single `jvm.options` file. Never assume Elastic stack features are shared across products.
 12. **Only two ways to set `-Xss` in Logstash:** (a) edit the `jvm.options` file directly, or (b) inject at container startup before the JVM launches.
 
+### Supervisord Gotchas
+13. **Supervisord priority ≠ sequential execution** — priority controls fork order, not completion barriers. Use `autostart=false` + `supervisorctl start` for true dependency ordering.
+14. **`startsecs=0` means 'started immediately'** — supervisord considers the process running the instant it forks, not when it finishes.
+15. **`&&`/`||` chains have surprising behavior** — `cmd1 && cmd2 || cmd3` runs cmd3 when cmd1 fails, masking errors. Use proper `if/then/fi`.
+
 ### Process Lessons
-13. **Don't apply privilege fixes globally** — scope to only the affected services.
-14. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
-15. **Bypassing an entrypoint's privilege drop skips ALL its side effects** — you must replicate chown, env setup, etc.
-16. **Test with the actual execution path** — `docker exec -u 1000` is NOT equivalent to the entrypoint's `su` heredoc.
-17. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
+16. **Don't apply privilege fixes globally** — scope to only the affected services.
+17. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
+18. **Bypassing an entrypoint's privilege drop skips ALL its side effects** — you must replicate chown, env setup, etc.
+19. **Test with the actual execution path** — `docker exec -u 1000` is NOT equivalent to the entrypoint's `su` heredoc.
+20. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
 
 ---
 
@@ -453,4 +502,5 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-55 | #63 | fix-perms for data/queue chown | 2026-03-01 |
 | NET-56 | #64 | StackOverflow via LS_JAVA_OPTS (wrong) | 2026-03-01 |
 | NET-57 | #65 | StackOverflow via jvm.options.d (WRONG — ES-only) | 2026-03-01 |
-| NET-58 | #66 | StackOverflow fix: inject -Xss8m into jvm.options | 2026-03-01 |
+| NET-58 | #66 | StackOverflow fix: inject -Xss8m into jvm.options (race condition) | 2026-03-01 |
+| NET-59 | #67 | Race condition fix: autostart=false + supervisorctl + LS_JAVA_OPTS | 2026-03-01 |
