@@ -298,47 +298,26 @@ print('${svc}: correctly omits no-new-privileges')
     done
 }
 
-@test "compose: supervisord services have PUSER_PRIV_DROP=false" {
+@test "compose: no Malcolm service sets PUSER_PRIV_DROP=false" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    # Only logstash and dashboards-helper use supervisord with stdout_logfile=/dev/fd/1.
-    # The su heredoc privilege drop breaks fd access, so these two need PUSER_PRIV_DROP=false.
-    local services_need_false=(
-        logstash
-        dashboards-helper
-    )
-
-    for svc in "${services_need_false[@]}"; do
-        run _compose_query "
-svc = data['services']['${svc}']
-env = svc.get('environment', {})
-priv_drop = env.get('PUSER_PRIV_DROP', 'not set')
-assert priv_drop == 'false', f'${svc}: PUSER_PRIV_DROP should be false, got: {priv_drop}'
-print('${svc}: PUSER_PRIV_DROP=false (correct)')
-"
-        [ "$status" -eq 0 ]
-    done
-}
-
-@test "compose: non-supervisord Malcolm services do NOT set PUSER_PRIV_DROP=false" {
-    if ! _has_pyyaml; then
-        skip "PyYAML not available"
-    fi
-
-    # Most Malcolm services (OpenSearch, Dashboards, Redis, etc.) refuse to run as root.
-    # They must NOT have PUSER_PRIV_DROP=false — the default privilege drop must stay enabled.
-    local services_must_not_be_false=(
+    # All Malcolm services refuse to run as root (OpenSearch, Dashboards, Logstash, etc.).
+    # PUSER_PRIV_DROP must stay at default (true) so the entrypoint's `su` drops to non-root.
+    # no-new-privileges has been removed, so the su setuid works correctly.
+    local malcolm_services=(
         opensearch
+        dashboards-helper
         dashboards
+        logstash
         filebeat
         api
         nginx-proxy
         redis
     )
 
-    for svc in "${services_must_not_be_false[@]}"; do
+    for svc in "${malcolm_services[@]}"; do
         run _compose_query "
 svc = data['services']['${svc}']
 env = svc.get('environment', {})
