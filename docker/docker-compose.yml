@@ -204,7 +204,7 @@ services:
     environment:
       <<: [*process-env, *opensearch-env]
       PUSER_PRIV_DROP: "false"
-      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g -Xss4m}"
+      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
       pipeline.workers: "${LOGSTASH_WORKERS:-2}"
       pipeline.batch.size: "125"
       LOGSTASH_OUI_LOOKUP: "true"
@@ -219,6 +219,7 @@ services:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
       - ./curlrc:/var/local/curlrc:ro
       - ../config/logstash/supervisord.conf:/etc/supervisord.conf:ro
+      - ../config/logstash/jvm.options.d/99-nettap.options:/usr/share/logstash/config/jvm.options.d/99-nettap.options:ro
     networks:
       - default
     depends_on:
