@@ -298,19 +298,42 @@ print('${svc}: correctly omits no-new-privileges')
     done
 }
 
-@test "compose: no Malcolm service sets PUSER_PRIV_DROP=false" {
+@test "compose: logstash has PUSER_PRIV_DROP=false with supervisord user= override" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
-    # All Malcolm services refuse to run as root (OpenSearch, Dashboards, Logstash, etc.).
-    # PUSER_PRIV_DROP must stay at default (true) so the entrypoint's `su` drops to non-root.
-    # no-new-privileges has been removed, so the su setuid works correctly.
+    # Logstash needs PUSER_PRIV_DROP=false because after su, /proc/self/fd/1
+    # becomes inaccessible (l-wx------ root root). Supervisord's stdout_logfile=
+    # /dev/fd/1 fails with EACCES. With PUSER_PRIV_DROP=false, supervisord runs
+    # as root (can open /dev/fd/1) and our custom supervisord.conf uses user=logstash
+    # so the logstash process itself runs as non-root.
+    run _compose_query "
+svc = data['services']['logstash']
+env = svc.get('environment', {})
+priv_drop = env.get('PUSER_PRIV_DROP', 'not set')
+assert priv_drop == 'false', f'logstash: PUSER_PRIV_DROP should be false, got: {priv_drop}'
+# Verify custom supervisord.conf is mounted
+volumes = [str(v) for v in svc.get('volumes', [])]
+has_supervisord = any('supervisord.conf' in v for v in volumes)
+assert has_supervisord, f'logstash: must mount custom supervisord.conf with user=logstash, volumes: {volumes}'
+print('logstash: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: non-logstash Malcolm services do NOT set PUSER_PRIV_DROP=false" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Most Malcolm services refuse to run as root. They use the entrypoint's su
+    # for privilege drop (works since no-new-privileges is removed).
+    # Only logstash needs PUSER_PRIV_DROP=false (supervisord /dev/fd/1 issue).
     local malcolm_services=(
         opensearch
         dashboards-helper
         dashboards
-        logstash
         filebeat
         api
         nginx-proxy

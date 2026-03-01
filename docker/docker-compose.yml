@@ -191,14 +191,19 @@ services:
     restart: unless-stopped
     <<: *logging-defaults
     # NOTE: Logstash does NOT use *security-defaults (no-new-privileges).
-    # Malcolm's entrypoint uses `su` (setuid) for privilege drop, which is
-    # incompatible with no-new-privileges. Normal priv drop works fine.
+    # Malcolm's entrypoint uses `su` (setuid) for privilege drop, but after su
+    # the logstash user cannot reopen /proc/self/fd/1 (kernel procfs restriction:
+    # l-wx------ root root). Supervisord's stdout_logfile=/dev/fd/1 fails EACCES.
+    # Fix: PUSER_PRIV_DROP=false skips the su, supervisord runs as root (can open
+    # /dev/fd/1), and our custom supervisord.conf adds user=logstash so the
+    # logstash process itself runs as non-root.
     labels:
       com.nettap.service: "logstash"
       com.nettap.component: "log-pipeline"
       com.nettap.description: "Logstash log enrichment and forwarding pipeline"
     environment:
       <<: [*process-env, *opensearch-env]
+      PUSER_PRIV_DROP: "false"
       LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
       pipeline.workers: "${LOGSTASH_WORKERS:-2}"
       pipeline.batch.size: "125"
@@ -213,6 +218,7 @@ services:
     volumes:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
       - ./curlrc:/var/local/curlrc:ro
+      - ../config/logstash/supervisord.conf:/etc/supervisord.conf:ro
     networks:
       - default
     depends_on:
