@@ -204,7 +204,9 @@ services:
     environment:
       <<: [*process-env, *opensearch-env]
       PUSER_PRIV_DROP: "false"
-      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
+      # -Xss8m is appended AFTER any env override to guarantee it's the last -Xss
+      # flag (JVM uses last value). Belt-and-suspenders with jvm.options injection.
+      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g} -Xss8m"
       pipeline.workers: "${LOGSTASH_WORKERS:-2}"
       pipeline.batch.size: "125"
       LOGSTASH_OUI_LOOKUP: "true"
@@ -219,9 +221,6 @@ services:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
       - ./curlrc:/var/local/curlrc:ro
       - ../config/logstash/supervisord.conf:/etc/supervisord.conf:ro
-      # OLD CODE START — jvm.options.d/ is Elasticsearch-only, Logstash ignores this dir
-      # - ../config/logstash/jvm.options.d/99-nettap.options:/usr/share/logstash/config/jvm.options.d/99-nettap.options:ro
-      # OLD CODE END — -Xss8m is now injected into jvm.options by fix-perms in supervisord.conf
     networks:
       - default
     depends_on:
