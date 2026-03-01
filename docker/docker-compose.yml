@@ -204,7 +204,7 @@ services:
     environment:
       <<: [*process-env, *opensearch-env]
       PUSER_PRIV_DROP: "false"
-      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g}"
+      LS_JAVA_OPTS: "${LS_JAVA_OPTS:--Xmx2g -Xms2g -Xss4m}"
       pipeline.workers: "${LOGSTASH_WORKERS:-2}"
       pipeline.batch.size: "125"
       LOGSTASH_OUI_LOOKUP: "true"
