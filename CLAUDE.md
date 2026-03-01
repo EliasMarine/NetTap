@@ -130,6 +130,14 @@ Development versions increment with each phase milestone. Tags are applied on `d
 
 **Workflow**: Implement → **Create/update Linear issue** → Update tracking doc → Verify.
 
+### Debugging Log (source of truth for deployment issues)
+
+**CRITICAL: Before starting ANY deployment fix, read `Debugging/DEPLOYMENT-ISSUES.md` first.** This document tracks every deployment bug, its causal chain, what was tried, what worked, and what didn't. After completing a fix, update this document with the new issue, root cause, fix, files changed, and lessons learned. This prevents re-introducing previously fixed bugs or repeating failed approaches.
+
+- **Location:** `Debugging/DEPLOYMENT-ISSUES.md`
+- **Before each fix:** Check the "Key Files Modified" table and "Lessons Learned" section
+- **After each fix:** Add a new entry, update "Current Stack Health", and add to "Known Risks" if applicable
+
 ### Tracking Docs (secondary)
 
 Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature**:
@@ -142,6 +150,8 @@ Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature
 ## Project Structure
 
 ```
+Debugging/         Deployment issue tracking (source of truth)
+  DEPLOYMENT-ISSUES.md   All deployment bugs, causal chains, fixes, lessons
 scripts/           Shell scripts for system setup
   bridge/          Linux bridge configuration (setup-bridge.sh)
   install/         Installation automation (install.sh)
