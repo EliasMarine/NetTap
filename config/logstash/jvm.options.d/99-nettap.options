@@ -1,0 +1,10 @@
+# NetTap JVM overrides for Logstash
+#
+# Malcolm's zeek pipeline (~75 config files with deeply nested conditionals)
+# causes a StackOverflowError during recursive pipeline compilation.
+# The default thread stack size (1m) is insufficient.
+#
+# NOTE: -Xss cannot be set via LS_JAVA_OPTS — Logstash 9.x's launcher
+# filters it out. Drop-in files in jvm.options.d/ are the supported method.
+
+-Xss8m
