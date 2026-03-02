@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-01
-> **Status:** 16 issues tracked. 15 RESOLVED. 1 NEW (NET-64 — sysfs symlink mount breaks NIC discovery). Fix in PR #70.
+> **Status:** 18 issues tracked. 16 RESOLVED. 2 NEW (NET-65 Redis double-shell, NET-66 setup auth redirect). Fix in PR #71.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -16,6 +16,8 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 3: Logstash JVM / Pipeline Compilation](#chain-3-logstash-jvm--pipeline-compilation)
 - [Chain 4: Missing Malcolm Command/Env Overrides](#chain-4-missing-malcolm-commandenv-overrides)
 - [Chain 5: Docker sysfs Symlink Resolution](#chain-5-docker-sysfs-symlink-resolution)
+- [Chain 6: Redis Double-Shell Wrapping](#chain-6-redis-double-shell-wrapping)
+- [Chain 7: Setup Wizard Auth Redirect](#chain-7-setup-wizard-auth-redirect)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -29,20 +31,21 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
 | Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
-| Redis | OK | Fixed in PR #69 — explicit `command: redis-server ...` added |
+| Redis | **CRASH-LOOP** | PR #69 fix used string-form command → double-shell-wrapping mangles `--save ''` (NET-65). Fix in PR #71. |
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed in PR #69 — upload-common env vars added |
 | Zeek, Suricata, Arkime | RESTARTING | Expected: br0 has no carrier (cables not connected). Will stabilize when plugged in. |
 | nginx-proxy | OK | Depends on API — now healthy after API fix |
 | CyberChef | UNHEALTHY | Low priority — app runs but healthcheck endpoint may not exist |
-| NetTap daemon NIC discovery | **BROKEN** | sysfs symlink mount — all NIC metadata empty (NET-64). Fix in PR #70. |
+| NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
+| NetTap setup wizard API | **BROKEN** | Auth middleware redirects /api/setup/* → /setup (HTML) — breaks JSON parse (NET-66). Fix in PR #71. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
 ---
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **5 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **7 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -59,6 +62,12 @@ CHAIN 4: Missing Malcolm Command/Env Overrides (NET-61, NET-62, NET-63)
 
 CHAIN 5: Docker sysfs Symlink Resolution (NET-64)
   PR #70
+
+CHAIN 6: Redis Double-Shell Wrapping (NET-65)
+  PR #69 (broke) → PR #71 (fix)
+
+CHAIN 7: Setup Wizard Auth Redirect (NET-66)
+  PR #71
 ```
 
 ---
@@ -589,13 +598,104 @@ The writable `/sys/class/leds` overlay is preserved because the igc LED blink fe
 
 ---
 
+## Chain 6: Redis Double-Shell Wrapping
+
+### NET-65 — Redis crash-loop: string-form command double-shell-wrapped
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-65 |
+| **PR** | #71 |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-01 |
+
+**Symptom:** Redis container exits with code 1 immediately after start. `Restarting (1)` in docker ps. No useful logs — redis-server never fully initializes.
+
+**Root Cause:** PR #69 added a string-form `command:` to the redis service:
+```yaml
+command: >-
+  redis-server --dir /data ... --save '' ... --requirepass $$REDIS_PASSWORD
+```
+
+Docker wraps string-form commands in `/bin/sh -c "..."`. Malcolm's entrypoint (`docker-uid-gid-setup.sh`) then passes this through `su -s /bin/bash -p` with `printf "%q "` quoting. This creates **double shell wrapping** — the `--save ''` single quotes get mangled through two shell layers, resulting in `--save` with no argument. Redis-server sees "bad directive or wrong number of arguments" and exits with code 1.
+
+Malcolm's upstream compose uses **list-form** (exec form) with explicit `sh -c`:
+```yaml
+command: ["sh", "-c", "redis-server --dir /data ... --save '' ..."]
+```
+
+List-form passes discrete arguments to the entrypoint. The entrypoint execs `sh -c "redis-server ..."` — only ONE shell layer processes the command, preserving quoting.
+
+**Fix:** Changed to list-form matching Malcolm's upstream:
+```yaml
+command:
+  - sh
+  - -c
+  - >-
+    redis-server --dir /data --appendonly yes ... --save '' ...
+```
+
+Also confirmed: Malcolm's entrypoint uses `su -s /bin/bash -p` (the `-p` flag **preserves** environment), so `$REDIS_PASSWORD` etc. expand correctly from container env vars.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — redis `command:` changed from string-form to list-form
+
+**Key Insight:** When using Malcolm images, ALWAYS use list-form `command:` (array syntax with `sh -c`) — never string-form. String-form gets double-shell-wrapped through Malcolm's entrypoint, mangling quoting. This matches Malcolm's upstream compose pattern exactly.
+
+---
+
+## Chain 7: Setup Wizard Auth Redirect
+
+### NET-66 — Setup wizard API returns HTML instead of JSON (auth redirect)
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-66 |
+| **PR** | #71 |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-01 |
+
+**Symptom:** Setup wizard Step 2 (Interfaces) shows "Server returned invalid data — daemon may need restart". NIC dropdowns are empty. Step 1 shows red X on "Two or more network interfaces". The daemon is healthy and the sysfs mount is correct (PR #70).
+
+**Root Cause:** The SvelteKit auth middleware in `web/src/hooks.server.ts` intercepts ALL requests before they reach route handlers. The `PUBLIC_PATHS` array was:
+```typescript
+const PUBLIC_PATHS = ['/login', '/setup', '/api/auth'];
+```
+
+The setup wizard page (`/setup`) is public, but its API calls (`/api/setup/nics`, `/api/setup/bridge`, `/api/setup/storage`) are NOT — they start with `/api/setup`, not `/setup`.
+
+On first run (no users exist), the hooks middleware has TWO redirect traps:
+1. **First-run redirect** (line 25): If `!hasUsers()`, redirect to `/setup` — applies to `/api/setup/nics` because it doesn't start with `/setup`
+2. **Auth guard** (line 40): If not authenticated and not public, redirect to `/login`
+
+Both traps fire on `/api/setup/nics`. The browser's `fetch()` follows the 302 redirect automatically, receives the HTML of `/setup` (or `/login`), and `JSON.parse()` fails on HTML.
+
+**Why Step 1 appeared to "work":** It didn't. The `checkRequirements()` function catches ALL errors silently and just sets `requirements.nics.status = 'fail'` (red X). It never displays the error message. Step 2's `fetchNics()` displays the error message to the user.
+
+**Fix:** Added `/api/setup` to both the PUBLIC_PATHS array and the first-run redirect exclusion:
+```typescript
+const PUBLIC_PATHS = ['/login', '/setup', '/api/auth', '/api/setup'];
+// ...
+if (!pathname.startsWith('/setup') && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/setup')) {
+```
+
+**Files Changed:**
+- `web/src/hooks.server.ts` — added `/api/setup` to PUBLIC_PATHS and first-run redirect exclusion
+
+**Key Insight:** When a page is public, ALL of its API calls must also be public. The setup wizard is public because it runs before any user account exists — but its `/api/setup/*` endpoints were behind auth. Always test the full request chain in first-run (no-users) state.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 10 PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#70 (all 15) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: explicit command. API: explicit gunicorn command. Filebeat: upload-common env vars. Daemon: full /sys mount for sysfs symlinks. |
+| `docker/docker-compose.yml` | #54-#71 (all 16) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common env vars. Daemon: full /sys mount + healthcheck. |
+| `web/src/hooks.server.ts` | #71 | PUBLIC_PATHS includes `/api/setup`; first-run redirect skips `/api/setup/*` |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
@@ -634,6 +734,14 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 17. **Exit code 0 + no logs = "nothing to run"** — for Malcolm images, a clean exit with only usermod/uid output means no CMD was provided. The entrypoint succeeded but there was no service to start.
 18. **Supervisord `%(ENV_*)s` is strictly fatal** — unlike shell `$VAR` which expands to empty, supervisord treats missing env vars as a hard crash. Every `%(ENV_*)s` referenced in supervisord.conf MUST be passed via the compose environment.
 19. **Always compare against Malcolm's upstream docker-compose** — Malcolm's images are designed to work with Malcolm's compose. When writing our own compose, we must provide equivalent `command:`, `env_file:`, and `volumes:` directives. Missing any of these causes silent failures.
+
+### Docker Command Form
+28. **Always use list-form `command:` with Malcolm images** — string-form commands get double-shell-wrapped through Malcolm's `docker-uid-gid-setup.sh` entrypoint, mangling quoting. Use `["sh", "-c", "..."]` to match Malcolm's upstream compose pattern.
+29. **`su -s /bin/bash -p` preserves env; `su -` does not** — Malcolm's entrypoint uses `-p` (preserve). This means env vars in commands ARE expanded correctly. The problem is quoting, not env expansion.
+
+### Web / Auth Gotchas
+30. **Public pages need public API endpoints** — if a page is accessible without auth, all its `fetch()` calls must also bypass auth. Otherwise the auth middleware returns HTML redirects that break JSON parsing.
+31. **Browser `fetch()` follows 302 redirects silently** — a redirect from an API endpoint to an HTML page succeeds (HTTP 200) but the body is HTML, not JSON. The only clue is `JSON.parse()` failing.
 
 ### sysfs / Filesystem Gotchas
 26. **`/sys/class/*` directories are symlink farms** — entries like `/sys/class/net/eth0` are symlinks to `/sys/devices/pci.../net/eth0`. Mounting only a `/sys/class/` subdirectory brings the symlinks but not their targets. Always mount all of `/sys:ro` and overlay writable paths as needed.
@@ -685,3 +793,5 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-62 | #69 | API crash-loop: missing gunicorn command | 2026-03-02 |
 | NET-63 | #69 | Filebeat crash-loop: missing PCAP_PIPELINE_VERBOSITY | 2026-03-02 |
 | NET-64 | #70 | NIC discovery empty metadata: sysfs symlink mount | 2026-03-01 |
+| NET-65 | #71 | Redis crash-loop: double-shell-wrapping mangles command | 2026-03-01 |
+| NET-66 | #71 | Setup wizard API returns HTML: auth redirect on /api/setup/* | 2026-03-01 |
