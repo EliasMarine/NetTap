@@ -183,9 +183,10 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         self.assertEqual(data["duration"], 1)
 
     @unittest_run_loop
+    @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
     @patch("api.nic_identify.shutil.which", return_value=None)
-    async def test_ethtool_not_found_returns_error(self, mock_which):
-        """When ethtool is not installed, should return 500 with helpful hint."""
+    async def test_ethtool_not_found_returns_error(self, mock_which, mock_sysfs):
+        """When ethtool is not installed and sysfs fails, should return 500."""
         resp = await self.client.request(
             "POST",
             "/api/setup/nics/identify",
@@ -193,8 +194,7 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 500)
         data = await resp.json()
-        self.assertEqual(data["error"], "ethtool is not installed")
-        self.assertIn("apt install ethtool", data["hint"])
+        self.assertIn("Cannot blink", data["error"])
 
     @unittest_run_loop
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
@@ -231,10 +231,11 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         self.assertIn("invalid json", data["error"].lower())
 
     @unittest_run_loop
+    @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
     @patch("api.nic_identify.asyncio.create_subprocess_exec")
-    async def test_ethtool_immediate_failure_returns_500(self, mock_exec, mock_which):
-        """When ethtool exits immediately with error, return 500."""
+    async def test_ethtool_immediate_failure_returns_500(self, mock_exec, mock_which, mock_sysfs):
+        """When ethtool fails and sysfs unavailable, return 500."""
         mock_process = AsyncMock()
         mock_process.returncode = 1
         mock_stderr = MagicMock()
@@ -250,16 +251,17 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 500)
         data = await resp.json()
-        self.assertIn("ethtool failed", data["error"])
+        self.assertIn("Cannot blink", data["error"])
 
     @unittest_run_loop
+    @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
     @patch(
         "api.nic_identify.asyncio.create_subprocess_exec",
         side_effect=OSError("Permission denied"),
     )
-    async def test_oserror_starting_ethtool_returns_500(self, mock_exec, mock_which):
-        """OSError when starting ethtool should return 500."""
+    async def test_oserror_starting_ethtool_returns_500(self, mock_exec, mock_which, mock_sysfs):
+        """OSError when starting ethtool and sysfs unavailable should return 500."""
         resp = await self.client.request(
             "POST",
             "/api/setup/nics/identify",
@@ -267,7 +269,7 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 500)
         data = await resp.json()
-        self.assertIn("failed to start ethtool", data["error"].lower())
+        self.assertIn("Cannot blink", data["error"])
 
 
 if __name__ == "__main__":

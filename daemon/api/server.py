@@ -45,6 +45,7 @@ from api.reports import register_report_routes
 from api.bridge import register_bridge_routes
 from api.updates import register_update_routes
 from api.nic_identify import register_nic_identify_routes
+from api.nic_discovery import register_nic_discovery_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -457,6 +458,9 @@ def create_app(
 
     # NIC LED identification (setup wizard physical port blink)
     register_nic_identify_routes(app)
+
+    # NIC discovery (setup wizard interface detection from host sysfs)
+    register_nic_discovery_routes(app)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
