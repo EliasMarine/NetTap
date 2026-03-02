@@ -304,6 +304,29 @@ curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
 
 This applies to all deployment, testing, debugging, and diagnostic instructions.
 
+**Test/verification commands must include the FULL deployment flow.** Never give bare test commands (e.g. `docker exec ... nsenter`) without the prerequisite steps a normal user needs to run first. Always include: pull latest code → build affected container(s) → recreate/restart → then test.
+
+Example — **BAD:**
+```bash
+# Test nsenter works:
+sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
+```
+
+Example — **GOOD:**
+```bash
+# Pull latest and rebuild
+cd ~/NetTap
+sudo git pull origin develop
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate
+
+# Verify container is healthy
+sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep daemon
+
+# Test nsenter works
+sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
+```
+
 ---
 
 ## Key Design Constraints
