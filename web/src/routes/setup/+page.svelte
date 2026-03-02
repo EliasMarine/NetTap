@@ -233,13 +233,21 @@
 
 		try {
 			const nicRes = await fetch('/api/setup/nics');
-			const nicData = await nicRes.json();
-			const ethernetNics = (nicData.interfaces || []).filter(
+			if (!nicRes.ok) throw new Error(`HTTP ${nicRes.status}`);
+			const text = await nicRes.text();
+			let nicData: { interfaces?: NetworkInterface[]; source?: string };
+			try {
+				nicData = JSON.parse(text);
+			} catch {
+				throw new Error('Server returned invalid data');
+			}
+			// Count non-loopback, non-virtual interfaces available for bridge duty
+			const bridgeableNics = (nicData.interfaces || []).filter(
 				(iface: NetworkInterface) => iface.type === 'ethernet'
 			);
 			requirements.nics = {
 				...requirements.nics,
-				status: ethernetNics.length >= 2 ? 'pass' : 'fail',
+				status: bridgeableNics.length >= 2 ? 'pass' : 'fail',
 			};
 
 			// Pre-populate interfaces for step 2
@@ -287,7 +295,13 @@
 		try {
 			const res = await fetch('/api/setup/nics');
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const data = await res.json();
+			const text = await res.text();
+			let data: { interfaces?: NetworkInterface[]; source?: string };
+			try {
+				data = JSON.parse(text);
+			} catch {
+				throw new Error('Server returned invalid data — daemon may need restart');
+			}
 			interfaces = data.interfaces || [];
 			nicsSource = data.source || '';
 		} catch (err) {
@@ -381,6 +395,13 @@
 		}
 		if (form?.error) {
 			adminLoading = false;
+		}
+	});
+
+	// Auto-run requirements check when page loads
+	$effect(() => {
+		if (!requirementsChecked && !checkingRequirements) {
+			checkRequirements();
 		}
 	});
 </script>
@@ -622,13 +643,13 @@
 									</select>
 									<button
 										class="btn btn-sm btn-secondary btn-identify"
-										class:btn-identify-active={blinkingInterface === selectedWan}
+										class:btn-identify-active={blinkingInterface !== '' && blinkingInterface === selectedWan}
 										type="button"
 										disabled={!selectedWan || (blinkingInterface !== '' && blinkingInterface !== selectedWan)}
 										onclick={() => identifyNic(selectedWan)}
 										title="Blink the physical port LEDs to identify this interface"
 									>
-										{#if blinkingInterface === selectedWan}
+										{#if blinkingInterface !== '' && blinkingInterface === selectedWan}
 											<span class="identify-icon pulse">
 												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 													<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>
@@ -677,13 +698,13 @@
 									</select>
 									<button
 										class="btn btn-sm btn-secondary btn-identify"
-										class:btn-identify-active={blinkingInterface === selectedLan}
+										class:btn-identify-active={blinkingInterface !== '' && blinkingInterface === selectedLan}
 										type="button"
 										disabled={!selectedLan || (blinkingInterface !== '' && blinkingInterface !== selectedLan)}
 										onclick={() => identifyNic(selectedLan)}
 										title="Blink the physical port LEDs to identify this interface"
 									>
-										{#if blinkingInterface === selectedLan}
+										{#if blinkingInterface !== '' && blinkingInterface === selectedLan}
 											<span class="identify-icon pulse">
 												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 													<path d="M9 18h6M10 22h4M12 2v1M4.22 4.22l.71.71M1 12h1M4.22 19.78l.71-.71M20.78 19.78l-.71-.71M23 12h-1M19.78 4.22l-.71.71"/>

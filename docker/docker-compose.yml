@@ -460,6 +460,16 @@ services:
       com.nettap.description: "NetTap storage & health daemon — retention, SMART, disk management"
     cap_drop:
       - ALL
+    # NET_ADMIN: ethtool NIC LED blink via host network namespace
+    # SYS_PTRACE: nsenter -t 1 -n to enter host network namespace
+    cap_add:
+      - NET_ADMIN
+      - SYS_PTRACE
+    # pid: host lets nsenter target PID 1 (host init) for network namespace
+    pid: "host"
+    # Override Dockerfile USER — capabilities only work for root in Docker.
+    # Security maintained via cap_drop: ALL + selective cap_add + read_only.
+    user: "root"
     read_only: true
     tmpfs:
       - /tmp:size=50M
@@ -468,6 +478,10 @@ services:
       - /dev:/dev:ro
       - storage-data:/var/lib/nettap
       - pcap-data:/opt/nettap/pcap:ro
+      # Host sysfs for NIC discovery (MAC, speed, driver, link state)
+      - /sys/class/net:/host/sys/class/net:ro
+      # Host LED sysfs for igc NIC LED blink (ethtool -p unsupported on igc)
+      - /sys/class/leds:/host/sys/class/leds
     environment:
       <<: *opensearch-env
       RETENTION_HOT: "${RETENTION_HOT:-90}"
@@ -475,6 +489,8 @@ services:
       RETENTION_COLD: "${RETENTION_COLD:-30}"
       DISK_THRESHOLD_PERCENT: "${DISK_THRESHOLD_PERCENT:-80}"
       PCAP_DIR: "/opt/nettap/pcap"
+      HOST_SYS_NET: "/host/sys/class/net"
+      HOST_SYS_LEDS: "/host/sys/class/leds"
     # Daemon port is internal-only — only the web container needs it
     expose:
       - "8880"
