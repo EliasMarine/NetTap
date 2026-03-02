@@ -2,8 +2,13 @@ import type { Handle } from '@sveltejs/kit';
 import { redirect } from '@sveltejs/kit';
 import { verifyToken, hasUsers } from '$lib/server/auth.js';
 
-/** Paths that do not require authentication */
-const PUBLIC_PATHS = ['/login', '/setup', '/api/auth'];
+/** Paths that do not require authentication.
+ * /api/setup/* must be public because the setup wizard (which is public)
+ * makes fetch() calls to these endpoints for NIC discovery, bridge config,
+ * and storage status. Without this, the auth middleware redirects the API
+ * calls to /setup (HTML), which breaks JSON parsing in the browser.
+ */
+const PUBLIC_PATHS = ['/login', '/setup', '/api/auth', '/api/setup'];
 
 function isPublicPath(pathname: string): boolean {
 	return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
@@ -22,7 +27,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	// --- First-run redirect: if no users exist, force setup ---
-	if (!pathname.startsWith('/setup') && !pathname.startsWith('/api/auth')) {
+	// Also skip redirect for /api/setup/* — the setup wizard's own API calls
+	if (!pathname.startsWith('/setup') && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/setup')) {
 		try {
 			if (!hasUsers()) {
 				throw redirect(302, '/setup');

@@ -389,8 +389,16 @@ services:
     # NOTE: Malcolm's redis image does NOT include a default CMD that starts
     # redis-server — the compose must provide it. Without this command, the
     # entrypoint completes uid/gid setup and exits cleanly (code 0).
-    command: >-
-      redis-server
+    #
+    # IMPORTANT: Must use list-form (exec form) with "sh -c" — NOT string-form.
+    # String-form gets wrapped by Docker in /bin/sh -c "...", and Malcolm's
+    # entrypoint passes it through su, causing double-shell-wrapping that
+    # mangles --save '' quoting. List-form keeps exactly one shell layer.
+    command:
+      - sh
+      - -c
+      - >-
+        redis-server
         --dir /data
         --appendonly yes
         --appendfsync everysec
@@ -535,6 +543,10 @@ services:
     # Daemon port is internal-only — only the web container needs it
     expose:
       - "8880"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8880/api/health')\""]
+      start_period: 15s
     networks:
       - default
     depends_on:

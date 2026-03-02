@@ -276,6 +276,35 @@ The script reads `tool_input.file_path` from stdin JSON using `python3` (not `jq
 ### Stop: Test Coverage Gatekeeper
 An agent hook that fires when Claude tries to stop. It reads the session transcript to find all `.ts` files modified via Edit/Write, then uses Glob to verify each has a matching `.test.ts` or `.spec.ts` file. If tests are missing, it returns `{"ok": false, "reason": "..."}` to block the stop and instruct Claude to create them. Checks `stop_hook_active` to avoid infinite loops.
 
+## Communication Rules
+
+**ALWAYS provide exact, copy-paste-ready commands.** Never say "run install.sh" or "do a docker compose down". Always give the full command with sudo, flags, paths, and working directory. The user should be able to copy and paste directly into their terminal without guessing.
+
+Example — **BAD:**
+> Run `install.sh` on the target host, then check the services.
+
+Example — **GOOD:**
+```bash
+# Clean up previous deployment
+cd /opt/nettap
+sudo docker compose -f docker/docker-compose.yml down -v
+
+# Pull latest code and reinstall
+cd /opt/nettap
+sudo git pull origin develop
+sudo scripts/install/install.sh
+
+# Verify services are healthy
+sudo docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Test NIC discovery endpoint
+curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
+```
+
+This applies to all deployment, testing, debugging, and diagnostic instructions.
+
+---
+
 ## Key Design Constraints
 
 - Target hardware: Intel N100 mini PCs, 16GB RAM, 1TB NVMe, dual Intel i226-V 2.5GbE NICs (~$200 BOM)
