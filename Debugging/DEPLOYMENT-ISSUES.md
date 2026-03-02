@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-02
-> **Status:** 15 issues tracked. 12 RESOLVED. 3 NEW (NET-61/62/63 — Redis/API/Filebeat missing command/env vars). Fix in PR #69.
+> **Last updated:** 2026-03-01
+> **Status:** 16 issues tracked. 15 RESOLVED. 1 NEW (NET-64 — sysfs symlink mount breaks NIC discovery). Fix in PR #70.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -15,6 +15,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 2: Privilege Drop & Service Startup](#chain-2-privilege-drop--service-startup)
 - [Chain 3: Logstash JVM / Pipeline Compilation](#chain-3-logstash-jvm--pipeline-compilation)
 - [Chain 4: Missing Malcolm Command/Env Overrides](#chain-4-missing-malcolm-commandenv-overrides)
+- [Chain 5: Docker sysfs Symlink Resolution](#chain-5-docker-sysfs-symlink-resolution)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -28,19 +29,20 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
 | Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
-| Redis | **CRASH-LOOP** | Missing `command:` override — image has no default CMD for redis-server (NET-61) |
-| API | **CRASH-LOOP** | Missing `command: gunicorn` — image has no default CMD for Flask app (NET-62) |
-| Filebeat | **CRASH-LOOP** | Missing `PCAP_PIPELINE_VERBOSITY` env var — supervisord can't expand %(ENV_...) (NET-63) |
+| Redis | OK | Fixed in PR #69 — explicit `command: redis-server ...` added |
+| API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
+| Filebeat | OK | Fixed in PR #69 — upload-common env vars added |
 | Zeek, Suricata, Arkime | RESTARTING | Expected: br0 has no carrier (cables not connected). Will stabilize when plugged in. |
-| nginx-proxy | UNHEALTHY | Expected: upstream API is crash-looping. Will resolve when API starts. |
+| nginx-proxy | OK | Depends on API — now healthy after API fix |
 | CyberChef | UNHEALTHY | Low priority — app runs but healthcheck endpoint may not exist |
+| NetTap daemon NIC discovery | **BROKEN** | sysfs symlink mount — all NIC metadata empty (NET-64). Fix in PR #70. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
 ---
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **3 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **5 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -54,6 +56,9 @@ CHAIN 3: Logstash JVM / Pipeline Compilation (NET-56 → NET-57 → NET-58 → N
 
 CHAIN 4: Missing Malcolm Command/Env Overrides (NET-61, NET-62, NET-63)
   PR #69
+
+CHAIN 5: Docker sysfs Symlink Resolution (NET-64)
+  PR #70
 ```
 
 ---
@@ -534,13 +539,63 @@ PCAP_MONITOR_HOST: "pcap-monitor"
 
 ---
 
+## Chain 5: Docker sysfs Symlink Resolution
+
+### NET-64 — NIC Discovery Returns Empty Metadata (sysfs Symlink Mount)
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-64 |
+| **PR** | #70 |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-01 |
+
+**Symptom:** Setup wizard shows red X on "Two or more network interfaces". The Interfaces page shows "Server returned invalid data — daemon may need restart". NIC dropdowns are empty. The daemon's `/api/setup/nics` endpoint returns interface names but ALL metadata fields are empty:
+```json
+{"interfaces": [{"name": "enp2s0", "mac": "", "state": "unknown", "speed": "", "driver": "", "type": "virtual"}, ...]}
+```
+
+All interfaces classified as `"virtual"` (no `device` symlink resolvable) — the setup wizard sees 0 physical NICs.
+
+**Root Cause:** Linux's `/sys/class/net/<iface>` entries are **symlinks** that point to `/sys/devices/pci0000:00/0000:00:1c.0/0000:03:00.0/net/enp3s0`. When Docker mounts only `/sys/class/net:/host/sys/class/net:ro`, the symlink directory itself is visible (so `iterdir()` lists interface names), but the symlink targets (`/sys/devices/...`) don't exist inside the container.
+
+This means:
+- `Path("/host/sys/class/net").iterdir()` — works (lists interface names like `enp2s0`)
+- `Path("/host/sys/class/net/enp2s0/address").read_text()` — **fails** (OSError, target path doesn't exist)
+- `Path("/host/sys/class/net/enp2s0/device").exists()` — **False** (no device symlink → classified as "virtual")
+- All `_read_sysfs()` calls return `""`, `_classify_type()` returns `"virtual"`, `_get_driver()` returns `""`
+
+The daemon code was **correct** — it was the Docker volume mount that made sysfs data inaccessible.
+
+**Fix:** Changed the volume mount from mounting only `/sys/class/net` to mounting all of `/sys`:
+
+```yaml
+# OLD (broken) — symlink targets don't exist inside container
+- /sys/class/net:/host/sys/class/net:ro
+
+# NEW (fixed) — entire sysfs tree available, symlinks resolve correctly
+- /sys:/host/sys:ro
+- /sys/class/leds:/host/sys/class/leds  # writable overlay for LED blink
+```
+
+The writable `/sys/class/leds` overlay is preserved because the igc LED blink feature needs to write to sysfs trigger files.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — daemon volumes: `/sys:/host/sys:ro` replaces `/sys/class/net:/host/sys/class/net:ro`
+- `daemon/api/nic_discovery.py` — updated comment explaining why full `/sys` mount is needed
+
+**Key Insight:** Never bind-mount a single sysfs subdirectory that contains symlinks to other parts of the sysfs tree. Linux's `/sys/class/` directories are almost entirely symlinks — always mount the entire `/sys` tree (read-only) and overlay writable subdirectories as needed.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 10 PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#69 (all 14) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: explicit command. API: explicit gunicorn command. Filebeat: upload-common env vars. |
+| `docker/docker-compose.yml` | #54-#70 (all 15) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: explicit command. API: explicit gunicorn command. Filebeat: upload-common env vars. Daemon: full /sys mount for sysfs symlinks. |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
@@ -580,6 +635,10 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 18. **Supervisord `%(ENV_*)s` is strictly fatal** — unlike shell `$VAR` which expands to empty, supervisord treats missing env vars as a hard crash. Every `%(ENV_*)s` referenced in supervisord.conf MUST be passed via the compose environment.
 19. **Always compare against Malcolm's upstream docker-compose** — Malcolm's images are designed to work with Malcolm's compose. When writing our own compose, we must provide equivalent `command:`, `env_file:`, and `volumes:` directives. Missing any of these causes silent failures.
 
+### sysfs / Filesystem Gotchas
+26. **`/sys/class/*` directories are symlink farms** — entries like `/sys/class/net/eth0` are symlinks to `/sys/devices/pci.../net/eth0`. Mounting only a `/sys/class/` subdirectory brings the symlinks but not their targets. Always mount all of `/sys:ro` and overlay writable paths as needed.
+27. **Directory listing succeeds even with broken symlinks** — `iterdir()` / `ls` shows entries, but reading files inside those entries fails silently with empty strings (OSError caught by sysfs read helpers). This makes the bug subtle: the daemon appears to work (returns valid JSON with interface names) but all metadata is empty.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -601,6 +660,7 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | Template bootstrap pushes 52 templates on every start | Unnecessary API calls on existing deployments | Add idempotency check (check if `malcolm_template` exists first) |
 | Malcolm image upgrades may add new supervisord env refs | Filebeat-style crash-loops from missing env vars | After upgrading Malcolm tag, check all supervisord.conf files inside images for new `%(ENV_*)s` references |
 | More Malcolm services may need explicit `command:` | Silent exit code 0 crashes | Audit all Malcolm services against upstream compose after tag bumps |
+| Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 
 ---
 
@@ -624,3 +684,4 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-61 | #69 | Redis crash-loop: missing command: override | 2026-03-02 |
 | NET-62 | #69 | API crash-loop: missing gunicorn command | 2026-03-02 |
 | NET-63 | #69 | Filebeat crash-loop: missing PCAP_PIPELINE_VERBOSITY | 2026-03-02 |
+| NET-64 | #70 | NIC discovery empty metadata: sysfs symlink mount | 2026-03-01 |
