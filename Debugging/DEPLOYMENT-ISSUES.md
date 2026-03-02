@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-01
-> **Status:** 12 issues tracked. ALL RESOLVED. PR #67 (NET-59) verified on host — all 7 pipelines running including malcolm-zeek.
+> **Last updated:** 2026-03-02
+> **Status:** 15 issues tracked. 12 RESOLVED. 3 NEW (NET-61/62/63 — Redis/API/Filebeat missing command/env vars). Fix in PR #69.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -14,6 +14,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 1: OpenSearch Auth & Bootstrap](#chain-1-opensearch-auth--bootstrap)
 - [Chain 2: Privilege Drop & Service Startup](#chain-2-privilege-drop--service-startup)
 - [Chain 3: Logstash JVM / Pipeline Compilation](#chain-3-logstash-jvm--pipeline-compilation)
+- [Chain 4: Missing Malcolm Command/Env Overrides](#chain-4-missing-malcolm-commandenv-overrides)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -26,11 +27,13 @@ This document tracks every deployment bug encountered while bringing up the NetT
 |---|---|---|
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
-| Logstash (6/7 pipelines) | OK | input, output, filescan, suricata, beats, enrichment |
-| Logstash (malcolm-zeek) | OK | PR #67 verified — -Xss8m delivered, pipeline compiled in 4.18s, all 7 pipelines running |
-| Zeek, Suricata, Arkime | OK | Capture services running after no-new-privileges removal |
-| Redis, API, Filebeat | OK | Depend on logstash/opensearch chain |
-| nginx-proxy, CyberChef | OK | Needed CHOWN/SETUID caps after security restructuring |
+| Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
+| Redis | **CRASH-LOOP** | Missing `command:` override — image has no default CMD for redis-server (NET-61) |
+| API | **CRASH-LOOP** | Missing `command: gunicorn` — image has no default CMD for Flask app (NET-62) |
+| Filebeat | **CRASH-LOOP** | Missing `PCAP_PIPELINE_VERBOSITY` env var — supervisord can't expand %(ENV_...) (NET-63) |
+| Zeek, Suricata, Arkime | RESTARTING | Expected: br0 has no carrier (cables not connected). Will stabilize when plugged in. |
+| nginx-proxy | UNHEALTHY | Expected: upstream API is crash-looping. Will resolve when API starts. |
+| CyberChef | UNHEALTHY | Low priority — app runs but healthcheck endpoint may not exist |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
 ---
@@ -48,6 +51,9 @@ CHAIN 2: Privilege Drop & Service Startup (NET-48 → NET-50 → NET-51 → NET-
 
 CHAIN 3: Logstash JVM / Pipeline Compilation (NET-56 → NET-57 → NET-58 → NET-59)
   PR #64 → PR #65 → PR #66 → PR #67
+
+CHAIN 4: Missing Malcolm Command/Env Overrides (NET-61, NET-62, NET-63)
+  PR #69
 ```
 
 ---
@@ -429,13 +435,112 @@ docker logs -f nettap-logstash 2>&1 | head -200
 
 ---
 
+## Chain 4: Missing Malcolm Command/Env Overrides
+
+These three issues were discovered during a fresh `install.sh` deployment (2026-03-02). They share a common root cause: Malcolm's published Docker images do NOT include working default CMD/env for all services — the compose file must provide explicit `command:` overrides and all referenced environment variables.
+
+### NET-61 — Redis Crash-Loop: Missing `command:` Override
+| Field | Value |
+|---|---|
+| **Linear** | [NET-61](https://linear.app/nettap/issue/NET-61) |
+| **PR** | [#69](https://github.com/EliasMarine/NetTap/pull/69) |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-02 |
+
+**Symptom:** Redis container runs entrypoint (usermod, uid=1000(redis)), then exits with code 0. No redis-server process ever starts. Crash-loops indefinitely.
+
+**Root Cause:** Malcolm's redis Docker image does NOT have a default CMD that starts redis-server. Malcolm's own docker-compose.yml provides an explicit `command:` that starts redis-server with AOF persistence, memory limits, and authentication flags. Our compose had no `command:` override, so after the entrypoint completed uid/gid setup, there was no process to run — container exited cleanly.
+
+**Fix:** Added explicit `command:` matching Malcolm's compose:
+```yaml
+command: >-
+  redis-server --dir /data --appendonly yes --appendfsync everysec
+    --no-appendfsync-on-rewrite yes --auto-aof-rewrite-percentage 100
+    --auto-aof-rewrite-min-size $$REDIS_AUTO_AOF_REWRITE_MIN_SIZE
+    --save '' --maxmemory $$REDIS_MAXMEMORY
+    --maxmemory-policy $$REDIS_MAXMEMORY_POLICY
+    --requirepass $$REDIS_PASSWORD
+```
+Also added required env vars: `REDIS_AUTO_AOF_REWRITE_MIN_SIZE`, `REDIS_MAXMEMORY`, `REDIS_MAXMEMORY_POLICY`. Fixed healthcheck to pass `-a` password flag to `redis-cli`.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — redis service: command + env vars + healthcheck fix
+
+**Key Insight:** Malcolm images use their entrypoint (`docker-uid-gid-setup.sh`) as ENTRYPOINT, not CMD. The actual service command MUST be provided by the compose file. An exit code 0 with no errors means "nothing to run" — not "success".
+
+---
+
+### NET-62 — API Crash-Loop: Missing `command:` Override
+| Field | Value |
+|---|---|
+| **Linear** | [NET-62](https://linear.app/nettap/issue/NET-62) |
+| **PR** | [#69](https://github.com/EliasMarine/NetTap/pull/69) |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-02 |
+
+**Symptom:** API container runs entrypoint, reports "opensearch-local is up and healthy", then exits and restarts. No Flask/gunicorn server ever starts.
+
+**Root Cause:** Same pattern as Redis — Malcolm's API image does NOT have a default CMD for gunicorn. Malcolm's compose provides `command: gunicorn --bind 0:5000 manage:app`. Without this, the entrypoint's OpenSearch healthcheck runs, prints success, and the container exits.
+
+**Fix:** Added explicit command and missing env vars:
+```yaml
+command: gunicorn --bind 0:5000 manage:app
+environment:
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "..."
+  NGINX_AUTH_MODE: "basic"
+  DASHBOARDS_URL: "http://dashboards:5601/dashboards"
+  ARKIME_VIEWER_PORT: "8005"
+```
+
+**Files Changed:**
+- `docker/docker-compose.yml` — api service: command + env vars
+
+**Key Insight:** The "opensearch-local is up and healthy" log line is NOT from the API server — it's from the entrypoint's pre-flight check. The actual server never started because no command was provided.
+
+---
+
+### NET-63 — Filebeat Crash-Loop: Missing `PCAP_PIPELINE_VERBOSITY` Env Var
+| Field | Value |
+|---|---|
+| **Linear** | [NET-63](https://linear.app/nettap/issue/NET-63) |
+| **PR** | [#69](https://github.com/EliasMarine/NetTap/pull/69) |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-02 |
+
+**Symptom:** Filebeat crash-loops with: `Format string ... contains names ('ENV_PCAP_PIPELINE_VERBOSITY') which cannot be expanded`. Supervisord refuses to start any programs.
+
+**Root Cause:** Malcolm's filebeat-oss:26.02.0 image has a `program:watch-upload` section in `/etc/supervisord.conf` that references `%(ENV_PCAP_PIPELINE_VERBOSITY)s`. Supervisord's `%(ENV_*)s` syntax expands process environment variables. Malcolm's compose passes this via `upload-common.env`, but our compose didn't include it.
+
+**Fix:** Added all vars from Malcolm's `upload-common.env`:
+```yaml
+AUTO_TAG: "true"
+PCAP_NODE_NAME: "malcolm"
+PCAP_PIPELINE_VERBOSITY: ""
+PCAP_PIPELINE_IGNORE_PREEXISTING: "false"
+PCAP_PIPELINE_POLLING: "false"
+PCAP_PIPELINE_POLLING_ASSUME_CLOSED_SEC: "10"
+PCAP_MONITOR_HOST: "pcap-monitor"
+```
+
+**Files Changed:**
+- `docker/docker-compose.yml` — filebeat service: env vars
+
+**Key Insight:** Supervisord's `%(ENV_*)s` syntax is strict — if the env var doesn't exist, supervisord crashes immediately without starting ANY programs. Unlike shell variable expansion which can have defaults, supervisord treats missing vars as fatal errors. Always verify that ALL env vars referenced in Malcolm's supervisord configs are passed through the compose file.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 10 PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#67 (all 12) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m |
+| `docker/docker-compose.yml` | #54-#69 (all 14) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: explicit command. API: explicit gunicorn command. Filebeat: upload-common env vars. |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
@@ -469,12 +574,19 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 14. **`startsecs=0` means 'started immediately'** — supervisord considers the process running the instant it forks, not when it finishes.
 15. **`&&`/`||` chains have surprising behavior** — `cmd1 && cmd2 || cmd3` runs cmd3 when cmd1 fails, masking errors. Use proper `if/then/fi`.
 
+### Malcolm Image Contract (NEW — Chain 4)
+16. **Malcolm images use ENTRYPOINT, not CMD** — the entrypoint (`docker-uid-gid-setup.sh`) handles uid/gid setup. The actual service command MUST be provided via `command:` in the compose file. Without it, the container exits cleanly after the entrypoint finishes.
+17. **Exit code 0 + no logs = "nothing to run"** — for Malcolm images, a clean exit with only usermod/uid output means no CMD was provided. The entrypoint succeeded but there was no service to start.
+18. **Supervisord `%(ENV_*)s` is strictly fatal** — unlike shell `$VAR` which expands to empty, supervisord treats missing env vars as a hard crash. Every `%(ENV_*)s` referenced in supervisord.conf MUST be passed via the compose environment.
+19. **Always compare against Malcolm's upstream docker-compose** — Malcolm's images are designed to work with Malcolm's compose. When writing our own compose, we must provide equivalent `command:`, `env_file:`, and `volumes:` directives. Missing any of these causes silent failures.
+
 ### Process Lessons
-16. **Don't apply privilege fixes globally** — scope to only the affected services.
-17. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
-18. **Bypassing an entrypoint's privilege drop skips ALL its side effects** — you must replicate chown, env setup, etc.
-19. **Test with the actual execution path** — `docker exec -u 1000` is NOT equivalent to the entrypoint's `su` heredoc.
-20. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
+20. **Don't apply privilege fixes globally** — scope to only the affected services.
+21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
+22. **Bypassing an entrypoint's privilege drop skips ALL its side effects** — you must replicate chown, env setup, etc.
+23. **Test with the actual execution path** — `docker exec -u 1000` is NOT equivalent to the entrypoint's `su` heredoc.
+24. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
+25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
 
 ---
 
@@ -487,6 +599,8 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | `fix-perms` runs chown on every container restart | Slow startup on large data dirs | Consider conditional check (`stat -c %U`) |
 | `no-new-privileges` removed from Malcolm services | Reduced container isolation | Acceptable — Malcolm's design requires setuid; NetTap services keep strict security |
 | Template bootstrap pushes 52 templates on every start | Unnecessary API calls on existing deployments | Add idempotency check (check if `malcolm_template` exists first) |
+| Malcolm image upgrades may add new supervisord env refs | Filebeat-style crash-loops from missing env vars | After upgrading Malcolm tag, check all supervisord.conf files inside images for new `%(ENV_*)s` references |
+| More Malcolm services may need explicit `command:` | Silent exit code 0 crashes | Audit all Malcolm services against upstream compose after tag bumps |
 
 ---
 
@@ -506,3 +620,7 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-57 | #65 | StackOverflow via jvm.options.d (WRONG — ES-only) | 2026-03-01 |
 | NET-58 | #66 | StackOverflow fix: inject -Xss8m into jvm.options (race condition) | 2026-03-01 |
 | NET-59 | #67 | Race condition fix: autostart=false + supervisorctl + LS_JAVA_OPTS | 2026-03-01 |
+| NET-60 | #68 | Setup wizard NIC detection + LED blink | 2026-03-02 |
+| NET-61 | #69 | Redis crash-loop: missing command: override | 2026-03-02 |
+| NET-62 | #69 | API crash-loop: missing gunicorn command | 2026-03-02 |
+| NET-63 | #69 | Filebeat crash-loop: missing PCAP_PIPELINE_VERBOSITY | 2026-03-02 |
