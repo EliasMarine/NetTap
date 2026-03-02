@@ -248,6 +248,16 @@ services:
       LOG_CLEANUP_MINUTES: "360"
       LOGSTASH_HOST: "logstash:5044"
       BEATS_SSL: "false"
+      # upload-common.env — required by Malcolm's supervisord watch-upload program.
+      # Without PCAP_PIPELINE_VERBOSITY, supervisord fails to expand
+      # %(ENV_PCAP_PIPELINE_VERBOSITY)s and crash-loops immediately.
+      AUTO_TAG: "${AUTO_TAG:-true}"
+      PCAP_NODE_NAME: "${PCAP_NODE_NAME:-malcolm}"
+      PCAP_PIPELINE_VERBOSITY: ""
+      PCAP_PIPELINE_IGNORE_PREEXISTING: "false"
+      PCAP_PIPELINE_POLLING: "false"
+      PCAP_PIPELINE_POLLING_ASSUME_CLOSED_SEC: "10"
+      PCAP_MONITOR_HOST: "pcap-monitor"
     # NOTE: No cert mount needed — BEATS_SSL is false. If enabled in the future,
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
@@ -376,16 +386,34 @@ services:
       com.nettap.service: "redis"
       com.nettap.component: "infrastructure"
       com.nettap.description: "Redis in-memory data store for caching and queues"
+    # NOTE: Malcolm's redis image does NOT include a default CMD that starts
+    # redis-server — the compose must provide it. Without this command, the
+    # entrypoint completes uid/gid setup and exits cleanly (code 0).
+    command: >-
+      redis-server
+        --dir /data
+        --appendonly yes
+        --appendfsync everysec
+        --no-appendfsync-on-rewrite yes
+        --auto-aof-rewrite-percentage 100
+        --auto-aof-rewrite-min-size $$REDIS_AUTO_AOF_REWRITE_MIN_SIZE
+        --save ''
+        --maxmemory $$REDIS_MAXMEMORY
+        --maxmemory-policy $$REDIS_MAXMEMORY_POLICY
+        --requirepass $$REDIS_PASSWORD
     environment:
       <<: *process-env
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+      REDIS_AUTO_AOF_REWRITE_MIN_SIZE: "${REDIS_AUTO_AOF_REWRITE_MIN_SIZE:-64mb}"
+      REDIS_MAXMEMORY: "${REDIS_MAXMEMORY:-0}"
+      REDIS_MAXMEMORY_POLICY: "${REDIS_MAXMEMORY_POLICY:-allkeys-lru}"
     volumes:
       - redis-data:/data
     networks:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-NetTap_Redis_Secret}", "ping"]
       start_period: 30s
 
   api:
@@ -397,8 +425,19 @@ services:
       com.nettap.service: "api"
       com.nettap.component: "infrastructure"
       com.nettap.description: "Malcolm REST API server"
+    # NOTE: Malcolm's API image does NOT include a default CMD that starts
+    # gunicorn — the compose must provide it. Without this command, the
+    # entrypoint checks OpenSearch connectivity, then exits.
+    command: gunicorn --bind 0:5000 manage:app
     environment:
       <<: [*process-env, *opensearch-env]
+      # Malcolm API needs Redis for caching and auth config for access control
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+      NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
+      DASHBOARDS_URL: "http://dashboards:5601/dashboards"
+      ARKIME_VIEWER_PORT: "8005"
     # NOTE: API service does not need host-side certs. It connects to OpenSearch
     # via curlrc credentials with SSL verification disabled, and is accessed
     # through nginx-proxy (not directly over TLS).
