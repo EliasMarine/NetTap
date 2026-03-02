@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-01
-> **Status:** 18 issues tracked. 16 RESOLVED. 2 NEW (NET-65 Redis double-shell, NET-66 setup auth redirect). Fix in PR #71.
+> **Last updated:** 2026-03-02
+> **Status:** 20 issues tracked. 20 RESOLVED. Latest: NET-68 NIC LED identify permission + fallback (PR #73).
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -18,6 +18,8 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 5: Docker sysfs Symlink Resolution](#chain-5-docker-sysfs-symlink-resolution)
 - [Chain 6: Redis Double-Shell Wrapping](#chain-6-redis-double-shell-wrapping)
 - [Chain 7: Setup Wizard Auth Redirect](#chain-7-setup-wizard-auth-redirect)
+- [Chain 8: Storage API Format Mismatch](#chain-8-storage-api-format-mismatch)
+- [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -688,14 +690,128 @@ if (!pathname.startsWith('/setup') && !pathname.startsWith('/api/auth') && !path
 
 ---
 
+## Chain 8: Storage API Format Mismatch
+
+### NET-67 — Storage API response format doesn't match frontend StorageStatus interface
+| Field | Value |
+|---|---|
+| **Linear** | [NET-67](https://linear.app/nettap/issue/NET-67) |
+| **PR** | [#72](https://github.com/EliasMarine/NetTap/pull/72) |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-02 |
+
+**Symptoms:**
+- Setup wizard Step 1 "Sufficient disk space (100GB+)" shows red X despite 1.8TB disk
+- Step 4 "Storage Configuration" shows NaN/undefined values for disk bar and retention fields
+
+**Root Cause:**
+The daemon's `StorageManager.get_status()` returned a completely different format than the web frontend's `StorageStatus` TypeScript interface expected:
+
+| Frontend expects | Daemon returned |
+|---|---|
+| `disk_free_gb: 1800` (number, GB) | **Not present at all** |
+| `disk_total_gb: 1830` (number, GB) | **Not present at all** |
+| `disk_usage_percent: 2.3` (number) | `"2.3%"` (string with % sign) |
+| `hot_days: 90` (top-level) | `retention.hot_days: 90` (nested) |
+| `disk_threshold_percent: 80` (0-100) | `disk_threshold: 0.80` (fraction 0-1) |
+| `estimated_daily_gb: 1.2` | **Not present at all** |
+
+The SvelteKit proxy at `/api/setup/storage` passed the daemon response through without transformation. Frontend did `storageData.disk_free_gb || 0` → `undefined || 0` = 0 → `0 >= 100` → fail.
+
+**Causal Chain:**
+```
+daemon get_status() lacks absolute GB values
+  → SvelteKit proxy passes through without transformation
+    → frontend gets { disk_usage: 0.023 } instead of { disk_free_gb: 1800 }
+      → disk_free_gb is undefined → defaults to 0
+        → 0 < 100GB → Step 1 shows red X
+        → Step 4 renders NaN for disk bar, undefined for retention fields
+```
+
+**Fix:**
+1. Updated daemon's `get_status()` (`daemon/storage/manager.py`):
+   - Added `disk_total_gb`, `disk_used_gb`, `disk_free_gb` via `shutil.disk_usage()`
+   - Changed `disk_usage_percent` from string `"X.X%"` to number `X.X`
+   - Flattened `retention.hot_days` → top-level `hot_days` (kept nested for backward compat)
+   - Added `disk_threshold_percent` and `emergency_threshold_percent` as 0-100 values
+   - Added `estimated_daily_gb: 1.2` and `source: "daemon"`
+   - Wrapped `list_indices()` in try/except for OpenSearch-down resilience during setup
+2. Added `normalizeStorageStatus()` in SvelteKit proxy as safety net for both old and new daemon formats
+3. Fixed settings page to read normalized top-level fields instead of nested `data.retention`
+
+**Files Changed:**
+- `daemon/storage/manager.py` — Updated `get_status()` to include absolute disk sizes
+- `daemon/tests/test_storage_manager.py` — Updated test to verify new response fields
+- `web/src/routes/api/setup/storage/+server.ts` — Added normalize transform layer
+- `web/src/routes/settings/+page.svelte` — Fixed to use normalized format
+
+**Key Insight:** TypeScript interfaces define the *desired* shape but don't enforce it at runtime. When a proxy layer passes through external data (like daemon responses), it MUST validate/transform the data to match the interface. Always test the full chain: daemon response → proxy → frontend rendering.
+
+---
+
+## Chain 9: NIC LED Identification Permission + Fallback
+
+### NET-68 — NIC LED blink fails with HTTP 500 on Intel I226-V (igc driver, kernel 6.8)
+| Field | Value |
+|---|---|
+| **Linear** | [NET-68](https://linear.app/nettap/issue/NET-68) |
+| **PR** | [#73](https://github.com/EliasMarine/NetTap/pull/73) |
+| **Status** | Done |
+| **Severity** | Medium |
+| **Date** | 2026-03-02 |
+
+**Symptoms:**
+- Setup wizard Step 2 "Identify" button returns HTTP 500 for all Intel I226-V NICs
+- Console shows: `nsenter: cannot open /proc/1/ns/net: Permission denied`
+- Even without nsenter, `ethtool -p` returns "Operation not supported" on igc driver
+
+**Root Cause:**
+Three compounding issues:
+
+1. **`no-new-privileges:true`** from `*security-defaults` YAML anchor blocks `nsenter` — the `setns` syscall requires privilege escalation, which `no-new-privileges` prevents. Error: `Permission denied` on `/proc/1/ns/net`.
+
+2. **`ethtool -p` not supported** on igc driver (kernel 6.8) — the `set_phys_id` callback was added to the igc driver in kernel ~6.11. On 6.8, ethtool returns "Operation not supported".
+
+3. **sysfs LEDs empty** — `CONFIG_IGC_LEDS` was added in kernel 6.9. On 6.8, `/sys/class/leds/igc-*` entries don't exist, so the sysfs fallback also fails.
+
+**Causal Chain:**
+```
+daemon inherits *security-defaults (no-new-privileges:true)
+  → nsenter setns syscall blocked → "Permission denied"
+    → ethtool -p falls through to sysfs fallback
+      → igc driver on kernel 6.8 has no set_phys_id → "Operation not supported"
+        → sysfs LED paths don't exist (CONFIG_IGC_LEDS needs kernel 6.9+)
+          → both strategies fail → HTTP 500 error → UI shows error
+```
+
+**Fix:**
+1. **docker-compose.yml** — Override `security_opt: [no-new-privileges:false]` on daemon service. Security maintained via `cap_drop: ALL` + selective `cap_add` + `read_only: true`.
+
+2. **daemon/api/nic_identify.py** — When both strategies fail, return HTTP 200 with `result: "info"` containing MAC address, PCI slot, and driver name read from sysfs. This gives the user enough information to physically identify the NIC.
+
+3. **web/src/routes/setup/+page.svelte** — Handle `method: "info"` response by displaying MAC/PCI/driver badges instead of an error message.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Override `security_opt` on daemon service
+- `daemon/api/nic_identify.py` — Add `_get_nic_info()` helper + info fallback response
+- `web/src/routes/setup/+page.svelte` — Handle info fallback in `identifyNic()` + display blinkInfo badges
+- `daemon/tests/test_nic_identify.py` — Update tests for 200 info response instead of 500
+- `web/src/lib/components/NicIdentify.test.ts` — Add tests for info fallback parsing
+
+**Key Insight:** On consumer hardware (Intel I226-V on kernel 6.8), NIC LED identification is impossible — the driver lacks both `set_phys_id` and sysfs LED support. Rather than showing a cryptic error, provide actionable NIC metadata (MAC/PCI) so the user can cross-reference with `ip link` output or physical labels on the hardware.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 10 PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#71 (all 16) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common env vars. Daemon: full /sys mount + healthcheck. |
+| `docker/docker-compose.yml` | #54-#73 (all 16) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common env vars. Daemon: full /sys mount + healthcheck. Daemon: no-new-privileges:false override for nsenter. |
 | `web/src/hooks.server.ts` | #71 | PUBLIC_PATHS includes `/api/setup`; first-run redirect skips `/api/setup/*` |
+| `daemon/api/nic_identify.py` | #68, #73 | Graceful info fallback when LED blink unavailable; returns MAC/PCI/driver |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
@@ -717,6 +833,7 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 6. **Docker creates missing file bind-mount sources as directories** — always pre-create files before container start.
 7. **`docker compose up -d` blocks on `service_healthy`** — bootstrap logic that runs after `up -d` will deadlock if the healthcheck depends on that bootstrap.
 8. **`id -u` under sudo returns 0** — use `SUDO_UID` or `stat` for real user detection.
+35. **`no-new-privileges` blocks `nsenter`** — the `setns` syscall used by nsenter requires privilege escalation. If a container needs nsenter (e.g., to access host network namespace), it must override `security_opt: [no-new-privileges:false]`. Maintain security via other mechanisms (cap_drop, read_only).
 
 ### JVM / Logstash Specifics
 9. **Logstash 9.x filters `-Xss` from `LS_JAVA_OPTS`** — env vars are unreliable for non-heap JVM flags.
@@ -746,6 +863,7 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 ### sysfs / Filesystem Gotchas
 26. **`/sys/class/*` directories are symlink farms** — entries like `/sys/class/net/eth0` are symlinks to `/sys/devices/pci.../net/eth0`. Mounting only a `/sys/class/` subdirectory brings the symlinks but not their targets. Always mount all of `/sys:ro` and overlay writable paths as needed.
 27. **Directory listing succeeds even with broken symlinks** — `iterdir()` / `ls` shows entries, but reading files inside those entries fails silently with empty strings (OSError caught by sysfs read helpers). This makes the bug subtle: the daemon appears to work (returns valid JSON with interface names) but all metadata is empty.
+34. **Kernel driver features have version requirements** — igc `set_phys_id` (ethtool -p) requires kernel ~6.11, and `CONFIG_IGC_LEDS` requires kernel 6.9. Always provide a graceful fallback when hardware/driver features may be unavailable.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
@@ -769,6 +887,7 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | Malcolm image upgrades may add new supervisord env refs | Filebeat-style crash-loops from missing env vars | After upgrading Malcolm tag, check all supervisord.conf files inside images for new `%(ENV_*)s` references |
 | More Malcolm services may need explicit `command:` | Silent exit code 0 crashes | Audit all Malcolm services against upstream compose after tag bumps |
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
+| NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
 
 ---
 
@@ -795,3 +914,5 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-64 | #70 | NIC discovery empty metadata: sysfs symlink mount | 2026-03-01 |
 | NET-65 | #71 | Redis crash-loop: double-shell-wrapping mangles command | 2026-03-01 |
 | NET-66 | #71 | Setup wizard API returns HTML: auth redirect on /api/setup/* | 2026-03-01 |
+| NET-67 | #72 | Storage API format mismatch: missing disk_free_gb, wrong types | 2026-03-02 |
+| NET-68 | #73 | NIC LED identify: nsenter permission + info fallback | 2026-03-02 |

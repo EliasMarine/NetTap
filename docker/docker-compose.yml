@@ -501,6 +501,11 @@ services:
     container_name: nettap-storage-daemon
     restart: unless-stopped
     <<: [*security-defaults, *logging-defaults]
+    # Override security-defaults: nsenter requires privilege escalation
+    # (setns syscall) which no-new-privileges blocks. Security maintained
+    # via cap_drop: ALL + selective cap_add + read_only: true.
+    security_opt:
+      - no-new-privileges:false
     labels:
       com.nettap.service: "storage-daemon"
       com.nettap.component: "nettap"
