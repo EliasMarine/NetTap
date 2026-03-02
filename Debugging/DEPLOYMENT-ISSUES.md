@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-01
-> **Status:** 12 issues tracked. PR #66 had a race condition. PR #67 (NET-59) fixes it with autostart=false + supervisorctl + LS_JAVA_OPTS belt-and-suspenders.
+> **Status:** 12 issues tracked. ALL RESOLVED. PR #67 (NET-59) verified on host — all 7 pipelines running including malcolm-zeek.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -27,7 +27,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
 | Logstash (6/7 pipelines) | OK | input, output, filescan, suricata, beats, enrichment |
-| Logstash (malcolm-zeek) | PENDING VERIFY | PR #66 had race condition. PR #67 uses autostart=false + supervisorctl + LS_JAVA_OPTS — awaiting host test |
+| Logstash (malcolm-zeek) | OK | PR #67 verified — -Xss8m delivered, pipeline compiled in 4.18s, all 7 pipelines running |
 | Zeek, Suricata, Arkime | OK | Capture services running after no-new-privileges removal |
 | Redis, API, Filebeat | OK | Depend on logstash/opensearch chain |
 | nginx-proxy, CyberChef | OK | Needed CHOWN/SETUID caps after security restructuring |
@@ -388,11 +388,13 @@ Look for:
 |---|---|
 | **Linear** | [NET-59](https://linear.app/nettap/issue/NET-59) |
 | **PR** | [#67](https://github.com/EliasMarine/NetTap/pull/67) |
-| **Status** | Done — AWAITING HOST VERIFICATION |
+| **Status** | Done — VERIFIED ON HOST 2026-03-02 |
 | **Severity** | Urgent |
 | **Date** | 2026-03-01 |
 
 **Symptom:** StackOverflowError persists after PR #66 deployed. The `-Xss8m` injection into `jvm.options` had no effect — the JVM still started with default thread stack size.
+
+**Verification (2026-03-02):** All 7 pipelines running. `-Xss8m` confirmed in JVM bootstrap flags. malcolm-zeek compiled in 4.18s with zero errors.
 
 **Root Cause:** Three bugs in PR #66's approach:
 
