@@ -171,13 +171,12 @@
 		fetch('/api/setup/storage')
 			.then((r) => r.json())
 			.then((data) => {
-				if (data.retention) {
-					retentionConfig.hot_days = data.retention.hot_days ?? 90;
-					retentionConfig.warm_days = data.retention.warm_days ?? 180;
-					retentionConfig.cold_days = data.retention.cold_days ?? 30;
-					retentionConfig.disk_threshold = data.retention.disk_threshold_percent ?? 80;
-					retentionConfig.emergency_threshold = data.retention.emergency_threshold_percent ?? 90;
-				}
+				// Normalized format has retention fields at top level
+				retentionConfig.hot_days = data.hot_days ?? data.retention?.hot_days ?? 90;
+				retentionConfig.warm_days = data.warm_days ?? data.retention?.warm_days ?? 180;
+				retentionConfig.cold_days = data.cold_days ?? data.retention?.cold_days ?? 30;
+				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
 			})
 			.catch(() => {});
 
