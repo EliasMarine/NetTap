@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-01
-> **Status:** 18 issues tracked. 16 RESOLVED. 2 NEW (NET-65 Redis double-shell, NET-66 setup auth redirect). Fix in PR #71.
+> **Last updated:** 2026-03-02
+> **Status:** 19 issues tracked. 19 RESOLVED. Latest: NET-67 storage API format mismatch (PR #72).
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -18,6 +18,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 5: Docker sysfs Symlink Resolution](#chain-5-docker-sysfs-symlink-resolution)
 - [Chain 6: Redis Double-Shell Wrapping](#chain-6-redis-double-shell-wrapping)
 - [Chain 7: Setup Wizard Auth Redirect](#chain-7-setup-wizard-auth-redirect)
+- [Chain 8: Storage API Format Mismatch](#chain-8-storage-api-format-mismatch)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -31,14 +32,14 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
 | Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
-| Redis | **CRASH-LOOP** | PR #69 fix used string-form command → double-shell-wrapping mangles `--save ''` (NET-65). Fix in PR #71. |
+| Redis | OK | Fixed in PR #71 — list-form command matching Malcolm upstream |
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed in PR #69 — upload-common env vars added |
 | Zeek, Suricata, Arkime | RESTARTING | Expected: br0 has no carrier (cables not connected). Will stabilize when plugged in. |
 | nginx-proxy | OK | Depends on API — now healthy after API fix |
 | CyberChef | UNHEALTHY | Low priority — app runs but healthcheck endpoint may not exist |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
-| NetTap setup wizard API | **BROKEN** | Auth middleware redirects /api/setup/* → /setup (HTML) — breaks JSON parse (NET-66). Fix in PR #71. |
+| NetTap setup wizard API | OK | Fixed in PR #71 (auth redirect) + PR #72 (storage format mismatch) |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
 ---
@@ -68,6 +69,9 @@ CHAIN 6: Redis Double-Shell Wrapping (NET-65)
 
 CHAIN 7: Setup Wizard Auth Redirect (NET-66)
   PR #71
+
+CHAIN 8: Storage API Format Mismatch (NET-67)
+  PR #72
 ```
 
 ---
@@ -688,6 +692,66 @@ if (!pathname.startsWith('/setup') && !pathname.startsWith('/api/auth') && !path
 
 ---
 
+## Chain 8: Storage API Format Mismatch
+
+### NET-67 — Storage API response format doesn't match frontend StorageStatus interface
+| Field | Value |
+|---|---|
+| **Linear** | [NET-67](https://linear.app/nettap/issue/NET-67) |
+| **PR** | [#72](https://github.com/EliasMarine/NetTap/pull/72) |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-02 |
+
+**Symptoms:**
+- Setup wizard Step 1 "Sufficient disk space (100GB+)" shows red X despite 1.8TB disk
+- Step 4 "Storage Configuration" shows NaN/undefined values for disk bar and retention fields
+
+**Root Cause:**
+The daemon's `StorageManager.get_status()` returned a completely different format than the web frontend's `StorageStatus` TypeScript interface expected:
+
+| Frontend expects | Daemon returned |
+|---|---|
+| `disk_free_gb: 1800` (number, GB) | **Not present at all** |
+| `disk_total_gb: 1830` (number, GB) | **Not present at all** |
+| `disk_usage_percent: 2.3` (number) | `"2.3%"` (string with % sign) |
+| `hot_days: 90` (top-level) | `retention.hot_days: 90` (nested) |
+| `disk_threshold_percent: 80` (0-100) | `disk_threshold: 0.80` (fraction 0-1) |
+| `estimated_daily_gb: 1.2` | **Not present at all** |
+
+The SvelteKit proxy at `/api/setup/storage` passed the daemon response through without transformation. Frontend did `storageData.disk_free_gb || 0` → `undefined || 0` = 0 → `0 >= 100` → fail.
+
+**Causal Chain:**
+```
+daemon get_status() lacks absolute GB values
+  → SvelteKit proxy passes through without transformation
+    → frontend gets { disk_usage: 0.023 } instead of { disk_free_gb: 1800 }
+      → disk_free_gb is undefined → defaults to 0
+        → 0 < 100GB → Step 1 shows red X
+        → Step 4 renders NaN for disk bar, undefined for retention fields
+```
+
+**Fix:**
+1. Updated daemon's `get_status()` (`daemon/storage/manager.py`):
+   - Added `disk_total_gb`, `disk_used_gb`, `disk_free_gb` via `shutil.disk_usage()`
+   - Changed `disk_usage_percent` from string `"X.X%"` to number `X.X`
+   - Flattened `retention.hot_days` → top-level `hot_days` (kept nested for backward compat)
+   - Added `disk_threshold_percent` and `emergency_threshold_percent` as 0-100 values
+   - Added `estimated_daily_gb: 1.2` and `source: "daemon"`
+   - Wrapped `list_indices()` in try/except for OpenSearch-down resilience during setup
+2. Added `normalizeStorageStatus()` in SvelteKit proxy as safety net for both old and new daemon formats
+3. Fixed settings page to read normalized top-level fields instead of nested `data.retention`
+
+**Files Changed:**
+- `daemon/storage/manager.py` — Updated `get_status()` to include absolute disk sizes
+- `daemon/tests/test_storage_manager.py` — Updated test to verify new response fields
+- `web/src/routes/api/setup/storage/+server.ts` — Added normalize transform layer
+- `web/src/routes/settings/+page.svelte` — Fixed to use normalized format
+
+**Key Insight:** TypeScript interfaces define the *desired* shape but don't enforce it at runtime. When a proxy layer passes through external data (like daemon responses), it MUST validate/transform the data to match the interface. Always test the full chain: daemon response → proxy → frontend rendering.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 10 PRs. Check their current state before making changes.
@@ -743,6 +807,10 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 30. **Public pages need public API endpoints** — if a page is accessible without auth, all its `fetch()` calls must also bypass auth. Otherwise the auth middleware returns HTML redirects that break JSON parsing.
 31. **Browser `fetch()` follows 302 redirects silently** — a redirect from an API endpoint to an HTML page succeeds (HTTP 200) but the body is HTML, not JSON. The only clue is `JSON.parse()` failing.
 
+### API Contract Gotchas
+32. **TypeScript interfaces don't enforce runtime shape** — when a proxy passes through external data (daemon responses), the TypeScript type parameter on `daemonJSON<T>()` only checks compile-time usage, not the actual JSON shape. Always validate/normalize at the boundary.
+33. **Proxy layers must transform, not just forward** — a SvelteKit API route that proxies to a Python daemon must normalize the response (flatten nested fields, convert types, add defaults) rather than blindly passing JSON through. The daemon's internal format and the frontend's expected format are separate contracts.
+
 ### sysfs / Filesystem Gotchas
 26. **`/sys/class/*` directories are symlink farms** — entries like `/sys/class/net/eth0` are symlinks to `/sys/devices/pci.../net/eth0`. Mounting only a `/sys/class/` subdirectory brings the symlinks but not their targets. Always mount all of `/sys:ro` and overlay writable paths as needed.
 27. **Directory listing succeeds even with broken symlinks** — `iterdir()` / `ls` shows entries, but reading files inside those entries fails silently with empty strings (OSError caught by sysfs read helpers). This makes the bug subtle: the daemon appears to work (returns valid JSON with interface names) but all metadata is empty.
@@ -795,3 +863,4 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-64 | #70 | NIC discovery empty metadata: sysfs symlink mount | 2026-03-01 |
 | NET-65 | #71 | Redis crash-loop: double-shell-wrapping mangles command | 2026-03-01 |
 | NET-66 | #71 | Setup wizard API returns HTML: auth redirect on /api/setup/* | 2026-03-01 |
+| NET-67 | #72 | Storage API format mismatch: missing disk_free_gb, wrong types | 2026-03-02 |
