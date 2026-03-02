@@ -488,22 +488,43 @@ class StorageManager:
     def get_status(self) -> dict:
         """Return current storage status for the HTTP API.
 
-        Returns a dict with:
-          - disk_usage: current usage as fraction
-          - disk_usage_percent: usage as percentage string
-          - disk_threshold: configured threshold
-          - emergency_threshold: configured emergency threshold
+        Returns a dict compatible with the web frontend's StorageStatus
+        interface, including absolute disk sizes in GB.
+
+        Fields returned:
+          - disk_total_gb, disk_used_gb, disk_free_gb: absolute sizes
+          - disk_usage: current usage as fraction (legacy)
+          - disk_usage_percent: usage as number (0-100)
+          - disk_threshold_percent: configured threshold as percent (0-100)
+          - emergency_threshold_percent: emergency threshold as percent (0-100)
+          - hot_days, warm_days, cold_days: retention days (top-level)
+          - estimated_daily_gb: estimated daily data ingestion
+          - source: always "daemon"
           - check_path: filesystem path being monitored
           - index_counts: dict of tier -> count of indices
           - total_indices: total number of tracked indices
-          - retention: dict of tier retention days
+          - retention: dict of tier retention days (legacy, for /api/storage/retention)
         """
+        # Disk usage — absolute sizes in GB
         try:
-            usage = self.check_disk_usage()
+            disk = shutil.disk_usage(self.config.check_path)
+            disk_total_gb = round(disk.total / (1024 ** 3), 2)
+            disk_used_gb = round(disk.used / (1024 ** 3), 2)
+            disk_free_gb = round(disk.free / (1024 ** 3), 2)
+            usage = disk.used / disk.total if disk.total > 0 else 0.0
         except OSError:
+            disk_total_gb = 0.0
+            disk_used_gb = 0.0
+            disk_free_gb = 0.0
             usage = -1.0
 
-        indices = self.list_indices()
+        # Index listing — wrapped safely to handle OpenSearch being down
+        # (common during initial setup before Malcolm stack is running).
+        try:
+            indices = self.list_indices()
+        except Exception as exc:
+            logger.warning("Failed to list indices (OpenSearch may be down): %s", exc)
+            indices = []
 
         # Count indices per tier
         tier_counts: dict[str, int] = {
@@ -517,8 +538,25 @@ class StorageManager:
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
         return {
+            # Absolute disk sizes (GB) — required by web frontend
+            "disk_total_gb": disk_total_gb,
+            "disk_used_gb": disk_used_gb,
+            "disk_free_gb": disk_free_gb,
+            # Usage as number (0-100) — frontend expects numeric, not string
+            "disk_usage_percent": round(usage * 100, 1) if usage >= 0 else 0.0,
+            # Thresholds as percent (0-100) — frontend expects percent, not fraction
+            "disk_threshold_percent": round(self.config.disk_threshold * 100, 1),
+            "emergency_threshold_percent": round(self.config.emergency_threshold * 100, 1),
+            # Retention days — top-level for frontend compatibility
+            "hot_days": self.config.hot_days,
+            "warm_days": self.config.warm_days,
+            "cold_days": self.config.cold_days,
+            # Estimated daily ingestion (conservative default)
+            "estimated_daily_gb": 1.2,
+            # Source marker so frontend knows this is live data
+            "source": "daemon",
+            # --- Legacy fields (kept for backward compatibility) ---
             "disk_usage": round(usage, 4),
-            "disk_usage_percent": f"{usage * 100:.1f}%",
             "disk_threshold": self.config.disk_threshold,
             "emergency_threshold": self.config.emergency_threshold,
             "check_path": self.config.check_path,

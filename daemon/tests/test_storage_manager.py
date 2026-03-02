@@ -463,12 +463,50 @@ class TestGetStatus:
         mgr._client = mock_opensearch_client
         mgr.opensearch_url = "http://localhost:9200"
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.65):
+        # Mock shutil.disk_usage to return ~1TB disk with ~300GB used
+        import collections
+        DiskUsage = collections.namedtuple("usage", ["total", "used", "free"])
+        mock_disk = DiskUsage(1073741824000, 322122547200, 751619276800)
+        with patch("storage.manager.shutil.disk_usage", return_value=mock_disk):
             status = mgr.get_status()
 
-        # Top-level keys
-        assert "disk_usage" in status
+        # --- New frontend-facing keys ---
+        assert "disk_total_gb" in status
+        assert "disk_used_gb" in status
+        assert "disk_free_gb" in status
+        assert isinstance(status["disk_total_gb"], float)
+        assert isinstance(status["disk_used_gb"], float)
+        assert isinstance(status["disk_free_gb"], float)
+        assert status["disk_total_gb"] > 0
+        assert status["disk_free_gb"] > 0
+
+        # disk_usage_percent should be a number (not a string)
         assert "disk_usage_percent" in status
+        assert isinstance(status["disk_usage_percent"], float)
+
+        # Threshold fields as percentages (0-100)
+        assert "disk_threshold_percent" in status
+        assert "emergency_threshold_percent" in status
+        assert isinstance(status["disk_threshold_percent"], float)
+        assert isinstance(status["emergency_threshold_percent"], float)
+        assert status["disk_threshold_percent"] == 80.0
+        assert status["emergency_threshold_percent"] == 90.0
+
+        # Top-level retention days (match retention_config fixture values)
+        assert "hot_days" in status
+        assert "warm_days" in status
+        assert "cold_days" in status
+        assert status["hot_days"] == retention_config.hot_days
+        assert status["warm_days"] == retention_config.warm_days
+        assert status["cold_days"] == retention_config.cold_days
+
+        # Estimated daily ingestion and source
+        assert "estimated_daily_gb" in status
+        assert status["source"] == "daemon"
+
+        # --- Legacy keys (backward compatibility) ---
+        assert "disk_usage" in status
+        assert isinstance(status["disk_usage"], float)
         assert "disk_threshold" in status
         assert "emergency_threshold" in status
         assert "check_path" in status
@@ -476,14 +514,11 @@ class TestGetStatus:
         assert "total_indices" in status
         assert "retention" in status
 
-        # Type checks
-        assert isinstance(status["disk_usage"], float)
-        assert isinstance(status["disk_usage_percent"], str)
         assert isinstance(status["index_counts"], dict)
         assert isinstance(status["total_indices"], int)
         assert isinstance(status["retention"], dict)
 
-        # Retention sub-keys
+        # Retention sub-keys (legacy nested format)
         assert "hot_days" in status["retention"]
         assert "warm_days" in status["retention"]
         assert "cold_days" in status["retention"]
