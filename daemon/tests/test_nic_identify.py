@@ -183,18 +183,22 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         self.assertEqual(data["duration"], 1)
 
     @unittest_run_loop
+    @patch("api.nic_identify._get_nic_info", return_value={"mac": "aa:bb:cc:dd:ee:ff", "pci_slot": "0000:02:00.0", "driver": "igc"})
     @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
     @patch("api.nic_identify.shutil.which", return_value=None)
-    async def test_ethtool_not_found_returns_error(self, mock_which, mock_sysfs):
-        """When ethtool is not installed and sysfs fails, should return 500."""
+    async def test_ethtool_not_found_returns_info(self, mock_which, mock_sysfs, mock_nic_info):
+        """When ethtool is not installed and sysfs fails, should return 200 with info fallback."""
         resp = await self.client.request(
             "POST",
             "/api/setup/nics/identify",
             json={"interface": "eth0", "duration": 15},
         )
-        self.assertEqual(resp.status, 500)
+        self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertIn("Cannot blink", data["error"])
+        self.assertEqual(data["result"], "info")
+        self.assertEqual(data["method"], "info")
+        self.assertEqual(data["interface"], "eth0")
+        self.assertIn("message", data)
 
     @unittest_run_loop
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
@@ -231,11 +235,12 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
         self.assertIn("invalid json", data["error"].lower())
 
     @unittest_run_loop
+    @patch("api.nic_identify._get_nic_info", return_value={"mac": "aa:bb:cc:dd:ee:ff", "pci_slot": "0000:02:00.0", "driver": "igc"})
     @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
     @patch("api.nic_identify.asyncio.create_subprocess_exec")
-    async def test_ethtool_immediate_failure_returns_500(self, mock_exec, mock_which, mock_sysfs):
-        """When ethtool fails and sysfs unavailable, return 500."""
+    async def test_ethtool_immediate_failure_returns_info(self, mock_exec, mock_which, mock_sysfs, mock_nic_info):
+        """When ethtool fails and sysfs unavailable, return 200 with info fallback."""
         mock_process = AsyncMock()
         mock_process.returncode = 1
         mock_stderr = MagicMock()
@@ -249,27 +254,52 @@ class TestNicIdentifyEndpoint(AioHTTPTestCase):
             "/api/setup/nics/identify",
             json={"interface": "eth99", "duration": 5},
         )
-        self.assertEqual(resp.status, 500)
+        self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertIn("Cannot blink", data["error"])
+        self.assertEqual(data["result"], "info")
+        self.assertEqual(data["method"], "info")
+        self.assertEqual(data["interface"], "eth99")
+        self.assertIn("message", data)
 
     @unittest_run_loop
+    @patch("api.nic_identify._get_nic_info", return_value={"mac": "aa:bb:cc:dd:ee:ff", "pci_slot": "0000:02:00.0", "driver": "igc"})
     @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
     @patch("api.nic_identify.shutil.which", return_value="/usr/sbin/ethtool")
     @patch(
         "api.nic_identify.asyncio.create_subprocess_exec",
         side_effect=OSError("Permission denied"),
     )
-    async def test_oserror_starting_ethtool_returns_500(self, mock_exec, mock_which, mock_sysfs):
-        """OSError when starting ethtool and sysfs unavailable should return 500."""
+    async def test_oserror_starting_ethtool_returns_info(self, mock_exec, mock_which, mock_sysfs, mock_nic_info):
+        """OSError when starting ethtool and sysfs unavailable should return 200 with info fallback."""
         resp = await self.client.request(
             "POST",
             "/api/setup/nics/identify",
             json={"interface": "eth0", "duration": 15},
         )
-        self.assertEqual(resp.status, 500)
+        self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertIn("Cannot blink", data["error"])
+        self.assertEqual(data["result"], "info")
+        self.assertEqual(data["method"], "info")
+        self.assertEqual(data["interface"], "eth0")
+        self.assertIn("message", data)
+
+    @unittest_run_loop
+    @patch("api.nic_identify._get_nic_info", return_value={"mac": "aa:bb:cc:dd:ee:ff", "pci_slot": "0000:02:00.0", "driver": "igc"})
+    @patch("api.nic_identify._blink_via_sysfs", new_callable=AsyncMock, return_value=False)
+    @patch("api.nic_identify.shutil.which", return_value=None)
+    async def test_info_fallback_includes_nic_details(self, mock_which, mock_sysfs, mock_nic_info):
+        """When both strategies fail, response includes mac, pci_slot, and driver from _get_nic_info."""
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/nics/identify",
+            json={"interface": "eth0", "duration": 15},
+        )
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["result"], "info")
+        self.assertEqual(data["mac"], "aa:bb:cc:dd:ee:ff")
+        self.assertEqual(data["pci_slot"], "0000:02:00.0")
+        self.assertEqual(data["driver"], "igc")
 
 
 if __name__ == "__main__":

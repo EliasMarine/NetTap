@@ -131,6 +131,47 @@ def _sysfs_write(path: Path, value: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# NIC info fallback (when LED blink is unavailable)
+# ---------------------------------------------------------------------------
+
+
+def _get_nic_info(interface: str) -> dict:
+    """Read MAC, PCI slot, and driver from sysfs for a given interface.
+
+    Reuses the same host-mount logic as nic_discovery.py — checks
+    HOST_SYS_NET first, falls back to /sys/class/net.
+    """
+    sys_net = Path(os.environ.get("HOST_SYS_NET", "/host/sys/class/net"))
+    if not sys_net.is_dir():
+        sys_net = Path("/sys/class/net")
+
+    info: dict = {}
+
+    # MAC address
+    mac_path = sys_net / interface / "address"
+    try:
+        info["mac"] = mac_path.read_text().strip()
+    except (OSError, IOError):
+        info["mac"] = ""
+
+    # PCI slot (from /device symlink basename)
+    device_link = sys_net / interface / "device"
+    try:
+        info["pci_slot"] = os.path.basename(os.readlink(str(device_link)))
+    except (OSError, IOError):
+        info["pci_slot"] = ""
+
+    # Driver (from /device/driver symlink basename)
+    driver_link = sys_net / interface / "device" / "driver"
+    try:
+        info["driver"] = os.path.basename(os.readlink(str(driver_link)))
+    except (OSError, IOError):
+        info["driver"] = ""
+
+    return info
+
+
+# ---------------------------------------------------------------------------
 # Route handler
 # ---------------------------------------------------------------------------
 
@@ -216,15 +257,20 @@ async def handle_nic_identify(request: web.Request) -> web.Response:
             "method": "sysfs_led",
         })
 
-    # --- Both strategies failed ---
-    return web.json_response(
-        {
-            "error": f"Cannot blink LEDs for '{interface}'. "
-                     "Neither ethtool -p nor sysfs LED control is available for this NIC.",
-            "hint": "Check that the NIC driver supports LED identification.",
-        },
-        status=500,
+    # --- Both strategies failed — return NIC info as graceful fallback ---
+    # Instead of HTTP 500, provide MAC/PCI/driver so the user can still
+    # physically identify the NIC by checking labels on the hardware.
+    info = _get_nic_info(interface)
+    logger.info(
+        "NIC identify: LED blink unavailable for %s, returning info fallback", interface
     )
+    return web.json_response({
+        "result": "info",
+        "interface": interface,
+        "method": "info",
+        **info,
+        "message": "LED blink not available \u2014 use MAC address or PCI slot to identify this NIC.",
+    })
 
 
 async def _try_ethtool(ethtool_path: str, interface: str, duration: int) -> bool:

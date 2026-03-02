@@ -57,10 +57,12 @@
 	let blinkingInterface = $state('');
 	let blinkCountdown = $state(0);
 	let blinkError = $state('');
+	let blinkInfo = $state<{ interface: string; mac: string; pci_slot: string; driver: string; message: string } | null>(null);
 
 	async function identifyNic(interfaceName: string): Promise<void> {
 		if (blinkingInterface) return; // Already blinking
 		blinkError = '';
+		blinkInfo = null;
 		blinkingInterface = interfaceName;
 		blinkCountdown = 15;
 
@@ -73,6 +75,20 @@
 			if (!res.ok) {
 				const data = await res.json();
 				blinkError = data.error || 'Failed to identify interface';
+				blinkingInterface = '';
+				blinkCountdown = 0;
+				return;
+			}
+			const data = await res.json();
+			// Graceful fallback: LED blink unavailable, show NIC info instead
+			if (data.method === 'info') {
+				blinkInfo = {
+					interface: data.interface,
+					mac: data.mac || '',
+					pci_slot: data.pci_slot || '',
+					driver: data.driver || '',
+					message: data.message || 'LED blink not available for this NIC.',
+				};
 				blinkingInterface = '';
 				blinkCountdown = 0;
 				return;
@@ -741,6 +757,23 @@
 						{#if blinkError}
 							<div class="alert alert-warning" style="margin-bottom: var(--space-sm);">
 								{blinkError}
+							</div>
+						{/if}
+
+						{#if blinkInfo}
+							<div class="alert alert-info" style="margin-bottom: var(--space-sm);">
+								<strong>{blinkInfo.message}</strong>
+								<div style="margin-top: var(--space-xs); display: flex; gap: var(--space-sm); flex-wrap: wrap;">
+									{#if blinkInfo.mac}
+										<span class="badge">MAC: {blinkInfo.mac}</span>
+									{/if}
+									{#if blinkInfo.pci_slot}
+										<span class="badge">PCI: {blinkInfo.pci_slot}</span>
+									{/if}
+									{#if blinkInfo.driver}
+										<span class="badge badge-accent">Driver: {blinkInfo.driver}</span>
+									{/if}
+								</div>
 							</div>
 						{/if}
 

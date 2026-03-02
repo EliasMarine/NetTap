@@ -105,6 +105,7 @@ Development versions increment with each phase milestone. Tags are applied on `d
 5. **Create PRs targeting `develop`** — never targeting `main`.
 6. **Include the Linear issue ID** in the PR description (e.g., "Closes NET-7").
 7. **Tag phase milestones** only when all tasks for that phase are complete and merged to `develop`.
+8. **Always use agent teams** for multi-file tasks. When a task involves 3+ independent file changes (e.g., code + tests + docs), use `TeamCreate` to spawn parallel agents. Delegate independent subtasks (test updates, doc updates, Linear issues) to teammates while the lead handles core code changes.
 
 ---
 

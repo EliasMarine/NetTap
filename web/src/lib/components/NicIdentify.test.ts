@@ -96,6 +96,22 @@ function simulateCountdown(
 	return { values, finalBlinking: blinking };
 }
 
+/** Parse an info fallback response into display data */
+function parseInfoFallback(
+	responseData: { result?: string; method?: string; mac?: string; pci_slot?: string; driver?: string; message?: string } | null,
+): { isInfo: boolean; mac: string; pciSlot: string; driver: string; message: string } {
+	if (!responseData || responseData.result !== 'info' || responseData.method !== 'info') {
+		return { isInfo: false, mac: '', pciSlot: '', driver: '', message: '' };
+	}
+	return {
+		isInfo: true,
+		mac: responseData.mac || '',
+		pciSlot: responseData.pci_slot || '',
+		driver: responseData.driver || '',
+		message: responseData.message || 'LED blink not available for this NIC.',
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -323,6 +339,58 @@ describe('NIC Identification logic', () => {
 
 			expect(canBlink('eth0', '')).toBe(true);
 			expect(canBlink('eth1', '')).toBe(true);
+		});
+	});
+
+	// -- Info fallback response handling -------------------------------------
+
+	describe('info fallback response handling', () => {
+		it('detects info fallback response', () => {
+			const result = parseInfoFallback({ result: 'info', method: 'info' });
+			expect(result.isInfo).toBe(true);
+		});
+
+		it('returns NIC details from info response', () => {
+			const result = parseInfoFallback({
+				result: 'info',
+				method: 'info',
+				mac: 'aa:bb:cc:dd:ee:ff',
+				pci_slot: '0000:03:00.0',
+				driver: 'igc',
+				message: 'LED blink not supported by driver.',
+			});
+			expect(result.isInfo).toBe(true);
+			expect(result.mac).toBe('aa:bb:cc:dd:ee:ff');
+			expect(result.pciSlot).toBe('0000:03:00.0');
+			expect(result.driver).toBe('igc');
+			expect(result.message).toBe('LED blink not supported by driver.');
+		});
+
+		it('provides default message when missing', () => {
+			const result = parseInfoFallback({ result: 'info', method: 'info' });
+			expect(result.message).toBe('LED blink not available for this NIC.');
+		});
+
+		it('returns isInfo false for blinking response', () => {
+			const result = parseInfoFallback({ result: 'blinking', method: 'ethtool' });
+			expect(result.isInfo).toBe(false);
+		});
+
+		it('returns isInfo false for null response', () => {
+			const result = parseInfoFallback(null);
+			expect(result.isInfo).toBe(false);
+		});
+
+		it('handles partial info response', () => {
+			const result = parseInfoFallback({
+				result: 'info',
+				method: 'info',
+				driver: 'igc',
+			});
+			expect(result.isInfo).toBe(true);
+			expect(result.mac).toBe('');
+			expect(result.pciSlot).toBe('');
+			expect(result.driver).toBe('igc');
 		});
 	});
 });
