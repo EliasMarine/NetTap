@@ -517,9 +517,11 @@ services:
       - /dev:/dev:ro
       - storage-data:/var/lib/nettap
       - pcap-data:/opt/nettap/pcap:ro
-      # Host sysfs for NIC discovery (MAC, speed, driver, link state)
-      - /sys/class/net:/host/sys/class/net:ro
-      # Host LED sysfs for igc NIC LED blink (ethtool -p unsupported on igc)
+      # Host sysfs — mount ALL of /sys so that symlinks resolve correctly.
+      # /sys/class/net/<iface> is a symlink to /sys/devices/pci.../net/<iface>;
+      # mounting only /sys/class/net leaves dangling targets inside the container.
+      - /sys:/host/sys:ro
+      # Writable overlay for igc NIC LED blink (sysfs timer trigger writes)
       - /sys/class/leds:/host/sys/class/leds
     environment:
       <<: *opensearch-env

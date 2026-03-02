@@ -19,7 +19,10 @@ logger = logging.getLogger("nettap.api.nic_discovery")
 
 # When running in Docker, /sys/class/net shows container interfaces.
 # Mount the host's sysfs via docker-compose:
-#   volumes: ["/sys/class/net:/host/sys/class/net:ro"]
+#   volumes: ["/sys:/host/sys:ro"]
+# We mount ALL of /sys because /sys/class/net/<iface> entries are symlinks
+# to /sys/devices/pci.../net/<iface> — mounting only /sys/class/net leaves
+# dangling symlink targets and all file reads (MAC, speed, etc.) fail.
 # The code checks HOST_SYS_NET first, then falls back to the local path.
 HOST_SYS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 LOCAL_SYS_NET = "/sys/class/net"
