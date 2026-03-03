@@ -217,7 +217,7 @@ sudo docker exec nettap-opensearch bash -c 'JAVA_HOME=/usr/share/opensearch/jdk 
 sudo docker compose -f docker/docker-compose.yml restart logstash filebeat
 
 # Step 4: Verify auth works
-sudo docker exec nettap-opensearch curl --cacert /usr/share/opensearch/config/certs/ca.crt -u "$(sudo docker exec nettap-opensearch cat /var/local/curlrc/.opensearch.primary.curlrc 2>/dev/null | grep -oP '(?<=user = ").*(?=")')" -s 'https://localhost:9200/_cluster/health' | python3 -m json.tool
+sudo docker exec nettap-opensearch curl --config /var/local/curlrc/.opensearch.primary.curlrc --cacert /usr/share/opensearch/config/certs/ca.crt --insecure -s 'https://localhost:9200/_cluster/health' | python3 -m json.tool
 ```
 
 ## Technology Stack
