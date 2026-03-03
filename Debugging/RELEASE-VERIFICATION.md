@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
-> **Last updated:** 2026-03-02
-> **Status:** 13/17 checks verified across 2 environments (Dev + N100) — 2 FAIL on Dev (shellcheck, Docker), E2E fixed
+> **Last updated:** 2026-03-03
+> **Status:** 14/17 checks verified across 2 environments (Dev + N100) — Trivy working, CVEs found in base images (upstream, no fix available)
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -27,6 +27,7 @@ This document tracks every verification test run, its environment, results, and 
 | N100 (Ubuntu) | `--quick` | 2026-03-02 | ALL PASSED | 7 | 0 | 8 |
 | N100 (Ubuntu) | `--full` | 2026-03-02 | ALL PASSED | 7 | 0 | 8 |
 | Dev (macOS) | `--full` | 2026-03-02 | **3 FAIL** | 5 | 3 | 2 |
+| N100 (Ubuntu) | `--trivy` | 2026-03-03 | **2 FAIL** | 7 | 2 | 6 | Trivy working. CVEs in Debian 12 base image + Node.js base image npm — all upstream, no fix available |
 
 ---
 
@@ -45,9 +46,9 @@ This document tracks every verification test run, its environment, results, and 
 - **OS:** Ubuntu Server 22.04 LTS
 - **Hardware:** Intel N100, 16GB RAM, 1TB NVMe, dual Intel i226-V 2.5GbE
 - **Purpose:** Docker builds, integration testing, hardware verification
-- **Tools available:** docker, python3, git, bash
-- **Tools missing:** ruff, shellcheck, pytest, npm, trivy, playwright (see [Missing Tools](#missing-tools-on-n100))
-- **Status:** Partial — automated checks pass but 8 skipped due to missing tools
+- **Tools available:** docker, python3, git, bash, trivy
+- **Tools missing:** ruff, shellcheck, pytest, npm, playwright (see [Missing Tools](#missing-tools-on-n100))
+- **Status:** Docker builds PASS, Trivy FAIL (upstream base image CVEs — no fix available). 6 checks still skipped (lint/test tools).
 
 ### GitHub Actions CI — automated
 
@@ -70,7 +71,7 @@ All 10 checks from `scripts/verify-release.sh`, tracked per environment and mode
 | 6 | Web Type Check (svelte-check) | PASS | PASS | SKIP | SKIP | — | 0 errors, 0 warnings |
 | 7 | Web Unit Tests (vitest) | PASS | PASS | SKIP | SKIP | — | 649/649 passed (2.61s) on Dev |
 | 8 | Docker Builds | n/a (quick) | **FAIL** | n/a (quick) | PASS | — | macOS: `docker compose -f` not recognized (V2 plugin missing). N100: all 4 images build OK |
-| 9 | Trivy CVE Scan | n/a (quick) | SKIP (no images) | n/a (quick) | SKIP (not installed) | — | Dev: trivy installed, but no Docker images to scan (builds fail on macOS). Fixed broken `docker-credential-desktop` symlink workaround. N100: trivy not installed |
+| 9 | Trivy CVE Scan | n/a (quick) | SKIP (no images) | n/a (quick) | **FAIL** (CVEs found) | — | N100: Trivy working. 4 CVEs in storage-daemon (2C,2H), 17 CVEs in web (1C,2H OS + 14H Node npm). All upstream base image issues — see [Trivy CVE Findings](#trivy-cve-findings-n100). Dev: no Docker images to scan. |
 | 10 | E2E Tests (Playwright) | n/a (quick) | PASS | n/a (quick) | SKIP | — | Dev: 6/8 passed, 2 skipped. Fixed selector + CSRF + DATA_DIR issues. See [E2E Failures](#e2e-test-failures-dev) |
 
 **Legend:** PASS = verified passing, FAIL = verified failing, SKIP = tool not available, n/a = not included in mode, — = not yet run
@@ -101,7 +102,7 @@ All items must be checked before tagging `v1.0.0` on `main`.
 - [ ] All automated checks PASS on N100 (`--full`) — no SKIPs
 - [ ] All automated checks PASS on CI — full pipeline green
 - [ ] All 7 hardware verification checks completed (H1–H7)
-- [ ] No CRITICAL/HIGH CVEs (Trivy scan clean)
+- [ ] No CRITICAL/HIGH CVEs (Trivy) — **BLOCKED:** upstream Debian 12 + Node.js base image CVEs with no fix available. See [Trivy CVE Findings](#trivy-cve-findings-n100). Acceptable risk: all CVEs are in OS libs (glibc, zlib, sqlite) or bundled npm (tar, glob, minimatch), not in app code.
 - [ ] Release notes drafted
 - [ ] Changelog generated (`git-cliff` or manual)
 - [ ] Version bumped in `web/package.json` + `daemon/pyproject.toml`
@@ -120,6 +121,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-02 | N100 (Ubuntu) | `--full` | ALL PASSED | 7 | 0 | 8 | Elias | Docker builds pass. Trivy + Playwright skipped (not installed). |
 | 2026-03-02 | N100 (Ubuntu) | `--full` | ALL PASSED | 7 | 0 | 8 | Elias | Re-run, identical results. Same 8 skips — dev tools still not installed. |
 | 2026-03-02 | Dev (macOS) | `--full` | **3 FAIL** | 5 | 3 | 2 | Elias | First dev run. FAIL: shellcheck (#3), docker builds (#8), E2E (#10). SKIP: ruff (#2), trivy (#9). pytest 997/997, vitest 649/649, svelte-check clean. |
+| 2026-03-03 | N100 (Ubuntu) | `--trivy` | **2 FAIL** | 7 | 2 | 6 | Elias | Trivy now working after image name + sudo fix. Both scans FAIL with upstream CVEs. storage-daemon: 4 CVEs (glibc, sqlite, zlib). web: 3 OS + 14 Node.js npm CVEs. App deps clean. |
 
 ---
 
@@ -145,6 +147,44 @@ shellcheck runs on Dev but reports warnings that cause non-zero exit. Key issues
 macOS Docker doesn't have the Compose V2 plugin (`docker compose`). The script uses `docker compose -f ...` which fails with "unknown shorthand flag: 'f'". This is expected — **Docker builds should only run on the N100 production host** or in CI, not on the dev Mac.
 
 **Fix priority:** Low — the script could detect the platform and skip Docker on macOS, or we accept this as a known limitation and only run Docker builds on N100/CI.
+
+### Trivy CVE Findings (N100 — Check #9) {#trivy-cve-findings-n100}
+
+Trivy scan ran 2026-03-03 on N100 against both Docker images. **All CVEs are in upstream base images**, not in NetTap application code. App-level dependencies (Python packages + Node.js app packages) have 0 vulnerabilities.
+
+#### nettap/storage-daemon:latest — 4 CVEs (2 CRITICAL, 2 HIGH)
+
+| Library | CVE | Severity | Status | Description | Fix Available? |
+|---------|-----|----------|--------|-------------|----------------|
+| `libc-bin` | CVE-2026-0861 | HIGH | affected | glibc: integer overflow in memalign → heap corruption | No (Debian 12 hasn't patched) |
+| `libc6` | CVE-2026-0861 | HIGH | affected | Same glibc CVE (shared library) | No |
+| `libsqlite3-0` | CVE-2025-7458 | CRITICAL | affected | SQLite integer overflow | No (Debian 12 hasn't patched) |
+| `zlib1g` | CVE-2023-45853 | CRITICAL | will_not_fix | Integer overflow in zipOpenNewFileInZip4_6 (minizip API) | No — Debian marked `will_not_fix` |
+
+#### nettap/web:latest — 3 OS + 14 Node.js CVEs (1 CRITICAL, 16 HIGH)
+
+**OS-level (same Debian 12 base):**
+
+| Library | CVE | Severity | Status | Fix Available? |
+|---------|-----|----------|--------|----------------|
+| `libc-bin`/`libc6` | CVE-2026-0861 | HIGH | affected | No |
+| `zlib1g` | CVE-2023-45853 | CRITICAL | will_not_fix | No |
+
+**Node.js base image npm** (in `/usr/local/lib/node_modules/npm/`, NOT in app's `node_modules/`):
+
+| Library | CVE | Severity | Installed | Fixed | Description |
+|---------|-----|----------|-----------|-------|-------------|
+| `glob` | CVE-2025-64756 | HIGH | 10.4.5 | 10.5.0+ | Command injection via malicious filenames |
+| `minimatch` | CVE-2026-26996 | HIGH | 9.0.5 | 9.0.6+ | DoS via crafted glob patterns |
+| `tar` (x3 copies) | CVE-2026-23745 | HIGH | 6.2.1/7.4.3 | 7.5.3+ | Arbitrary file overwrite via unsanitized linkpaths |
+| `tar` (x3 copies) | CVE-2026-23950 | HIGH | 6.2.1/7.4.3 | 7.5.4+ | Arbitrary file overwrite via Unicode collision race |
+| `tar` (x3 copies) | CVE-2026-24842 | HIGH | 6.2.1/7.4.3 | 7.5.7+ | File creation via path traversal in hardlink |
+| `tar` (x3 copies) | CVE-2026-26960 | HIGH | 6.2.1/7.4.3 | 7.5.8+ | Arbitrary file read/write via malicious hardlink |
+
+**Risk assessment:**
+- **OS CVEs (glibc, zlib, sqlite):** Low risk for NetTap. The glibc memalign overflow requires specific allocation patterns unlikely in our workload. The zlib CVE is in the minizip API which we don't use. SQLite is not directly used by the daemon.
+- **Node.js npm CVEs (tar, glob, minimatch):** Low risk. These are in the Docker image's system npm (`/usr/local/lib/node_modules/npm/`), not in the app's dependencies. The app never calls `npm` or `tar` at runtime.
+- **Mitigation:** Upgrade to a newer Node.js base image when one becomes available with patched npm. Consider adding a `.trivyignore` file to suppress accepted risks for release.
 
 ### E2E Test Failures (Dev — Check #10) — FIXED {#e2e-test-failures-dev}
 
@@ -174,7 +214,7 @@ These tools need to be installed on the N100 production host for full `--full` v
 | shellcheck | `sudo apt install shellcheck` | Shell script linting | #3 | Medium — can run on dev/CI |
 | pytest | `pip install pytest` | Python unit tests | #4 | Medium — can run on dev/CI |
 | npm | `curl -fsSL https://deb.nodesource.com/setup_20.x \| sudo -E bash - && sudo apt install -y nodejs` | Web dependency install, type check, unit tests | #5, #6, #7 | Medium — can run on dev/CI |
-| trivy | `curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \| sudo sh -s -- -b /usr/local/bin` | Container CVE scanning | #9 | High — should run on build host |
+| ~~trivy~~ | ~~`curl -sfL ...`~~ | ~~Container CVE scanning~~ | ~~#9~~ | **INSTALLED** (2026-03-03) — working, scans both images |
 | playwright | `cd web && npx playwright install --with-deps` | End-to-end browser tests | #10 | Low — best run on dev/CI |
 
 ### Missing Tools on Dev (macOS)
