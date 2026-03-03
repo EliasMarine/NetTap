@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-02
-> **Status:** 20 issues tracked. 20 RESOLVED. Latest: NET-68 NIC LED identify permission + fallback (PR #73).
+> **Status:** 21 issues tracked. 21 RESOLVED. Latest: NET-79 Malcolm capture + proxy env vars (commit on develop).
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -20,6 +20,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 7: Setup Wizard Auth Redirect](#chain-7-setup-wizard-auth-redirect)
 - [Chain 8: Storage API Format Mismatch](#chain-8-storage-api-format-mismatch)
 - [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
+- [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -33,21 +34,22 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
 | Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
-| Redis | **CRASH-LOOP** | PR #69 fix used string-form command → double-shell-wrapping mangles `--save ''` (NET-65). Fix in PR #71. |
+| Redis | OK | Fixed in PR #71 — list-form command |
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
-| Filebeat | OK | Fixed in PR #69 — upload-common env vars added |
-| Zeek, Suricata, Arkime | RESTARTING | Expected: br0 has no carrier (cables not connected). Will stabilize when plugged in. |
-| nginx-proxy | OK | Depends on API — now healthy after API fix |
-| CyberChef | UNHEALTHY | Low priority — app runs but healthcheck endpoint may not exist |
+| Filebeat | OK | Fixed — REDIS_HOST/PORT/PASSWORD env vars added (NET-79) |
+| Zeek, Suricata, Arkime | OK (pending test) | Fixed — `EXTRA_TAGS: ""` + `MANAGE_PCAP_FILES` env vars added (NET-79). Awaiting full stack test. |
+| nginx-proxy | OK (pending test) | Fixed — added ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL and other template vars (NET-79) |
+| CyberChef | OK (pending test) | Fixed healthcheck: `/health` → `/` (CyberChef is static nginx, no `/health` endpoint) |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
-| NetTap setup wizard API | **BROKEN** | Auth middleware redirects /api/setup/* → /setup (HTML) — breaks JSON parse (NET-66). Fix in PR #71. |
+| NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
+| NetTap web (nettap-web) | **502 ERROR** | Nginx proxies to nettap-web:3000. Internal healthcheck works (302→/setup→200). Browser gets 502. Likely missing `ORIGIN` env for SvelteKit CSRF. Investigating. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
 ---
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **7 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **10 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -70,6 +72,15 @@ CHAIN 6: Redis Double-Shell Wrapping (NET-65)
 
 CHAIN 7: Setup Wizard Auth Redirect (NET-66)
   PR #71
+
+CHAIN 8: Storage API Format Mismatch (NET-67)
+  PR #72
+
+CHAIN 9: NIC LED Identification Permission + Fallback (NET-68)
+  PR #73
+
+CHAIN 10: Malcolm Capture Services + Proxy Env Vars (NET-79)
+  fix/malcolm-capture-env-vars → develop
 ```
 
 ---
@@ -803,13 +814,81 @@ daemon inherits *security-defaults (no-new-privileges:true)
 
 ---
 
+## Chain 10: Malcolm Capture Services + Proxy Env Vars
+
+### NET-79 — Zeek/Suricata/Arkime crash-loop, filebeat exits, nginx-proxy crash, CyberChef/Dashboards unhealthy
+
+| Field | Value |
+|---|---|
+| **Linear** | [NET-79](https://linear.app/nettap/issue/NET-79) |
+| **Branch** | `fix/malcolm-capture-env-vars` → merged to `develop` |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-02 |
+
+**Symptoms:**
+First full Docker stack spin-up on N100. Of 18 containers, 6 were failing:
+- **zeek-live, suricata-live, arkime-live**: Crash-loop with `KeyError: 'ENV_EXTRA_TAGS'` from supervisord
+- **filebeat**: Exits immediately: `missing field accessing 'output.redis.password'`
+- **nginx-proxy**: Unhealthy — `nginx: [emerg] invalid number of arguments in "map" directive in /etc/nginx/conf.d/01_template_variables.conf:21`
+- **cyberchef**: Unhealthy — healthcheck hitting `/health` which doesn't exist (static nginx)
+- **dashboards**: Healthcheck 404 — checking `/api/status` instead of `/dashboards/api/status`
+
+**Root Cause:**
+Five distinct but related issues, all caused by incomplete env var mapping from Malcolm's upstream env files:
+
+1. **Capture services (`EXTRA_TAGS`)** — Malcolm's supervisord configs for zeek/suricata/arkime reference `%(ENV_EXTRA_TAGS)s`. Unlike shell `$VAR` which defaults to empty, supervisord's `%(ENV_*)s` is **strictly fatal** on missing vars. Malcolm's upstream compose loads this via `upload-common.env` file, which we don't use.
+
+2. **Filebeat (`REDIS_PASSWORD`)** — Filebeat's config references `output.redis.password` from env vars. Malcolm's upstream provides this via `redis.env`. We had partial filebeat env from Chain 4 but missed the Redis connection vars.
+
+3. **nginx-proxy (`ARKIME_SSL`, `ROLE_BASED_ACCESS`)** — Malcolm's nginx uses `envsubst` to render `01_template_variables.conf.template`. The template uses env vars as nginx `map` KEYS: `map $ARKIME_SSL $arkime_protocol { ... }`. When env vars are unset, envsubst replaces them with empty string, producing `map  $arkime_protocol {` (1 argument instead of required 2) — invalid nginx syntax. Multiple template vars (`ARKIME_SSL`, `ROLE_BASED_ACCESS`, `DASHBOARDS_URL`, etc.) needed to be set.
+
+4. **CyberChef healthcheck** — CyberChef is static nginx serving a single-page app. It has no `/health` endpoint — the correct healthcheck is just `/`.
+
+5. **Dashboards healthcheck** — Malcolm serves OpenSearch Dashboards at the `/dashboards/` prefix, not at root. The status API is at `/dashboards/api/status`, not `/api/status`.
+
+**Causal Chain:**
+```
+Malcolm capture images reference %(ENV_EXTRA_TAGS)s in supervisord.conf
+  → env var not in compose environment → supervisord KeyError → crash-loop (zeek, suricata, arkime)
+
+Malcolm filebeat config references output.redis.password
+  → REDIS_PASSWORD not in compose env → filebeat exits immediately
+
+Malcolm nginx template uses $ARKIME_SSL as map key
+  → envsubst replaces unset var with empty → "map  $var {" (1 arg) → nginx parse error → crash
+
+CyberChef healthcheck tests /health
+  → static nginx has no /health route → 404 → unhealthy
+
+Dashboards healthcheck tests /api/status
+  → Malcolm prefix is /dashboards/ → /api/status returns 404 → unhealthy
+```
+
+**Fix:**
+Added missing environment variables and fixed healthcheck endpoints in `docker/docker-compose.yml`:
+
+1. **zeek-live, suricata-live, arkime-live** — Added `EXTRA_TAGS: ""`
+2. **arkime-live** — Also added `MANAGE_PCAP_FILES: "false"`, `MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"`
+3. **filebeat** — Added `REDIS_HOST: "redis"`, `REDIS_PORT: "6379"`, `REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"`
+4. **nginx-proxy** — Added `ARKIME_SSL: "true"`, `ROLE_BASED_ACCESS: "false"`, `DASHBOARDS_URL: "http://dashboards:5601/dashboards"`, `ARKIME_VIEWER_PORT: "8005"`, `MANAGE_PCAP_FILES: "false"`, `MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"`, `ROLE_ADMIN: "admin"`, `ROLE_CAPTURE_SERVICE: "capture_service"`
+5. **cyberchef** — Changed healthcheck from `http://localhost:8443/health` to `http://localhost:8443/`
+6. **dashboards** — Changed healthcheck from `http://localhost:5601/api/status` to `http://localhost:5601/dashboards/api/status`
+
+**Files Changed:**
+- `docker/docker-compose.yml` — 31 insertions, 2 deletions across 6 services
+
+**Key Insight:** Malcolm's upstream compose relies on `env_file:` directives to load dozens of env vars from `.env` files (`upload-common.env`, `redis.env`, `nginx.env`, `auth-common.env`, etc.). When writing a custom compose that extends Malcolm images, you must either (a) use the same env files, or (b) explicitly replicate every env var that supervisord, nginx templates, and service configs reference. The safest approach is to check Malcolm's upstream compose AND the actual template files inside the images (e.g., `01_template_variables.conf.template`) to find all required vars.
+
+---
+
 ## Key Files Modified
 
-These files were touched repeatedly across the 10 PRs. Check their current state before making changes.
+These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73 (all 16) | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common env vars. Daemon: full /sys mount + healthcheck. Daemon: no-new-privileges:false override for nsenter. |
+| `docker/docker-compose.yml` | #54-#73, NET-79 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. |
 | `web/src/hooks.server.ts` | #71 | PUBLIC_PATHS includes `/api/setup`; first-run redirect skips `/api/setup/*` |
 | `daemon/api/nic_identify.py` | #68, #73 | Graceful info fallback when LED blink unavailable; returns MAC/PCI/driver |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
@@ -865,6 +944,13 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 27. **Directory listing succeeds even with broken symlinks** — `iterdir()` / `ls` shows entries, but reading files inside those entries fails silently with empty strings (OSError caught by sysfs read helpers). This makes the bug subtle: the daemon appears to work (returns valid JSON with interface names) but all metadata is empty.
 34. **Kernel driver features have version requirements** — igc `set_phys_id` (ethtool -p) requires kernel ~6.11, and `CONFIG_IGC_LEDS` requires kernel 6.9. Always provide a graceful fallback when hardware/driver features may be unavailable.
 
+### Malcolm Env / Template Rendering (NEW — Chain 10)
+36. **Malcolm nginx templates use `envsubst` with vars as map keys** — `map $ARKIME_SSL $arkime_protocol { ... }`. When `$ARKIME_SSL` is unset, envsubst replaces it with empty string, producing `map  $arkime_protocol {` (1 argument) which is invalid nginx syntax. The error message (`invalid number of arguments in "map" directive`) doesn't mention the env var — you must read the template source to find the culprit.
+37. **Malcolm env files are not optional** — Malcolm's upstream compose uses `env_file:` to load `.env` files (upload-common.env, redis.env, nginx.env, etc.). Each contains dozens of vars referenced by supervisord, nginx templates, and service configs. Missing even one can cause crash-loops, parse errors, or silent misconfiguration.
+38. **Always check Malcolm's template files inside the image** — the compose file doesn't show which env vars nginx-proxy needs. You must check the actual template files (e.g., `nginx/templates/01_template_variables.conf.template`) to find all `$VAR` references that envsubst will expand.
+39. **CyberChef has no healthcheck endpoint** — it's static nginx serving a single-page app. Use `/` as the healthcheck path, not `/health`.
+40. **Malcolm Dashboards uses a URL prefix** — OpenSearch Dashboards serves at `/dashboards/`, not at root. API endpoints like `/api/status` must be prefixed: `/dashboards/api/status`.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -888,6 +974,8 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | More Malcolm services may need explicit `command:` | Silent exit code 0 crashes | Audit all Malcolm services against upstream compose after tag bumps |
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 | NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
+| Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
+| Web UI 502 error from browser (under investigation) | Users can't access the dashboard | nginx-proxy→nettap-web proxying works internally (healthcheck passes). Likely missing `ORIGIN` env for SvelteKit CSRF. Needs diagnostic output from N100. |
 
 ---
 
@@ -916,3 +1004,4 @@ These files were touched repeatedly across the 10 PRs. Check their current state
 | NET-66 | #71 | Setup wizard API returns HTML: auth redirect on /api/setup/* | 2026-03-01 |
 | NET-67 | #72 | Storage API format mismatch: missing disk_free_gb, wrong types | 2026-03-02 |
 | NET-68 | #73 | NIC LED identify: nsenter permission + info fallback | 2026-03-02 |
+| NET-79 | develop | Malcolm capture + proxy env vars, healthcheck fixes | 2026-03-02 |
