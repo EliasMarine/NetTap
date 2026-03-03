@@ -306,13 +306,27 @@
 </svelte:head>
 
 <div class="dashboard">
-	<!-- Error banner -->
+	<!-- Error / status banners -->
 	{#if error}
 		<div class="alert alert-warning error-banner">
 			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
 			</svg>
-			<span>Unable to reach the monitoring daemon. Data may be stale or unavailable.</span>
+			<span>Unable to reach the monitoring daemon. Check that the NetTap daemon container is running.</span>
+		</div>
+	{:else if systemHealth && !systemHealth.opensearch_reachable}
+		<div class="alert alert-info error-banner">
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+			</svg>
+			<span>OpenSearch is not reachable. The daemon is running but cannot connect to OpenSearch. Traffic data will be unavailable until the connection is restored.</span>
+		</div>
+	{:else if !loading && systemHealth?.opensearch_reachable && !trafficSummary && bandwidthData.length === 0}
+		<div class="alert alert-info error-banner">
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+			</svg>
+			<span>No traffic data yet. OpenSearch is connected but no network logs have been indexed. Traffic will appear once Zeek and Suricata start capturing.</span>
 		</div>
 	{/if}
 

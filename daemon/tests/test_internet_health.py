@@ -409,11 +409,11 @@ class TestHistorySizeLimit(unittest.TestCase):
 class TestGetCurrentStatus(unittest.TestCase):
     """Tests for get_current_status()."""
 
-    def test_empty_history_returns_unknown(self):
-        """With no history, current status should be 'unknown'."""
+    def test_empty_history_returns_not_configured(self):
+        """With no history, current status should be 'not_configured'."""
         monitor = InternetHealthMonitor()
         status = monitor.get_current_status()
-        self.assertEqual(status["status"], "unknown")
+        self.assertEqual(status["status"], "not_configured")
         self.assertIsNone(status["timestamp"])
 
     def test_returns_last_check(self):

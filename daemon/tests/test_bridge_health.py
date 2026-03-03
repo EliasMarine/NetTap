@@ -166,6 +166,16 @@ class TestDetermineHealthStatus(unittest.TestCase):
         status = self.monitor._determine_health_status("up", True, False, False)
         self.assertEqual(status, "degraded")
 
+    def test_not_configured_status(self):
+        """Bridge not_configured should return 'not_configured'."""
+        status = self.monitor._determine_health_status("not_configured", False, False, False)
+        self.assertEqual(status, "not_configured")
+
+    def test_not_configured_overrides_bypass(self):
+        """not_configured should take priority over bypass."""
+        status = self.monitor._determine_health_status("not_configured", False, False, True)
+        self.assertEqual(status, "not_configured")
+
 
 class TestEstimateLatency(unittest.TestCase):
     """Tests for BridgeHealthMonitor._estimate_latency()."""
@@ -342,10 +352,10 @@ class TestGracefulDegradation(unittest.TestCase):
     """Tests for graceful degradation when sysfs files do not exist."""
 
     def test_check_bridge_state_missing_sysfs(self):
-        """Missing sysfs file should return 'unknown'."""
+        """Missing bridge interface directory should return 'not_configured'."""
         monitor = BridgeHealthMonitor(bridge_name="nonexistent_br99")
         result = asyncio.run(monitor._check_bridge_state())
-        self.assertEqual(result, "unknown")
+        self.assertEqual(result, "not_configured")
 
     def test_check_carrier_missing_sysfs(self):
         """Missing carrier file should return False."""

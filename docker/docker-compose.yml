@@ -576,9 +576,15 @@ services:
       - /tmp:size=50M
     volumes:
       - ../config:/opt/nettap/config:ro
-      - /dev:/dev:ro
+      # NVMe SMART queries send admin commands that require write access to
+      # /dev/nvme0 (the controller device). :ro silently blocks these commands,
+      # causing all SMART metrics to return null. See Debugging/RELIABILITY-TRACKER.md.
+      - /dev:/dev
       - storage-data:/var/lib/nettap
       - pcap-data:/opt/nettap/pcap:ro
+      # OpenSearch credentials — daemon needs Basic Auth to query OpenSearch.
+      # Without this, StorageManager gets 403 on all API calls.
+      - ./curlrc:/var/local/curlrc:ro
       # Host sysfs — mount ALL of /sys so that symlinks resolve correctly.
       # /sys/class/net/<iface> is a symlink to /sys/devices/pci.../net/<iface>;
       # mounting only /sys/class/net leaves dangling targets inside the container.

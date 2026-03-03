@@ -168,6 +168,16 @@
 						</span>
 					</div>
 				</div>
+				{#if systemHealth && !systemHealth.opensearch_reachable}
+					<div class="alert alert-info os-help">
+						OpenSearch is not reachable. Possible causes:
+						<ul>
+							<li>OpenSearch container is still starting (can take up to 3 minutes)</li>
+							<li>Credentials are not configured — check curlrc mount</li>
+							<li>OpenSearch security needs bootstrap — see CLAUDE.md</li>
+						</ul>
+					</div>
+				{/if}
 			</div>
 		</div>
 
@@ -270,6 +280,11 @@
 							<span class="info-value mono">{smartHealth.power_on_hours != null ? smartHealth.power_on_hours.toLocaleString() : '--'}</span>
 						</div>
 					</div>
+					{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}
+						<div class="alert alert-info os-help">
+							SMART metrics are unavailable. The device was detected but no data could be read. Check that the /dev volume is mounted without :ro in Docker Compose, as NVMe drives require write access for admin commands.
+						</div>
+					{/if}
 					{#if smartHealth.warnings && smartHealth.warnings.length > 0}
 						<div class="smart-warnings">
 							{#each smartHealth.warnings as warning}
@@ -517,6 +532,22 @@
 		color: var(--text-secondary);
 		min-width: 36px;
 		text-align: right;
+	}
+
+	/* Actionable help boxes */
+	.os-help {
+		margin-top: var(--space-md);
+		font-size: var(--text-sm);
+		line-height: 1.5;
+	}
+
+	.os-help ul {
+		margin: var(--space-xs) 0 0 var(--space-md);
+		padding: 0;
+	}
+
+	.os-help li {
+		margin-bottom: var(--space-xs);
 	}
 
 	/* SMART warnings */

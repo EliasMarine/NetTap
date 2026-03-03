@@ -69,11 +69,11 @@ class TestHealthStatusEndpoint(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_health_status_empty_history(self):
-        """GET /api/internet/health with no history returns unknown."""
+        """GET /api/internet/health with no history returns not_configured."""
         self.monitor._history.clear()
         resp = await self.client.request("GET", "/api/internet/health")
         data = await resp.json()
-        self.assertEqual(data["status"], "unknown")
+        self.assertEqual(data["status"], "not_configured")
 
 
 class TestHealthHistoryEndpoint(AioHTTPTestCase):
