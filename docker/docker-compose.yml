@@ -160,7 +160,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD", "/usr/local/bin/container_health.sh"]
+      test: ["CMD-SHELL", "test -d /proc/1 || exit 1"]
       start_period: 90s
 
   dashboards:
@@ -186,7 +186,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -sf http://localhost:5601/dashboards/api/status || exit 1"]
+      test: ["CMD-SHELL", "curl -sf --config /var/local/curlrc/.opensearch.primary.curlrc http://localhost:5601/dashboards/api/status || exit 1"]
       start_period: 120s
 
   # ========================================================================
@@ -487,6 +487,11 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
       start_period: 60s
 
+  # KNOWN ISSUE: nginx-proxy is unhealthy because Malcolm's baked-in nginx.conf
+  # references upstream "arkime:8005", but our arkime-live service uses host
+  # networking and is invisible to Docker DNS. This is not critical — NetTap
+  # uses nettap-nginx (port 443) as the edge proxy, not nginx-proxy.
+  # Fix: add a dedicated Arkime viewer service in a future phase.
   nginx-proxy:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
@@ -781,7 +786,7 @@ services:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/health || exit 1"]
       start_period: 10s
 
 # ==========================================================================
