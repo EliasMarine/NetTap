@@ -220,15 +220,6 @@ sudo docker compose -f docker/docker-compose.yml restart logstash filebeat
 sudo docker exec nettap-opensearch curl --cacert /usr/share/opensearch/config/certs/ca.crt -u "$(sudo docker exec nettap-opensearch cat /var/local/curlrc/.opensearch.primary.curlrc 2>/dev/null | grep -oP '(?<=user = ").*(?=")')" -s 'https://localhost:9200/_cluster/health' | python3 -m json.tool
 ```
 
-**All-in-one (copy-paste the whole block):**
-```bash
-cd ~/NetTap && \
-sudo docker exec nettap-opensearch python3 -c "open('/usr/share/opensearch/config/opensearch-security/roles_mapping.yml','w').write('---\n_meta:\n  type: \"rolesmapping\"\n  config_version: 2\n\nall_access:\n  reserved: false\n  backend_roles:\n  - \"admin\"\n  description: \"Maps admin backend role to all_access\"\n')" && \
-sudo docker exec nettap-opensearch bash -c 'JAVA_HOME=/usr/share/opensearch/jdk /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/ -cacert /usr/share/opensearch/config/certs/ca.crt -cert /usr/share/opensearch/config/certs/admin.crt -key /usr/share/opensearch/config/certs/admin.key -icl -nhnv' && \
-sudo docker compose -f docker/docker-compose.yml restart logstash filebeat && \
-echo "✅ Security bootstrap complete — logstash + filebeat restarting"
-```
-
 ## Technology Stack
 
 - **Host OS:** Ubuntu Server 22.04 LTS
