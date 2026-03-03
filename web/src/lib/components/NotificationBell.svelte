@@ -13,6 +13,7 @@
 		markAllNotificationsRead,
 		type Notification,
 	} from '$api/notifications';
+	import { createNotificationStream } from '$api/notification-stream';
 
 	// State
 	let notifications = $state<Notification[]>([]);
@@ -34,11 +35,31 @@
 		}
 	}
 
-	// Poll every 30 seconds
+	// SSE real-time push with polling fallback
 	$effect(() => {
 		fetchNotifications();
-		const interval = setInterval(fetchNotifications, 30_000);
-		return () => clearInterval(interval);
+
+		// SSE real-time push
+		const stream = createNotificationStream((notification) => {
+			// Prepend new notification
+			notifications = [notification, ...notifications].slice(0, 15);
+			if (!notification.read) {
+				unreadCount++;
+			}
+		});
+
+		// Fallback polling — slower when SSE is active
+		const interval = setInterval(
+			() => {
+				fetchNotifications();
+			},
+			stream.isConnected() ? 60_000 : 30_000
+		);
+
+		return () => {
+			stream.close();
+			clearInterval(interval);
+		};
 	});
 
 	// Close dropdown on outside click

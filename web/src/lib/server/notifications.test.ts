@@ -188,4 +188,65 @@ describe('notifications server module', () => {
 			expect(count).toBeGreaterThanOrEqual(2);
 		});
 	});
+
+	describe('onNotification (SSE emitter)', () => {
+		it('emits when sendNotification is called', async () => {
+			const received: unknown[] = [];
+			const unsubscribe = notifications.onNotification((n) => received.push(n));
+
+			await notifications.sendNotification({
+				type: 'alert',
+				severity: 'high',
+				title: 'Emitter Test',
+				message: 'Should emit',
+			});
+
+			unsubscribe();
+
+			expect(received).toHaveLength(1);
+			expect((received[0] as { title: string }).title).toBe('Emitter Test');
+		});
+
+		it('unsubscribe stops receiving events', async () => {
+			const received: unknown[] = [];
+			const unsubscribe = notifications.onNotification((n) => received.push(n));
+
+			await notifications.sendNotification({
+				type: 'alert',
+				severity: 'high',
+				title: 'Before Unsub',
+				message: 'Should receive',
+			});
+
+			unsubscribe();
+
+			await notifications.sendNotification({
+				type: 'alert',
+				severity: 'high',
+				title: 'After Unsub',
+				message: 'Should NOT receive',
+			});
+
+			expect(received).toHaveLength(1);
+			expect((received[0] as { title: string }).title).toBe('Before Unsub');
+		});
+
+		it('emits for below-threshold notifications too', async () => {
+			// Default threshold is 3 (medium). Low = 4, so below threshold.
+			const received: unknown[] = [];
+			const unsubscribe = notifications.onNotification((n) => received.push(n));
+
+			await notifications.sendNotification({
+				type: 'system',
+				severity: 'low',
+				title: 'Low Severity',
+				message: 'Below threshold but should still emit',
+			});
+
+			unsubscribe();
+
+			expect(received).toHaveLength(1);
+			expect((received[0] as { title: string }).title).toBe('Low Severity');
+		});
+	});
 });

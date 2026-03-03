@@ -15,6 +15,20 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { EventEmitter } from 'events';
+
+// SSE broadcast emitter — all connected SSE clients receive notifications in real-time
+const notificationEmitter = new EventEmitter();
+notificationEmitter.setMaxListeners(100);
+
+/**
+ * Subscribe to real-time notification events.
+ * Returns an unsubscribe function.
+ */
+export function onNotification(callback: (notification: Notification) => void): () => void {
+	notificationEmitter.on('notification', callback);
+	return () => notificationEmitter.off('notification', callback);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -295,6 +309,8 @@ export async function sendNotification(
 		if (config.inApp.enabled) {
 			storeInApp(full);
 		}
+		// Broadcast to SSE subscribers even below threshold
+		notificationEmitter.emit('notification', full);
 		return full;
 	}
 
@@ -312,6 +328,9 @@ export async function sendNotification(
 	if (config.inApp.enabled) {
 		storeInApp(full);
 	}
+
+	// Broadcast to SSE subscribers
+	notificationEmitter.emit('notification', full);
 
 	await Promise.allSettled(dispatches);
 	return full;
