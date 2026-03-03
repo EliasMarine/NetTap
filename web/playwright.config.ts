@@ -1,4 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import path from 'path';
+import os from 'os';
+
+/** Shared temp directory for E2E test data (auth users file, etc.).
+ *  Must match the value imported by e2e/ test files. */
+export const E2E_DATA_DIR = path.join(os.tmpdir(), 'nettap-e2e-data');
 
 export default defineConfig({
 	testDir: './e2e',
@@ -22,5 +28,9 @@ export default defineConfig({
 		url: 'http://localhost:3000',
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
+		env: {
+			DATA_DIR: E2E_DATA_DIR,
+			ORIGIN: 'http://localhost:3000',
+		},
 	},
 });

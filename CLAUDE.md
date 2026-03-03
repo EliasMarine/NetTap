@@ -139,6 +139,15 @@ Development versions increment with each phase milestone. Tags are applied on `d
 - **Before each fix:** Check the "Key Files Modified" table and "Lessons Learned" section
 - **After each fix:** Add a new entry, update "Current Stack Health", and add to "Known Risks" if applicable
 
+### Release Verification (source of truth for release readiness)
+
+**CRITICAL: Before any release-related work, read `Debugging/RELEASE-VERIFICATION.md` first.** This document tracks every verification test run, its environment, results, and what's still outstanding. After running any verification tests, update this document with the results. This ensures we always know exactly where we stand in the release process.
+
+- **Location:** `Debugging/RELEASE-VERIFICATION.md`
+- **Before each test run:** Check what's already been verified and what's still missing
+- **After each test run:** Add results to the Test Execution Log, update check statuses
+- **Before tagging a release:** Verify ALL Pre-Release Gate items are checked off
+
 ### Tracking Docs (secondary)
 
 Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature**:
@@ -151,8 +160,9 @@ Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature
 ## Project Structure
 
 ```
-Debugging/         Deployment issue tracking (source of truth)
+Debugging/         Deployment issue tracking & release verification (source of truth)
   DEPLOYMENT-ISSUES.md   All deployment bugs, causal chains, fixes, lessons
+  RELEASE-VERIFICATION.md  Release readiness verification test runs & gate status
 scripts/           Shell scripts for system setup
   bridge/          Linux bridge configuration (setup-bridge.sh)
   install/         Installation automation (install.sh)

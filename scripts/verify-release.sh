@@ -389,9 +389,45 @@ if [[ "$RUN_TRIVY" == "true" ]]; then
     SECTION_OK=true
 
     if command -v trivy &>/dev/null; then
-        for img in nettap-storage-daemon nettap-web; do
-            run_cmd "Scan ${img} (CRITICAL/HIGH)" trivy image --severity CRITICAL,HIGH --exit-code 1 "${img}:latest" || SECTION_OK=false
+        # Trivy uses the Docker credential helper configured in
+        # ~/.docker/config.json to pull its vulnerability DB from OCI
+        # registries. On macOS, the "credsStore": "desktop" entry
+        # points to docker-credential-desktop which may be a broken
+        # symlink (e.g., Docker Desktop moved/updated). This causes
+        # a FATAL error even for public DB downloads.
+        #
+        # Fix: create a minimal Docker config without credsStore and
+        # point DOCKER_CONFIG to it for the trivy commands.
+        TRIVY_DOCKER_CFG=$(mktemp -d)
+        echo '{"auths":{}}' > "${TRIVY_DOCKER_CFG}/config.json"
+
+        # Trivy needs Docker socket access to inspect local images.
+        # Use sudo if the current user can't access the socket directly.
+        TRIVY_SUDO=""
+        if ! docker info &>/dev/null; then
+            TRIVY_SUDO="sudo"
+        fi
+
+        # Image names must match docker-compose.yml (nettap/<service>:latest)
+        IMAGES_FOUND=false
+        for img in nettap/storage-daemon nettap/web; do
+            if $TRIVY_SUDO docker image inspect "${img}:latest" &>/dev/null; then
+                IMAGES_FOUND=true
+                run_cmd "Scan ${img} (CRITICAL/HIGH)" \
+                    env DOCKER_CONFIG="$TRIVY_DOCKER_CFG" $TRIVY_SUDO trivy image \
+                    --severity CRITICAL,HIGH \
+                    --exit-code 1 \
+                    "${img}:latest" || SECTION_OK=false
+            else
+                skip "${img}:latest not found (build Docker images first)"
+            fi
         done
+
+        rm -rf "$TRIVY_DOCKER_CFG"
+
+        if [[ "$IMAGES_FOUND" == "false" ]]; then
+            skip "No nettap Docker images found locally — run Docker builds first"
+        fi
     else
         skip "trivy not installed (brew install trivy / see https://trivy.dev)"
     fi
