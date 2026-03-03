@@ -1,6 +1,22 @@
 import { test, expect, mockAllApiRoutes, MOCK_NICS } from './fixtures';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
+/** Must match E2E_DATA_DIR exported from playwright.config.ts */
+const E2E_DATA_DIR = path.join(os.tmpdir(), 'nettap-e2e-data');
 
 test.describe('Setup wizard', () => {
+	// Tests must run in order: test 3 creates a user which would affect test 1
+	test.describe.configure({ mode: 'serial' });
+
+	// Clean up the DATA_DIR before the suite so we start with zero users
+	test.beforeAll(() => {
+		if (fs.existsSync(E2E_DATA_DIR)) {
+			fs.rmSync(E2E_DATA_DIR, { recursive: true });
+		}
+	});
+
 	test('first-run (no users) redirects to /setup', async ({ page }) => {
 		// The hooks.server.ts calls hasUsers() and redirects to /setup
 		// if no users file exists. On a fresh test server (no DATA_DIR
@@ -14,9 +30,13 @@ test.describe('Setup wizard', () => {
 		const redirectedCorrectly = url.includes('/setup') || url.includes('/login');
 		expect(redirectedCorrectly).toBe(true);
 
-		// If we landed on /setup, verify the wizard page is rendered
+		// If we landed on /setup, verify the wizard page is rendered.
+		// The wizard's step 1 heading is "Welcome to NetTap" (not "Setup Wizard"
+		// which only appears in the <title> tag and isn't visible on page).
 		if (url.includes('/setup')) {
-			await expect(page.getByText('Setup Wizard')).toBeVisible({ timeout: 5_000 });
+			await expect(page.getByRole('heading', { name: 'Welcome to NetTap' })).toBeVisible({
+				timeout: 5_000,
+			});
 		}
 	});
 
@@ -58,7 +78,11 @@ test.describe('Setup wizard', () => {
 		await getStartedBtn.click();
 
 		// --- Step 2: Interfaces ---
-		await expect(page.getByText('Network Interfaces')).toBeVisible({ timeout: 5_000 });
+		// Use getByRole('heading') to avoid strict mode violation — the text
+		// "Network Interfaces" appears in both the <h2> heading and the <p> description.
+		await expect(
+			page.getByRole('heading', { name: /Network Interfaces/i }),
+		).toBeVisible({ timeout: 5_000 });
 
 		// The wizard fetches NICs from /api/setup/nics (mocked).
 		// Wait for interface cards to render.
@@ -82,7 +106,9 @@ test.describe('Setup wizard', () => {
 		}
 
 		// --- Step 3: Bridge ---
-		await expect(page.getByText(/Bridge/i)).toBeVisible({ timeout: 5_000 });
+		await expect(
+			page.getByRole('heading', { name: /Bridge Configuration/i }),
+		).toBeVisible({ timeout: 5_000 });
 
 		// Step 3 is optional (can be skipped)
 		const skipBtn = page.getByRole('button', { name: /Skip/i });
@@ -96,7 +122,9 @@ test.describe('Setup wizard', () => {
 		}
 
 		// --- Step 4: Storage ---
-		await expect(page.getByText(/Storage/i)).toBeVisible({ timeout: 5_000 });
+		await expect(
+			page.getByRole('heading', { name: /Storage/i }),
+		).toBeVisible({ timeout: 5_000 });
 
 		// Step 4 has defaults and is optional (can skip)
 		const skipBtn4 = page.getByRole('button', { name: /Skip/i });
@@ -182,41 +210,29 @@ test.describe('Setup wizard', () => {
 		await page.getByLabel('Password', { exact: true }).fill('TestPass123');
 		await page.getByLabel('Confirm Password').fill('TestPass123');
 
-		// Mock the form action to return success
-		await page.route('**/setup?/createAdmin', (route) => {
-			if (route.request().method() === 'POST') {
-				// SvelteKit form actions return a special __data format for
-				// progressive enhancement. We simulate a successful response.
-				return route.fulfill({
-					status: 200,
-					contentType: 'application/json',
-					body: JSON.stringify({
-						type: 'success',
-						status: 200,
-						data: JSON.stringify({ success: true, username: 'testadmin' }),
-					}),
-				});
-			}
-			return route.continue();
-		});
+		// No form action mock needed — the real server handles the POST.
+		// DATA_DIR is set to a writable temp directory in playwright.config.ts,
+		// so createUser() will succeed and write users.json to that directory.
 
 		// The "Complete Setup" button should be enabled now
 		const completeBtn = page.getByRole('button', { name: /Complete Setup/i });
 		await expect(completeBtn).toBeEnabled();
-		await completeBtn.click();
 
-		// After submission, either:
-		// 1. The server creates the account and the page shows success message
-		// 2. The mock returns success and the page shows "Admin account created"
-		// 3. The server fails (no DATA_DIR) and shows an error
-		//
-		// We check for either success message or form submission completion
-		await page.waitForTimeout(2_000);
+		// Click and wait for the form POST to complete
+		await Promise.all([
+			page.waitForResponse(
+				(resp) => resp.request().method() === 'POST' && resp.url().includes('/setup'),
+				{ timeout: 15_000 },
+			),
+			completeBtn.click(),
+		]);
 
-		const successVisible = await page.getByText(/Admin account created|successfully/i).isVisible().catch(() => false);
-		const errorVisible = await page.locator('.alert-danger').isVisible().catch(() => false);
-
-		// Either success or an error means the form was submitted and processed
-		expect(successVisible || errorVisible).toBe(true);
+		// After submission, the server creates the account and the page
+		// re-renders with form.success = true, showing the success alert.
+		// If DATA_DIR is unwritable, form.error is shown in .alert-danger.
+		// On success, the page also navigates to /login after 1.5s.
+		await expect(
+			page.locator('.alert-success, .alert-danger'),
+		).toBeVisible({ timeout: 10_000 });
 	});
 });
