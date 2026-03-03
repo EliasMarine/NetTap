@@ -25,6 +25,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
 
 # ---------------------------------------------------------------------------
@@ -147,6 +148,7 @@ step_preflight() {
     check_arch
 
     # Hardware validation (source for the function, don't run standalone)
+    # shellcheck source=validate-hardware.sh
     source "${SCRIPT_DIR}/validate-hardware.sh"
     # Run validation but don't abort on warnings (rc=1)
     validate_hardware || {

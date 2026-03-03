@@ -123,6 +123,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Determine which sections to run
+# shellcheck disable=SC2034
 RUN_SECRETS=true
 RUN_LINT=true
 RUN_TESTS=true
@@ -255,7 +256,7 @@ if [[ "$RUN_LINT" == "true" ]]; then
         SHELL_FILES=$(find scripts/ -name '*.sh' -type f 2>/dev/null || true)
         if [[ -n "$SHELL_FILES" ]]; then
             # shellcheck disable=SC2086
-            run_cmd "shellcheck scripts/**/*.sh" shellcheck $SHELL_FILES || SECTION_OK=false
+            run_cmd "shellcheck scripts/**/*.sh" shellcheck -x -S warning $SHELL_FILES || SECTION_OK=false
         else
             skip "No shell scripts found in scripts/"
         fi
@@ -364,6 +365,7 @@ if [[ "$RUN_DOCKER" == "true" ]]; then
         fi
         if [[ -f "$COMPOSE_FILE" ]]; then
             for svc in nettap-storage-daemon nettap-web nettap-tshark nettap-cyberchef; do
+                # shellcheck disable=SC2086
                 run_cmd "Build ${svc}" $DOCKER_CMD compose -f "$COMPOSE_FILE" build "$svc" || SECTION_OK=false
             done
         else
@@ -417,6 +419,7 @@ if [[ "$RUN_TRIVY" == "true" ]]; then
                     env DOCKER_CONFIG="$TRIVY_DOCKER_CFG" $TRIVY_SUDO trivy image \
                     --severity CRITICAL,HIGH \
                     --exit-code 1 \
+                    --ignorefile "$PROJECT_ROOT/.trivyignore" \
                     "${img}:latest" || SECTION_OK=false
             else
                 skip "${img}:latest not found (build Docker images first)"

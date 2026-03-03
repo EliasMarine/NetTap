@@ -5,7 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
+# shellcheck source=malcolm-versions.conf
 source "${SCRIPT_DIR}/malcolm-versions.conf"
 
 # ---------------------------------------------------------------------------
@@ -139,6 +141,7 @@ pull_images() {
 # ---------------------------------------------------------------------------
 generate_config() {
     log "Generating Malcolm configuration..."
+    # shellcheck source=malcolm-config.sh
     source "${SCRIPT_DIR}/malcolm-config.sh"
     configure_malcolm
 }
@@ -221,6 +224,7 @@ monitor_startup() {
     local elapsed=0
 
     # Services to monitor (in dependency order)
+    # shellcheck disable=SC2034
     local -a critical_services=(opensearch)
     local -a dependent_services=(dashboards-helper dashboards logstash)
     local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
@@ -347,15 +351,12 @@ _wait_for_service() {
         status=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Status}}' "$service" 2>/dev/null | head -1) || true
 
         case "$status" in
+            *unhealthy*|*Unhealthy*)
+                warn "  [!!] ${service} is unhealthy (${elapsed}s)"
+                ;;
             *healthy*)
                 log "  [OK] ${service} is healthy (${elapsed}s)"
                 return 0
-                ;;
-            *starting*|*Starting*)
-                log "  [..] ${service} starting... (${elapsed}s)"
-                ;;
-            *unhealthy*|*Unhealthy*)
-                warn "  [!!] ${service} is unhealthy (${elapsed}s)"
                 ;;
             *Exit*|*exited*|*Restarting*)
                 warn "  [XX] ${service} has exited/crashed (${elapsed}s)"
@@ -363,6 +364,9 @@ _wait_for_service() {
                 docker logs --tail 5 "nettap-${service}" 2>&1 | while IFS= read -r line; do
                     warn "       $line"
                 done
+                ;;
+            *starting*|*Starting*)
+                log "  [..] ${service} starting... (${elapsed}s)"
                 ;;
             *Up*|*running*)
                 # Running but no healthcheck defined
@@ -485,7 +489,8 @@ bootstrap_index_templates() {
     # Push ECS component templates
     local ecs_count=0
     for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/ecs-templates-os/composable/component -name "*.json" 2>/dev/null); do
-        local name="ecs_$(basename "$f" .json)"
+        local name
+        name="ecs_$(basename "$f" .json)"
         local code
         code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
             curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
@@ -499,7 +504,8 @@ bootstrap_index_templates() {
     # Push custom component templates
     local custom_count=0
     for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/templates/composable/component -name "*.json" 2>/dev/null); do
-        local name="custom_$(basename "$f" .json)"
+        local name
+        name="custom_$(basename "$f" .json)"
         local code
         code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
             curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \

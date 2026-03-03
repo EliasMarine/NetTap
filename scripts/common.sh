@@ -157,9 +157,11 @@ check_ubuntu() {
         error "Cannot detect OS — /etc/os-release not found"
     fi
     if ! grep -qi "ubuntu" /etc/os-release; then
+        # shellcheck disable=SC1091,SC2153
         error "NetTap requires Ubuntu Server (detected: $(. /etc/os-release && echo "$NAME"))"
     fi
     local version
+    # shellcheck disable=SC1091
     version=$(. /etc/os-release && echo "$VERSION_ID")
     debug "Ubuntu version: ${version}"
     case "$version" in
@@ -182,7 +184,7 @@ check_arch() {
 check_interface_exists() {
     local iface="$1"
     if ! ip link show "$iface" &>/dev/null; then
-        error "Interface ${iface} not found. Available interfaces: $(ls /sys/class/net/ | tr '\n' ' ')"
+        error "Interface ${iface} not found. Available interfaces: $(find /sys/class/net/ -maxdepth 1 -printf '%f ' 2>/dev/null)"
     fi
 }
 
