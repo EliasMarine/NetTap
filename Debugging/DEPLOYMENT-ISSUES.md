@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-02
-> **Status:** 21 issues tracked. 21 RESOLVED. Latest: NET-79 Malcolm capture + proxy env vars (commit on develop).
+> **Status:** 23 issues tracked. 23 RESOLVED. Latest: NET-80 Storage API format mismatch (develop). Also discovered: OpenSearch security roles_mapping reset on container recreate (manual fix applied).
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -37,12 +37,14 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Redis | OK | Fixed in PR #71 — list-form command |
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed — REDIS_HOST/PORT/PASSWORD env vars added (NET-79) |
-| Zeek, Suricata, Arkime | OK (pending test) | Fixed — `EXTRA_TAGS: ""` + `MANAGE_PCAP_FILES` env vars added (NET-79). Awaiting full stack test. |
-| nginx-proxy | OK (pending test) | Fixed — added ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL and other template vars (NET-79) |
-| CyberChef | OK (pending test) | Fixed healthcheck: `/health` → `/` (CyberChef is static nginx, no `/health` endpoint) |
+| Zeek, Suricata, Arkime | OK | Fixed — `EXTRA_TAGS: ""` + `MANAGE_PCAP_FILES` env vars added (NET-79). Running on N100. |
+| nginx-proxy | UNHEALTHY | Container starts but healthcheck fails. Needs further investigation (possibly Malcolm-internal dependencies). |
+| CyberChef | UNHEALTHY | Healthcheck fixed (`/health` → `/`) in NET-79 but still reporting unhealthy on N100. Needs investigation. |
+| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets (see Logstash bootstrap below). |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
-| NetTap web (nettap-web) | **502 ERROR** | Nginx proxies to nettap-web:3000. Internal healthcheck works (302→/setup→200). Browser gets 502. Likely missing `ORIGIN` env for SvelteKit CSRF. Investigating. |
+| NetTap web (nettap-web) | OK | 302→/setup working. 502 was pre-NET-79 fix. Browser access confirmed working. |
+| NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
 ---
@@ -73,14 +75,19 @@ CHAIN 6: Redis Double-Shell Wrapping (NET-65)
 CHAIN 7: Setup Wizard Auth Redirect (NET-66)
   PR #71
 
-CHAIN 8: Storage API Format Mismatch (NET-67)
-  PR #72
+CHAIN 8: Storage API Format Mismatch (NET-67 → NET-80)
+  PR #72 (docs only) → develop (code fix NET-80)
 
 CHAIN 9: NIC LED Identification Permission + Fallback (NET-68)
   PR #73
 
 CHAIN 10: Malcolm Capture Services + Proxy Env Vars (NET-79)
   fix/malcolm-capture-env-vars → develop
+
+CHAIN 11: OpenSearch Security Reset on Container Recreate
+  Manual fix (securityadmin.sh re-run). No code fix yet — needs automation.
+  Logstash blocked waiting for malcolm_template because roles_mapping.yml
+  reverts to empty on --force-recreate.
 ```
 
 ---
@@ -882,6 +889,94 @@ Added missing environment variables and fixed healthcheck endpoints in `docker/d
 
 ---
 
+## Chain 11: OpenSearch Security Reset + Logstash Bootstrap Deadlock
+
+### Logstash stuck waiting for malcolm_template after --force-recreate
+
+| Field | Value |
+|---|---|
+| **Linear** | Not yet filed (manual fix applied) |
+| **Status** | Workaround applied; needs automation |
+| **Severity** | High |
+| **Date** | 2026-03-03 |
+
+**Symptoms:**
+- After `docker compose up -d --force-recreate`, logstash container is "unhealthy" after 693s
+- Logstash uses only 54MB RAM (JVM never started — should use 2GB with `-Xms2g`)
+- `ps aux` inside container shows `opensearch_status.sh -t malcolm_template` in a sleep loop
+- `curl` to logstash API port 9600 returns empty (API never started)
+- `roles_mapping.yml` inside OpenSearch container reverted to empty (only `_meta` header)
+
+**Root Cause:**
+`--force-recreate` recreates the OpenSearch container with a fresh filesystem. The `roles_mapping.yml` file (which maps `admin` backend role → `all_access` OpenSearch role) reverts to the image default (empty). The `.opendistro_security` index in the data volume retains the OLD config, but `securityadmin.sh` needs to be re-run to push the updated config file into the index.
+
+Without the role mapping, `malcolm_internal` authenticates (200) but has no authorization (403 on all endpoints). Logstash's `opensearch_status.sh -t malcolm_template` can't check if the template exists → loops forever → logstash JVM never starts → healthcheck fails.
+
+**Causal Chain:**
+```
+docker compose up --force-recreate
+  → OpenSearch container filesystem reset → roles_mapping.yml empty
+    → .opendistro_security index still has old config (data volume)
+      → securityadmin.sh not re-run → security config stale
+        → malcolm_internal gets 403 on all endpoints
+          → opensearch_status.sh can't check templates → infinite loop
+            → logstash JVM never starts → unhealthy after 693s
+              → filebeat depends on logstash healthy → also fails
+```
+
+**Fix (manual):**
+1. Write `roles_mapping.yml` with `admin → all_access` mapping inside OpenSearch container
+2. Run `securityadmin.sh` to push config to `.opendistro_security` index
+3. Restart logstash
+
+**TODO:** Automate this — add a startup script or init container that checks if `malcolm_internal` can authenticate AND authorize, and re-runs `securityadmin.sh` if not. This should be part of `deploy-malcolm.sh` or a dedicated healthcheck.
+
+**Key Insight:** `--force-recreate` resets container filesystems but NOT named volumes. Security config lives in TWO places: the config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These can get out of sync. The security plugin reads from the index, not the files — so the files must be pushed to the index via `securityadmin.sh` after any container recreation.
+
+---
+
+### NET-80 — Storage API format mismatch: disk_free_gb missing, wrong types break setup wizard
+
+| Field | Value |
+|---|---|
+| **Linear** | [NET-80](https://linear.app/nettap/issue/NET-80) |
+| **Branch** | develop |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-03 |
+
+**Symptoms:**
+- Setup wizard Step 1 "Sufficient disk space (100GB+)" always shows red X despite 1TB+ storage
+- Step 4 "Loading storage information" stuck forever, never loads any data
+
+**Root Cause:**
+The daemon's `get_status()` returned a completely different format than the frontend's `StorageStatus` TypeScript interface expected. The original NET-67 code fix was documented but never merged to develop — only the docs made it.
+
+| Frontend expects | Daemon returned |
+|---|---|
+| `disk_free_gb: 1800` (number, GB) | **Not present at all** |
+| `disk_total_gb: 1830` (number, GB) | **Not present at all** |
+| `disk_usage_percent: 2.3` (number) | `"2.3%"` (string with % sign) |
+| `hot_days: 90` (top-level) | `retention.hot_days: 90` (nested) |
+| `disk_threshold_percent: 80` (0-100) | `disk_threshold: 0.80` (fraction 0-1) |
+
+Frontend did `storageData.disk_free_gb || 0` → `undefined || 0` = 0 → `0 >= 100` → fail.
+
+**Fix:**
+1. Updated daemon's `get_status()` to return absolute GB values via `shutil.disk_usage()`, numeric 0-100 percentages, top-level retention days, and `source: "daemon"`
+2. Added `normalizeStorageStatus()` in SvelteKit proxy as safety net for both old and new daemon formats
+3. Wrapped `list_indices()` in try/except for OpenSearch-down resilience during setup
+
+**Files Changed:**
+- `daemon/storage/manager.py` — Updated `get_status()` response format
+- `daemon/tests/test_storage_manager.py` — Updated test for new response fields
+- `web/src/routes/api/setup/storage/+server.ts` — Added `normalizeStorageStatus()` transform
+- `web/src/routes/api/setup/storage/server.test.ts` — New: 5 tests for normalization
+
+**Key Insight:** TypeScript interfaces define the *desired* shape but don't enforce it at runtime. When a proxy layer passes through external data (like daemon responses), it MUST validate/transform the data to match the interface. The `normalizeStorageStatus()` function handles both old (fraction-based) and new (GB-based) formats, making the system resilient to daemon version differences.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -889,6 +984,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | File | PRs | Current State |
 |---|---|---|
 | `docker/docker-compose.yml` | #54-#73, NET-79 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. |
+| `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
+| `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
 | `web/src/hooks.server.ts` | #71 | PUBLIC_PATHS includes `/api/setup`; first-run redirect skips `/api/setup/*` |
 | `daemon/api/nic_identify.py` | #68, #73 | Graceful info fallback when LED blink unavailable; returns MAC/PCI/driver |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
@@ -906,6 +1003,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 2. **Malcolm's `su` heredoc breaks `/dev/fd/` access** — kernel procfs restriction makes fd entries inaccessible after UID change. Cannot be fixed without controlling how supervisord runs.
 3. **Malcolm's security plugin has 2 layers** — `internal_users.yml` (auth) + `roles_mapping.yml` (authz). Both must be configured AND pushed via `securityadmin.sh`.
 4. **Fresh deployments have circular template dependencies** — must bootstrap templates before logstash starts.
+41. **`--force-recreate` resets container filesystems but NOT volumes** — security config lives in TWO places: config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These get out of sync. Must re-run `securityadmin.sh` after any `--force-recreate` that touches OpenSearch.
+42. **`roles_mapping.yml` is dynamically generated, not in git** — `deploy-malcolm.sh` writes it at deploy time. The image default is empty (just `_meta` header). If the container is recreated without running the deploy script, all service accounts lose authorization (403 on everything).
 
 ### Docker / Container Gotchas
 5. **`su` failing silently (exit 0)** is extremely hard to debug — the process simply never starts.
@@ -975,7 +1074,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 | NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
-| Web UI 502 error from browser (under investigation) | Users can't access the dashboard | nginx-proxy→nettap-web proxying works internally (healthcheck passes). Likely missing `ORIGIN` env for SvelteKit CSRF. Needs diagnostic output from N100. |
+| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
+| Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 
 ---
 
@@ -1005,3 +1105,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-67 | #72 | Storage API format mismatch: missing disk_free_gb, wrong types | 2026-03-02 |
 | NET-68 | #73 | NIC LED identify: nsenter permission + info fallback | 2026-03-02 |
 | NET-79 | develop | Malcolm capture + proxy env vars, healthcheck fixes | 2026-03-02 |
+| NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
+| — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |

@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-03
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS on N100 (--trivy). Hardware checks (H1–H7) in progress. H1 partial: stack starts, NET-79 fixed 6 container failures, 502 on web UI under investigation.
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. H1: stack starts, web UI accessible (302→/setup), NET-79 fixed 6 containers, NET-80 fixed storage API. Logstash required manual security bootstrap. Pending full rebuild test.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **IN PROGRESS** | 2026-03-02 | Elias | 18 containers started. 6 crashed (NET-79: missing env vars). Fix pushed. Web UI returns 502 from browser (investigating). |
+| H1 | Integration test — full Docker stack up | N100 | **IN PROGRESS** | 2026-03-03 | Elias | 18 containers start. NET-79 fixed 6 crash-loops (env vars). NET-80 fixed storage API. Logstash needed manual security bootstrap (roles_mapping.yml + securityadmin.sh). Web UI accessible (302→/setup). Pending: full rebuild with all fixes, verify all 18 healthy. |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -126,7 +126,8 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-03 | N100 (Ubuntu) | `--trivy` | **2 FAIL** | 7 | 2 | 6 | Elias | Trivy now working after image name + sudo fix. Both scans FAIL with upstream CVEs. storage-daemon: 4 CVEs (glibc, sqlite, zlib). web: 3 OS + 14 Node.js npm CVEs. App deps clean. |
 | 2026-03-03 | Dev (macOS) | `--quick` | ALL PASSED | 8 | 0 | 1 | Claude | After shellcheck fixes (.trivyignore, case reorder, SC2034/SC2155 suppressions, source directives). 1 skip: ruff. |
 | 2026-03-03 | N100 (Ubuntu) | `--trivy` | ALL PASSED | 9 | 0 | 6 | Elias | ALL 9 runnable checks PASS after .trivyignore + npm stripping from web prod image. 6 skips are lint/test tools (run on Dev). |
-| 2026-03-02 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | First full stack spin-up. 12/18 containers healthy, 6 crash-loop. Fixed via NET-79 (EXTRA_TAGS, REDIS_PASSWORD, ARKIME_SSL, healthcheck endpoints). Pushed to develop. Web UI 502 from browser still under investigation. |
+| 2026-03-02 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | First full stack spin-up. 12/18 containers healthy, 6 crash-loop. Fixed via NET-79 (EXTRA_TAGS, REDIS_PASSWORD, ARKIME_SSL, healthcheck endpoints). Pushed to develop. |
+| 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | After NET-79 pull + force-recreate: logstash stuck (roles_mapping.yml reset). Manual fix: wrote roles_mapping, ran securityadmin.sh → logstash healthy. Web UI accessible (302→/setup). Storage wizard broken → fixed NET-80. Pending: full rebuild with NET-80. |
 
 ---
 
