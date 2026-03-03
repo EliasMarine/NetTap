@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-03
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. H1: stack starts, web UI accessible (302→/setup), NET-79 fixed 6 containers, NET-80 fixed storage API, NET-81 fixed CSRF + volume permissions for admin account creation. Logstash required manual security bootstrap. Pending full rebuild test with NET-81.
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete:** Dashboard loads, setup wizard works end-to-end (account creation fixed), system page works, SSE notifications streaming. 17/18 containers healthy (nginx-proxy known issue). Fixed: CSRF 403 real root cause (NET-82 nginx proxy_set_header inheritance), null SMART crash (NET-83), filebeat healthcheck (NET-85), dashboards/cyberchef healthchecks (NET-86). OpenSearch security bootstrap commands added to CLAUDE.md (NET-84).
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **IN PROGRESS** | 2026-03-03 | Elias | 18 containers start. NET-79 fixed 6 crash-loops. NET-80 fixed storage API. NET-81 fixed admin account creation (CSRF 403 + volume perms). Logstash needed manual security bootstrap. Web UI accessible, all wizard steps work through Step 4. Pending: full rebuild with NET-81 to test account creation (Step 5) end-to-end. |
+| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-03 | Elias | 18 containers running, 17 healthy. Dashboard loads for the first time. Setup wizard completes end-to-end (Steps 1-5 including account creation). System page works (null SMART values handled). SSE notification stream working through nginx. **Issues fixed this session:** NET-82 (nginx proxy_set_header inheritance — real CSRF 403 root cause), NET-83 (null-safe SMART health), NET-85 (filebeat pgrep healthcheck), NET-86 (dashboards/helper/cyberchef healthchecks). **Known issue:** nginx-proxy unhealthy — Malcolm's nginx references `arkime:8005` upstream but arkime-live uses host networking (invisible to Docker DNS). Not critical — nettap-nginx handles all user traffic. **Remaining:** Confirm logstash/filebeat process logs correctly after security bootstrap. |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -129,6 +129,9 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-02 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | First full stack spin-up. 12/18 containers healthy, 6 crash-loop. Fixed via NET-79 (EXTRA_TAGS, REDIS_PASSWORD, ARKIME_SSL, healthcheck endpoints). Pushed to develop. |
 | 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | After NET-79 pull + force-recreate: logstash stuck (roles_mapping.yml reset). Manual fix: wrote roles_mapping, ran securityadmin.sh → logstash healthy. Web UI accessible (302→/setup). Storage wizard broken → fixed NET-80. Pending: full rebuild with NET-80. |
 | 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | Full rebuild with NET-80. All containers healthy, storage API working (1830GB total, 1731GB free). Setup wizard Steps 1-4 work. Step 5 (account creation) fails silently → NET-81 fix: CSRF PROTOCOL_HEADER + Dockerfile volume chown. Pending: rebuild with NET-81. |
+| 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | After NET-81 rebuild: still CSRF 403. Browser Network tab confirmed POST /setup?/createAdmin → 403 Forbidden. Root cause: nginx `proxy_set_header` inheritance — location-level headers silently drop ALL server-level headers. Fixed NET-82: repeated all proxy headers in every location block. Dashboard loads for the first time! |
+| 2026-03-03 | N100 (Ubuntu) | H1: System page | **FIXED** | — | — | — | Elias | System page crashed on null SMART health values (`power_on_hours.toLocaleString()` on null). Fixed NET-83: added null-coalescing to all SMART template values. Also fixed SSE proxy buffering in nginx (proxy_buffering off). |
+| 2026-03-03 | N100 (Ubuntu) | H1: Healthchecks | **FIXED** | — | — | — | Elias | Fixed 4 container healthchecks: filebeat (NET-85: pgrep not in image → test -d /proc/1), dashboards (NET-86: curl needs auth → added curlrc), dashboards-helper (container_health.sh → test -d /proc/1), cyberchef (hit /health not /). nginx-proxy remains unhealthy (known issue: arkime upstream on host networking). Final: 17/18 healthy. |
 
 ---
 

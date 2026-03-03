@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-03
-> **Status:** 24 issues tracked. 24 RESOLVED. Latest: NET-81 Setup wizard account creation fails silently — CSRF 403 behind nginx reverse proxy + volume permissions. Chain 12 added.
+> **Status:** 29 issues tracked. 29 RESOLVED. Latest: NET-82 nginx proxy_set_header inheritance (real CSRF root cause), NET-83 null SMART crash, NET-84 bootstrap docs, NET-85 filebeat healthcheck, NET-86 dashboards/cyberchef/helper healthchecks. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -38,12 +38,15 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed — REDIS_HOST/PORT/PASSWORD env vars added (NET-79) |
 | Zeek, Suricata, Arkime | OK | Fixed — `EXTRA_TAGS: ""` + `MANAGE_PCAP_FILES` env vars added (NET-79). Running on N100. |
-| nginx-proxy | UNHEALTHY | Container starts but healthcheck fails. Needs further investigation (possibly Malcolm-internal dependencies). |
-| CyberChef | UNHEALTHY | Healthcheck fixed (`/health` → `/`) in NET-79 but still reporting unhealthy on N100. Needs investigation. |
-| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets (see Logstash bootstrap below). |
+| nginx-proxy | **KNOWN ISSUE** | Malcolm's nginx.conf references upstream `arkime:8005` but arkime-live uses host networking (invisible to Docker DNS). nginx crashes on startup. Not critical — nettap-nginx handles all user traffic. Fix: add dedicated Arkime viewer service in future phase. |
+| CyberChef | OK | Fixed NET-86: healthcheck `wget /` → `wget /health`. Service was always running fine. |
+| Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
+| Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
+| Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
+| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
-| NetTap web (nettap-web) | **FIXED** | 302→/setup working. Admin account creation was silently failing (CSRF 403 + volume permissions). Fixed NET-81: added PROTOCOL_HEADER/HOST_HEADER env vars + chown data dir in Dockerfile. |
+| NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
@@ -1105,8 +1108,12 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 36. **Malcolm nginx templates use `envsubst` with vars as map keys** — `map $ARKIME_SSL $arkime_protocol { ... }`. When `$ARKIME_SSL` is unset, envsubst replaces it with empty string, producing `map  $arkime_protocol {` (1 argument) which is invalid nginx syntax. The error message (`invalid number of arguments in "map" directive`) doesn't mention the env var — you must read the template source to find the culprit.
 37. **Malcolm env files are not optional** — Malcolm's upstream compose uses `env_file:` to load `.env` files (upload-common.env, redis.env, nginx.env, etc.). Each contains dozens of vars referenced by supervisord, nginx templates, and service configs. Missing even one can cause crash-loops, parse errors, or silent misconfiguration.
 38. **Always check Malcolm's template files inside the image** — the compose file doesn't show which env vars nginx-proxy needs. You must check the actual template files (e.g., `nginx/templates/01_template_variables.conf.template`) to find all `$VAR` references that envsubst will expand.
-39. **CyberChef has no healthcheck endpoint** — it's static nginx serving a single-page app. Use `/` as the healthcheck path, not `/health`.
+39. **CyberChef has a `/health` endpoint** — our Dockerfile.cyberchef adds a `/health` endpoint returning JSON. Use `/health` for healthchecks, not `/` (which returns full HTML and can confuse `wget --spider`).
 40. **Malcolm Dashboards uses a URL prefix** — OpenSearch Dashboards serves at `/dashboards/`, not at root. API endpoints like `/api/status` must be prefixed: `/dashboards/api/status`.
+45. **Nginx `proxy_set_header` inheritance is location-level, not additive** — if ANY `proxy_set_header` directive is defined in a `location` block, ALL server-level `proxy_set_header` directives are silently dropped. Must repeat ALL proxy headers in every location block. This caused CSRF 403: WebSocket headers (`Upgrade`, `Connection`) killed `X-Forwarded-Proto` → SvelteKit origin mismatch.
+46. **Malcolm container images are minimal — never assume standard tools exist** — Malcolm's filebeat-oss image doesn't have `pgrep` or `ps`. The dashboards image needs auth for its status endpoint. Always test healthcheck commands inside the actual container before deploying. Use shell builtins (`test -d /proc/1`) as a universal fallback.
+47. **SSE (Server-Sent Events) streams require explicit nginx configuration** — must set `proxy_buffering off`, `proxy_cache off`, and `proxy_read_timeout 86400s` in the location block. Without this, nginx buffers the SSE response and the client never receives real-time events.
+48. **Null-check ALL template values from daemon APIs** — SMART health, storage stats, and any other daemon data can return null fields when hardware isn't available or monitoring hasn't started. Calling `.toLocaleString()` on null crashes the entire page. Always use null-coalescing (`??`) or explicit null checks in Svelte templates.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
