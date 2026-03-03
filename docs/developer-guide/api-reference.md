@@ -383,23 +383,6 @@ Roll back a component to its previous version.
 
 ---
 
-## NIC Identification
-
-### `POST /api/setup/nics/identify`
-
-Blink the LED on a network interface for physical identification.
-
-**Request Body:**
-
-```json
-{
-  "interface": "enp1s0",
-  "duration": 15
-}
-```
-
----
-
 ## TShark Packet Analysis
 
 ### `POST /api/tshark/analyze`

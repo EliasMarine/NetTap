@@ -21,10 +21,6 @@ LABEL org.opencontainers.image.description="NetTap web dashboard — SvelteKit-b
 LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Copy built SvelteKit app
@@ -40,7 +36,7 @@ USER nettap
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -sf http://localhost:3000/api/health || exit 1
+    CMD node -e "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 ENV NODE_ENV=production
 ENV PORT=3000

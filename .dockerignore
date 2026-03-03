@@ -1,0 +1,51 @@
+# Version control
+.git
+.gitignore
+
+# Documentation & planning
+docs/
+plans/
+Debugging/
+mockups/
+*.md
+!README.md
+
+# CI/CD & editor configs
+.github/
+.vscode/
+.claude/
+
+# Test files
+tests/
+web/e2e/
+coverage/
+.nyc_output/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+daemon/.pytest_cache/
+daemon/.mypy_cache/
+
+# Node/SvelteKit build artifacts
+web/node_modules/
+web/.svelte-kit/
+web/coverage/
+web/test-results/
+web/playwright-report/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+tracking-fixes/
+cliff.toml
+mkdocs.yml

@@ -158,6 +158,10 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/usr/local/bin/container_health.sh"]
+      start_period: 90s
 
   dashboards:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -180,6 +184,10 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
+      start_period: 120s
 
   # ========================================================================
   # LOG PIPELINE
@@ -270,6 +278,10 @@ services:
     depends_on:
       logstash:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pgrep -f filebeat || exit 1"]
+      start_period: 60s
 
   # ========================================================================
   # LIVE CAPTURE — These run with host networking for raw NIC access
@@ -456,6 +468,10 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
+      start_period: 60s
 
   nginx-proxy:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -593,6 +609,10 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      start_period: 15s
 
   nettap-grafana:
     image: grafana/grafana:10.4.2
