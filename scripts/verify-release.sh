@@ -173,21 +173,34 @@ section_start "Secrets Audit"
 SECTION_OK=true
 
 # Check for common secret patterns in tracked files
+# Exclude: docs, tests, examples, secret-generation scripts, compose files (env var refs)
 SECRETS_PATTERN='(password|secret|api_key|token|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}'
-if git ls-files | xargs grep -ilE "$SECRETS_PATTERN" 2>/dev/null | grep -v -E '\.(md|test\.|spec\.|example|sample|CLAUDE)' | grep -v 'node_modules' | head -20 | grep -q .; then
+SECRETS_EXCLUDE='\.(md|test\.|spec\.|example|sample|CLAUDE)|node_modules|generate-secrets\.sh|docker-compose\.yml'
+SECRET_HITS=$(git ls-files | xargs grep -ilE "$SECRETS_PATTERN" 2>/dev/null \
+    | grep -v -E "$SECRETS_EXCLUDE" || true)
+# Filter out files where all matches are env var references (${...})
+REAL_HITS=""
+for f in $SECRET_HITS; do
+    # If any matching line does NOT contain ${ it's a real hardcoded secret
+    if grep -E "$SECRETS_PATTERN" "$f" 2>/dev/null | grep -qv '\${'; then
+        REAL_HITS="${REAL_HITS}${f}\n"
+    fi
+done
+if [[ -n "$REAL_HITS" ]]; then
     fail "Potential secrets found in tracked files:"
-    git ls-files | xargs grep -ilE "$SECRETS_PATTERN" 2>/dev/null | grep -v -E '\.(md|test\.|spec\.|example|sample|CLAUDE)' | grep -v 'node_modules' | head -10 | while read -r f; do echo "    - $f"; done
+    echo -e "$REAL_HITS" | head -10 | while read -r f; do [[ -n "$f" ]] && echo "    - $f"; done
     SECTION_OK=false
 else
     pass "No hardcoded secrets in tracked files"
 fi
 
-# Verify .env files are gitignored
-if git ls-files --cached | grep -qE '\.env($|\.)'; then
-    fail ".env file(s) tracked by git"
+# Verify .env files are gitignored (exclude .env.example/.env.sample templates)
+if git ls-files --cached | grep -E '\.env($|\.)' | grep -qvE '\.(example|sample|template)$'; then
+    fail ".env file(s) tracked by git:"
+    git ls-files --cached | grep -E '\.env($|\.)' | grep -vE '\.(example|sample|template)$' | while read -r f; do echo "    - $f"; done
     SECTION_OK=false
 else
-    pass ".env files excluded from git"
+    pass ".env files excluded from git (.env.example templates OK)"
 fi
 
 # Check docker/.env is gitignored
@@ -265,7 +278,11 @@ if [[ "$RUN_TESTS" == "true" ]]; then
     SECTION_OK=true
 
     if command -v python3 &>/dev/null && [[ -d daemon/tests ]]; then
-        run_cmd "pytest daemon/tests/" python3 -m pytest daemon/tests/ -v --tb=short || SECTION_OK=false
+        if python3 -c "import pytest" 2>/dev/null; then
+            run_cmd "pytest daemon/tests/" python3 -m pytest daemon/tests/ -v --tb=short || SECTION_OK=false
+        else
+            skip "pytest not installed (pip install pytest)"
+        fi
     else
         skip "python3 or daemon/tests/ not available"
     fi
@@ -340,9 +357,14 @@ if [[ "$RUN_DOCKER" == "true" ]]; then
 
     if command -v docker &>/dev/null; then
         COMPOSE_FILE="docker/docker-compose.yml"
+        # Use sudo if docker/.env exists and isn't readable by current user
+        DOCKER_CMD="docker"
+        if [[ -f docker/.env ]] && ! [[ -r docker/.env ]]; then
+            DOCKER_CMD="sudo docker"
+        fi
         if [[ -f "$COMPOSE_FILE" ]]; then
             for svc in nettap-storage-daemon nettap-web nettap-tshark nettap-cyberchef; do
-                run_cmd "Build ${svc}" docker compose -f "$COMPOSE_FILE" build "$svc" || SECTION_OK=false
+                run_cmd "Build ${svc}" $DOCKER_CMD compose -f "$COMPOSE_FILE" build "$svc" || SECTION_OK=false
             done
         else
             fail "docker-compose.yml not found at ${COMPOSE_FILE}"
