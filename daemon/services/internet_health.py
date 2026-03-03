@@ -225,14 +225,19 @@ class InternetHealthMonitor:
         return check
 
     def get_current_status(self) -> dict:
-        """Return most recent health check result, or a default if none."""
+        """Return most recent health check result, or a default if none.
+
+        When no checks have been run yet, returns ``status: 'not_configured'``
+        to indicate the service hasn't been initialized rather than implying
+        a failure condition.
+        """
         if not self._history:
             return {
                 "timestamp": None,
                 "latency_ms": None,
                 "dns_resolve_ms": None,
                 "packet_loss_pct": None,
-                "status": "unknown",
+                "status": "not_configured",
             }
         return self._history[-1].to_dict()
 

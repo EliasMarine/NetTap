@@ -139,6 +139,14 @@ Development versions increment with each phase milestone. Tags are applied on `d
 - **Before each fix:** Check the "Key Files Modified" table and "Lessons Learned" section
 - **After each fix:** Add a new entry, update "Current Stack Health", and add to "Known Risks" if applicable
 
+### Reliability Tracker (source of truth for production-grade quality)
+
+**CRITICAL: Before any reliability or health-check work, read `Debugging/RELIABILITY-TRACKER.md` first.** This document tracks every subsystem's production readiness, known issues, and fixes. After completing a reliability fix, update this document with the new status, fix details, and verification results. This prevents re-introducing previously fixed issues.
+
+- **Location:** `Debugging/RELIABILITY-TRACKER.md`
+- **Before each fix:** Check the Subsystem Reliability Status table and Lessons Learned
+- **After each fix:** Update the Issues Found & Fixed table, update subsystem status, add verification results
+
 ### Release Verification (source of truth for release readiness)
 
 **CRITICAL: Before any release-related work, read `Debugging/RELEASE-VERIFICATION.md` first.** This document tracks every verification test run, its environment, results, and what's still outstanding. After running any verification tests, update this document with the results. This ensures we always know exactly where we stand in the release process.

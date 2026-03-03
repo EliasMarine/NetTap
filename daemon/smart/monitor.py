@@ -245,6 +245,14 @@ class SmartMonitor:
         self.alert_callbacks: list[Callable[[SmartAlert], None]] = [log_alert]
         if alert_callbacks:
             self.alert_callbacks.extend(alert_callbacks)
+        logger.info(
+            "SmartMonitor initialized: device=%s, thresholds(temp_warn=%dC, temp_crit=%dC, wear_warn=%d%%, wear_crit=%d%%)",
+            self.device,
+            self.thresholds.temp_warn_c,
+            self.thresholds.temp_crit_c,
+            self.thresholds.wear_warn_pct,
+            self.thresholds.wear_crit_pct,
+        )
 
     # ------------------------------------------------------------------
     # Raw data retrieval
@@ -265,10 +273,27 @@ class SmartMonitor:
             )
             # smartctl may return non-zero exit codes for certain conditions
             # (e.g., SMART warnings) but still produce valid JSON output
+            if result.returncode != 0:
+                logger.warning(
+                    "smartctl exited with code %d for %s (may still have valid data)",
+                    result.returncode,
+                    self.device,
+                )
+                if result.stderr.strip():
+                    logger.warning("smartctl stderr: %s", result.stderr.strip())
             self._raw_data = json.loads(result.stdout)
             return self._raw_data
-        except (subprocess.SubprocessError, json.JSONDecodeError) as e:
-            logger.error("Failed to read SMART data from %s: %s", self.device, e)
+        except subprocess.SubprocessError as e:
+            logger.error("Failed to run smartctl for %s: %s", self.device, e)
+            self._raw_data = {}
+            return {}
+        except json.JSONDecodeError as e:
+            logger.error(
+                "Failed to parse smartctl JSON for %s: %s (stderr: %s)",
+                self.device,
+                e,
+                result.stderr.strip() if result.stderr else "none",
+            )
             self._raw_data = {}
             return {}
 

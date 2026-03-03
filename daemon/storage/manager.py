@@ -110,24 +110,37 @@ class StorageManager:
     usage exceeds the emergency threshold.
     """
 
-    def __init__(self, config: RetentionConfig, opensearch_url: str):
+    def __init__(
+        self,
+        config: RetentionConfig,
+        opensearch_url: str,
+        http_auth: tuple[str, str] | None = None,
+    ):
         self.config = config
         self.opensearch_url = opensearch_url
 
         # Parse URL for opensearch-py client
-        self._client = self._create_client(opensearch_url)
+        self._client = self._create_client(opensearch_url, http_auth=http_auth)
 
     # ------------------------------------------------------------------
     # Client helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _create_client(url: str) -> OpenSearch:
+    def _create_client(
+        url: str,
+        http_auth: tuple[str, str] | None = None,
+    ) -> OpenSearch:
         """Create an OpenSearch client from a URL string.
 
         Supports both http:// and https:// URLs.  For https, SSL
         certificate verification is disabled by default (typical for
         internal Malcolm deployments with self-signed certificates).
+
+        Args:
+            url: OpenSearch URL (e.g., "https://opensearch:9200").
+            http_auth: Optional (username, password) tuple for Basic Auth.
+                Required after OpenSearch security bootstrap.
         """
         use_ssl = url.startswith("https")
         # Strip protocol for host parsing
@@ -140,15 +153,19 @@ class StorageManager:
             host = host_part.rstrip("/")
             port = 9200
 
-        return OpenSearch(
-            hosts=[{"host": host, "port": port}],
-            use_ssl=use_ssl,
-            verify_certs=False,
-            ssl_show_warn=False,
-            timeout=30,
-            max_retries=3,
-            retry_on_timeout=True,
-        )
+        kwargs: dict = {
+            "hosts": [{"host": host, "port": port}],
+            "use_ssl": use_ssl,
+            "verify_certs": False,
+            "ssl_show_warn": False,
+            "timeout": 30,
+            "max_retries": 3,
+            "retry_on_timeout": True,
+        }
+        if http_auth:
+            kwargs["http_auth"] = http_auth
+
+        return OpenSearch(**kwargs)
 
     # ------------------------------------------------------------------
     # Disk usage

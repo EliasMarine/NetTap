@@ -114,6 +114,59 @@ def _env_str(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def _parse_curlrc_credentials(config_file: str) -> tuple[str, str] | None:
+    """Parse OpenSearch credentials from a Malcolm curlrc file.
+
+    Malcolm stores credentials in curlrc format, e.g.::
+
+        user = "malcolm_internal:xNa4p..."
+
+    or::
+
+        user: "username:password"
+
+    Args:
+        config_file: Path to the curlrc file (e.g.,
+            ``/var/local/curlrc/.opensearch.primary.curlrc``).
+
+    Returns:
+        Tuple of (username, password) if parsed successfully, None otherwise.
+    """
+    if not config_file:
+        return None
+
+    try:
+        with open(config_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Match patterns: user = "u:p", user: "u:p", user "u:p",
+                # --user "u:p", -u "u:p"
+                if "user" in line.lower():
+                    # Extract the value after user/--user/-u and separators
+                    # Remove leading keyword and separators
+                    for prefix in ("--user", "-u", "user"):
+                        if line.lower().startswith(prefix):
+                            rest = line[len(prefix):].strip()
+                            # Remove = or : separator
+                            if rest.startswith(("=", ":")):
+                                rest = rest[1:].strip()
+                            # Remove surrounding quotes
+                            rest = rest.strip('"').strip("'")
+                            # Split on first colon: username:password
+                            if ":" in rest:
+                                username, password = rest.split(":", 1)
+                                return (username, password)
+                            break
+    except FileNotFoundError:
+        logger.warning("Curlrc file not found: %s", config_file)
+    except (OSError, PermissionError) as exc:
+        logger.warning("Cannot read curlrc file %s: %s", config_file, exc)
+
+    return None
+
+
 def load_config() -> dict[str, Any]:
     """Parse all daemon configuration from environment variables.
 
@@ -253,6 +306,21 @@ async def async_main() -> None:
     logger.info("  Log level:              %s", cfg["log_level"])
     logger.info("=" * 60)
 
+    # --- Parse OpenSearch credentials from curlrc ---
+    creds_file = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE", "")
+    http_auth = _parse_curlrc_credentials(creds_file)
+    if http_auth:
+        logger.info(
+            "  OpenSearch auth:        loaded from %s (user=%s)",
+            creds_file,
+            http_auth[0],
+        )
+    else:
+        logger.warning(
+            "  OpenSearch auth:        NO CREDENTIALS — queries may fail with 403. "
+            "Set OPENSEARCH_CREDS_CONFIG_FILE or mount curlrc in the container."
+        )
+
     # --- Build subsystems ---
     retention_config = RetentionConfig(
         hot_days=cfg["retention_hot"],
@@ -262,7 +330,7 @@ async def async_main() -> None:
         emergency_threshold=cfg["emergency_threshold"],
     )
 
-    storage = StorageManager(retention_config, cfg["opensearch_url"])
+    storage = StorageManager(retention_config, cfg["opensearch_url"], http_auth=http_auth)
     smart = SmartMonitor(device=cfg["smart_device"])
 
     # --- Shutdown coordination ---

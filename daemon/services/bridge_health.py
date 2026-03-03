@@ -12,10 +12,11 @@ or proc entries are missing, returning "unknown" states rather than
 crashing.
 
 Health status levels:
-    normal:   Bridge up, both NICs linked, no bypass
-    degraded: Bridge up but one NIC down, or elevated latency
-    bypass:   Bypass mode is active (traffic flows direct, no inspection)
-    down:     Bridge interface is down or both NICs unlinked
+    normal:         Bridge up, both NICs linked, no bypass
+    degraded:       Bridge up but one NIC down, or elevated latency
+    bypass:         Bypass mode is active (traffic flows direct, no inspection)
+    down:           Bridge interface is down or both NICs unlinked
+    not_configured: Bridge interface does not exist (setup not completed)
 """
 
 import asyncio
@@ -48,7 +49,7 @@ class BridgeHealthCheck:
     rx_packets_delta: int  # packets received since last check
     tx_packets_delta: int  # packets transmitted since last check
     uptime_seconds: float  # bridge uptime since last state change
-    health_status: str  # "normal" | "degraded" | "bypass" | "down"
+    health_status: str  # "normal" | "degraded" | "bypass" | "down" | "not_configured"
     issues: list  # human-readable issue descriptions
     last_check: str  # ISO timestamp
 
@@ -165,19 +166,23 @@ class BridgeHealthMonitor:
         latency_us = self._estimate_latency(bridge_state, wan_link, lan_link)
 
         # Build issue list
-        if bridge_state == "down":
+        if bridge_state == "not_configured":
+            issues.append("Bridge interface has not been configured — run the setup wizard")
+        elif bridge_state == "down":
             issues.append("Bridge interface is down")
         elif bridge_state == "unknown":
             issues.append("Bridge interface state could not be determined")
 
-        if not wan_link:
-            issues.append(f"WAN interface {self._wan_iface} has no carrier")
-        if not lan_link:
-            issues.append(f"LAN interface {self._lan_iface} has no carrier")
-        if bypass_active:
-            issues.append("Bypass mode is active -- traffic is not being inspected")
-        if not watchdog_active:
-            issues.append("Watchdog service is not running")
+        # Only flag NIC issues if bridge is actually configured
+        if bridge_state != "not_configured":
+            if not wan_link:
+                issues.append(f"WAN interface {self._wan_iface} has no carrier")
+            if not lan_link:
+                issues.append(f"LAN interface {self._lan_iface} has no carrier")
+            if bypass_active:
+                issues.append("Bypass mode is active -- traffic is not being inspected")
+            if not watchdog_active:
+                issues.append("Watchdog service is not running")
 
         # Determine health status
         health_status = self._determine_health_status(
@@ -336,9 +341,16 @@ class BridgeHealthMonitor:
         """Check the bridge interface operational state via sysfs.
 
         Returns:
-            "up", "down", or "unknown" if sysfs is not accessible.
+            "up", "down", "not_configured" if the bridge interface does not
+            exist in sysfs, or "unknown" if sysfs is not accessible.
         """
-        operstate_path = os.path.join(_SYSFS_NET, self._bridge_name, "operstate")
+        bridge_dir = os.path.join(_SYSFS_NET, self._bridge_name)
+        # If the bridge interface directory doesn't exist at all, the bridge
+        # hasn't been configured yet — this is informational, not an error.
+        if not os.path.exists(bridge_dir):
+            return "not_configured"
+
+        operstate_path = os.path.join(bridge_dir, "operstate")
         try:
             loop = asyncio.get_running_loop()
             content = await loop.run_in_executor(
@@ -442,8 +454,11 @@ class BridgeHealthMonitor:
         """Determine overall health status from component states.
 
         Returns:
-            "normal", "degraded", "bypass", or "down".
+            "normal", "degraded", "bypass", "down", or "not_configured".
         """
+        if bridge_state == "not_configured":
+            return "not_configured"
+
         if bypass_active:
             return "bypass"
 

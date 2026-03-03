@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 export interface BridgeHealth {
-	bridge_state: 'up' | 'down' | 'unknown';
+	bridge_state: 'up' | 'down' | 'unknown' | 'not_configured';
 	wan_link: boolean;
 	lan_link: boolean;
 	bypass_active: boolean;
@@ -20,7 +20,7 @@ export interface BridgeHealth {
 	rx_packets_delta: number;
 	tx_packets_delta: number;
 	uptime_seconds: number;
-	health_status: 'normal' | 'degraded' | 'bypass' | 'down';
+	health_status: 'normal' | 'degraded' | 'bypass' | 'down' | 'not_configured';
 	issues: string[];
 	last_check: string;
 }

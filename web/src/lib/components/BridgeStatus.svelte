@@ -20,6 +20,8 @@
 				return 'badge badge-warning';
 			case 'bypass':
 				return 'badge badge-info';
+			case 'not_configured':
+				return 'badge badge-info';
 			case 'down':
 				return 'badge badge-danger';
 			default:
@@ -35,6 +37,8 @@
 				return 'Degraded';
 			case 'bypass':
 				return 'Bypass';
+			case 'not_configured':
+				return 'Not Configured';
 			case 'down':
 				return 'Down';
 			default:
@@ -55,6 +59,8 @@
 				return 'var(--warning)';
 			case 'bypass':
 				return 'var(--accent)';
+			case 'not_configured':
+				return 'var(--text-muted)';
 			case 'down':
 				return 'var(--danger)';
 			default:
@@ -160,6 +166,27 @@
 			<div class="spinner"></div>
 			<p class="text-muted">Checking bridge status...</p>
 		</div>
+	{:else if health && health.health_status === 'not_configured'}
+		<!-- Not configured info state -->
+		<div class="not-configured-state">
+			<div class="info-icon">
+				<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+				</svg>
+			</div>
+			<p class="not-configured-title">Bridge Not Configured</p>
+			<p class="not-configured-desc text-muted">
+				The network bridge (br0) has not been set up yet. Run the setup wizard to configure your WAN and LAN interfaces.
+			</p>
+			<a href="/setup" class="btn btn-sm btn-primary">Open Setup Wizard</a>
+		</div>
+		{#if health.issues && health.issues.length > 0}
+			<div class="bridge-issues">
+				{#each health.issues as issue}
+					<div class="alert alert-info">{issue}</div>
+				{/each}
+			</div>
+		{/if}
 	{:else if health}
 		<!-- Network diagram -->
 		<div class="bridge-diagram">
@@ -318,6 +345,33 @@
 </div>
 
 <style>
+	/* Not configured state */
+	.not-configured-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: var(--space-xl);
+		gap: var(--space-md);
+		text-align: center;
+	}
+
+	.info-icon {
+		opacity: 0.7;
+	}
+
+	.not-configured-title {
+		font-size: var(--text-lg);
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.not-configured-desc {
+		font-size: var(--text-sm);
+		max-width: 360px;
+		line-height: 1.5;
+	}
+
 	/* Bridge card specific styles */
 	.bridge-loading {
 		display: flex;
