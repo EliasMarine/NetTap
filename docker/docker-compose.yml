@@ -186,7 +186,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/dashboards/api/status || exit 1"]
       start_period: 120s
 
   # ========================================================================
@@ -266,6 +266,10 @@ services:
       PCAP_PIPELINE_POLLING: "false"
       PCAP_PIPELINE_POLLING_ASSUME_CLOSED_SEC: "10"
       PCAP_MONITOR_HOST: "pcap-monitor"
+      # redis.env — Filebeat outputs to Redis and needs the password
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
     # NOTE: No cert mount needed — BEATS_SSL is false. If enabled in the future,
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
@@ -313,6 +317,10 @@ services:
       ZEEK_EXTRACTOR_MODE: "none"
       ZEEK_LOCAL_NETS: "${ZEEK_LOCAL_NETS:-192.168.0.0/16,10.0.0.0/8,172.16.0.0/12}"
       ZEEK_ROTATED_PCAP: "false"
+      # upload-common.env — EXTRA_TAGS is referenced by Malcolm's supervisord
+      # config (%(ENV_EXTRA_TAGS)s). Without it, supervisord can't expand the
+      # format string and crash-loops immediately.
+      EXTRA_TAGS: ""
     volumes:
       - zeek-live-logs:/zeek/live
       - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
@@ -337,6 +345,8 @@ services:
       SURICATA_UPDATE_RULES: "true"
       SURICATA_UPDATE_ETOPEN: "true"
       SURICATA_ROTATED_PCAP: "false"
+      # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
+      EXTRA_TAGS: ""
     volumes:
       - suricata-live-logs:/var/log/suricata
       - suricata-rules:/var/lib/suricata/rules
@@ -380,6 +390,10 @@ services:
       ARKIME_ROTATE_INDEX: "daily"
       ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"
       ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      MANAGE_PCAP_FILES: "false"
+      MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
+      # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
+      EXTRA_TAGS: ""
     # NOTE: Arkime self-generates viewer.crt/viewer.key inside the container
     # at startup via initarkime.sh. No host-side cert mount needed.
     volumes:
@@ -491,6 +505,21 @@ services:
       NGINX_SSL: "true"
       NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
       NGINX_LOG_ACCESS_AND_ERRORS: "false"
+      # dashboards.env — nginx-proxy templates use envsubst; DASHBOARDS_URL
+      # is parsed by the entrypoint to derive PREFIX and PROXY_PASS values
+      DASHBOARDS_URL: "http://dashboards:5601/dashboards"
+      # arkime.env — ARKIME_SSL is used as an envsubst map key in
+      # 01_template_variables.conf:21. If unset, envsubst produces
+      # "map  $arkime_protocol {" (1 arg) which crashes nginx.
+      ARKIME_SSL: "true"
+      ARKIME_VIEWER_PORT: "8005"
+      MANAGE_PCAP_FILES: "false"
+      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+      # auth-common.env — ROLE_BASED_ACCESS is also an envsubst map key.
+      # Must be set to prevent another "invalid number of arguments" error.
+      ROLE_BASED_ACCESS: "false"
+      ROLE_ADMIN: "admin"
+      ROLE_CAPTURE_SERVICE: "capture_service"
     volumes:
       - ${MALCOLM_CERTS_DIR:-./certs}:/etc/nginx/certs:ro
       - ${MALCOLM_AUTH_DIR:-./auth}:/etc/nginx/auth:ro
@@ -747,7 +776,7 @@ services:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/ || exit 1"]
       start_period: 10s
 
 # ==========================================================================
