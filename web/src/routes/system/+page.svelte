@@ -249,8 +249,8 @@
 						</div>
 						<div class="info-row">
 							<span class="info-label">Temperature</span>
-							<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c)}">
-								{smartHealth.temperature_c}&deg;C
+							<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c ?? 0)}">
+								{smartHealth.temperature_c ?? '--'}&deg;C
 							</span>
 						</div>
 						<div class="info-row">
@@ -259,15 +259,15 @@
 								<div class="wear-bar-container">
 									<div
 										class="wear-bar"
-										style="width: {Math.min(smartHealth.percentage_used, 100)}%; background-color: {smartHealth.percentage_used > 80 ? 'var(--danger)' : smartHealth.percentage_used > 50 ? 'var(--warning)' : 'var(--success)'}"
+										style="width: {Math.min(smartHealth.percentage_used ?? 0, 100)}%; background-color: {(smartHealth.percentage_used ?? 0) > 80 ? 'var(--danger)' : (smartHealth.percentage_used ?? 0) > 50 ? 'var(--warning)' : 'var(--success)'}"
 									></div>
 								</div>
-								<span class="mono wear-text">{smartHealth.percentage_used}%</span>
+								<span class="mono wear-text">{smartHealth.percentage_used ?? '--'}%</span>
 							</div>
 						</div>
 						<div class="info-row">
 							<span class="info-label">Power-On Hours</span>
-							<span class="info-value mono">{smartHealth.power_on_hours.toLocaleString()}</span>
+							<span class="info-value mono">{smartHealth.power_on_hours != null ? smartHealth.power_on_hours.toLocaleString() : '--'}</span>
 						</div>
 					</div>
 					{#if smartHealth.warnings && smartHealth.warnings.length > 0}
