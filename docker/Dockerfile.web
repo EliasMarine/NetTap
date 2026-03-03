@@ -34,9 +34,10 @@ COPY --from=build /app/build ./build
 COPY --from=build /app/package.json .
 COPY --from=build /app/node_modules ./node_modules
 
-# Create non-root user
+# Create non-root user and data directory (must exist before USER switch
+# so the named volume mount inherits correct ownership on first creation)
 RUN groupadd -r nettap && useradd -r -g nettap -s /sbin/nologin nettap
-RUN chown -R nettap:nettap /app
+RUN mkdir -p /var/lib/nettap-web && chown -R nettap:nettap /app /var/lib/nettap-web
 USER nettap
 
 EXPOSE 3000

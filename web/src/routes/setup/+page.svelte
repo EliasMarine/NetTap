@@ -965,8 +965,11 @@
 								}
 
 								adminLoading = true;
-								return async ({ update }) => {
+								return async ({ result, update }) => {
 									adminLoading = false;
+									if (result.type === 'error') {
+										clientError = `Server error (${result.status}). Check browser console for details.`;
+									}
 									await update({ reset: false });
 								};
 							}}

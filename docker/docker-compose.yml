@@ -633,6 +633,11 @@ services:
       NETTAP_HOSTNAME: "${NETTAP_HOSTNAME:-nettap.local}"
       DAEMON_URL: "http://nettap-storage-daemon:8880"
       CYBERCHEF_URL: "http://nettap-cyberchef:8443"
+      # SvelteKit adapter-node: trust nginx proxy headers for CSRF origin check.
+      # Without this, SvelteKit sees raw HTTP (port 3000) while browser sends
+      # Origin: https://..., causing silent 403 CSRF rejection on form POSTs.
+      PROTOCOL_HEADER: "x-forwarded-proto"
+      HOST_HEADER: "host"
     networks:
       - default
     depends_on:
