@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-03
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. H1: stack starts, web UI accessible (302→/setup), NET-79 fixed 6 containers, NET-80 fixed storage API. Logstash required manual security bootstrap. Pending full rebuild test.
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. H1: stack starts, web UI accessible (302→/setup), NET-79 fixed 6 containers, NET-80 fixed storage API, NET-81 fixed CSRF + volume permissions for admin account creation. Logstash required manual security bootstrap. Pending full rebuild test with NET-81.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **IN PROGRESS** | 2026-03-03 | Elias | 18 containers start. NET-79 fixed 6 crash-loops (env vars). NET-80 fixed storage API. Logstash needed manual security bootstrap (roles_mapping.yml + securityadmin.sh). Web UI accessible (302→/setup). Pending: full rebuild with all fixes, verify all 18 healthy. |
+| H1 | Integration test — full Docker stack up | N100 | **IN PROGRESS** | 2026-03-03 | Elias | 18 containers start. NET-79 fixed 6 crash-loops. NET-80 fixed storage API. NET-81 fixed admin account creation (CSRF 403 + volume perms). Logstash needed manual security bootstrap. Web UI accessible, all wizard steps work through Step 4. Pending: full rebuild with NET-81 to test account creation (Step 5) end-to-end. |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -128,6 +128,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-03 | N100 (Ubuntu) | `--trivy` | ALL PASSED | 9 | 0 | 6 | Elias | ALL 9 runnable checks PASS after .trivyignore + npm stripping from web prod image. 6 skips are lint/test tools (run on Dev). |
 | 2026-03-02 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | First full stack spin-up. 12/18 containers healthy, 6 crash-loop. Fixed via NET-79 (EXTRA_TAGS, REDIS_PASSWORD, ARKIME_SSL, healthcheck endpoints). Pushed to develop. |
 | 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | After NET-79 pull + force-recreate: logstash stuck (roles_mapping.yml reset). Manual fix: wrote roles_mapping, ran securityadmin.sh → logstash healthy. Web UI accessible (302→/setup). Storage wizard broken → fixed NET-80. Pending: full rebuild with NET-80. |
+| 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | Full rebuild with NET-80. All containers healthy, storage API working (1830GB total, 1731GB free). Setup wizard Steps 1-4 work. Step 5 (account creation) fails silently → NET-81 fix: CSRF PROTOCOL_HEADER + Dockerfile volume chown. Pending: rebuild with NET-81. |
 
 ---
 

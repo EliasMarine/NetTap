@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-02
-> **Status:** 23 issues tracked. 23 RESOLVED. Latest: NET-80 Storage API format mismatch (develop). Also discovered: OpenSearch security roles_mapping reset on container recreate (manual fix applied).
+> **Last updated:** 2026-03-03
+> **Status:** 24 issues tracked. 24 RESOLVED. Latest: NET-81 Setup wizard account creation fails silently — CSRF 403 behind nginx reverse proxy + volume permissions. Chain 12 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -43,7 +43,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets (see Logstash bootstrap below). |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
-| NetTap web (nettap-web) | OK | 302→/setup working. 502 was pre-NET-79 fix. Browser access confirmed working. |
+| NetTap web (nettap-web) | **FIXED** | 302→/setup working. Admin account creation was silently failing (CSRF 403 + volume permissions). Fixed NET-81: added PROTOCOL_HEADER/HOST_HEADER env vars + chown data dir in Dockerfile. |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 
@@ -51,7 +51,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **10 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **12 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -88,6 +88,11 @@ CHAIN 11: OpenSearch Security Reset on Container Recreate
   Manual fix (securityadmin.sh re-run). No code fix yet — needs automation.
   Logstash blocked waiting for malcolm_template because roles_mapping.yml
   reverts to empty on --force-recreate.
+
+CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
+  fix/nic-led-identify-fallback → develop
+  Admin account creation silently fails: SvelteKit CSRF 403 behind nginx
+  + /var/lib/nettap-web owned by root (nettap user can't write users.json).
 ```
 
 ---
@@ -977,13 +982,64 @@ Frontend did `storageData.disk_free_gb || 0` → `undefined || 0` = 0 → `0 >= 
 
 ---
 
+## Chain 12: Setup Wizard CSRF + Volume Permissions
+
+### NET-81 — Admin account creation silently fails: CSRF 403 behind nginx + volume write permissions
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-81 |
+| **Branch** | fix/nic-led-identify-fallback |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-03 |
+
+**Symptoms:**
+- User enters valid username + password on setup wizard Step 5 and clicks "Complete Setup"
+- Nothing happens — no error message, no success message, button returns to default state
+- All other wizard steps work (NIC discovery, bridge config, storage API)
+
+**Root Cause (two issues):**
+
+1. **SvelteKit CSRF rejection (403):** Nginx terminates TLS and proxies to `nettap-web:3000` over HTTP. The browser sends `Origin: https://192.168.x.x` on form POST. SvelteKit adapter-node, without `PROTOCOL_HEADER` configured, constructs origin from raw TCP connection: `http://192.168.x.x`. Protocol mismatch → 403 CSRF rejection BEFORE the form action runs.
+
+2. **Volume ownership:** Docker named volume `web-data` mounts at `/var/lib/nettap-web`. The Dockerfile only does `chown nettap:nettap /app`, not the data dir. Docker creates the mount point as root. Even if CSRF passed, `writeFileSync('/var/lib/nettap-web/users.json')` would throw EACCES.
+
+**Why "nothing happens":** SvelteKit's `use:enhance` callback receives the 403 as `result.type === 'error'`, not as a form action failure. The default `update()` sets `$page.error` but the form template only checks `form?.error` (set by `fail()` action responses). No visible error → user sees no feedback.
+
+**Causal Chain:**
+```
+Browser sends Origin: https://192.168.x.x (TLS terminated by nginx)
+  → nginx proxies to http://nettap-web:3000 (plain HTTP internally)
+    → SvelteKit has no PROTOCOL_HEADER → derives origin from raw HTTP
+      → Origin comparison: https:// vs http:// → MISMATCH
+        → SvelteKit returns 403 CSRF before form action runs
+          → use:enhance receives error result, not action failure
+            → form?.error not set → no visible feedback → "nothing happens"
+```
+
+**Fix:**
+1. **docker-compose.yml** — Added `PROTOCOL_HEADER: "x-forwarded-proto"` and `HOST_HEADER: "host"` to nettap-web environment. SvelteKit now trusts nginx's proxy headers, constructs correct `https://` origin.
+2. **Dockerfile.web** — Added `mkdir -p /var/lib/nettap-web && chown nettap:nettap /var/lib/nettap-web` before `USER nettap`. Docker named volume inherits correct ownership on first creation.
+3. **+page.svelte** — Added `result` parameter to `use:enhance` async callback. Non-action errors (CSRF, 500, etc.) now surface as `clientError` with status code.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added PROTOCOL_HEADER + HOST_HEADER env vars to nettap-web
+- `docker/Dockerfile.web` — mkdir + chown /var/lib/nettap-web before USER switch
+- `web/src/routes/setup/+page.svelte` — Enhanced error handling in use:enhance callback
+
+**Key Insight:** SvelteKit adapter-node behind a reverse proxy that terminates TLS MUST have `PROTOCOL_HEADER` set to trust `X-Forwarded-Proto`. Without it, the CSRF check compares `https://` (browser) with `http://` (raw connection) and silently rejects all form POSTs. This is invisible because `use:enhance` doesn't surface non-action errors by default.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
 | `web/src/hooks.server.ts` | #71 | PUBLIC_PATHS includes `/api/setup`; first-run redirect skips `/api/setup/*` |
@@ -1037,6 +1093,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 ### Web / Auth Gotchas
 30. **Public pages need public API endpoints** — if a page is accessible without auth, all its `fetch()` calls must also bypass auth. Otherwise the auth middleware returns HTML redirects that break JSON parsing.
 31. **Browser `fetch()` follows 302 redirects silently** — a redirect from an API endpoint to an HTML page succeeds (HTTP 200) but the body is HTML, not JSON. The only clue is `JSON.parse()` failing.
+43. **SvelteKit adapter-node CSRF requires `PROTOCOL_HEADER` behind TLS-terminating proxies** — without it, SvelteKit compares `https://` (browser Origin) with `http://` (raw TCP) and silently rejects all form POSTs with 403. The `use:enhance` callback doesn't surface non-action errors by default — no visible feedback to the user.
+44. **Docker named volumes inherit mount point ownership from the image** — if the Dockerfile doesn't `mkdir + chown` the mount point path before switching to a non-root `USER`, the volume is created as root and the app can't write to it. Always create and chown data dirs in the Dockerfile.
 
 ### sysfs / Filesystem Gotchas
 26. **`/sys/class/*` directories are symlink farms** — entries like `/sys/class/net/eth0` are symlinks to `/sys/devices/pci.../net/eth0`. Mounting only a `/sys/class/` subdirectory brings the symlinks but not their targets. Always mount all of `/sys:ro` and overlay writable paths as needed.
@@ -1076,6 +1134,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
 | `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
+| Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
 
 ---
 
@@ -1107,3 +1166,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-79 | develop | Malcolm capture + proxy env vars, healthcheck fixes | 2026-03-02 |
 | NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
 | — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |
+| NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |
