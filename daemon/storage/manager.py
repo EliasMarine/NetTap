@@ -488,22 +488,31 @@ class StorageManager:
     def get_status(self) -> dict:
         """Return current storage status for the HTTP API.
 
-        Returns a dict with:
-          - disk_usage: current usage as fraction
-          - disk_usage_percent: usage as percentage string
-          - disk_threshold: configured threshold
-          - emergency_threshold: configured emergency threshold
-          - check_path: filesystem path being monitored
-          - index_counts: dict of tier -> count of indices
-          - total_indices: total number of tracked indices
-          - retention: dict of tier retention days
+        Returns a dict matching the frontend's StorageStatus interface:
+          - disk_total_gb, disk_used_gb, disk_free_gb: absolute GB values
+          - disk_usage_percent: usage as 0-100 number (NOT string, NOT fraction)
+          - hot_days, warm_days, cold_days: retention days (top-level)
+          - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
+          - estimated_daily_gb: estimated daily ingest size
+          - source: "daemon"
+          - index_counts, total_indices: index metadata
         """
         try:
-            usage = self.check_disk_usage()
+            usage_frac = self.check_disk_usage()
+            disk = shutil.disk_usage(self.config.check_path)
+            disk_total_gb = round(disk.total / (1024**3), 2)
+            disk_used_gb = round(disk.used / (1024**3), 2)
+            disk_free_gb = round(disk.free / (1024**3), 2)
         except OSError:
-            usage = -1.0
+            usage_frac = -1.0
+            disk_total_gb = 0
+            disk_used_gb = 0
+            disk_free_gb = 0
 
-        indices = self.list_indices()
+        try:
+            indices = self.list_indices()
+        except Exception:
+            indices = []
 
         # Count indices per tier
         tier_counts: dict[str, int] = {
@@ -517,13 +526,31 @@ class StorageManager:
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
         return {
-            "disk_usage": round(usage, 4),
-            "disk_usage_percent": f"{usage * 100:.1f}%",
+            # Absolute disk values (GB) — required by frontend
+            "disk_total_gb": disk_total_gb,
+            "disk_used_gb": disk_used_gb,
+            "disk_free_gb": disk_free_gb,
+            "disk_usage_percent": round(usage_frac * 100, 1),
+            # Retention days — top-level (frontend reads these directly)
+            "hot_days": self.config.hot_days,
+            "warm_days": self.config.warm_days,
+            "cold_days": self.config.cold_days,
+            # Thresholds as 0-100 percentages (not 0-1 fractions)
+            "disk_threshold_percent": round(self.config.disk_threshold * 100),
+            "emergency_threshold_percent": round(
+                self.config.emergency_threshold * 100
+            ),
+            # Estimates
+            "estimated_daily_gb": 1.2,
+            "source": "daemon",
+            # Index metadata
+            "index_counts": tier_counts,
+            "total_indices": len(indices),
+            # Legacy fields (backward compat)
+            "disk_usage": round(usage_frac, 4),
             "disk_threshold": self.config.disk_threshold,
             "emergency_threshold": self.config.emergency_threshold,
             "check_path": self.config.check_path,
-            "index_counts": tier_counts,
-            "total_indices": len(indices),
             "retention": {
                 "hot_days": self.config.hot_days,
                 "warm_days": self.config.warm_days,

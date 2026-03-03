@@ -25,13 +25,69 @@ export interface StorageConfigRequest {
 }
 
 /**
+ * Normalize daemon response to match StorageStatus interface.
+ * Handles both old format (disk_usage as fraction, nested retention)
+ * and new format (disk_free_gb, top-level days, 0-100 percentages).
+ */
+function normalizeStorageStatus(raw: Record<string, unknown>): StorageStatus {
+	// Absolute disk values — new format has them, old format doesn't
+	const diskTotalGb = (raw.disk_total_gb as number) ?? 0;
+	const diskUsedGb = (raw.disk_used_gb as number) ?? 0;
+	const diskFreeGb = (raw.disk_free_gb as number) ?? 0;
+
+	// Disk usage percent — new format: number 0-100, old format: string "X.X%"
+	let usagePct = 0;
+	if (typeof raw.disk_usage_percent === 'number') {
+		usagePct = raw.disk_usage_percent;
+	} else if (typeof raw.disk_usage_percent === 'string') {
+		usagePct = parseFloat(raw.disk_usage_percent) || 0;
+	} else if (typeof raw.disk_usage === 'number') {
+		usagePct = (raw.disk_usage as number) * 100;
+	}
+
+	// Retention days — new format: top-level, old format: nested in retention{}
+	const retention = (raw.retention as Record<string, number>) ?? {};
+	const hotDays = (raw.hot_days as number) ?? retention.hot_days ?? 90;
+	const warmDays = (raw.warm_days as number) ?? retention.warm_days ?? 180;
+	const coldDays = (raw.cold_days as number) ?? retention.cold_days ?? 30;
+
+	// Thresholds — new format: 0-100, old format: 0-1 fraction
+	let thresholdPct = (raw.disk_threshold_percent as number) ?? 0;
+	if (!thresholdPct && typeof raw.disk_threshold === 'number') {
+		thresholdPct = (raw.disk_threshold as number) <= 1
+			? (raw.disk_threshold as number) * 100
+			: (raw.disk_threshold as number);
+	}
+	let emergencyPct = (raw.emergency_threshold_percent as number) ?? 0;
+	if (!emergencyPct && typeof raw.emergency_threshold === 'number') {
+		emergencyPct = (raw.emergency_threshold as number) <= 1
+			? (raw.emergency_threshold as number) * 100
+			: (raw.emergency_threshold as number);
+	}
+
+	return {
+		disk_total_gb: diskTotalGb,
+		disk_used_gb: diskUsedGb,
+		disk_free_gb: diskFreeGb,
+		disk_usage_percent: Math.round(usagePct * 10) / 10,
+		hot_days: hotDays,
+		warm_days: warmDays,
+		cold_days: coldDays,
+		disk_threshold_percent: thresholdPct || 80,
+		emergency_threshold_percent: emergencyPct || 90,
+		estimated_daily_gb: (raw.estimated_daily_gb as number) ?? 1.2,
+		source: 'daemon',
+	};
+}
+
+/**
  * GET: Fetch current storage status and configuration.
  */
 export const GET: RequestHandler = async () => {
-	const { data, error } = await daemonJSON<StorageStatus>('/api/storage/status');
+	const { data, error } = await daemonJSON<Record<string, unknown>>('/api/storage/status');
 
 	if (data && !error) {
-		return json(data);
+		return json(normalizeStorageStatus(data));
 	}
 
 	// Daemon unavailable — return mock storage status

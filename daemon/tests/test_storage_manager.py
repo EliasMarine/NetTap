@@ -463,30 +463,52 @@ class TestGetStatus:
         mgr._client = mock_opensearch_client
         mgr.opensearch_url = "http://localhost:9200"
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.65):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.65),
+            patch("shutil.disk_usage") as mock_disk,
+        ):
+            mock_disk.return_value = type(
+                "Usage", (), {"total": 1000 * 1024**3, "used": 650 * 1024**3, "free": 350 * 1024**3}
+            )()
             status = mgr.get_status()
 
-        # Top-level keys
-        assert "disk_usage" in status
+        # Frontend-required keys (StorageStatus interface)
+        assert "disk_total_gb" in status
+        assert "disk_used_gb" in status
+        assert "disk_free_gb" in status
         assert "disk_usage_percent" in status
-        assert "disk_threshold" in status
-        assert "emergency_threshold" in status
-        assert "check_path" in status
+        assert "hot_days" in status
+        assert "warm_days" in status
+        assert "cold_days" in status
+        assert "disk_threshold_percent" in status
+        assert "emergency_threshold_percent" in status
+        assert "estimated_daily_gb" in status
+        assert "source" in status
         assert "index_counts" in status
         assert "total_indices" in status
-        assert "retention" in status
 
-        # Type checks
-        assert isinstance(status["disk_usage"], float)
-        assert isinstance(status["disk_usage_percent"], str)
+        # Type checks — disk_usage_percent is now a number (0-100), not a string
+        assert isinstance(status["disk_total_gb"], (int, float))
+        assert isinstance(status["disk_used_gb"], (int, float))
+        assert isinstance(status["disk_free_gb"], (int, float))
+        assert isinstance(status["disk_usage_percent"], (int, float))
+        assert isinstance(status["hot_days"], int)
         assert isinstance(status["index_counts"], dict)
         assert isinstance(status["total_indices"], int)
-        assert isinstance(status["retention"], dict)
+        assert status["source"] == "daemon"
 
-        # Retention sub-keys
-        assert "hot_days" in status["retention"]
-        assert "warm_days" in status["retention"]
-        assert "cold_days" in status["retention"]
+        # Verify absolute GB values are reasonable
+        assert status["disk_total_gb"] > 0
+        assert status["disk_free_gb"] > 0
+        assert status["disk_usage_percent"] == 65.0
+
+        # Thresholds are 0-100 percentages
+        assert status["disk_threshold_percent"] == 80
+        assert status["emergency_threshold_percent"] == 90
+
+        # Legacy keys still present for backward compat
+        assert "disk_usage" in status
+        assert "retention" in status
 
         # Index counts should include expected tiers
         for tier in ("hot", "warm", "cold", "unknown"):
