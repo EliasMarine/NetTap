@@ -22,6 +22,7 @@ OS_URL="https://${OS_HOST}:${OS_PORT}"
 CURL_OPTS="-sk --connect-timeout 10 --max-time 30"
 SECURITY_DIR="/usr/share/opensearch/config/opensearch-security"
 CERTS_DIR="/usr/share/opensearch/config/certs"
+SECURITYADMIN="/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh"
 MAX_RETRIES=5
 RETRY_DELAY=5
 
@@ -70,7 +71,7 @@ YAML
 log "Step 2/3: Running securityadmin.sh (pushing security config to OpenSearch)..."
 for attempt in $(seq 1 $MAX_RETRIES); do
     if JAVA_HOME=/usr/share/opensearch/jdk \
-        "${SECURITY_DIR}/../plugins/opensearch-security/tools/securityadmin.sh" \
+        "$SECURITYADMIN" \
         -cd "$SECURITY_DIR" \
         -cacert "${CERTS_DIR}/ca.crt" \
         -cert "${CERTS_DIR}/admin.crt" \
