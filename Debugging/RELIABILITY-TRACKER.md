@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-04
-> Status: 5/7 subsystems production-ready
+> Status: 7/9 subsystems production-ready. Capture pipeline (Zeek/Suricata) running on N100. Logstash blocker has automated fix (opensearch-init container, Chain 15) — pending N100 deploy verification.
 
 ## Purpose
 
@@ -20,6 +20,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Web UI (System) | OK | 2026-03-03 | -- | Fixed: null-safe SMART display, storage NaN fix (PR #82) |
 | Web UI (Go Live) | OK | 2026-03-04 | -- | NEW: 3-phase Go Live page — readiness/wiring/monitoring (PR #83) |
 | Web Auth | OK | 2026-03-04 | -- | Fixed: bridge API + /go-live added to public paths (PR #85) |
+| Zeek Capture | OK | 2026-03-04 | -- | Fixed: entrypoint wrapper for fresh volume permissions, `user: "root"` in compose (PR #89 + develop commit) |
+| Suricata Capture | OK | 2026-03-04 | -- | Fixed: removed SURICATA_RUNMODE conflict, entrypoint wrapper for /var/log/suricata/live (PR #89 + develop commit) |
+| Logstash Pipeline | OK (pending deploy) | 2026-03-04 | -- | Fixed: opensearch-init one-shot container (Chain 15) runs securityadmin.sh + pushes malcolm_template before logstash starts. Pending N100 deploy verification. |
 | Storage Daemon | OK | 2026-03-03 | -- | Disk monitoring and retention working |
 
 ### Status Legend
@@ -49,6 +52,10 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-04 | Zeek | Zeek crash-loops: Permission denied on /zeek/live/logs | Fresh volumes root-owned, Malcolm entrypoint needs root for mkdir/chown | Added `user: "root"` to capture services | NET-93 | PR #89 |
 | 2026-03-04 | Suricata | Suricata fails: "workers" doesn't exist for UNIX_SOCKET runmode | `SURICATA_RUNMODE: "workers"` conflicts with Malcolm 8.x internal runmode | Removed env var — Malcolm auto-selects af-packet | NET-93 | PR #89 |
 | 2026-03-04 | Bridge Health | Netfilter check fails when br_netfilter module not loaded | nsenter cat returns error when proc file absent (module not loaded = good) | Treat missing proc file as netfilter disabled (PASS) | NET-93 | PR #89 |
+| 2026-03-04 | Zeek | Zeek still Permission denied after `user: "root"` | Malcolm entrypoint drops to PUID via `su` BEFORE zeekctl creates dirs; fresh volumes are root-owned | Entrypoint wrapper: mkdir+chown as root before exec original chain | NET-93 | develop (f45a8e2) |
+| 2026-03-04 | Suricata | Suricata fails: /var/log/suricata/live missing | Same root cause as Zeek — privilege drop before dir creation | Entrypoint wrapper: mkdir+chown /var/log/suricata as root | NET-93 | develop (f45a8e2) |
+| 2026-03-04 | Logstash | Filebeat can't connect to logstash:5044 (224 retries) | After `down -v`, OpenSearch roles_mapping.yml resets → logstash 403 → stuck on malcolm_template | Re-run security bootstrap (Chain 11 in DEPLOYMENT-ISSUES.md) | -- | Manual bootstrap |
+| 2026-03-04 | Logstash | Permanent fix for Chain 11: automated bootstrap | opensearch-init one-shot container runs securityadmin.sh + pushes malcolm_template | Added opensearch-init service to docker-compose.yml, logstash depends_on service_completed_successfully | -- | `infra/opensearch-bootstrap` |
 
 ## Reliability Lessons Learned
 
@@ -67,6 +74,12 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 13. **Malcolm capture images need `user: "root"` in compose.** Their entrypoint (`docker-uid-gid-setup.sh`) runs `mkdir`/`chown` to set up log directories, then drops privileges to PUID:PGID via `su`. Without starting as root, fresh Docker volumes (root-owned) cause Permission denied.
 14. **Don't override Malcolm's internal runmode selection.** Setting `SURICATA_RUNMODE` conflicts with Malcolm's orchestration in Suricata 8.x. Let `SURICATA_LIVE_CAPTURE=true` handle mode selection automatically.
 15. **Missing kernel module proc files ≠ feature enabled.** When `br_netfilter` isn't loaded, `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist. This means no iptables interference — the desired state, not a failure.
+16. **`user: "root"` alone is NOT enough for Malcolm capture images.** Malcolm's `docker-uid-gid-setup.sh` entrypoint drops to PUID:PGID via `su` BEFORE the service creates log directories. Fresh Docker volumes (after `down -v`) are root-owned → mkdir fails after privilege drop. Must use a custom `entrypoint:` wrapper in docker-compose that creates directories and chowns them as root, then `exec`s the original Malcolm entrypoint chain.
+17. **After `docker compose down -v`, the ENTIRE pipeline must be re-bootstrapped.** Not just OpenSearch security (Chain 11) — capture volumes also reset to root ownership. The full recovery sequence is: (1) security bootstrap → (2) restart logstash/filebeat → (3) capture containers auto-create dirs via entrypoint wrappers. Without step 1, logstash never starts → filebeat has nowhere to send logs → no data in OpenSearch → empty dashboards.
+18. **Inspect entrypoint chains with `docker inspect`.** When overriding `entrypoint:` in compose, the EXACT chain must match the image's original. Use `docker inspect <container> --format '{{json .Config.Entrypoint}}'` and `'{{json .Config.Cmd}}'` to get the correct order. Getting it wrong means the service never starts (wrong binary executed).
+19. **Use init containers with `service_completed_successfully` for startup ordering.** One-shot init containers (`restart: "no"`) with `depends_on: condition: service_completed_successfully` guarantee bootstrap tasks complete before dependent services start. More reliable than healthcheck-based ordering — eliminates manual bootstrap steps after `docker compose down -v` + `up`.
+20. **Share certs via Docker named volumes, not host bind mounts.** When an init container needs TLS certs generated by the main service, share them via a named volume. No host-path coupling, works across any host filesystem layout.
+21. **Break startup deadlocks with minimal templates.** When Service A waits for a template that Service B pushes (but B starts after A), inject a minimal version of the template in an init container. The full template is overwritten later by the proper service.
 
 ## Verification Checklist
 
@@ -77,10 +90,15 @@ After deploying reliability fixes to N100 hardware:
 - [x] `curl -sk https://localhost/api/bridge/health | python3 -m json.tool` → `health_status: "not_configured"` (verified 2026-03-03)
 - [x] Dashboard shows "Healthy" or informational states, no red badges for unconfigured services (verified 2026-03-03)
 - [x] System page shows actionable messages for unreachable OpenSearch (verified 2026-03-03)
-- [ ] `curl -sk https://localhost/api/bridge/readiness | python3 -m json.tool` → returns readiness JSON (pending PR #85 deploy)
+- [x] `curl -sk https://localhost/api/bridge/readiness | python3 -m json.tool` → returns readiness JSON with all 8 checks PASS (verified 2026-03-04, PR #88+#89)
 - [ ] Go Live page (`/go-live`) loads and shows readiness phase
 - [ ] Bridge creation via `/api/bridge/create` works end-to-end
 - [ ] Bypass toggle enables/disables promisc via nsenter
+- [x] Bridge health auto-discovers interface names from br0 brif sysfs (verified 2026-03-04, PR #88)
+- [x] Zeek capture running — producing logs in /zeek/live/logs/ (verified 2026-03-04)
+- [x] Suricata capture running — af-packet on br0 with 12 worker threads (verified 2026-03-04)
+- [ ] Logstash healthy and processing logs → zeek-*/suricata-* indices in OpenSearch (opensearch-init fix ready — deploy `infra/opensearch-bootstrap` branch)
+- [ ] Dashboard shows real packet data from capture pipeline
 
 ## Test Results
 
@@ -92,3 +110,6 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | Dev tests (pytest) | Dev macOS | PASS | 1036/1036 passed (104 bridge-specific) |
 | 2026-03-04 | Dev tests (vitest) | Dev macOS | PASS | 683/683 passed (22 GoLive + 25 bridge API) |
 | 2026-03-04 | Dev svelte-check | Dev macOS | PASS | 620 files, 0 errors, 0 warnings |
+| 2026-03-04 | Bridge interface discovery deploy | N100 production | PASS | PR #88: Auto-discovered enp2s0/enp3s0 from br0 brif. Carrier + packet data now visible in bridge health API. |
+| 2026-03-04 | Capture pipeline deploy | N100 production | **PARTIAL** | PR #89 + develop: Zeek producing logs, Suricata capturing on br0. BUT logstash down (Chain 11 — needs security bootstrap after `down -v`). Filebeat can't connect to logstash:5044. No data in OpenSearch yet. |
+| 2026-03-04 | Bridge readiness all-pass | N100 production | PASS | All 8 readiness checks PASS: bridge exists, UP, WAN carrier, LAN carrier, promisc on both, STP off, forward_delay 0, netfilter disabled (br_netfilter not loaded). |

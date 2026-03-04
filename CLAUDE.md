@@ -129,7 +129,17 @@ Development versions increment with each phase milestone. Tags are applied on `d
 - **Set state:** `Done` if already fixed, `In Progress` if actively working, `Todo` if planned
 - **Link PRs** using the `links` parameter: `[{"url": "https://github.com/EliasMarine/NetTap/pull/N", "title": "PR #N: Description"}]`
 
-**Workflow**: Implement → **Create/update Linear issue** → Update tracking doc → Verify.
+**Workflow**: Implement → **Create/update Linear issue** → **Update ALL THREE tracking docs** → Verify.
+
+### Tracking Doc Update Rule (MANDATORY — DO NOT SKIP)
+
+**After EVERY code change, bugfix, feature, debug session, or learning — you MUST update ALL THREE tracking docs:**
+
+1. **`Debugging/DEPLOYMENT-ISSUES.md`** — Add issue chain entry, update issue-to-PR mapping, add lessons learned, update Key Files Modified table
+2. **`Debugging/RELIABILITY-TRACKER.md`** — Update subsystem status, add to Issues Found & Fixed table, add lessons learned, update verification checklist, add test results
+3. **`Debugging/RELEASE-VERIFICATION.md`** — Add test execution log entry, update hardware verification status, update status header
+
+This is non-negotiable. These documents are the source of truth. If they aren't updated, the next session will re-introduce previously fixed bugs or repeat failed approaches. **Do this BEFORE responding that the task is done.**
 
 ### Debugging Log (source of truth for deployment issues)
 
