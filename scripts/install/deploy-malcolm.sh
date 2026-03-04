@@ -159,31 +159,32 @@ start_services() {
     BUILDKIT_PROGRESS=plain run docker compose -f "$COMPOSE_FILE" build
 
     # ---------------------------------------------------------------------------
-    # Phase 0: Bootstrap OpenSearch security before starting dependent services
+    # Phase 0: Security bootstrap is now automatic via nettap-opensearch-init
     # ---------------------------------------------------------------------------
-    # On fresh deployments, the .opendistro_security index doesn't exist.
-    # The healthcheck (curl + auth) fails → Docker marks OpenSearch unhealthy →
-    # dependent services (logstash, dashboards, etc.) refuse to start.
+    # The nettap-opensearch-init one-shot container (docker-compose.yml) handles:
+    #   1. Waits for OpenSearch healthy (depends_on condition)
+    #   2. Runs securityadmin.sh to push roles_mapping.yml → .opendistro_security index
+    #   3. Verifies auth works
+    #   4. Exits — downstream services (logstash, daemon) depend on it completing
     #
-    # Fix: start OpenSearch alone, wait for its HTTP API to respond (even 401),
-    # run securityadmin.sh to create the security index, THEN start everything.
-    # ---------------------------------------------------------------------------
-    log "Starting OpenSearch first (security bootstrap required before other services)..."
-    run docker compose -f "$COMPOSE_FILE" up -d opensearch
-
-    # Wait for OpenSearch HTTP API to respond (even "Unauthorized" is fine —
-    # it means the REST API is up and ready for securityadmin.sh)
-    _wait_for_opensearch_http
-
-    # Bootstrap security (idempotent — safe on existing deployments too)
-    bootstrap_opensearch_security
+    # OLD CODE START — Manual bootstrap replaced by init container
+    # log "Starting OpenSearch first (security bootstrap required before other services)..."
+    # run docker compose -f "$COMPOSE_FILE" up -d opensearch
+    # _wait_for_opensearch_http
+    # bootstrap_opensearch_security
+    # OLD CODE END — Init container handles this automatically now
 
     # Bootstrap index templates — dashboards-helper's idxinit has a 180s sleep
     # and waits for logs that don't exist yet on fresh deploys, creating a deadlock
     # with logstash (which waits for malcolm_template). Push templates directly.
+    # Start OpenSearch first so it's healthy for both init container and template push.
+    log "Starting OpenSearch + security init container..."
+    run docker compose -f "$COMPOSE_FILE" up -d opensearch
+    _wait_for_opensearch_http
     bootstrap_index_templates
 
-    # Now start the full stack — OpenSearch should pass healthchecks
+    # Now start the full stack — init container will run automatically,
+    # and downstream services wait for it to complete before starting.
     log "Starting remaining services..."
     run docker compose -f "$COMPOSE_FILE" up -d
 

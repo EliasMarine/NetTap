@@ -43,7 +43,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
 | Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
-| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). |
+| Logstash startup | OK | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. **FIXED:** `nettap-opensearch-init` one-shot container auto-runs securityadmin.sh on every `docker compose up`. Logstash now depends on init service completing. No longer breaks on `--force-recreate`. |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
@@ -87,10 +87,10 @@ CHAIN 9: NIC LED Identification Permission + Fallback (NET-68)
 CHAIN 10: Malcolm Capture Services + Proxy Env Vars (NET-79)
   fix/malcolm-capture-env-vars → develop
 
-CHAIN 11: OpenSearch Security Reset on Container Recreate
-  Manual fix (securityadmin.sh re-run). No code fix yet — needs automation.
-  Logstash blocked waiting for malcolm_template because roles_mapping.yml
-  reverts to empty on --force-recreate.
+CHAIN 11: OpenSearch Security Reset on Container Recreate — PERMANENTLY FIXED
+  Branch: infra/opensearch-field-mapping
+  Bind-mount roles_mapping.yml from git + one-shot init container runs
+  securityadmin.sh automatically on every `docker compose up`.
 
 CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
   fix/nic-led-identify-fallback → develop
@@ -903,8 +903,9 @@ Added missing environment variables and fixed healthcheck endpoints in `docker/d
 
 | Field | Value |
 |---|---|
-| **Linear** | Not yet filed (manual fix applied) |
-| **Status** | Workaround applied; needs automation |
+| **Linear** | (see NET-95 branch) |
+| **Branch** | infra/opensearch-field-mapping |
+| **Status** | **PERMANENTLY FIXED** — bind-mount + init container |
 | **Severity** | High |
 | **Date** | 2026-03-03 |
 
@@ -932,14 +933,37 @@ docker compose up --force-recreate
               → filebeat depends on logstash healthy → also fails
 ```
 
-**Fix (manual):**
+**Fix (manual — SUPERSEDED):**
 1. Write `roles_mapping.yml` with `admin → all_access` mapping inside OpenSearch container
 2. Run `securityadmin.sh` to push config to `.opendistro_security` index
 3. Restart logstash
 
-**TODO:** Automate this — add a startup script or init container that checks if `malcolm_internal` can authenticate AND authorize, and re-runs `securityadmin.sh` if not. This should be part of `deploy-malcolm.sh` or a dedicated healthcheck.
+**Permanent Fix (infra/opensearch-field-mapping):**
+The manual workaround has been replaced with a fully automated solution using two mechanisms:
 
-**Key Insight:** `--force-recreate` resets container filesystems but NOT named volumes. Security config lives in TWO places: the config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These can get out of sync. The security plugin reads from the index, not the files — so the files must be pushed to the index via `securityadmin.sh` after any container recreation.
+1. **Bind-mount `roles_mapping.yml` from git** — `config/opensearch/opensearch-security/roles_mapping.yml` is committed to the repo and bind-mounted into the OpenSearch container. On container recreate, the correct file is always present (never reverts to Malcolm's empty default).
+
+2. **One-shot init container (`nettap-opensearch-init`)** — a new service in `docker-compose.yml` that:
+   - Depends on `opensearch: service_healthy`
+   - Runs `docker/scripts/opensearch-security-init.sh` (idempotent)
+   - Executes `securityadmin.sh` to push config to `.opendistro_security` index
+   - Verifies auth works (curl cluster health with credentials)
+   - Exits after successful bootstrap (one-shot: `restart: "no"`)
+
+3. **Downstream dependencies updated** — logstash and daemon now depend on `nettap-opensearch-init: service_completed_successfully` instead of `opensearch: service_healthy`. This ensures security is bootstrapped BEFORE any service tries to authenticate.
+
+4. **`deploy-malcolm.sh` simplified** — removed automatic `bootstrap_opensearch_security` call from the startup flow (init container handles it). Function kept for manual use.
+
+**Files Changed:**
+- `config/opensearch/opensearch-security/roles_mapping.yml` (NEW) — admin → all_access mapping, stored in git
+- `docker/scripts/opensearch-security-init.sh` (NEW) — idempotent bootstrap script
+- `docker/docker-compose.yml` (EDIT) — bind-mount, init service, dependency changes
+- `scripts/install/deploy-malcolm.sh` (EDIT) — removed auto-bootstrap from startup
+- `tests/scripts/test_compose_validation.bats` (EDIT) — 7 new tests for init service
+
+**Key Insight:** `--force-recreate` resets container filesystems but NOT named volumes. Security config lives in TWO places: the config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). The permanent fix addresses BOTH: bind-mount ensures the files are always correct, and the init container ensures the index is always synced.
+
+**Solution Pattern: Bind-mount + one-shot init container.** For any config that (a) must survive container recreation and (b) requires a post-startup push/sync step, bind-mount the config from git and add a one-shot init service that runs after the target is healthy. This pattern eliminates manual bootstrap steps from the deployment workflow.
 
 ---
 
@@ -1041,7 +1065,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, Chain 11 fix | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** **NEW: roles_mapping.yml bind-mount into opensearch, `nettap-opensearch-init` one-shot service, logstash/daemon depend on init service.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1049,7 +1073,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/api/nic_identify.py` | #68, #73 | Graceful info fallback when LED blink unavailable; returns MAC/PCI/driver |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
-| `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
+| `config/opensearch/opensearch-security/roles_mapping.yml` | Chain 11 fix | NEW: admin → all_access role mapping. Bind-mounted into opensearch container. Ensures correct mapping survives container recreate. |
+| `docker/scripts/opensearch-security-init.sh` | Chain 11 fix | NEW: Idempotent bootstrap script. Runs securityadmin.sh + verifies auth. Used by nettap-opensearch-init one-shot service. |
+| `scripts/install/deploy-malcolm.sh` | #54, #55, #60, Chain 11 fix | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup. **Auto-bootstrap removed from startup flow** (init container handles it). Function kept for manual use. |
 | `daemon/api/traffic.py` | NET-95 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters |
 | `daemon/api/alerts.py` | NET-95 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields |
 | `daemon/api/devices.py` | NET-95 | Device queries use `NETWORK_INDEX` + ECS fields |
@@ -1057,7 +1083,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/services/traffic_classifier.py` | NET-95 | Category classification uses `NETWORK_INDEX` + ECS fields |
 | `daemon/services/device_fingerprint.py` | NET-95 | Fingerprinting uses `NETWORK_INDEX` + ECS fields (zeek.dns.query, zeek.http.user_agent, etc.) |
 | `daemon/services/nl_search.py` | NET-95 | NL search uses `NETWORK_INDEX` + ECS fields |
-| `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
+| `tests/scripts/test_compose_validation.bats` | #54, #56-#62, Chain 11 fix | 126+ tests (was 119), validates security per Malcolm vs NetTap services. **+7 tests for opensearch-init service** (one-shot config, depends_on, bind-mount, script mount, restart policy, healthcheck absence, logstash dependency). |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
 ---
@@ -1069,8 +1095,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 2. **Malcolm's `su` heredoc breaks `/dev/fd/` access** — kernel procfs restriction makes fd entries inaccessible after UID change. Cannot be fixed without controlling how supervisord runs.
 3. **Malcolm's security plugin has 2 layers** — `internal_users.yml` (auth) + `roles_mapping.yml` (authz). Both must be configured AND pushed via `securityadmin.sh`.
 4. **Fresh deployments have circular template dependencies** — must bootstrap templates before logstash starts.
-41. **`--force-recreate` resets container filesystems but NOT volumes** — security config lives in TWO places: config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These get out of sync. Must re-run `securityadmin.sh` after any `--force-recreate` that touches OpenSearch.
-42. **`roles_mapping.yml` is dynamically generated, not in git** — `deploy-malcolm.sh` writes it at deploy time. The image default is empty (just `_meta` header). If the container is recreated without running the deploy script, all service accounts lose authorization (403 on everything).
+41. **`--force-recreate` resets container filesystems but NOT volumes** — security config lives in TWO places: config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These get out of sync. **FIXED:** bind-mount the config from git (never resets) + one-shot init container runs `securityadmin.sh` automatically.
+42. **`roles_mapping.yml` is now in git and bind-mounted** — previously `deploy-malcolm.sh` wrote it at deploy time; the image default is empty (just `_meta` header). Now `config/opensearch/opensearch-security/roles_mapping.yml` is committed to git and bind-mounted into the container. Container recreate no longer loses the mapping.
+52. **Use bind-mount + one-shot init container for config that must survive recreate** — for any config that (a) reverts on container recreate and (b) needs a post-startup push step, bind-mount from git and add a one-shot service (restart: "no") that depends on the target being healthy. Downstream services depend on `service_completed_successfully` to ensure bootstrap runs before they start.
 
 ### Docker / Container Gotchas
 5. **`su` failing silently (exit 0)** is extremely hard to debug — the process simply never starts.
@@ -1151,7 +1178,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 | NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
-| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
+| ~~`--force-recreate` breaks OpenSearch security~~ | ~~Logstash, filebeat, and all services using `malcolm_internal` get 403~~ | **RESOLVED:** `roles_mapping.yml` bind-mounted from git + `nettap-opensearch-init` one-shot container auto-runs `securityadmin.sh` on every `docker compose up`. No manual intervention needed. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
 
@@ -1184,5 +1211,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-68 | #73 | NIC LED identify: nsenter permission + info fallback | 2026-03-02 |
 | NET-79 | develop | Malcolm capture + proxy env vars, healthcheck fixes | 2026-03-02 |
 | NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
-| — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |
+| — | infra/opensearch-field-mapping | OpenSearch security reset + logstash bootstrap deadlock — **PERMANENTLY FIXED** (bind-mount + init container) | 2026-03-04 |
 | NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |

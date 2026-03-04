@@ -123,6 +123,10 @@ services:
       # Malcolm reads credentials from curlrc to set up internal users + security
       - ./curlrc:/var/local/curlrc:ro
       - ./ca-trust:/var/local/ca-trust:ro
+      # Bind-mount the correct roles_mapping.yml so it survives container recreations.
+      # Without this, recreating the container resets to Malcolm's empty default,
+      # breaking all service auth (403). See Debugging/DEPLOYMENT-ISSUES.md Chain 11.
+      - ../config/opensearch/opensearch-security/roles_mapping.yml:/usr/share/opensearch/config/opensearch-security/roles_mapping.yml:ro
     networks:
       - default
     healthcheck:
@@ -131,6 +135,37 @@ services:
       # adds --insecure explicitly, and checks the right endpoint.
       test: ["CMD", "/usr/local/bin/container_health.sh"]
       start_period: 180s
+
+  # ========================================================================
+  # SECURITY BOOTSTRAP — One-shot init container
+  # ========================================================================
+  # Pushes roles_mapping.yml (bind-mounted from repo) into the
+  # .opendistro_security index via securityadmin.sh. Runs once on every
+  # `docker compose up` and exits. All downstream services that need
+  # OpenSearch auth depend on this completing successfully.
+  #
+  # This permanently fixes the "403 after container recreate" problem
+  # (Debugging/DEPLOYMENT-ISSUES.md Chain 11).
+
+  nettap-opensearch-init:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-opensearch-init
+    restart: "no"
+    <<: *logging-defaults
+    labels:
+      com.nettap.service: "opensearch-init"
+      com.nettap.component: "data-store"
+      com.nettap.description: "One-shot OpenSearch security bootstrap (securityadmin.sh)"
+    command: ["/bin/bash", "/opt/nettap/opensearch-security-init.sh"]
+    volumes:
+      - ./scripts/opensearch-security-init.sh:/opt/nettap/opensearch-security-init.sh:ro
+      - ../config/opensearch/opensearch-security/roles_mapping.yml:/usr/share/opensearch/config/opensearch-security/roles_mapping.yml:ro
+      - ./curlrc:/var/local/curlrc:ro
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
 
   # ========================================================================
   # DASHBOARDS
@@ -232,8 +267,8 @@ services:
     networks:
       - default
     depends_on:
-      opensearch:
-        condition: service_healthy
+      nettap-opensearch-init:
+        condition: service_completed_successfully
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "curl -sf http://localhost:9600/_node/pipelines || exit 1"]
@@ -663,8 +698,8 @@ services:
     networks:
       - default
     depends_on:
-      opensearch:
-        condition: service_healthy
+      nettap-opensearch-init:
+        condition: service_completed_successfully
 
   nettap-web:
     build:

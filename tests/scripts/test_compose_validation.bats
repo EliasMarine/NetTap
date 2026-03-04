@@ -57,6 +57,7 @@ assert 'services' in data, 'Missing services key'
 @test "compose: all expected services are defined" {
     local expected_services=(
         opensearch
+        nettap-opensearch-init
         dashboards-helper
         dashboards
         logstash
@@ -537,22 +538,27 @@ print('opensearch curlrc mount: ' + str(curlrc_mount[0]))
 # Restart policy
 # ==========================================================================
 
-@test "compose: all services use restart: unless-stopped" {
+@test "compose: all services use restart: unless-stopped (except one-shot init)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
     run _compose_query "
 services = data.get('services', {})
+# One-shot init containers intentionally use restart: 'no'
+one_shot_services = {'nettap-opensearch-init'}
 wrong = []
 for name, svc in services.items():
     restart = svc.get('restart', 'no')
-    if restart != 'unless-stopped':
+    if name in one_shot_services:
+        if restart != 'no':
+            wrong.append(f'{name}: {restart} (should be no — one-shot)')
+    elif restart != 'unless-stopped':
         wrong.append(f'{name}: {restart}')
 if wrong:
     print('Services with wrong restart policy: ' + ', '.join(wrong))
     sys.exit(1)
-print('All services use restart: unless-stopped')
+print('All services have correct restart policy')
 "
     [ "$status" -eq 0 ]
 }
@@ -610,4 +616,106 @@ print('All services use restart: unless-stopped')
 
 @test "compose: OpenSearch 9200 is bound to loopback only" {
     grep -q '127.0.0.1:9200:9200' "$COMPOSE_FILE"
+}
+
+# ==========================================================================
+# OpenSearch Security Init Container
+# ==========================================================================
+
+@test "compose: nettap-opensearch-init service exists" {
+    grep -q "^  nettap-opensearch-init:" "$COMPOSE_FILE"
+}
+
+@test "compose: nettap-opensearch-init depends on opensearch healthy" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-opensearch-init']
+deps = svc.get('depends_on', {})
+assert 'opensearch' in deps, 'init must depend on opensearch'
+assert deps['opensearch'].get('condition') == 'service_healthy', \
+    f'init must wait for opensearch healthy, got: {deps[\"opensearch\"]}'
+print('nettap-opensearch-init: depends on opensearch (service_healthy)')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: nettap-opensearch-init has restart: no (one-shot)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-opensearch-init']
+restart = svc.get('restart', 'not set')
+assert restart == 'no', f'init must be one-shot (restart: no), got: {restart}'
+print('nettap-opensearch-init: restart=no (one-shot)')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: nettap-opensearch-init bind-mounts roles_mapping.yml" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-opensearch-init']
+volumes = [str(v) for v in svc.get('volumes', [])]
+has_roles = any('roles_mapping.yml' in v for v in volumes)
+assert has_roles, f'init must mount roles_mapping.yml, volumes: {volumes}'
+print('nettap-opensearch-init: roles_mapping.yml bind-mounted')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: opensearch bind-mounts roles_mapping.yml" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['opensearch']
+volumes = [str(v) for v in svc.get('volumes', [])]
+has_roles = any('roles_mapping.yml' in v for v in volumes)
+assert has_roles, f'opensearch must mount roles_mapping.yml, volumes: {volumes}'
+print('opensearch: roles_mapping.yml bind-mounted')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: logstash depends on init service completed" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['logstash']
+deps = svc.get('depends_on', {})
+assert 'nettap-opensearch-init' in deps, \
+    f'logstash must depend on init service, deps: {list(deps.keys())}'
+assert deps['nettap-opensearch-init'].get('condition') == 'service_completed_successfully', \
+    f'logstash must wait for init completed, got: {deps[\"nettap-opensearch-init\"]}'
+print('logstash: depends on nettap-opensearch-init (service_completed_successfully)')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: daemon depends on init service completed" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-storage-daemon']
+deps = svc.get('depends_on', {})
+assert 'nettap-opensearch-init' in deps, \
+    f'daemon must depend on init service, deps: {list(deps.keys())}'
+assert deps['nettap-opensearch-init'].get('condition') == 'service_completed_successfully', \
+    f'daemon must wait for init completed, got: {deps[\"nettap-opensearch-init\"]}'
+print('daemon: depends on nettap-opensearch-init (service_completed_successfully)')
+"
+    [ "$status" -eq 0 ]
 }
