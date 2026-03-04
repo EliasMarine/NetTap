@@ -416,14 +416,23 @@ class BridgeManager:
         # 8. Netfilter disabled — must read from HOST namespace via nsenter.
         # /proc/sys/net/bridge/bridge-nf-call-iptables inside the container
         # reflects the container's own namespace (always 1), not the host's.
+        # If the file doesn't exist, the br_netfilter kernel module is not
+        # loaded — meaning bridge traffic is NOT subject to iptables at all,
+        # which is the desired state (effectively disabled).
         rc, nf_out, _ = await self._run_nsenter(
             "cat", "/proc/sys/net/bridge/bridge-nf-call-iptables"
         )
-        nf_disabled = nf_out.strip() == "0" if rc == 0 else False
+        if rc == 0:
+            nf_disabled = nf_out.strip() == "0"
+            nf_detail = f"Bridge netfilter {'disabled' if nf_disabled else 'enabled (Docker iptables may break traffic)'}"
+        else:
+            # File doesn't exist → br_netfilter module not loaded → no interference
+            nf_disabled = True
+            nf_detail = "Bridge netfilter not loaded (br_netfilter module absent — no iptables interference)"
         checks.append({
             "name": "netfilter_disabled",
             "passed": nf_disabled,
-            "detail": f"Bridge netfilter {'disabled' if nf_disabled else 'enabled (Docker iptables may break traffic)'}",
+            "detail": nf_detail,
         })
 
         # Determine overall readiness and message

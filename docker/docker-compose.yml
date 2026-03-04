@@ -304,6 +304,11 @@ services:
       com.nettap.service: "zeek-live"
       com.nettap.component: "capture"
       com.nettap.description: "Zeek network metadata analysis (live capture)"
+    # Malcolm's entrypoint (docker-uid-gid-setup.sh) needs root to create log
+    # directories in fresh Docker volumes and chown them to PUID:PGID before
+    # dropping privileges via `su`. Without this, `mkdir /zeek/live/logs` fails
+    # with Permission denied after `docker compose down -v` recreates volumes.
+    user: "root"
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -335,13 +340,21 @@ services:
       com.nettap.service: "suricata-live"
       com.nettap.component: "capture"
       com.nettap.description: "Suricata IDS/IPS engine (live capture)"
+    # Malcolm's entrypoint needs root for directory creation in fresh volumes
+    # (same as zeek-live above). Privileges drop to PUID:PGID via `su`.
+    user: "root"
     cap_add: *capture-caps
     environment:
       <<: *process-env
       SURICATA_LIVE_CAPTURE: "true"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
-      SURICATA_RUNMODE: "workers"
+      # NOTE: Do NOT set SURICATA_RUNMODE here. Malcolm's entrypoint selects
+      # the correct runmode automatically when SURICATA_LIVE_CAPTURE=true
+      # (af-packet with workers threading). Setting it explicitly to "workers"
+      # conflicts with Malcolm's internal UNIX_SOCKET initialization in
+      # Suricata 8.x and causes: "The custom type workers doesn't exist for
+      # this runmode type UNIX_SOCKET".
       SURICATA_UPDATE_RULES: "true"
       SURICATA_UPDATE_ETOPEN: "true"
       SURICATA_ROTATED_PCAP: "false"
@@ -362,6 +375,8 @@ services:
       com.nettap.service: "pcap-capture"
       com.nettap.component: "capture"
       com.nettap.description: "Raw packet capture (netsniff-ng)"
+    # Malcolm's entrypoint needs root for directory creation in fresh volumes
+    user: "root"
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *pcap-env]
