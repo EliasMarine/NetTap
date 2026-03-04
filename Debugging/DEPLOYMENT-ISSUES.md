@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-03
-> **Status:** 29 issues tracked. 29 RESOLVED. Latest: NET-82 nginx proxy_set_header inheritance (real CSRF root cause), NET-83 null SMART crash, NET-84 bootstrap docs, NET-85 filebeat healthcheck, NET-86 dashboards/cyberchef/helper healthchecks. 17/18 containers healthy on N100.
+> **Last updated:** 2026-03-04
+> **Status:** 37 issues tracked. 37 RESOLVED. **Full data pipeline VERIFIED on N100** — Zeek → Filebeat → Logstash → `arkime_sessions3-260304` → OpenSearch. 7,508+ docs indexed and growing. opensearch-init bootstrap (Chain 15) + index naming (Chain 16) both working.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -21,6 +21,8 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 8: Storage API Format Mismatch](#chain-8-storage-api-format-mismatch)
 - [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
 - [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
+- [Chain 15: OpenSearch Bootstrap Automation](#chain-15-opensearch-bootstrap-automation)
+- [Chain 16: Logstash Index Naming — @prefix Nil](#chain-16-logstash-index-naming--prefix-nil)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -43,7 +45,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
 | Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
-| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). |
+| Logstash startup | **FIXED (pending deploy)** | Chain 15: `opensearch-init` one-shot container runs `securityadmin.sh` + pushes `malcolm_template` before logstash starts. Logstash depends on `opensearch-init: service_completed_successfully`. Eliminates manual bootstrap. |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
@@ -88,7 +90,7 @@ CHAIN 10: Malcolm Capture Services + Proxy Env Vars (NET-79)
   fix/malcolm-capture-env-vars → develop
 
 CHAIN 11: OpenSearch Security Reset on Container Recreate
-  Manual fix (securityadmin.sh re-run). No code fix yet — needs automation.
+  Manual fix (securityadmin.sh re-run). Permanent fix: Chain 15 (opensearch-init container).
   Logstash blocked waiting for malcolm_template because roles_mapping.yml
   reverts to empty on --force-recreate.
 
@@ -96,6 +98,22 @@ CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
   fix/nic-led-identify-fallback → develop
   Admin account creation silently fails: SvelteKit CSRF 403 behind nginx
   + /var/lib/nettap-web owned by root (nettap user can't write users.json).
+
+CHAIN 13: Bridge Interface Discovery + Netfilter Namespace (NET-92)
+  fix/bridge-interface-discovery → PR #88
+  System page shows no carriers — BridgeHealthMonitor hardcoded eth0/eth1 vs N100 enp2s0/enp3s0.
+  Also: netfilter readiness reads container /proc namespace instead of host.
+
+CHAIN 14: Capture Pipeline Permissions + Runmode Conflict (NET-93)
+  fix/capture-pipeline-permissions → PR #89 + develop (f45a8e2)
+  Zeek/Suricata crash-loop: fresh volumes root-owned, Malcolm entrypoint drops to PUID before
+  mkdir. Suricata RUNMODE conflict with Malcolm 8.x. Netfilter check fails on missing module.
+
+CHAIN 15: OpenSearch Bootstrap Automation (permanent fix for Chain 11)
+  infra/opensearch-bootstrap → pending PR
+  opensearch-init one-shot container: writes roles_mapping.yml, runs securityadmin.sh,
+  pushes minimal malcolm_template. Logstash depends on init completing successfully.
+  Eliminates manual security bootstrap after docker compose down -v + up.
 ```
 
 ---
@@ -904,7 +922,7 @@ Added missing environment variables and fixed healthcheck endpoints in `docker/d
 | Field | Value |
 |---|---|
 | **Linear** | Not yet filed (manual fix applied) |
-| **Status** | Workaround applied; needs automation |
+| **Status** | Done — permanent fix in Chain 15 (opensearch-init container) |
 | **Severity** | High |
 | **Date** | 2026-03-03 |
 
@@ -937,7 +955,7 @@ docker compose up --force-recreate
 2. Run `securityadmin.sh` to push config to `.opendistro_security` index
 3. Restart logstash
 
-**TODO:** Automate this — add a startup script or init container that checks if `malcolm_internal` can authenticate AND authorize, and re-runs `securityadmin.sh` if not. This should be part of `deploy-malcolm.sh` or a dedicated healthcheck.
+**RESOLVED:** Automated via Chain 15 — `opensearch-init` one-shot container runs `securityadmin.sh` + pushes `malcolm_template` on every `docker compose up`. See [Chain 15](#chain-15-opensearch-bootstrap-automation).
 
 **Key Insight:** `--force-recreate` resets container filesystems but NOT named volumes. Security config lives in TWO places: the config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These can get out of sync. The security plugin reads from the index, not the files — so the files must be pushed to the index via `securityadmin.sh` after any container recreation.
 
@@ -1035,17 +1053,246 @@ Browser sends Origin: https://192.168.x.x (TLS terminated by nginx)
 
 ---
 
+## Chain 13: Bridge Interface Discovery + Netfilter Namespace
+
+### NET-92 — System page shows no carriers, bridge health uses wrong NIC names
+
+| Field | Value |
+|---|---|
+| **Linear** | [NET-92](https://linear.app/nettap/issue/NET-92) |
+| **PR** | [#88](https://github.com/EliasMarine/NetTap/pull/88) |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-04 |
+
+**Symptoms:**
+- System page shows "no carriers" despite both cables plugged in and bridge readiness reporting carriers detected
+- Bridge health API returns `wan_link: false, lan_link: false` with zero packet counts
+- Bridge readiness (via `BridgeManager`) shows carriers correctly — only `BridgeHealthMonitor` is broken
+
+**Root Cause (two issues):**
+
+1. **Hardcoded interface names:** `BridgeHealthMonitor` initialized with `eth0`/`eth1` defaults (from `WAN_IFACE`/`LAN_IFACE` env vars, which weren't set in docker-compose.yml). Intel N100 uses `enp2s0`/`enp3s0` (PCI bus naming). Carrier check reads `/sys/class/net/eth0/carrier` → file doesn't exist → defaults to "no carrier".
+
+2. **Container namespace for netfilter:** The readiness check read `/proc/sys/net/bridge/bridge-nf-call-iptables` from inside the container — this returns the container's namespace value (default 1), not the host's. The check always reported "netfilter enabled" even when the host had it disabled.
+
+**Fix:**
+1. Added `_discover_interfaces()` to `BridgeHealthMonitor` — reads `/sys/class/net/br0/brif/` directory to get actual bridge member names. Called at start of every `check_health()` until successful (bridge may not exist at daemon startup).
+2. Changed netfilter check in `BridgeManager.check_readiness()` to use `nsenter -t 1 -n -- cat /proc/sys/net/bridge/bridge-nf-call-iptables` for host namespace read.
+
+**Files Changed:**
+- `daemon/services/bridge_health.py` — Added `_discover_interfaces()`, `_interfaces_discovered` flag
+- `daemon/services/bridge_manager.py` — Netfilter check via nsenter
+- `daemon/tests/test_bridge_health.py` — 5 new tests for interface discovery
+
+**Key Insight:** Never hardcode NIC names — PCI bus naming (`enp2s0`) varies by hardware. Always auto-discover from the bridge's brif sysfs directory. Also, container `/proc` is namespace-isolated; use nsenter for any host-level reads.
+
+---
+
+## Chain 14: Capture Pipeline Permissions + Runmode Conflict
+
+### NET-93 — Zeek/Suricata crash-loop: fresh volume permissions + Suricata runmode conflict + netfilter module
+
+| Field | Value |
+|---|---|
+| **Linear** | [NET-93](https://linear.app/nettap/issue/NET-93) |
+| **PR** | [#89](https://github.com/EliasMarine/NetTap/pull/89), develop (f45a8e2) |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-04 |
+
+**Symptoms (three separate failures):**
+- **Zeek crash-loops:** `mkdir: cannot create directory '/zeek/live/logs': Permission denied`
+- **Suricata error:** `The custom type "workers" doesn't exist for this runmode type "UNIX_SOCKET"`
+- **Netfilter readiness fails:** `nsenter cat` returns error — file doesn't exist
+
+**Root Causes:**
+
+1. **Zeek/Suricata fresh volume permissions:** After `docker compose down -v`, named volumes are recreated as root-owned. Malcolm's entrypoint chain (`docker-uid-gid-setup.sh`) drops to PUID:PGID (1000:1000) via `su` BEFORE the service creates its log directories. Even with `user: "root"` in compose, the privilege drop happens inside the entrypoint. Result: `mkdir` runs as uid 1000 on root-owned volume → Permission denied.
+
+2. **Suricata runmode conflict:** `SURICATA_RUNMODE: "workers"` in docker-compose.yml conflicts with Malcolm's internal UNIX_SOCKET initialization in Suricata 8.x. Malcolm uses `SURICATA_LIVE_CAPTURE=true` to auto-select af-packet mode.
+
+3. **Missing br_netfilter module:** On N100, the `br_netfilter` kernel module is not loaded, so `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist. The nsenter cat fails with "No such file or directory". This is actually the desired state (no iptables interference).
+
+**Causal Chain:**
+```
+docker compose down -v → volumes recreated as root-owned
+  → Malcolm entrypoint drops to PUID:PGID via su
+    → Zeek: mkdir /zeek/live/logs as uid 1000 on root-owned volume → Permission denied → crash-loop
+    → Suricata: mkdir /var/log/suricata/live → same Permission denied
+  Also: SURICATA_RUNMODE: "workers" → conflicts with UNIX_SOCKET → error message → crash
+  Also: br_netfilter not loaded → proc file missing → nsenter error → readiness false failure
+```
+
+**Fix (three-part):**
+
+1. **Entrypoint wrappers** (permanent fix for volume permissions): Custom `entrypoint:` in docker-compose.yml that creates directories and chowns them as root BEFORE exec'ing the original Malcolm entrypoint chain:
+```yaml
+zeek-live:
+  user: "root"
+  entrypoint:
+    - /bin/bash
+    - -c
+    - >-
+      mkdir -p /zeek/live/logs /zeek/live/spool /zeek/live/extract_files
+      && chown -R ${PUID:-1000}:${PGID:-1000} /zeek/live
+      && exec /usr/bin/tini --
+      /usr/local/bin/docker-uid-gid-setup.sh
+      /usr/local/bin/docker_entrypoint.sh
+      /usr/local/bin/service_check_passthrough.sh -s zeek
+      /usr/local/bin/supervisord -c /etc/supervisord.conf -n
+```
+
+2. **Removed `SURICATA_RUNMODE: "workers"`** — let Malcolm auto-select af-packet via `SURICATA_LIVE_CAPTURE=true`.
+
+3. **Netfilter missing module handling:** If nsenter cat returns error (file doesn't exist), treat as "netfilter disabled" (PASS) since no br_netfilter module = no iptables interference.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Entrypoint wrappers for zeek-live, suricata-live, pcap-capture; removed SURICATA_RUNMODE
+- `daemon/services/bridge_manager.py` — Netfilter check handles missing module
+
+**Key Insight:** `user: "root"` alone does NOT fix Malcolm capture volume permissions. The issue is Malcolm's entrypoint calling `su` to drop privileges BEFORE directory creation. The fix must create directories as root and then exec the original entrypoint chain. The entrypoint chain order is critical — get it from `docker inspect <container> --format '{{json .Config.Entrypoint}}'`.
+
+---
+
+## Chain 15: OpenSearch Bootstrap Automation
+
+### opensearch-init one-shot container (permanent fix for Chain 11)
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-94 |
+| **Branch** | `infra/opensearch-bootstrap` |
+| **PR** | #90 |
+| **Status** | VERIFIED on N100 — security bootstrap + malcolm_template working. Index naming separate issue (Chain 16). |
+| **Severity** | Urgent |
+| **Date** | 2026-03-04 |
+
+**Symptom:** After `docker compose down -v` + `up`, OpenSearch's `roles_mapping.yml` resets to empty (breaking auth — 403 for all services) AND `malcolm_template` index template doesn't exist (logstash blocks forever waiting for it). This breaks the entire data pipeline: logstash -> filebeat -> no data in OpenSearch -> empty dashboards. Previously required manual `securityadmin.sh` re-run every time (Chain 11).
+
+**Root Cause:** Two startup dependencies not codified:
+1. OpenSearch security config (roles_mapping.yml) must be pushed to `.opendistro_security` index after container recreation
+2. Logstash's `opensearch_status.sh` blocks until `malcolm_template` exists — but the template is pushed by dashboards-helper which starts AFTER logstash (deadlock)
+
+**Fix: `opensearch-init` one-shot container:**
+
+1. **`config/opensearch/roles_mapping.yml`** (NEW) — correct `admin -> all_access` mapping, mounted into both opensearch (belt-and-suspenders) and opensearch-init containers
+2. **`config/opensearch/bootstrap.sh`** (NEW, 3 iterations) — one-shot script that:
+   - Writes `roles_mapping.yml` to `/tmp` (not the image's security dir)
+   - Runs `securityadmin.sh -f /tmp/roles_mapping.yml -t rolesmapping` (pushes ONLY roles_mapping)
+   - Verifies auth works with malcolm_internal credentials (retry logic + 2s delay)
+   - Pushes minimal `malcolm_template` if it doesn't exist (breaks the logstash deadlock)
+   - **Iteration 1 bug:** Relative path for securityadmin.sh → "No such file or directory"
+   - **Iteration 2 bug:** Used `-cd` (entire directory) → overwrote `internal_users.yml` with image defaults → broke ALL auth
+   - **Iteration 3 fix:** Use `-f`/`-t` flags to push ONLY the roles_mapping file
+3. **`docker/docker-compose.yml`** (EDIT):
+   - Added `opensearch-certs` named volume shared between opensearch and opensearch-init
+   - Mounted correct `roles_mapping.yml` into opensearch service (auto-initialization)
+   - Added `opensearch-init` one-shot service (`restart: "no"`, uses opensearch image, `depends_on: opensearch: condition: service_healthy`)
+   - Logstash now `depends_on: opensearch-init: condition: service_completed_successfully`
+
+**Architecture decisions:**
+- Uses same opensearch image (has Java, securityadmin.sh, curl — no extra image)
+- Shares certs via named volume (opensearch generates certs -> init container reads same certs)
+- `restart: "no"` — one-shot, runs once per `docker compose up`, exits 0 on success
+- Logstash blocked until init exits 0 via `service_completed_successfully`
+- Minimal `malcolm_template` breaks the deadlock (dashboards-helper pushes full template later)
+- Belt-and-suspenders: mount correct config file into opensearch (for auto-init on fresh volume) + push via securityadmin.sh (for recreate scenarios)
+
+**Causal Chain (resolved):**
+```
+docker compose up
+  → opensearch starts, becomes healthy
+    → opensearch-init starts (depends_on: opensearch healthy)
+      → writes roles_mapping.yml → runs securityadmin.sh → pushes malcolm_template
+        → opensearch-init exits 0
+          → logstash starts (depends_on: opensearch-init service_completed_successfully)
+            → opensearch_status.sh finds malcolm_template → JVM starts → port 5044 opens
+              → filebeat connects → logs flow to OpenSearch → dashboards populated
+```
+
+**Files Changed:**
+- `config/opensearch/roles_mapping.yml` — NEW: correct admin -> all_access mapping
+- `config/opensearch/bootstrap.sh` — NEW: one-shot bootstrap script
+- `docker/docker-compose.yml` — opensearch-certs volume, opensearch-init service, logstash dependency
+
+**Key Insight:** Docker Compose `service_completed_successfully` is the correct primitive for one-shot init containers. Combined with `restart: "no"`, it provides guaranteed ordering: the init container runs to completion before dependent services start. This is more reliable than health-check-based ordering because it guarantees the bootstrap COMPLETED, not just that the service is running.
+
+---
+
+## Chain 16: Logstash Index Naming — @prefix Nil
+
+### format_index_string.rb crashes on every event
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-94 (updated) |
+| **Branch** | `infra/opensearch-bootstrap` |
+| **PR** | #90 |
+| **Status** | **VERIFIED on N100** — `arkime_sessions3-260304` index appeared with 7,508+ docs, growing steadily |
+| **Severity** | Critical |
+| **Date** | 2026-03-04 |
+
+**Symptom:** After opensearch-init bootstrap succeeded (Chain 15), logstash started all 7 pipelines and processed 60,000+ events — but ALL events went to a literal index named `%{[@metadata][malcolm_opensearch_index]}` instead of properly-named indices like `arkime_sessions3-260304`. No data appeared in dashboards despite the full pipeline running.
+
+**Root Cause:** Malcolm's `logstash/ruby/format_index_string.rb` line 52:
+```ruby
+prefix_resolved = @prefix.delete_suffix('*')  # @prefix is nil → crash
+```
+
+The `register` method initializes `@prefix` from an environment variable:
+```ruby
+@prefix = params["prefix"]           # nil (not passed by pipeline config)
+_prefix_env = params["prefix_env"]   # "MALCOLM_NETWORK_INDEX_PATTERN"
+if @prefix.nil? && !_prefix_env.nil?
+  @prefix = ENV[_prefix_env]         # nil — env var not set!
+end
+if !@prefix.nil? && @prefix.empty?
+  @prefix = params["prefix_default"] # ONLY fires on empty string, NOT nil
+end
+```
+
+The fallback to `prefix_default` ("arkime_sessions3-*") only fires when the env var is set to an empty string. When the env var is completely unset, `ENV[]` returns `nil`, `@prefix` stays `nil`, and the script crashes.
+
+**Four env vars needed (from Malcolm's `opensearch.env`):**
+- `MALCOLM_NETWORK_INDEX_PATTERN` = `"arkime_sessions3-*"` (Zeek/Suricata index prefix)
+- `MALCOLM_NETWORK_INDEX_SUFFIX` = `"%{%y%m%d}"` (date suffix for network logs)
+- `MALCOLM_OTHER_INDEX_PATTERN` = `"malcolm_beats_*"` (beats/other log prefix)
+- `MALCOLM_OTHER_INDEX_SUFFIX` = `"%{%y%m%d}"` (date suffix for other logs)
+
+**Fix:** Added all four env vars to the shared `opensearch-env` YAML anchor in `docker-compose.yml`. This makes them available to logstash (and all other services using `*opensearch-env`). Removed duplicate `MALCOLM_NETWORK_INDEX_PATTERN` from nginx-proxy (now inherited from anchor).
+
+**Causal Chain:**
+```
+docker compose up
+  → logstash starts → loads format_index_string.rb
+    → register() reads params["prefix_env"] = "MALCOLM_NETWORK_INDEX_PATTERN"
+      → ENV["MALCOLM_NETWORK_INDEX_PATTERN"] returns nil (not set in compose)
+        → @prefix stays nil → fallback to prefix_default SKIPPED (only fires on empty string)
+          → filter() calls @prefix.delete_suffix('*') → NoMethodError: undefined method for nil
+            → event drops through with unresolved %{} template → lands in literal index name
+```
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added 4 env vars to `opensearch-env` anchor, removed duplicate from nginx-proxy
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-92, NET-93, Chain 15, Chain 16 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. **Logstash depends_on opensearch-init: service_completed_successfully.** Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + `user: "root"` + entrypoint wrappers (mkdir+chown before Malcolm chain). **Removed SURICATA_RUNMODE.** nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** **NEW: opensearch-init one-shot service + opensearch-certs named volume.** **opensearch-env anchor: MALCOLM_NETWORK_INDEX_PATTERN, MALCOLM_NETWORK_INDEX_SUFFIX, MALCOLM_OTHER_INDEX_PATTERN, MALCOLM_OTHER_INDEX_SUFFIX (Chain 16).** |
+| `config/opensearch/roles_mapping.yml` | Chain 15 | NEW: correct admin -> all_access role mapping. Mounted into both opensearch (belt-and-suspenders) and opensearch-init containers. |
+| `config/opensearch/bootstrap.sh` | Chain 15 | NEW: one-shot bootstrap script — writes roles_mapping.yml, runs securityadmin.sh, pushes minimal malcolm_template. |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
-| `web/src/hooks.server.ts` | #71 | PUBLIC_PATHS includes `/api/setup`; first-run redirect skips `/api/setup/*` |
+| `web/src/hooks.server.ts` | #71, PR #85 | PUBLIC_PATHS includes `/api/setup`, `/api/bridge`, `/go-live`; first-run redirect skips `/api/setup/*` |
+| `daemon/services/bridge_health.py` | PR #83, PR #88 | Auto-discovers interface names from br0 brif sysfs. 30s polling loop. Bypass promisc toggle via nsenter. |
+| `daemon/services/bridge_manager.py` | PR #83, PR #88, PR #89 | Create/teardown/readiness. Netfilter check via nsenter with missing module handling. |
 | `daemon/api/nic_identify.py` | #68, #73 | Graceful info fallback when LED blink unavailable; returns MAC/PCI/driver |
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
@@ -1115,6 +1362,28 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 47. **SSE (Server-Sent Events) streams require explicit nginx configuration** — must set `proxy_buffering off`, `proxy_cache off`, and `proxy_read_timeout 86400s` in the location block. Without this, nginx buffers the SSE response and the client never receives real-time events.
 48. **Null-check ALL template values from daemon APIs** — SMART health, storage stats, and any other daemon data can return null fields when hardware isn't available or monitoring hasn't started. Calling `.toLocaleString()` on null crashes the entire page. Always use null-coalescing (`??`) or explicit null checks in Svelte templates.
 
+### Bridge / Capture Pipeline (NEW — Chains 13-14)
+49. **Never hardcode NIC names — auto-discover from bridge sysfs.** Intel N100 uses `enp2s0`/`enp3s0` (PCI bus naming), not `eth0`/`eth1`. Read bridge member interfaces from `/sys/class/net/br0/brif/` directory listing to get actual interface names dynamically.
+50. **Container `/proc` is namespace-isolated — use nsenter for host reads.** Reading `/proc/sys/net/bridge/bridge-nf-call-iptables` inside a container returns the container's own namespace value (default 1), not the host's. Must use `nsenter -t 1 -n -- cat` to read from the host network namespace.
+51. **Missing kernel module proc files ≠ feature enabled.** When `br_netfilter` isn't loaded, `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist at all. This means no iptables interference with bridge traffic — the desired state, not a failure. Treat missing proc file as PASS.
+52. **Malcolm capture images need entrypoint wrappers for fresh volumes.** `user: "root"` alone is NOT enough — Malcolm's `docker-uid-gid-setup.sh` drops to PUID:PGID via `su` BEFORE the service creates directories. Fresh Docker volumes are root-owned, so mkdir fails after privilege drop. Fix: custom `entrypoint:` in compose that runs `mkdir -p && chown` as root, then `exec`s the original entrypoint chain.
+53. **Don't override Malcolm's internal runmode selection.** Setting `SURICATA_RUNMODE: "workers"` conflicts with Malcolm's UNIX_SOCKET initialization in Suricata 8.x. Let `SURICATA_LIVE_CAPTURE=true` handle af-packet mode selection automatically.
+54. **After `docker compose down -v`, the ENTIRE data pipeline breaks.** Not just OpenSearch security (Chain 11) — capture volumes also reset. Must re-bootstrap: (1) OpenSearch security, (2) logstash/filebeat restart, (3) capture volume permissions. This is the most destructive operation in the stack.
+
+### Init Container / Startup Ordering (NEW — Chain 15)
+55. **Use `service_completed_successfully` for one-shot init containers.** Docker Compose's `depends_on` with `condition: service_completed_successfully` guarantees the init container ran to completion (exit 0) before dependent services start. Combined with `restart: "no"`, this is the correct primitive for bootstrap tasks that must happen exactly once per `docker compose up`.
+56. **Share Docker named volumes for cert-based auth between containers.** When an init container needs the same TLS certs as the main service, share them via a named volume rather than bind-mounting from host. The main service generates/manages certs in the volume; the init container reads them. No host-path coupling.
+57. **Break startup deadlocks with minimal templates.** When Service A waits for a template that Service B pushes, but B starts after A, inject a minimal version of the template in an init container. The full template can be overwritten later by the proper service (dashboards-helper). The minimal template just needs to exist to unblock the wait loop.
+58. **Belt-and-suspenders for critical config files.** Mount the correct `roles_mapping.yml` into the opensearch container (so auto-initialization on fresh volumes picks it up) AND push it via `securityadmin.sh` in the init container (so recreate scenarios are covered). Two mechanisms covering different failure modes.
+
+### Malcolm Environment Variables (NEW — Chain 16)
+59. **NEVER use `securityadmin.sh -cd` from an init container.** The `-cd` flag pushes ALL security config files from the container's filesystem — including `internal_users.yml` with IMAGE DEFAULT password hashes. Malcolm's opensearch container generates correct hashes from curlrc credentials via `setup-internal-users.sh`. Pushing image defaults overwrites those hashes and breaks ALL authentication (403 on every service). Always use `-f <file> -t <type>` to push only the specific config file needed.
+60. **Malcolm's Ruby filter fallbacks have a nil vs empty-string gap.** `format_index_string.rb` falls back to `prefix_default` ONLY when the env var is set to an empty string. When the env var is completely unset, `ENV[]` returns nil, and the `!@prefix.nil? && @prefix.empty?` guard doesn't fire. The script crashes instead of using the default. Always set the env var explicitly — don't rely on in-script defaults.
+61. **Malcolm distributes config across multiple `.env` files.** Malcolm's upstream compose uses `env_file:` directives pointing to `opensearch.env`, `upload-common.env`, `auth-common.env`, etc. NetTap replaces these with inline YAML anchors. When adding a new Malcolm service or debugging missing env vars, diff against Malcolm's `.env.example` files to find what's missing.
+62. **All Malcolm services sharing `opensearch-env` should get index pattern vars.** `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` are needed by logstash but safe to provide to all services. Put them in the shared anchor rather than per-service to prevent future omissions.
+63. **Init container images share filesystem state with the image, not the running container.** The opensearch-init container uses the same opensearch IMAGE but gets a FRESH filesystem — it does NOT share the running opensearch container's filesystem. Config files modified by the opensearch container's entrypoint (e.g., `internal_users.yml` with regenerated password hashes) are NOT visible in the init container. The init container sees only the IMAGE DEFAULTS.
+64. **Docker caches init container scripts across rebuilds.** When bind-mounting a script into an init container (`bootstrap.sh:ro`), Docker may cache the old version if the container image layer hasn't changed. After fixing the script, the old version may run first from cache before the new one takes effect. Always verify the running script content with `docker exec` after deploy.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1139,9 +1408,14 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 | NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
-| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
+| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | **MITIGATED (Chain 15):** `opensearch-init` one-shot container automatically re-runs `securityadmin.sh` on every `docker compose up`. No manual intervention needed. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
+| Capture entrypoint wrappers break on Malcolm image upgrade | Entrypoint chain hardcoded in compose `entrypoint:` override | Pin Malcolm image tags; update entrypoint chain from `docker inspect` after any tag bump |
+| `docker compose down -v` wipes all state | OpenSearch security, capture volumes, all indices gone | **PARTIALLY MITIGATED (Chain 15):** opensearch-init handles security + template bootstrap automatically. Capture volume permissions handled by entrypoint wrappers (Chain 14). Data/indices still lost — document as destructive operation. |
+| opensearch-init bootstrap.sh hardcodes cert paths | Breaks if Malcolm changes cert generation paths | Pin Malcolm image tags; verify cert paths after any tag bump. Paths sourced from `docker inspect` of opensearch container. |
+| Malcolm adds new env vars in future releases | Ruby filters crash with nil method errors, events go to malformed index names | After upgrading Malcolm tag, diff upstream `.env.example` files. Check for new `ENV[]` references in Ruby filters. Add missing vars to `opensearch-env` anchor. |
+| `securityadmin.sh -cd` used accidentally in bootstrap | Overwrites `internal_users.yml` with image defaults, breaks ALL auth | bootstrap.sh uses `-f`/`-t` (single file push). NEVER change to `-cd`. Comment in script explains why. |
 
 ---
 
@@ -1174,3 +1448,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
 | — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |
 | NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |
+| NET-92 | PR #88 | Bridge interface discovery: hardcoded eth0/eth1 vs N100 enp2s0/enp3s0 | 2026-03-04 |
+| NET-92 | PR #88 | Netfilter readiness: reads container /proc, not host namespace | 2026-03-04 |
+| NET-93 | PR #89 | Zeek/Suricata crash-loop: fresh volume permissions + runmode conflict | 2026-03-04 |
+| NET-93 | PR #89 | Netfilter check: missing br_netfilter module treated as failure | 2026-03-04 |
+| NET-93 | develop | Capture entrypoint wrappers: mkdir+chown before Malcolm privilege drop | 2026-03-04 |
+| — | — | Logstash down after down -v: filebeat can't connect to logstash:5044 (Chain 11 recurrence) | 2026-03-04 |
+| NET-94 | PR #90 | OpenSearch bootstrap automation: opensearch-init one-shot container (Chain 15, permanent fix for Chain 11) | 2026-03-04 |
+| NET-94 | PR #90 | Logstash index naming: missing MALCOLM_NETWORK_INDEX_PATTERN env var (Chain 16) | 2026-03-04 |

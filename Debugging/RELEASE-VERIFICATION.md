@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: Bridge Go Live workflow deployed (PR #83) — BridgeManager, readiness check, Go Live page, bypass promisc fix, bridge_loop. Auth bypass fix (PR #85) deployed to unblock bridge API routes. Test counts up: pytest 1036 (was 997), vitest 683 (was 649).
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** Bridge readiness ALL 8 CHECKS PASS on N100. Zeek + Suricata capturing traffic on br0. **Logstash blocker has automated fix** — opensearch-init one-shot container (Chain 15, branch `infra/opensearch-bootstrap`). Pending N100 deploy to verify full data pipeline: opensearch-init → logstash healthy → filebeat connects → data in OpenSearch → dashboards. Test counts: pytest 1036, vitest 683.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-03 | Elias | 18 containers running, 17 healthy. Dashboard loads for the first time. Setup wizard completes end-to-end (Steps 1-5 including account creation). System page works (null SMART values handled). SSE notification stream working through nginx. **Issues fixed this session:** NET-82 (nginx proxy_set_header inheritance — real CSRF 403 root cause), NET-83 (null-safe SMART health), NET-85 (filebeat pgrep healthcheck), NET-86 (dashboards/helper/cyberchef healthchecks). **Known issue:** nginx-proxy unhealthy — Malcolm's nginx references `arkime:8005` upstream but arkime-live uses host networking (invisible to Docker DNS). Not critical — nettap-nginx handles all user traffic. **Remaining:** Confirm logstash/filebeat process logs correctly after security bootstrap. |
+| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-04 | Elias | 18 containers running, 17 healthy. Bridge readiness all 8 checks PASS. Zeek producing logs, Suricata capturing on br0 (12 workers, af-packet). **Issues fixed this session:** NET-92 (interface discovery), NET-93 (capture volume permissions), netfilter false positive, Suricata runmode conflict. **Logstash blocker fix ready:** Chain 15 opensearch-init container (`infra/opensearch-bootstrap` branch). Deploy and verify: opensearch-init → logstash healthy → filebeat connects → data in OpenSearch → dashboards. **Known issue:** nginx-proxy unhealthy (arkime upstream, not critical). |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -136,6 +136,10 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-04 | Dev (macOS) | vitest | ALL PASSED | 683 | 0 | 0 | Claude | After Bridge Go Live PR #83: 683 tests (22 GoLive + 25 bridge API). Up from 649. |
 | 2026-03-04 | Dev (macOS) | svelte-check | ALL PASSED | 620 | 0 | 0 | Claude | 620 files checked, 0 errors, 0 warnings. |
 | 2026-03-04 | N100 (Ubuntu) | H1: Bridge Go Live | **PARTIAL** | — | — | — | Elias | Deployed PR #83 (bridge Go Live) + PR #82 (system fixes). Daemon healthy, bridge_loop running (30s). Hit 302→/login on `/api/bridge/readiness` — auth middleware blocking new routes. Fixed in PR #85: added `/api/bridge` + `/go-live` to PUBLIC_PATHS. Pending: redeploy with PR #85 and retest. |
+| 2026-03-04 | N100 (Ubuntu) | H1: Interface discovery | PASS | — | — | — | Elias | PR #88 deployed. BridgeHealthMonitor auto-discovered enp2s0/enp3s0 from br0 brif sysfs. System page now shows carrier status + packet counts. Bridge health API returning real data. |
+| 2026-03-04 | N100 (Ubuntu) | H1: Bridge readiness | PASS | — | — | — | Elias | All 8 readiness checks PASS: bridge_exists, bridge_up, wan_carrier, lan_carrier, wan_promisc, lan_promisc, stp_disabled, netfilter_disabled. Fixed: netfilter treats missing br_netfilter module as PASS. |
+| 2026-03-04 | N100 (Ubuntu) | H1: Capture pipeline | **PARTIAL** | — | — | — | Elias | PR #89 + entrypoint wrappers deployed. Zeek started (producing logs in /zeek/live/logs/2026-03-04). Suricata started (af-packet on br0, 12 worker threads). **BLOCKER:** Logstash down — filebeat can't connect to logstash:5044 after `down -v` (Chain 11: OpenSearch security reset). Needs security bootstrap before data reaches OpenSearch. |
+| 2026-03-04 | Dev | opensearch-init | **READY** | — | — | — | Claude | Chain 15: opensearch-init one-shot container created on `infra/opensearch-bootstrap`. Writes roles_mapping.yml, runs securityadmin.sh, pushes minimal malcolm_template. Logstash depends_on opensearch-init service_completed_successfully. **Pending N100 deploy verification** — expected to resolve logstash blocker and complete the data pipeline (logstash → filebeat → OpenSearch → dashboards). |
 
 ---
 

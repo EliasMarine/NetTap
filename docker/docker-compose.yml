@@ -39,6 +39,13 @@ x-opensearch-env: &opensearch-env
   OPENSEARCH_SSL_CERTIFICATE_VERIFICATION: "false"
   OPENSEARCH_COMPOSE_PROJECT: "nettap"
   OPENSEARCH_CREDS_CONFIG_FILE: "/var/local/curlrc/.opensearch.primary.curlrc"
+  # Malcolm index naming — used by logstash's format_index_string.rb to construct
+  # OpenSearch index names. Without these, @prefix is nil and every event crashes
+  # with "undefined method 'delete_suffix' for nil:NilClass" at line 52.
+  MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+  MALCOLM_NETWORK_INDEX_SUFFIX: "%{%y%m%d}"
+  MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
+  MALCOLM_OTHER_INDEX_SUFFIX: "%{%y%m%d}"
 
 x-capture-caps: &capture-caps
   - IPC_LOCK
@@ -120,9 +127,16 @@ services:
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - opensearch-backup:/opt/opensearch/backup
+      # Shared cert volume — opensearch generates certs here at startup,
+      # opensearch-init reads them to run securityadmin.sh remotely.
+      - opensearch-certs:/usr/share/opensearch/config/certs
       # Malcolm reads credentials from curlrc to set up internal users + security
       - ./curlrc:/var/local/curlrc:ro
       - ./ca-trust:/var/local/ca-trust:ro
+      # Override the default roles_mapping.yml with our correct mapping.
+      # On fresh boot (after down -v), the security plugin auto-initializes
+      # from this file, ensuring admin → all_access is set from the start.
+      - ../config/opensearch/roles_mapping.yml:/usr/share/opensearch/config/opensearch-security/roles_mapping.yml:ro
     networks:
       - default
     healthcheck:
@@ -131,6 +145,43 @@ services:
       # adds --insecure explicitly, and checks the right endpoint.
       test: ["CMD", "/usr/local/bin/container_health.sh"]
       start_period: 180s
+
+  # ------------------------------------------------------------------------
+  # OpenSearch Init — One-shot bootstrap (security + templates)
+  # ------------------------------------------------------------------------
+  # Runs ONCE at startup to ensure:
+  #   1. roles_mapping.yml is pushed via securityadmin.sh (admin → all_access)
+  #   2. malcolm_template index template exists (unblocks logstash)
+  #
+  # Without this, after `docker compose down -v` + `up`:
+  #   - roles_mapping resets → all services get 403
+  #   - malcolm_template missing → logstash blocks forever → no data
+  #
+  # Logstash depends on this via `service_completed_successfully` — it won't
+  # start until bootstrap exits 0. See Debugging/DEPLOYMENT-ISSUES.md Chain 15.
+  # ------------------------------------------------------------------------
+  opensearch-init:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-opensearch-init
+    restart: "no"
+    <<: *logging-defaults
+    labels:
+      com.nettap.service: "opensearch-init"
+      com.nettap.component: "data-store"
+      com.nettap.description: "One-shot OpenSearch security and template bootstrap"
+    entrypoint: ["/bin/bash", "/opt/nettap/bootstrap.sh"]
+    volumes:
+      # Shared certs — same volume as opensearch, so admin certs match
+      - opensearch-certs:/usr/share/opensearch/config/certs:ro
+      # Credentials for curl-based API calls
+      - ./curlrc:/var/local/curlrc:ro
+      # The bootstrap script
+      - ../config/opensearch/bootstrap.sh:/opt/nettap/bootstrap.sh:ro
+    networks:
+      - default
+    depends_on:
+      opensearch:
+        condition: service_healthy
 
   # ========================================================================
   # DASHBOARDS
@@ -234,6 +285,10 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+      # Wait for opensearch-init to push security config + malcolm_template.
+      # Without this, logstash blocks forever on `opensearch_status.sh -t malcolm_template`.
+      opensearch-init:
+        condition: service_completed_successfully
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "curl -sf http://localhost:9600/_node/pipelines || exit 1"]
@@ -440,6 +495,58 @@ services:
     volumes:
       - pcap-data:/data/pcap
 
+  # Arkime viewer — serves the web UI on port 8005 for browsing captured sessions.
+  # Distinct from arkime-live (capture, host network). The viewer runs on the
+  # Docker bridge network so nginx-proxy can reach it at arkime:8005.
+  arkime:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-arkime
+    restart: unless-stopped
+    hostname: arkime
+    <<: *logging-defaults
+    labels:
+      com.nettap.service: "arkime"
+      com.nettap.component: "capture"
+      com.nettap.description: "Arkime session viewer and PCAP analysis web UI"
+    networks:
+      - default
+    environment:
+      <<: [*process-env, *opensearch-env]
+      ARKIME_SSL: "true"
+      ARKIME_VIEWER_PORT: "8005"
+      ARKIME_ROTATE_INDEX: "daily"
+      ARKIME_SPI_DATA_MAX_INDICES: "7"
+      ARKIME_QUERY_ALL_INDICES: "false"
+      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      ARKIME_FREESPACEG: "10%"
+      ARKIME_DEBUG_LEVEL: "0"
+      MANAGE_PCAP_FILES: "false"
+      MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
+      # Offline/viewer mode — processes rotated PCAPs, exposes web UI
+      ARKIME_AUTO_ANALYZE_PCAP_FILES: "true"
+      ARKIME_AUTO_ANALYZE_PCAP_THREADS: "1"
+      ARKIME_ROTATED_PCAP: "true"
+      # upload-common.env — required by Malcolm supervisord config
+      AUTO_TAG: "${AUTO_TAG:-true}"
+      PCAP_NODE_NAME: "${PCAP_NODE_NAME:-malcolm}"
+      PCAP_PIPELINE_VERBOSITY: ""
+      PCAP_PIPELINE_IGNORE_PREEXISTING: "false"
+      PCAP_PIPELINE_POLLING: "false"
+      PCAP_PIPELINE_POLLING_ASSUME_CLOSED_SEC: "10"
+      PCAP_MONITOR_HOST: "pcap-monitor"
+      EXTRA_TAGS: ""
+    volumes:
+      - pcap-data:/data/pcap
+      - ./curlrc:/var/local/curlrc:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -sf https://localhost:8005 -k || exit 1"]
+      interval: 90s
+      start_period: 210s
+
   # ========================================================================
   # INFRASTRUCTURE
   # ========================================================================
@@ -528,16 +635,29 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
       start_period: 60s
 
-  # KNOWN ISSUE: nginx-proxy is unhealthy because Malcolm's baked-in nginx.conf
-  # references upstream "arkime:8005", but our arkime-live service uses host
-  # networking and is invisible to Docker DNS. This is not critical — NetTap
-  # uses nettap-nginx (port 443) as the edge proxy, not nginx-proxy.
-  # Fix: add a dedicated Arkime viewer service in a future phase.
   nginx-proxy:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
     restart: unless-stopped
     <<: *logging-defaults
+    # Malcolm's nginx config references upstreams for all Malcolm services.
+    # NetTap v1.0 excludes these optional services to conserve resources on
+    # 16GB N100 hardware. DNS stubs prevent nginx from crashing at config load;
+    # routes return connection refused (correct — feature not available).
+    # To enable any service, add the real Malcolm container and remove from here.
+    #
+    # Full upstream audit (from `grep -rh 'server [a-z]' /etc/nginx/`):
+    #   RUNNING: api, arkime, dashboards, dashboards-helper, logstash, opensearch
+    #   STUBBED: upload, filescan, extracted-file-http-server, dashboards-maps,
+    #            htadmin, keycloak, netbox
+    extra_hosts:
+      - "upload:127.0.0.1"              # manual PCAP upload (we have live capture)
+      - "filescan:127.0.0.1"            # ClamAV/YARA file scanning
+      - "extracted-file-http-server:127.0.0.1"  # extracted file downloads
+      - "dashboards-maps:127.0.0.1"     # offline map tile server
+      - "htadmin:127.0.0.1"             # htpasswd admin UI (we use .env credentials)
+      - "keycloak:127.0.0.1"            # SSO/OIDC (we use basic auth)
+      - "netbox:127.0.0.1"              # IPAM/DCIM asset management
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
@@ -560,7 +680,7 @@ services:
       ARKIME_SSL: "true"
       ARKIME_VIEWER_PORT: "8005"
       MANAGE_PCAP_FILES: "false"
-      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+      # MALCOLM_NETWORK_INDEX_PATTERN now inherited from *opensearch-env anchor
       # auth-common.env — ROLE_BASED_ACCESS is also an envsubst map key.
       # Must be set to prevent another "invalid number of arguments" error.
       ROLE_BASED_ACCESS: "false"
@@ -574,10 +694,14 @@ services:
       - default
     depends_on:
       - api
+      - arkime
       - dashboards
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -skf https://localhost:443 || exit 1"]
+      # NOTE: nginx requires basic auth, so unauthenticated requests return 401.
+      # 401 = nginx running + TLS working + auth enforced = healthy.
+      # Using -o /dev/null -w '%{http_code}' instead of -f to accept 401 as success.
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://localhost:443 | grep -qE '^(200|401|302)' || exit 1"]
       start_period: 120s
 
   # ========================================================================
@@ -854,6 +978,10 @@ volumes:
   # Malcolm data volumes
   opensearch-data:
   opensearch-backup:
+  # Shared between opensearch and opensearch-init — cert files generated by
+  # Malcolm's self_signed_key_gen.sh persist here so the init container can
+  # use the same admin certs for securityadmin.sh remote execution.
+  opensearch-certs:
   dashboards-helper-data:
   logstash-persistent-queue:
   filebeat-registry:

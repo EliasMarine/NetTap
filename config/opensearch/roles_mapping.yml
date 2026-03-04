@@ -1,0 +1,21 @@
+---
+# OpenSearch Security roles_mapping.yml — NetTap override
+#
+# This file maps the "admin" backend role to the "all_access" OpenSearch role.
+# Without this mapping, the malcolm_internal user (which has backend_role=admin)
+# gets 403 on all API calls, breaking logstash, filebeat, and the NetTap daemon.
+#
+# This file is mounted into the opensearch container at:
+#   /usr/share/opensearch/config/opensearch-security/roles_mapping.yml
+# and into the opensearch-init container for securityadmin.sh.
+#
+# See: Debugging/DEPLOYMENT-ISSUES.md (Chain 11) for the full causal chain.
+_meta:
+  type: "rolesmapping"
+  config_version: 2
+
+all_access:
+  reserved: false
+  backend_roles:
+  - "admin"
+  description: "Maps admin backend role to all_access"
