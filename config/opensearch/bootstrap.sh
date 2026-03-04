@@ -44,18 +44,18 @@ if [[ -z "$CREDS" ]]; then
 fi
 
 # --------------------------------------------------------------------------
-# Step 1: Security Bootstrap
+# Step 1: Security Bootstrap — Push ONLY roles_mapping.yml
 # --------------------------------------------------------------------------
-# Write the correct roles_mapping.yml into this container's security config
-# directory, then push ALL security config to OpenSearch via securityadmin.sh.
-#
-# Why write it here instead of just mounting it? Because securityadmin.sh reads
-# the ENTIRE -cd directory (roles.yml, internal_users.yml, action_groups.yml,
-# etc.). We need the image defaults for those files + our override for
-# roles_mapping.yml.
+# IMPORTANT: Use `-f` with `-t rolesmapping` to push ONLY this one file.
+# Do NOT use `-cd` (push entire directory) — the init container has the IMAGE
+# DEFAULT internal_users.yml with wrong password hashes. Malcolm's opensearch
+# entrypoint (setup-internal-users.sh) generates correct hashes from curlrc
+# credentials. Pushing the entire directory would overwrite those hashes and
+# break all authentication.
 # --------------------------------------------------------------------------
 log "Step 1/3: Writing roles_mapping.yml..."
-cat > "${SECURITY_DIR}/roles_mapping.yml" <<'YAML'
+ROLES_MAPPING_FILE="/tmp/roles_mapping.yml"
+cat > "$ROLES_MAPPING_FILE" <<'YAML'
 ---
 _meta:
   type: "rolesmapping"
@@ -68,17 +68,17 @@ all_access:
   description: "Maps admin backend role to all_access"
 YAML
 
-log "Step 2/3: Running securityadmin.sh (pushing security config to OpenSearch)..."
+log "Step 2/3: Running securityadmin.sh (pushing roles_mapping ONLY)..."
 for attempt in $(seq 1 $MAX_RETRIES); do
     if JAVA_HOME=/usr/share/opensearch/jdk \
         "$SECURITYADMIN" \
-        -cd "$SECURITY_DIR" \
+        -f "$ROLES_MAPPING_FILE" -t rolesmapping \
         -cacert "${CERTS_DIR}/ca.crt" \
         -cert "${CERTS_DIR}/admin.crt" \
         -key "${CERTS_DIR}/admin.key" \
         -h "$OS_HOST" -p "$OS_PORT" \
         -icl -nhnv 2>&1; then
-        log "Security config pushed successfully"
+        log "roles_mapping pushed successfully"
         break
     else
         if [[ $attempt -eq $MAX_RETRIES ]]; then
@@ -89,12 +89,23 @@ for attempt in $(seq 1 $MAX_RETRIES); do
     fi
 done
 
+# Brief delay for OpenSearch to apply the security config change
+sleep 2
+
 # Verify auth works with malcolm_internal credentials
 log "Verifying malcolm_internal authentication..."
-if ! curl $CURL_OPTS -u "$CREDS" --fail "$OS_URL/_cluster/health" > /dev/null 2>&1; then
-    die "Authentication failed after security bootstrap — check roles_mapping.yml"
-fi
-log "Authentication verified"
+for attempt in $(seq 1 3); do
+    if curl $CURL_OPTS -u "$CREDS" --fail "$OS_URL/_cluster/health" > /dev/null 2>&1; then
+        log "Authentication verified"
+        break
+    else
+        if [[ $attempt -eq 3 ]]; then
+            die "Authentication failed after security bootstrap — check roles_mapping.yml"
+        fi
+        warn "Auth check failed (attempt ${attempt}/3), retrying in 3s..."
+        sleep 3
+    fi
+done
 
 # --------------------------------------------------------------------------
 # Step 3: Template Bootstrap
