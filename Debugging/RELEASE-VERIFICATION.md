@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
-> **Last updated:** 2026-03-03
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete:** Dashboard loads, setup wizard works end-to-end (account creation fixed), system page works, SSE notifications streaming. 17/18 containers healthy (nginx-proxy known issue). Fixed: CSRF 403 real root cause (NET-82 nginx proxy_set_header inheritance), null SMART crash (NET-83), filebeat healthcheck (NET-85), dashboards/cyberchef healthchecks (NET-86). OpenSearch security bootstrap commands added to CLAUDE.md (NET-84).
+> **Last updated:** 2026-03-04
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: Bridge Go Live workflow deployed (PR #83) — BridgeManager, readiness check, Go Live page, bypass promisc fix, bridge_loop. Auth bypass fix (PR #85) deployed to unblock bridge API routes. Test counts up: pytest 1036 (was 997), vitest 683 (was 649).
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -68,10 +68,10 @@ All 10 checks from `scripts/verify-release.sh`, tracked per environment and mode
 | 1 | Secrets Audit | PASS | PASS | PASS | PASS | — | No hardcoded secrets, .env excluded from git |
 | 2 | Python Lint (ruff) | SKIP | SKIP | SKIP | SKIP | — | ruff not installed on either machine |
 | 3 | Shell Lint (shellcheck) | PASS | PASS | SKIP | SKIP | — | Fixed: SC2221/SC2222 case reorder, SC2034/SC2155 suppressions, shellcheck source directives (NET-78) |
-| 4 | Python Tests (pytest) | PASS | PASS | SKIP | SKIP | — | 997/997 passed (1.65s) on Dev |
+| 4 | Python Tests (pytest) | PASS | PASS | SKIP | SKIP | — | 1036/1036 passed on Dev (was 997; +39 bridge tests from PR #83) |
 | 5 | Web Dependencies (npm ci) | PASS | PASS | SKIP | SKIP | — | 0 vulnerabilities, 212 packages |
-| 6 | Web Type Check (svelte-check) | PASS | PASS | SKIP | SKIP | — | 0 errors, 0 warnings |
-| 7 | Web Unit Tests (vitest) | PASS | PASS | SKIP | SKIP | — | 649/649 passed (2.61s) on Dev |
+| 6 | Web Type Check (svelte-check) | PASS | PASS | SKIP | SKIP | — | 620 files, 0 errors, 0 warnings |
+| 7 | Web Unit Tests (vitest) | PASS | PASS | SKIP | SKIP | — | 683/683 passed on Dev (was 649; +34 bridge/GoLive tests from PR #83) |
 | 8 | Docker Builds | n/a (quick) | **FAIL** | n/a (quick) | PASS | — | macOS: `docker compose -f` not recognized (V2 plugin missing). N100: all 4 images build OK |
 | 9 | Trivy CVE Scan | n/a (quick) | SKIP (no images) | n/a (quick) | PASS | — | N100: PASS after .trivyignore (3 accepted OS CVEs) + npm stripping from web prod image (eliminates 14 Node CVEs). See [Trivy CVE Findings](#trivy-cve-findings-n100) for risk assessment. |
 | 10 | E2E Tests (Playwright) | n/a (quick) | PASS | n/a (quick) | SKIP | — | Dev: 6/8 passed, 2 skipped. Fixed selector + CSRF + DATA_DIR issues. See [E2E Failures](#e2e-test-failures-dev) |
@@ -132,6 +132,10 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-03 | N100 (Ubuntu) | H1: Full stack | **PARTIAL** | — | — | — | Elias | After NET-81 rebuild: still CSRF 403. Browser Network tab confirmed POST /setup?/createAdmin → 403 Forbidden. Root cause: nginx `proxy_set_header` inheritance — location-level headers silently drop ALL server-level headers. Fixed NET-82: repeated all proxy headers in every location block. Dashboard loads for the first time! |
 | 2026-03-03 | N100 (Ubuntu) | H1: System page | **FIXED** | — | — | — | Elias | System page crashed on null SMART health values (`power_on_hours.toLocaleString()` on null). Fixed NET-83: added null-coalescing to all SMART template values. Also fixed SSE proxy buffering in nginx (proxy_buffering off). |
 | 2026-03-03 | N100 (Ubuntu) | H1: Healthchecks | **FIXED** | — | — | — | Elias | Fixed 4 container healthchecks: filebeat (NET-85: pgrep not in image → test -d /proc/1), dashboards (NET-86: curl needs auth → added curlrc), dashboards-helper (container_health.sh → test -d /proc/1), cyberchef (hit /health not /). nginx-proxy remains unhealthy (known issue: arkime upstream on host networking). Final: 17/18 healthy. |
+| 2026-03-04 | Dev (macOS) | pytest | ALL PASSED | 1036 | 0 | 0 | Claude | After Bridge Go Live PR #83: 1036 tests (104 bridge-specific). Up from 997. |
+| 2026-03-04 | Dev (macOS) | vitest | ALL PASSED | 683 | 0 | 0 | Claude | After Bridge Go Live PR #83: 683 tests (22 GoLive + 25 bridge API). Up from 649. |
+| 2026-03-04 | Dev (macOS) | svelte-check | ALL PASSED | 620 | 0 | 0 | Claude | 620 files checked, 0 errors, 0 warnings. |
+| 2026-03-04 | N100 (Ubuntu) | H1: Bridge Go Live | **PARTIAL** | — | — | — | Elias | Deployed PR #83 (bridge Go Live) + PR #82 (system fixes). Daemon healthy, bridge_loop running (30s). Hit 302→/login on `/api/bridge/readiness` — auth middleware blocking new routes. Fixed in PR #85: added `/api/bridge` + `/go-live` to PUBLIC_PATHS. Pending: redeploy with PR #85 and retest. |
 
 ---
 
@@ -195,6 +199,20 @@ Trivy scan ran 2026-03-03 on N100 against both Docker images. **All CVEs are in 
   1. **`.trivyignore`** — Suppresses 3 accepted OS CVEs (CVE-2026-0861, CVE-2023-45853, CVE-2025-7458) with documented risk assessment
   2. **Stripped npm/yarn/corepack from web prod image** — `Dockerfile.web` removes `/usr/local/lib/node_modules/npm`, corepack, yarn from production stage, eliminating all 14 Node.js CVEs
   3. Result: Trivy scan PASSES with 0 vulnerabilities on both images
+
+### Bridge API Auth Bypass (N100 — H1) — FIXED
+
+**Status:** Fixed in PR #85. `/api/bridge/*` and `/go-live` added to `PUBLIC_PATHS` in `hooks.server.ts`.
+
+**Discovery:** After deploying PR #83 (Bridge Go Live), `curl -sk https://localhost/api/bridge/readiness` returned `302 Found` → `/login` instead of JSON. The SvelteKit auth middleware (`hooks.server.ts`) was intercepting all non-public routes and redirecting unauthenticated requests.
+
+**Root cause:** The new bridge API proxy routes (`/api/bridge/readiness`, `/api/bridge/create`, `/api/bridge/teardown`) and the Go Live page (`/go-live`) were not in `PUBLIC_PATHS`. These need to be accessible without authentication because:
+1. The Go Live page runs immediately after the setup wizard (before the user logs in)
+2. The wizard redirects to `/go-live`, which polls `/api/bridge/readiness`
+
+**Fix:** Added `/api/bridge` and `/go-live` to `PUBLIC_PATHS` array (PR #85).
+
+**Lesson:** Any new `/api/*` SvelteKit proxy route that needs to work pre-login must be added to `PUBLIC_PATHS` in `hooks.server.ts`. This is easy to miss because daemon endpoints have no auth — the auth layer is SvelteKit-only.
 
 ### E2E Test Failures (Dev — Check #10) — FIXED {#e2e-test-failures-dev}
 
