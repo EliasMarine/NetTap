@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -95,6 +96,7 @@ class TestInitialization(unittest.TestCase):
         self.assertEqual(monitor._wan_iface, "eth0")
         self.assertEqual(monitor._lan_iface, "eth1")
         self.assertEqual(monitor._max_history, 2880)
+        self.assertFalse(monitor._interfaces_discovered)
 
     def test_custom_parameters(self):
         """Custom parameters should be stored."""
@@ -661,6 +663,69 @@ class TestBypassStateFilePath(unittest.TestCase):
         from services.bridge_health import _BYPASS_STATE_FILE
         self.assertTrue(_BYPASS_STATE_FILE.startswith("/tmp/"))
         self.assertNotIn("/var/run/", _BYPASS_STATE_FILE)
+
+
+class TestDiscoverInterfaces(unittest.TestCase):
+    """Tests for BridgeHealthMonitor._discover_interfaces()."""
+
+    def test_discover_from_brif(self):
+        """Should override defaults when brif directory has 2+ members."""
+        monitor = BridgeHealthMonitor()
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertEqual(monitor._lan_iface, "eth1")
+
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.listdir", return_value=["enp2s0", "enp3s0"]):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "enp2s0")
+        self.assertEqual(monitor._lan_iface, "enp3s0")
+        self.assertTrue(monitor._interfaces_discovered)
+
+    def test_discover_no_bridge(self):
+        """Should keep defaults when bridge brif directory doesn't exist."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", return_value=False):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertEqual(monitor._lan_iface, "eth1")
+        self.assertFalse(monitor._interfaces_discovered)
+
+    def test_discover_single_member(self):
+        """Should keep defaults when bridge has fewer than 2 members."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.listdir", return_value=["enp2s0"]):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertEqual(monitor._lan_iface, "eth1")
+        self.assertFalse(monitor._interfaces_discovered)
+
+    def test_discover_oserror_handled(self):
+        """Should handle OSError gracefully."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", side_effect=OSError("permission denied")):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertFalse(monitor._interfaces_discovered)
+
+    def test_discover_sorted_alphabetically(self):
+        """Members should be sorted so assignment is deterministic."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.listdir", return_value=["enp3s0", "enp2s0"]):
+            monitor._discover_interfaces()
+
+        # Sorted: enp2s0, enp3s0
+        self.assertEqual(monitor._wan_iface, "enp2s0")
+        self.assertEqual(monitor._lan_iface, "enp3s0")
 
 
 class TestRunNsenter(unittest.TestCase):

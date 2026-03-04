@@ -83,8 +83,11 @@ class BridgeHealthMonitor:
         max_history: int = DEFAULT_MAX_HISTORY,
     ) -> None:
         self._bridge_name = bridge_name
+        # wan_iface/lan_iface are fallback defaults; _discover_interfaces()
+        # overrides them with the actual bridge members from sysfs/brif.
         self._wan_iface = wan_iface
         self._lan_iface = lan_iface
+        self._interfaces_discovered = False
         self._max_history = max_history
 
         # Health check history (bounded deque)
@@ -126,6 +129,14 @@ class BridgeHealthMonitor:
             watchdog_active, latency_us, rx/tx deltas, uptime_seconds,
             health_status, issues, and last_check timestamp.
         """
+        # Auto-discover actual member interfaces from the bridge's brif
+        # directory. This handles hardware where NIC names differ from the
+        # eth0/eth1 defaults (e.g. enp2s0/enp3s0 on Intel N100).
+        # Re-discover every call until successful (bridge may not exist at
+        # daemon startup but gets created later via the Go Live workflow).
+        if not self._interfaces_discovered:
+            self._discover_interfaces()
+
         now = datetime.now(timezone.utc)
         issues: list[str] = []
 
@@ -380,6 +391,36 @@ class BridgeHealthMonitor:
         except FileNotFoundError:
             logger.debug("nsenter not available")
             return (1, "", "nsenter not found")
+
+    def _discover_interfaces(self) -> None:
+        """Discover actual WAN/LAN member interfaces from the bridge's brif directory.
+
+        On hardware like Intel N100, NIC names are enp2s0/enp3s0 instead of
+        eth0/eth1. The brif directory under the bridge sysfs entry lists all
+        member interfaces. If found, overrides the fallback names and logs the
+        discovery. Only marks _interfaces_discovered=True on success, so
+        subsequent check_health calls retry until the bridge exists.
+        """
+        brif_dir = os.path.join(_SYSFS_NET, self._bridge_name, "brif")
+        try:
+            if os.path.isdir(brif_dir):
+                members = sorted(os.listdir(brif_dir))
+                if len(members) >= 2:
+                    old_wan, old_lan = self._wan_iface, self._lan_iface
+                    self._wan_iface = members[0]
+                    self._lan_iface = members[1]
+                    self._interfaces_discovered = True
+                    if old_wan != self._wan_iface or old_lan != self._lan_iface:
+                        logger.info(
+                            "Auto-discovered bridge members: wan=%s lan=%s "
+                            "(overriding defaults %s/%s)",
+                            self._wan_iface,
+                            self._lan_iface,
+                            old_wan,
+                            old_lan,
+                        )
+        except OSError as exc:
+            logger.debug("Could not discover bridge members: %s", exc)
 
     async def _check_bridge_state(self) -> str:
         """Check the bridge interface operational state via sysfs.
