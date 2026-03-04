@@ -46,6 +46,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-04 | Web Auth | Bridge API returns 302 → /login | `/api/bridge/*` and `/go-live` not in PUBLIC_PATHS | Added to PUBLIC_PATHS in hooks.server.ts | -- | PR #85 |
 | 2026-03-04 | Bridge Health | System page shows no carriers, no packet data | BridgeHealthMonitor uses hardcoded eth0/eth1 but N100 has enp2s0/enp3s0 | Auto-discover members from br0's brif sysfs directory | NET-92 | PR #88 |
 | 2026-03-04 | Bridge Health | Readiness falsely reports netfilter enabled | Reads container `/proc` namespace (always 1) instead of host | Changed netfilter check to use nsenter for host namespace | NET-92 | PR #88 |
+| 2026-03-04 | Zeek | Zeek crash-loops: Permission denied on /zeek/live/logs | Fresh volumes root-owned, Malcolm entrypoint needs root for mkdir/chown | Added `user: "root"` to capture services | NET-93 | PR #89 |
+| 2026-03-04 | Suricata | Suricata fails: "workers" doesn't exist for UNIX_SOCKET runmode | `SURICATA_RUNMODE: "workers"` conflicts with Malcolm 8.x internal runmode | Removed env var — Malcolm auto-selects af-packet | NET-93 | PR #89 |
+| 2026-03-04 | Bridge Health | Netfilter check fails when br_netfilter module not loaded | nsenter cat returns error when proc file absent (module not loaded = good) | Treat missing proc file as netfilter disabled (PASS) | NET-93 | PR #89 |
 
 ## Reliability Lessons Learned
 
@@ -61,6 +64,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 10. **Bridge health needs continuous polling, not demand-driven.** Without a `bridge_loop()`, health history only populated when the API endpoint is hit. The 30s polling loop ensures consistent monitoring data.
 11. **Never hardcode NIC names — auto-discover from bridge sysfs.** Intel N100 uses `enp2s0`/`enp3s0` (PCI bus naming), not `eth0`/`eth1`. Read bridge member interfaces from `/sys/class/net/br0/brif/` directory to get actual names.
 12. **Container `/proc` is isolated — use nsenter for host reads.** Reading `/proc/sys/net/bridge/bridge-nf-call-iptables` inside the container returns the container's own namespace value (default 1), not the host's. Must use `nsenter -t 1 -n -- cat` to read from host namespace.
+13. **Malcolm capture images need `user: "root"` in compose.** Their entrypoint (`docker-uid-gid-setup.sh`) runs `mkdir`/`chown` to set up log directories, then drops privileges to PUID:PGID via `su`. Without starting as root, fresh Docker volumes (root-owned) cause Permission denied.
+14. **Don't override Malcolm's internal runmode selection.** Setting `SURICATA_RUNMODE` conflicts with Malcolm's orchestration in Suricata 8.x. Let `SURICATA_LIVE_CAPTURE=true` handle mode selection automatically.
+15. **Missing kernel module proc files ≠ feature enabled.** When `br_netfilter` isn't loaded, `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist. This means no iptables interference — the desired state, not a failure.
 
 ## Verification Checklist
 
