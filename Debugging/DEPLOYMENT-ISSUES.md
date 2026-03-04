@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 36 issues tracked. 35 RESOLVED. 1 PENDING VERIFICATION (opensearch-init bootstrap — needs N100 deploy). Latest: Chain 15 opensearch-init container (permanent fix for Chain 11). Zeek + Suricata capturing traffic on N100. 17/18 containers healthy. Logstash blocker has automated fix — pending deploy.
+> **Status:** 37 issues tracked. 35 RESOLVED. 1 VERIFIED (opensearch-init bootstrap — deployed to N100, security + template working). 1 FIXING (logstash index naming — `format_index_string.rb` @prefix nil). Zeek + Suricata capturing traffic. All 7 logstash pipelines running. Index naming fix deployed (env vars added to compose).
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -22,6 +22,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
 - [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
 - [Chain 15: OpenSearch Bootstrap Automation](#chain-15-opensearch-bootstrap-automation)
+- [Chain 16: Logstash Index Naming — @prefix Nil](#chain-16-logstash-index-naming--prefix-nil)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -1160,9 +1161,10 @@ zeek-live:
 
 | Field | Value |
 |---|---|
-| **Linear** | Pending |
+| **Linear** | NET-94 |
 | **Branch** | `infra/opensearch-bootstrap` |
-| **Status** | Done — pending N100 deploy verification |
+| **PR** | #90 |
+| **Status** | VERIFIED on N100 — security bootstrap + malcolm_template working. Index naming separate issue (Chain 16). |
 | **Severity** | Urgent |
 | **Date** | 2026-03-04 |
 
@@ -1175,10 +1177,14 @@ zeek-live:
 **Fix: `opensearch-init` one-shot container:**
 
 1. **`config/opensearch/roles_mapping.yml`** (NEW) — correct `admin -> all_access` mapping, mounted into both opensearch (belt-and-suspenders) and opensearch-init containers
-2. **`config/opensearch/bootstrap.sh`** (NEW) — one-shot script that:
-   - Copies correct `roles_mapping.yml` into the security config directory
-   - Runs `securityadmin.sh` against `opensearch:9200` using shared admin certs
+2. **`config/opensearch/bootstrap.sh`** (NEW, 3 iterations) — one-shot script that:
+   - Writes `roles_mapping.yml` to `/tmp` (not the image's security dir)
+   - Runs `securityadmin.sh -f /tmp/roles_mapping.yml -t rolesmapping` (pushes ONLY roles_mapping)
+   - Verifies auth works with malcolm_internal credentials (retry logic + 2s delay)
    - Pushes minimal `malcolm_template` if it doesn't exist (breaks the logstash deadlock)
+   - **Iteration 1 bug:** Relative path for securityadmin.sh → "No such file or directory"
+   - **Iteration 2 bug:** Used `-cd` (entire directory) → overwrote `internal_users.yml` with image defaults → broke ALL auth
+   - **Iteration 3 fix:** Use `-f`/`-t` flags to push ONLY the roles_mapping file
 3. **`docker/docker-compose.yml`** (EDIT):
    - Added `opensearch-certs` named volume shared between opensearch and opensearch-init
    - Mounted correct `roles_mapping.yml` into opensearch service (auto-initialization)
@@ -1214,13 +1220,71 @@ docker compose up
 
 ---
 
+## Chain 16: Logstash Index Naming — @prefix Nil
+
+### format_index_string.rb crashes on every event
+
+| Field | Value |
+|---|---|
+| **Linear** | NET-94 (updated) |
+| **Branch** | `infra/opensearch-bootstrap` |
+| **PR** | #90 |
+| **Status** | Fix deployed (commit `eecbcc8`) — pending N100 verification |
+| **Severity** | Critical |
+| **Date** | 2026-03-04 |
+
+**Symptom:** After opensearch-init bootstrap succeeded (Chain 15), logstash started all 7 pipelines and processed 60,000+ events — but ALL events went to a literal index named `%{[@metadata][malcolm_opensearch_index]}` instead of properly-named indices like `arkime_sessions3-260304`. No data appeared in dashboards despite the full pipeline running.
+
+**Root Cause:** Malcolm's `logstash/ruby/format_index_string.rb` line 52:
+```ruby
+prefix_resolved = @prefix.delete_suffix('*')  # @prefix is nil → crash
+```
+
+The `register` method initializes `@prefix` from an environment variable:
+```ruby
+@prefix = params["prefix"]           # nil (not passed by pipeline config)
+_prefix_env = params["prefix_env"]   # "MALCOLM_NETWORK_INDEX_PATTERN"
+if @prefix.nil? && !_prefix_env.nil?
+  @prefix = ENV[_prefix_env]         # nil — env var not set!
+end
+if !@prefix.nil? && @prefix.empty?
+  @prefix = params["prefix_default"] # ONLY fires on empty string, NOT nil
+end
+```
+
+The fallback to `prefix_default` ("arkime_sessions3-*") only fires when the env var is set to an empty string. When the env var is completely unset, `ENV[]` returns `nil`, `@prefix` stays `nil`, and the script crashes.
+
+**Four env vars needed (from Malcolm's `opensearch.env`):**
+- `MALCOLM_NETWORK_INDEX_PATTERN` = `"arkime_sessions3-*"` (Zeek/Suricata index prefix)
+- `MALCOLM_NETWORK_INDEX_SUFFIX` = `"%{%y%m%d}"` (date suffix for network logs)
+- `MALCOLM_OTHER_INDEX_PATTERN` = `"malcolm_beats_*"` (beats/other log prefix)
+- `MALCOLM_OTHER_INDEX_SUFFIX` = `"%{%y%m%d}"` (date suffix for other logs)
+
+**Fix:** Added all four env vars to the shared `opensearch-env` YAML anchor in `docker-compose.yml`. This makes them available to logstash (and all other services using `*opensearch-env`). Removed duplicate `MALCOLM_NETWORK_INDEX_PATTERN` from nginx-proxy (now inherited from anchor).
+
+**Causal Chain:**
+```
+docker compose up
+  → logstash starts → loads format_index_string.rb
+    → register() reads params["prefix_env"] = "MALCOLM_NETWORK_INDEX_PATTERN"
+      → ENV["MALCOLM_NETWORK_INDEX_PATTERN"] returns nil (not set in compose)
+        → @prefix stays nil → fallback to prefix_default SKIPPED (only fires on empty string)
+          → filter() calls @prefix.delete_suffix('*') → NoMethodError: undefined method for nil
+            → event drops through with unresolved %{} template → lands in literal index name
+```
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added 4 env vars to `opensearch-env` anchor, removed duplicate from nginx-proxy
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-92, NET-93, Chain 15 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. **Logstash depends_on opensearch-init: service_completed_successfully.** Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + `user: "root"` + entrypoint wrappers (mkdir+chown before Malcolm chain). **Removed SURICATA_RUNMODE.** nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** **NEW: opensearch-init one-shot service + opensearch-certs named volume.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-92, NET-93, Chain 15, Chain 16 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. **Logstash depends_on opensearch-init: service_completed_successfully.** Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + `user: "root"` + entrypoint wrappers (mkdir+chown before Malcolm chain). **Removed SURICATA_RUNMODE.** nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** **NEW: opensearch-init one-shot service + opensearch-certs named volume.** **opensearch-env anchor: MALCOLM_NETWORK_INDEX_PATTERN, MALCOLM_NETWORK_INDEX_SUFFIX, MALCOLM_OTHER_INDEX_PATTERN, MALCOLM_OTHER_INDEX_SUFFIX (Chain 16).** |
 | `config/opensearch/roles_mapping.yml` | Chain 15 | NEW: correct admin -> all_access role mapping. Mounted into both opensearch (belt-and-suspenders) and opensearch-init containers. |
 | `config/opensearch/bootstrap.sh` | Chain 15 | NEW: one-shot bootstrap script — writes roles_mapping.yml, runs securityadmin.sh, pushes minimal malcolm_template. |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
@@ -1312,6 +1376,14 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 57. **Break startup deadlocks with minimal templates.** When Service A waits for a template that Service B pushes, but B starts after A, inject a minimal version of the template in an init container. The full template can be overwritten later by the proper service (dashboards-helper). The minimal template just needs to exist to unblock the wait loop.
 58. **Belt-and-suspenders for critical config files.** Mount the correct `roles_mapping.yml` into the opensearch container (so auto-initialization on fresh volumes picks it up) AND push it via `securityadmin.sh` in the init container (so recreate scenarios are covered). Two mechanisms covering different failure modes.
 
+### Malcolm Environment Variables (NEW — Chain 16)
+59. **NEVER use `securityadmin.sh -cd` from an init container.** The `-cd` flag pushes ALL security config files from the container's filesystem — including `internal_users.yml` with IMAGE DEFAULT password hashes. Malcolm's opensearch container generates correct hashes from curlrc credentials via `setup-internal-users.sh`. Pushing image defaults overwrites those hashes and breaks ALL authentication (403 on every service). Always use `-f <file> -t <type>` to push only the specific config file needed.
+60. **Malcolm's Ruby filter fallbacks have a nil vs empty-string gap.** `format_index_string.rb` falls back to `prefix_default` ONLY when the env var is set to an empty string. When the env var is completely unset, `ENV[]` returns nil, and the `!@prefix.nil? && @prefix.empty?` guard doesn't fire. The script crashes instead of using the default. Always set the env var explicitly — don't rely on in-script defaults.
+61. **Malcolm distributes config across multiple `.env` files.** Malcolm's upstream compose uses `env_file:` directives pointing to `opensearch.env`, `upload-common.env`, `auth-common.env`, etc. NetTap replaces these with inline YAML anchors. When adding a new Malcolm service or debugging missing env vars, diff against Malcolm's `.env.example` files to find what's missing.
+62. **All Malcolm services sharing `opensearch-env` should get index pattern vars.** `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` are needed by logstash but safe to provide to all services. Put them in the shared anchor rather than per-service to prevent future omissions.
+63. **Init container images share filesystem state with the image, not the running container.** The opensearch-init container uses the same opensearch IMAGE but gets a FRESH filesystem — it does NOT share the running opensearch container's filesystem. Config files modified by the opensearch container's entrypoint (e.g., `internal_users.yml` with regenerated password hashes) are NOT visible in the init container. The init container sees only the IMAGE DEFAULTS.
+64. **Docker caches init container scripts across rebuilds.** When bind-mounting a script into an init container (`bootstrap.sh:ro`), Docker may cache the old version if the container image layer hasn't changed. After fixing the script, the old version may run first from cache before the new one takes effect. Always verify the running script content with `docker exec` after deploy.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1342,6 +1414,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Capture entrypoint wrappers break on Malcolm image upgrade | Entrypoint chain hardcoded in compose `entrypoint:` override | Pin Malcolm image tags; update entrypoint chain from `docker inspect` after any tag bump |
 | `docker compose down -v` wipes all state | OpenSearch security, capture volumes, all indices gone | **PARTIALLY MITIGATED (Chain 15):** opensearch-init handles security + template bootstrap automatically. Capture volume permissions handled by entrypoint wrappers (Chain 14). Data/indices still lost — document as destructive operation. |
 | opensearch-init bootstrap.sh hardcodes cert paths | Breaks if Malcolm changes cert generation paths | Pin Malcolm image tags; verify cert paths after any tag bump. Paths sourced from `docker inspect` of opensearch container. |
+| Malcolm adds new env vars in future releases | Ruby filters crash with nil method errors, events go to malformed index names | After upgrading Malcolm tag, diff upstream `.env.example` files. Check for new `ENV[]` references in Ruby filters. Add missing vars to `opensearch-env` anchor. |
+| `securityadmin.sh -cd` used accidentally in bootstrap | Overwrites `internal_users.yml` with image defaults, breaks ALL auth | bootstrap.sh uses `-f`/`-t` (single file push). NEVER change to `-cd`. Comment in script explains why. |
 
 ---
 
@@ -1380,4 +1454,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-93 | PR #89 | Netfilter check: missing br_netfilter module treated as failure | 2026-03-04 |
 | NET-93 | develop | Capture entrypoint wrappers: mkdir+chown before Malcolm privilege drop | 2026-03-04 |
 | — | — | Logstash down after down -v: filebeat can't connect to logstash:5044 (Chain 11 recurrence) | 2026-03-04 |
-| — | pending | OpenSearch bootstrap automation: opensearch-init one-shot container (Chain 15, permanent fix for Chain 11) | 2026-03-04 |
+| NET-94 | PR #90 | OpenSearch bootstrap automation: opensearch-init one-shot container (Chain 15, permanent fix for Chain 11) | 2026-03-04 |
+| NET-94 | PR #90 | Logstash index naming: missing MALCOLM_NETWORK_INDEX_PATTERN env var (Chain 16) | 2026-03-04 |
