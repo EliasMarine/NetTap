@@ -640,20 +640,24 @@ services:
     container_name: nettap-nginx-proxy
     restart: unless-stopped
     <<: *logging-defaults
-    # Malcolm's baked-in nginx.conf references upstreams for optional services
-    # that NetTap v1.0 intentionally excludes to conserve resources on 16GB N100:
-    #   - upload:80           — manual PCAP upload (unnecessary with live capture)
-    #   - filescan:8006       — ClamAV/YARA extracted file scanning
-    #   - extracted-file-http-server — extracted file download server
-    #   - dashboards-maps     — offline map tile server
-    # DNS stubs prevent nginx from crashing at config load. Routes to these
-    # services return connection refused (correct — feature not available).
-    # To enable any of these, add the real Malcolm service and remove from here.
+    # Malcolm's nginx config references upstreams for all Malcolm services.
+    # NetTap v1.0 excludes these optional services to conserve resources on
+    # 16GB N100 hardware. DNS stubs prevent nginx from crashing at config load;
+    # routes return connection refused (correct — feature not available).
+    # To enable any service, add the real Malcolm container and remove from here.
+    #
+    # Full upstream audit (from `grep -rh 'server [a-z]' /etc/nginx/`):
+    #   RUNNING: api, arkime, dashboards, dashboards-helper, logstash, opensearch
+    #   STUBBED: upload, filescan, extracted-file-http-server, dashboards-maps,
+    #            htadmin, keycloak, netbox
     extra_hosts:
-      - "upload:127.0.0.1"
-      - "filescan:127.0.0.1"
-      - "extracted-file-http-server:127.0.0.1"
-      - "dashboards-maps:127.0.0.1"
+      - "upload:127.0.0.1"              # manual PCAP upload (we have live capture)
+      - "filescan:127.0.0.1"            # ClamAV/YARA file scanning
+      - "extracted-file-http-server:127.0.0.1"  # extracted file downloads
+      - "dashboards-maps:127.0.0.1"     # offline map tile server
+      - "htadmin:127.0.0.1"             # htpasswd admin UI (we use .env credentials)
+      - "keycloak:127.0.0.1"            # SSO/OIDC (we use basic auth)
+      - "netbox:127.0.0.1"              # IPAM/DCIM asset management
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
