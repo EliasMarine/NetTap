@@ -357,6 +357,13 @@ class SmartMonitor:
         Returns dict with normalized metric keys.
         """
         nvme_log = data.get("nvme_smart_health_information_log", {})
+        if not nvme_log:
+            logger.warning(
+                "NVMe SMART health log is empty for %s. smartctl may lack "
+                "SYS_RAWIO capability for NVMe admin commands. Available keys: %s",
+                self.device,
+                list(data.keys()),
+            )
 
         # Temperature: smartctl provides temperature in the top-level
         # "temperature" object and inside the nvme health log

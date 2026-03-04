@@ -22,8 +22,15 @@ export interface StorageStatus {
 	disk_total_bytes: number;
 	disk_used_bytes: number;
 	disk_free_bytes: number;
+	// GB fields returned by daemon alongside bytes
+	disk_total_gb?: number;
+	disk_used_gb?: number;
+	disk_free_gb?: number;
 	retention: any;
-	index_summary: any;
+	index_summary?: any;
+	// Daemon returns index_counts (object) + total_indices (number) instead
+	index_counts?: Record<string, number>;
+	total_indices?: number;
 }
 
 export interface SmartHealth {

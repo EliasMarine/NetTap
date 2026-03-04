@@ -30,7 +30,11 @@ from datetime import datetime, timezone
 logger = logging.getLogger("nettap.services.bridge_health")
 
 # Path constants for Linux sysfs/proc/run
-_SYSFS_NET = "/sys/class/net"
+# HOST_SYS_NET: When the daemon runs inside Docker without network_mode: host,
+# /sys/class/net shows container interfaces, not the host's. The host sysfs is
+# mounted at /host/sys via docker-compose volume, and the env var HOST_SYS_NET
+# points to the correct path for reading host bridge/NIC state.
+_SYSFS_NET = os.environ.get("HOST_SYS_NET", "/sys/class/net")
 _BYPASS_STATE_FILE = "/var/run/nettap-bypass-active"
 
 
