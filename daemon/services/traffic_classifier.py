@@ -8,6 +8,7 @@ traffic breakdowns.
 
 import fnmatch
 import logging
+import os
 
 logger = logging.getLogger("nettap.services.traffic_classifier")
 
@@ -203,9 +204,11 @@ SERVICE_RULES: dict[str, str] = {
     "ntp": "other",
 }
 
-# DNS index for category stats queries
-ZEEK_DNS_INDEX = "zeek-dns-*"
-ZEEK_CONN_INDEX = "zeek-*"
+# OLD CODE START — separate per-log-type indices replaced by unified Malcolm index
+# ZEEK_DNS_INDEX = "zeek-dns-*"
+# ZEEK_CONN_INDEX = "zeek-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +310,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     """
     time_filter = {
         "range": {
-            "ts": {
+            "@timestamp": {
                 "gte": from_ts,
                 "lte": to_ts,
                 "format": "strict_date_optional_time",
@@ -318,11 +321,15 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     # Step 1: Get top domains with their query counts from DNS logs
     dns_query = {
         "size": 0,
-        "query": {"bool": {"filter": [time_filter]}},
+        "query": {"bool": {"filter": [
+            time_filter,
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "dns"}},
+        ]}},
         "aggs": {
             "top_domains": {
                 "terms": {
-                    "field": "query",
+                    "field": "zeek.dns.query",
                     "size": 500,
                 },
             }
@@ -330,7 +337,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     }
 
     try:
-        dns_result = client.search(index=ZEEK_DNS_INDEX, body=dns_query)
+        dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
     except Exception as exc:
         logger.error("OpenSearch error fetching DNS domains: %s", exc)
         return []
@@ -342,17 +349,21 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     # Step 2: Also get connection-level stats with service and port info
     conn_query = {
         "size": 0,
-        "query": {"bool": {"filter": [time_filter]}},
+        "query": {"bool": {"filter": [
+            time_filter,
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+        ]}},
         "aggs": {
             "by_service": {
-                "terms": {"field": "service", "size": 50, "missing": "unknown"},
+                "terms": {"field": "network.protocol", "size": 50, "missing": "unknown"},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
                                 "source": (
-                                    "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0)"
-                                    " + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)"
+                                    "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
+                                    " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
                                 ),
                                 "lang": "painless",
                             }
@@ -364,7 +375,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     }
 
     try:
-        conn_result = client.search(index=ZEEK_CONN_INDEX, body=conn_query)
+        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
     except Exception as exc:
         logger.error("OpenSearch error fetching connection stats: %s", exc)
         return []

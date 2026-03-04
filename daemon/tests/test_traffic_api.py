@@ -23,7 +23,7 @@ from api.traffic import (
     _parse_time_range,
     _parse_int_param,
     _time_range_filter,
-    ZEEK_INDEX,
+    NETWORK_INDEX,
 )
 from storage.manager import StorageManager, RetentionConfig
 
@@ -115,9 +115,9 @@ class TestTimeRangeFilter(unittest.TestCase):
 
     def test_builds_correct_range(self):
         result = _time_range_filter("2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z")
-        self.assertEqual(result["range"]["ts"]["gte"], "2026-02-25T00:00:00Z")
-        self.assertEqual(result["range"]["ts"]["lte"], "2026-02-26T00:00:00Z")
-        self.assertEqual(result["range"]["ts"]["format"], "strict_date_optional_time")
+        self.assertEqual(result["range"]["@timestamp"]["gte"], "2026-02-25T00:00:00Z")
+        self.assertEqual(result["range"]["@timestamp"]["lte"], "2026-02-26T00:00:00Z")
+        self.assertEqual(result["range"]["@timestamp"]["format"], "strict_date_optional_time")
 
 
 class TestTrafficSummaryHandler(AioHTTPTestCase):
@@ -158,7 +158,7 @@ class TestTrafficSummaryHandler(AioHTTPTestCase):
         self.assertEqual(data["connection_count"], 1500)
         self.assertEqual(data["top_protocol"], "tcp")
 
-        # Verify search was called with ZEEK_INDEX
+        # Verify search was called with NETWORK_INDEX
         self.mock_client.search.assert_called_once()
         call_kwargs = self.mock_client.search.call_args
         self.assertEqual(
@@ -166,7 +166,7 @@ class TestTrafficSummaryHandler(AioHTTPTestCase):
             or call_kwargs[1].get(
                 "index", call_kwargs[0][0] if call_kwargs[0] else None
             ),
-            ZEEK_INDEX,
+            NETWORK_INDEX,
         )
 
     @unittest_run_loop
@@ -452,10 +452,10 @@ class TestConnectionsHandler(AioHTTPTestCase):
                         "_id": "doc1",
                         "_index": "zeek-conn-2026.02.25",
                         "_source": {
-                            "ts": "2026-02-25T12:00:00Z",
-                            "proto": "tcp",
-                            "id.orig_h": "192.168.1.100",
-                            "id.resp_h": "8.8.8.8",
+                            "@timestamp": "2026-02-25T12:00:00Z",
+                            "network.transport": "tcp",
+                            "source.ip": "192.168.1.100",
+                            "destination.ip": "8.8.8.8",
                         },
                     },
                 ],
@@ -473,7 +473,7 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(data["total_pages"], 5)
         self.assertEqual(len(data["connections"]), 1)
         self.assertEqual(data["connections"][0]["_id"], "doc1")
-        self.assertEqual(data["connections"][0]["proto"], "tcp")
+        self.assertEqual(data["connections"][0]["network.transport"], "tcp")
 
     @unittest_run_loop
     async def test_connections_with_search(self):

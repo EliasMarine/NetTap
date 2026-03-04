@@ -652,6 +652,7 @@ services:
       HOST_SYSTEMD_DIR: "/host/etc/systemd/system"
       HOST_SYSCTL_DIR: "/host/etc/sysctl.d"
       BRIDGE_CHECK_INTERVAL: "${BRIDGE_CHECK_INTERVAL:-30}"
+      OPENSEARCH_NETWORK_INDEX: "${OPENSEARCH_NETWORK_INDEX:-arkime_sessions3-*}"
     # Daemon port is internal-only — only the web container needs it
     expose:
       - "8880"

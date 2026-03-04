@@ -209,7 +209,7 @@ class TestGetMacForIP(unittest.TestCase):
         """Returns MAC from DHCP logs when available."""
         mock_client = MagicMock()
         mock_client.search.return_value = {
-            "hits": {"hits": [{"_source": {"mac": "AA:BB:CC:DD:EE:FF"}}]}
+            "hits": {"hits": [{"_source": {"source.mac": "AA:BB:CC:DD:EE:FF"}}]}
         }
 
         result = self.fp.get_mac_for_ip(
@@ -223,7 +223,7 @@ class TestGetMacForIP(unittest.TestCase):
         # First call (DHCP) returns empty, second call (conn) returns MAC
         mock_client.search.side_effect = [
             {"hits": {"hits": []}},
-            {"hits": {"hits": [{"_source": {"orig_l2_addr": "11:22:33:44:55:66"}}]}},
+            {"hits": {"hits": [{"_source": {"source.mac": "11:22:33:44:55:66"}}]}},
         ]
 
         result = self.fp.get_mac_for_ip(

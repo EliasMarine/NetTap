@@ -75,7 +75,7 @@ class TestIPPatterns(unittest.TestCase):
         """Parse 'from <IP>'."""
         result = self.parser.parse("connections from 192.168.1.1")
         query_str = str(result["query"])
-        self.assertIn("id.orig_h", query_str)
+        self.assertIn("source.ip", query_str)
         self.assertIn("192.168.1.1", query_str)
         self.assertIn("source IP 192.168.1.1", result["description"])
 
@@ -83,7 +83,7 @@ class TestIPPatterns(unittest.TestCase):
         """Parse 'to <IP>'."""
         result = self.parser.parse("connections to 10.0.0.1")
         query_str = str(result["query"])
-        self.assertIn("id.resp_h", query_str)
+        self.assertIn("destination.ip", query_str)
         self.assertIn("10.0.0.1", query_str)
         self.assertIn("destination IP 10.0.0.1", result["description"])
 
@@ -112,7 +112,7 @@ class TestProtocolPatterns(unittest.TestCase):
         """Parse 'using tcp'."""
         result = self.parser.parse("connections using tcp")
         query_str = str(result["query"])
-        self.assertIn("proto", query_str)
+        self.assertIn("network.transport", query_str)
         self.assertIn("tcp", query_str)
         self.assertIn("protocol tcp", result["description"])
 
@@ -181,25 +181,25 @@ class TestAlertPatterns(unittest.TestCase):
     def test_high_severity_alerts(self):
         """Parse 'high severity alerts'."""
         result = self.parser.parse("high severity alerts")
-        self.assertEqual(result["index"], "suricata-*")
+        self.assertEqual(result["index"], "arkime_sessions3-*")
         self.assertIn("high/critical severity alerts", result["description"])
 
     def test_critical_alerts(self):
         """Parse 'critical alerts'."""
         result = self.parser.parse("critical alerts")
-        self.assertEqual(result["index"], "suricata-*")
+        self.assertEqual(result["index"], "arkime_sessions3-*")
 
     def test_alerts_from_ip(self):
         """Parse 'alerts from <IP>'."""
         result = self.parser.parse("alerts from 192.168.1.100")
-        self.assertEqual(result["index"], "suricata-*")
+        self.assertEqual(result["index"], "arkime_sessions3-*")
         self.assertIn("192.168.1.100", str(result["query"]))
         self.assertIn("alerts involving 192.168.1.100", result["description"])
 
     def test_alerts_for_ip(self):
         """Parse 'alerts for <IP>'."""
         result = self.parser.parse("alerts for 10.0.0.5")
-        self.assertEqual(result["index"], "suricata-*")
+        self.assertEqual(result["index"], "arkime_sessions3-*")
         self.assertIn("10.0.0.5", str(result["query"]))
 
 
@@ -240,14 +240,14 @@ class TestTrafficPatterns(unittest.TestCase):
         """Parse 'large traffic'."""
         result = self.parser.parse("large traffic")
         query_str = str(result["query"])
-        self.assertIn("orig_bytes", query_str)
+        self.assertIn("client.bytes", query_str)
         self.assertIn("large traffic transfers", result["description"])
 
     def test_heavy_uploads(self):
         """Parse 'heavy uploads'."""
         result = self.parser.parse("heavy uploads")
         query_str = str(result["query"])
-        self.assertIn("orig_bytes", query_str)
+        self.assertIn("client.bytes", query_str)
 
     def test_big_transfers(self):
         """Parse 'big transfers'."""
@@ -309,7 +309,7 @@ class TestCombinedQueries(unittest.TestCase):
     def test_alert_with_time(self):
         """Parse 'high severity alerts in the last 1 hour'."""
         result = self.parser.parse("high severity alerts in the last 1 hour")
-        self.assertEqual(result["index"], "suricata-*")
+        self.assertEqual(result["index"], "arkime_sessions3-*")
         self.assertIn("1 hour", result["description"])
 
 
@@ -323,7 +323,7 @@ class TestEdgeCases(unittest.TestCase):
         """Empty query returns match_all."""
         result = self.parser.parse("")
         self.assertIn("match_all", str(result["query"]))
-        self.assertEqual(result["index"], "zeek-*,suricata-*")
+        self.assertEqual(result["index"], "arkime_sessions3-*")
         self.assertEqual(result["size"], 50)
 
     def test_none_query(self):

@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: Bridge Go Live workflow deployed (PR #83) — BridgeManager, readiness check, Go Live page, bypass promisc fix, bridge_loop. Auth bypass fix (PR #85) deployed to unblock bridge API routes. Test counts up: pytest 1036 (was 997), vitest 683 (was 649).
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: NET-95 OpenSearch ECS field mapping — all daemon queries remapped to Malcolm's actual index/field names. Test counts up: pytest 1041 (was 1036), vitest 683.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -136,6 +136,9 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-04 | Dev (macOS) | vitest | ALL PASSED | 683 | 0 | 0 | Claude | After Bridge Go Live PR #83: 683 tests (22 GoLive + 25 bridge API). Up from 649. |
 | 2026-03-04 | Dev (macOS) | svelte-check | ALL PASSED | 620 | 0 | 0 | Claude | 620 files checked, 0 errors, 0 warnings. |
 | 2026-03-04 | N100 (Ubuntu) | H1: Bridge Go Live | **PARTIAL** | — | — | — | Elias | Deployed PR #83 (bridge Go Live) + PR #82 (system fixes). Daemon healthy, bridge_loop running (30s). Hit 302→/login on `/api/bridge/readiness` — auth middleware blocking new routes. Fixed in PR #85: added `/api/bridge` + `/go-live` to PUBLIC_PATHS. Pending: redeploy with PR #85 and retest. |
+| 2026-03-04 | Dev (macOS) | pytest | ALL PASSED | 1041 | 0 | 0 | Claude | After NET-95 ECS field mapping: 1041 tests (up from 1036). All daemon queries remapped to arkime_sessions3-* + ECS fields. |
+| 2026-03-04 | Dev (macOS) | vitest | ALL PASSED | 683 | 0 | 0 | Claude | No web changes needed for ECS mapping — frontend uses daemon API. |
+| 2026-03-04 | Dev (macOS) | svelte-check | ALL PASSED | 620 | 0 | 0 | Claude | No type errors. |
 
 ---
 
