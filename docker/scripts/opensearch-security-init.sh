@@ -38,6 +38,8 @@ while (( attempt < MAX_RETRIES )); do
     if JAVA_HOME=/usr/share/opensearch/jdk \
        /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh \
        -cd "$SECURITY_CONFIG_DIR" \
+       -h "$OPENSEARCH_HOST" \
+       -p "$OPENSEARCH_PORT" \
        -cacert "$CERTS_DIR/ca.crt" \
        -cert "$CERTS_DIR/admin.crt" \
        -key "$CERTS_DIR/admin.key" \
