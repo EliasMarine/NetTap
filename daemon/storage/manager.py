@@ -506,7 +506,7 @@ class StorageManager:
         """Return current storage status for the HTTP API.
 
         Returns a dict matching the frontend's StorageStatus interface:
-          - disk_total_gb, disk_used_gb, disk_free_gb: absolute GB values
+          - disk_total_bytes, disk_used_bytes, disk_free_bytes: absolute byte values
           - disk_usage_percent: usage as 0-100 number (NOT string, NOT fraction)
           - hot_days, warm_days, cold_days: retention days (top-level)
           - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
@@ -543,10 +543,10 @@ class StorageManager:
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
         return {
-            # Absolute disk values (GB) — required by frontend
-            "disk_total_gb": disk_total_gb,
-            "disk_used_gb": disk_used_gb,
-            "disk_free_gb": disk_free_gb,
+            # Absolute disk values (bytes) — required by frontend
+            "disk_total_bytes": disk.total,
+            "disk_used_bytes": disk.used,
+            "disk_free_bytes": disk.free,
             "disk_usage_percent": round(usage_frac * 100, 1),
             # Retention days — top-level (frontend reads these directly)
             "hot_days": self.config.hot_days,
