@@ -43,8 +43,8 @@ class TestAlertTimeRangeFilter(unittest.TestCase):
 
     def test_builds_correct_timestamp_range(self):
         result = _time_range_filter("2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z")
-        self.assertEqual(result["range"]["timestamp"]["gte"], "2026-02-25T00:00:00Z")
-        self.assertEqual(result["range"]["timestamp"]["lte"], "2026-02-26T00:00:00Z")
+        self.assertEqual(result["range"]["@timestamp"]["gte"], "2026-02-25T00:00:00Z")
+        self.assertEqual(result["range"]["@timestamp"]["lte"], "2026-02-26T00:00:00Z")
 
 
 class TestAckFileHelpers(unittest.TestCase):
@@ -120,16 +120,16 @@ class TestAlertsListHandler(AioHTTPTestCase):
                         "_id": "alert-1",
                         "_index": "suricata-alert-2026.02.25",
                         "_source": {
-                            "timestamp": "2026-02-25T12:00:00Z",
-                            "alert": {
-                                "signature": "ET TROJAN Test",
-                                "signature_id": 2001,
-                                "severity": 1,
+                            "@timestamp": "2026-02-25T12:00:00Z",
+                            "rule": {
+                                "name": "ET TROJAN Test",
+                                "id": 2001,
                                 "category": "Trojan",
                             },
-                            "src_ip": "192.168.1.100",
-                            "dest_ip": "10.0.0.1",
-                            "proto": "tcp",
+                            "suricata": {"severity": 1},
+                            "source": {"ip": "192.168.1.100"},
+                            "destination": {"ip": "10.0.0.1"},
+                            "network": {"transport": "tcp"},
                         },
                     }
                 ],
@@ -144,7 +144,7 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertEqual(data["size"], 50)
         self.assertEqual(len(data["alerts"]), 1)
         self.assertEqual(data["alerts"][0]["_id"], "alert-1")
-        self.assertEqual(data["alerts"][0]["alert"]["signature"], "ET TROJAN Test")
+        self.assertEqual(data["alerts"][0]["rule"]["name"], "ET TROJAN Test")
         self.assertFalse(data["alerts"][0]["acknowledged"])
 
     @unittest_run_loop
@@ -161,7 +161,7 @@ class TestAlertsListHandler(AioHTTPTestCase):
         body = call_args.kwargs.get("body") or call_args[1].get("body")
         filters = body["query"]["bool"]["filter"]
         has_severity = any(
-            "term" in f and "alert.severity" in f.get("term", {}) for f in filters
+            "term" in f and "suricata.severity" in f.get("term", {}) for f in filters
         )
         self.assertTrue(has_severity)
 
@@ -178,8 +178,8 @@ class TestAlertsListHandler(AioHTTPTestCase):
         call_args = self.mock_client.search.call_args
         body = call_args.kwargs.get("body") or call_args[1].get("body")
         filters = body["query"]["bool"]["filter"]
-        # Should only have the time range filter
-        self.assertEqual(len(filters), 1)
+        # Should have time range + event.provider + event.dataset filters
+        self.assertEqual(len(filters), 3)
 
     @unittest_run_loop
     async def test_alerts_list_opensearch_error(self):
@@ -215,7 +215,7 @@ class TestAlertsListHandler(AioHTTPTestCase):
                     {
                         "_id": "alert-1",
                         "_index": "suricata-alert-2026.02.25",
-                        "_source": {"timestamp": "2026-02-25T12:00:00Z"},
+                        "_source": {"@timestamp": "2026-02-25T12:00:00Z"},
                     }
                 ],
             }
@@ -316,13 +316,13 @@ class TestAlertDetailHandler(AioHTTPTestCase):
                         "_id": "alert-123",
                         "_index": "suricata-alert-2026.02.25",
                         "_source": {
-                            "timestamp": "2026-02-25T12:00:00Z",
-                            "alert": {
-                                "signature": "ET SCAN Test",
-                                "severity": 2,
+                            "@timestamp": "2026-02-25T12:00:00Z",
+                            "rule": {
+                                "name": "ET SCAN Test",
                             },
-                            "src_ip": "10.0.0.1",
-                            "dest_ip": "192.168.1.1",
+                            "suricata": {"severity": 2},
+                            "source": {"ip": "10.0.0.1"},
+                            "destination": {"ip": "192.168.1.1"},
                         },
                     }
                 ]
@@ -333,7 +333,7 @@ class TestAlertDetailHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertEqual(data["alert"]["_id"], "alert-123")
-        self.assertEqual(data["alert"]["alert"]["severity"], 2)
+        self.assertEqual(data["alert"]["suricata"]["severity"], 2)
 
     @unittest_run_loop
     async def test_detail_not_found(self):

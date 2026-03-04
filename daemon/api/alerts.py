@@ -2,9 +2,10 @@
 NetTap Alert API Routes
 
 Registers Suricata alert endpoints with the aiohttp application.
-These endpoints query OpenSearch suricata-* indices to provide paginated
-alert listings, severity counts, individual alert details, and
-acknowledgement tracking.
+These endpoints query the unified arkime_sessions3-* index (Malcolm's
+Logstash pipeline) filtered by event.provider=suricata and event.dataset=alert
+to provide paginated alert listings, severity counts, individual alert
+details, and acknowledgement tracking.
 """
 
 import json
@@ -26,8 +27,17 @@ _alert_enrichment = AlertEnrichment()
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
 
-# Suricata alert indices
-SURICATA_INDEX = "suricata-*"
+# OLD CODE START — replaced by unified NETWORK_INDEX (Malcolm routes all data here)
+# SURICATA_INDEX = "suricata-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# Suricata alert filters — all queries must include these to select only
+# Suricata alert documents from the unified index.
+_SURICATA_ALERT_FILTERS: list[dict] = [
+    {"term": {"event.provider": "suricata"}},
+    {"term": {"event.dataset": "alert"}},
+]
 
 # Path for storing acknowledgement data (local JSON file)
 _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
@@ -76,10 +86,13 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
-    """Build an OpenSearch range filter on the 'timestamp' field (Suricata)."""
+    """Build an OpenSearch range filter on the '@timestamp' field (ECS)."""
+    # OLD CODE START — Zeek-native field name
+    # "timestamp": { ... }
+    # OLD CODE END
     return {
         "range": {
-            "timestamp": {
+            "@timestamp": {
                 "gte": from_ts,
                 "lte": to_ts,
                 "format": "strict_date_optional_time",
@@ -140,14 +153,20 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
 
     offset = (page - 1) * size
 
-    filter_clauses: list[dict] = [_time_range_filter(from_ts, to_ts)]
+    filter_clauses: list[dict] = [
+        _time_range_filter(from_ts, to_ts),
+        *_SURICATA_ALERT_FILTERS,
+    ]
 
     # Optional severity filter
+    # OLD CODE START — Zeek-native field: "alert.severity"
+    # filter_clauses.append({"term": {"alert.severity": severity}})
+    # OLD CODE END
     if severity_raw:
         try:
             severity = int(severity_raw)
             if severity in (1, 2, 3):
-                filter_clauses.append({"term": {"alert.severity": severity}})
+                filter_clauses.append({"term": {"suricata.severity": severity}})
         except (ValueError, TypeError):
             pass
 
@@ -159,11 +178,14 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 "filter": filter_clauses,
             }
         },
-        "sort": [{"timestamp": {"order": "desc"}}],
+        # OLD CODE START — Zeek-native sort field: "timestamp"
+        # "sort": [{"timestamp": {"order": "desc"}}],
+        # OLD CODE END
+        "sort": [{"@timestamp": {"order": "desc"}}],
     }
 
     try:
-        result = client.search(index=SURICATA_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts list: %s", exc)
         return web.json_response(
@@ -213,14 +235,24 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ]
+            }
+        },
         "aggs": {
-            "by_severity": {"terms": {"field": "alert.severity", "size": 10}},
+            # OLD CODE START — Zeek-native: "alert.severity"
+            # "by_severity": {"terms": {"field": "alert.severity", "size": 10}},
+            # OLD CODE END
+            "by_severity": {"terms": {"field": "suricata.severity", "size": 10}},
         },
     }
 
     try:
-        result = client.search(index=SURICATA_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/count: %s", exc)
         return web.json_response(
@@ -265,14 +297,20 @@ async def handle_alert_detail(request: web.Request) -> web.Response:
 
     client = _get_client(request)
 
-    # Search across all suricata indices for the document by _id
+    # Search across the unified index for the document by _id, filtered
+    # to suricata alerts only so we don't return Zeek docs by accident.
     query = {
         "size": 1,
-        "query": {"ids": {"values": [alert_id]}},
+        "query": {
+            "bool": {
+                "must": [{"ids": {"values": [alert_id]}}],
+                "filter": list(_SURICATA_ALERT_FILTERS),
+            }
+        },
     }
 
     try:
-        result = client.search(index=SURICATA_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert detail: %s", exc)
         return web.json_response(

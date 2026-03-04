@@ -90,8 +90,8 @@ class TestDeviceListHandler(AioHTTPTestCase):
         """Configure mock_client.search to return different responses per index.
 
         The device list handler makes multiple search calls:
-        1. zeek-conn-* for device aggregation
-        2. suricata-* for alert counts
+        1. NETWORK_INDEX (event.provider=zeek, event.dataset=conn) for device aggregation
+        2. NETWORK_INDEX (event.provider=suricata, event.dataset=alert) for alert counts
         3-N. fingerprint lookups (dhcp, conn, dns, http, ssl) per device
         """
         responses = []
@@ -258,7 +258,7 @@ class TestDeviceListHandler(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_device_list_with_alert_counts(self):
-        """Alert counts from suricata-* are merged into device records."""
+        """Alert counts from Suricata events are merged into device records."""
         alert_response = {
             "aggregations": {
                 "by_ip": {
@@ -307,9 +307,9 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         """Configure mock search responses for device detail.
 
         Calls:
-        1. zeek-conn-* (main agg)
-        2. zeek-dns-* (dns queries)
-        3. suricata-* (alert count)
+        1. NETWORK_INDEX with zeek conn filter (main agg)
+        2. NETWORK_INDEX with zeek dns filter (dns queries)
+        3. NETWORK_INDEX with suricata alert filter (alert count)
         4-N. fingerprint calls
         """
         responses = [conn_response]
@@ -425,7 +425,7 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         # Alert response
         alert_resp = {"hits": {"total": {"value": 2}}}
         # Fingerprint: DHCP returns MAC
-        dhcp_resp = {"hits": {"hits": [{"_source": {"mac": "00:03:93:11:22:33"}}]}}
+        dhcp_resp = {"hits": {"hits": [{"_source": {"source.mac": "00:03:93:11:22:33"}}]}}
         # Fingerprint: DNS hostname
         hostname_resp = {
             "aggregations": {
@@ -540,24 +540,24 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
                         "_id": "conn1",
                         "_index": "zeek-conn-2026.02.25",
                         "_source": {
-                            "ts": "2026-02-25T12:00:00Z",
-                            "proto": "tcp",
-                            "id.orig_h": "192.168.1.100",
-                            "id.resp_h": "8.8.8.8",
-                            "orig_bytes": 1000,
-                            "resp_bytes": 5000,
+                            "@timestamp": "2026-02-25T12:00:00Z",
+                            "network.transport": "tcp",
+                            "source.ip": "192.168.1.100",
+                            "destination.ip": "8.8.8.8",
+                            "client.bytes": 1000,
+                            "server.bytes": 5000,
                         },
                     },
                     {
                         "_id": "conn2",
                         "_index": "zeek-conn-2026.02.25",
                         "_source": {
-                            "ts": "2026-02-25T12:01:00Z",
-                            "proto": "udp",
-                            "id.orig_h": "192.168.1.100",
-                            "id.resp_h": "1.1.1.1",
-                            "orig_bytes": 200,
-                            "resp_bytes": 800,
+                            "@timestamp": "2026-02-25T12:01:00Z",
+                            "network.transport": "udp",
+                            "source.ip": "192.168.1.100",
+                            "destination.ip": "1.1.1.1",
+                            "client.bytes": 200,
+                            "server.bytes": 800,
                         },
                     },
                 ],
@@ -577,7 +577,7 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(data["total_pages"], 3)
         self.assertEqual(len(data["connections"]), 2)
         self.assertEqual(data["connections"][0]["_id"], "conn1")
-        self.assertEqual(data["connections"][0]["proto"], "tcp")
+        self.assertEqual(data["connections"][0]["network.transport"], "tcp")
 
     @unittest_run_loop
     async def test_connections_empty(self):

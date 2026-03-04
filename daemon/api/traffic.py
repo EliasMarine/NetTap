@@ -2,12 +2,13 @@
 NetTap Traffic API Routes
 
 Registers traffic analysis endpoints with the aiohttp application.
-These endpoints query OpenSearch zeek-* indices to provide network traffic
-summaries, top talkers, protocol distributions, bandwidth time-series,
-and paginated connection listings.
+These endpoints query OpenSearch arkime_sessions3-* indices to provide
+network traffic summaries, top talkers, protocol distributions,
+bandwidth time-series, and paginated connection listings.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
@@ -21,8 +22,17 @@ logger = logging.getLogger("nettap.api.traffic")
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
 
-# Zeek connection indices
-ZEEK_INDEX = "zeek-*"
+# OLD CODE START — replaced Zeek-native index with Malcolm unified index
+# ZEEK_INDEX = "zeek-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# Zeek conn event filters — Malcolm routes all data into arkime_sessions3-*;
+# these term filters select only Zeek connection logs from the unified index.
+_ZEEK_CONN_FILTERS = [
+    {"term": {"event.provider": "zeek"}},
+    {"term": {"event.dataset": "conn"}},
+]
 
 
 # ---------------------------------------------------------------------------
@@ -71,10 +81,10 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
-    """Build an OpenSearch range filter on the 'ts' field (Zeek timestamp)."""
+    """Build an OpenSearch range filter on the '@timestamp' field (ECS)."""
     return {
         "range": {
-            "ts": {
+            "@timestamp": {
                 "gte": from_ts,
                 "lte": to_ts,
                 "format": "strict_date_optional_time",
@@ -98,25 +108,28 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     """GET /api/traffic/summary?from=&to=
 
     Returns total bytes, packet count, connection count, and top protocol
-    for the given time range from zeek-* indices.
+    for the given time range from arkime_sessions3-* indices.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
-            "total_orig_bytes": {"sum": {"field": "orig_bytes", "missing": 0}},
-            "total_resp_bytes": {"sum": {"field": "resp_bytes", "missing": 0}},
-            "total_orig_pkts": {"sum": {"field": "orig_pkts", "missing": 0}},
-            "total_resp_pkts": {"sum": {"field": "resp_pkts", "missing": 0}},
-            "top_protocol": {"terms": {"field": "proto", "size": 1}},
+            "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+            "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
+            "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
+            "top_protocol": {"terms": {"field": "network.transport", "size": 1}},
         },
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/summary: %s", exc)
         return web.json_response(
@@ -154,7 +167,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 async def handle_top_talkers(request: web.Request) -> web.Response:
     """GET /api/traffic/top-talkers?from=&to=&limit=20
 
-    Returns top source IPs by total bytes (orig_bytes + resp_bytes).
+    Returns top source IPs by total bytes (client.bytes + server.bytes).
     """
     from_ts, to_ts = _parse_time_range(request)
     limit = _parse_int_param(request, "limit", 20)
@@ -162,15 +175,18 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
             "top_sources": {
-                "terms": {"field": "id.orig_h", "size": limit},
+                "terms": {"field": "source.ip", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -184,7 +200,7 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/top-talkers: %s", exc)
         return web.json_response(
@@ -222,15 +238,18 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
             "top_destinations": {
-                "terms": {"field": "id.resp_h", "size": limit},
+                "terms": {"field": "destination.ip", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -244,7 +263,7 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/top-destinations: %s", exc)
         return web.json_response(
@@ -276,25 +295,29 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
 async def handle_protocols(request: web.Request) -> web.Response:
     """GET /api/traffic/protocols?from=&to=
 
-    Returns protocol distribution via terms aggregation on the 'proto'
-    and 'service' fields from zeek connection logs.
+    Returns protocol distribution via terms aggregation on the
+    'network.transport' and 'network.protocol' fields from Zeek
+    connection logs in arkime_sessions3-*.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
-            "by_proto": {"terms": {"field": "proto", "size": 50}},
+            "by_proto": {"terms": {"field": "network.transport", "size": 50}},
             "by_service": {
-                "terms": {"field": "service", "size": 50, "missing": "unknown"}
+                "terms": {"field": "network.protocol", "size": 50, "missing": "unknown"}
             },
         },
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/protocols: %s", exc)
         return web.json_response(
@@ -322,8 +345,8 @@ async def handle_protocols(request: web.Request) -> web.Response:
 async def handle_bandwidth(request: web.Request) -> web.Response:
     """GET /api/traffic/bandwidth?from=&to=&interval=5m
 
-    Returns time-series bandwidth data using a date_histogram on 'ts'
-    with sum of orig_bytes + resp_bytes per bucket.
+    Returns time-series bandwidth data using a date_histogram on '@timestamp'
+    with sum of client.bytes + server.bytes per bucket.
     """
     from_ts, to_ts = _parse_time_range(request)
     interval = request.query.get("interval", "5m")
@@ -336,11 +359,14 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
             "bandwidth_over_time": {
                 "date_histogram": {
-                    "field": "ts",
+                    "field": "@timestamp",
                     "fixed_interval": interval,
                     "min_doc_count": 0,
                     "extended_bounds": {
@@ -349,15 +375,15 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
                     },
                 },
                 "aggs": {
-                    "orig_bytes": {"sum": {"field": "orig_bytes", "missing": 0}},
-                    "resp_bytes": {"sum": {"field": "resp_bytes", "missing": 0}},
+                    "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                    "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
                 },
             }
         },
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/bandwidth: %s", exc)
         return web.json_response(
@@ -406,7 +432,10 @@ async def handle_connections(request: web.Request) -> web.Response:
 
     # Build query
     must_clauses: list[dict] = []
-    filter_clauses: list[dict] = [_time_range_filter(from_ts, to_ts)]
+    filter_clauses: list[dict] = [
+        _time_range_filter(from_ts, to_ts),
+        *_ZEEK_CONN_FILTERS,
+    ]
 
     if search_query:
         must_clauses.append(
@@ -428,11 +457,11 @@ async def handle_connections(request: web.Request) -> web.Response:
                 "filter": filter_clauses,
             }
         },
-        "sort": [{"ts": {"order": "desc"}}],
+        "sort": [{"@timestamp": {"order": "desc"}}],
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/connections: %s", exc)
         return web.json_response(

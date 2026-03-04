@@ -8,6 +8,7 @@ hostname, manufacturer, OS hint).
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
@@ -21,10 +22,12 @@ logger = logging.getLogger("nettap.api.devices")
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
 
-# Index patterns
-ZEEK_CONN_INDEX = "zeek-conn-*"
-ZEEK_DNS_INDEX = "zeek-dns-*"
-SURICATA_INDEX = "suricata-*"
+# OLD CODE START — separate per-log-type indices replaced by unified Malcolm index
+# ZEEK_CONN_INDEX = "zeek-conn-*"
+# ZEEK_DNS_INDEX = "zeek-dns-*"
+# SURICATA_INDEX = "suricata-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Maximum devices per request
 _MAX_DEVICE_LIMIT = 500
@@ -79,10 +82,13 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
-    """Build an OpenSearch range filter on the 'ts' field (Zeek timestamp)."""
+    """Build an OpenSearch range filter on the '@timestamp' field (ECS timestamp)."""
     return {
         "range": {
-            "ts": {
+            # OLD CODE START — was "ts" (Zeek-native), now "@timestamp" (ECS)
+            # "ts": {
+            # OLD CODE END
+            "@timestamp": {
                 "gte": from_ts,
                 "lte": to_ts,
                 "format": "strict_date_optional_time",
@@ -141,11 +147,15 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [_time_range_filter(from_ts, to_ts)]}},
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+        ]}},
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "id.orig_h",
+                    "field": "source.ip",
                     "size": fetch_size,
                     "order": {agg_sort_key: sort_order},
                 },
@@ -153,21 +163,21 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
                     },
-                    "protocols": {"terms": {"field": "proto", "size": 10}},
-                    "first_seen": {"min": {"field": "ts"}},
-                    "last_seen": {"max": {"field": "ts"}},
+                    "protocols": {"terms": {"field": "network.transport", "size": 10}},
+                    "first_seen": {"min": {"field": "@timestamp"}},
+                    "last_seen": {"max": {"field": "@timestamp"}},
                 },
             }
         },
     }
 
     try:
-        result = client.search(index=ZEEK_CONN_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices list: %s", exc)
         return web.json_response(
@@ -189,22 +199,24 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     "filter": [
                         {
                             "range": {
-                                "timestamp": {
+                                "@timestamp": {
                                     "gte": from_ts,
                                     "lte": to_ts,
                                     "format": "strict_date_optional_time",
                                 }
                             }
                         },
-                        {"terms": {"src_ip": device_ips}},
+                        {"terms": {"source.ip": device_ips}},
+                        {"term": {"event.provider": "suricata"}},
+                        {"term": {"event.dataset": "alert"}},
                     ]
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "src_ip", "size": len(device_ips)}}},
+            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}},
         }
 
         try:
-            alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+            alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
             for ab in (
                 alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
             ):
@@ -284,7 +296,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
-                    {"term": {"id.orig_h": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
@@ -292,21 +306,21 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "total_bytes": {
                 "sum": {
                     "script": {
-                        "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                        "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                         "lang": "painless",
                     }
                 }
             },
-            "protocols": {"terms": {"field": "proto", "size": 10}},
-            "first_seen": {"min": {"field": "ts"}},
-            "last_seen": {"max": {"field": "ts"}},
+            "protocols": {"terms": {"field": "network.transport", "size": 10}},
+            "first_seen": {"min": {"field": "@timestamp"}},
+            "last_seen": {"max": {"field": "@timestamp"}},
             "top_destinations": {
-                "terms": {"field": "id.resp_h", "size": 20},
+                "terms": {"field": "destination.ip", "size": 20},
                 "aggs": {
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -315,7 +329,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             },
             "bandwidth_series": {
                 "date_histogram": {
-                    "field": "ts",
+                    "field": "@timestamp",
                     "fixed_interval": "5m",
                     "min_doc_count": 0,
                     "extended_bounds": {
@@ -327,7 +341,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -338,7 +352,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=ZEEK_CONN_INDEX, body=device_query)
+        result = client.search(index=NETWORK_INDEX, body=device_query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device detail: %s", exc)
         return web.json_response(
@@ -378,23 +392,25 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         for bwb in bw_buckets
     ]
 
-    # DNS queries from zeek-dns-*
+    # DNS queries from unified index (zeek dns events)
     dns_query = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
-                    {"term": {"id.orig_h": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "dns"}},
                 ]
             }
         },
-        "aggs": {"dns_queries": {"terms": {"field": "query", "size": 50}}},
+        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50}}},
     }
 
     dns_queries = []
     try:
-        dns_result = client.search(index=ZEEK_DNS_INDEX, body=dns_query)
+        dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
         dns_buckets = (
             dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
         )
@@ -404,7 +420,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     except OpenSearchException as exc:
         logger.warning("DNS query lookup failed for %s: %s", ip, exc)
 
-    # Alert count from suricata-*
+    # Alert count from unified index (suricata alert events)
     alert_query = {
         "size": 0,
         "query": {
@@ -412,14 +428,16 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "timestamp": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
                     },
-                    {"term": {"src_ip": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "suricata"}},
+                    {"term": {"event.dataset": "alert"}},
                 ]
             }
         },
@@ -427,7 +445,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
 
     alert_count = 0
     try:
-        alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+        alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
         alert_total = alert_result.get("hits", {}).get("total", {})
         alert_count = (
             alert_total.get("value", 0)
@@ -489,20 +507,22 @@ async def handle_device_connections(request: web.Request) -> web.Response:
                     {
                         "bool": {
                             "should": [
-                                {"term": {"id.orig_h": ip}},
-                                {"term": {"id.resp_h": ip}},
+                                {"term": {"source.ip": ip}},
+                                {"term": {"destination.ip": ip}},
                             ],
                             "minimum_should_match": 1,
                         }
                     },
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
-        "sort": [{"ts": {"order": "desc"}}],
+        "sort": [{"@timestamp": {"order": "desc"}}],
     }
 
     try:
-        result = client.search(index=ZEEK_CONN_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device connections: %s", exc)
         return web.json_response(

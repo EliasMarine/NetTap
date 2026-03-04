@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-03
-> **Status:** 29 issues tracked. 29 RESOLVED. Latest: NET-82 nginx proxy_set_header inheritance (real CSRF root cause), NET-83 null SMART crash, NET-84 bootstrap docs, NET-85 filebeat healthcheck, NET-86 dashboards/cyberchef/helper healthchecks. 17/18 containers healthy on N100.
+> **Last updated:** 2026-03-04
+> **Status:** 30 issues tracked. 30 RESOLVED. Latest: NET-95 OpenSearch field mapping — daemon queries remapped from Zeek-native to ECS (Malcolm's actual field names). 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1041,7 +1041,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1050,6 +1050,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
+| `daemon/api/traffic.py` | NET-95 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters |
+| `daemon/api/alerts.py` | NET-95 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields |
+| `daemon/api/devices.py` | NET-95 | Device queries use `NETWORK_INDEX` + ECS fields |
+| `daemon/api/risk.py` | NET-95 | Risk scoring uses `NETWORK_INDEX` + ECS fields |
+| `daemon/services/traffic_classifier.py` | NET-95 | Category classification uses `NETWORK_INDEX` + ECS fields |
+| `daemon/services/device_fingerprint.py` | NET-95 | Fingerprinting uses `NETWORK_INDEX` + ECS fields (zeek.dns.query, zeek.http.user_agent, etc.) |
+| `daemon/services/nl_search.py` | NET-95 | NL search uses `NETWORK_INDEX` + ECS fields |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1114,6 +1121,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 46. **Malcolm container images are minimal — never assume standard tools exist** — Malcolm's filebeat-oss image doesn't have `pgrep` or `ps`. The dashboards image needs auth for its status endpoint. Always test healthcheck commands inside the actual container before deploying. Use shell builtins (`test -d /proc/1`) as a universal fallback.
 47. **SSE (Server-Sent Events) streams require explicit nginx configuration** — must set `proxy_buffering off`, `proxy_cache off`, and `proxy_read_timeout 86400s` in the location block. Without this, nginx buffers the SSE response and the client never receives real-time events.
 48. **Null-check ALL template values from daemon APIs** — SMART health, storage stats, and any other daemon data can return null fields when hardware isn't available or monitoring hasn't started. Calling `.toLocaleString()` on null crashes the entire page. Always use null-coalescing (`??`) or explicit null checks in Svelte templates.
+
+### Malcolm Data Pipeline (NEW — Chain 11)
+49. **Malcolm's Logstash routes ALL data into `arkime_sessions3-*`** — there are no separate `zeek-*` or `suricata-*` indices. Zeek and Suricata data are distinguished by `event.provider` and `event.dataset` fields. Never assume a separate index per tool.
+50. **ECS field naming is universal in Malcolm** — all Zeek-native field names (`id.orig_h`, `orig_bytes`, `ts`) are remapped to ECS format (`source.ip`, `client.bytes`, `@timestamp`). Zeek-specific fields are prefixed: `zeek.dns.query`, `zeek.http.user_agent`, `zeek.ssl.ja3`. Suricata fields: `suricata.severity`, `rule.name`, `rule.category`.
+51. **Use `NETWORK_INDEX` env var for index configurability** — hardcoded index names break across Malcolm versions. The `OPENSEARCH_NETWORK_INDEX` env var lets operators override the index pattern without code changes.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.

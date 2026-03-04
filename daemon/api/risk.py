@@ -7,6 +7,7 @@ telemetry data from OpenSearch indices.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
@@ -17,9 +18,11 @@ from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.risk")
 
-# Index patterns
-ZEEK_CONN_INDEX = "zeek-conn-*"
-SURICATA_INDEX = "suricata-*"
+# OLD CODE START — separate per-log-type indices replaced by unified Malcolm index
+# ZEEK_CONN_INDEX = "zeek-conn-*"
+# SURICATA_INDEX = "suricata-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
@@ -118,27 +121,29 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "ts": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
-                    }
+                    },
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "id.orig_h",
+                    "field": "source.ip",
                     "size": limit,
                 },
                 "aggs": {
                     "total_orig_bytes": {
                         "sum": {
                             "script": {
-                                "source": "doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0",
+                                "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
                                 "lang": "painless",
                             }
                         }
@@ -146,19 +151,19 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     "total_resp_bytes": {
                         "sum": {
                             "script": {
-                                "source": "doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0",
+                                "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
                                 "lang": "painless",
                             }
                         }
                     },
-                    "ports_used": {"terms": {"field": "id.resp_p", "size": 50}},
+                    "ports_used": {"terms": {"field": "destination.port", "size": 50}},
                     "external_conns": {
                         "filter": {
                             "bool": {
                                 "must_not": [
-                                    {"term": {"id.resp_h": "10.0.0.0/8"}},
-                                    {"term": {"id.resp_h": "172.16.0.0/12"}},
-                                    {"term": {"id.resp_h": "192.168.0.0/16"}},
+                                    {"term": {"destination.ip": "10.0.0.0/8"}},
+                                    {"term": {"destination.ip": "172.16.0.0/12"}},
+                                    {"term": {"destination.ip": "192.168.0.0/16"}},
                                 ]
                             }
                         }
@@ -170,7 +175,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     }
 
     try:
-        conn_result = client.search(index=ZEEK_CONN_INDEX, body=conn_query)
+        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in risk scores: %s", exc)
         return web.json_response(
@@ -207,22 +212,24 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     "filter": [
                         {
                             "range": {
-                                "timestamp": {
+                                "@timestamp": {
                                     "gte": from_ts,
                                     "lte": to_ts,
                                     "format": "strict_date_optional_time",
                                 }
                             }
                         },
-                        {"terms": {"src_ip": device_ips}},
+                        {"terms": {"source.ip": device_ips}},
+                        {"term": {"event.provider": "suricata"}},
+                        {"term": {"event.dataset": "alert"}},
                     ]
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "src_ip", "size": len(device_ips)}}},
+            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}},
         }
 
         try:
-            alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+            alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
             for ab in (
                 alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
             ):
@@ -284,14 +291,16 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "ts": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
                     },
-                    {"term": {"id.orig_h": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
@@ -299,7 +308,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             "total_orig_bytes": {
                 "sum": {
                     "script": {
-                        "source": "doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0",
+                        "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
                         "lang": "painless",
                     }
                 }
@@ -307,19 +316,19 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             "total_resp_bytes": {
                 "sum": {
                     "script": {
-                        "source": "doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0",
+                        "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
                         "lang": "painless",
                     }
                 }
             },
-            "ports_used": {"terms": {"field": "id.resp_p", "size": 50}},
+            "ports_used": {"terms": {"field": "destination.port", "size": 50}},
             "external_conns": {
                 "filter": {
                     "bool": {
                         "must_not": [
-                            {"term": {"id.resp_h": "10.0.0.0/8"}},
-                            {"term": {"id.resp_h": "172.16.0.0/12"}},
-                            {"term": {"id.resp_h": "192.168.0.0/16"}},
+                            {"term": {"destination.ip": "10.0.0.0/8"}},
+                            {"term": {"destination.ip": "172.16.0.0/12"}},
+                            {"term": {"destination.ip": "192.168.0.0/16"}},
                         ]
                     }
                 }
@@ -328,7 +337,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     }
 
     try:
-        conn_result = client.search(index=ZEEK_CONN_INDEX, body=conn_query)
+        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in single risk score: %s", exc)
         return web.json_response(
@@ -364,23 +373,25 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "ts": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
-                    }
+                    },
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
-        "aggs": {"devices": {"terms": {"field": "id.orig_h", "size": 500}}},
+        "aggs": {"devices": {"terms": {"field": "source.ip", "size": 500}}},
     }
 
     network_avg = 0.0
     network_stddev = 0.0
     try:
-        network_result = client.search(index=ZEEK_CONN_INDEX, body=network_query)
+        network_result = client.search(index=NETWORK_INDEX, body=network_query)
         net_buckets = (
             network_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
         )
@@ -402,21 +413,23 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "timestamp": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
                     },
-                    {"term": {"src_ip": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "suricata"}},
+                    {"term": {"event.dataset": "alert"}},
                 ]
             }
         },
     }
 
     try:
-        alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+        alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
         alert_total = alert_result.get("hits", {}).get("total", {})
         alert_count = (
             alert_total.get("value", 0)
