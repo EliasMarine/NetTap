@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-04
-> Status: 5/7 subsystems production-ready
+> Status: 5/7 subsystems production-ready. OpenSearch security auto-bootstrap now fully automated (bind-mount + init container).
 
 ## Purpose
 
@@ -11,7 +11,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 
 | Subsystem | Status | Verified On | Issues | Notes |
 |-----------|--------|-------------|--------|-------|
-| OpenSearch | OK | 2026-03-03 | -- | Fixed: curlrc credential parsing added (PR #81) |
+| OpenSearch | OK | 2026-03-04 | -- | Fixed: curlrc credential parsing (PR #81). **Auto-bootstrap:** bind-mount roles_mapping.yml + one-shot init container runs securityadmin.sh on every `docker compose up`. No manual bootstrap needed after container recreate. |
 | SMART Monitoring | OK | 2026-03-03 | NVMe data limited | smartctl code 2 (may lack SYS_RAWIO); health OK but temp/wear null on some devices |
 | Bridge Health | OK | 2026-03-04 | -- | Fixed: not_configured state (PR #81), bypass promisc toggle (PR #83), 30s polling loop (PR #83), 8-point readiness check (PR #83) |
 | Bridge Management | OK | 2026-03-04 | -- | NEW: BridgeManager service — create/teardown/readiness via nsenter, host persistence (PR #83) |
@@ -50,6 +50,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-04 | Suricata | Suricata fails: "workers" doesn't exist for UNIX_SOCKET runmode | `SURICATA_RUNMODE: "workers"` conflicts with Malcolm 8.x internal runmode | Removed env var — Malcolm auto-selects af-packet | NET-93 | PR #89 |
 | 2026-03-04 | Bridge Health | Netfilter check fails when br_netfilter module not loaded | nsenter cat returns error when proc file absent (module not loaded = good) | Treat missing proc file as netfilter disabled (PASS) | NET-93 | PR #89 |
 | 2026-03-04 | Dashboard Data | All dashboard queries return zero data | Daemon queries used Zeek-native index/field names; Malcolm uses unified arkime_sessions3-* with ECS fields | Remapped all 7 daemon files: index → NETWORK_INDEX, fields → ECS, added event.provider/dataset filters | NET-95 | infra/opensearch-field-mapping |
+| 2026-03-04 | OpenSearch | Security auth breaks after container recreate (Chain 11) | `--force-recreate` resets roles_mapping.yml to Malcolm's empty default; securityadmin.sh not re-run | Bind-mount roles_mapping.yml from git + nettap-opensearch-init one-shot container auto-runs securityadmin.sh. Logstash/daemon depend on init completing. | -- | infra/opensearch-field-mapping |
 
 ## Reliability Lessons Learned
 
@@ -69,6 +70,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 14. **Don't override Malcolm's internal runmode selection.** Setting `SURICATA_RUNMODE` conflicts with Malcolm's orchestration in Suricata 8.x. Let `SURICATA_LIVE_CAPTURE=true` handle mode selection automatically.
 15. **Missing kernel module proc files ≠ feature enabled.** When `br_netfilter` isn't loaded, `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist. This means no iptables interference — the desired state, not a failure.
 16. **Malcolm unifies all data into arkime_sessions3-*.** There are no separate zeek-*/suricata-* indices. Use `event.provider` + `event.dataset` to filter by data source. All field names use ECS format, not Zeek-native. Always verify field names against a real document from the N100 before writing queries.
+17. **Use bind-mount + one-shot init container for config that must survive container recreate.** OpenSearch's roles_mapping.yml reverted on every `--force-recreate` because it lived inside the container filesystem. Fix: bind-mount the file from git (always correct) and add a one-shot init service that pushes it to the security index. Downstream services use `service_completed_successfully` dependency to ensure bootstrap completes before they start. This pattern eliminates all manual bootstrap steps.
 
 ## Verification Checklist
 
@@ -97,3 +99,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | ECS field mapping (pytest) | Dev macOS | PASS | 1041/1041 passed — all daemon queries updated to ECS fields |
 | 2026-03-04 | ECS field mapping (vitest) | Dev macOS | PASS | Web tests pass — no web changes needed |
 | 2026-03-04 | ECS field mapping (svelte-check) | Dev macOS | PASS | No type errors |
+| 2026-03-04 | OpenSearch auto-bootstrap (BATS) | Dev macOS | **PASS (36/37)** | 7 new tests for opensearch-init service all pass. 1 pre-existing failure on test 10 (unrelated to this change). Tests cover: one-shot config, depends_on, bind-mount, script mount, restart policy, healthcheck absence, logstash dependency chain. |

@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 30 issues tracked. 30 RESOLVED. Latest: NET-95 OpenSearch field mapping — daemon queries remapped from Zeek-native to ECS (Malcolm's actual field names). 17/18 containers healthy on N100.
+> **Status:** 31 issues tracked. 31 RESOLVED. Latest: Chain 11 permanently fixed — OpenSearch security auto-bootstrap via bind-mount + one-shot init container. No more manual `securityadmin.sh` after container recreate. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 

@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: NET-95 OpenSearch ECS field mapping — all daemon queries remapped to Malcolm's actual index/field names. Test counts up: pytest 1041 (was 1036), vitest 683.
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** OpenSearch security auto-bootstrap permanently fixed (bind-mount + init container). BATS compose validation: 36/37 pass (7 new tests for init service). Test counts: pytest 1041, vitest 683, BATS 37.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -139,6 +139,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-04 | Dev (macOS) | pytest | ALL PASSED | 1041 | 0 | 0 | Claude | After NET-95 ECS field mapping: 1041 tests (up from 1036). All daemon queries remapped to arkime_sessions3-* + ECS fields. |
 | 2026-03-04 | Dev (macOS) | vitest | ALL PASSED | 683 | 0 | 0 | Claude | No web changes needed for ECS mapping — frontend uses daemon API. |
 | 2026-03-04 | Dev (macOS) | svelte-check | ALL PASSED | 620 | 0 | 0 | Claude | No type errors. |
+| 2026-03-04 | Dev (macOS) | BATS compose validation | **36/37 PASS** | 36 | 1 | 0 | Claude | OpenSearch auto-bootstrap: 7 new tests all pass (opensearch-init one-shot service, bind-mount, depends_on chain, restart policy, script mount, healthcheck absence, logstash dependency). 1 pre-existing failure on test 10 (unrelated). Total BATS tests: 37. |
 
 ---
 
