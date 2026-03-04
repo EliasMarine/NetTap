@@ -167,3 +167,87 @@ export async function getBypassStatus(): Promise<BypassStatus> {
 
 	return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Bridge management types (Go Live workflow)
+// ---------------------------------------------------------------------------
+
+export interface BridgeReadinessCheck {
+	name: string;
+	passed: boolean;
+	detail: string;
+}
+
+export interface BridgeReadiness {
+	ready: boolean;
+	checks: BridgeReadinessCheck[];
+	message: string;
+}
+
+export interface BridgeCreateResult {
+	created: boolean;
+	bridge_name: string;
+	wan: string;
+	lan: string;
+	state: string;
+	errors: string[];
+	warnings: string[];
+	persistence_files: string[];
+}
+
+export interface BridgeTeardownResult {
+	torn_down: boolean;
+	errors: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Bridge management fetch helpers
+// ---------------------------------------------------------------------------
+
+export async function createBridge(wan: string, lan: string): Promise<BridgeCreateResult> {
+	const res = await fetch('/api/bridge/create', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ wan_interface: wan, lan_interface: lan }),
+	});
+
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		return {
+			created: false,
+			bridge_name: '',
+			wan,
+			lan,
+			state: 'error',
+			errors: [data.error || `HTTP ${res.status}`],
+			warnings: [],
+			persistence_files: [],
+		};
+	}
+
+	return res.json();
+}
+
+export async function getBridgeReadiness(): Promise<BridgeReadiness> {
+	const res = await fetch('/api/bridge/readiness');
+
+	if (!res.ok) {
+		return {
+			ready: false,
+			checks: [],
+			message: 'Unable to reach readiness endpoint',
+		};
+	}
+
+	return res.json();
+}
+
+export async function teardownBridge(): Promise<BridgeTeardownResult> {
+	const res = await fetch('/api/bridge/teardown', { method: 'POST' });
+
+	if (!res.ok) {
+		return { torn_down: false, errors: ['Failed to reach teardown endpoint'] };
+	}
+
+	return res.json();
+}

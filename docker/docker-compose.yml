@@ -576,6 +576,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=50M
+      - /var/run:size=1M
     volumes:
       - ../config:/opt/nettap/config:ro
       # NVMe SMART queries send admin commands that require write access to
@@ -593,6 +594,10 @@ services:
       - /sys:/host/sys:ro
       # Writable overlay for igc NIC LED blink (sysfs timer trigger writes)
       - /sys/class/leds:/host/sys/class/leds
+      # Bridge persistence — daemon writes config to host filesystem
+      - /etc/netplan:/host/etc/netplan
+      - /etc/systemd/system:/host/etc/systemd/system
+      - /etc/sysctl.d:/host/etc/sysctl.d
     environment:
       <<: *opensearch-env
       RETENTION_HOT: "${RETENTION_HOT:-90}"
@@ -602,6 +607,10 @@ services:
       PCAP_DIR: "/opt/nettap/pcap"
       HOST_SYS_NET: "/host/sys/class/net"
       HOST_SYS_LEDS: "/host/sys/class/leds"
+      HOST_NETPLAN_DIR: "/host/etc/netplan"
+      HOST_SYSTEMD_DIR: "/host/etc/systemd/system"
+      HOST_SYSCTL_DIR: "/host/etc/sysctl.d"
+      BRIDGE_CHECK_INTERVAL: "${BRIDGE_CHECK_INTERVAL:-30}"
     # Daemon port is internal-only — only the web container needs it
     expose:
       - "8880"

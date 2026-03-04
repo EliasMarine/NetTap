@@ -289,6 +289,10 @@
 			}
 			bridgeConfig = await res.json();
 			bridgeVerified = bridgeConfig?.ready ?? false;
+			if (bridgeVerified && typeof window !== 'undefined') {
+				localStorage.setItem('nettap_wan_iface', selectedWan);
+				localStorage.setItem('nettap_lan_iface', selectedLan);
+			}
 		} catch (err) {
 			bridgeError = err instanceof Error ? err.message : 'Failed to verify bridge configuration';
 		}
@@ -349,7 +353,7 @@
 		if (form?.success) {
 			// Account created — redirect to dashboard after a brief delay
 			setTimeout(() => {
-				goto('/login');
+				goto('/go-live');
 			}, 1500);
 		}
 		if (form?.error) {

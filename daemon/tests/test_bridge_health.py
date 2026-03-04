@@ -580,8 +580,15 @@ class TestBypassMode(unittest.TestCase):
     def test_trigger_bypass(self):
         """trigger_bypass() should activate bypass and return confirmation."""
         monitor = BridgeHealthMonitor()
-        # Mock file write to avoid filesystem side effects
+        # Mock file write and nsenter to avoid filesystem/system side effects
         monitor._write_bypass_file = lambda active: None
+        nsenter_calls: list[tuple] = []
+
+        async def mock_nsenter(*args):
+            nsenter_calls.append(args)
+            return (0, "", "")
+
+        monitor._run_nsenter = mock_nsenter
 
         result = asyncio.run(monitor.trigger_bypass())
         self.assertTrue(result["bypass_active"])
@@ -589,17 +596,34 @@ class TestBypassMode(unittest.TestCase):
         self.assertIn("message", result)
         self.assertTrue(monitor._bypass_active)
 
+        # Should have called nsenter to disable promisc on both NICs
+        nsenter_cmds = [" ".join(a) for a in nsenter_calls]
+        self.assertTrue(any("promisc off" in c and "eth0" in c for c in nsenter_cmds))
+        self.assertTrue(any("promisc off" in c and "eth1" in c for c in nsenter_cmds))
+
     def test_disable_bypass(self):
         """disable_bypass() should deactivate bypass and return confirmation."""
         monitor = BridgeHealthMonitor()
         monitor._bypass_active = True
         monitor._write_bypass_file = lambda active: None
+        nsenter_calls: list[tuple] = []
+
+        async def mock_nsenter(*args):
+            nsenter_calls.append(args)
+            return (0, "", "")
+
+        monitor._run_nsenter = mock_nsenter
 
         result = asyncio.run(monitor.disable_bypass())
         self.assertFalse(result["bypass_active"])
         self.assertIn("deactivated_at", result)
         self.assertIn("message", result)
         self.assertFalse(monitor._bypass_active)
+
+        # Should have called nsenter to enable promisc on both NICs
+        nsenter_cmds = [" ".join(a) for a in nsenter_calls]
+        self.assertTrue(any("promisc on" in c and "eth0" in c for c in nsenter_cmds))
+        self.assertTrue(any("promisc on" in c and "eth1" in c for c in nsenter_cmds))
 
     def test_bypass_affects_health_status(self):
         """Health check during bypass should report 'bypass' status."""
@@ -627,6 +651,34 @@ class TestBypassMode(unittest.TestCase):
         result = asyncio.run(monitor.check_health())
         self.assertEqual(result["health_status"], "bypass")
         self.assertTrue(result["bypass_active"])
+
+
+class TestBypassStateFilePath(unittest.TestCase):
+    """Tests for bypass state file location."""
+
+    def test_bypass_file_uses_tmp(self):
+        """Bypass state file should be at /tmp, not /var/run."""
+        from services.bridge_health import _BYPASS_STATE_FILE
+        self.assertTrue(_BYPASS_STATE_FILE.startswith("/tmp/"))
+        self.assertNotIn("/var/run/", _BYPASS_STATE_FILE)
+
+
+class TestRunNsenter(unittest.TestCase):
+    """Tests for _run_nsenter() helper on BridgeHealthMonitor."""
+
+    def test_nsenter_method_exists(self):
+        """BridgeHealthMonitor should have _run_nsenter method."""
+        monitor = BridgeHealthMonitor()
+        self.assertTrue(hasattr(monitor, "_run_nsenter"))
+        self.assertTrue(asyncio.iscoroutinefunction(monitor._run_nsenter))
+
+    def test_nsenter_returns_tuple(self):
+        """_run_nsenter should return (rc, stdout, stderr) tuple."""
+        monitor = BridgeHealthMonitor()
+        rc, stdout, stderr = asyncio.run(monitor._run_nsenter("echo", "test"))
+        self.assertIsInstance(rc, int)
+        self.assertIsInstance(stdout, str)
+        self.assertIsInstance(stderr, str)
 
 
 class TestCheckWatchdog(unittest.TestCase):
