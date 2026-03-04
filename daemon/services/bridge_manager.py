@@ -413,9 +413,13 @@ class BridgeManager:
             "detail": f"STP {'disabled' if stp_disabled else 'enabled (should be disabled for inline tap)'}",
         })
 
-        # 8. Netfilter disabled
-        nf_val = self._read_sysfs("/proc/sys/net/bridge/bridge-nf-call-iptables")
-        nf_disabled = nf_val == "0"
+        # 8. Netfilter disabled — must read from HOST namespace via nsenter.
+        # /proc/sys/net/bridge/bridge-nf-call-iptables inside the container
+        # reflects the container's own namespace (always 1), not the host's.
+        rc, nf_out, _ = await self._run_nsenter(
+            "cat", "/proc/sys/net/bridge/bridge-nf-call-iptables"
+        )
+        nf_disabled = nf_out.strip() == "0" if rc == 0 else False
         checks.append({
             "name": "netfilter_disabled",
             "passed": nf_disabled,
