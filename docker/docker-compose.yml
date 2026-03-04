@@ -583,16 +583,17 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
       start_period: 60s
 
-  # KNOWN ISSUE: nginx-proxy is unhealthy because Malcolm's baked-in nginx.conf
-  # references upstream "arkime:8005", but our arkime-live service uses host
-  # networking and is invisible to Docker DNS. This is not critical — NetTap
-  # uses nettap-nginx (port 443) as the edge proxy, not nginx-proxy.
-  # Fix: add a dedicated Arkime viewer service in a future phase.
   nginx-proxy:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
     restart: unless-stopped
     <<: *logging-defaults
+    # Malcolm's baked-in nginx.conf references upstream "arkime:8005".
+    # We don't run a separate Arkime viewer container, so nginx crashes on
+    # DNS resolution at config load. extra_hosts gives it a dummy entry —
+    # nginx starts cleanly, and Arkime routes just get connection refused.
+    extra_hosts:
+      - "arkime:127.0.0.1"
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
