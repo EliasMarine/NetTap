@@ -5,10 +5,11 @@ import { verifyToken, hasUsers } from '$lib/server/auth.js';
 /** Paths that do not require authentication.
  * /api/setup/* must be public because the setup wizard (which is public)
  * makes fetch() calls to these endpoints for NIC discovery, bridge config,
- * and storage status. Without this, the auth middleware redirects the API
- * calls to /setup (HTML), which breaks JSON parsing in the browser.
+ * and storage status. /api/bridge/* and /go-live are public because the
+ * Go Live page is part of the initial deployment flow (wizard → go-live)
+ * and needs bridge readiness/health data before the user has logged in.
  */
-const PUBLIC_PATHS = ['/login', '/setup', '/api/auth', '/api/setup'];
+const PUBLIC_PATHS = ['/login', '/setup', '/api/auth', '/api/setup', '/api/bridge', '/go-live'];
 
 function isPublicPath(pathname: string): boolean {
 	return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
