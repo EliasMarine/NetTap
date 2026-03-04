@@ -28,8 +28,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	// --- First-run redirect: if no users exist, force setup ---
-	// Also skip redirect for /api/setup/* — the setup wizard's own API calls
-	if (!pathname.startsWith('/setup') && !pathname.startsWith('/api/auth') && !pathname.startsWith('/api/setup')) {
+	// Skip for public paths (setup wizard, bridge API, go-live) and health endpoint
+	if (!isPublicPath(pathname) && pathname !== '/api/health') {
 		try {
 			if (!hasUsers()) {
 				throw redirect(302, '/setup');
