@@ -495,6 +495,58 @@ services:
     volumes:
       - pcap-data:/data/pcap
 
+  # Arkime viewer — serves the web UI on port 8005 for browsing captured sessions.
+  # Distinct from arkime-live (capture, host network). The viewer runs on the
+  # Docker bridge network so nginx-proxy can reach it at arkime:8005.
+  arkime:
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    container_name: nettap-arkime
+    restart: unless-stopped
+    hostname: arkime
+    <<: *logging-defaults
+    labels:
+      com.nettap.service: "arkime"
+      com.nettap.component: "capture"
+      com.nettap.description: "Arkime session viewer and PCAP analysis web UI"
+    networks:
+      - default
+    environment:
+      <<: [*process-env, *opensearch-env]
+      ARKIME_SSL: "true"
+      ARKIME_VIEWER_PORT: "8005"
+      ARKIME_ROTATE_INDEX: "daily"
+      ARKIME_SPI_DATA_MAX_INDICES: "7"
+      ARKIME_QUERY_ALL_INDICES: "false"
+      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      ARKIME_FREESPACEG: "10%"
+      ARKIME_DEBUG_LEVEL: "0"
+      MANAGE_PCAP_FILES: "false"
+      MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
+      # Offline/viewer mode — processes rotated PCAPs, exposes web UI
+      ARKIME_AUTO_ANALYZE_PCAP_FILES: "true"
+      ARKIME_AUTO_ANALYZE_PCAP_THREADS: "1"
+      ARKIME_ROTATED_PCAP: "true"
+      # upload-common.env — required by Malcolm supervisord config
+      AUTO_TAG: "${AUTO_TAG:-true}"
+      PCAP_NODE_NAME: "${PCAP_NODE_NAME:-malcolm}"
+      PCAP_PIPELINE_VERBOSITY: ""
+      PCAP_PIPELINE_IGNORE_PREEXISTING: "false"
+      PCAP_PIPELINE_POLLING: "false"
+      PCAP_PIPELINE_POLLING_ASSUME_CLOSED_SEC: "10"
+      PCAP_MONITOR_HOST: "pcap-monitor"
+      EXTRA_TAGS: ""
+    volumes:
+      - pcap-data:/data/pcap
+      - ./curlrc:/var/local/curlrc:ro
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "curl -sf https://localhost:8005 -k || exit 1"]
+      interval: 90s
+      start_period: 210s
+
   # ========================================================================
   # INFRASTRUCTURE
   # ========================================================================
@@ -588,12 +640,6 @@ services:
     container_name: nettap-nginx-proxy
     restart: unless-stopped
     <<: *logging-defaults
-    # Malcolm's baked-in nginx.conf references upstream "arkime:8005".
-    # We don't run a separate Arkime viewer container, so nginx crashes on
-    # DNS resolution at config load. extra_hosts gives it a dummy entry —
-    # nginx starts cleanly, and Arkime routes just get connection refused.
-    extra_hosts:
-      - "arkime:127.0.0.1"
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
@@ -630,6 +676,7 @@ services:
       - default
     depends_on:
       - api
+      - arkime
       - dashboards
     healthcheck:
       <<: *healthcheck-defaults
