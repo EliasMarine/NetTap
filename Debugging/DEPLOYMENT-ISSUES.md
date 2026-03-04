@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 37 issues tracked. 35 RESOLVED. 1 VERIFIED (opensearch-init bootstrap — deployed to N100, security + template working). 1 FIXING (logstash index naming — `format_index_string.rb` @prefix nil). Zeek + Suricata capturing traffic. All 7 logstash pipelines running. Index naming fix deployed (env vars added to compose).
+> **Status:** 37 issues tracked. 37 RESOLVED. **Full data pipeline VERIFIED on N100** — Zeek → Filebeat → Logstash → `arkime_sessions3-260304` → OpenSearch. 7,508+ docs indexed and growing. opensearch-init bootstrap (Chain 15) + index naming (Chain 16) both working.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1229,7 +1229,7 @@ docker compose up
 | **Linear** | NET-94 (updated) |
 | **Branch** | `infra/opensearch-bootstrap` |
 | **PR** | #90 |
-| **Status** | Fix deployed (commit `eecbcc8`) — pending N100 verification |
+| **Status** | **VERIFIED on N100** — `arkime_sessions3-260304` index appeared with 7,508+ docs, growing steadily |
 | **Severity** | Critical |
 | **Date** | 2026-03-04 |
 

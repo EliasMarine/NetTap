@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-04
-> Status: 7/9 subsystems production-ready. opensearch-init bootstrap VERIFIED on N100 (security + template working). Logstash pipelines running (7/7) but index naming fix pending deploy (Chain 16 — missing MALCOLM_NETWORK_INDEX_PATTERN env var). Fix committed (`eecbcc8`).
+> Status: 8/9 subsystems production-ready. **Full data pipeline VERIFIED on N100** — Zeek → Filebeat → Logstash → `arkime_sessions3-260304` → OpenSearch. opensearch-init bootstrap + index naming both working. 7,508+ docs indexed and growing.
 
 ## Purpose
 
@@ -22,7 +22,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Web Auth | OK | 2026-03-04 | -- | Fixed: bridge API + /go-live added to public paths (PR #85) |
 | Zeek Capture | OK | 2026-03-04 | -- | Fixed: entrypoint wrapper for fresh volume permissions, `user: "root"` in compose (PR #89 + develop commit) |
 | Suricata Capture | OK | 2026-03-04 | -- | Fixed: removed SURICATA_RUNMODE conflict, entrypoint wrapper for /var/log/suricata/live (PR #89 + develop commit) |
-| Logstash Pipeline | Fixing | 2026-03-04 | Index naming (Chain 16) | opensearch-init bootstrap VERIFIED on N100 (Chain 15). All 7 pipelines running, 60k+ events processed. BUT: missing `MALCOLM_NETWORK_INDEX_PATTERN` env var → `format_index_string.rb` @prefix nil → events go to literal `%{[@metadata][malcolm_opensearch_index]}`. Fix committed (`eecbcc8`) — pending redeploy. |
+| Logstash Pipeline | OK | 2026-03-04 | -- | **VERIFIED:** opensearch-init bootstrap (Chain 15) + index naming fix (Chain 16). All 7 pipelines running. Events flowing to `arkime_sessions3-260304` (7,508+ docs, growing). Full pipeline: Zeek → Filebeat → Logstash → OpenSearch. |
 | Storage Daemon | OK | 2026-03-03 | -- | Disk monitoring and retention working |
 
 ### Status Legend
@@ -104,7 +104,7 @@ After deploying reliability fixes to N100 hardware:
 - [x] Bridge health auto-discovers interface names from br0 brif sysfs (verified 2026-03-04, PR #88)
 - [x] Zeek capture running — producing logs in /zeek/live/logs/ (verified 2026-03-04)
 - [x] Suricata capture running — af-packet on br0 with 12 worker threads (verified 2026-03-04)
-- [ ] Logstash healthy and processing logs → arkime_sessions3-*/malcolm_beats_* indices in OpenSearch (opensearch-init VERIFIED, index naming fix `eecbcc8` pending deploy)
+- [x] Logstash healthy and processing logs → `arkime_sessions3-260304` index in OpenSearch (verified 2026-03-04, PR #90: opensearch-init + index naming fix)
 - [ ] Dashboard shows real packet data from capture pipeline
 
 ## Test Results
@@ -122,3 +122,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | Bridge readiness all-pass | N100 production | PASS | All 8 readiness checks PASS: bridge exists, UP, WAN carrier, LAN carrier, promisc on both, STP off, forward_delay 0, netfilter disabled (br_netfilter not loaded). |
 | 2026-03-04 | opensearch-init bootstrap deploy | N100 production | PASS (3 iterations) | **Iteration 1:** securityadmin.sh path not found (relative path bug). **Iteration 2:** `-cd` flag overwrote internal_users.yml → broke ALL auth → required manual recovery. **Iteration 3:** `-f`/`-t` flags → security pushed successfully, auth verified, malcolm_template created. |
 | 2026-03-04 | Logstash pipeline startup | N100 production | **PARTIAL** | All 7 pipelines started: malcolm-input, malcolm-output, malcolm-zeek, malcolm-suricata, malcolm-enrichment, malcolm-beats, malcolm-filescan. 60,696+ events processed. BUT: format_index_string.rb crashes — @prefix nil, all events to literal `%{[@metadata][malcolm_opensearch_index]}`. Root cause: missing MALCOLM_NETWORK_INDEX_PATTERN env var. Fix committed (`eecbcc8`). |
+| 2026-03-04 | Logstash index naming fix | N100 production | **PASS** | After adding 4 Malcolm index env vars to opensearch-env anchor and recreating logstash: `arkime_sessions3-260304` index appeared with 7,508+ docs, growing steadily. Full pipeline verified end-to-end. |
