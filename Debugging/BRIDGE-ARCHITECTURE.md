@@ -395,7 +395,7 @@ If we mount only `/sys/class/net`, the symlink target is dangling inside the con
 1. **Bridge state** — reads `/host/sys/class/net/br0/operstate` → "up" | "down" | "unknown" | "not_configured"
 2. **NIC carrier** — reads `/host/sys/class/net/eth0/carrier` and `/host/sys/class/net/eth1/carrier` → 0 | 1
 3. **Packet counters** — reads `/host/sys/class/net/br0/statistics/{rx_bytes, tx_bytes, rx_packets, tx_packets}`
-4. **Bypass state** — checks if `/var/run/nettap-bypass-active` exists
+4. **Bypass state** — checks if `/tmp/nettap-bypass-active` exists
 5. **Watchdog status** — runs `systemctl is-active nettap-watchdog` (via nsenter or direct)
 
 **Health Status Logic:**
@@ -424,11 +424,14 @@ def _determine_health_status(bridge_state, wan_link, lan_link, bypass_active):
 | `/api/bridge/health` | GET | Current health snapshot |
 | `/api/bridge/history?limit=100` | GET | Historical data |
 | `/api/bridge/stats` | GET | Aggregated statistics |
-| `/api/bridge/bypass/enable` | POST | Activate bypass |
-| `/api/bridge/bypass/disable` | POST | Deactivate bypass |
+| `/api/bridge/bypass/enable` | POST | Activate bypass (toggles promisc off via nsenter) |
+| `/api/bridge/bypass/disable` | POST | Deactivate bypass (toggles promisc on via nsenter) |
 | `/api/bridge/bypass/status` | GET | Current bypass state |
+| `/api/setup/bridge` | POST | Create bridge with WAN/LAN interfaces (BridgeManager) |
+| `/api/bridge/teardown` | POST | Remove bridge and release interfaces (BridgeManager) |
+| `/api/bridge/readiness` | GET | 8-point readiness check with human-readable messages |
 
-**Refresh Rate:** 30s intervals (2880 history entries = 24 hours of monitoring)
+**Refresh Rate:** 30s background polling via `bridge_loop()` in `daemon/main.py` (configurable via `BRIDGE_CHECK_INTERVAL` env var, default 30s). Maintains 2880 history entries = 24 hours of monitoring.
 
 ### Internet Health Monitor
 
@@ -502,7 +505,7 @@ ip link set eth0 promisc off
 ip link set eth1 promisc off
 
 # Step 4: Write state file (signal to daemon and UI)
-echo "bypass active" > /var/run/nettap-bypass-active
+echo "bypass active" > /tmp/nettap-bypass-active
 ```
 
 **Disable Bypass:**
@@ -516,20 +519,21 @@ ip link set eth1 promisc on
 docker compose -f docker/docker-compose.yml start zeek-live suricata-live arkime-live pcap-capture
 
 # Step 3: Remove state file
-rm -f /var/run/nettap-bypass-active
+rm -f /tmp/nettap-bypass-active
 ```
 
 ### State Persistence
 
-**State file:** `/var/run/nettap-bypass-active`
+**State file:** `/tmp/nettap-bypass-active`
 
 - Created when bypass is enabled
 - Removed when bypass is disabled
 - Checked by daemon on every health check
 - Consumed by UI to show bypass badge
+- **Daemon bypass** also toggles promiscuous mode via `nsenter -t 1 -n -- ip link set <iface> promisc off/on`
 
 **Limitations:**
-- `/var/run/` is ephemeral (lost on reboot)
+- `/tmp/` is a tmpfs (lost on container restart — intentional: reboot should resume monitoring)
 - If host crashes in bypass mode, bypass is exited automatically
 - No persistent bypass scheduling (can add systemd timer in future)
 
@@ -636,6 +640,12 @@ Verifies:
 | **NIC detection fails if /sys not fully mounted** | Bridge won't be created | docker-compose mounts full `/sys` | MITIGATED |
 | **Systemd race condition (LP#1874022)** | Bridge DOWN after reboot despite netplan | nettap-bridge.service forces UP | MITIGATED |
 | **NetworkManager interferes with bridge** | Bridge config overwritten | Script tells user to disable NM | DOCUMENTED |
+| **Bypass state file on read-only path** | `/var/run` write failed in container | Moved to `/tmp` (writable tmpfs) | **FIXED** (PR #83) |
+| **Bypass didn't toggle promisc** | Capture continued despite bypass | Added nsenter promisc off/on in `trigger_bypass()`/`disable_bypass()` | **FIXED** (PR #83) |
+| **No bridge health polling loop** | Health history was demand-driven only | Added `bridge_loop()` in `main.py` (30s interval) | **FIXED** (PR #83) |
+| **No bridge creation from daemon** | Wizard step 3 only generated mock preview | Added `BridgeManager.create_bridge()` + `/api/setup/bridge` endpoint | **FIXED** (PR #83) |
+| **No readiness check** | User had no guidance on cable migration | Added 8-point readiness check at `/api/bridge/readiness` | **FIXED** (PR #83) |
+| **No Go Live page** | Wizard redirected to `/login` with no guidance | Added `/go-live` page with 3-phase workflow | **FIXED** (PR #83) |
 
 ### Design Gaps
 
@@ -650,7 +660,7 @@ Verifies:
    - **Fix:** Store MAC address mapping and validate at boot
 
 3. **Bypass state ephemeral**
-   - Lost on reboot
+   - Lost on container restart (intentional — reboot should resume monitoring)
    - Can't schedule bypass windows across reboots
    - **Fix:** Add optional persistent bypass schedule in future
 
@@ -664,11 +674,16 @@ Verifies:
    - May report false negatives if systemctl unavailable
    - **Graceful degradation:** Returns false, issue added to health report
 
+6. **Bridge member NIC discovery order-dependent**
+   - Uses sorted `brif/` directory listing — assumes first = WAN, second = LAN (alphabetical)
+   - Falls back to `WAN_IFACE`/`LAN_IFACE` env vars
+   - **Mitigation:** Env var fallback covers most cases; document in deployment guide
+
 ### Architectural Limitations
 
 1. **Docker-isolated daemon can't directly interact with host network**
    - All sysfs reads must go through mounted volumes
-   - All systemctl calls must use nsenter
+   - All bridge commands use `nsenter -t 1 -n --` to enter host namespace
    - **Trade-off:** Security (container isolation) vs. simplicity
 
 2. **Capture containers isolated from storage daemon**
@@ -685,6 +700,11 @@ Verifies:
    - Health data is independent of indexed logs
    - Can't correlate "bridge was down" with "no packets indexed"
    - **Future improvement:** Index health check results into OpenSearch
+
+5. **Persistence requires host volume mounts**
+   - Bridge creation writes netplan/systemd/sysctl to mounted host dirs
+   - If mounts are missing (`HOST_NETPLAN_DIR` etc.), bridge works in memory but won't survive reboot
+   - Docker-compose configures these mounts; standalone daemon installs need manual setup
 
 ---
 
@@ -736,13 +756,13 @@ Verifies:
 
 | File | Purpose | Who Writes | Who Reads |
 |------|---------|-----------|-----------|
-| `/etc/netplan/10-nettap-bridge.yaml` | Bridge config at boot | setup-bridge.sh --persist | systemd-networkd |
-| `/etc/systemd/system/nettap-bridge.service` | Force bridge UP (workaround) | setup-bridge.sh --persist | systemd |
-| `/etc/sysctl.d/99-nettap-bridge.conf` | Netfilter disabling | setup-bridge.sh --persist | sysctl --system |
+| `/etc/netplan/10-nettap-bridge.yaml` | Bridge config at boot | setup-bridge.sh --persist OR BridgeManager | systemd-networkd |
+| `/etc/systemd/system/nettap-bridge.service` | Force bridge UP (workaround) | setup-bridge.sh --persist OR BridgeManager | systemd |
+| `/etc/sysctl.d/99-nettap-bridge.conf` | Netfilter disabling | setup-bridge.sh --persist OR BridgeManager | sysctl --system |
 | `/etc/sysctl.d/99-nettap-bridge-hardening.conf` | Resilience settings | harden-bridge.sh | sysctl --system |
 | `/etc/modules-load.d/nettap-br-netfilter.conf` | Load br_netfilter at boot | harden-bridge.sh | systemd |
 | `/etc/NetworkManager/conf.d/99-nettap-unmanaged.conf` | Tell NM to leave bridge alone | setup-bridge.sh --persist | NetworkManager |
-| `/var/run/nettap-bypass-active` | Bypass state (ephemeral) | bypass-mode.sh | daemon, UI |
+| `/tmp/nettap-bypass-active` | Bypass state (ephemeral tmpfs) | daemon bridge_health.py | daemon, UI |
 
 ---
 
@@ -874,23 +894,29 @@ sudo scripts/bridge/harden-bridge.sh --check
 ## 13. References & Related Code
 
 **Bridge Setup:**
-- `/scripts/bridge/setup-bridge.sh` — Main setup with persistence and validation
+- `/scripts/bridge/setup-bridge.sh` — Main setup with persistence and validation (host script)
 - `/scripts/bridge/harden-bridge.sh` — Kernel hardening for resilience
-- `/scripts/bridge/bypass-mode.sh` — Bypass mode control
+- `/scripts/bridge/bypass-mode.sh` — Bypass mode control (host script)
 
-**Health Monitoring:**
-- `/daemon/services/bridge_health.py` — Bridge health monitor class
-- `/daemon/api/bridge.py` — Bridge API routes
+**Bridge Management (Daemon):**
+- `/daemon/services/bridge_manager.py` — Bridge create/teardown/readiness via nsenter (from Docker)
+- `/daemon/services/bridge_health.py` — Bridge health monitor + bypass toggle with promisc
+- `/daemon/api/bridge.py` — Bridge API routes (9 endpoints)
 - `/daemon/api/nic_discovery.py` — NIC discovery for setup wizard
+- `/daemon/main.py` — `bridge_loop()` for 30s background health polling
 
 **Docker Integration:**
-- `/docker/docker-compose.yml` — All services, includes bridge references
+- `/docker/docker-compose.yml` — All services, host volume mounts for bridge persistence
 - `/config/zeek/nettap.zeek` — Zeek custom config
 - `/config/suricata/nettap.yaml` — Suricata custom config
 
 **Web UI:**
+- `/web/src/routes/go-live/+page.svelte` — Three-phase Go Live workflow page
 - `/web/src/lib/components/BridgeStatus.svelte` — Bridge status component
-- `/web/src/lib/api/bridge.ts` — Bridge API client
+- `/web/src/lib/api/bridge.ts` — Bridge API client (health, readiness, create, teardown, bypass)
+- `/web/src/routes/api/bridge/create/+server.ts` — Proxy route for bridge creation
+- `/web/src/routes/api/bridge/readiness/+server.ts` — Proxy route for readiness check
+- `/web/src/routes/api/bridge/teardown/+server.ts` — Proxy route for bridge teardown
 
 **Tracking:**
 - `/Debugging/DEPLOYMENT-ISSUES.md` — Related deployment issues
