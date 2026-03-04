@@ -698,7 +698,10 @@ services:
       - dashboards
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -skf https://localhost:443 || exit 1"]
+      # NOTE: nginx requires basic auth, so unauthenticated requests return 401.
+      # 401 = nginx running + TLS working + auth enforced = healthy.
+      # Using -o /dev/null -w '%{http_code}' instead of -f to accept 401 as success.
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://localhost:443 | grep -qE '^(200|401|302)' || exit 1"]
       start_period: 120s
 
   # ========================================================================
