@@ -240,6 +240,12 @@ img {
   border-color: var(--danger);
 }
 
+.badge-muted {
+  background-color: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-muted);
+}
+
 .badge-accent {
   background-color: var(--accent-muted);
   color: var(--accent);

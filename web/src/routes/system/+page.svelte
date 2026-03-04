@@ -14,8 +14,8 @@
 	let cyberchefStatus = $state<CyberChefStatus | null>(null);
 	let loading = $state(true);
 
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
+	function formatBytes(bytes: number | null | undefined): string {
+		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(1024));
 		const val = bytes / Math.pow(1024, i);
@@ -164,7 +164,7 @@
 					<div class="info-row">
 						<span class="info-label">Indices</span>
 						<span class="info-value mono">
-							{storageStatus?.index_summary?.count ?? '--'}
+							{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
 						</span>
 					</div>
 				</div>
@@ -315,12 +315,14 @@
 								<span class="service-name">TShark</span>
 								{#if tsharkStatus?.version}
 									<span class="service-version mono">{tsharkStatus.version}</span>
+								{:else if tsharkStatus && !tsharkStatus.available}
+									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
 						{#if tsharkStatus}
-							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-danger'}>
-								{tsharkStatus.available ? 'Available' : 'Unavailable'}
+							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
+								{tsharkStatus.available ? 'Available' : 'Not Deployed'}
 							</span>
 						{:else}
 							<span class="badge">Checking...</span>
@@ -339,12 +341,14 @@
 								<span class="service-name">CyberChef</span>
 								{#if cyberchefStatus?.version}
 									<span class="service-version mono">{cyberchefStatus.version}</span>
+								{:else if cyberchefStatus && !cyberchefStatus.available}
+									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
 						{#if cyberchefStatus}
-							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-danger'}>
-								{cyberchefStatus.available ? 'Available' : 'Unavailable'}
+							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
+								{cyberchefStatus.available ? 'Available' : 'Not Deployed'}
 							</span>
 						{:else}
 							<span class="badge">Checking...</span>

@@ -506,7 +506,7 @@ class StorageManager:
         """Return current storage status for the HTTP API.
 
         Returns a dict matching the frontend's StorageStatus interface:
-          - disk_total_gb, disk_used_gb, disk_free_gb: absolute GB values
+          - disk_total_bytes, disk_used_bytes, disk_free_bytes: absolute byte values
           - disk_usage_percent: usage as 0-100 number (NOT string, NOT fraction)
           - hot_days, warm_days, cold_days: retention days (top-level)
           - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
@@ -517,11 +517,17 @@ class StorageManager:
         try:
             usage_frac = self.check_disk_usage()
             disk = shutil.disk_usage(self.config.check_path)
+            disk_total_bytes = disk.total
+            disk_used_bytes = disk.used
+            disk_free_bytes = disk.free
             disk_total_gb = round(disk.total / (1024**3), 2)
             disk_used_gb = round(disk.used / (1024**3), 2)
             disk_free_gb = round(disk.free / (1024**3), 2)
         except OSError:
             usage_frac = -1.0
+            disk_total_bytes = 0
+            disk_used_bytes = 0
+            disk_free_bytes = 0
             disk_total_gb = 0
             disk_used_gb = 0
             disk_free_gb = 0
@@ -543,7 +549,11 @@ class StorageManager:
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
         return {
-            # Absolute disk values (GB) — required by frontend
+            # Absolute disk values (bytes) — required by frontend formatBytes()
+            "disk_total_bytes": disk_total_bytes,
+            "disk_used_bytes": disk_used_bytes,
+            "disk_free_bytes": disk_free_bytes,
+            # Absolute disk values (GB) — human-readable convenience
             "disk_total_gb": disk_total_gb,
             "disk_used_gb": disk_used_gb,
             "disk_free_gb": disk_free_gb,

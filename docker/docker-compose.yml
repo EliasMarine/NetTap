@@ -563,9 +563,11 @@ services:
       - ALL
     # NET_ADMIN: ethtool NIC LED blink via host network namespace
     # SYS_PTRACE: nsenter -t 1 -n to enter host network namespace
+    # SYS_RAWIO: NVMe admin commands for smartctl SMART health queries
     cap_add:
       - NET_ADMIN
       - SYS_PTRACE
+      - SYS_RAWIO
     # pid: host lets nsenter target PID 1 (host init) for network namespace
     pid: "host"
     # Override Dockerfile USER — capabilities only work for root in Docker.

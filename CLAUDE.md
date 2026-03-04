@@ -147,6 +147,14 @@ Development versions increment with each phase milestone. Tags are applied on `d
 - **Before each fix:** Check the Subsystem Reliability Status table and Lessons Learned
 - **After each fix:** Update the Issues Found & Fixed table, update subsystem status, add verification results
 
+### Bridge Architecture (source of truth for bridge/ingestion/bypass work)
+
+**CRITICAL: Before any bridge, ingestion pipeline, capture, or bypass-related work, read `Debugging/BRIDGE-ARCHITECTURE.md` first.** This document is the definitive reference for how data flows from ISP modem through NetTap's Linux bridge to the router, how capture containers tap traffic, how health monitoring works from inside Docker, and how bypass mode operates. It covers physical topology, setup flow, capture pipeline, hardening, known issues, and troubleshooting.
+
+- **Location:** `Debugging/BRIDGE-ARCHITECTURE.md`
+- **Before any bridge/capture work:** Read the full architecture, especially Section 4 (Health Monitoring) and Section 7 (Known Issues)
+- **After changes:** Update relevant sections and the Known Issues table
+
 ### Release Verification (source of truth for release readiness)
 
 **CRITICAL: Before any release-related work, read `Debugging/RELEASE-VERIFICATION.md` first.** This document tracks every verification test run, its environment, results, and what's still outstanding. After running any verification tests, update this document with the results. This ensures we always know exactly where we stand in the release process.
@@ -169,6 +177,7 @@ Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature
 
 ```
 Debugging/         Deployment issue tracking & release verification (source of truth)
+  BRIDGE-ARCHITECTURE.md   Bridge topology, capture pipeline, bypass, health monitoring
   DEPLOYMENT-ISSUES.md   All deployment bugs, causal chains, fixes, lessons
   RELEASE-VERIFICATION.md  Release readiness verification test runs & gate status
 scripts/           Shell scripts for system setup
