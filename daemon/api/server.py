@@ -55,6 +55,7 @@ from services.nl_search import NLSearchParser
 from services.detection_packs import DetectionPackManager
 from services.report_generator import ReportGenerator
 from services.bridge_health import BridgeHealthMonitor
+from services.bridge_manager import BridgeManager
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
 from services.update_executor import UpdateExecutor
@@ -434,7 +435,15 @@ def create_app(
     bridge_health = BridgeHealthMonitor(
         bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
     )
-    register_bridge_routes(app, bridge_health)
+
+    # Bridge manager (create/teardown/readiness — writes to mounted host dirs)
+    bridge_manager = BridgeManager(
+        bridge_name=bridge_name,
+        netplan_dir=os.environ.get("HOST_NETPLAN_DIR", ""),
+        systemd_dir=os.environ.get("HOST_SYSTEMD_DIR", ""),
+        sysctl_dir=os.environ.get("HOST_SYSCTL_DIR", ""),
+    )
+    register_bridge_routes(app, bridge_health, bridge_manager)
 
     # Software update system (version inventory + update checker + executor)
     compose_file = os.environ.get(

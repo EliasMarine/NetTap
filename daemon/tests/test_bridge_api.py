@@ -19,6 +19,7 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.bridge import register_bridge_routes
 from services.bridge_health import BridgeHealthMonitor
+from services.bridge_manager import BridgeManager
 
 
 def _make_mock_monitor():
@@ -27,6 +28,13 @@ def _make_mock_monitor():
     monitor._bypass_active = False
     monitor._history = []
     return monitor
+
+
+def _make_mock_manager():
+    """Create a mock BridgeManager with async method stubs."""
+    manager = BridgeManager.__new__(BridgeManager)
+    manager._bridge_name = "br0"
+    return manager
 
 
 def _make_health_result(
@@ -338,16 +346,187 @@ class TestBypassStatusEndpoint(AioHTTPTestCase):
         self.assertTrue(data["bypass_active"])
 
 
+class TestBridgeCreateEndpoint(AioHTTPTestCase):
+    """Tests for POST /api/setup/bridge."""
+
+    def setUp(self):
+        self.mock_monitor = _make_mock_monitor()
+        self.mock_manager = _make_mock_manager()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        register_bridge_routes(app, self.mock_monitor, self.mock_manager)
+        return app
+
+    @unittest_run_loop
+    async def test_create_returns_200(self):
+        """POST /api/setup/bridge should return 200 on success."""
+        self.mock_manager.create_bridge = AsyncMock(
+            return_value={
+                "created": True,
+                "bridge_name": "br0",
+                "wan": "enp2s0",
+                "lan": "enp3s0",
+                "state": "created",
+                "errors": [],
+                "warnings": [],
+                "persistence_files": [],
+            }
+        )
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0", "lan_interface": "enp3s0"},
+        )
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["created"])
+
+    @unittest_run_loop
+    async def test_create_missing_params_returns_400(self):
+        """Missing wan/lan params should return 400."""
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0"},
+        )
+        self.assertEqual(resp.status, 400)
+
+    @unittest_run_loop
+    async def test_create_invalid_json_returns_400(self):
+        """Invalid JSON body should return 400."""
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            data=b"not json",
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(resp.status, 400)
+
+    @unittest_run_loop
+    async def test_create_failure_returns_400(self):
+        """Bridge creation failure should return 400."""
+        self.mock_manager.create_bridge = AsyncMock(
+            return_value={
+                "created": False,
+                "bridge_name": "br0",
+                "wan": "eth0",
+                "lan": "eth0",
+                "state": "error",
+                "errors": ["WAN and LAN interfaces must be different"],
+                "warnings": [],
+                "persistence_files": [],
+            }
+        )
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "eth0", "lan_interface": "eth0"},
+        )
+        self.assertEqual(resp.status, 400)
+
+
+class TestBridgeTeardownEndpoint(AioHTTPTestCase):
+    """Tests for POST /api/bridge/teardown."""
+
+    def setUp(self):
+        self.mock_monitor = _make_mock_monitor()
+        self.mock_manager = _make_mock_manager()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        register_bridge_routes(app, self.mock_monitor, self.mock_manager)
+        return app
+
+    @unittest_run_loop
+    async def test_teardown_returns_200(self):
+        """POST /api/bridge/teardown should return 200 on success."""
+        self.mock_manager.teardown_bridge = AsyncMock(
+            return_value={"torn_down": True, "errors": []}
+        )
+        resp = await self.client.request("POST", "/api/bridge/teardown")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["torn_down"])
+
+    @unittest_run_loop
+    async def test_teardown_failure_returns_400(self):
+        """Teardown failure should return 400."""
+        self.mock_manager.teardown_bridge = AsyncMock(
+            return_value={
+                "torn_down": False,
+                "errors": ["Bridge br0 does not exist"],
+            }
+        )
+        resp = await self.client.request("POST", "/api/bridge/teardown")
+        self.assertEqual(resp.status, 400)
+
+
+class TestBridgeReadinessEndpoint(AioHTTPTestCase):
+    """Tests for GET /api/bridge/readiness."""
+
+    def setUp(self):
+        self.mock_monitor = _make_mock_monitor()
+        self.mock_manager = _make_mock_manager()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        register_bridge_routes(app, self.mock_monitor, self.mock_manager)
+        return app
+
+    @unittest_run_loop
+    async def test_readiness_returns_200(self):
+        """GET /api/bridge/readiness should return 200."""
+        self.mock_manager.check_readiness = AsyncMock(
+            return_value={
+                "ready": False,
+                "checks": [{"name": "bridge_exists", "passed": False, "detail": "Not found"}],
+                "message": "Bridge not configured",
+            }
+        )
+        resp = await self.client.request("GET", "/api/bridge/readiness")
+        self.assertEqual(resp.status, 200)
+
+    @unittest_run_loop
+    async def test_readiness_returns_correct_structure(self):
+        """Readiness response should contain ready, checks, message."""
+        self.mock_manager.check_readiness = AsyncMock(
+            return_value={
+                "ready": True,
+                "checks": [],
+                "message": "All good",
+            }
+        )
+        resp = await self.client.request("GET", "/api/bridge/readiness")
+        data = await resp.json()
+        self.assertIn("ready", data)
+        self.assertIn("checks", data)
+        self.assertIn("message", data)
+
+    @unittest_run_loop
+    async def test_readiness_error_returns_500(self):
+        """Internal error should return 500."""
+        self.mock_manager.check_readiness = AsyncMock(
+            side_effect=RuntimeError("test error")
+        )
+        resp = await self.client.request("GET", "/api/bridge/readiness")
+        self.assertEqual(resp.status, 500)
+
+
 class TestRouteRegistration(AioHTTPTestCase):
     """Tests for route registration."""
 
     def setUp(self):
         self.mock_monitor = _make_mock_monitor()
+        self.mock_manager = _make_mock_manager()
         super().setUp()
 
     async def get_application(self):
         app = web.Application()
-        register_bridge_routes(app, self.mock_monitor)
+        register_bridge_routes(app, self.mock_monitor, self.mock_manager)
         return app
 
     @unittest_run_loop
@@ -356,8 +535,13 @@ class TestRouteRegistration(AioHTTPTestCase):
         self.assertIs(self.app["bridge_health"], self.mock_monitor)
 
     @unittest_run_loop
+    async def test_manager_stored_on_app(self):
+        """The BridgeManager should be stored on the app dict."""
+        self.assertIs(self.app["bridge_manager"], self.mock_manager)
+
+    @unittest_run_loop
     async def test_all_routes_registered(self):
-        """All 6 bridge routes should be registered."""
+        """All 9 bridge routes should be registered."""
         # Verify routes exist by checking they do not return 404
         self.mock_monitor.check_health = AsyncMock(return_value=_make_health_result())
         self.mock_monitor.get_history = AsyncMock(return_value=[])
@@ -388,6 +572,28 @@ class TestRouteRegistration(AioHTTPTestCase):
                 "message": "ok",
             }
         )
+        self.mock_manager.create_bridge = AsyncMock(
+            return_value={
+                "created": True,
+                "bridge_name": "br0",
+                "wan": "eth0",
+                "lan": "eth1",
+                "state": "created",
+                "errors": [],
+                "warnings": [],
+                "persistence_files": [],
+            }
+        )
+        self.mock_manager.teardown_bridge = AsyncMock(
+            return_value={"torn_down": True, "errors": []}
+        )
+        self.mock_manager.check_readiness = AsyncMock(
+            return_value={
+                "ready": False,
+                "checks": [],
+                "message": "Not ready",
+            }
+        )
 
         routes_to_check = [
             ("GET", "/api/bridge/health"),
@@ -396,6 +602,8 @@ class TestRouteRegistration(AioHTTPTestCase):
             ("POST", "/api/bridge/bypass/enable"),
             ("POST", "/api/bridge/bypass/disable"),
             ("GET", "/api/bridge/bypass/status"),
+            ("GET", "/api/bridge/readiness"),
+            ("POST", "/api/bridge/teardown"),
         ]
         for method, path in routes_to_check:
             resp = await self.client.request(method, path)

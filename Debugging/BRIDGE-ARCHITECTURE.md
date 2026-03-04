@@ -924,6 +924,74 @@ sudo scripts/bridge/harden-bridge.sh --check
 
 ---
 
+## 15. Go Live Workflow
+
+### Overview
+
+The Go Live workflow bridges the gap between the setup wizard (which configures NIC selections and storage) and actual network monitoring. It handles bridge creation, physical cable migration guidance, and readiness verification.
+
+**Flow:** Setup Wizard → Bridge Creation → Readiness Check → Physical Cable Migration → Live Monitoring
+
+### Architecture Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Bridge creation method | `nsenter -t 1 -n` for `ip link` commands | Already proven in nic_discovery.py; works with existing caps (NET_ADMIN, SYS_PTRACE, pid: host) |
+| Bridge persistence | Mount host `/etc/netplan`, `/etc/systemd/system`, `/etc/sysctl.d` as writable volumes | Daemon writes config files directly; host picks them up on next boot |
+| Bypass mode | "Soft bypass" — toggle promiscuous mode via nsenter | No Docker socket needed; containers stay running but receive no packets |
+| Bypass state file | `/tmp/nettap-bypass-active` | `/tmp` has writable tmpfs; `/var/run` was on read-only root fs |
+| Go Live UX | Separate `/go-live` page (not a wizard step) | Reusable from dashboard; wizard handles config, Go Live handles physical deployment |
+
+### Docker Security Model
+
+The `nettap-storage-daemon` container has these capabilities for bridge management:
+
+- **NET_ADMIN**: Required for `ip link add/set` bridge commands and ethtool NIC tuning
+- **SYS_PTRACE**: Required for `nsenter -t 1 -n` to enter host network namespace
+- **pid: host**: Required for nsenter to target PID 1 (host init process)
+- **No Docker socket**: Bridge management uses nsenter, not the Docker API — reduces attack surface
+
+Host filesystem mounts for persistence:
+- `/etc/netplan:/host/etc/netplan` — Netplan bridge YAML
+- `/etc/systemd/system:/host/etc/systemd/system` — Systemd bridge service unit
+- `/etc/sysctl.d:/host/etc/sysctl.d` — Sysctl netfilter disable config
+- `/tmp` tmpfs — Bypass state file
+- `/var/run` tmpfs — Future use
+
+### New API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/setup/bridge` | POST | Create bridge with WAN/LAN interfaces |
+| `/api/bridge/teardown` | POST | Remove bridge and release interfaces |
+| `/api/bridge/readiness` | GET | 8-point readiness check with human-readable messages |
+
+### Readiness Checks
+
+The readiness endpoint performs 8 sequential checks:
+
+1. **bridge_exists** — Bridge interface exists in sysfs
+2. **bridge_up** — Bridge operstate is "up"
+3. **wan_carrier** — WAN NIC has link carrier (cable connected)
+4. **lan_carrier** — LAN NIC has link carrier (cable connected)
+5. **wan_promisc** — WAN NIC in promiscuous mode (IFF_PROMISC flag)
+6. **lan_promisc** — LAN NIC in promiscuous mode
+7. **stp_disabled** — STP is off (required for inline tap)
+8. **netfilter_disabled** — bridge-nf-call-iptables is 0
+
+### Bridge Health Loop
+
+A new `bridge_loop()` runs alongside `storage_loop()` and `smart_loop()` in the daemon's async main. Default interval: 30 seconds (configurable via `BRIDGE_CHECK_INTERVAL` env var). This provides continuous bridge health history instead of demand-driven checks.
+
+### Known Limitations
+
+- Bridge member NIC discovery uses sorted `brif/` directory listing — assumes first = WAN, second = LAN (alphabetical order). Falls back to WAN_IFACE/LAN_IFACE env vars.
+- Persistence files require host dirs to be mounted writable. If mounts are missing, bridge works but won't survive reboot.
+- Bypass state is ephemeral (tmpfs) — lost on container restart. This is intentional: reboot should resume monitoring.
+- No hot-swap NIC detection — if a NIC is physically replaced, bridge must be recreated.
+
+---
+
 **Document Status:** COMPLETE & VERIFIED
 **Next Review:** After Phase 2 completion (Storage Management)
 **Maintainer:** NetTap Project Team

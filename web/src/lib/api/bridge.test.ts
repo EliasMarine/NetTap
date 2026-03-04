@@ -6,6 +6,9 @@ import {
 	enableBypass,
 	disableBypass,
 	getBypassStatus,
+	createBridge,
+	getBridgeReadiness,
+	teardownBridge,
 } from './bridge';
 
 // ---------------------------------------------------------------------------
@@ -277,6 +280,126 @@ describe('bridge API client', () => {
 
 			expect(result.active).toBe(false);
 			expect(result.activated_at).toBeNull();
+		});
+	});
+
+	// -- createBridge ---------------------------------------------------------
+
+	describe('createBridge', () => {
+		it('sends POST with wan/lan and returns result on success', async () => {
+			const expected = {
+				created: true,
+				bridge_name: 'br0',
+				wan: 'eth0',
+				lan: 'eth1',
+				state: 'up',
+				errors: [],
+				warnings: [],
+				persistence_files: ['/etc/netplan/99-nettap-bridge.yaml'],
+			};
+			mockFetchSuccess(expected);
+
+			const result = await createBridge('eth0', 'eth1');
+
+			expect(fetch).toHaveBeenCalledWith('/api/bridge/create', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ wan_interface: 'eth0', lan_interface: 'eth1' }),
+			});
+			expect(result.created).toBe(true);
+			expect(result.bridge_name).toBe('br0');
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('returns error result on HTTP failure', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 500,
+					json: () => Promise.resolve({ error: 'Bridge creation failed' }),
+				}),
+			);
+
+			const result = await createBridge('eth0', 'eth1');
+
+			expect(result.created).toBe(false);
+			expect(result.state).toBe('error');
+			expect(result.errors).toContain('Bridge creation failed');
+		});
+
+		it('handles unparseable error response', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 502,
+					json: () => Promise.reject(new Error('bad json')),
+				}),
+			);
+
+			const result = await createBridge('eth0', 'eth1');
+
+			expect(result.created).toBe(false);
+			expect(result.errors).toContain('HTTP 502');
+		});
+	});
+
+	// -- getBridgeReadiness ----------------------------------------------------
+
+	describe('getBridgeReadiness', () => {
+		it('returns parsed readiness on success', async () => {
+			const expected = {
+				ready: true,
+				checks: [
+					{ name: 'bridge_exists', passed: true, detail: 'br0 is up' },
+					{ name: 'wan_carrier', passed: true, detail: 'eth0 carrier detected' },
+					{ name: 'lan_carrier', passed: true, detail: 'eth1 carrier detected' },
+				],
+				message: 'Bridge is ready',
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getBridgeReadiness();
+
+			expect(fetch).toHaveBeenCalledWith('/api/bridge/readiness');
+			expect(result.ready).toBe(true);
+			expect(result.checks).toHaveLength(3);
+			expect(result.checks[0].name).toBe('bridge_exists');
+		});
+
+		it('returns not-ready defaults on HTTP error', async () => {
+			mockFetchFailure(500);
+
+			const result = await getBridgeReadiness();
+
+			expect(result.ready).toBe(false);
+			expect(result.checks).toEqual([]);
+			expect(result.message).toBe('Unable to reach readiness endpoint');
+		});
+	});
+
+	// -- teardownBridge --------------------------------------------------------
+
+	describe('teardownBridge', () => {
+		it('sends POST and returns result on success', async () => {
+			const expected = { torn_down: true, errors: [] };
+			mockFetchSuccess(expected);
+
+			const result = await teardownBridge();
+
+			expect(fetch).toHaveBeenCalledWith('/api/bridge/teardown', { method: 'POST' });
+			expect(result.torn_down).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('returns error result on HTTP failure', async () => {
+			mockFetchFailure(500);
+
+			const result = await teardownBridge();
+
+			expect(result.torn_down).toBe(false);
+			expect(result.errors).toContain('Failed to reach teardown endpoint');
 		});
 	});
 });

@@ -35,7 +35,7 @@ logger = logging.getLogger("nettap.services.bridge_health")
 # mounted at /host/sys via docker-compose volume, and the env var HOST_SYS_NET
 # points to the correct path for reading host bridge/NIC state.
 _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/sys/class/net")
-_BYPASS_STATE_FILE = "/var/run/nettap-bypass-active"
+_BYPASS_STATE_FILE = "/tmp/nettap-bypass-active"
 
 
 @dataclass
@@ -313,6 +313,15 @@ class BridgeHealthMonitor:
         """
         self._bypass_active = True
         self._write_bypass_file(active=True)
+
+        # Disable promiscuous mode on both NICs — stops packet capture
+        for iface in (self._wan_iface, self._lan_iface):
+            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "promisc", "off")
+            if rc != 0:
+                logger.warning("Failed to disable promisc on %s: %s", iface, err)
+            else:
+                logger.info("Disabled promiscuous mode on %s", iface)
+
         ts = datetime.now(timezone.utc).isoformat()
         logger.warning("Bypass mode ACTIVATED at %s", ts)
         return {
@@ -329,6 +338,15 @@ class BridgeHealthMonitor:
         """
         self._bypass_active = False
         self._write_bypass_file(active=False)
+
+        # Re-enable promiscuous mode on both NICs — resumes packet capture
+        for iface in (self._wan_iface, self._lan_iface):
+            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "promisc", "on")
+            if rc != 0:
+                logger.warning("Failed to enable promisc on %s: %s", iface, err)
+            else:
+                logger.info("Enabled promiscuous mode on %s", iface)
+
         ts = datetime.now(timezone.utc).isoformat()
         logger.info("Bypass mode DEACTIVATED at %s", ts)
         return {
@@ -340,6 +358,28 @@ class BridgeHealthMonitor:
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
+        """Run a command in the host network namespace via nsenter."""
+        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            return (
+                proc.returncode or 0,
+                stdout.decode("utf-8", errors="replace"),
+                stderr.decode("utf-8", errors="replace"),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            return (1, "", "timeout")
+        except FileNotFoundError:
+            logger.debug("nsenter not available")
+            return (1, "", "nsenter not found")
 
     async def _check_bridge_state(self) -> str:
         """Check the bridge interface operational state via sysfs.
@@ -512,7 +552,6 @@ class BridgeHealthMonitor:
         """
         try:
             if active:
-                os.makedirs(os.path.dirname(_BYPASS_STATE_FILE), exist_ok=True)
                 with open(_BYPASS_STATE_FILE, "w") as f:
                     f.write(datetime.now(timezone.utc).isoformat())
             else:

@@ -71,6 +71,7 @@ from typing import Any
 
 from storage.manager import StorageManager, RetentionConfig
 from smart.monitor import SmartMonitor
+from services.bridge_health import BridgeHealthMonitor
 from api.server import start_api
 
 logger = logging.getLogger("nettap")
@@ -196,6 +197,7 @@ def load_config() -> dict[str, Any]:
         "smart_device": _env_str("SMART_DEVICE", "/dev/nvme0n1"),
         "storage_check_interval": _env_int("STORAGE_CHECK_INTERVAL", 300),
         "smart_check_interval": _env_int("SMART_CHECK_INTERVAL", 3600),
+        "bridge_check_interval": _env_int("BRIDGE_CHECK_INTERVAL", 30),
         "api_port": _env_int("API_PORT", 8880),
         "log_level": _env_str("LOG_LEVEL", "INFO").upper(),
     }
@@ -274,6 +276,31 @@ async def smart_loop(
     logger.info("SMART monitor loop stopped")
 
 
+async def bridge_loop(
+    bridge_health: BridgeHealthMonitor,
+    interval: int,
+    shutdown_event: asyncio.Event,
+) -> None:
+    """Periodically run bridge health checks.
+
+    Exits cleanly when *shutdown_event* is set.
+    """
+    logger.info("Bridge health loop started (interval=%ds)", interval)
+    while not shutdown_event.is_set():
+        try:
+            await bridge_health.check_health()
+        except Exception:
+            logger.exception("Unhandled error in bridge health check")
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+    logger.info("Bridge health loop stopped")
+
+
 # ---------------------------------------------------------------------------
 # Main async entry point
 # ---------------------------------------------------------------------------
@@ -301,6 +328,7 @@ async def async_main() -> None:
     logger.info("  Emergency threshold:    %.0f%%", cfg["emergency_threshold"] * 100)
     logger.info("  Storage check interval: %ds", cfg["storage_check_interval"])
     logger.info("  SMART check interval:   %ds", cfg["smart_check_interval"])
+    logger.info("  Bridge check interval:  %ds", cfg["bridge_check_interval"])
     logger.info("  SMART device:           %s", cfg["smart_device"])
     logger.info("  API port:               %d", cfg["api_port"])
     logger.info("  Log level:              %s", cfg["log_level"])
@@ -354,6 +382,14 @@ async def async_main() -> None:
         shutdown_event=shutdown_event,
     )
 
+    # --- Build bridge health monitor for background polling ---
+    bridge_name = os.environ.get("BRIDGE_NAME", "br0")
+    wan_iface = os.environ.get("WAN_IFACE", "eth0")
+    lan_iface = os.environ.get("LAN_IFACE", "eth1")
+    bridge_health = BridgeHealthMonitor(
+        bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
+    )
+
     # --- Start monitoring tasks ---
     storage_task = asyncio.create_task(
         storage_loop(storage, cfg["storage_check_interval"], shutdown_event),
@@ -362,6 +398,10 @@ async def async_main() -> None:
     smart_task = asyncio.create_task(
         smart_loop(smart, cfg["smart_check_interval"], shutdown_event),
         name="smart-loop",
+    )
+    bridge_task = asyncio.create_task(
+        bridge_loop(bridge_health, cfg["bridge_check_interval"], shutdown_event),
+        name="bridge-loop",
     )
 
     logger.info("All monitoring loops running; waiting for shutdown signal")
@@ -372,11 +412,11 @@ async def async_main() -> None:
     logger.info("Shutdown requested — waiting for tasks to finish")
 
     # Cancel tasks and wait for them to complete
-    for task in (storage_task, smart_task):
+    for task in (storage_task, smart_task, bridge_task):
         task.cancel()
 
     # Gather with return_exceptions to avoid raising CancelledError
-    await asyncio.gather(storage_task, smart_task, return_exceptions=True)
+    await asyncio.gather(storage_task, smart_task, bridge_task, return_exceptions=True)
 
     # --- Cleanup HTTP API ---
     await api_runner.cleanup()
