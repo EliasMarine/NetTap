@@ -124,7 +124,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
-            "top_protocol": {"terms": {"field": "network.transport", "size": 1}},
+            "top_protocol": {"terms": {"field": "network.transport.keyword", "size": 1}},
         },
     }
 
@@ -181,7 +181,7 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
         ]}},
         "aggs": {
             "top_sources": {
-                "terms": {"field": "source.ip", "size": limit},
+                "terms": {"field": "source.ip.keyword", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -244,7 +244,7 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
         ]}},
         "aggs": {
             "top_destinations": {
-                "terms": {"field": "destination.ip", "size": limit},
+                "terms": {"field": "destination.ip.keyword", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -309,9 +309,9 @@ async def handle_protocols(request: web.Request) -> web.Response:
             *_ZEEK_CONN_FILTERS,
         ]}},
         "aggs": {
-            "by_proto": {"terms": {"field": "network.transport", "size": 50}},
+            "by_proto": {"terms": {"field": "network.transport.keyword", "size": 50}},
             "by_service": {
-                "terms": {"field": "network.protocol", "size": 50, "missing": "unknown"}
+                "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"}
             },
         },
     }
