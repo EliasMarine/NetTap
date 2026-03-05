@@ -27,9 +27,18 @@ RETRY_DELAY=5
 log() { echo "[opensearch-init] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
 
 # ---------------------------------------------------------------------------
-# Step 1: Run securityadmin.sh to push config files into the security index
+# Step 1: Push ONLY roles_mapping.yml to the security index
 # ---------------------------------------------------------------------------
-log "Pushing security configuration to OpenSearch..."
+# IMPORTANT: Do NOT use -cd (push entire directory). The init container's
+# config directory has the Malcolm IMAGE DEFAULT internal_users.yml, which
+# has wrong password hashes. Pushing the whole directory would overwrite
+# the correct internal_users.yml that opensearch's entrypoint generated
+# from the curlrc password, breaking all authentication (401).
+#
+# Using -f/-t pushes ONLY the roles mapping without touching internal_users,
+# action_groups, tenants, or any other security config.
+# ---------------------------------------------------------------------------
+log "Pushing roles_mapping.yml to OpenSearch security index..."
 
 attempt=0
 while (( attempt < MAX_RETRIES )); do
@@ -37,7 +46,8 @@ while (( attempt < MAX_RETRIES )); do
 
     if JAVA_HOME=/usr/share/opensearch/jdk \
        /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh \
-       -cd "$SECURITY_CONFIG_DIR" \
+       -f "$SECURITY_CONFIG_DIR/roles_mapping.yml" \
+       -t rolesmapping \
        -h "$OPENSEARCH_HOST" \
        -p "$OPENSEARCH_PORT" \
        -cacert "$CERTS_DIR/ca.crt" \
