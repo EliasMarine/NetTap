@@ -83,17 +83,64 @@ while (( verify_attempt < MAX_RETRIES )); do
 
     if [[ "$http_code" == "200" ]]; then
         log "Authentication verified (HTTP 200) — OpenSearch security is configured"
-        exit 0
+        break
     fi
 
     if (( verify_attempt >= MAX_RETRIES )); then
         log "WARNING: Auth verification returned HTTP ${http_code} after ${MAX_RETRIES} attempts"
         log "securityadmin.sh succeeded, so security config was pushed — proceeding anyway"
-        # Exit 0 because securityadmin.sh succeeded; verification failure may be
-        # transient (e.g., security index still propagating)
-        exit 0
+        break
     fi
 
     log "Auth check returned HTTP ${http_code} (attempt ${verify_attempt}/${MAX_RETRIES}), retrying in ${RETRY_DELAY}s..."
     sleep "$RETRY_DELAY"
 done
+
+# ---------------------------------------------------------------------------
+# Step 3: Create stub malcolm_template if missing (fresh install only)
+# ---------------------------------------------------------------------------
+# On fresh installs (after `down -v`), no index templates exist. Logstash
+# blocks on startup waiting for `malcolm_template` to exist. Dashboards-helper
+# creates the full template, but it has a 180s sleep + waits for log data
+# that logstash produces — creating a deadlock:
+#
+#   logstash waits for malcolm_template → template needs dashboards-helper →
+#   dashboards-helper waits for logs → logs need logstash → DEADLOCK
+#
+# Fix: create a minimal stub template that unblocks logstash. Dashboards-helper
+# will overwrite it with the full template within minutes. By the time actual
+# data flows through the pipeline, the full template will be in place.
+# ---------------------------------------------------------------------------
+OS_URL="https://${OPENSEARCH_HOST}:${OPENSEARCH_PORT}"
+CURL_AUTH="--config $CURLRC --cacert $CERTS_DIR/ca.crt --insecure --silent"
+
+template_code=$(curl $CURL_AUTH -o /dev/null -w '%{http_code}' \
+    "${OS_URL}/_index_template/malcolm_template" 2>/dev/null) || true
+
+if [[ "$template_code" == "200" ]]; then
+    log "malcolm_template already exists — skipping stub creation"
+else
+    log "Creating stub malcolm_template to unblock logstash (dashboards-helper will update with full template)..."
+    stub_code=$(curl $CURL_AUTH -o /dev/null -w '%{http_code}' \
+        -XPUT "${OS_URL}/_index_template/malcolm_template" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "index_patterns": ["arkime_sessions3-*", "malcolm_beats_*"],
+            "priority": 100,
+            "template": {
+                "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 0
+                }
+            }
+        }' 2>/dev/null) || true
+
+    if [[ "$stub_code" == "200" ]]; then
+        log "Stub malcolm_template created — logstash will unblock"
+    else
+        log "WARNING: Failed to create stub template (HTTP ${stub_code}) — logstash may wait for dashboards-helper"
+    fi
+fi
+
+log "OpenSearch init complete"
+exit 0
