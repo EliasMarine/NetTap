@@ -38,6 +38,7 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
+from services.excluded_ips import load_excluded_ips
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
@@ -406,8 +407,14 @@ def create_app(
     investigation_store = InvestigationStore(store_file=investigations_file)
     register_investigation_routes(app, investigation_store)
 
-    # Settings (API keys, env file management)
+    # Settings (API keys, env file management, excluded IPs)
     env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/.env")
+    excluded_ips_file = os.environ.get(
+        "EXCLUDED_IPS_FILE", "/opt/nettap/data/excluded_ips.json"
+    )
+    app["excluded_ips_file"] = excluded_ips_file
+    app["excluded_ips"] = load_excluded_ips(excluded_ips_file)
+    logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
     register_settings_routes(app, env_file=env_file)
 
     # Natural language search (query parser + OpenSearch execution)

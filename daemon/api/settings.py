@@ -1,13 +1,16 @@
 """
 NetTap Settings API Routes
 
-Registers REST endpoints for managing API keys and configuration settings.
-Keys are stored in the environment file and exposed only as boolean
-"configured" flags — never as raw values — to prevent accidental leakage.
+Registers REST endpoints for managing API keys, excluded IPs, and
+configuration settings.  Keys are stored in the environment file and
+exposed only as boolean "configured" flags — never as raw values — to
+prevent accidental leakage.
 
 Endpoints:
-    GET  /api/settings/api-keys   Check which API keys are configured
-    POST /api/settings/api-keys   Save API key values to env file
+    GET  /api/settings/api-keys        Check which API keys are configured
+    POST /api/settings/api-keys        Save API key values to env file
+    GET  /api/settings/excluded-ips    Get the excluded IP list
+    PUT  /api/settings/excluded-ips    Replace the excluded IP list
 """
 
 import logging
@@ -15,6 +18,8 @@ import os
 from pathlib import Path
 
 from aiohttp import web
+
+from services.excluded_ips import load_excluded_ips, save_excluded_ips
 
 logger = logging.getLogger("nettap.api.settings")
 
@@ -187,6 +192,59 @@ async def handle_save_api_keys(request: web.Request) -> web.Response:
     return web.json_response(response)
 
 
+async def handle_get_excluded_ips(request: web.Request) -> web.Response:
+    """GET /api/settings/excluded-ips
+
+    Returns the list of IPs excluded from device-centric views.
+    """
+    ips = request.app.get("excluded_ips", [])
+    return web.json_response({"excluded_ips": ips})
+
+
+async def handle_put_excluded_ips(request: web.Request) -> web.Response:
+    """PUT /api/settings/excluded-ips
+
+    Replace the excluded IP list. Accepts JSON body:
+    { "excluded_ips": ["99.10.70.92", "192.168.1.1"] }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    if not isinstance(body, dict) or "excluded_ips" not in body:
+        return web.json_response(
+            {"error": "Body must contain 'excluded_ips' array"}, status=400
+        )
+
+    raw_ips = body["excluded_ips"]
+    if not isinstance(raw_ips, list):
+        return web.json_response(
+            {"error": "'excluded_ips' must be an array of IP strings"}, status=400
+        )
+
+    # Validate and deduplicate
+    clean_ips = list(dict.fromkeys(
+        ip.strip() for ip in raw_ips if isinstance(ip, str) and ip.strip()
+    ))
+
+    try:
+        save_excluded_ips(clean_ips, request.app.get("excluded_ips_file"))
+    except OSError as exc:
+        return web.json_response(
+            {"error": f"Failed to save excluded IPs: {exc}"}, status=500
+        )
+
+    # Update in-memory list so it takes effect immediately
+    request.app["excluded_ips"] = clean_ips
+
+    return web.json_response({
+        "result": "saved",
+        "excluded_ips": clean_ips,
+        "count": len(clean_ips),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
@@ -206,5 +264,7 @@ def register_settings_routes(app: web.Application, env_file: str | None = None) 
 
     app.router.add_get("/api/settings/api-keys", handle_get_api_keys)
     app.router.add_post("/api/settings/api-keys", handle_save_api_keys)
+    app.router.add_get("/api/settings/excluded-ips", handle_get_excluded_ips)
+    app.router.add_put("/api/settings/excluded-ips", handle_put_excluded_ips)
 
     logger.info("Settings API routes registered")

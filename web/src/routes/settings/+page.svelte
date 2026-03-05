@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	type TabId = 'notifications' | 'retention' | 'display' | 'about';
+	type TabId = 'notifications' | 'retention' | 'network' | 'display' | 'about';
 
 	let activeTab = $state<TabId>('notifications');
 
@@ -29,6 +29,14 @@
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
+
+	// --- Network state (excluded IPs) ---
+	let excludedIps = $state<string[]>([]);
+	let newExcludedIp = $state('');
+	let networkSaving = $state(false);
+	let networkMessage = $state('');
+	let networkError = $state(false);
+	let networkLoading = $state(true);
 
 	// --- Display state ---
 	let autoRefresh = $state('30');
@@ -121,10 +129,74 @@
 		}
 	}
 
+	async function loadExcludedIps() {
+		networkLoading = true;
+		try {
+			const res = await fetch('/api/settings/excluded-ips');
+			if (res.ok) {
+				const data = await res.json();
+				excludedIps = data.excluded_ips ?? [];
+			}
+		} catch {
+			// Will use empty default
+		} finally {
+			networkLoading = false;
+		}
+	}
+
+	async function saveExcludedIps() {
+		networkSaving = true;
+		networkMessage = '';
+		networkError = false;
+		try {
+			const res = await fetch('/api/settings/excluded-ips', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ excluded_ips: excludedIps }),
+			});
+			if (res.ok) {
+				networkMessage = 'Excluded IPs saved. Changes take effect immediately.';
+			} else {
+				const data = await res.json();
+				networkMessage = data.error || 'Failed to save excluded IPs.';
+				networkError = true;
+			}
+		} catch {
+			networkMessage = 'Failed to connect to server.';
+			networkError = true;
+		} finally {
+			networkSaving = false;
+		}
+	}
+
+	function addExcludedIp() {
+		const ip = newExcludedIp.trim();
+		if (!ip) return;
+		// Basic IP format validation
+		if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+			networkMessage = 'Please enter a valid IPv4 address.';
+			networkError = true;
+			return;
+		}
+		if (excludedIps.includes(ip)) {
+			networkMessage = `${ip} is already in the exclusion list.`;
+			networkError = true;
+			return;
+		}
+		excludedIps = [...excludedIps, ip];
+		newExcludedIp = '';
+		networkMessage = '';
+	}
+
+	function removeExcludedIp(ip: string) {
+		excludedIps = excludedIps.filter((i) => i !== ip);
+	}
+
 	onMount(() => {
 		loadNotificationConfig();
 		loadRetention();
 		loadDiskUsage();
+		loadExcludedIps();
 		loadAbout();
 		loadDisplaySettings();
 	});
@@ -265,6 +337,13 @@
 			onclick={() => (activeTab = 'retention')}
 		>
 			Retention
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'network'}
+			onclick={() => (activeTab = 'network')}
+		>
+			Network
 		</button>
 		<button
 			class="tab"
@@ -436,6 +515,60 @@
 				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
+			</div>
+		</div>
+
+	{:else if activeTab === 'network'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">Excluded IPs</span>
+				</div>
+
+				<p class="field-help" style="margin-bottom: var(--space-md);">
+					IPs in this list are hidden from device-centric views (Devices, Top Talkers, Risk Scores) but remain visible in Log Explorer, Alerts, and raw connection data.
+					Useful for filtering out your ISP gateway's public IP or infrastructure addresses that appear on every connection.
+				</p>
+
+				{#if networkMessage}
+					<div class="alert {networkError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+						{networkMessage}
+					</div>
+				{/if}
+
+				{#if networkLoading}
+					<p class="text-muted">Loading...</p>
+				{:else}
+					<div class="excluded-ip-input-row">
+						<input
+							class="input"
+							type="text"
+							bind:value={newExcludedIp}
+							placeholder="e.g. 99.10.70.92"
+							onkeydown={(e) => { if (e.key === 'Enter') addExcludedIp(); }}
+						/>
+						<button class="btn btn-secondary" onclick={addExcludedIp}>Add</button>
+					</div>
+
+					{#if excludedIps.length === 0}
+						<p class="text-muted" style="margin-top: var(--space-md);">No IPs excluded. All IPs appear in device views.</p>
+					{:else}
+						<div class="excluded-ip-list">
+							{#each excludedIps as ip}
+								<div class="excluded-ip-item">
+									<span class="mono">{ip}</span>
+									<button class="btn-icon-remove" onclick={() => removeExcludedIp(ip)} title="Remove {ip}">
+										&times;
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<button class="btn btn-primary" onclick={saveExcludedIps} disabled={networkSaving} style="margin-top: var(--space-md);">
+						{networkSaving ? 'Saving...' : 'Save Excluded IPs'}
+					</button>
+				{/if}
 			</div>
 		</div>
 
@@ -760,6 +893,57 @@
 	.toggle-input:focus-visible + .toggle-slider {
 		outline: 2px solid var(--accent);
 		outline-offset: 2px;
+	}
+
+	/* Excluded IPs */
+	.excluded-ip-input-row {
+		display: flex;
+		gap: var(--space-sm);
+		align-items: center;
+	}
+
+	.excluded-ip-input-row .input {
+		flex: 1;
+		max-width: 300px;
+	}
+
+	.excluded-ip-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+		margin-top: var(--space-md);
+	}
+
+	.excluded-ip-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-xs) var(--space-sm);
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-muted);
+		border-radius: var(--radius-md);
+	}
+
+	.excluded-ip-item .mono {
+		font-size: var(--text-sm);
+		color: var(--text-primary);
+	}
+
+	.btn-icon-remove {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 1.2rem;
+		cursor: pointer;
+		padding: 0 var(--space-xs);
+		line-height: 1;
+		border-radius: var(--radius-sm);
+		transition: color var(--transition-fast), background var(--transition-fast);
+	}
+
+	.btn-icon-remove:hover {
+		color: var(--red);
+		background: rgba(239, 68, 68, 0.1);
 	}
 
 	@media (max-width: 768px) {

@@ -16,6 +16,7 @@ from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
+from services.excluded_ips import build_excluded_ips_filter
 
 logger = logging.getLogger("nettap.api.devices")
 
@@ -145,13 +146,20 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # Fetch more than needed if sorting by alerts (post-query sort)
     fetch_size = limit * 2 if sort_field == "alerts" else limit
 
-    query = {
-        "size": 0,
-        "query": {"bool": {"filter": [
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    bool_query: dict = {
+        "filter": [
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
-        ]}},
+        ],
+    }
+    if excluded:
+        bool_query["must_not"] = excluded
+
+    query = {
+        "size": 0,
+        "query": {"bool": bool_query},
         "aggs": {
             "devices": {
                 "terms": {

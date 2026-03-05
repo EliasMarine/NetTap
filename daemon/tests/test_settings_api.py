@@ -278,5 +278,158 @@ class TestRouteRegistration(AioHTTPTestCase):
         self.assertEqual(self.app["env_file"], self.tmp.name)
 
 
+class TestExcludedIpsGet(AioHTTPTestCase):
+    """Tests for GET /api/settings/excluded-ips."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
+        self.tmp.close()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        if os.path.exists(self.tmp.name):
+            os.unlink(self.tmp.name)
+
+    async def get_application(self):
+        app = web.Application()
+        app["excluded_ips"] = ["99.10.70.92", "192.168.1.1"]
+        register_settings_routes(app, env_file=self.tmp.name)
+        return app
+
+    @unittest_run_loop
+    async def test_get_returns_excluded_ips(self):
+        """GET /api/settings/excluded-ips returns the current list."""
+        resp = await self.client.request("GET", "/api/settings/excluded-ips")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["excluded_ips"], ["99.10.70.92", "192.168.1.1"])
+
+    @unittest_run_loop
+    async def test_get_returns_empty_list_when_not_set(self):
+        """GET /api/settings/excluded-ips returns [] when no IPs excluded."""
+        self.app["excluded_ips"] = []
+        resp = await self.client.request("GET", "/api/settings/excluded-ips")
+        data = await resp.json()
+        self.assertEqual(data["excluded_ips"], [])
+
+
+class TestExcludedIpsPut(AioHTTPTestCase):
+    """Tests for PUT /api/settings/excluded-ips."""
+
+    def setUp(self):
+        self.tmp_env = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
+        self.tmp_env.close()
+        self.tmp_ips = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
+        self.tmp_ips.close()
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        for f in (self.tmp_env.name, self.tmp_ips.name):
+            if os.path.exists(f):
+                os.unlink(f)
+
+    async def get_application(self):
+        app = web.Application()
+        app["excluded_ips"] = []
+        app["excluded_ips_file"] = self.tmp_ips.name
+        register_settings_routes(app, env_file=self.tmp_env.name)
+        return app
+
+    @unittest_run_loop
+    async def test_put_saves_ips(self):
+        """PUT /api/settings/excluded-ips saves and returns the list."""
+        resp = await self.client.request(
+            "PUT",
+            "/api/settings/excluded-ips",
+            json={"excluded_ips": ["10.0.0.1", "99.10.70.92"]},
+        )
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["result"], "saved")
+        self.assertEqual(data["count"], 2)
+        self.assertIn("10.0.0.1", data["excluded_ips"])
+        # Verify in-memory update
+        self.assertEqual(self.app["excluded_ips"], ["10.0.0.1", "99.10.70.92"])
+
+    @unittest_run_loop
+    async def test_put_deduplicates(self):
+        """PUT /api/settings/excluded-ips deduplicates entries."""
+        resp = await self.client.request(
+            "PUT",
+            "/api/settings/excluded-ips",
+            json={"excluded_ips": ["10.0.0.1", "10.0.0.1", "10.0.0.1"]},
+        )
+        data = await resp.json()
+        self.assertEqual(data["count"], 1)
+
+    @unittest_run_loop
+    async def test_put_invalid_json_returns_400(self):
+        """PUT /api/settings/excluded-ips with invalid JSON returns 400."""
+        resp = await self.client.request(
+            "PUT",
+            "/api/settings/excluded-ips",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(resp.status, 400)
+
+    @unittest_run_loop
+    async def test_put_missing_key_returns_400(self):
+        """PUT /api/settings/excluded-ips without 'excluded_ips' returns 400."""
+        resp = await self.client.request(
+            "PUT",
+            "/api/settings/excluded-ips",
+            json={"ips": ["10.0.0.1"]},
+        )
+        self.assertEqual(resp.status, 400)
+
+    @unittest_run_loop
+    async def test_put_empty_list_clears(self):
+        """PUT /api/settings/excluded-ips with empty list clears exclusions."""
+        self.app["excluded_ips"] = ["1.2.3.4"]
+        resp = await self.client.request(
+            "PUT",
+            "/api/settings/excluded-ips",
+            json={"excluded_ips": []},
+        )
+        data = await resp.json()
+        self.assertEqual(data["count"], 0)
+        self.assertEqual(self.app["excluded_ips"], [])
+
+
+class TestExcludedIpsService(unittest.TestCase):
+    """Tests for the excluded IPs service module."""
+
+    def test_load_returns_empty_when_file_missing(self):
+        from services.excluded_ips import load_excluded_ips
+        result = load_excluded_ips("/tmp/nonexistent_excluded_ips.json")
+        self.assertEqual(result, [])
+
+    def test_save_and_load_roundtrip(self):
+        from services.excluded_ips import load_excluded_ips, save_excluded_ips
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.close()
+        try:
+            ips = ["10.0.0.1", "99.10.70.92"]
+            save_excluded_ips(ips, tmp.name)
+            loaded = load_excluded_ips(tmp.name)
+            self.assertEqual(loaded, ips)
+        finally:
+            os.unlink(tmp.name)
+
+    def test_build_filter_empty_list(self):
+        from services.excluded_ips import build_excluded_ips_filter
+        result = build_excluded_ips_filter([])
+        self.assertEqual(result, [])
+
+    def test_build_filter_with_ips(self):
+        from services.excluded_ips import build_excluded_ips_filter
+        result = build_excluded_ips_filter(["10.0.0.1", "99.10.70.92"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["terms"]["source.ip"], ["10.0.0.1", "99.10.70.92"])
+
+
 if __name__ == "__main__":
     unittest.main()

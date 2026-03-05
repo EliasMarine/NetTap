@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
 
@@ -173,12 +174,19 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
     limit = _parse_int_param(request, "limit", 20)
     client = _get_client(request)
 
-    query = {
-        "size": 0,
-        "query": {"bool": {"filter": [
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    bool_query: dict = {
+        "filter": [
             _time_range_filter(from_ts, to_ts),
             *_ZEEK_CONN_FILTERS,
-        ]}},
+        ],
+    }
+    if excluded:
+        bool_query["must_not"] = excluded
+
+    query = {
+        "size": 0,
+        "query": {"bool": bool_query},
         "aggs": {
             "top_sources": {
                 "terms": {"field": "source.ip.keyword", "size": limit},
@@ -236,12 +244,24 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     limit = _parse_int_param(request, "limit", 20)
     client = _get_client(request)
 
-    query = {
-        "size": 0,
-        "query": {"bool": {"filter": [
+    excluded_ips = request.app.get("excluded_ips", [])
+    must_not: list[dict] = []
+    if excluded_ips:
+        # Exclude from both source and destination for top-destinations
+        must_not.append({"terms": {"destination.ip": excluded_ips}})
+
+    bool_query: dict = {
+        "filter": [
             _time_range_filter(from_ts, to_ts),
             *_ZEEK_CONN_FILTERS,
-        ]}},
+        ],
+    }
+    if must_not:
+        bool_query["must_not"] = must_not
+
+    query = {
+        "size": 0,
+        "query": {"bool": bool_query},
         "aggs": {
             "top_destinations": {
                 "terms": {"field": "destination.ip.keyword", "size": limit},
