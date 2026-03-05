@@ -625,6 +625,7 @@ services:
       # causing all SMART metrics to return null. See Debugging/RELIABILITY-TRACKER.md.
       - /dev:/dev
       - storage-data:/var/lib/nettap
+      - nettap-appdata:/opt/nettap/data
       - pcap-data:/opt/nettap/pcap:ro
       # OpenSearch credentials — daemon needs Basic Auth to query OpenSearch.
       # Without this, StorageManager gets 403 on all API calls.
@@ -868,5 +869,6 @@ volumes:
 
   # NetTap data volumes
   storage-data:
+  nettap-appdata:
   web-data:
   grafana-data:
