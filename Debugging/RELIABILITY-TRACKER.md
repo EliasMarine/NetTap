@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-04
-> Status: 5/7 subsystems production-ready. OpenSearch security auto-bootstrap fully automated and verified on N100 — init container uses targeted `-f/-t` push (not `-cd`), shared certs volume, Docker DNS. All 20 containers healthy, cluster GREEN.
+> Status: 5/7 subsystems production-ready. OpenSearch security auto-bootstrap fully automated and verified on N100 — init container uses targeted `-f/-t` push (not `-cd`), shared certs volume, Docker DNS, stub `malcolm_template` creation. Nuclear test (`down -v && up -d`): 34/34 steps, 20 containers, logstash healthy at 64.9s, zero manual intervention.
 
 ## Purpose
 
@@ -11,7 +11,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 
 | Subsystem | Status | Verified On | Issues | Notes |
 |-----------|--------|-------------|--------|-------|
-| OpenSearch | OK | 2026-03-04 | -- | Fixed: curlrc credential parsing (PR #81). **Auto-bootstrap:** bind-mount roles_mapping.yml + one-shot init container runs securityadmin.sh (`-f/-t` targeted push, NOT `-cd`) on every `docker compose up`. Shared `opensearch-certs` named volume for TLS cert access. Verified: cluster GREEN, 24/24 shards, logstash healthy at 60.6s, all 20 containers up. |
+| OpenSearch | OK | 2026-03-04 | -- | Fixed: curlrc credential parsing (PR #81). **Auto-bootstrap:** bind-mount roles_mapping.yml + one-shot init container runs securityadmin.sh (`-f/-t` targeted push, NOT `-cd`) on every `docker compose up`. Shared `opensearch-certs` named volume for TLS cert access. **Stub template:** init container creates minimal `malcolm_template` on fresh installs to break logstash/dashboards-helper circular deadlock. Nuclear test verified: 34/34 steps, logstash healthy at 64.9s, all 20 containers up, zero manual intervention. |
 | SMART Monitoring | OK | 2026-03-03 | NVMe data limited | smartctl code 2 (may lack SYS_RAWIO); health OK but temp/wear null on some devices |
 | Bridge Health | OK | 2026-03-04 | -- | Fixed: not_configured state (PR #81), bypass promisc toggle (PR #83), 30s polling loop (PR #83), 8-point readiness check (PR #83) |
 | Bridge Management | OK | 2026-03-04 | -- | NEW: BridgeManager service — create/teardown/readiness via nsenter, host persistence (PR #83) |
@@ -53,6 +53,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-04 | OpenSearch | Security auth breaks after container recreate (Chain 11) | `--force-recreate` resets roles_mapping.yml to Malcolm's empty default; securityadmin.sh not re-run | Bind-mount roles_mapping.yml from git + nettap-opensearch-init one-shot container auto-runs securityadmin.sh. Logstash/daemon depend on init completing. | -- | infra/opensearch-field-mapping |
 | 2026-03-04 | OpenSearch | Init container `-cd` overwrites internal_users.yml (Chain 11a) | `securityadmin.sh -cd` pushes ALL config files including image-default internal_users.yml with wrong password hashes | Changed to `-f roles_mapping.yml -t rolesmapping` — pushes ONLY roles mapping | -- | 7014cda |
 | 2026-03-04 | OpenSearch | Init container can't reach OpenSearch (Chain 11b) | Init container's localhost is its own network namespace, not opensearch. Also missing TLS admin certs (generated at runtime inside opensearch container) | Added `-h opensearch -p 9200` for Docker DNS. Added `opensearch-certs` shared named volume for TLS cert sharing. Override `entrypoint: ["/bin/bash"]` | -- | 90b4e38 |
+| 2026-03-04 | OpenSearch | Logstash deadlocks on fresh install waiting for `malcolm_template` (Chain 11d) | Circular dependency: logstash waits for `malcolm_template` → dashboards-helper creates it but has 180s sleep + waits for log data → log data needs logstash | Init container Step 3: check if `malcolm_template` exists, create minimal stub if absent. Dashboards-helper overwrites with full template before data flows. | -- | 733672e |
 
 ## Reliability Lessons Learned
 
@@ -77,6 +78,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 19. **Init containers have their own network namespace** — `localhost` in an init container is NOT the opensearch container's localhost. Use Docker DNS hostnames (`-h opensearch -p 9200`) for cross-container communication in `securityadmin.sh`.
 20. **Share runtime-generated TLS certs via named volumes** — Malcolm generates admin certs (`ca.crt`, `admin.crt`, `admin.key`) at startup inside the opensearch container. These are ephemeral. Use a named volume (`opensearch-certs`) that opensearch writes to and the init container reads from.
 21. **Override `entrypoint`, not just `command`, for utility containers** — Malcolm's entrypoint chain runs cert generation, uid/gid setup, and supervisord. For a one-shot utility container, set `entrypoint: ["/bin/bash"]` to skip side effects entirely.
+22. **Break circular template dependencies with stubs from the init container.** On fresh installs (`down -v`), logstash waits for `malcolm_template` but dashboards-helper (which creates it) waits for log data that logstash produces — a deadlock. Creating a minimal stub template (just `index_patterns` + basic settings) from the init container unblocks logstash immediately. The full template is overwritten by dashboards-helper before any data flows through, so the stub never affects data integrity.
 
 ## Verification Checklist
 
@@ -107,3 +109,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | ECS field mapping (svelte-check) | Dev macOS | PASS | No type errors |
 | 2026-03-04 | OpenSearch auto-bootstrap (BATS) | Dev macOS | **PASS (36/37)** | 7 new tests for opensearch-init service all pass. 1 pre-existing failure on test 10 (unrelated to this change). Tests cover: one-shot config, depends_on, bind-mount, script mount, restart policy, healthcheck absence, logstash dependency chain. |
 | 2026-03-04 | OpenSearch init container debug | N100 production | **PASS** | After fixing -cd → -f/-t, adding -h opensearch, shared certs volume: init pushes rolesmapping SUCC attempt 1, auth 200 immediately, cluster GREEN 24/24 shards, logstash healthy 60.6s, all 20 containers up, dashboard showing bandwidth data. |
+| 2026-03-04 | Nuclear test (`down -v && up -d`) | N100 production | **PASS** | Fresh install scenario. 34/34 docker compose steps with checkmarks. Init container: roles_mapping SUCC → auth 200 → stub template created → done 39.3s. Logstash healthy at 64.9s (was deadlocked 659s+ before fix). Filebeat started at 65.0s. All 20 containers up, zero manual intervention. |

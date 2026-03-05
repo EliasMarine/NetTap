@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 34 issues tracked. 34 RESOLVED. Latest: Chain 11 init container debugging — fixed `-cd` overwriting internal_users.yml, init container network namespace isolation, and shared TLS cert volume. All 20 containers healthy on N100, cluster GREEN (24/24 shards).
+> **Status:** 35 issues tracked. 35 RESOLVED. Latest: Chain 11d — stub `malcolm_template` creation breaks logstash/dashboards-helper circular deadlock on fresh installs. Nuclear test (`down -v && up -d`): 34/34 steps, 20 containers, logstash healthy at 64.9s. All containers healthy on N100, cluster GREEN.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -43,7 +43,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
 | Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
-| Logstash startup | OK | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. **FIXED:** `nettap-opensearch-init` one-shot container auto-runs securityadmin.sh (targeted `-f/-t` push, not `-cd`) on every `docker compose up`. Uses shared `opensearch-certs` volume for TLS certs. Logstash healthy at 60.6s. No longer breaks on `--force-recreate`. |
+| Logstash startup | OK | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. **FIXED:** `nettap-opensearch-init` one-shot container auto-runs securityadmin.sh (targeted `-f/-t` push, not `-cd`) on every `docker compose up`. Uses shared `opensearch-certs` volume for TLS certs. **Also creates stub `malcolm_template` on fresh installs** to break circular logstash/dashboards-helper dependency. Logstash healthy at 64.9s (nuclear test). No longer breaks on `--force-recreate` or `down -v`. |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
@@ -89,10 +89,11 @@ CHAIN 10: Malcolm Capture Services + Proxy Env Vars (NET-79)
 
 CHAIN 11: OpenSearch Security Reset on Container Recreate — PERMANENTLY FIXED
   Branch: infra/opensearch-field-mapping
-  Commits: 90b4e38 (shared certs volume + -h flag), 7014cda (-f/-t targeted push)
-  Sub-issues: 11a (internal_users overwrite), 11b (network namespace + TLS certs), 11c (auth 200)
+  Commits: 90b4e38 (shared certs volume + -h flag), 7014cda (-f/-t targeted push), 733672e (stub template)
+  Sub-issues: 11a (internal_users overwrite), 11b (network namespace + TLS certs), 11c (auth 200), 11d (template deadlock on fresh install)
   Bind-mount roles_mapping.yml from git + one-shot init container runs
   securityadmin.sh automatically on every `docker compose up`.
+  Init container also creates stub malcolm_template on fresh installs to break logstash/dashboards-helper circular dependency.
   All 20 containers healthy, cluster GREEN (24/24 shards).
 
 CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
@@ -1044,6 +1045,61 @@ The `-cd` flag was the sole cause of the 401. Once only `roles_mapping.yml` is p
 - All 20 containers started with checkmarks
 - Dashboard showing "bandwidth over time" data
 
+### Sub-issue 11d — Logstash/dashboards-helper circular template deadlock on fresh install (`down -v`)
+
+| Field | Value |
+|---|---|
+| **Commit** | 733672e |
+| **Status** | **FIXED** |
+| **Severity** | High |
+| **Date** | 2026-03-04 |
+
+**Symptoms:**
+- After `docker compose down -v && docker compose up -d` (nuclear test / fresh install), logstash deadlocks waiting for `malcolm_template` index template
+- Logstash stuck in `opensearch_status.sh -t malcolm_template` sleep loop for 659+ seconds
+- JVM never starts (only ~54MB RAM used instead of expected 2GB)
+- Filebeat also blocked (depends on logstash healthy)
+
+**Root Cause:**
+Circular dependency between logstash and dashboards-helper on fresh installs (no data volumes):
+
+1. **Logstash** waits for `malcolm_template` index template to exist before starting its JVM (`opensearch_status.sh -t malcolm_template` loop)
+2. **Dashboards-helper** creates `malcolm_template` but has a 180-second sleep on startup AND waits for log data to appear in OpenSearch before proceeding to template creation
+3. **Log data** can only appear if logstash is running to ingest it
+
+This creates a deadlock: logstash needs the template → dashboards-helper creates the template but needs log data → log data needs logstash → circular.
+
+On existing installs (volumes preserved), the template already exists in OpenSearch, so logstash starts immediately. The deadlock only manifests on fresh installs (`down -v`, first-time deployment).
+
+**Causal Chain:**
+```
+docker compose down -v (removes all volumes including OpenSearch data)
+  → docker compose up -d (fresh install, no templates in OpenSearch)
+    → logstash starts opensearch_status.sh -t malcolm_template
+      → malcolm_template doesn't exist → sleep loop
+        → dashboards-helper starts with 180s sleep
+          → dashboards-helper waits for log data to create templates
+            → log data requires logstash running → DEADLOCK
+              → logstash stuck 659+ seconds → unhealthy
+                → filebeat blocked (depends on logstash healthy)
+```
+
+**Fix:**
+Added Step 3 to `docker/scripts/opensearch-security-init.sh` — after pushing `roles_mapping.yml` and verifying auth, the init container checks if `malcolm_template` exists. If not (fresh install), it creates a minimal stub template with just `index_patterns: ["arkime_sessions3-*"]` and basic settings. This unblocks logstash immediately. Dashboards-helper overwrites the stub with the full template (700+ field mappings) within minutes, before any data flows through the pipeline.
+
+**Test Results (nuclear test — `down -v && up -d`):**
+- All 34/34 docker compose steps completed with checkmarks
+- Init container: roles_mapping SUCC → auth HTTP 200 → stub template created → done in 39.3s
+- Logstash: Healthy at 64.9s (was deadlocked for 659s+ before the fix)
+- Filebeat: Started at 65.0s (right after logstash)
+- All 20 containers up, zero manual intervention
+- Complete fresh install scenario confirmed working
+
+**Files Changed:**
+- `docker/scripts/opensearch-security-init.sh` — Added Step 3: check for `malcolm_template`, create minimal stub if absent
+
+**Key Insight:** On fresh installs, logstash and dashboards-helper have a circular dependency on `malcolm_template`. Breaking the deadlock with a stub template from the init container is safe because dashboards-helper overwrites it with the full template (including all ECS field mappings) before any data flows through the pipeline. The stub only needs `index_patterns` and basic settings to satisfy logstash's existence check.
+
 ---
 
 ### NET-80 — Storage API format mismatch: disk_free_gb missing, wrong types break setup wizard
@@ -1153,7 +1209,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `config/opensearch/opensearch-security/roles_mapping.yml` | Chain 11 fix | NEW: admin → all_access role mapping. Bind-mounted into opensearch container. Ensures correct mapping survives container recreate. |
-| `docker/scripts/opensearch-security-init.sh` | Chain 11 fix | Idempotent bootstrap script. Uses `-f roles_mapping.yml -t rolesmapping` (NOT `-cd`). Connects via `-h opensearch -p 9200` (NOT localhost). Reads TLS certs from shared `opensearch-certs` volume. Verifies auth returns 200. |
+| `docker/scripts/opensearch-security-init.sh` | Chain 11 fix | Idempotent bootstrap script. Step 1: Uses `-f roles_mapping.yml -t rolesmapping` (NOT `-cd`). Step 2: Verifies auth returns 200. **Step 3: Checks if `malcolm_template` exists, creates minimal stub if absent (fresh install).** Connects via `-h opensearch -p 9200` (NOT localhost). Reads TLS certs from shared `opensearch-certs` volume. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60, Chain 11 fix | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup. **Auto-bootstrap removed from startup flow** (init container handles it). Function kept for manual use. |
 | `daemon/api/traffic.py` | NET-95 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters |
 | `daemon/api/alerts.py` | NET-95 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields |
@@ -1232,6 +1288,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 49. **Malcolm's Logstash routes ALL data into `arkime_sessions3-*`** — there are no separate `zeek-*` or `suricata-*` indices. Zeek and Suricata data are distinguished by `event.provider` and `event.dataset` fields. Never assume a separate index per tool.
 50. **ECS field naming is universal in Malcolm** — all Zeek-native field names (`id.orig_h`, `orig_bytes`, `ts`) are remapped to ECS format (`source.ip`, `client.bytes`, `@timestamp`). Zeek-specific fields are prefixed: `zeek.dns.query`, `zeek.http.user_agent`, `zeek.ssl.ja3`. Suricata fields: `suricata.severity`, `rule.name`, `rule.category`.
 51. **Use `NETWORK_INDEX` env var for index configurability** — hardcoded index names break across Malcolm versions. The `OPENSEARCH_NETWORK_INDEX` env var lets operators override the index pattern without code changes.
+57. **Break circular template dependencies with stubs from the init container** — on fresh installs (`down -v`), logstash waits for `malcolm_template` to exist, but dashboards-helper (which creates it) waits for log data that logstash produces — circular deadlock. The init container can create a minimal stub template (just `index_patterns` + basic settings) to unblock logstash. Dashboards-helper overwrites the stub with the full 700+ field mapping template before any data flows through the pipeline. This is safe because the stub only needs to satisfy logstash's existence check, not provide correct field mappings.
 
 ### OpenSearch Security Init (NEW — Chain 11 sub-issues)
 53. **NEVER use `securityadmin.sh -cd` from an init container** — `-cd` pushes ALL config files in the directory, including `internal_users.yml`. The init container has Malcolm's IMAGE DEFAULT `internal_users.yml` with wrong password hashes. This overwrites the correct hashes that OpenSearch's entrypoint generated from the curlrc password. Use `-f FILE -t TYPE` to push only what you need (e.g., `-f roles_mapping.yml -t rolesmapping`).
@@ -1257,7 +1314,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `-Xss8m` may not be enough for future zeek plugins | StackOverflowError returns | Monitor pipeline startup; increase to 16m if needed |
 | `fix-perms` runs chown on every container restart | Slow startup on large data dirs | Consider conditional check (`stat -c %U`) |
 | `no-new-privileges` removed from Malcolm services | Reduced container isolation | Acceptable — Malcolm's design requires setuid; NetTap services keep strict security |
-| Template bootstrap pushes 52 templates on every start | Unnecessary API calls on existing deployments | Add idempotency check (check if `malcolm_template` exists first) |
+| ~~Template bootstrap pushes 52 templates on every start~~ | ~~Unnecessary API calls on existing deployments~~ | **RESOLVED:** Init container now checks if `malcolm_template` exists first. Only creates a minimal stub on fresh installs (no templates). Dashboards-helper overwrites with full template. On existing deployments, the check passes immediately and no templates are pushed. |
 | Malcolm image upgrades may add new supervisord env refs | Filebeat-style crash-loops from missing env vars | After upgrading Malcolm tag, check all supervisord.conf files inside images for new `%(ENV_*)s` references |
 | More Malcolm services may need explicit `command:` | Silent exit code 0 crashes | Audit all Malcolm services against upstream compose after tag bumps |
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
@@ -1296,5 +1353,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-68 | #73 | NIC LED identify: nsenter permission + info fallback | 2026-03-02 |
 | NET-79 | develop | Malcolm capture + proxy env vars, healthcheck fixes | 2026-03-02 |
 | NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
-| — | infra/opensearch-field-mapping | OpenSearch security reset + logstash bootstrap deadlock — **PERMANENTLY FIXED** (bind-mount + init container) | 2026-03-04 |
+| — | infra/opensearch-field-mapping | OpenSearch security reset + logstash bootstrap deadlock — **PERMANENTLY FIXED** (bind-mount + init container + stub template) | 2026-03-04 |
 | NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |
