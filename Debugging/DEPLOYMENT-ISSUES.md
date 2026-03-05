@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-04
-> **Status:** 31 issues tracked. 31 RESOLVED. Latest: Chain 11 permanently fixed — OpenSearch security auto-bootstrap via bind-mount + one-shot init container. No more manual `securityadmin.sh` after container recreate. 17/18 containers healthy on N100.
+> **Status:** 34 issues tracked. 34 RESOLVED. Latest: Chain 11 init container debugging — fixed `-cd` overwriting internal_users.yml, init container network namespace isolation, and shared TLS cert volume. All 20 containers healthy on N100, cluster GREEN (24/24 shards).
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -43,7 +43,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
 | Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
-| Logstash startup | OK | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. **FIXED:** `nettap-opensearch-init` one-shot container auto-runs securityadmin.sh on every `docker compose up`. Logstash now depends on init service completing. No longer breaks on `--force-recreate`. |
+| Logstash startup | OK | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. **FIXED:** `nettap-opensearch-init` one-shot container auto-runs securityadmin.sh (targeted `-f/-t` push, not `-cd`) on every `docker compose up`. Uses shared `opensearch-certs` volume for TLS certs. Logstash healthy at 60.6s. No longer breaks on `--force-recreate`. |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
@@ -89,8 +89,11 @@ CHAIN 10: Malcolm Capture Services + Proxy Env Vars (NET-79)
 
 CHAIN 11: OpenSearch Security Reset on Container Recreate — PERMANENTLY FIXED
   Branch: infra/opensearch-field-mapping
+  Commits: 90b4e38 (shared certs volume + -h flag), 7014cda (-f/-t targeted push)
+  Sub-issues: 11a (internal_users overwrite), 11b (network namespace + TLS certs), 11c (auth 200)
   Bind-mount roles_mapping.yml from git + one-shot init container runs
   securityadmin.sh automatically on every `docker compose up`.
+  All 20 containers healthy, cluster GREEN (24/24 shards).
 
 CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
   fix/nic-led-identify-fallback → develop
@@ -965,6 +968,82 @@ The manual workaround has been replaced with a fully automated solution using tw
 
 **Solution Pattern: Bind-mount + one-shot init container.** For any config that (a) must survive container recreation and (b) requires a post-startup push/sync step, bind-mount the config from git and add a one-shot init service that runs after the target is healthy. This pattern eliminates manual bootstrap steps from the deployment workflow.
 
+### Sub-issue 11a — securityadmin.sh `-cd` overwrites internal_users.yml with wrong password hashes
+
+| Field | Value |
+|---|---|
+| **Commit** | 7014cda |
+| **Status** | **FIXED** |
+| **Severity** | High |
+| **Date** | 2026-03-04 |
+
+**Symptoms:**
+- Init container runs `securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/` (push entire config directory)
+- Auth verification immediately returns 401 Unauthorized
+- All services using `malcolm_internal` credentials fail to authenticate
+
+**Root Cause:**
+The `-cd` flag pushes ALL security config files from the directory, including `internal_users.yml`. The init container uses Malcolm's IMAGE DEFAULT `internal_users.yml` which has the **original** password hashes baked into the Docker image. But the opensearch container's entrypoint (`self_signed_key_gen.sh`) generates `internal_users.yml` with the CORRECT hashes derived from the curlrc password file. Pushing `-cd` overwrites the correct `internal_users.yml` in the `.opendistro_security` index with the image default (wrong hashes), breaking all authentication.
+
+**Fix:**
+Changed `securityadmin.sh` invocation from `-cd <dir>` (push all files) to `-f roles_mapping.yml -t rolesmapping` (push ONLY the roles mapping file). This leaves `internal_users.yml` and all other security config untouched in the index.
+
+**Files Changed:**
+- `docker/scripts/opensearch-security-init.sh` — switched from `-cd` to `-f/-t` for targeted push
+
+### Sub-issue 11b — Init container network namespace isolation + missing TLS certs
+
+| Field | Value |
+|---|---|
+| **Commit** | 90b4e38 |
+| **Status** | **FIXED** |
+| **Severity** | High |
+| **Date** | 2026-03-04 |
+
+**Symptoms:**
+- Init container runs `securityadmin.sh` which defaults to connecting to `localhost:9200`
+- Connection refused — `securityadmin.sh` can't reach OpenSearch
+- Even if network worked, `securityadmin.sh` needs admin TLS certs (`ca.crt`, `admin.crt`, `admin.key`) which don't exist in the init container
+
+**Root Cause (two issues):**
+
+1. **Network namespace isolation:** The init container is a separate Docker container from opensearch. Its `localhost` refers to its own network namespace, not the opensearch container. `securityadmin.sh` defaults to `localhost:9200` which hits the init container's own loopback — nothing listening there.
+
+2. **Missing TLS certificates:** Malcolm's `self_signed_key_gen.sh` generates admin TLS certs at runtime inside the opensearch container's filesystem. These certs are ephemeral (lost on container recreate) and only exist inside the opensearch container. The init container has no access to them.
+
+**Fix:**
+1. Added `-h opensearch -p 9200` flags to `securityadmin.sh` invocation so it connects via Docker DNS to the opensearch container instead of localhost.
+2. Created a `opensearch-certs` shared named volume. OpenSearch writes its generated certs to this volume; the init container mounts the same volume read-only to access `ca.crt`, `admin.crt`, and `admin.key`.
+3. Overrode init container `entrypoint: ["/bin/bash"]` to skip Malcolm's full startup chain (`docker-uid-gid-setup.sh` → `self_signed_key_gen.sh` → supervisord`). A utility container only needs a shell.
+
+**Files Changed:**
+- `docker/scripts/opensearch-security-init.sh` — added `-h opensearch -p 9200` flags
+- `docker/docker-compose.yml` — added `opensearch-certs` named volume, cert volume mounts for init container, entrypoint override
+
+### Sub-issue 11c — Auth verification returns 200 after targeted push
+
+| Field | Value |
+|---|---|
+| **Commit** | 7014cda |
+| **Status** | **FIXED** (side-effect of 11a fix) |
+| **Severity** | Low (diagnostic) |
+| **Date** | 2026-03-04 |
+
+**Symptoms:**
+- With `-cd`, auth verification in the init script returned 401 (internal_users overwritten)
+- After switching to `-f/-t`, auth verification returns 200 immediately on first attempt
+
+**Root Cause:**
+The `-cd` flag was the sole cause of the 401. Once only `roles_mapping.yml` is pushed (leaving `internal_users.yml` intact), authentication works immediately because the correct password hashes are preserved in the security index.
+
+**Final Successful Test Results (N100 hardware):**
+- Init container: pushed ONLY rolesmapping → SUCC on attempt 1
+- Auth verification: HTTP 200 immediately
+- Cluster health: GREEN, 24/24 shards active
+- Logstash: Healthy at 60.6s
+- All 20 containers started with checkmarks
+- Dashboard showing "bandwidth over time" data
+
 ---
 
 ### NET-80 — Storage API format mismatch: disk_free_gb missing, wrong types break setup wizard
@@ -1065,7 +1144,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, Chain 11 fix | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** **NEW: roles_mapping.yml bind-mount into opensearch, `nettap-opensearch-init` one-shot service, logstash/daemon depend on init service.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, Chain 11 fix | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** **roles_mapping.yml bind-mount into opensearch, `nettap-opensearch-init` one-shot service (entrypoint override, opensearch-certs shared volume, cert volume mounts), logstash/daemon depend on init service.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1074,7 +1153,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `config/opensearch/opensearch-security/roles_mapping.yml` | Chain 11 fix | NEW: admin → all_access role mapping. Bind-mounted into opensearch container. Ensures correct mapping survives container recreate. |
-| `docker/scripts/opensearch-security-init.sh` | Chain 11 fix | NEW: Idempotent bootstrap script. Runs securityadmin.sh + verifies auth. Used by nettap-opensearch-init one-shot service. |
+| `docker/scripts/opensearch-security-init.sh` | Chain 11 fix | Idempotent bootstrap script. Uses `-f roles_mapping.yml -t rolesmapping` (NOT `-cd`). Connects via `-h opensearch -p 9200` (NOT localhost). Reads TLS certs from shared `opensearch-certs` volume. Verifies auth returns 200. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60, Chain 11 fix | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup. **Auto-bootstrap removed from startup flow** (init container handles it). Function kept for manual use. |
 | `daemon/api/traffic.py` | NET-95 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters |
 | `daemon/api/alerts.py` | NET-95 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields |
@@ -1153,6 +1232,12 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 49. **Malcolm's Logstash routes ALL data into `arkime_sessions3-*`** — there are no separate `zeek-*` or `suricata-*` indices. Zeek and Suricata data are distinguished by `event.provider` and `event.dataset` fields. Never assume a separate index per tool.
 50. **ECS field naming is universal in Malcolm** — all Zeek-native field names (`id.orig_h`, `orig_bytes`, `ts`) are remapped to ECS format (`source.ip`, `client.bytes`, `@timestamp`). Zeek-specific fields are prefixed: `zeek.dns.query`, `zeek.http.user_agent`, `zeek.ssl.ja3`. Suricata fields: `suricata.severity`, `rule.name`, `rule.category`.
 51. **Use `NETWORK_INDEX` env var for index configurability** — hardcoded index names break across Malcolm versions. The `OPENSEARCH_NETWORK_INDEX` env var lets operators override the index pattern without code changes.
+
+### OpenSearch Security Init (NEW — Chain 11 sub-issues)
+53. **NEVER use `securityadmin.sh -cd` from an init container** — `-cd` pushes ALL config files in the directory, including `internal_users.yml`. The init container has Malcolm's IMAGE DEFAULT `internal_users.yml` with wrong password hashes. This overwrites the correct hashes that OpenSearch's entrypoint generated from the curlrc password. Use `-f FILE -t TYPE` to push only what you need (e.g., `-f roles_mapping.yml -t rolesmapping`).
+54. **Init containers are separate network namespaces** — `localhost` in an init container is NOT the same as `localhost` in the target service. `securityadmin.sh` defaults to `localhost:9200`, but the init container's loopback has nothing listening. Must use Docker DNS hostname: `-h opensearch -p 9200`.
+55. **Malcolm generates TLS certs at runtime inside the container** — `self_signed_key_gen.sh` creates `ca.crt`, `admin.crt`, `admin.key` inside the opensearch container's filesystem. These are ephemeral (lost on container recreate). To share with other containers (like the init container), use a named volume (`opensearch-certs`) that both containers mount.
+56. **Override entrypoint, not just command, for utility containers** — Malcolm's entrypoint chain (`docker-uid-gid-setup.sh` → `self_signed_key_gen.sh` → supervisord`) runs side effects (cert generation, uid/gid setup, service startup). For a utility container that only needs to run a script, set `entrypoint: ["/bin/bash"]` to skip the entire chain. Otherwise the entrypoint may interfere or fail when the container isn't configured for full service startup.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
