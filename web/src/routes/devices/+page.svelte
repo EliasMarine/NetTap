@@ -5,14 +5,18 @@
 	 * Features:
 	 *   - Search by IP, hostname, or manufacturer
 	 *   - Sortable columns (click header to toggle asc/desc)
-	 *   - Click row to navigate to /devices/{ip}
+	 *   - Inline expandable detail panel with recent connections
+	 *   - Risk score badges (green/amber/red)
+	 *   - "NEW" badge for devices first seen < 24h ago
 	 *   - Auto-refresh toggle (30s interval)
 	 *   - Loading skeletons, empty state, device count badge
 	 */
 
-	import { goto } from '$app/navigation';
-	import { getDevices } from '$api/devices';
-	import type { Device, DeviceListResponse } from '$api/devices';
+	import { onMount } from 'svelte';
+	import { getDevices, getDeviceConnections } from '$api/devices';
+	import type { Device, DeviceListResponse, DeviceConnection, DeviceConnectionsResponse } from '$api/devices';
+	import { getRiskScores } from '$api/risk';
+	import type { DeviceRiskScore } from '$api/risk';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -20,11 +24,15 @@
 
 	let loading = $state(true);
 	let devices = $state<Device[]>([]);
+	let riskScores = $state<Map<string, DeviceRiskScore>>(new Map());
 	let searchQuery = $state('');
-	let sortColumn = $state<keyof Device>('last_seen');
+	let sortColumn = $state<string>('last_seen');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
 	let autoRefresh = $state(false);
 	let lastUpdated = $state('');
+	let expandedIp = $state<string | null>(null);
+	let expandedConnections = $state<DeviceConnection[]>([]);
+	let expandedLoading = $state(false);
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -33,12 +41,18 @@
 	async function fetchDevices() {
 		loading = true;
 		try {
-			const response: DeviceListResponse = await getDevices({
-				sort: sortColumn,
-				order: sortDirection,
-				limit: 500,
-			});
-			devices = response.devices;
+			const [deviceRes, riskRes] = await Promise.all([
+				getDevices({ sort: sortColumn, order: sortDirection, limit: 500 }),
+				getRiskScores()
+			]);
+			devices = deviceRes.devices;
+
+			const scoreMap = new Map<string, DeviceRiskScore>();
+			for (const s of riskRes.scores) {
+				scoreMap.set(s.ip, s);
+			}
+			riskScores = scoreMap;
+
 			lastUpdated = new Date().toLocaleTimeString();
 		} catch {
 			devices = [];
@@ -47,15 +61,43 @@
 		}
 	}
 
-	// Initial fetch + auto-refresh
-	$effect(() => {
-		fetchDevices();
+	async function fetchConnections(ip: string) {
+		expandedLoading = true;
+		try {
+			const res: DeviceConnectionsResponse = await getDeviceConnections(ip, { size: 10 });
+			expandedConnections = res.connections;
+		} catch {
+			expandedConnections = [];
+		} finally {
+			expandedLoading = false;
+		}
+	}
 
+	// Initial fetch + auto-refresh
+	onMount(() => {
+		fetchDevices();
+	});
+
+	$effect(() => {
 		if (autoRefresh) {
 			const interval = setInterval(fetchDevices, 30_000);
 			return () => clearInterval(interval);
 		}
 	});
+
+	// ---------------------------------------------------------------------------
+	// Expand/collapse
+	// ---------------------------------------------------------------------------
+
+	function toggleExpand(ip: string) {
+		if (expandedIp === ip) {
+			expandedIp = null;
+			expandedConnections = [];
+		} else {
+			expandedIp = ip;
+			fetchConnections(ip);
+		}
+	}
 
 	// ---------------------------------------------------------------------------
 	// Filtering & sorting
@@ -64,7 +106,6 @@
 	let filteredDevices = $derived.by(() => {
 		let result = devices;
 
-		// Search filter
 		if (searchQuery.trim()) {
 			const q = searchQuery.toLowerCase().trim();
 			result = result.filter(
@@ -75,10 +116,18 @@
 			);
 		}
 
-		// Client-side sort
 		result = [...result].sort((a, b) => {
-			const aVal = a[sortColumn];
-			const bVal = b[sortColumn];
+			let aVal: unknown;
+			let bVal: unknown;
+
+			// Special case: risk_score is from the riskScores map
+			if (sortColumn === 'risk_score') {
+				aVal = riskScores.get(a.ip)?.score ?? -1;
+				bVal = riskScores.get(b.ip)?.score ?? -1;
+			} else {
+				aVal = a[sortColumn as keyof Device];
+				bVal = b[sortColumn as keyof Device];
+			}
 
 			if (aVal == null && bVal == null) return 0;
 			if (aVal == null) return 1;
@@ -101,17 +150,18 @@
 	// Sort handler
 	// ---------------------------------------------------------------------------
 
-	type SortableColumn = 'ip' | 'hostname' | 'manufacturer' | 'os_hint' | 'total_bytes' | 'connection_count' | 'alert_count' | 'last_seen';
+	type SortableColumn = 'ip' | 'hostname' | 'mac' | 'manufacturer' | 'first_seen' | 'last_seen' | 'total_bytes' | 'connection_count' | 'risk_score';
 
 	const columnDefs: { key: SortableColumn; label: string }[] = [
 		{ key: 'ip', label: 'IP Address' },
 		{ key: 'hostname', label: 'Hostname' },
+		{ key: 'mac', label: 'MAC' },
 		{ key: 'manufacturer', label: 'Manufacturer' },
-		{ key: 'os_hint', label: 'OS' },
-		{ key: 'total_bytes', label: 'Bandwidth' },
-		{ key: 'connection_count', label: 'Connections' },
-		{ key: 'alert_count', label: 'Alerts' },
+		{ key: 'first_seen', label: 'First Seen' },
 		{ key: 'last_seen', label: 'Last Seen' },
+		{ key: 'total_bytes', label: 'Total Bytes' },
+		{ key: 'connection_count', label: 'Connections' },
+		{ key: 'risk_score', label: 'Risk Score' },
 	];
 
 	function handleSort(column: SortableColumn) {
@@ -119,7 +169,7 @@
 			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
 		} else {
 			sortColumn = column;
-			sortDirection = column === 'last_seen' || column === 'total_bytes' || column === 'connection_count' || column === 'alert_count' ? 'desc' : 'asc';
+			sortDirection = column === 'last_seen' || column === 'first_seen' || column === 'total_bytes' || column === 'connection_count' || column === 'risk_score' ? 'desc' : 'asc';
 		}
 	}
 
@@ -129,16 +179,20 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Navigation
+	// Helpers
 	// ---------------------------------------------------------------------------
 
-	function navigateToDevice(ip: string) {
-		goto(`/devices/${encodeURIComponent(ip)}`);
+	function isNewDevice(firstSeen: string): boolean {
+		if (!firstSeen) return false;
+		const diff = Date.now() - new Date(firstSeen).getTime();
+		return diff < 24 * 60 * 60 * 1000;
 	}
 
-	// ---------------------------------------------------------------------------
-	// Formatting helpers
-	// ---------------------------------------------------------------------------
+	function getRiskBadgeClass(score: number): string {
+		if (score <= 30) return 'badge-success';
+		if (score <= 60) return 'badge-warning';
+		return 'badge-danger';
+	}
 
 	function formatBytes(bytes: number): string {
 		if (bytes === 0) return '0 B';
@@ -183,7 +237,7 @@
 					<span class="badge badge-accent">{filteredDevices.length} device{filteredDevices.length !== 1 ? 's' : ''}</span>
 				{/if}
 			</div>
-			<p class="text-muted">All discovered devices on the network, with traffic and alert summaries.</p>
+			<p class="text-muted">All discovered devices on the network, with traffic and risk summaries.</p>
 		</div>
 		<div class="header-actions">
 			{#if lastUpdated}
@@ -279,24 +333,139 @@
 					</thead>
 					<tbody>
 						{#each filteredDevices as device (device.ip)}
-							<tr class="device-row" onclick={() => navigateToDevice(device.ip)} role="link" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') navigateToDevice(device.ip); }}>
-								<td class="mono ip-cell">{device.ip}</td>
+							{@const risk = riskScores.get(device.ip)}
+							{@const isNew = isNewDevice(device.first_seen)}
+							{@const isExpanded = expandedIp === device.ip}
+							<tr
+								class="device-row"
+								class:expanded={isExpanded}
+								onclick={() => toggleExpand(device.ip)}
+								role="button"
+								tabindex="0"
+								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(device.ip); } }}
+							>
+								<td class="mono ip-cell">
+									{device.ip}
+									{#if isNew}
+										<span class="badge badge-info badge-inline">NEW</span>
+									{/if}
+								</td>
 								<td class="hostname-cell">{device.hostname || '--'}</td>
+								<td class="mono mac-cell">{device.mac || '--'}</td>
 								<td>{device.manufacturer || '--'}</td>
-								<td>{device.os_hint || '--'}</td>
+								<td class="time-cell" title={device.first_seen ? new Date(device.first_seen).toLocaleString() : ''}>
+									{timeAgo(device.first_seen)}
+								</td>
+								<td class="time-cell" title={device.last_seen ? new Date(device.last_seen).toLocaleString() : ''}>
+									{timeAgo(device.last_seen)}
+								</td>
 								<td class="mono">{formatBytes(device.total_bytes)}</td>
 								<td class="mono">{formatNumber(device.connection_count)}</td>
 								<td>
-									{#if device.alert_count > 0}
-										<span class="badge badge-danger">{formatNumber(device.alert_count)}</span>
+									{#if risk}
+										<span class="badge {getRiskBadgeClass(risk.score)}">{risk.score}</span>
 									{:else}
-										<span class="text-muted">0</span>
+										<span class="text-muted">--</span>
 									{/if}
 								</td>
-								<td class="last-seen-cell" title={device.last_seen ? new Date(device.last_seen).toLocaleString() : ''}>
-									{timeAgo(device.last_seen)}
-								</td>
 							</tr>
+							{#if isExpanded}
+								<tr class="detail-row">
+									<td colspan="9">
+										<div class="detail-panel">
+											<div class="detail-grid">
+												<!-- Device summary -->
+												<div class="detail-section">
+													<h4>Device Info</h4>
+													<dl class="detail-list">
+														<div class="detail-item">
+															<dt>IP Address</dt>
+															<dd class="mono">{device.ip}</dd>
+														</div>
+														<div class="detail-item">
+															<dt>MAC Address</dt>
+															<dd class="mono">{device.mac || 'Unknown'}</dd>
+														</div>
+														<div class="detail-item">
+															<dt>Hostname</dt>
+															<dd>{device.hostname || 'Unknown'}</dd>
+														</div>
+														<div class="detail-item">
+															<dt>Manufacturer</dt>
+															<dd>{device.manufacturer || 'Unknown'}</dd>
+														</div>
+														{#if device.os_hint}
+															<div class="detail-item">
+																<dt>OS Hint</dt>
+																<dd>{device.os_hint}</dd>
+															</div>
+														{/if}
+														<div class="detail-item">
+															<dt>Protocols</dt>
+															<dd>
+																{#if device.protocols.length > 0}
+																	{#each device.protocols as proto}
+																		<span class="badge badge-muted protocol-badge">{proto}</span>
+																	{/each}
+																{:else}
+																	<span class="text-muted">None</span>
+																{/if}
+															</dd>
+														</div>
+														<div class="detail-item">
+															<dt>Alerts</dt>
+															<dd>
+																{#if device.alert_count > 0}
+																	<span class="badge badge-danger">{device.alert_count}</span>
+																{:else}
+																	<span class="text-muted">0</span>
+																{/if}
+															</dd>
+														</div>
+														{#if risk}
+															<div class="detail-item">
+																<dt>Risk Score</dt>
+																<dd>
+																	<span class="badge {getRiskBadgeClass(risk.score)}">{risk.score} ({risk.level})</span>
+																</dd>
+															</div>
+														{/if}
+													</dl>
+													<a class="btn btn-sm btn-secondary detail-link" href="/logs?filter={encodeURIComponent(device.ip)}">
+														View in Log Explorer
+													</a>
+												</div>
+
+												<!-- Recent connections -->
+												<div class="detail-section">
+													<h4>Recent Connections</h4>
+													{#if expandedLoading}
+														<div class="detail-loading">
+															<div class="loading-spinner"></div>
+															<span class="text-muted">Loading connections...</span>
+														</div>
+													{:else if expandedConnections.length === 0}
+														<p class="text-muted">No recent connections found.</p>
+													{:else}
+														<div class="connections-list">
+															{#each expandedConnections as conn}
+																<div class="connection-item">
+																	<span class="conn-time">{conn.ts ? timeAgo(conn.ts) : '--'}</span>
+																	<span class="badge badge-muted">{conn.proto || '?'}</span>
+																	{#if conn.service}
+																		<span class="badge badge-info">{conn.service}</span>
+																	{/if}
+																	<span class="mono conn-id">{conn._id.substring(0, 12)}</span>
+																</div>
+															{/each}
+														</div>
+													{/if}
+												</div>
+											</div>
+										</div>
+									</td>
+								</tr>
+							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -475,10 +644,20 @@
 		outline-offset: -2px;
 	}
 
+	.device-row.expanded {
+		background-color: var(--bg-tertiary);
+	}
+
 	.ip-cell {
 		font-size: var(--text-sm);
 		color: var(--accent);
 		font-weight: 500;
+	}
+
+	.badge-inline {
+		margin-left: var(--space-xs);
+		font-size: 0.625rem;
+		vertical-align: middle;
 	}
 
 	.hostname-cell {
@@ -487,8 +666,114 @@
 		text-overflow: ellipsis;
 	}
 
-	.last-seen-cell {
+	.mac-cell {
+		font-size: var(--text-xs);
 		color: var(--text-secondary);
+	}
+
+	.time-cell {
+		color: var(--text-secondary);
+	}
+
+	/* Detail panel */
+	.detail-row td {
+		padding: 0 !important;
+		border-bottom: 1px solid var(--border-default) !important;
+	}
+
+	.detail-panel {
+		padding: var(--space-lg);
+		background-color: var(--bg-primary);
+		border-top: 1px solid var(--border-default);
+	}
+
+	.detail-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-xl);
+	}
+
+	.detail-section h4 {
+		font-size: var(--text-sm);
+		font-weight: 600;
+		color: var(--text-primary);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		margin-bottom: var(--space-md);
+		padding-bottom: var(--space-xs);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.detail-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-md);
+	}
+
+	.detail-item {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-md);
+	}
+
+	.detail-item dt {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		min-width: 100px;
+		flex-shrink: 0;
+	}
+
+	.detail-item dd {
+		font-size: var(--text-sm);
+		color: var(--text-primary);
+	}
+
+	.protocol-badge {
+		margin-right: var(--space-xs);
+	}
+
+	.detail-link {
+		margin-top: var(--space-sm);
+	}
+
+	.detail-loading {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-md) 0;
+	}
+
+	.connections-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.connection-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+	}
+
+	.connection-item:hover {
+		background-color: var(--bg-secondary);
+	}
+
+	.conn-time {
+		color: var(--text-muted);
+		min-width: 60px;
+	}
+
+	.conn-id {
+		color: var(--text-secondary);
+		font-size: var(--text-xs);
+		margin-left: auto;
 	}
 
 	/* Empty state */
@@ -565,6 +850,10 @@
 
 		.search-bar {
 			max-width: 100%;
+		}
+
+		.detail-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

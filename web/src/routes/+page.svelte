@@ -299,6 +299,58 @@
 	function categoryColor(name: string): string {
 		return CATEGORY_COLORS[name.toLowerCase()] || CATEGORY_COLORS['other'];
 	}
+
+	// ---------------------------------------------------------------------------
+	// Top talkers bar chart data
+	// ---------------------------------------------------------------------------
+
+	let maxTalkerBytes = $derived(
+		topTalkers.length > 0 ? Math.max(...topTalkers.map((t) => t.total_bytes)) : 1
+	);
+
+	// ---------------------------------------------------------------------------
+	// Alert sparkline data (severity breakdown over time)
+	// ---------------------------------------------------------------------------
+
+	let alertSparklinePoints = $derived.by(() => {
+		if (recentAlerts.length === 0) return { high: '', medium: '', low: '' };
+		// Group alerts into ~12 time buckets for sparkline
+		const sorted = [...recentAlerts].sort((a, b) =>
+			new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+		);
+		const bucketCount = Math.min(12, sorted.length);
+		const bucketSize = Math.ceil(sorted.length / bucketCount);
+
+		const highCounts: number[] = [];
+		const medCounts: number[] = [];
+		const lowCounts: number[] = [];
+
+		for (let i = 0; i < bucketCount; i++) {
+			const slice = sorted.slice(i * bucketSize, (i + 1) * bucketSize);
+			highCounts.push(slice.filter((a) => a.alert?.severity === 1).length);
+			medCounts.push(slice.filter((a) => a.alert?.severity === 2).length);
+			lowCounts.push(slice.filter((a) => a.alert?.severity === 3).length);
+		}
+
+		const maxCount = Math.max(1, ...highCounts.map((h, i) => h + medCounts[i] + lowCounts[i]));
+		const sparkW = 200;
+		const sparkH = 40;
+
+		function toPath(counts: number[], baseline: number[]): string {
+			return counts.map((c, i) => {
+				const x = (i / (bucketCount - 1 || 1)) * sparkW;
+				const y = sparkH - ((c + baseline[i]) / maxCount) * sparkH;
+				return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+			}).join(' ');
+		}
+
+		const zeros = new Array(bucketCount).fill(0);
+		return {
+			high: toPath(highCounts, medCounts.map((m, i) => m + lowCounts[i])),
+			medium: toPath(medCounts, lowCounts),
+			low: toPath(lowCounts, zeros),
+		};
+	});
 </script>
 
 <svelte:head>
@@ -565,9 +617,9 @@
 		</div>
 	{/if}
 
-	<!-- Row 3: Tables -->
+	<!-- Row 3: Top Talkers + Alert Sparkline + Recent Alerts -->
 	<div class="grid grid-cols-2 tables-grid">
-		<!-- Top Talkers -->
+		<!-- Top Talkers (horizontal bar chart) -->
 		<div class="card table-card">
 			<div class="card-header">
 				<span class="card-title">Top Talkers</span>
@@ -584,37 +636,53 @@
 					<p class="text-muted">No traffic data available.</p>
 				</div>
 			{:else}
-				<div class="table-scroll">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>Source IP</th>
-								<th>Bandwidth</th>
-								<th>Connections</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each topTalkers.slice(0, 10) as talker, i}
-								<tr>
-									<td class="row-num">{i + 1}</td>
-									<td class="ip-cell"><IPAddress ip={talker.ip} /></td>
-									<td>{formatBytes(talker.total_bytes)}</td>
-									<td>{talker.connection_count.toLocaleString()}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+				<div class="top-talkers-bars">
+					{#each topTalkers.slice(0, 5) as talker, i}
+						<a href="/devices/{talker.ip}" class="talker-row">
+							<span class="talker-rank">{i + 1}</span>
+							<span class="talker-ip mono"><IPAddress ip={talker.ip} /></span>
+							<div class="talker-bar-track">
+								<div
+									class="talker-bar-fill"
+									style="width: {(talker.total_bytes / maxTalkerBytes) * 100}%;"
+								></div>
+							</div>
+							<span class="talker-value mono">{formatBytesShort(talker.total_bytes)}</span>
+							<span class="talker-conns text-muted">{talker.connection_count.toLocaleString()} conn</span>
+						</a>
+					{/each}
 				</div>
 			{/if}
 		</div>
 
-		<!-- Recent Alerts -->
+		<!-- Recent Alerts + Sparkline -->
 		<div class="card table-card">
 			<div class="card-header">
 				<span class="card-title">Recent Alerts</span>
 				<a href="/alerts" class="card-action">View all</a>
 			</div>
+
+			<!-- Alert Trend Sparkline -->
+			{#if recentAlerts.length > 1}
+				<div class="alert-sparkline-container">
+					<div class="sparkline-legend">
+						<span class="sparkline-legend-item"><span class="sparkline-dot" style="background: var(--red);"></span> High</span>
+						<span class="sparkline-legend-item"><span class="sparkline-dot" style="background: var(--amber);"></span> Medium</span>
+						<span class="sparkline-legend-item"><span class="sparkline-dot" style="background: var(--blue);"></span> Low</span>
+					</div>
+					<svg class="alert-sparkline" viewBox="0 0 200 40" preserveAspectRatio="none">
+						{#if alertSparklinePoints.high}
+							<path d={alertSparklinePoints.high} fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+						{/if}
+						{#if alertSparklinePoints.medium}
+							<path d={alertSparklinePoints.medium} fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+						{/if}
+						{#if alertSparklinePoints.low}
+							<path d={alertSparklinePoints.low} fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+						{/if}
+					</svg>
+				</div>
+			{/if}
 			{#if loading && recentAlerts.length === 0}
 				<div class="skeleton-table">
 					{#each Array(5) as _}
@@ -837,6 +905,107 @@
 		font-size: var(--text-xs);
 		color: var(--text-muted);
 		text-align: right;
+	}
+
+	/* Top Talkers horizontal bars */
+	.top-talkers-bars {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.talker-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-sm);
+		text-decoration: none;
+		color: inherit;
+		transition: background-color var(--transition-fast);
+	}
+
+	.talker-row:hover {
+		background-color: var(--bg-tertiary);
+		color: inherit;
+	}
+
+	.talker-rank {
+		flex-shrink: 0;
+		width: 20px;
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-align: right;
+	}
+
+	.talker-ip {
+		flex-shrink: 0;
+		width: 120px;
+		font-size: var(--text-xs);
+	}
+
+	.talker-bar-track {
+		flex: 1;
+		height: 18px;
+		background-color: var(--bg-tertiary);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+	}
+
+	.talker-bar-fill {
+		height: 100%;
+		border-radius: var(--radius-sm);
+		background: linear-gradient(90deg, var(--cyan), var(--blue));
+		transition: width 0.4s ease-out;
+		min-width: 2px;
+	}
+
+	.talker-value {
+		flex-shrink: 0;
+		width: 60px;
+		font-size: var(--text-xs);
+		color: var(--text-primary);
+		text-align: right;
+	}
+
+	.talker-conns {
+		flex-shrink: 0;
+		width: 70px;
+		font-size: var(--text-xs);
+		text-align: right;
+	}
+
+	/* Alert sparkline */
+	.alert-sparkline-container {
+		padding: var(--space-sm) 0;
+		margin-bottom: var(--space-sm);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.sparkline-legend {
+		display: flex;
+		gap: var(--space-md);
+		margin-bottom: var(--space-xs);
+	}
+
+	.sparkline-legend-item {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+	}
+
+	.sparkline-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		display: inline-block;
+	}
+
+	.alert-sparkline {
+		width: 100%;
+		height: 40px;
 	}
 
 	/* Clickable alert rows */
