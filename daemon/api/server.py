@@ -44,6 +44,9 @@ from api.reports import register_report_routes
 from api.bridge import register_bridge_routes
 from api.updates import register_update_routes
 from api.nic_discovery import register_nic_discovery_routes
+from api.logs import register_log_routes
+from api.opensearch_cluster import register_opensearch_cluster_routes
+from api.logstash import register_logstash_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -465,6 +468,15 @@ def create_app(
 
     # NIC discovery (setup wizard interface detection from host sysfs)
     register_nic_discovery_routes(app)
+
+    # Log search API (generic Zeek/Suricata log browser)
+    register_log_routes(app, storage)
+
+    # OpenSearch cluster visibility (health, indices, shards, templates)
+    register_opensearch_cluster_routes(app, storage)
+
+    # Logstash monitoring (pipeline stats, JVM, throughput)
+    register_logstash_routes(app)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
