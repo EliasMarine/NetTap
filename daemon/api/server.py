@@ -83,6 +83,11 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
             response = await handler(request)
         except web.HTTPException as exc:
             response = exc
+        except Exception as exc:
+            logger.exception("Unhandled exception in %s %s", request.method, request.path)
+            response = web.json_response(
+                {"error": f"Internal server error: {exc}"}, status=500
+            )
 
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"

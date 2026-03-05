@@ -39,6 +39,13 @@ x-opensearch-env: &opensearch-env
   OPENSEARCH_SSL_CERTIFICATE_VERIFICATION: "false"
   OPENSEARCH_COMPOSE_PROJECT: "nettap"
   OPENSEARCH_CREDS_CONFIG_FILE: "/var/local/curlrc/.opensearch.primary.curlrc"
+  # Malcolm index naming — used by logstash's format_index_string.rb to construct
+  # OpenSearch index names. Without these, @metadata[malcolm_opensearch_index] is
+  # never set and documents land in a literal index named after the template var.
+  MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+  MALCOLM_NETWORK_INDEX_SUFFIX: "%{%y%m%d}"
+  MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
+  MALCOLM_OTHER_INDEX_SUFFIX: "%{%y%m%d}"
 
 x-capture-caps: &capture-caps
   - IPC_LOCK
