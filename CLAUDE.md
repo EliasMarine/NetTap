@@ -349,6 +349,30 @@ curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
 
 This applies to all deployment, testing, debugging, and diagnostic instructions.
 
+**When there are multiple sequential commands, chain them into a single copy-paste block** using `&&` and `\` line continuations. The user should be able to paste ONE block and walk away. Never give 5 separate code blocks when one chained block works.
+
+Example — **BAD:**
+```bash
+git pull origin phase-4/webui-v2
+```
+```bash
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+```
+```bash
+sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate
+```
+
+Example — **GOOD:**
+```bash
+cd ~/NetTap && \
+git pull origin phase-4/webui-v2 && \
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon && \
+sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate && \
+sleep 10 && \
+echo "=== Verify ===" && \
+sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep daemon
+```
+
 **Test/verification commands must include the FULL deployment flow.** Never give bare test commands (e.g. `docker exec ... nsenter`) without the prerequisite steps a normal user needs to run first. Always include: pull latest code → build affected container(s) → recreate/restart → then test.
 
 Example — **BAD:**

@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-05
-> **Status:** 30 issues tracked. 30 RESOLVED. Latest: NET-100 Web UI v2 redesign — Log Explorer, Infrastructure page, Datadog/Grafana aesthetic CSS overhaul. 17/18 containers healthy on N100.
+> **Status:** 33 issues tracked. 33 RESOLVED. Latest: .keyword suffix fix for OpenSearch aggregation fields (PR #92), log search _source wrapper fix, CSP Google Fonts fix. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -21,6 +21,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 8: Storage API Format Mismatch](#chain-8-storage-api-format-mismatch)
 - [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
 - [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
+- [Chain 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts](#chain-13-opensearch-keyword-suffix--log-search-format--csp-fonts)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -54,7 +55,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **12 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **13 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -96,6 +97,11 @@ CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
   fix/nic-led-identify-fallback → develop
   Admin account creation silently fails: SvelteKit CSRF 403 behind nginx
   + /var/lib/nettap-web owned by root (nettap user can't write users.json).
+
+CHAIN 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts
+  PR #92 (phase-4/webui-v2)
+  All dashboard aggregations fail 400: text fields not optimised for aggregations.
+  Log search returns flat docs instead of _source wrapper. CSP blocks Google Fonts.
 ```
 
 ---
@@ -1035,6 +1041,95 @@ Browser sends Origin: https://192.168.x.x (TLS terminated by nginx)
 
 ---
 
+## Chain 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts
+
+### Issue 13a — All dashboard aggregations fail with 400 error
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **PR** | #92 |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-05 |
+| **Environment** | N100 production hardware |
+
+**Symptoms:**
+Every dashboard page (traffic summary, devices, protocols, top talkers, categories) returned empty data or 400 errors. OpenSearch returned: `"Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default."` on all `terms` aggregation queries.
+
+**Root Cause:**
+Malcolm maps all text fields (source.ip, network.transport, destination.ip, network.protocol, zeek.dns.query, etc.) as **text+keyword multi-fields** in OpenSearch. The `text` type supports full-text search but NOT aggregations. Any `terms` aggregation must use the `.keyword` subfield (e.g., `source.ip.keyword`, `network.transport.keyword`). Without the `.keyword` suffix, OpenSearch refuses the aggregation with a 400 error.
+
+**Causal Chain:**
+```
+Malcolm indexes all fields as text+keyword multi-fields
+  → daemon queries use bare field names (source.ip, network.transport)
+    → OpenSearch tries terms aggregation on text field → 400 error
+      → ALL dashboard pages show empty/error states
+```
+
+**Fix:**
+Added `.keyword` suffix to all 22 field references used in `terms` aggregations across 6 daemon files:
+- `daemon/api/traffic.py` — source.ip.keyword, destination.ip.keyword, network.transport.keyword, network.protocol.keyword
+- `daemon/api/devices.py` — source.ip.keyword, destination.ip.keyword, source.mac.keyword, destination.mac.keyword
+- `daemon/api/alerts.py` — rule.category.keyword, rule.name.keyword, source.ip.keyword, destination.ip.keyword
+- `daemon/api/risk.py` — source.ip.keyword, destination.ip.keyword, rule.category.keyword
+- `daemon/services/traffic_classifier.py` — network.protocol.keyword, destination.port, zeek.dns.query.keyword
+- `daemon/services/device_fingerprint.py` — zeek.dns.query.keyword, zeek.http.user_agent.keyword, source.ip.keyword
+
+### Issue 13b — Log search API returns flat docs instead of _source wrapper
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **PR** | #92 |
+| **Status** | Done |
+| **Severity** | Medium |
+| **Date** | 2026-03-05 |
+
+**Symptoms:**
+Log Explorer page showed empty rows or crashed when trying to access log fields. The frontend expected documents in `{_id, _source: {...}}` format (standard OpenSearch hit structure), but the daemon API was returning flattened documents like `{_id, "source.ip": "...", "destination.ip": "..."}`.
+
+**Root Cause:**
+The `daemon/api/logs.py` endpoint was flattening the `_source` wrapper when serializing search results. The frontend `LogExplorer` component destructured `hit._source` to access fields, which returned `undefined` on flat docs.
+
+**Fix:**
+Updated `daemon/api/logs.py` to preserve the `{_id, _source: {...}}` wrapper format that the frontend expects. Added test coverage in `daemon/tests/test_logs_api.py`.
+
+### Issue 13c — CSP blocking Google Fonts
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **PR** | #92 |
+| **Status** | Done |
+| **Severity** | Low |
+| **Date** | 2026-03-05 |
+
+**Symptoms:**
+Dashboard rendered with fallback system fonts instead of the intended Inter/JetBrains Mono web fonts. Browser console showed Content-Security-Policy violations for `fonts.googleapis.com` and `fonts.gstatic.com`.
+
+**Root Cause:**
+The `docker/nginx.conf` Content-Security-Policy header did not include `fonts.googleapis.com` in the `style-src` directive or `fonts.gstatic.com` in the `font-src` directive.
+
+**Fix:**
+Updated `docker/nginx.conf` CSP header to allow:
+- `style-src`: added `fonts.googleapis.com`
+- `font-src`: added `fonts.gstatic.com`
+
+**Files Changed (all three issues):**
+- `daemon/api/traffic.py` — .keyword suffix on aggregation fields
+- `daemon/api/devices.py` — .keyword suffix on aggregation fields
+- `daemon/api/alerts.py` — .keyword suffix on aggregation fields
+- `daemon/api/risk.py` — .keyword suffix on aggregation fields
+- `daemon/services/traffic_classifier.py` — .keyword suffix on aggregation fields
+- `daemon/services/device_fingerprint.py` — .keyword suffix on aggregation fields
+- `daemon/api/logs.py` — _source wrapper format fix
+- `daemon/tests/test_logs_api.py` — test coverage for _source format
+- `docker/nginx.conf` — CSP font allowlisting
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -1050,14 +1145,15 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
-| `daemon/api/traffic.py` | NET-95 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters |
-| `daemon/api/alerts.py` | NET-95 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields |
-| `daemon/api/devices.py` | NET-95 | Device queries use `NETWORK_INDEX` + ECS fields |
-| `daemon/api/risk.py` | NET-95 | Risk scoring uses `NETWORK_INDEX` + ECS fields |
-| `daemon/services/traffic_classifier.py` | NET-95 | Category classification uses `NETWORK_INDEX` + ECS fields |
-| `daemon/services/device_fingerprint.py` | NET-95 | Fingerprinting uses `NETWORK_INDEX` + ECS fields (zeek.dns.query, zeek.http.user_agent, etc.) |
+| `daemon/api/traffic.py` | NET-95, PR #92 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters. **All aggregation fields use .keyword suffix.** |
+| `daemon/api/alerts.py` | NET-95, PR #92 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/api/devices.py` | NET-95, PR #92 | Device queries use `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/api/risk.py` | NET-95, PR #92 | Risk scoring uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/services/traffic_classifier.py` | NET-95, PR #92 | Category classification uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/services/device_fingerprint.py` | NET-95, PR #92 | Fingerprinting uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix (zeek.dns.query.keyword, etc.).** |
 | `daemon/services/nl_search.py` | NET-95 | NL search uses `NETWORK_INDEX` + ECS fields |
-| `daemon/api/logs.py` | NET-100 | Log Search API — generic Zeek/Suricata browser |
+| `daemon/api/logs.py` | NET-100, PR #92 | Log Search API — generic Zeek/Suricata browser. **Fixed _source wrapper format for frontend compatibility.** |
+| `docker/nginx.conf` | PR #92 | CSP header updated to allow fonts.googleapis.com (style-src) and fonts.gstatic.com (font-src) |
 | `daemon/api/opensearch_cluster.py` | NET-100 | OpenSearch cluster visibility API |
 | `daemon/api/logstash.py` | NET-100 | Logstash monitoring API |
 | `web/src/lib/styles/global.css` | NET-100 | Complete CSS redesign (Datadog/Grafana aesthetic) |
@@ -1133,6 +1229,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 49. **Malcolm's Logstash routes ALL data into `arkime_sessions3-*`** — there are no separate `zeek-*` or `suricata-*` indices. Zeek and Suricata data are distinguished by `event.provider` and `event.dataset` fields. Never assume a separate index per tool.
 50. **ECS field naming is universal in Malcolm** — all Zeek-native field names (`id.orig_h`, `orig_bytes`, `ts`) are remapped to ECS format (`source.ip`, `client.bytes`, `@timestamp`). Zeek-specific fields are prefixed: `zeek.dns.query`, `zeek.http.user_agent`, `zeek.ssl.ja3`. Suricata fields: `suricata.severity`, `rule.name`, `rule.category`.
 51. **Use `NETWORK_INDEX` env var for index configurability** — hardcoded index names break across Malcolm versions. The `OPENSEARCH_NETWORK_INDEX` env var lets operators override the index pattern without code changes.
+53. **Malcolm maps ALL text fields as text+keyword multi-fields. Every OpenSearch `terms` aggregation MUST use `.keyword` suffix** (e.g., `source.ip.keyword`, `network.transport.keyword`). Without it, aggregations fail with 400: "Text fields are not optimised for operations that require per-document field data like aggregations." This applies to every field used in `terms`, `cardinality`, or `composite` aggregations — NOT to `match`, `range`, or `bool` filter queries.
+54. **Preserve OpenSearch `_source` wrapper in API responses** — frontends expect `{_id, _source: {...}}` (the standard OpenSearch hit structure). Flattening to `{_id, "field": "value"}` breaks destructuring like `hit._source.field`. Always pass through the raw hit structure.
+55. **CSP headers must explicitly allow external font CDNs** — Google Fonts requires `fonts.googleapis.com` in `style-src` (for CSS) and `fonts.gstatic.com` in `font-src` (for font files). Missing either causes silent fallback to system fonts with only console CSP violations as evidence.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
