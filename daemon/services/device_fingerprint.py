@@ -131,7 +131,7 @@ class DeviceFingerprint:
                     ]
                 }
             },
-            "aggs": {"top_hostname": {"terms": {"field": "zeek.dns.query", "size": 1}}},
+            "aggs": {"top_hostname": {"terms": {"field": "zeek.dns.query.keyword", "size": 1}}},
         }
 
         try:
@@ -256,7 +256,7 @@ class DeviceFingerprint:
                     ]
                 }
             },
-            "aggs": {"top_ua": {"terms": {"field": "zeek.http.user_agent", "size": 5}}},
+            "aggs": {"top_ua": {"terms": {"field": "zeek.http.user_agent.keyword", "size": 5}}},
         }
 
         try:
@@ -294,7 +294,7 @@ class DeviceFingerprint:
                     ]
                 }
             },
-            "aggs": {"top_ja3": {"terms": {"field": "zeek.ssl.ja3", "size": 1}}},
+            "aggs": {"top_ja3": {"terms": {"field": "zeek.ssl.ja3.keyword", "size": 1}}},
         }
 
         try:

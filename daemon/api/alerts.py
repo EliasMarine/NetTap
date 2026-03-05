@@ -247,7 +247,7 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
             # OLD CODE START — Zeek-native: "alert.severity"
             # "by_severity": {"terms": {"field": "alert.severity", "size": 10}},
             # OLD CODE END
-            "by_severity": {"terms": {"field": "suricata.severity", "size": 10}},
+            "by_severity": {"terms": {"field": "suricata.severity.keyword", "size": 10}},
         },
     }
 
