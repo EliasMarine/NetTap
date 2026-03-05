@@ -123,7 +123,8 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(data["total"], 1)
         self.assertEqual(len(data["hits"]), 1)
         self.assertEqual(data["hits"][0]["_id"], "doc1")
-        self.assertEqual(data["hits"][0]["source.ip"], "192.168.1.1")
+        self.assertEqual(data["hits"][0]["_source"]["source.ip"], "192.168.1.1")
+        self.assertEqual(data["hits"][0]["_index"], "arkime_sessions3-260305")
         self.assertIsNotNone(data["search_after"])
 
     async def test_fields_endpoint(self):

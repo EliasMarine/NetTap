@@ -206,10 +206,11 @@ async def handle_log_search(request: web.Request) -> web.Response:
         documents = []
         last_sort = None
         for hit in hits.get("hits", []):
-            doc = hit.get("_source", {})
-            doc["_id"] = hit.get("_id")
-            doc["_index"] = hit.get("_index")
-            documents.append(doc)
+            documents.append({
+                "_id": hit.get("_id"),
+                "_index": hit.get("_index"),
+                "_source": hit.get("_source", {}),
+            })
             last_sort = hit.get("sort")
 
         return web.json_response({
