@@ -672,6 +672,8 @@ services:
       - /var/run:size=1M
     volumes:
       - ../config:/opt/nettap/config:ro
+      # Docker socket — daemon uses `docker exec` for TShark PCAP analysis
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # NVMe SMART queries send admin commands that require write access to
       # /dev/nvme0 (the controller device). :ro silently blocks these commands,
       # causing all SMART metrics to return null. See Debugging/RELIABILITY-TRACKER.md.
