@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
-> **Last updated:** 2026-03-04
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: NET-95 OpenSearch ECS field mapping — all daemon queries remapped to Malcolm's actual index/field names. Test counts up: pytest 1041 (was 1036), vitest 683.
+> **Last updated:** 2026-03-05
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** New: NET-100 Web UI v2 complete redesign — 7 SIEM pages, 3 new daemon API modules, new design system. Test counts up: daemon 25 new tests, vitest 690 (was 683), svelte-check 0 errors.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.

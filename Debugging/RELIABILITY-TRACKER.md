@@ -1,6 +1,6 @@
 # NetTap Reliability Tracker — Source of Truth
 
-> Last updated: 2026-03-04
+> Last updated: 2026-03-05
 > Status: 5/7 subsystems production-ready
 
 ## Purpose
@@ -16,11 +16,16 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Bridge Health | OK | 2026-03-04 | -- | Fixed: not_configured state (PR #81), bypass promisc toggle (PR #83), 30s polling loop (PR #83), 8-point readiness check (PR #83) |
 | Bridge Management | OK | 2026-03-04 | -- | NEW: BridgeManager service — create/teardown/readiness via nsenter, host persistence (PR #83) |
 | Internet Health | Fixing | -- | Shows "down" when not configured | Missing `not_configured` state |
-| Web UI (Dashboard) | OK | 2026-03-03 | -- | Fixed: distinct states for unreachable/connecting/no-data (PR #81) |
-| Web UI (System) | OK | 2026-03-03 | -- | Fixed: null-safe SMART display, storage NaN fix (PR #82) |
+| Web UI (Dashboard) | OK | 2026-03-05 | -- | REDESIGNED: Full SIEM dashboard with stat cards, charts, auto-refresh (NET-100) |
+| Web UI (System) | OK | 2026-03-05 | -- | REDESIGNED: Infrastructure page with OpenSearch/Logstash/System tabs (NET-100) |
 | Web UI (Go Live) | OK | 2026-03-04 | -- | NEW: 3-phase Go Live page — readiness/wiring/monitoring (PR #83) |
 | Web Auth | OK | 2026-03-04 | -- | Fixed: bridge API + /go-live added to public paths (PR #85) |
 | Storage Daemon | OK | 2026-03-03 | -- | Disk monitoring and retention working |
+| Log Search API | OK | 2026-03-05 | -- | NEW: Generic Zeek/Suricata log browser with 8 log types, cursor pagination (NET-100) |
+| OpenSearch Cluster API | OK | 2026-03-05 | -- | NEW: Cluster health, indices, shards, templates visibility (NET-100) |
+| Logstash Monitor API | OK | 2026-03-05 | -- | NEW: Pipeline stats, JVM heap, throughput monitoring (NET-100) |
+| Web UI (Log Explorer) | OK | 2026-03-05 | -- | NEW: Kibana Discover-style log browser (NET-100) |
+| Web UI (Infrastructure) | OK | 2026-03-05 | -- | NEW: 3-tab OpenSearch/Logstash/System view (NET-100) |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -49,6 +54,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-04 | Zeek | Zeek crash-loops: Permission denied on /zeek/live/logs | Fresh volumes root-owned, Malcolm entrypoint needs root for mkdir/chown | Added `user: "root"` to capture services | NET-93 | PR #89 |
 | 2026-03-04 | Suricata | Suricata fails: "workers" doesn't exist for UNIX_SOCKET runmode | `SURICATA_RUNMODE: "workers"` conflicts with Malcolm 8.x internal runmode | Removed env var — Malcolm auto-selects af-packet | NET-93 | PR #89 |
 | 2026-03-04 | Bridge Health | Netfilter check fails when br_netfilter module not loaded | nsenter cat returns error when proc file absent (module not loaded = good) | Treat missing proc file as netfilter disabled (PASS) | NET-93 | PR #89 |
+| 2026-03-05 | Web UI v2 Redesign | .gitignore `logs/` catches route dirs | `.gitignore` pattern `logs/` matches SvelteKit route directories like `src/routes/logs/` | `git add -f` override | NET-100 | -- |
 | 2026-03-04 | Dashboard Data | All dashboard queries return zero data | Daemon queries used Zeek-native index/field names; Malcolm uses unified arkime_sessions3-* with ECS fields | Remapped all 7 daemon files: index → NETWORK_INDEX, fields → ECS, added event.provider/dataset filters | NET-95 | infra/opensearch-field-mapping |
 
 ## Reliability Lessons Learned
@@ -68,7 +74,8 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 13. **Malcolm capture images need `user: "root"` in compose.** Their entrypoint (`docker-uid-gid-setup.sh`) runs `mkdir`/`chown` to set up log directories, then drops privileges to PUID:PGID via `su`. Without starting as root, fresh Docker volumes (root-owned) cause Permission denied.
 14. **Don't override Malcolm's internal runmode selection.** Setting `SURICATA_RUNMODE` conflicts with Malcolm's orchestration in Suricata 8.x. Let `SURICATA_LIVE_CAPTURE=true` handle mode selection automatically.
 15. **Missing kernel module proc files ≠ feature enabled.** When `br_netfilter` isn't loaded, `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist. This means no iptables interference — the desired state, not a failure.
-16. **Malcolm unifies all data into arkime_sessions3-*.** There are no separate zeek-*/suricata-* indices. Use `event.provider` + `event.dataset` to filter by data source. All field names use ECS format, not Zeek-native. Always verify field names against a real document from the N100 before writing queries.
+16. **Agent teams (7 parallel) can build independent SvelteKit pages concurrently without conflicts** — each page has its own route directory, so parallel agents don't step on each other's files.
+17. **Malcolm unifies all data into arkime_sessions3-*.** There are no separate zeek-*/suricata-* indices. Use `event.provider` + `event.dataset` to filter by data source. All field names use ECS format, not Zeek-native. Always verify field names against a real document from the N100 before writing queries.
 
 ## Verification Checklist
 

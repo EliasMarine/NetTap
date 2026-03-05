@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-04
-> **Status:** 30 issues tracked. 30 RESOLVED. Latest: NET-95 OpenSearch field mapping — daemon queries remapped from Zeek-native to ECS (Malcolm's actual field names). 17/18 containers healthy on N100.
+> **Last updated:** 2026-03-05
+> **Status:** 30 issues tracked. 30 RESOLVED. Latest: NET-100 Web UI v2 redesign — Log Explorer, Infrastructure page, Datadog/Grafana aesthetic CSS overhaul. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1057,6 +1057,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/services/traffic_classifier.py` | NET-95 | Category classification uses `NETWORK_INDEX` + ECS fields |
 | `daemon/services/device_fingerprint.py` | NET-95 | Fingerprinting uses `NETWORK_INDEX` + ECS fields (zeek.dns.query, zeek.http.user_agent, etc.) |
 | `daemon/services/nl_search.py` | NET-95 | NL search uses `NETWORK_INDEX` + ECS fields |
+| `daemon/api/logs.py` | NET-100 | Log Search API — generic Zeek/Suricata browser |
+| `daemon/api/opensearch_cluster.py` | NET-100 | OpenSearch cluster visibility API |
+| `daemon/api/logstash.py` | NET-100 | Logstash monitoring API |
+| `web/src/lib/styles/global.css` | NET-100 | Complete CSS redesign (Datadog/Grafana aesthetic) |
+| `web/src/routes/+layout.svelte` | NET-100 | New layout shell + navigation |
+| `web/src/routes/logs/+page.svelte` | NET-100 | NEW: Log Explorer page |
+| `web/src/routes/infrastructure/+page.svelte` | NET-100 | NEW: Infrastructure page |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1134,6 +1141,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 23. **Test with the actual execution path** — `docker exec -u 1000` is NOT equivalent to the entrypoint's `su` heredoc.
 24. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
 25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
+52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
 
 ---
 
