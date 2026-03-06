@@ -140,19 +140,24 @@ def _normalize_alert_source(source: dict) -> dict:
         or rule.get("id")
         or suricata_alert.get("signature_id")
     )
-    category = (
+    raw_category = (
         existing_alert.get("category")
         or rule.get("category")
         or suricata_alert.get("category")
         or ""
     )
+    # Malcolm may store category as a list — flatten to first string
+    if isinstance(raw_category, list):
+        category = raw_category[0] if raw_category else ""
+    else:
+        category = raw_category
     severity = _extract_severity(existing_alert, suricata, suricata_alert)
 
     source["alert"] = {
         "signature": signature,
         "signature_id": signature_id,
         "severity": severity,
-        "category": category,
+        "category": str(category),
     }
 
     # --- Flatten network endpoints ---
@@ -176,7 +181,11 @@ def _normalize_alert_source(source: dict) -> dict:
         source.setdefault("proto", net.get("transport"))
 
     # --- Normalize timestamp ---
-    source.setdefault("timestamp", source.get("@timestamp", ""))
+    # Prefer @timestamp (ISO 8601) over raw timestamp (epoch millis from Malcolm)
+    if "@timestamp" in source:
+        source["timestamp"] = source["@timestamp"]
+    elif "timestamp" not in source:
+        source["timestamp"] = ""
 
     return source
 
