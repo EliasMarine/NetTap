@@ -152,7 +152,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
-            RFC1918_SOURCE_FILTER,
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
         ],
     }
     if excluded:

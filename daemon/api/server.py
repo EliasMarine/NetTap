@@ -38,7 +38,7 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
-from services.excluded_ips import load_excluded_ips
+from services.excluded_ips import load_excluded_ips, detect_and_build_lan_filter
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
@@ -418,6 +418,11 @@ def create_app(
     app["excluded_ips_file"] = excluded_ips_file
     app["excluded_ips"] = load_excluded_ips(excluded_ips_file)
     logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
+
+    # Auto-detect LAN subnets from OpenSearch traffic data
+    # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback
+    app["lan_filter"] = detect_and_build_lan_filter(storage._client)
+    logger.info("LAN filter initialized")
     register_settings_routes(app, env_file=env_file)
 
     # Natural language search (query parser + OpenSearch execution)

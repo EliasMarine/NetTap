@@ -129,7 +129,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
             },
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
-            RFC1918_SOURCE_FILTER,
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
         ],
     }
     if excluded:

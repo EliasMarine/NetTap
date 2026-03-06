@@ -5,8 +5,9 @@ Manages a configurable list of IP addresses to exclude from device-centric
 views (device inventory, top talkers, risk scores) while keeping them
 visible in raw log search, alerts, and connection listings.
 
-Typical use case: filtering out the ISP gateway's public IP that appears
-on every external connection and drowns out actual LAN devices.
+Also provides LAN subnet auto-detection: queries OpenSearch for the most
+common RFC1918 source IP subnets to automatically identify the user's
+actual LAN without any manual configuration.
 """
 
 import json
@@ -16,6 +17,8 @@ import os
 logger = logging.getLogger("nettap.services.excluded_ips")
 
 DEFAULT_EXCLUDED_IPS_FILE = "/opt/nettap/data/excluded_ips.json"
+
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 
 def _get_file_path() -> str:
@@ -49,49 +52,122 @@ def save_excluded_ips(ips: list[str], file_path: str | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# LAN subnet filter — configurable via LAN_SUBNETS env var
+# RFC1918 helpers
 # ---------------------------------------------------------------------------
-# Restricts source.ip to configured LAN subnets (painless script filter).
-# Uses a painless script for proper numeric IP comparison because arkime_sessions3-*
-# maps source.ip as keyword type, making range queries lexicographic (which incorrectly
-# matches public IPs like 172.217.x.x or 172.234.x.x).
-#
-# OLD CODE START — hardcoded all-RFC1918 painless filter allowed ISP CGNAT 10.x.x.x IPs (2026-03-05)
-# RFC1918_SOURCE_FILTER = {
-#     "script": {
-#         "script": {
-#             "source": """
-#                 def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
-#                 if (ip.length() == 0) return false;
-#                 def parts = ip.splitOnToken('.');
-#                 if (parts.length != 4) return false;
-#                 int a = Integer.parseInt(parts[0]);
-#                 int b = Integer.parseInt(parts[1]);
-#                 if (a == 10) return true;
-#                 if (a == 172 && b >= 16 && b <= 31) return true;
-#                 if (a == 192 && b == 168) return true;
-#                 return false;
-#             """,
-#             "lang": "painless"
-#         }
-#     }
-# }
-# OLD CODE END
 
 
-def _parse_lan_subnets() -> list[tuple[int, int, int]]:
-    """Parse LAN_SUBNETS env var into (a, b, c) tuples for painless script.
+def _is_rfc1918(a: int, b: int) -> bool:
+    """Check if first two octets belong to an RFC1918 range."""
+    if a == 10:
+        return True
+    if a == 172 and 16 <= b <= 31:
+        return True
+    if a == 192 and b == 168:
+        return True
+    return False
 
-    Supports /8, /16, /24 CIDR blocks only (sufficient for home/SMB LANs).
-    Default: 192.168.0.0/16
 
-    Environment variable: LAN_SUBNETS (comma-separated CIDR notation)
-    Examples:
-        LAN_SUBNETS=192.168.1.0/24
-        LAN_SUBNETS=192.168.0.0/16,10.0.0.0/8
-        LAN_SUBNETS=172.16.0.0/16,192.168.1.0/24
+# ---------------------------------------------------------------------------
+# LAN subnet auto-detection from OpenSearch traffic data
+# ---------------------------------------------------------------------------
+
+
+def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
+    """Auto-detect LAN subnets by querying OpenSearch for common source IPs.
+
+    Strategy: aggregate source.ip from recent zeek conn logs, extract the
+    /24 subnet of each top IP, keep only RFC1918 subnets, and return them
+    sorted by frequency. This correctly identifies the user's actual LAN
+    regardless of their subnet scheme (192.168.1.x, 10.0.1.x, 172.16.x.x, etc.).
+
+    Args:
+        client: OpenSearch client instance.
+
+    Returns:
+        List of (a, b, c) tuples representing detected /24 subnets.
+        Empty list if detection fails.
     """
-    raw = os.environ.get("LAN_SUBNETS", "192.168.0.0/16,10.10.0.0/16")
+    try:
+        query = {
+            "size": 0,
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"event.provider": "zeek"}},
+                        {"term": {"event.dataset": "conn"}},
+                    ]
+                }
+            },
+            "aggs": {
+                "top_sources": {
+                    "terms": {
+                        "field": "source.ip.keyword",
+                        "size": 500,
+                    }
+                }
+            },
+        }
+
+        result = client.search(index=NETWORK_INDEX, body=query)
+        buckets = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+
+        if not buckets:
+            logger.warning("LAN detection: no source IPs found in OpenSearch")
+            return []
+
+        # Count connections per /24 subnet (only RFC1918)
+        subnet_counts: dict[tuple[int, int, int], int] = {}
+        for bucket in buckets:
+            ip = bucket["key"]
+            count = bucket["doc_count"]
+            parts = ip.split(".")
+            if len(parts) != 4:
+                continue
+            try:
+                a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+            except ValueError:
+                continue
+
+            if not _is_rfc1918(a, b):
+                continue
+
+            subnet = (a, b, c)
+            subnet_counts[subnet] = subnet_counts.get(subnet, 0) + count
+
+        if not subnet_counts:
+            logger.warning("LAN detection: no RFC1918 source IPs found")
+            return []
+
+        # Sort by connection count descending, take top subnets
+        sorted_subnets = sorted(subnet_counts.items(), key=lambda x: x[1], reverse=True)
+
+        # Only keep subnets with meaningful traffic (>1% of the top subnet's traffic)
+        top_count = sorted_subnets[0][1]
+        threshold = top_count * 0.01
+        detected = [s for s, c in sorted_subnets if c >= threshold]
+
+        logger.info(
+            "LAN detection: found %d subnet(s): %s",
+            len(detected),
+            ", ".join(f"{a}.{b}.{c}.0/24" for a, b, c in detected),
+        )
+        return detected
+
+    except Exception as exc:
+        logger.warning("LAN subnet detection failed: %s", exc)
+        return []
+
+
+def _parse_manual_subnets() -> list[tuple[int, int, int]]:
+    """Parse LAN_SUBNETS env var as manual override.
+
+    Supports /8, /16, /24 CIDR blocks.
+    Returns empty list if env var is not set (triggers auto-detection).
+    """
+    raw = os.environ.get("LAN_SUBNETS", "")
+    if not raw.strip():
+        return []  # No manual override — use auto-detection
+
     subnets: list[tuple[int, int, int]] = []
     for cidr in raw.split(","):
         cidr = cidr.strip()
@@ -104,31 +180,58 @@ def _parse_lan_subnets() -> list[tuple[int, int, int]]:
         a, b, c = int(octets[0]), int(octets[1]), int(octets[2])
         prefix_len = int(prefix)
         if prefix_len == 8:
-            subnets.append((a, -1, -1))  # match first octet only
+            subnets.append((a, -1, -1))
         elif prefix_len == 16:
-            subnets.append((a, b, -1))  # match first two octets
+            subnets.append((a, b, -1))
         elif prefix_len == 24:
-            subnets.append((a, b, c))  # match first three octets
+            subnets.append((a, b, c))
+
+    if subnets:
+        logger.info(
+            "LAN subnets from env override: %s",
+            ", ".join(
+                f"{a}.{'*' if b == -1 else b}.{'*' if c == -1 else c}.0"
+                for a, b, c in subnets
+            ),
+        )
     return subnets
 
 
-def build_lan_filter() -> dict:
-    """Build an OpenSearch painless script filter that only matches IPs in configured LAN subnets.
+def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
+    """Build an OpenSearch painless script filter matching only given subnets.
 
-    Reads the LAN_SUBNETS environment variable (comma-separated CIDR notation).
-    Default: 192.168.0.0/16 (matches 192.168.x.x only).
+    Args:
+        subnets: List of (a, b, c) tuples. -1 means wildcard for that octet.
+            e.g. (192, 168, 1) matches 192.168.1.x
+                 (10, -1, -1)   matches 10.x.x.x
 
-    Returns a dict suitable for use as an OpenSearch query filter clause.
+    Returns:
+        OpenSearch query filter clause.
     """
-    subnets = _parse_lan_subnets()
     if not subnets:
-        # Fallback to 192.168.0.0/16
-        subnets = [(192, 168, -1)]
+        # Fallback: match all RFC1918 (broad, but safe default)
+        return {
+            "script": {
+                "script": {
+                    "source": """
+                        def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
+                        if (ip.length() == 0) return false;
+                        def parts = ip.splitOnToken('.');
+                        if (parts.length != 4) return false;
+                        int a = Integer.parseInt(parts[0]);
+                        int b = Integer.parseInt(parts[1]);
+                        if (a == 10) return true;
+                        if (a == 172 && b >= 16 && b <= 31) return true;
+                        if (a == 192 && b == 168) return true;
+                        return false;
+                    """,
+                    "lang": "painless"
+                }
+            }
+        }
 
-    # Build painless conditions
     conditions = []
-    for subnet in subnets:
-        a, b, c = subnet
+    for a, b, c in subnets:
         if b == -1:
             conditions.append(f"(a == {a})")
         elif c == -1:
@@ -157,8 +260,39 @@ def build_lan_filter() -> dict:
     }
 
 
-# Module-level constant — built once at import time from LAN_SUBNETS env var
-RFC1918_SOURCE_FILTER = build_lan_filter()
+def detect_and_build_lan_filter(client) -> dict:
+    """Auto-detect LAN subnets from traffic data and build the filter.
+
+    Priority order:
+    1. LAN_SUBNETS env var (manual override) — if set, use it
+    2. Auto-detect from OpenSearch traffic data
+    3. Fall back to all RFC1918 if detection fails
+
+    Args:
+        client: OpenSearch client instance (can be None if not available yet).
+
+    Returns:
+        OpenSearch query filter clause for LAN source IPs.
+    """
+    # Check for manual override first
+    manual = _parse_manual_subnets()
+    if manual:
+        return build_lan_filter(manual)
+
+    # Auto-detect from traffic data
+    if client is not None:
+        detected = detect_lan_subnets(client)
+        if detected:
+            return build_lan_filter(detected)
+
+    # Fallback: all RFC1918
+    logger.info("LAN filter: using broad RFC1918 fallback (auto-detection unavailable)")
+    return build_lan_filter([])
+
+
+# Module-level fallback — used only until auto-detection runs in create_app()
+# After startup, devices.py and risk.py read from request.app["lan_filter"]
+RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
 
 
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
