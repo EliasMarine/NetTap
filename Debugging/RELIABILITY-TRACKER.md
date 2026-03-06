@@ -1,6 +1,6 @@
 # NetTap Reliability Tracker — Source of Truth
 
-> Last updated: 2026-03-05
+> Last updated: 2026-03-06
 > Status: 7/7 subsystems production-ready
 
 ## Purpose
@@ -28,6 +28,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Web UI (Infrastructure) | OK | 2026-03-05 | -- | NEW: 3-tab OpenSearch/Logstash/System view (NET-100) |
 | Dashboard Data (Aggregations) | OK | 2026-03-05 | -- | Fixed: .keyword suffix on all 22 aggregation field references (PR #92). All dashboard pages return data. |
 | Logstash Index Routing | OK | 2026-03-05 | -- | Fixed: MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX env vars added to logstash service (717bd24). Events now route to correct arkime_sessions3-* indices. 34,992 docs reindexed from broken index. |
+| Alerts API | OK | 2026-03-06 | -- | Fixed: ECS/Malcolm/Suricata field normalization. Signatures, severities, categories, timestamps all populated correctly. Severity counts handle string keys. IP filter (source OR destination) added. |
+| WHOIS/DNS Lookup API | OK | 2026-03-06 | -- | NEW: `GET /api/lookup/whois/{ip}` (async subprocess, 15s timeout, parsed fields) + `GET /api/lookup/dns/{ip}` (reverse + forward DNS). Requires `whois` package in Dockerfile. |
+| IP Context Menu | OK | 2026-03-06 | -- | NEW: 8 right-click actions on every IP (Copy, Device, GeoIP, WHOIS, DNS, Alerts, Filter From, Filter To). IPAddress component on Devices, Logs, Alerts pages. Filter from/to bug fixed (was using identical URL). |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -62,6 +65,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-05 | Log Search API | Log search returns flat docs, frontend crashes | `logs.py` flattened `_source` wrapper; frontend expected `{_id, _source: {...}}` | Preserved `_source` wrapper format in API response | -- | PR #92 (phase-4/webui-v2) |
 | 2026-03-05 | Web UI (CSS) | Google Fonts blocked by CSP | nginx.conf Content-Security-Policy missing `fonts.googleapis.com` / `fonts.gstatic.com` | Added font domains to `style-src` and `font-src` CSP directives | -- | PR #92 (phase-4/webui-v2) |
 | 2026-03-05 | Logstash / Data Pipeline | 89K+ events in broken literal index, 0 Suricata events in arkime_sessions3-* | `MALCOLM_NETWORK_INDEX_PATTERN` and `MALCOLM_NETWORK_INDEX_SUFFIX` env vars missing from logstash service — `format_index_string.rb` crashed with `NoMethodError: undefined method 'delete_suffix' for nil:NilClass` | Added 4 MALCOLM_*_INDEX env vars to logstash service in docker-compose.yml. Reindexed 34,992 docs from broken index. | -- | Commit 717bd24 (phase-4/webui-v2) |
+| 2026-03-06 | Alerts API | All alert signatures show "unknown", severities all "info" | Daemon passed raw `_source` without normalizing ECS/Malcolm/Suricata field paths (`rule.name` vs `suricata.alert.signature` vs `alert.signature`). Category stored as array. Timestamp as epoch millis. | Added `_normalize_alert_source()` + `_extract_severity()` to merge all 3 paths, flatten array categories, prefer ISO `@timestamp`. Fixed severity count string-key parsing. | -- | Commits cf960e4 + 4c26c26 (phase-4/webui-v2) |
+| 2026-03-06 | Web UI (IPAddress) | "Filter from" and "Filter to" use identical URL | Both menu items navigated to `/connections?ip={ip}` — no src/dst distinction | Fixed: "from" → `?src_ip=`, "to" → `?dst_ip=` | -- | Commit 5b1b4d4 (phase-4/webui-v2) |
+| 2026-03-06 | Web UI (IP Context Menu) | IP addresses on Devices, Logs, Alerts pages rendered as plain text — no right-click actions | IPAddress component only used on Connections and Device Detail pages | Added IPAddress to Devices (3 locations), Log Explorer (IP column detection), Alerts (IP filter badge). Added WHOIS/DNS/Alerts menu items. Created daemon lookup API + pages. | -- | Commit 5b1b4d4 (phase-4/webui-v2) |
 
 ## Reliability Lessons Learned
 
@@ -87,6 +93,10 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 20. **CSP headers must explicitly allow external font CDNs.** Google Fonts requires `fonts.googleapis.com` in `style-src` (for CSS) and `fonts.gstatic.com` in `font-src` (for font files). Missing either causes silent fallback to system fonts — only visible via browser console CSP violation messages.
 21. **Every Malcolm service needs its own complete set of env vars.** Docker service environments are isolated — setting `MALCOLM_NETWORK_INDEX_PATTERN` on nginx-proxy does NOT make it available to logstash. Malcolm's upstream uses shared `env_file:` references; our custom compose must replicate each env var on every service that needs it. Missing index pattern vars caused Logstash to silently misindex 89K+ events.
 22. **Logstash Ruby filter errors cause silent misindexing, not event drops.** When `format_index_string.rb` crashes, Logstash catches the exception and sets the index metadata to the literal unexpanded variable string. OpenSearch creates an index with that garbage name and happily accepts all events. The only signal is Ruby exception traces in logstash logs — pipeline stats show no errors.
+23. **Malcolm stores Suricata alert fields under 3 different paths.** ECS: `rule.name`/`rule.id`/`rule.category`. Malcolm: `suricata.alert.signature`/`suricata.severity`. Raw: `alert.signature`/`alert.severity`. A normalization layer must check all 3 paths with fallback priority before the frontend can display them uniformly.
+24. **OpenSearch `.keyword` aggregation returns string keys, not ints.** When aggregating on `suricata.severity.keyword`, bucket keys come back as `"1"`, `"2"`, `"3"` (strings), not integers. Severity map lookups fail silently if they only handle int keys. Always parse string keys with `int()` before lookup.
+25. **Malcolm may store ECS fields as arrays.** `rule.category` can be `["Generic Protocol Command Decode"]` (array) or `"Generic Protocol Command Decode"` (string). Always check `isinstance(val, list)` and flatten before using as a display string.
+26. **Prefer `@timestamp` (ISO) over `timestamp` (epoch millis).** Malcolm documents have both — `@timestamp` in ISO 8601 and `timestamp` as raw epoch milliseconds. Frontend `formatTimestamp()` expects ISO strings. Always normalize to the ISO form.
 
 ## Verification Checklist
 
@@ -116,3 +126,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | ECS field mapping (vitest) | Dev macOS | PASS | Web tests pass — no web changes needed |
 | 2026-03-04 | ECS field mapping (svelte-check) | Dev macOS | PASS | No type errors |
 | 2026-03-05 | Logstash index pattern fix | N100 production | PASS | Zero Ruby exceptions after adding MALCOLM_*_INDEX env vars. Suricata events flowing to arkime_sessions3-*. 34,992 docs reindexed from broken index. |
+| 2026-03-06 | Alerts normalization + IP context menu | Dev macOS | PASS | svelte-check: 665 files, 0 errors. vitest: 691/691 passed. pytest: 1078/1078 passed. Alerts fix verified via docker exec — signatures, severities, categories all populated. IP context menu: 16 files changed, 1214 lines added. |

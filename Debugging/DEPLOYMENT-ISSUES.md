@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-05
-> **Status:** 34 issues tracked. 34 RESOLVED. Latest: Logstash index pattern env var fix (commit 717bd24) — missing MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX env vars caused 89K+ events to land in broken literal index. 17/18 containers healthy on N100.
+> **Last updated:** 2026-03-06
+> **Status:** 36 issues tracked. 36 RESOLVED. Latest: IP context menu expansion (commit 5b1b4d4) — WHOIS/DNS lookup APIs + pages, IPAddress component on all pages, alerts IP filter, filter URL bug fix. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1217,7 +1217,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
 | `daemon/api/traffic.py` | NET-95, PR #92 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters. **All aggregation fields use .keyword suffix.** |
-| `daemon/api/alerts.py` | NET-95, PR #92 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/api/alerts.py` | NET-95, PR #92, cf960e4+4c26c26+5b1b4d4 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields. **Aggregation fields use .keyword suffix.** `_normalize_alert_source()` merges ECS/Malcolm/raw field paths. IP filter (`source.ip` OR `destination.ip`) via `ip` query param. |
+| `daemon/api/lookup.py` | 5b1b4d4 | NEW: WHOIS + DNS lookup endpoints. Async subprocess for whois, thread executor for socket DNS. IP validation, 15s timeout, parsed field extraction. |
 | `daemon/api/devices.py` | NET-95, PR #92 | Device queries use `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
 | `daemon/api/risk.py` | NET-95, PR #92 | Risk scoring uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
 | `daemon/services/traffic_classifier.py` | NET-95, PR #92 | Category classification uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
@@ -1229,7 +1230,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/api/logstash.py` | NET-100 | Logstash monitoring API |
 | `web/src/lib/styles/global.css` | NET-100 | Complete CSS redesign (Datadog/Grafana aesthetic) |
 | `web/src/routes/+layout.svelte` | NET-100 | New layout shell + navigation |
-| `web/src/routes/logs/+page.svelte` | NET-100 | NEW: Log Explorer page |
+| `web/src/routes/logs/+page.svelte` | NET-100, 5b1b4d4 | NEW: Log Explorer page. **IPAddress component added for IP columns.** |
+| `web/src/routes/devices/+page.svelte` | 5b1b4d4 | **IPAddress component added in 3 locations** (table row, detail panel, connections dest IP). |
+| `web/src/routes/alerts/+page.svelte` | 5b1b4d4 | **IP filter support** — reads `ip` URL param, passes to API, displays filter badge with clear button. |
+| `web/src/lib/components/IPAddress.svelte` | 5b1b4d4 | **8 menu items** (was 5). Fixed filter from/to bug. Added WHOIS, DNS, View Alerts actions. |
+| `web/src/lib/components/ContextMenu.svelte` | 5b1b4d4 | **3 new icons** (whois, dns, alert). |
+| `web/src/routes/lookup/whois/[ip]/+page.svelte` | 5b1b4d4 | NEW: WHOIS lookup page with parsed fields + raw output toggle. |
+| `web/src/routes/lookup/dns/[ip]/+page.svelte` | 5b1b4d4 | NEW: DNS lookup page with reverse/forward DNS display. |
 | `web/src/routes/infrastructure/+page.svelte` | NET-100 | NEW: Infrastructure page |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
@@ -1305,6 +1312,12 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 55. **CSP headers must explicitly allow external font CDNs** — Google Fonts requires `fonts.googleapis.com` in `style-src` (for CSS) and `fonts.gstatic.com` in `font-src` (for font files). Missing either causes silent fallback to system fonts with only console CSP violations as evidence.
 56. **Logstash env vars must be set on the logstash service, not just nginx-proxy** — Malcolm's `format_index_string.rb` filter reads `MALCOLM_NETWORK_INDEX_PATTERN` and `MALCOLM_NETWORK_INDEX_SUFFIX` from the process environment. These were set on nginx-proxy (for template rendering) but missing from logstash. Each Docker service has its own isolated environment — env vars do NOT propagate between services. When an env var is needed by multiple services, it must be explicitly set on each one.
 57. **Logstash silently misindexes on Ruby filter errors instead of dropping events** — When `format_index_string.rb` crashes with NoMethodError, Logstash catches the exception and sets `[@metadata][malcolm_opensearch_index]` to the literal unexpanded string `%{[@metadata][malcolm_opensearch_index]}`. OpenSearch happily creates an index with that name. The result is 89K+ events in a garbage index with zero errors visible in the pipeline stats — only the Ruby exception in logs reveals the problem.
+
+### Alert/ECS Field Normalization (NEW — 2026-03-06)
+58. **Malcolm stores Suricata fields under 3 different paths depending on ECS normalization** — ECS: `rule.name`/`rule.id`/`rule.category`. Malcolm: `suricata.alert.signature`/`suricata.severity`. Raw Suricata EVE: `alert.signature`/`alert.severity`. A normalization layer must check all 3 with fallback priority. The frontend only reads one path (`alert.signature`), so normalization must happen in the daemon before the response is sent.
+59. **OpenSearch `.keyword` aggregation returns string keys, not ints** — `suricata.severity.keyword` bucket keys are `"1"`, `"2"`, `"3"` (strings). Severity map lookups using int keys silently return `None`. Always `int()` parse string keys before lookup.
+60. **Malcolm may store ECS fields as arrays** — `rule.category` can be `["Generic Protocol Command Decode"]` or a plain string. Always `isinstance(val, list)` check and flatten to first element before using as display text.
+61. **Prefer `@timestamp` (ISO 8601) over `timestamp` (epoch millis)** — Malcolm documents have both fields. Frontend `formatTimestamp()` expects ISO strings. Normalization must copy `@timestamp` into `timestamp` to avoid displaying raw epoch milliseconds.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.

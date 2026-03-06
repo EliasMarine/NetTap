@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
-> **Last updated:** 2026-03-05
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** NET-100 Web UI v2 complete redesign — 7 SIEM pages, 3 new daemon API modules, new design system. PR #92: .keyword suffix fix for all aggregation fields + log search _source wrapper + CSP fonts. Commit 717bd24: Logstash index pattern env var fix — 89K+ misindexed events recovered. Daemon tests: 1066 passing.
+> **Last updated:** 2026-03-06
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** NET-100 Web UI v2 complete redesign — 7 SIEM pages, 3 new daemon API modules, new design system. PR #92: .keyword suffix fix for all aggregation fields + log search _source wrapper + CSP fonts. Commit 717bd24: Logstash index pattern env var fix — 89K+ misindexed events recovered. Commit 5b1b4d4: IP context menu expansion — WHOIS/DNS lookups, 8 right-click actions on all IPs, alerts IP filter. Daemon tests: 1078 passing. Web tests: 691 passing.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -68,10 +68,10 @@ All 10 checks from `scripts/verify-release.sh`, tracked per environment and mode
 | 1 | Secrets Audit | PASS | PASS | PASS | PASS | — | No hardcoded secrets, .env excluded from git |
 | 2 | Python Lint (ruff) | SKIP | SKIP | SKIP | SKIP | — | ruff not installed on either machine |
 | 3 | Shell Lint (shellcheck) | PASS | PASS | SKIP | SKIP | — | Fixed: SC2221/SC2222 case reorder, SC2034/SC2155 suppressions, shellcheck source directives (NET-78) |
-| 4 | Python Tests (pytest) | PASS | PASS | SKIP | SKIP | — | 1066/1066 passed on Dev (was 1041; +25 from PR #92 .keyword fix + log search tests) |
+| 4 | Python Tests (pytest) | PASS | PASS | SKIP | SKIP | — | 1078/1078 passed on Dev (was 1066; +12 from alerts normalization + lookup API) |
 | 5 | Web Dependencies (npm ci) | PASS | PASS | SKIP | SKIP | — | 0 vulnerabilities, 212 packages |
-| 6 | Web Type Check (svelte-check) | PASS | PASS | SKIP | SKIP | — | 620 files, 0 errors, 0 warnings |
-| 7 | Web Unit Tests (vitest) | PASS | PASS | SKIP | SKIP | — | 683/683 passed on Dev (was 649; +34 bridge/GoLive tests from PR #83) |
+| 6 | Web Type Check (svelte-check) | PASS | PASS | SKIP | SKIP | — | 665 files, 0 errors, 4 warnings (pre-existing a11y) |
+| 7 | Web Unit Tests (vitest) | PASS | PASS | SKIP | SKIP | — | 691/691 passed on Dev (was 683; +8 from IP context menu changes) |
 | 8 | Docker Builds | n/a (quick) | **FAIL** | n/a (quick) | PASS | — | macOS: `docker compose -f` not recognized (V2 plugin missing). N100: all 4 images build OK |
 | 9 | Trivy CVE Scan | n/a (quick) | SKIP (no images) | n/a (quick) | PASS | — | N100: PASS after .trivyignore (3 accepted OS CVEs) + npm stripping from web prod image (eliminates 14 Node CVEs). See [Trivy CVE Findings](#trivy-cve-findings-n100) for risk assessment. |
 | 10 | E2E Tests (Playwright) | n/a (quick) | PASS | n/a (quick) | SKIP | — | Dev: 6/8 passed, 2 skipped. Fixed selector + CSRF + DATA_DIR issues. See [E2E Failures](#e2e-test-failures-dev) |
@@ -142,6 +142,10 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-05 | Dev (macOS) | pytest | ALL PASSED | 1066 | 0 | 0 | Claude | After PR #92 (.keyword suffix fix + log search _source wrapper): 1066 tests (up from 1041). 22 aggregation fields fixed across 6 daemon files. |
 | 2026-03-05 | N100 (Ubuntu) | H1: Dashboard data | **FIXED** | — | — | — | Elias | All dashboard aggregations now return data after .keyword suffix fix. Log Explorer shows logs in correct _source format. Google Fonts render correctly after CSP fix. |
 | 2026-03-05 | N100 (Ubuntu) | H1: Logstash indexing | **FIXED** | — | — | — | Elias | Logstash `format_index_string.rb` was crashing with `NoMethodError` — missing `MALCOLM_NETWORK_INDEX_PATTERN`/`SUFFIX` env vars on logstash service. 89K+ events landed in broken literal index `%{[@metadata][malcolm_opensearch_index]}`. Fix: added 4 MALCOLM_*_INDEX env vars to logstash in docker-compose.yml (commit 717bd24). Post-fix: zero Ruby exceptions, Suricata events flowing to correct `arkime_sessions3-*` index (0 → 20+ in minutes). Reindexed 34,992 docs from broken index. |
+| 2026-03-06 | Dev (macOS) | pytest | ALL PASSED | 1078 | 0 | 0 | Claude | After alerts ECS normalization + lookup API + IP filter: 1078 tests (up from 1066). |
+| 2026-03-06 | Dev (macOS) | vitest | ALL PASSED | 691 | 0 | 0 | Claude | After IP context menu expansion: 691 tests (up from 683). 16 files changed, 1214 lines added. |
+| 2026-03-06 | Dev (macOS) | svelte-check | ALL PASSED | 665 | 0 | 0 | Claude | 665 files (up from 620), 0 errors, 4 pre-existing a11y warnings. |
+| 2026-03-06 | N100 (Ubuntu) | H1: Alerts page | **VERIFIED** | — | — | — | Claude | Alerts now show real signatures, severities (1/2/3), categories, timestamps via `docker exec` API test. ECS/Malcolm/Suricata field normalization working. |
 
 ---
 
