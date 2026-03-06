@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-05
-> **Status:** 33 issues tracked. 33 RESOLVED. Latest: .keyword suffix fix for OpenSearch aggregation fields (PR #92), log search _source wrapper fix, CSP Google Fonts fix. 17/18 containers healthy on N100.
+> **Status:** 34 issues tracked. 34 RESOLVED. Latest: Logstash index pattern env var fix (commit 717bd24) — missing MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX env vars caused 89K+ events to land in broken literal index. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -22,6 +22,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
 - [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
 - [Chain 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts](#chain-13-opensearch-keyword-suffix--log-search-format--csp-fonts)
+- [Chain 14: Logstash Index Pattern Env Vars Missing](#chain-14-logstash-index-pattern-env-vars-missing)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -34,7 +35,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 |---|---|---|
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
-| Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
+| Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running. Index pattern env vars fixed (717bd24) — MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX now set on logstash service. |
 | Redis | OK | Fixed in PR #71 — list-form command |
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed — REDIS_HOST/PORT/PASSWORD env vars added (NET-79) |
@@ -55,7 +56,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **13 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **14 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -102,6 +103,11 @@ CHAIN 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts
   PR #92 (phase-4/webui-v2)
   All dashboard aggregations fail 400: text fields not optimised for aggregations.
   Log search returns flat docs instead of _source wrapper. CSP blocks Google Fonts.
+
+CHAIN 14: Logstash Index Pattern Env Vars Missing
+  Commit 717bd24 (phase-4/webui-v2)
+  Logstash format_index_string.rb crashes: MALCOLM_NETWORK_INDEX_PATTERN env var missing.
+  89K+ events land in broken literal index %{[@metadata][malcolm_opensearch_index]}.
 ```
 
 ---
@@ -1130,13 +1136,78 @@ Updated `docker/nginx.conf` CSP header to allow:
 
 ---
 
+## Chain 14: Logstash Index Pattern Env Vars Missing
+
+### Logstash format_index_string.rb crashes — 89K+ events misindexed
+
+| Field | Value |
+|---|---|
+| **Commit** | `717bd24` |
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-05 |
+| **Environment** | N100 production hardware |
+
+**Symptoms:**
+- Logstash logs flooded with `NoMethodError: undefined method 'delete_suffix' for nil:NilClass` from Malcolm's `format_index_string.rb` filter plugin
+- 89,000+ events (including ALL Suricata events) landed in a broken literal index named `%{[@metadata][malcolm_opensearch_index]}` instead of the correct `arkime_sessions3-YYMMDD`
+- Suricata event count in `arkime_sessions3-*` was 0 despite Suricata generating alerts
+- Dashboard showed zero Suricata alerts despite the IDS engine running correctly
+
+**Root Cause:**
+Malcolm's `format_index_string.rb` Logstash filter plugin constructs the destination index name using two environment variables:
+- `MALCOLM_NETWORK_INDEX_PATTERN` — the base index pattern (e.g., `arkime_sessions3-*`)
+- `MALCOLM_NETWORK_INDEX_SUFFIX` — the date suffix format (e.g., `%{%y%m%d}`)
+
+The plugin calls `.delete_suffix('*')` on the pattern value to strip the wildcard and construct the final index name (e.g., `arkime_sessions3-260305`). When the env var is missing, Ruby's `ENV.fetch()` returns `nil`, and calling `.delete_suffix` on `nil` raises `NoMethodError`.
+
+These 4 env vars (`MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX`) were set on the `nginx-proxy` service (added in Chain 10 / NET-79 for template rendering) but were never added to the `logstash` service. Malcolm's upstream compose loads these from `opensearch.env` via `env_file:`, which we don't use.
+
+When the Ruby filter crashed, Logstash's error handling set `[@metadata][malcolm_opensearch_index]` to the literal string `%{[@metadata][malcolm_opensearch_index]}` (unexpanded). The OpenSearch output plugin then created an index with that literal name — a valid index name that silently swallowed all events.
+
+**Causal Chain:**
+```
+Malcolm's format_index_string.rb reads MALCOLM_NETWORK_INDEX_PATTERN from ENV
+  → env var not set on logstash service (only on nginx-proxy)
+    → ENV.fetch returns nil → .delete_suffix('*') on nil → NoMethodError
+      → Logstash error handler sets index to literal "%{[@metadata][malcolm_opensearch_index]}"
+        → OpenSearch creates index with that literal name
+          → 89K+ events land in broken index → 0 events in arkime_sessions3-*
+            → ALL dashboard Suricata data missing
+```
+
+**Fix:**
+Added 4 env vars to the logstash service in `docker/docker-compose.yml`:
+```yaml
+MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+MALCOLM_NETWORK_INDEX_SUFFIX: "%{%y%m%d}"
+MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
+MALCOLM_OTHER_INDEX_SUFFIX: "%{%y%m%d}"
+```
+
+**Post-fix recovery:**
+Reindexed 34,992 documents from the broken literal index to correct `arkime_sessions3-*` indices using the OpenSearch `_reindex` API. Deleted the broken index afterward.
+
+**Verification:**
+- Zero Ruby exceptions in logstash logs after fix
+- Suricata events flowing to correct `arkime_sessions3-*` index (count went from 0 to 20+ within minutes)
+- Dashboard Suricata alert panels populated correctly
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added 4 MALCOLM_*_INDEX env vars to logstash service
+
+**Key Insight:** Malcolm's Logstash plugins reference env vars from multiple `.env` files (`opensearch.env`, `upload-common.env`, etc.). When a service needs an env var, check ALL Malcolm services that use that image — the same env vars may be needed by logstash, nginx-proxy, and filebeat independently. An env var set on one service does NOT propagate to others. The `format_index_string.rb` crash was particularly insidious because Logstash didn't stop — it silently misindexed 89K+ events into a garbage index name that looks like an unexpanded variable reference.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1232,6 +1303,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 53. **Malcolm maps ALL text fields as text+keyword multi-fields. Every OpenSearch `terms` aggregation MUST use `.keyword` suffix** (e.g., `source.ip.keyword`, `network.transport.keyword`). Without it, aggregations fail with 400: "Text fields are not optimised for operations that require per-document field data like aggregations." This applies to every field used in `terms`, `cardinality`, or `composite` aggregations — NOT to `match`, `range`, or `bool` filter queries.
 54. **Preserve OpenSearch `_source` wrapper in API responses** — frontends expect `{_id, _source: {...}}` (the standard OpenSearch hit structure). Flattening to `{_id, "field": "value"}` breaks destructuring like `hit._source.field`. Always pass through the raw hit structure.
 55. **CSP headers must explicitly allow external font CDNs** — Google Fonts requires `fonts.googleapis.com` in `style-src` (for CSS) and `fonts.gstatic.com` in `font-src` (for font files). Missing either causes silent fallback to system fonts with only console CSP violations as evidence.
+56. **Logstash env vars must be set on the logstash service, not just nginx-proxy** — Malcolm's `format_index_string.rb` filter reads `MALCOLM_NETWORK_INDEX_PATTERN` and `MALCOLM_NETWORK_INDEX_SUFFIX` from the process environment. These were set on nginx-proxy (for template rendering) but missing from logstash. Each Docker service has its own isolated environment — env vars do NOT propagate between services. When an env var is needed by multiple services, it must be explicitly set on each one.
+57. **Logstash silently misindexes on Ruby filter errors instead of dropping events** — When `format_index_string.rb` crashes with NoMethodError, Logstash catches the exception and sets `[@metadata][malcolm_opensearch_index]` to the literal unexpanded string `%{[@metadata][malcolm_opensearch_index]}`. OpenSearch happily creates an index with that name. The result is 89K+ events in a garbage index with zero errors visible in the pipeline stats — only the Ruby exception in logs reveals the problem.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
@@ -1261,6 +1334,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
+| Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
 
 ---
 
@@ -1293,3 +1367,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
 | — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |
 | NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |
+| — | 717bd24 | Logstash index pattern env vars missing — 89K+ events misindexed | 2026-03-05 |

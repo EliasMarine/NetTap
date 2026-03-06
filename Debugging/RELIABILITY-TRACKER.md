@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-05
-> Status: 5/7 subsystems production-ready
+> Status: 7/7 subsystems production-ready
 
 ## Purpose
 
@@ -26,6 +26,8 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Logstash Monitor API | OK | 2026-03-05 | -- | NEW: Pipeline stats, JVM heap, throughput monitoring (NET-100) |
 | Web UI (Log Explorer) | OK | 2026-03-05 | -- | NEW: Kibana Discover-style log browser (NET-100) |
 | Web UI (Infrastructure) | OK | 2026-03-05 | -- | NEW: 3-tab OpenSearch/Logstash/System view (NET-100) |
+| Dashboard Data (Aggregations) | OK | 2026-03-05 | -- | Fixed: .keyword suffix on all 22 aggregation field references (PR #92). All dashboard pages return data. |
+| Logstash Index Routing | OK | 2026-03-05 | -- | Fixed: MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX env vars added to logstash service (717bd24). Events now route to correct arkime_sessions3-* indices. 34,992 docs reindexed from broken index. |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -56,6 +58,10 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-04 | Bridge Health | Netfilter check fails when br_netfilter module not loaded | nsenter cat returns error when proc file absent (module not loaded = good) | Treat missing proc file as netfilter disabled (PASS) | NET-93 | PR #89 |
 | 2026-03-05 | Web UI v2 Redesign | .gitignore `logs/` catches route dirs | `.gitignore` pattern `logs/` matches SvelteKit route directories like `src/routes/logs/` | `git add -f` override | NET-100 | -- |
 | 2026-03-04 | Dashboard Data | All dashboard queries return zero data | Daemon queries used Zeek-native index/field names; Malcolm uses unified arkime_sessions3-* with ECS fields | Remapped all 7 daemon files: index → NETWORK_INDEX, fields → ECS, added event.provider/dataset filters | NET-95 | infra/opensearch-field-mapping |
+| 2026-03-05 | Dashboard Data | All dashboard aggregations fail with 400 | Malcolm maps text fields as text+keyword multi-fields; `terms` aggs require `.keyword` suffix | Added `.keyword` suffix to all 22 aggregation field references across 6 daemon files | -- | PR #92 (phase-4/webui-v2) |
+| 2026-03-05 | Log Search API | Log search returns flat docs, frontend crashes | `logs.py` flattened `_source` wrapper; frontend expected `{_id, _source: {...}}` | Preserved `_source` wrapper format in API response | -- | PR #92 (phase-4/webui-v2) |
+| 2026-03-05 | Web UI (CSS) | Google Fonts blocked by CSP | nginx.conf Content-Security-Policy missing `fonts.googleapis.com` / `fonts.gstatic.com` | Added font domains to `style-src` and `font-src` CSP directives | -- | PR #92 (phase-4/webui-v2) |
+| 2026-03-05 | Logstash / Data Pipeline | 89K+ events in broken literal index, 0 Suricata events in arkime_sessions3-* | `MALCOLM_NETWORK_INDEX_PATTERN` and `MALCOLM_NETWORK_INDEX_SUFFIX` env vars missing from logstash service — `format_index_string.rb` crashed with `NoMethodError: undefined method 'delete_suffix' for nil:NilClass` | Added 4 MALCOLM_*_INDEX env vars to logstash service in docker-compose.yml. Reindexed 34,992 docs from broken index. | -- | Commit 717bd24 (phase-4/webui-v2) |
 
 ## Reliability Lessons Learned
 
@@ -76,6 +82,11 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 15. **Missing kernel module proc files ≠ feature enabled.** When `br_netfilter` isn't loaded, `/proc/sys/net/bridge/bridge-nf-call-iptables` doesn't exist. This means no iptables interference — the desired state, not a failure.
 16. **Agent teams (7 parallel) can build independent SvelteKit pages concurrently without conflicts** — each page has its own route directory, so parallel agents don't step on each other's files.
 17. **Malcolm unifies all data into arkime_sessions3-*.** There are no separate zeek-*/suricata-* indices. Use `event.provider` + `event.dataset` to filter by data source. All field names use ECS format, not Zeek-native. Always verify field names against a real document from the N100 before writing queries.
+18. **Malcolm maps ALL text fields as text+keyword multi-fields. Every OpenSearch `terms` aggregation MUST use `.keyword` suffix** (e.g., `source.ip.keyword`, `network.transport.keyword`). Without it, aggregations fail with 400: "Text fields are not optimised for operations that require per-document field data." This applies to `terms`, `cardinality`, and `composite` aggs — NOT to `match`, `range`, or `bool` filter queries.
+19. **Preserve OpenSearch `_source` wrapper in API responses.** Frontends expect `{_id, _source: {...}}` (standard OpenSearch hit structure). Flattening to `{_id, "field": "value"}` breaks destructuring like `hit._source.field`. Always pass through the raw hit structure from OpenSearch.
+20. **CSP headers must explicitly allow external font CDNs.** Google Fonts requires `fonts.googleapis.com` in `style-src` (for CSS) and `fonts.gstatic.com` in `font-src` (for font files). Missing either causes silent fallback to system fonts — only visible via browser console CSP violation messages.
+21. **Every Malcolm service needs its own complete set of env vars.** Docker service environments are isolated — setting `MALCOLM_NETWORK_INDEX_PATTERN` on nginx-proxy does NOT make it available to logstash. Malcolm's upstream uses shared `env_file:` references; our custom compose must replicate each env var on every service that needs it. Missing index pattern vars caused Logstash to silently misindex 89K+ events.
+22. **Logstash Ruby filter errors cause silent misindexing, not event drops.** When `format_index_string.rb` crashes, Logstash catches the exception and sets the index metadata to the literal unexpanded variable string. OpenSearch creates an index with that garbage name and happily accepts all events. The only signal is Ruby exception traces in logstash logs — pipeline stats show no errors.
 
 ## Verification Checklist
 
@@ -104,3 +115,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | ECS field mapping (pytest) | Dev macOS | PASS | 1041/1041 passed — all daemon queries updated to ECS fields |
 | 2026-03-04 | ECS field mapping (vitest) | Dev macOS | PASS | Web tests pass — no web changes needed |
 | 2026-03-04 | ECS field mapping (svelte-check) | Dev macOS | PASS | No type errors |
+| 2026-03-05 | Logstash index pattern fix | N100 production | PASS | Zero Ruby exceptions after adding MALCOLM_*_INDEX env vars. Suricata events flowing to arkime_sessions3-*. 34,992 docs reindexed from broken index. |
