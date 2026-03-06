@@ -16,7 +16,7 @@ from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
-from services.excluded_ips import build_excluded_ips_filter
+from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 
 logger = logging.getLogger("nettap.api.devices")
 
@@ -152,6 +152,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
+            RFC1918_SOURCE_FILTER,
         ],
     }
     if excluded:

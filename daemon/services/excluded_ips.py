@@ -48,6 +48,19 @@ def save_excluded_ips(ips: list[str], file_path: str | None = None) -> None:
     logger.info("Saved %d excluded IPs to %s", len(ips), path)
 
 
+# Filter to restrict source.ip to RFC1918 private address ranges (LAN devices only)
+RFC1918_SOURCE_FILTER = {
+    "bool": {
+        "should": [
+            {"range": {"source.ip": {"gte": "10.0.0.0", "lte": "10.255.255.255"}}},
+            {"range": {"source.ip": {"gte": "172.16.0.0", "lte": "172.31.255.255"}}},
+            {"range": {"source.ip": {"gte": "192.168.0.0", "lte": "192.168.255.255"}}},
+        ],
+        "minimum_should_match": 1,
+    }
+}
+
+
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
     """Build OpenSearch must_not clauses to exclude IPs from source.ip aggregations.
 

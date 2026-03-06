@@ -180,6 +180,43 @@
 		<button class="tab" class:active={activeTab === 'system'} onclick={() => switchTab('system')}>System</button>
 	</div>
 
+	<!-- External service links -->
+	<div class="services-row">
+		<a href="/dashboards/" target="_blank" rel="noopener" class="service-card">
+			<div class="service-icon">
+				<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+					<rect x="3" y="3" width="18" height="18" rx="2" />
+					<path d="M3 9h18M9 21V9" />
+				</svg>
+			</div>
+			<div class="service-info">
+				<span class="service-name">OpenSearch Dashboards</span>
+				<span class="service-desc text-muted">Kibana-style visualization</span>
+			</div>
+			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+				<polyline points="15 3 21 3 21 9" />
+				<line x1="10" y1="14" x2="21" y2="3" />
+			</svg>
+		</a>
+		<a href="/grafana/" target="_blank" rel="noopener" class="service-card">
+			<div class="service-icon">
+				<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+				</svg>
+			</div>
+			<div class="service-info">
+				<span class="service-name">Grafana</span>
+				<span class="service-desc text-muted">Advanced dashboards &amp; graphs</span>
+			</div>
+			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+				<polyline points="15 3 21 3 21 9" />
+				<line x1="10" y1="14" x2="21" y2="3" />
+			</svg>
+		</a>
+	</div>
+
 	{#if activeTab === 'opensearch'}
 		<!-- Cluster Health Card -->
 		<div class="card">
@@ -760,6 +797,53 @@
 		background: var(--bg-tertiary);
 		border-radius: var(--radius-sm);
 		color: var(--text-secondary);
+	}
+
+	/* External service link cards */
+	.services-row {
+		display: flex;
+		gap: var(--space-md);
+		flex-wrap: wrap;
+	}
+
+	.service-card {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		padding: var(--space-md) var(--space-lg);
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		text-decoration: none;
+		color: var(--text-primary);
+		transition: border-color var(--transition-fast), background-color var(--transition-fast);
+		flex: 1;
+		min-width: 220px;
+	}
+
+	.service-card:hover {
+		border-color: var(--accent);
+		background-color: var(--bg-tertiary);
+	}
+
+	.service-icon {
+		color: var(--accent);
+		flex-shrink: 0;
+	}
+
+	.service-info {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+	}
+
+	.service-name {
+		font-weight: 600;
+		font-size: var(--text-sm);
+	}
+
+	.service-desc {
+		font-size: var(--text-xs);
 	}
 
 	@media (max-width: 640px) {

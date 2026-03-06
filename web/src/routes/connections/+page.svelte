@@ -3,6 +3,7 @@
 	import type { Connection, ConnectionsResponse } from '$api/traffic';
 	import { getTSharkStatus } from '$api/tshark';
 	import type { TSharkStatus } from '$api/tshark';
+	import { page } from '$app/stores';
 	import IPAddress from '$components/IPAddress.svelte';
 
 	// ---------------------------------------------------------------------------
@@ -65,6 +66,20 @@
 	let tsharkChecked = $state(false);
 
 	// ---------------------------------------------------------------------------
+	// Nested field accessor for ECS dot-notation paths
+	// ---------------------------------------------------------------------------
+
+	function getField(obj: Record<string, unknown>, path: string): unknown {
+		const parts = path.split('.');
+		let current: unknown = obj;
+		for (const part of parts) {
+			if (current == null || typeof current !== 'object') return undefined;
+			current = (current as Record<string, unknown>)[part];
+		}
+		return current;
+	}
+
+	// ---------------------------------------------------------------------------
 	// Display helpers
 	// ---------------------------------------------------------------------------
 
@@ -94,7 +109,7 @@
 	}
 
 	function connState(conn: Connection): string {
-		const state = (conn.conn_state as string) || '';
+		const state = (getField(conn, 'zeek.conn.state') as string) || '';
 		const lower = state.toLowerCase();
 		if (lower.includes('established') || lower === 'sf' || lower === 's1') return 'established';
 		if (lower.includes('reject') || lower === 'rej' || lower === 'rstr' || lower === 'rsto') return 'rejected';
@@ -114,7 +129,7 @@
 	}
 
 	function stateLabel(conn: Connection): string {
-		const raw = (conn.conn_state as string) || '';
+		const raw = (getField(conn, 'zeek.conn.state') as string) || '';
 		const mapped = connState(conn);
 		if (raw && mapped !== raw.toLowerCase()) return `${mapped.toUpperCase()} (${raw})`;
 		return mapped.toUpperCase();
@@ -217,8 +232,12 @@
 		}
 	});
 
-	// Initial fetch
+	// Initial fetch — also read IP filter from URL query params (e.g. from IPAddress context menu)
 	$effect(() => {
+		const urlIp = $page.url.searchParams.get('ip');
+		if (urlIp) {
+			ipFilter = urlIp;
+		}
 		fetchConnections(1);
 		initialized = true;
 	});
@@ -361,28 +380,28 @@
 								class:expanded={expandedId === conn._id}
 								onclick={() => toggleRow(conn._id)}
 							>
-								<td class="mono">{formatTimestamp(conn.ts)}</td>
+								<td class="mono">{formatTimestamp(conn['@timestamp'] as string | undefined)}</td>
 								<td class="mono">
-									{#if conn.id_orig_h}
-										<IPAddress ip={String(conn.id_orig_h)} /><!--
-										-->{#if conn.id_orig_p}:{conn.id_orig_p}{/if}
+									{#if getField(conn, 'source.ip')}
+										<IPAddress ip={String(getField(conn, 'source.ip'))} /><!--
+										-->{#if getField(conn, 'source.port')}:{getField(conn, 'source.port')}{/if}
 									{:else}
 										--
 									{/if}
 								</td>
 								<td class="mono">
-									{#if conn.id_resp_h}
-										<IPAddress ip={String(conn.id_resp_h)} /><!--
-										-->{#if conn.id_resp_p}:{conn.id_resp_p}{/if}
+									{#if getField(conn, 'destination.ip')}
+										<IPAddress ip={String(getField(conn, 'destination.ip'))} /><!--
+										-->{#if getField(conn, 'destination.port')}:{getField(conn, 'destination.port')}{/if}
 									{:else}
 										--
 									{/if}
 								</td>
-								<td>{(conn.proto as string)?.toUpperCase() || '--'}</td>
-								<td>{(conn.service as string) || '--'}</td>
-								<td class="mono">{formatDuration(conn.duration as number | undefined)}</td>
-								<td class="mono">{formatBytes(conn.orig_bytes as number | undefined)}</td>
-								<td class="mono">{formatBytes(conn.resp_bytes as number | undefined)}</td>
+								<td>{(getField(conn, 'network.transport') as string)?.toUpperCase() || '--'}</td>
+								<td>{(getField(conn, 'network.protocol') as string) || '--'}</td>
+								<td class="mono">{formatDuration(getField(conn, 'event.duration') as number | undefined)}</td>
+								<td class="mono">{formatBytes((getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined)}</td>
+								<td class="mono">{formatBytes((getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes')) as number | undefined)}</td>
 								<td>
 									<span class={stateBadgeClass(connState(conn))}>
 										{stateLabel(conn)}
@@ -397,34 +416,34 @@
 											<div class="detail-grid">
 												<div class="detail-item">
 													<span class="label">UID</span>
-													<span class="mono">{conn.uid || conn._id}</span>
+													<span class="mono">{getField(conn, 'zeek.session_id') || conn._id}</span>
 												</div>
 												<div class="detail-item">
 													<span class="label">Index</span>
 													<span class="mono">{conn._index}</span>
 												</div>
-												{#if conn.orig_pkts}
+												{#if getField(conn, 'source.packets')}
 													<div class="detail-item">
 														<span class="label">Orig Packets</span>
-														<span class="mono">{conn.orig_pkts}</span>
+														<span class="mono">{getField(conn, 'source.packets')}</span>
 													</div>
 												{/if}
-												{#if conn.resp_pkts}
+												{#if getField(conn, 'destination.packets')}
 													<div class="detail-item">
 														<span class="label">Resp Packets</span>
-														<span class="mono">{conn.resp_pkts}</span>
+														<span class="mono">{getField(conn, 'destination.packets')}</span>
 													</div>
 												{/if}
-												{#if conn.history}
+												{#if getField(conn, 'zeek.conn.history')}
 													<div class="detail-item">
 														<span class="label">History</span>
-														<span class="mono">{conn.history}</span>
+														<span class="mono">{getField(conn, 'zeek.conn.history')}</span>
 													</div>
 												{/if}
-												{#if conn.community_id}
+												{#if getField(conn, 'network.community_id')}
 													<div class="detail-item">
 														<span class="label">Community ID</span>
-														<span class="mono">{conn.community_id}</span>
+														<span class="mono">{getField(conn, 'network.community_id')}</span>
 													</div>
 												{/if}
 											</div>

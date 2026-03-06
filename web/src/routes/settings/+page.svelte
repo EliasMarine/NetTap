@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	type TabId = 'notifications' | 'retention' | 'network' | 'display' | 'about';
+	type TabId = 'notifications' | 'retention' | 'api-keys' | 'network' | 'display' | 'about';
 
 	let activeTab = $state<TabId>('notifications');
 
@@ -37,6 +37,15 @@
 	let networkMessage = $state('');
 	let networkError = $state(false);
 	let networkLoading = $state(true);
+
+	// --- API Keys state ---
+	let apiKeysStatus = $state<Record<string, boolean>>({});
+	let apiKeysLoading = $state(true);
+	let apiKeysSaving = $state(false);
+	let apiKeysMessage = $state('');
+	let apiKeysError = $state(false);
+	// Track modified fields only — don't send unchanged values
+	let apiKeyValues = $state<Record<string, string>>({});
 
 	// --- Display state ---
 	let autoRefresh = $state('30');
@@ -144,6 +153,65 @@
 		}
 	}
 
+	async function loadApiKeys() {
+		apiKeysLoading = true;
+		try {
+			const res = await fetch('/api/settings/api-keys');
+			if (res.ok) {
+				const data = await res.json();
+				apiKeysStatus = data.keys ?? {};
+			}
+		} catch {
+			// Will use empty default
+		} finally {
+			apiKeysLoading = false;
+		}
+	}
+
+	async function saveApiKeys() {
+		apiKeysSaving = true;
+		apiKeysMessage = '';
+		apiKeysError = false;
+
+		// Only send fields that have been modified (non-empty)
+		const payload: Record<string, string> = {};
+		for (const [key, value] of Object.entries(apiKeyValues)) {
+			if (value.trim()) {
+				payload[key] = value.trim();
+			}
+		}
+
+		if (Object.keys(payload).length === 0) {
+			apiKeysMessage = 'No changes to save. Enter a value in at least one field.';
+			apiKeysError = true;
+			apiKeysSaving = false;
+			return;
+		}
+
+		try {
+			const res = await fetch('/api/settings/api-keys', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			const data = await res.json();
+			if (res.ok) {
+				apiKeysMessage = `Saved ${data.saved_count ?? Object.keys(payload).length} key(s) successfully.`;
+				apiKeysStatus = data.keys ?? apiKeysStatus;
+				// Clear input fields after successful save
+				apiKeyValues = {};
+			} else {
+				apiKeysMessage = data.error || 'Failed to save API keys.';
+				apiKeysError = true;
+			}
+		} catch {
+			apiKeysMessage = 'Failed to connect to server.';
+			apiKeysError = true;
+		} finally {
+			apiKeysSaving = false;
+		}
+	}
+
 	async function saveExcludedIps() {
 		networkSaving = true;
 		networkMessage = '';
@@ -197,6 +265,7 @@
 		loadRetention();
 		loadDiskUsage();
 		loadExcludedIps();
+		loadApiKeys();
 		loadAbout();
 		loadDisplaySettings();
 	});
@@ -337,6 +406,13 @@
 			onclick={() => (activeTab = 'retention')}
 		>
 			Retention
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'api-keys'}
+			onclick={() => (activeTab = 'api-keys')}
+		>
+			API Keys
 		</button>
 		<button
 			class="tab"
@@ -515,6 +591,195 @@
 				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
+			</div>
+		</div>
+
+	{:else if activeTab === 'api-keys'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">API Keys &amp; Credentials</span>
+				</div>
+
+				<p class="field-help" style="margin-bottom: var(--space-lg);">
+					Configure external service credentials. Keys are stored securely on disk and never displayed after saving.
+					Fields showing "Configured" already have a value saved — leave the input blank to keep the existing value.
+				</p>
+
+				{#if apiKeysMessage}
+					<div class="alert {apiKeysError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+						{apiKeysMessage}
+					</div>
+				{/if}
+
+				{#if apiKeysLoading}
+					<p class="text-muted">Loading API key status...</p>
+				{:else}
+					<!-- GeoIP Section -->
+					<div class="api-keys-section">
+						<h4 class="api-keys-section-title">GeoIP Lookups</h4>
+
+						<div class="form-group">
+							<div class="label-with-badge">
+								<label class="label" for="maxmind-key">MaxMind License Key</label>
+								{#if apiKeysStatus['MAXMIND_LICENSE_KEY']}
+									<span class="badge badge-configured">Configured</span>
+								{/if}
+							</div>
+							<input
+								class="input"
+								id="maxmind-key"
+								type="password"
+								bind:value={apiKeyValues['MAXMIND_LICENSE_KEY']}
+								placeholder={apiKeysStatus['MAXMIND_LICENSE_KEY'] ? 'Leave blank to keep current value' : 'Enter MaxMind license key'}
+							/>
+							<p class="field-help">Required for GeoIP map visualizations. Get a free key at <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">maxmind.com</a>.</p>
+						</div>
+					</div>
+
+					<!-- IDS Rules Section -->
+					<div class="api-keys-section">
+						<h4 class="api-keys-section-title">IDS Rules</h4>
+
+						<div class="form-group">
+							<div class="label-with-badge">
+								<label class="label" for="et-pro-key">Emerging Threats Pro Key</label>
+								{#if apiKeysStatus['SURICATA_ET_PRO_KEY']}
+									<span class="badge badge-configured">Configured</span>
+								{/if}
+							</div>
+							<input
+								class="input"
+								id="et-pro-key"
+								type="password"
+								bind:value={apiKeyValues['SURICATA_ET_PRO_KEY']}
+								placeholder={apiKeysStatus['SURICATA_ET_PRO_KEY'] ? 'Leave blank to keep current value' : 'Enter ET Pro key (optional)'}
+							/>
+							<p class="field-help">Optional. Enables Proofpoint's commercial Suricata ruleset. Free ET Open rules are used by default.</p>
+						</div>
+					</div>
+
+					<!-- SMTP Section -->
+					<div class="api-keys-section">
+						<h4 class="api-keys-section-title">SMTP (Email Alerts)</h4>
+						<p class="field-help" style="margin-bottom: var(--space-md);">
+							Required for email notifications. Configure your SMTP server details below, then enable email alerts in the Notifications tab.
+						</p>
+
+						<div class="smtp-grid">
+							<div class="form-group">
+								<div class="label-with-badge">
+									<label class="label" for="smtp-host">SMTP Host</label>
+									{#if apiKeysStatus['SMTP_HOST']}
+										<span class="badge badge-configured">Configured</span>
+									{/if}
+								</div>
+								<input
+									class="input"
+									id="smtp-host"
+									type="text"
+									bind:value={apiKeyValues['SMTP_HOST']}
+									placeholder={apiKeysStatus['SMTP_HOST'] ? 'Leave blank to keep current' : 'smtp.gmail.com'}
+								/>
+								<p class="field-help">SMTP server hostname.</p>
+							</div>
+
+							<div class="form-group">
+								<div class="label-with-badge">
+									<label class="label" for="smtp-port">SMTP Port</label>
+									{#if apiKeysStatus['SMTP_PORT']}
+										<span class="badge badge-configured">Configured</span>
+									{/if}
+								</div>
+								<input
+									class="input"
+									id="smtp-port"
+									type="text"
+									bind:value={apiKeyValues['SMTP_PORT']}
+									placeholder={apiKeysStatus['SMTP_PORT'] ? 'Leave blank to keep current' : '587'}
+								/>
+								<p class="field-help">587 for STARTTLS, 465 for SSL/TLS.</p>
+							</div>
+
+							<div class="form-group">
+								<div class="label-with-badge">
+									<label class="label" for="smtp-username">SMTP Username</label>
+									{#if apiKeysStatus['SMTP_USERNAME']}
+										<span class="badge badge-configured">Configured</span>
+									{/if}
+								</div>
+								<input
+									class="input"
+									id="smtp-username"
+									type="text"
+									bind:value={apiKeyValues['SMTP_USERNAME']}
+									placeholder={apiKeysStatus['SMTP_USERNAME'] ? 'Leave blank to keep current' : 'user@example.com'}
+								/>
+								<p class="field-help">Your SMTP login username or email.</p>
+							</div>
+
+							<div class="form-group">
+								<div class="label-with-badge">
+									<label class="label" for="smtp-password">SMTP Password</label>
+									{#if apiKeysStatus['SMTP_PASSWORD']}
+										<span class="badge badge-configured">Configured</span>
+									{/if}
+								</div>
+								<input
+									class="input"
+									id="smtp-password"
+									type="password"
+									bind:value={apiKeyValues['SMTP_PASSWORD']}
+									placeholder={apiKeysStatus['SMTP_PASSWORD'] ? 'Leave blank to keep current' : 'App password or SMTP password'}
+								/>
+								<p class="field-help">For Gmail, use an App Password (not your account password).</p>
+							</div>
+
+							<div class="form-group smtp-sender-full">
+								<div class="label-with-badge">
+									<label class="label" for="smtp-sender">Sender Email</label>
+									{#if apiKeysStatus['SMTP_SENDER_EMAIL']}
+										<span class="badge badge-configured">Configured</span>
+									{/if}
+								</div>
+								<input
+									class="input"
+									id="smtp-sender"
+									type="email"
+									bind:value={apiKeyValues['SMTP_SENDER_EMAIL']}
+									placeholder={apiKeysStatus['SMTP_SENDER_EMAIL'] ? 'Leave blank to keep current' : 'nettap@example.com'}
+								/>
+								<p class="field-help">The "From" address on alert emails.</p>
+							</div>
+						</div>
+					</div>
+
+					<!-- Webhook Section -->
+					<div class="api-keys-section">
+						<h4 class="api-keys-section-title">Webhook</h4>
+
+						<div class="form-group">
+							<div class="label-with-badge">
+								<label class="label" for="webhook-url-keys">Webhook URL</label>
+								{#if apiKeysStatus['WEBHOOK_URL']}
+									<span class="badge badge-configured">Configured</span>
+								{/if}
+							</div>
+							<input
+								class="input"
+								id="webhook-url-keys"
+								type="url"
+								bind:value={apiKeyValues['WEBHOOK_URL']}
+								placeholder={apiKeysStatus['WEBHOOK_URL'] ? 'Leave blank to keep current' : 'https://hooks.slack.com/services/...'}
+							/>
+							<p class="field-help">Also configurable in the Notifications tab. JSON alert payloads are POSTed here.</p>
+						</div>
+					</div>
+
+					<button class="btn btn-primary" onclick={saveApiKeys} disabled={apiKeysSaving} style="margin-top: var(--space-md);">
+						{apiKeysSaving ? 'Saving...' : 'Save API Keys'}
+					</button>
+				{/if}
 			</div>
 		</div>
 
@@ -946,6 +1211,62 @@
 		background: rgba(239, 68, 68, 0.1);
 	}
 
+	/* API Keys section */
+	.api-keys-section {
+		margin-bottom: var(--space-lg);
+		padding-bottom: var(--space-lg);
+		border-bottom: 1px solid var(--border-muted);
+	}
+
+	.api-keys-section:last-of-type {
+		border-bottom: none;
+		margin-bottom: 0;
+		padding-bottom: 0;
+	}
+
+	.api-keys-section-title {
+		font-size: var(--text-sm);
+		font-weight: 600;
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin-bottom: var(--space-md);
+	}
+
+	.label-with-badge {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.label-with-badge .label {
+		margin-bottom: 0;
+	}
+
+	.badge {
+		font-size: var(--text-xs);
+		font-weight: 600;
+		padding: 1px 8px;
+		border-radius: var(--radius-full);
+		white-space: nowrap;
+	}
+
+	.badge-configured {
+		background: rgba(34, 197, 94, 0.15);
+		color: var(--green, #22c55e);
+		border: 1px solid rgba(34, 197, 94, 0.3);
+	}
+
+	.smtp-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: var(--space-md);
+	}
+
+	.smtp-sender-full {
+		grid-column: 1 / -1;
+	}
+
 	@media (max-width: 768px) {
 		.retention-grid {
 			grid-template-columns: 1fr;
@@ -962,6 +1283,10 @@
 
 		.about-links {
 			flex-direction: column;
+		}
+
+		.smtp-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

@@ -30,7 +30,7 @@ LOG_TYPE_FILTERS = {
     "zeek.files": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "files"}}],
     "zeek.dhcp": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "dhcp"}}],
     "zeek.smtp": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "smtp"}}],
-    "suricata": [{"term": {"event.provider": "suricata"}}],
+    "suricata": [{"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}],
 }
 
 # Field definitions per log type (name, type, description, example)

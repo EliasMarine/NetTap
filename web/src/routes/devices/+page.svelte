@@ -221,6 +221,20 @@
 		const days = Math.floor(hours / 24);
 		return `${days}d ago`;
 	}
+
+	/**
+	 * Safely access nested ECS fields (e.g. "destination.ip", "network.transport").
+	 * OpenSearch returns ECS data as nested objects, not flat Zeek field names.
+	 */
+	function getField(obj: Record<string, unknown>, path: string): unknown {
+		const parts = path.split('.');
+		let current: unknown = obj;
+		for (const part of parts) {
+			if (current == null || typeof current !== 'object') return undefined;
+			current = (current as Record<string, unknown>)[part];
+		}
+		return current;
+	}
 </script>
 
 <svelte:head>
@@ -449,13 +463,18 @@
 													{:else}
 														<div class="connections-list">
 															{#each expandedConnections as conn}
+																{@const svc = getField(conn, 'network.protocol')}
+																{@const destIp = getField(conn, 'destination.ip')}
 																<div class="connection-item">
-																	<span class="conn-time">{conn.ts ? timeAgo(conn.ts) : '--'}</span>
-																	<span class="badge badge-muted">{conn.proto || '?'}</span>
-																	{#if conn.service}
-																		<span class="badge badge-info">{conn.service}</span>
+																	<span class="conn-time">{conn['@timestamp'] ? timeAgo(String(conn['@timestamp'])) : '--'}</span>
+																	<span class="badge badge-muted">{String(getField(conn, 'network.transport') || '?').toUpperCase()}</span>
+																	{#if svc}
+																		<span class="badge badge-info">{svc}</span>
 																	{/if}
-																	<span class="mono conn-id">{conn._id.substring(0, 12)}</span>
+																	{#if destIp}
+																		<span class="mono" style="font-size: var(--text-xs); color: var(--text-secondary)">&rarr; {destIp}</span>
+																	{/if}
+																	<span class="mono conn-id">{conn._id.substring(0, 8)}</span>
 																</div>
 															{/each}
 														</div>

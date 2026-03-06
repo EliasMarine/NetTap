@@ -87,6 +87,9 @@
 	let sortField = $state('@timestamp');
 	let sortDir = $state<'desc' | 'asc'>('desc');
 	let expandedRow = $state<string | null>(null);
+	let fullDoc = $state<Record<string, unknown> | null>(null);
+	let fullDocLoading = $state(false);
+	let copySuccess = $state(false);
 	let fieldDefs = $state<Record<string, string>>({});
 
 	// ---------------------------------------------------------------------------
@@ -234,8 +237,39 @@
 		fetchLogs();
 	}
 
+	async function fetchFullDocument(hit: LogHit) {
+		fullDocLoading = true;
+		try {
+			const params = new URLSearchParams();
+			params.set('query', `_id:${hit._id}`);
+			params.set('size', '1');
+			// Don't pass 'fields' - get full _source
+			const from = timeRangeToISO(timeRange);
+			params.set('from', from);
+			params.set('to', new Date().toISOString());
+			const res = await fetch(`/api/logs/search?${params.toString()}`);
+			if (res.ok) {
+				const data = await res.json();
+				if (data.hits && data.hits.length > 0) {
+					fullDoc = data.hits[0]._source;
+				}
+			}
+		} catch {
+			// Fall back to projected data
+		} finally {
+			fullDocLoading = false;
+		}
+	}
+
 	function toggleRow(id: string) {
-		expandedRow = expandedRow === id ? null : id;
+		if (expandedRow === id) {
+			expandedRow = null;
+			fullDoc = null;
+		} else {
+			expandedRow = id;
+			const hit = results.find(h => h._id === id);
+			if (hit) fetchFullDocument(hit);
+		}
 	}
 
 	// ---------------------------------------------------------------------------
@@ -446,16 +480,29 @@
 									<div class="expanded-content">
 										<div class="expanded-fields">
 											<h4>Fields</h4>
+											{#if fullDocLoading}
+												<div class="loading-spinner" style="width: 14px; height: 14px;"></div>
+											{/if}
 											<div class="field-grid">
-												{#each Object.entries(flattenObject(hit._source)) as [key, val]}
+												{#each Object.entries(flattenObject(fullDoc || hit._source)) as [key, val]}
 													<div class="field-key mono">{key}</div>
 													<div class="field-val mono">{String(val ?? '--')}</div>
 												{/each}
 											</div>
 										</div>
 										<div class="expanded-raw">
-											<h4>Raw JSON</h4>
-											<pre>{JSON.stringify(hit._source, null, 2)}</pre>
+											<div class="raw-header">
+												<h4>Raw JSON</h4>
+												<button class="btn btn-secondary btn-xs copy-btn" onclick={(e: MouseEvent) => {
+													e.stopPropagation();
+													navigator.clipboard.writeText(JSON.stringify(fullDoc || hit._source, null, 2));
+													copySuccess = true;
+													setTimeout(() => { copySuccess = false; }, 2000);
+												}}>
+													{copySuccess ? 'Copied!' : 'Copy'}
+												</button>
+											</div>
+											<pre>{JSON.stringify(fullDoc || hit._source, null, 2)}</pre>
 										</div>
 									</div>
 								</td>
@@ -644,6 +691,22 @@
 	.field-val {
 		color: var(--text-secondary);
 		word-break: break-all;
+	}
+
+	.raw-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--space-sm);
+	}
+
+	.raw-header h4 {
+		margin-bottom: 0;
+	}
+
+	.copy-btn {
+		font-size: var(--text-xs);
+		padding: 2px 8px;
 	}
 
 	.expanded-raw pre {

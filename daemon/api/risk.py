@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from services.excluded_ips import build_excluded_ips_filter
+from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.risk_scoring import RiskScorer
 from storage.manager import StorageManager
 
@@ -129,6 +129,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
             },
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
+            RFC1918_SOURCE_FILTER,
         ],
     }
     if excluded:

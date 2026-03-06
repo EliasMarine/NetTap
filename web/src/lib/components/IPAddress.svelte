@@ -95,8 +95,7 @@
 			label: 'GeoIP lookup',
 			icon: 'geoip',
 			action: () => {
-				// Open GeoIP lookup in a new tab (using an external service as fallback)
-				window.open(`https://ipinfo.io/${encodeURIComponent(ip)}`, '_blank', 'noopener');
+				goto(`/geoip/${encodeURIComponent(ip)}`);
 			},
 		},
 		{
@@ -104,14 +103,14 @@
 			icon: 'search',
 			separator: true,
 			action: () => {
-				goto(`/connections?filter=ip.src==${encodeURIComponent(ip)}`);
+				goto(`/connections?ip=${encodeURIComponent(ip)}`);
 			},
 		},
 		{
 			label: 'Filter connections to this IP',
 			icon: 'search',
 			action: () => {
-				goto(`/connections?filter=ip.dst==${encodeURIComponent(ip)}`);
+				goto(`/connections?ip=${encodeURIComponent(ip)}`);
 			},
 		},
 	]);

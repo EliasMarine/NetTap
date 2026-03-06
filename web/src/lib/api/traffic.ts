@@ -100,9 +100,15 @@ export interface CategoriesResponse {
 export interface Connection {
 	_id: string;
 	_index: string;
-	ts?: string;
-	proto?: string;
-	service?: string;
+	/** ECS fields from OpenSearch _source */
+	'@timestamp'?: string;
+	source?: { ip?: string; port?: number; bytes?: number; packets?: number };
+	destination?: { ip?: string; port?: number; bytes?: number; packets?: number };
+	client?: { bytes?: number };
+	server?: { bytes?: number };
+	network?: { transport?: string; protocol?: string; community_id?: string };
+	event?: { duration?: number };
+	zeek?: { session_id?: string; conn?: { state?: string; history?: string } };
 	[key: string]: unknown;
 }
 
