@@ -220,6 +220,13 @@ services:
       LOGSTASH_OUI_LOOKUP: "true"
       LOGSTASH_SEVERITY_SCORING: "true"
       LOGSTASH_REVERSE_DNS: "false"
+      # Index name patterns — required by format_index_string.rb to resolve
+      # [@metadata][malcolm_opensearch_index]. Without these, the Ruby script
+      # crashes (nil.delete_suffix) and events land in a broken literal index.
+      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+      MALCOLM_NETWORK_INDEX_SUFFIX: "%{%y%m%d}"
+      MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
+      MALCOLM_OTHER_INDEX_SUFFIX: "%{%y%m%d}"
       BEATS_SSL: "false"
       LOGSTASH_HOST: "logstash:5044"
     # NOTE: No cert mount needed — BEATS_SSL is false, so logstash accepts
