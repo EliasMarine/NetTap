@@ -48,15 +48,39 @@ def save_excluded_ips(ips: list[str], file_path: str | None = None) -> None:
     logger.info("Saved %d excluded IPs to %s", len(ips), path)
 
 
-# Filter to restrict source.ip to RFC1918 private address ranges (LAN devices only)
+# Filter to restrict source.ip to RFC1918 private address ranges (LAN devices only).
+# Uses a painless script for proper numeric IP comparison because arkime_sessions3-*
+# maps source.ip as keyword type, making range queries lexicographic (which incorrectly
+# matches public IPs like 172.217.x.x or 172.234.x.x).
+# OLD CODE START — replaced lexicographic range queries with painless script (2026-03-05)
+# RFC1918_SOURCE_FILTER = {
+#     "bool": {
+#         "should": [
+#             {"range": {"source.ip": {"gte": "10.0.0.0", "lte": "10.255.255.255"}}},
+#             {"range": {"source.ip": {"gte": "172.16.0.0", "lte": "172.31.255.255"}}},
+#             {"range": {"source.ip": {"gte": "192.168.0.0", "lte": "192.168.255.255"}}},
+#         ],
+#         "minimum_should_match": 1,
+#     }
+# }
+# OLD CODE END
 RFC1918_SOURCE_FILTER = {
-    "bool": {
-        "should": [
-            {"range": {"source.ip": {"gte": "10.0.0.0", "lte": "10.255.255.255"}}},
-            {"range": {"source.ip": {"gte": "172.16.0.0", "lte": "172.31.255.255"}}},
-            {"range": {"source.ip": {"gte": "192.168.0.0", "lte": "192.168.255.255"}}},
-        ],
-        "minimum_should_match": 1,
+    "script": {
+        "script": {
+            "source": """
+                def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
+                if (ip.length() == 0) return false;
+                def parts = ip.splitOnToken('.');
+                if (parts.length != 4) return false;
+                int a = Integer.parseInt(parts[0]);
+                int b = Integer.parseInt(parts[1]);
+                if (a == 10) return true;
+                if (a == 172 && b >= 16 && b <= 31) return true;
+                if (a == 192 && b == 168) return true;
+                return false;
+            """,
+            "lang": "painless"
+        }
     }
 }
 

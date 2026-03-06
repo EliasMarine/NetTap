@@ -206,6 +206,30 @@
 		}
 		return current;
 	}
+
+	/**
+	 * Coerce an ECS field value to a string. In Arkime/Malcolm OpenSearch data,
+	 * fields like network.transport and network.protocol are arrays (e.g. ["tcp"]),
+	 * not plain strings. This helper safely extracts the first element.
+	 */
+	function asString(val: unknown): string {
+		if (Array.isArray(val)) return String(val[0] ?? '');
+		if (typeof val === 'string') return val;
+		if (val != null) return String(val);
+		return '';
+	}
+
+	/**
+	 * Coerce an ECS field value to a number. In Arkime/Malcolm OpenSearch data,
+	 * numeric fields like event.duration may be arrays (e.g. [1234567890]).
+	 * This helper safely extracts the first element.
+	 */
+	function asNumber(val: unknown): number | undefined {
+		if (Array.isArray(val)) val = val[0];
+		if (typeof val === 'number') return val;
+		if (typeof val === 'string') { const n = Number(val); return isNaN(n) ? undefined : n; }
+		return undefined;
+	}
 </script>
 
 <svelte:head>
@@ -503,13 +527,13 @@
 									</td>
 									<td>
 										{#if transport}
-											<span class="badge">{String(transport).toUpperCase()}</span>
+											<span class="badge">{asString(transport).toUpperCase()}</span>
 										{:else}
 											<span class="text-muted">--</span>
 										{/if}
 									</td>
-									<td>{service ? String(service) : '--'}</td>
-									<td class="mono">{formatDuration(duration as number | undefined)}</td>
+									<td>{service ? asString(service) : '--'}</td>
+									<td class="mono">{formatDuration(asNumber(duration))}</td>
 									<td class="mono">{srcBytes != null ? formatBytes(Number(srcBytes)) : '--'}</td>
 								</tr>
 							{/each}

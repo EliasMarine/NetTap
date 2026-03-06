@@ -235,6 +235,18 @@
 		}
 		return current;
 	}
+
+	/**
+	 * Coerce an ECS field value to a string. In Arkime/Malcolm OpenSearch data,
+	 * fields like network.transport and network.protocol are arrays (e.g. ["tcp"]),
+	 * not plain strings. This helper safely extracts the first element.
+	 */
+	function asString(val: unknown): string {
+		if (Array.isArray(val)) return String(val[0] ?? '');
+		if (typeof val === 'string') return val;
+		if (val != null) return String(val);
+		return '';
+	}
 </script>
 
 <svelte:head>
@@ -467,9 +479,9 @@
 																{@const destIp = getField(conn, 'destination.ip')}
 																<div class="connection-item">
 																	<span class="conn-time">{conn['@timestamp'] ? timeAgo(String(conn['@timestamp'])) : '--'}</span>
-																	<span class="badge badge-muted">{String(getField(conn, 'network.transport') || '?').toUpperCase()}</span>
+																	<span class="badge badge-muted">{(asString(getField(conn, 'network.transport')) || '?').toUpperCase()}</span>
 																	{#if svc}
-																		<span class="badge badge-info">{svc}</span>
+																		<span class="badge badge-info">{asString(svc)}</span>
 																	{/if}
 																	{#if destIp}
 																		<span class="mono" style="font-size: var(--text-xs); color: var(--text-secondary)">&rarr; {destIp}</span>

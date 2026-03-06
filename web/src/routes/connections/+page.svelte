@@ -80,6 +80,16 @@
 	}
 
 	// ---------------------------------------------------------------------------
+	// Safe value extractors (OpenSearch may return arrays for ECS fields)
+	// ---------------------------------------------------------------------------
+
+	function asString(val: unknown): string {
+		if (Array.isArray(val)) return val[0] ?? '';
+		if (typeof val === 'string') return val;
+		return '';
+	}
+
+	// ---------------------------------------------------------------------------
 	// Display helpers
 	// ---------------------------------------------------------------------------
 
@@ -99,8 +109,9 @@
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
-	function formatDuration(seconds: number | undefined): string {
-		if (seconds === undefined || seconds === null) return '--';
+	function formatDuration(ns: number | undefined): string {
+		if (ns === undefined || ns === null) return '--';
+		const seconds = ns / 1_000_000_000;
 		if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
 		const mins = Math.floor(seconds / 60);
@@ -109,7 +120,7 @@
 	}
 
 	function connState(conn: Connection): string {
-		const state = (getField(conn, 'zeek.conn.state') as string) || '';
+		const state = asString(getField(conn, 'zeek.conn.state'));
 		const lower = state.toLowerCase();
 		if (lower.includes('established') || lower === 'sf' || lower === 's1') return 'established';
 		if (lower.includes('reject') || lower === 'rej' || lower === 'rstr' || lower === 'rsto') return 'rejected';
@@ -129,7 +140,7 @@
 	}
 
 	function stateLabel(conn: Connection): string {
-		const raw = (getField(conn, 'zeek.conn.state') as string) || '';
+		const raw = asString(getField(conn, 'zeek.conn.state'));
 		const mapped = connState(conn);
 		if (raw && mapped !== raw.toLowerCase()) return `${mapped.toUpperCase()} (${raw})`;
 		return mapped.toUpperCase();
@@ -397,8 +408,8 @@
 										--
 									{/if}
 								</td>
-								<td>{(getField(conn, 'network.transport') as string)?.toUpperCase() || '--'}</td>
-								<td>{(getField(conn, 'network.protocol') as string) || '--'}</td>
+								<td>{asString(getField(conn, 'network.transport')).toUpperCase() || '--'}</td>
+								<td>{asString(getField(conn, 'network.protocol')) || '--'}</td>
 								<td class="mono">{formatDuration(getField(conn, 'event.duration') as number | undefined)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes')) as number | undefined)}</td>
@@ -443,7 +454,7 @@
 												{#if getField(conn, 'network.community_id')}
 													<div class="detail-item">
 														<span class="label">Community ID</span>
-														<span class="mono">{getField(conn, 'network.community_id')}</span>
+														<span class="mono">{asString(getField(conn, 'network.community_id'))}</span>
 													</div>
 												{/if}
 											</div>
