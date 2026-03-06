@@ -107,6 +107,109 @@ def _get_client(request: web.Request):
     return storage._client
 
 
+def _normalize_alert_source(source: dict) -> dict:
+    """Normalize OpenSearch ECS/Malcolm field names into the structure the
+    frontend expects.
+
+    OpenSearch documents from Malcolm's Logstash pipeline can store Suricata
+    alert fields under several paths depending on ECS normalization:
+
+    - ``rule.name`` / ``rule.id`` / ``rule.category``  (ECS)
+    - ``suricata.alert.signature`` / ``suricata.alert.severity``  (Malcolm)
+    - ``alert.signature`` / ``alert.severity``  (raw Suricata EVE)
+    - ``suricata.severity``  (Malcolm top-level duplicate)
+
+    This function merges all paths into a single ``alert`` sub-dict and
+    flattens network fields so the frontend can access them uniformly.
+    """
+    rule = source.get("rule", {}) or {}
+    suricata = source.get("suricata", {}) or {}
+    suricata_alert = suricata.get("alert", {}) if isinstance(suricata, dict) else {}
+    suricata_alert = suricata_alert or {}
+    existing_alert = source.get("alert", {}) or {}
+
+    # --- alert sub-dict (signature, severity, category) ---
+    signature = (
+        existing_alert.get("signature")
+        or rule.get("name")
+        or suricata_alert.get("signature")
+        or ""
+    )
+    signature_id = (
+        existing_alert.get("signature_id")
+        or rule.get("id")
+        or suricata_alert.get("signature_id")
+    )
+    category = (
+        existing_alert.get("category")
+        or rule.get("category")
+        or suricata_alert.get("category")
+        or ""
+    )
+    severity = _extract_severity(existing_alert, suricata, suricata_alert)
+
+    source["alert"] = {
+        "signature": signature,
+        "signature_id": signature_id,
+        "severity": severity,
+        "category": category,
+    }
+
+    # --- Flatten network endpoints ---
+    src = source.get("source", {}) or {}
+    dst = source.get("destination", {}) or {}
+    net = source.get("network", {}) or {}
+
+    def _first_ip(val):
+        """Handle array-valued IP fields (ECS sometimes wraps in list)."""
+        if isinstance(val, list):
+            return val[0] if val else None
+        return val
+
+    if isinstance(src, dict):
+        source.setdefault("src_ip", _first_ip(src.get("ip")))
+        source.setdefault("src_port", src.get("port"))
+    if isinstance(dst, dict):
+        source.setdefault("dest_ip", _first_ip(dst.get("ip")))
+        source.setdefault("dest_port", dst.get("port"))
+    if isinstance(net, dict):
+        source.setdefault("proto", net.get("transport"))
+
+    # --- Normalize timestamp ---
+    source.setdefault("timestamp", source.get("@timestamp", ""))
+
+    return source
+
+
+def _extract_severity(alert_sub: dict, suricata: dict, suricata_alert: dict) -> int:
+    """Extract severity from the first available field path.
+
+    Returns 3 (low) as the default if no severity is found.
+    """
+    # 1. alert.severity  (raw Suricata EVE)
+    sev = alert_sub.get("severity")
+    if isinstance(sev, int):
+        return sev
+
+    # 2. suricata.severity  (Malcolm top-level)
+    sev = suricata.get("severity") if isinstance(suricata, dict) else None
+    if isinstance(sev, int):
+        return sev
+    # Could be stored as string "1" via keyword mapping
+    if isinstance(sev, str):
+        try:
+            return int(sev)
+        except ValueError:
+            pass
+
+    # 3. suricata.alert.severity  (Malcolm nested)
+    sev = suricata_alert.get("severity")
+    if isinstance(sev, int):
+        return sev
+
+    return 3  # default: low
+
+
 def _load_acks(ack_file: str | None = None) -> dict:
     """Load the alert acknowledgement map from disk.
 
@@ -208,6 +311,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         source["acknowledged"] = alert_id in acks
         if alert_id in acks:
             source["acknowledged_at"] = acks[alert_id].get("acknowledged_at")
+        # Normalize ECS/Malcolm field names into frontend-expected structure
+        _normalize_alert_source(source)
         # Enrich with plain English description, risk context, and recommendation
         _alert_enrichment.enrich_alert(source)
         alerts.append(source)
@@ -274,7 +379,14 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
     }
     for b in buckets:
         key = b.get("key")
-        label = severity_map.get(key, f"severity_{key}")
+        # Handle both int keys (numeric field) and string keys (.keyword field)
+        int_key = key
+        if isinstance(key, str):
+            try:
+                int_key = int(key)
+            except (ValueError, TypeError):
+                int_key = None
+        label = severity_map.get(int_key, f"severity_{key}")
         counts[label] = b.get("doc_count", 0)
 
     return web.json_response(
@@ -333,6 +445,8 @@ async def handle_alert_detail(request: web.Request) -> web.Response:
         source["acknowledged_at"] = acks[source["_id"]].get("acknowledged_at")
         source["acknowledged_by"] = acks[source["_id"]].get("acknowledged_by")
 
+    # Normalize ECS/Malcolm field names into frontend-expected structure
+    _normalize_alert_source(source)
     # Enrich with plain English description, risk context, and recommendation
     _alert_enrichment.enrich_alert(source)
 
