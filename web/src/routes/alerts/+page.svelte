@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { getAlerts, getAlertCount } from '$api/alerts';
 	import type { Alert, AlertsListResponse, AlertCountResponse } from '$api/alerts';
 	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
@@ -48,6 +50,9 @@
 
 	// Expanded row
 	let expandedAlertId = $state<string | null>(null);
+
+	// IP filter from URL query param
+	let ipFilter = $derived($page.url.searchParams.get('ip') || '');
 
 	// ---------------------------------------------------------------------------
 	// Time range helpers
@@ -198,6 +203,7 @@
 				severity,
 				page,
 				size: pageSize,
+				ip: ipFilter || undefined,
 				...timeParams,
 			});
 			alerts = response.alerts;
@@ -272,6 +278,7 @@
 
 	let prevFilter: SeverityFilter | null = null;
 	let prevTimeRange: TimeRange | null = null;
+	let prevIpFilter: string | null = null;
 
 	$effect(() => {
 		if (prevFilter !== null && prevFilter !== activeFilter) {
@@ -285,6 +292,13 @@
 			fetchAll();
 		}
 		prevTimeRange = activeTimeRange;
+	});
+
+	$effect(() => {
+		if (prevIpFilter !== null && prevIpFilter !== ipFilter) {
+			fetchAlerts(1);
+		}
+		prevIpFilter = ipFilter;
 	});
 
 	// ---------------------------------------------------------------------------
@@ -461,6 +475,14 @@
 				</button>
 			{/each}
 		</div>
+		{#if ipFilter}
+			<div class="active-filter">
+				<span class="badge badge-info">
+					IP: {ipFilter}
+					<button class="filter-clear" onclick={() => goto('/alerts')} title="Clear filter">&times;</button>
+				</span>
+			</div>
+		{/if}
 	</div>
 
 	<!-- Alerts table -->
@@ -799,6 +821,27 @@
 
 	.time-pills {
 		flex-shrink: 0;
+	}
+
+	.active-filter {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.filter-clear {
+		background: none;
+		border: none;
+		color: inherit;
+		font-size: var(--text-md);
+		cursor: pointer;
+		padding: 0 0 0 var(--space-xs);
+		line-height: 1;
+		opacity: 0.7;
+	}
+
+	.filter-clear:hover {
+		opacity: 1;
 	}
 
 	/* Loading state */

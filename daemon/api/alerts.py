@@ -282,6 +282,19 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         except (ValueError, TypeError):
             pass
 
+    # Optional IP filter (matches source OR destination)
+    ip_filter = request.query.get("ip", "")
+    if ip_filter:
+        filter_clauses.append({
+            "bool": {
+                "should": [
+                    {"term": {"source.ip": ip_filter}},
+                    {"term": {"destination.ip": ip_filter}},
+                ],
+                "minimum_should_match": 1,
+            }
+        })
+
     query = {
         "size": size,
         "from": offset,

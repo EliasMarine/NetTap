@@ -17,6 +17,7 @@
 	import type { Device, DeviceListResponse, DeviceConnection, DeviceConnectionsResponse } from '$api/devices';
 	import { getRiskScores } from '$api/risk';
 	import type { DeviceRiskScore } from '$api/risk';
+	import IPAddress from '$components/IPAddress.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -371,7 +372,7 @@
 								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(device.ip); } }}
 							>
 								<td class="mono ip-cell">
-									{device.ip}
+									<IPAddress ip={device.ip} />
 									{#if isNew}
 										<span class="badge badge-info badge-inline">NEW</span>
 									{/if}
@@ -406,7 +407,7 @@
 													<dl class="detail-list">
 														<div class="detail-item">
 															<dt>IP Address</dt>
-															<dd class="mono">{device.ip}</dd>
+															<dd class="mono"><IPAddress ip={device.ip} /></dd>
 														</div>
 														<div class="detail-item">
 															<dt>MAC Address</dt>
@@ -484,7 +485,7 @@
 																		<span class="badge badge-info">{asString(svc)}</span>
 																	{/if}
 																	{#if destIp}
-																		<span class="mono" style="font-size: var(--text-xs); color: var(--text-secondary)">&rarr; {destIp}</span>
+																		<span style="font-size: var(--text-xs)">&rarr; <IPAddress ip={String(destIp)} /></span>
 																	{/if}
 																	<span class="mono conn-id">{conn._id.substring(0, 8)}</span>
 																</div>

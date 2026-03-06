@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ethtool \
     iproute2 \
     util-linux \
+    whois \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/nettap/daemon

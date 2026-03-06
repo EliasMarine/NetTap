@@ -48,6 +48,7 @@ from api.nic_discovery import register_nic_discovery_routes
 from api.logs import register_log_routes
 from api.opensearch_cluster import register_opensearch_cluster_routes
 from api.logstash import register_logstash_routes
+from api.lookup import register_lookup_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -384,6 +385,9 @@ def create_app(
     geoip_db = os.environ.get("GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb")
     geoip_service = GeoIPService(db_path=geoip_db, opensearch_client=storage._client)
     register_geoip_routes(app, geoip_service)
+
+    # IP lookup tools (WHOIS + DNS)
+    register_lookup_routes(app)
 
     # Risk scoring (per-device 0-100 risk scores from telemetry)
     risk_scorer = RiskScorer()

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import IPAddress from '$components/IPAddress.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -470,7 +471,11 @@
 							{#each COLUMNS[logType] as col}
 								{@const value = getNestedValue(hit._source, col)}
 								<td class:mono={MONO_FIELDS.has(col) || IP_FIELDS.has(col)}>
-									{formatCellValue(col, value)}
+									{#if IP_FIELDS.has(col) && value != null && value !== ''}
+										<IPAddress ip={String(value)} />
+									{:else}
+										{formatCellValue(col, value)}
+									{/if}
 								</td>
 							{/each}
 						</tr>
