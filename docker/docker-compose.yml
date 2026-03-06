@@ -274,7 +274,9 @@ services:
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
       - zeek-live-logs:/zeek/live:ro
-      - suricata-live-logs:/var/log/suricata:ro
+      # Mount at /suricata to match FILEBEAT_SURICATA_LOG_PATH env var.
+      # Was /var/log/suricata which didn't match, so filebeat never found eve logs.
+      - suricata-live-logs:/suricata:ro
       - filebeat-registry:/usr/share/filebeat/data
       - ./curlrc:/var/local/curlrc:ro
     networks:
