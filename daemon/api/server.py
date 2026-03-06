@@ -380,9 +380,9 @@ def create_app(
     # Device inventory (OpenSearch zeek-*/suricata-* queries + fingerprinting)
     register_device_routes(app, storage)
 
-    # GeoIP lookup (MaxMind GeoLite2 + fallback)
+    # GeoIP lookup (MaxMind GeoLite2 + OpenSearch enrichment + fallback)
     geoip_db = os.environ.get("GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb")
-    geoip_service = GeoIPService(db_path=geoip_db)
+    geoip_service = GeoIPService(db_path=geoip_db, opensearch_client=storage._client)
     register_geoip_routes(app, geoip_service)
 
     # Risk scoring (per-device 0-100 risk scores from telemetry)
