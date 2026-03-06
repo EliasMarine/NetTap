@@ -188,7 +188,7 @@ async def handle_log_search(request: web.Request) -> web.Response:
             not field.startswith(_NO_KEYWORD_PREFIXES)
             and not field.endswith(".keyword")
             and "." in field
-            and field not in ("source.port", "destination.port", "source.ip", "destination.ip")
+            and field not in ("source.port", "destination.port")
         ):
             field = f"{field}.keyword"
         body["sort"].append({field: {"order": order}})
