@@ -109,10 +109,14 @@
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
-	function formatDuration(ns: number | undefined): string {
-		if (ns === undefined || ns === null) return '--';
-		const seconds = ns / 1_000_000_000;
-		if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
+	function formatDuration(conn: Connection): string {
+		const start = getField(conn, 'event.start') as string | undefined;
+		const end = getField(conn, 'event.end') as string | undefined;
+		if (!start || !end) return '--';
+		const ms = new Date(end).getTime() - new Date(start).getTime();
+		if (isNaN(ms) || ms < 0) return '--';
+		const seconds = ms / 1000;
+		if (seconds < 1) return `${ms}ms`;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
 		const mins = Math.floor(seconds / 60);
 		const secs = (seconds % 60).toFixed(0);
@@ -120,7 +124,7 @@
 	}
 
 	function connState(conn: Connection): string {
-		const state = asString(getField(conn, 'zeek.conn.state'));
+		const state = asString(getField(conn, 'zeek.conn.conn_state'));
 		const lower = state.toLowerCase();
 		if (lower.includes('established') || lower === 'sf' || lower === 's1') return 'established';
 		if (lower.includes('reject') || lower === 'rej' || lower === 'rstr' || lower === 'rsto') return 'rejected';
@@ -140,7 +144,7 @@
 	}
 
 	function stateLabel(conn: Connection): string {
-		const raw = asString(getField(conn, 'zeek.conn.state'));
+		const raw = asString(getField(conn, 'zeek.conn.conn_state'));
 		const mapped = connState(conn);
 		if (raw && mapped !== raw.toLowerCase()) return `${mapped.toUpperCase()} (${raw})`;
 		return mapped.toUpperCase();
@@ -409,8 +413,8 @@
 									{/if}
 								</td>
 								<td>{asString(getField(conn, 'network.transport')).toUpperCase() || '--'}</td>
-								<td>{asString(getField(conn, 'network.protocol')) || '--'}</td>
-								<td class="mono">{formatDuration(getField(conn, 'event.duration') as number | undefined)}</td>
+								<td>{asString(getField(conn, 'protocol')) || '--'}</td>
+								<td class="mono">{formatDuration(conn)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes')) as number | undefined)}</td>
 								<td>
@@ -445,7 +449,19 @@
 														<span class="mono">{getField(conn, 'destination.packets')}</span>
 													</div>
 												{/if}
-												{#if getField(conn, 'zeek.conn.history')}
+												{#if getField(conn, 'zeek.conn.conn_state')}
+												<div class="detail-item">
+													<span class="label">Conn State</span>
+													<span class="mono">{asString(getField(conn, 'zeek.conn.conn_state'))}</span>
+												</div>
+											{/if}
+											{#if getField(conn, 'zeek.conn.conn_state_description')}
+												<div class="detail-item">
+													<span class="label">State Description</span>
+													<span>{asString(getField(conn, 'zeek.conn.conn_state_description'))}</span>
+												</div>
+											{/if}
+											{#if getField(conn, 'zeek.conn.history')}
 													<div class="detail-item">
 														<span class="label">History</span>
 														<span class="mono">{getField(conn, 'zeek.conn.history')}</span>

@@ -23,8 +23,11 @@ from services.excluded_ips import load_excluded_ips, save_excluded_ips
 
 logger = logging.getLogger("nettap.api.settings")
 
-# The env file that stores API key values
-DEFAULT_ENV_FILE = "/opt/nettap/.env"
+# The env file that stores API key values.
+# OLD CODE START — was /opt/nettap/.env which is in the read-only container layer (2026-03-05)
+# DEFAULT_ENV_FILE = "/opt/nettap/.env"
+# OLD CODE END
+DEFAULT_ENV_FILE = "/opt/nettap/data/.env"
 
 # All known API key fields and their env variable names
 API_KEY_FIELDS = {
@@ -255,7 +258,7 @@ def register_settings_routes(app: web.Application, env_file: str | None = None) 
 
     Args:
         app: The aiohttp web application to register routes on.
-        env_file: Optional path to the env file. Defaults to /opt/nettap/.env.
+        env_file: Optional path to the env file. Defaults to /opt/nettap/data/.env.
     """
     if env_file:
         app["env_file"] = env_file

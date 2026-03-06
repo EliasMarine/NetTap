@@ -184,10 +184,22 @@
 		return 'badge-danger';
 	}
 
-	function formatDuration(ns: number | undefined): string {
-		if (!ns && ns !== 0) return '--';
-		const seconds = ns / 1_000_000_000;
-		if (seconds < 1) return `${Math.round(ns / 1_000_000)}ms`;
+	/**
+	 * Calculate and format duration from event.start and event.end timestamps.
+	 * event.duration does not exist as a usable field in Arkime/Malcolm ECS data,
+	 * so we compute the difference from start/end ISO timestamps instead.
+	 */
+	function formatDuration(startVal: unknown, endVal: unknown): string {
+		const startStr = asString(startVal);
+		const endStr = asString(endVal);
+		if (!startStr || !endStr) return '--';
+		const startMs = new Date(startStr).getTime();
+		const endMs = new Date(endStr).getTime();
+		if (isNaN(startMs) || isNaN(endMs)) return '--';
+		const diffMs = endMs - startMs;
+		if (diffMs < 0) return '--';
+		if (diffMs < 1000) return `${Math.round(diffMs)}ms`;
+		const seconds = diffMs / 1000;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
 		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
@@ -219,17 +231,16 @@
 		return '';
 	}
 
-	/**
-	 * Coerce an ECS field value to a number. In Arkime/Malcolm OpenSearch data,
-	 * numeric fields like event.duration may be arrays (e.g. [1234567890]).
-	 * This helper safely extracts the first element.
-	 */
-	function asNumber(val: unknown): number | undefined {
-		if (Array.isArray(val)) val = val[0];
-		if (typeof val === 'number') return val;
-		if (typeof val === 'string') { const n = Number(val); return isNaN(n) ? undefined : n; }
-		return undefined;
-	}
+	// OLD CODE START — asNumber removed: event.duration field doesn't exist in
+	// Arkime/Malcolm ECS data. Duration is now calculated from event.start/event.end
+	// timestamps via formatDuration(). Kept as comment per code preservation policy.
+	// function asNumber(val: unknown): number | undefined {
+	// 	if (Array.isArray(val)) val = val[0];
+	// 	if (typeof val === 'number') return val;
+	// 	if (typeof val === 'string') { const n = Number(val); return isNaN(n) ? undefined : n; }
+	// 	return undefined;
+	// }
+	// OLD CODE END
 </script>
 
 <svelte:head>
@@ -513,8 +524,9 @@
 							{#each connections as conn (conn._id)}
 								{@const destIp = getField(conn, 'destination.ip')}
 								{@const transport = getField(conn, 'network.transport')}
-								{@const service = getField(conn, 'network.protocol')}
-								{@const duration = getField(conn, 'event.duration')}
+								{@const service = getField(conn, 'protocol')}
+								{@const eventStart = getField(conn, 'event.start')}
+								{@const eventEnd = getField(conn, 'event.end')}
 								{@const srcBytes = getField(conn, 'source.bytes')}
 								<tr>
 									<td class="mono timestamp-cell">{formatTimestamp(conn['@timestamp'] as string | undefined)}</td>
@@ -533,7 +545,7 @@
 										{/if}
 									</td>
 									<td>{service ? asString(service) : '--'}</td>
-									<td class="mono">{formatDuration(asNumber(duration))}</td>
+									<td class="mono">{formatDuration(eventStart, eventEnd)}</td>
 									<td class="mono">{srcBytes != null ? formatBytes(Number(srcBytes)) : '--'}</td>
 								</tr>
 							{/each}

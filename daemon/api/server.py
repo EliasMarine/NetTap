@@ -408,7 +408,10 @@ def create_app(
     register_investigation_routes(app, investigation_store)
 
     # Settings (API keys, env file management, excluded IPs)
-    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/.env")
+    # OLD CODE START — was /opt/nettap/.env which is in the read-only container layer (2026-03-05)
+    # env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/.env")
+    # OLD CODE END
+    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
     excluded_ips_file = os.environ.get(
         "EXCLUDED_IPS_FILE", "/opt/nettap/data/excluded_ips.json"
     )
