@@ -402,6 +402,29 @@ class GeoIPService:
             location = geo.get("location", {})
             lat = location.get("lat") if isinstance(location, dict) else None
             lon = location.get("lon") if isinstance(location, dict) else None
+            # Fall back to top-level latitude/longitude if location dict missing
+            if lat is None:
+                lat = geo.get("latitude")
+            if lon is None:
+                lon = geo.get("longitude")
+
+            # Parse ASN from Malcolm's "as.full" field: "AS16509 Amazon.com, Inc."
+            asn_number = as_info.get("number")
+            org_name = as_info.get("organization")
+            if isinstance(org_name, dict):
+                org_name = org_name.get("name")
+            as_full = as_info.get("full", "")
+            if as_full and (asn_number is None or org_name is None):
+                # Parse "AS16509 Amazon.com, Inc." → (16509, "Amazon.com, Inc.")
+                if as_full.upper().startswith("AS"):
+                    parts = as_full.split(" ", 1)
+                    if len(parts) >= 1 and asn_number is None:
+                        try:
+                            asn_number = int(parts[0][2:])
+                        except ValueError:
+                            pass
+                    if len(parts) == 2 and org_name is None:
+                        org_name = parts[1]
 
             result = GeoIPResult(
                 ip=ip,
@@ -410,10 +433,8 @@ class GeoIPService:
                 city=geo.get("city_name"),
                 latitude=lat,
                 longitude=lon,
-                asn=as_info.get("number"),
-                organization=as_info.get("organization", {}).get("name")
-                if isinstance(as_info.get("organization"), dict)
-                else as_info.get("organization"),
+                asn=asn_number,
+                organization=org_name,
             )
 
             # Cache the result
