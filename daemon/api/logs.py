@@ -174,13 +174,24 @@ async def handle_log_search(request: web.Request) -> web.Response:
         "sort": [],
     }
 
-    # Sort
+    # Sort — auto-add .keyword suffix for text fields that need it.
+    # Fields like @timestamp, _id, and numeric fields don't need it.
+    _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
     for part in sort_param.split(","):
         if ":" in part:
             field, order = part.split(":", 1)
-            body["sort"].append({field: {"order": order}})
         else:
-            body["sort"].append({part: {"order": "desc"}})
+            field, order = part, "desc"
+        # Add .keyword for text fields (zeek.*, suricata.*, source.*, destination.*)
+        # unless they already have .keyword or are known non-text fields
+        if (
+            not field.startswith(_NO_KEYWORD_PREFIXES)
+            and not field.endswith(".keyword")
+            and "." in field
+            and field not in ("source.port", "destination.port", "source.ip", "destination.ip")
+        ):
+            field = f"{field}.keyword"
+        body["sort"].append({field: {"order": order}})
     # Always add _id tiebreaker for cursor pagination
     if not any("_id" in s for s in body["sort"]):
         body["sort"].append({"_id": {"order": "desc"}})
