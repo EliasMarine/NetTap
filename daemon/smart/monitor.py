@@ -75,6 +75,8 @@ preservation policy.
 
 from __future__ import annotations
 
+import glob as globmod
+import os
 import subprocess
 import json
 import logging
@@ -84,6 +86,34 @@ from enum import Enum
 from typing import Callable
 
 logger = logging.getLogger("nettap.smart")
+
+
+def auto_detect_device() -> str:
+    """Auto-detect the primary storage device for SMART monitoring.
+
+    Checks common NVMe and SATA device paths in order of likelihood.
+    Falls back to /dev/nvme0n1 if nothing is found.
+    """
+    # Try NVMe devices first (most common on N100 mini PCs)
+    nvme_devices = sorted(globmod.glob("/dev/nvme[0-9]n[0-9]"))
+    if nvme_devices:
+        logger.info("SMART auto-detect: found NVMe device %s", nvme_devices[0])
+        return nvme_devices[0]
+
+    # Try SATA/SSD devices
+    sata_devices = sorted(globmod.glob("/dev/sd[a-z]"))
+    if sata_devices:
+        logger.info("SMART auto-detect: found SATA device %s", sata_devices[0])
+        return sata_devices[0]
+
+    # Try virtio (VMs)
+    vd_devices = sorted(globmod.glob("/dev/vd[a-z]"))
+    if vd_devices:
+        logger.info("SMART auto-detect: found virtio device %s", vd_devices[0])
+        return vd_devices[0]
+
+    logger.warning("SMART auto-detect: no block devices found, defaulting to /dev/nvme0n1")
+    return "/dev/nvme0n1"
 
 
 # ---------------------------------------------------------------------------
@@ -737,7 +767,62 @@ class SmartMonitor:
         health data to the web dashboard.
 
         Returns:
-            Dict representation of SmartMetrics.
+            Dict representation of SmartMetrics, or a fallback dict with
+            basic disk info from sysfs if smartctl fails completely.
         """
         metrics = self.get_metrics()
-        return metrics.to_dict()
+        result = metrics.to_dict()
+
+        # If smartctl returned nothing useful, try sysfs fallback for basic info
+        if not result.get("model") or result["model"] == "Unknown":
+            sysfs_info = self._sysfs_fallback()
+            if sysfs_info:
+                result.update(sysfs_info)
+
+        return result
+
+    def _sysfs_fallback(self) -> dict:
+        """Read basic disk info from sysfs when smartctl fails.
+
+        This provides at least model/serial/size even when smartctl
+        can't access the device (permission issues, missing capabilities).
+        """
+        try:
+            # Extract block device name from path (e.g., /dev/nvme0n1 -> nvme0n1)
+            dev_name = os.path.basename(self.device)
+
+            # For NVMe, the sysfs path uses the controller (nvme0) not the namespace
+            if dev_name.startswith("nvme"):
+                # nvme0n1 -> nvme0
+                ctrl = dev_name.split("n")[0] + "n" + dev_name.split("n")[1] if "n" in dev_name else dev_name
+                model_path = f"/sys/block/{dev_name}/device/model"
+                serial_path = f"/sys/block/{dev_name}/device/serial"
+                size_path = f"/sys/block/{dev_name}/size"
+            else:
+                model_path = f"/sys/block/{dev_name}/device/model"
+                serial_path = f"/sys/block/{dev_name}/device/serial"
+                size_path = f"/sys/block/{dev_name}/size"
+
+            info: dict = {}
+
+            if os.path.exists(model_path):
+                with open(model_path) as f:
+                    info["model"] = f.read().strip()
+
+            if os.path.exists(serial_path):
+                with open(serial_path) as f:
+                    info["serial"] = f.read().strip()
+
+            if os.path.exists(size_path):
+                with open(size_path) as f:
+                    # Size is in 512-byte sectors
+                    sectors = int(f.read().strip())
+                    info["total_capacity_bytes"] = sectors * 512
+
+            if info:
+                logger.info("SMART sysfs fallback: found %s", info.get("model", "unknown"))
+
+            return info
+        except Exception as exc:
+            logger.debug("sysfs fallback failed: %s", exc)
+            return {}

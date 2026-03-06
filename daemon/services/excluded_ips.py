@@ -88,6 +88,10 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         Empty list if detection fails.
     """
     try:
+        # Only count source IPs that make OUTBOUND connections (to non-RFC1918
+        # destinations). This filters out ISP CGNAT IPs (e.g. 10.181.x.x) which
+        # are RFC1918 but only appear as source in INBOUND traffic to the user's
+        # router. Real LAN devices initiate connections to external destinations.
         query = {
             "size": 0,
             "query": {
@@ -95,6 +99,27 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                     "filter": [
                         {"term": {"event.provider": "zeek"}},
                         {"term": {"event.dataset": "conn"}},
+                        # Exclude connections to RFC1918 destinations (inbound/LAN-to-LAN)
+                        # Only keep outbound connections to public IPs
+                        {
+                            "script": {
+                                "script": {
+                                    "source": """
+                                        def ip = doc['destination.ip.keyword'].size() > 0 ? doc['destination.ip.keyword'].value : '';
+                                        if (ip.length() == 0) return false;
+                                        def parts = ip.splitOnToken('.');
+                                        if (parts.length != 4) return false;
+                                        int a = Integer.parseInt(parts[0]);
+                                        int b = Integer.parseInt(parts[1]);
+                                        if (a == 10) return false;
+                                        if (a == 172 && b >= 16 && b <= 31) return false;
+                                        if (a == 192 && b == 168) return false;
+                                        return true;
+                                    """,
+                                    "lang": "painless"
+                                }
+                            }
+                        },
                     ]
                 }
             },
@@ -141,9 +166,9 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         # Sort by connection count descending, take top subnets
         sorted_subnets = sorted(subnet_counts.items(), key=lambda x: x[1], reverse=True)
 
-        # Only keep subnets with meaningful traffic (>1% of the top subnet's traffic)
+        # Only keep subnets with meaningful traffic (>10% of the top subnet's traffic)
         top_count = sorted_subnets[0][1]
-        threshold = top_count * 0.01
+        threshold = top_count * 0.10
         detected = [s for s, c in sorted_subnets if c >= threshold]
 
         logger.info(

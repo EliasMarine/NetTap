@@ -216,24 +216,30 @@
 				</div>
 			</div>
 
-			<!-- Map placeholder -->
+			<!-- Embedded map -->
 			{#if result.latitude != null && result.longitude != null}
-				<div class="map-placeholder">
-					<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
-						<circle cx="12" cy="10" r="3" />
-					</svg>
-					<span class="text-muted">
-						{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}
-					</span>
-					<a
-						href="https://www.google.com/maps/search/?api=1&query={result.latitude},{result.longitude}"
-						target="_blank"
-						rel="noopener noreferrer"
-						class="btn btn-secondary btn-sm"
-					>
-						Open in Google Maps
-					</a>
+				<div class="map-container">
+					<iframe
+						title="GeoIP Location Map"
+						width="100%"
+						height="300"
+						frameborder="0"
+						scrolling="no"
+						src="https://www.openstreetmap.org/export/embed.html?bbox={result.longitude - 0.5},{result.latitude - 0.3},{result.longitude + 0.5},{result.latitude + 0.3}&layer=mapnik&marker={result.latitude},{result.longitude}"
+					></iframe>
+					<div class="map-footer">
+						<span class="text-muted mono">
+							{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}
+						</span>
+						<a
+							href="https://www.google.com/maps/search/?api=1&query={result.latitude},{result.longitude}"
+							target="_blank"
+							rel="noopener noreferrer"
+							class="btn btn-secondary btn-sm"
+						>
+							Open in Google Maps
+						</a>
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -374,18 +380,28 @@
 		color: var(--accent-hover);
 	}
 
-	/* Map placeholder */
-	.map-placeholder {
+	/* Map container */
+	.map-container {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-sm);
-		padding: var(--space-xl);
-		background-color: var(--bg-tertiary);
-		border: 1px dashed var(--border-default);
+		gap: 0;
+		border: 1px solid var(--border-default);
 		border-radius: var(--radius-md);
-		color: var(--text-muted);
+		overflow: hidden;
+	}
+
+	.map-container iframe {
+		display: block;
+		filter: invert(0.9) hue-rotate(180deg) saturate(0.5) brightness(1.1);
+	}
+
+	.map-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-sm) var(--space-md);
+		background-color: var(--bg-tertiary);
+		border-top: 1px solid var(--border-default);
 	}
 
 	/* Actions row */

@@ -70,7 +70,7 @@ import sys
 from typing import Any
 
 from storage.manager import StorageManager, RetentionConfig
-from smart.monitor import SmartMonitor
+from smart.monitor import SmartMonitor, auto_detect_device
 from services.bridge_health import BridgeHealthMonitor
 from api.server import start_api
 
@@ -194,7 +194,7 @@ def load_config() -> dict[str, Any]:
         "disk_threshold": _env_int("DISK_THRESHOLD_PERCENT", 80) / 100.0,
         "emergency_threshold": _env_int("EMERGENCY_THRESHOLD_PERCENT", 90) / 100.0,
         "opensearch_url": _env_str("OPENSEARCH_URL", "http://localhost:9200"),
-        "smart_device": _env_str("SMART_DEVICE", "/dev/nvme0n1"),
+        "smart_device": _env_str("SMART_DEVICE", "") or auto_detect_device(),
         "storage_check_interval": _env_int("STORAGE_CHECK_INTERVAL", 300),
         "smart_check_interval": _env_int("SMART_CHECK_INTERVAL", 3600),
         "bridge_check_interval": _env_int("BRIDGE_CHECK_INTERVAL", 30),
