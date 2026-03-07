@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     util-linux \
     whois \
+    dnsutils \
+    traceroute \
+    iputils-ping \
+    openssl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/nettap/daemon

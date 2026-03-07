@@ -49,6 +49,7 @@ from api.logs import register_log_routes
 from api.opensearch_cluster import register_opensearch_cluster_routes
 from api.logstash import register_logstash_routes
 from api.lookup import register_lookup_routes
+from api.tools import register_tools_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -61,6 +62,10 @@ from services.detection_packs import DetectionPackManager
 from services.report_generator import ReportGenerator
 from services.bridge_health import BridgeHealthMonitor
 from services.bridge_manager import BridgeManager
+from services.dns_recon_service import DnsReconService
+from services.mac_lookup_service import MacLookupService
+from services.network_diag_service import NetworkDiagService
+from services.ssl_cert_service import SslCertService
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
 from services.update_executor import UpdateExecutor
@@ -388,6 +393,13 @@ def create_app(
 
     # IP lookup tools (WHOIS + DNS)
     register_lookup_routes(app)
+
+    # Network tools (DNS Recon, MAC Lookup, Ping, Traceroute, SSL Cert)
+    dns_recon = DnsReconService()
+    mac_lookup = MacLookupService()
+    network_diag = NetworkDiagService()
+    ssl_cert = SslCertService()
+    register_tools_routes(app, dns_recon, mac_lookup, network_diag, ssl_cert)
 
     # Risk scoring (per-device 0-100 risk scores from telemetry)
     risk_scorer = RiskScorer()
