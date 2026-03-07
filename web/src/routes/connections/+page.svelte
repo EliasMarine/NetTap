@@ -239,8 +239,11 @@
 
 	function openInTShark(conn: Connection) {
 		const filter = buildTSharkFilter(conn);
+		const ts = conn['@timestamp'] as string | undefined;
 		const params = new URLSearchParams();
 		if (filter) params.set('filter', filter);
+		if (ts) params.set('ts', ts);
+		params.set('auto', '1');
 		goto(`/tools/tshark?${params.toString()}`);
 	}
 

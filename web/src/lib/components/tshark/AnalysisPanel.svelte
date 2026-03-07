@@ -46,13 +46,62 @@
 	let status = $state<TSharkStatus | null>(null);
 	let statusLoading = $state(true);
 
-	// ---- Read URL query params on mount ----
+	// ---- Read URL query params + auto-analyze on mount ----
+	let autoAnalyzeDone = false;
+
 	$effect(() => {
 		const urlFilter = $page.url.searchParams.get('filter');
 		const urlPcap = $page.url.searchParams.get('pcap');
+		const autoRun = $page.url.searchParams.get('auto') === '1';
+		const connTs = $page.url.searchParams.get('ts');
+
 		if (urlFilter && !displayFilter) displayFilter = urlFilter;
 		if (urlPcap && !pcapPath) pcapPath = urlPcap;
+
+		if (autoRun && !autoAnalyzeDone) {
+			autoAnalyzeDone = true;
+			autoAnalyze(connTs);
+		}
 	});
+
+	async function autoAnalyze(connTimestamp: string | null) {
+		// Load PCAP files, pick best match, run analysis
+		pcapFilesLoading = true;
+		try {
+			const res = await getPcapFiles();
+			pcapFiles = res.pcaps;
+		} catch {
+			pcapFiles = [];
+		} finally {
+			pcapFilesLoading = false;
+		}
+
+		if (pcapFiles.length === 0) {
+			errorMessage = 'No PCAP files found. Arkime may not be capturing packets, or the PCAP volume is empty.';
+			return;
+		}
+
+		// Pick the PCAP whose modification time is closest to the connection timestamp
+		if (connTimestamp && pcapFiles.length > 1) {
+			const connTime = new Date(connTimestamp).getTime() / 1000;
+			let bestIdx = 0;
+			let bestDiff = Infinity;
+			for (let i = 0; i < pcapFiles.length; i++) {
+				const diff = Math.abs(pcapFiles[i].modified - connTime);
+				if (diff < bestDiff) {
+					bestDiff = diff;
+					bestIdx = i;
+				}
+			}
+			pcapPath = pcapFiles[bestIdx].path;
+		} else {
+			// Default to most recent
+			pcapPath = pcapFiles[0].path;
+		}
+
+		// Auto-run analysis
+		runAnalysis();
+	}
 
 	// ---- Fetch TShark status on mount ----
 	$effect(() => {
