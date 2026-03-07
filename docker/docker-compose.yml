@@ -117,6 +117,12 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    ports:
+      # Expose OpenSearch to localhost for host-networked containers (arkime-live,
+      # pcap-capture). Previously nginx-proxy provided this, but Malcolm's baked-in
+      # nginx.conf references upstream "arkime:8005" which crashes nginx on startup,
+      # making the :9200 proxy unreachable. Direct binding is simpler and reliable.
+      - "127.0.0.1:9200:9200"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - opensearch-backup:/opt/opensearch/backup
@@ -576,61 +582,21 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
       start_period: 60s
 
-  # nginx-proxy provides the 127.0.0.1:9200 OpenSearch proxy that arkime-live
-  # (host networking) needs to reach OpenSearch. Malcolm's baked-in nginx.conf
-  # also references upstream "arkime:8005", but our arkime-live uses host
-  # networking so Docker DNS can't resolve it. This makes the :443 vhost fail,
-  # but the :9200 OpenSearch proxy still works. The health check tests :9200
-  # (OpenSearch proxy) instead of :443 (broken arkime upstream).
-  nginx-proxy:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
-    container_name: nettap-nginx-proxy
-    restart: unless-stopped
-    <<: *logging-defaults
-    labels:
-      com.nettap.service: "nginx-proxy"
-      com.nettap.component: "infrastructure"
-      com.nettap.description: "Malcolm nginx reverse proxy (OpenSearch proxy for host-networked containers)"
-    ports:
-      # OLD CODE START — :443 vhost is broken (arkime:8005 unresolvable), not needed by NetTap
-      # - "${MALCOLM_HTTPS_PORT:-9443}:443"
-      # OLD CODE END
-      # Bind OpenSearch proxy to loopback only — never expose 9200 externally
-      - "127.0.0.1:9200:9200"
-    environment:
-      <<: [*process-env, *opensearch-env]
-      NGINX_SSL: "true"
-      NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
-      NGINX_LOG_ACCESS_AND_ERRORS: "false"
-      # dashboards.env — nginx-proxy templates use envsubst; DASHBOARDS_URL
-      # is parsed by the entrypoint to derive PREFIX and PROXY_PASS values
-      DASHBOARDS_URL: "http://dashboards:5601/dashboards"
-      # arkime.env — ARKIME_SSL is used as an envsubst map key in
-      # 01_template_variables.conf:21. If unset, envsubst produces
-      # "map  $arkime_protocol {" (1 arg) which crashes nginx.
-      ARKIME_SSL: "true"
-      ARKIME_VIEWER_PORT: "8005"
-      MANAGE_PCAP_FILES: "false"
-      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
-      # auth-common.env — ROLE_BASED_ACCESS is also an envsubst map key.
-      # Must be set to prevent another "invalid number of arguments" error.
-      ROLE_BASED_ACCESS: "false"
-      ROLE_ADMIN: "admin"
-      ROLE_CAPTURE_SERVICE: "capture_service"
-    volumes:
-      - ${MALCOLM_CERTS_DIR:-./certs}:/etc/nginx/certs:ro
-      - ${MALCOLM_AUTH_DIR:-./auth}:/etc/nginx/auth:ro
-      - ./curlrc:/var/local/curlrc:ro
-    networks:
-      - default
-    depends_on:
-      - api
-      - dashboards
-    healthcheck:
-      <<: *healthcheck-defaults
-      # Test the OpenSearch proxy (:9200), not the broken :443 vhost
-      test: ["CMD-SHELL", "curl -skf https://localhost:9200 || exit 1"]
-      start_period: 120s
+  # OLD CODE START — nginx-proxy disabled. Malcolm's baked-in nginx.conf
+  # references upstream "arkime:8005" which crashes nginx on startup because
+  # arkime-live uses host networking (invisible to Docker DNS). This made the
+  # :9200 OpenSearch proxy unreachable. OpenSearch now binds 127.0.0.1:9200
+  # directly, making nginx-proxy unnecessary. Kept commented for reference.
+  # nginx-proxy:
+  #   image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
+  #   container_name: nettap-nginx-proxy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "127.0.0.1:9200:9200"
+  #   depends_on:
+  #     - api
+  #     - dashboards
+  # OLD CODE END
 
   # ========================================================================
   # NETTAP SERVICES
