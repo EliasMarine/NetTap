@@ -410,8 +410,21 @@ services:
       com.nettap.service: "pcap-capture"
       com.nettap.component: "capture"
       com.nettap.description: "Raw packet capture (netsniff-ng)"
-    # Malcolm's entrypoint needs root for directory creation in fresh volumes
     user: "root"
+    # Wrap the original entrypoint to create/chown PCAP output directory.
+    # Without this, netsniff-ng (running as user "pcap") can't write to
+    # root-owned /pcap in fresh Docker volumes.
+    # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s pcap-capture]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        mkdir -p /pcap
+        && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap
+        && exec /usr/bin/tini --
+        /usr/local/bin/docker-uid-gid-setup.sh
+        /usr/local/bin/service_check_passthrough.sh -s pcap-capture
+        /usr/local/bin/supervisor.sh
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *pcap-env]
@@ -432,6 +445,22 @@ services:
       com.nettap.service: "arkime-live"
       com.nettap.component: "capture"
       com.nettap.description: "Arkime full packet capture and session indexer"
+    user: "root"
+    # Wrap the original entrypoint to create PCAP output directory.
+    # Arkime's supervisor does chdir to /data/pcap/arkime-live which must
+    # exist and be writable by PUID:PGID. Fresh volumes are root-owned.
+    # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s arkime docker_entrypoint.sh]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        mkdir -p /data/pcap/arkime-live
+        && chown -R $${PUID:-1000}:$${PGID:-1000} /data/pcap
+        && exec /usr/bin/tini --
+        /usr/local/bin/docker-uid-gid-setup.sh
+        /usr/local/bin/service_check_passthrough.sh -s arkime
+        /usr/local/bin/docker_entrypoint.sh
+        /usr/local/bin/supervisord -c /etc/supervisord.conf -n
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *opensearch-env, *pcap-env]
@@ -444,8 +473,6 @@ services:
       MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
       EXTRA_TAGS: ""
-    # NOTE: Arkime self-generates viewer.crt/viewer.key inside the container
-    # at startup via initarkime.sh. No host-side cert mount needed.
     volumes:
       - pcap-data:/data/pcap
 
