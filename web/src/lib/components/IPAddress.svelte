@@ -113,6 +113,28 @@
 			},
 		},
 		{
+			label: 'Ping this IP',
+			icon: 'ping',
+			action: () => {
+				goto(`/tools/ping?target=${encodeURIComponent(ip)}`);
+			},
+		},
+		{
+			label: 'Traceroute to this IP',
+			icon: 'ping',
+			action: () => {
+				goto(`/tools/ping?target=${encodeURIComponent(ip)}&tab=traceroute`);
+			},
+		},
+		{
+			label: 'SSL certificate check',
+			icon: 'ssl',
+			separator: true,
+			action: () => {
+				goto(`/tools/ssl-cert?host=${encodeURIComponent(ip)}`);
+			},
+		},
+		{
 			label: 'View alerts for this IP',
 			icon: 'alert',
 			separator: true,
