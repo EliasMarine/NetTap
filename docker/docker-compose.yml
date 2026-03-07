@@ -421,6 +421,8 @@ services:
       - >-
         mkdir -p /pcap
         && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap
+        && setcap -r /usr/sbin/netsniff-ng 2>/dev/null
+        && sed -i 's/user=%(ENV_PUSER)s/user=root/' /etc/supervisor.d/netsniff-br0.conf
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
         /usr/local/bin/service_check_passthrough.sh -s pcap-capture
@@ -464,6 +466,9 @@ services:
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *opensearch-env, *pcap-env]
+      # Override OPENSEARCH_URL for host networking — Docker DNS (opensearch:9200)
+      # doesn't resolve on the host network. nginx-proxy binds 127.0.0.1:9200.
+      OPENSEARCH_URL: "https://localhost:9200"
       ARKIME_LIVE_CAPTURE: "true"
       ARKIME_VIEWER_PORT: "8005"
       ARKIME_ROTATE_INDEX: "daily"
