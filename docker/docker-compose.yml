@@ -641,6 +641,9 @@ services:
       # OpenSearch credentials — daemon needs Basic Auth to query OpenSearch.
       # Without this, StorageManager gets 403 on all API calls.
       - ./curlrc:/var/local/curlrc:ro
+      # Docker socket — daemon uses docker exec for TShark PCAP analysis.
+      # Read-only: daemon only inspects/execs, never creates/removes containers.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Host sysfs — mount ALL of /sys so that symlinks resolve correctly.
       # /sys/class/net/<iface> is a symlink to /sys/devices/pci.../net/<iface>;
       # mounting only /sys/class/net leaves dangling targets inside the container.
@@ -858,7 +861,7 @@ services:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8443/health || exit 1"]
       start_period: 10s
 
 # ==========================================================================
