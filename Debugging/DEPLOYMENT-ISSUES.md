@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-06
-> **Status:** 36 issues tracked. 36 RESOLVED. Latest: IP context menu expansion (commit 5b1b4d4) — WHOIS/DNS lookup APIs + pages, IPAddress component on all pages, alerts IP filter, filter URL bug fix. 17/18 containers healthy on N100.
+> **Status:** 36 issues tracked. 36 RESOLVED. Latest: Tools section (10 tools) — 4 backend services (DNS Recon, MAC Lookup, Ping/Traceroute, SSL Cert), 10 frontend pages, sidebar nav, IP context menu tool links. Daemon tests: 1175 passing. Web tests: 24 tools API tests passing. 17/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1381,3 +1381,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |
 | NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |
 | — | 717bd24 | Logstash index pattern env vars missing — 89K+ events misindexed | 2026-03-05 |
+| — | 32d4ab2 | Tools section: 4 backend services + API routes + Dockerfile + 97 tests | 2026-03-06 |
+| — | 2c00031 | Tools section: design docs + mockups | 2026-03-06 |

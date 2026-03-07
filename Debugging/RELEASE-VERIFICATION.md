@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-06
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** NET-100 Web UI v2 complete redesign — 7 SIEM pages, 3 new daemon API modules, new design system. PR #92: .keyword suffix fix for all aggregation fields + log search _source wrapper + CSP fonts. Commit 717bd24: Logstash index pattern env var fix — 89K+ misindexed events recovered. Commit 5b1b4d4: IP context menu expansion — WHOIS/DNS lookups, 8 right-click actions on all IPs, alerts IP filter. Daemon tests: 1078 passing. Web tests: 691 passing.
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** NET-100 Web UI v2 complete redesign — 7 SIEM pages, 3 new daemon API modules, new design system. PR #92: .keyword suffix fix for all aggregation fields + log search _source wrapper + CSP fonts. Commit 717bd24: Logstash index pattern env var fix — 89K+ misindexed events recovered. Commit 5b1b4d4: IP context menu expansion — WHOIS/DNS lookups, 8 right-click actions on all IPs, alerts IP filter. Commit 32d4ab2: Tools section — 10 tools, 4 backend services, 97+24 new tests. Daemon tests: 1175 passing. Web tools tests: 24 passing.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.

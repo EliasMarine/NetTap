@@ -31,6 +31,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Alerts API | OK | 2026-03-06 | -- | Fixed: ECS/Malcolm/Suricata field normalization. Signatures, severities, categories, timestamps all populated correctly. Severity counts handle string keys. IP filter (source OR destination) added. |
 | WHOIS/DNS Lookup API | OK | 2026-03-06 | -- | NEW: `GET /api/lookup/whois/{ip}` (async subprocess, 15s timeout, parsed fields) + `GET /api/lookup/dns/{ip}` (reverse + forward DNS). Requires `whois` package in Dockerfile. |
 | IP Context Menu | OK | 2026-03-06 | -- | NEW: 8 right-click actions on every IP (Copy, Device, GeoIP, WHOIS, DNS, Alerts, Filter From, Filter To). IPAddress component on Devices, Logs, Alerts pages. Filter from/to bug fixed (was using identical URL). |
+| Tools Section | OK | 2026-03-06 | -- | NEW: 10 tools — DNS Recon (dig), MAC Lookup (OUI db), Ping/Traceroute (subprocess), SSL Cert (openssl), Subnet Calculator (pure JS), Port Reference (static), Base64/Hex (pure JS), TShark (existing), CyberChef (moved). 4 backend services, 5 proxy routes, 10 pages, sidebar nav, IP context menu links. 97 backend + 24 frontend tests. |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -127,3 +128,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-04 | ECS field mapping (svelte-check) | Dev macOS | PASS | No type errors |
 | 2026-03-05 | Logstash index pattern fix | N100 production | PASS | Zero Ruby exceptions after adding MALCOLM_*_INDEX env vars. Suricata events flowing to arkime_sessions3-*. 34,992 docs reindexed from broken index. |
 | 2026-03-06 | Alerts normalization + IP context menu | Dev macOS | PASS | svelte-check: 665 files, 0 errors. vitest: 691/691 passed. pytest: 1078/1078 passed. Alerts fix verified via docker exec — signatures, severities, categories all populated. IP context menu: 16 files changed, 1214 lines added. |
+| 2026-03-06 | Tools section (10 tools) | Dev macOS | PASS | pytest: 1175/1175 passed (97 new tools tests). vitest: 24/24 tools API tests passed. svelte-check: 692 files, 0 errors. 4 backend services, 10 frontend pages, sidebar nav, context menu links. |
