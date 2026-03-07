@@ -48,6 +48,14 @@ export interface TSharkField {
 	[key: string]: any;
 }
 
+export interface PcapFile {
+	path: string;
+	relative_path: string;
+	name: string;
+	size_bytes: number;
+	modified: number;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
@@ -102,6 +110,19 @@ export async function getProtocols(): Promise<{ protocols: TSharkProtocol[]; cou
 
 	if (!res.ok) {
 		return { protocols: [], count: 0 };
+	}
+
+	return res.json();
+}
+
+/**
+ * List available PCAP files on the appliance.
+ */
+export async function getPcapFiles(): Promise<{ pcaps: PcapFile[]; count: number }> {
+	const res = await fetch('/api/tshark/pcaps');
+
+	if (!res.ok) {
+		return { pcaps: [], count: 0 };
 	}
 
 	return res.json();

@@ -18,15 +18,21 @@
 	import {
 		analyzePcap,
 		getTSharkStatus,
+		getPcapFiles,
 		type TSharkAnalyzeResponse,
 		type TSharkStatus,
+		type PcapFile,
 	} from '$api/tshark';
+	import { page } from '$app/stores';
 
 	// ---- State ----
 	let pcapPath = $state('');
 	let displayFilter = $state('');
 	let maxPackets = $state(100);
 	let outputFormat = $state<'json' | 'text'>('json');
+	let pcapFiles = $state<PcapFile[]>([]);
+	let pcapFilesLoading = $state(false);
+	let showPcapPicker = $state(false);
 
 	let loading = $state(false);
 	let result = $state<TSharkAnalyzeResponse | null>(null);
@@ -39,6 +45,14 @@
 
 	let status = $state<TSharkStatus | null>(null);
 	let statusLoading = $state(true);
+
+	// ---- Read URL query params on mount ----
+	$effect(() => {
+		const urlFilter = $page.url.searchParams.get('filter');
+		const urlPcap = $page.url.searchParams.get('pcap');
+		if (urlFilter && !displayFilter) displayFilter = urlFilter;
+		if (urlPcap && !pcapPath) pcapPath = urlPcap;
+	});
 
 	// ---- Fetch TShark status on mount ----
 	$effect(() => {
@@ -104,6 +118,40 @@
 			runAnalysis();
 		}
 	}
+
+	// ---- PCAP file picker ----
+	async function loadPcapFiles() {
+		if (pcapFiles.length > 0) {
+			showPcapPicker = !showPcapPicker;
+			return;
+		}
+		pcapFilesLoading = true;
+		showPcapPicker = true;
+		try {
+			const res = await getPcapFiles();
+			pcapFiles = res.pcaps;
+		} catch {
+			pcapFiles = [];
+		} finally {
+			pcapFilesLoading = false;
+		}
+	}
+
+	function selectPcap(pcap: PcapFile) {
+		pcapPath = pcap.path;
+		showPcapPicker = false;
+	}
+
+	function formatFileSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+	}
+
+	function formatFileDate(ts: number): string {
+		return new Date(ts * 1000).toLocaleString();
+	}
 </script>
 
 <div class="analysis-panel">
@@ -142,15 +190,60 @@
 			<!-- PCAP path input -->
 			<div class="form-group pcap-group">
 				<label class="label" for="pcap-path">PCAP File Path</label>
-				<input
-					id="pcap-path"
-					type="text"
-					class="input mono-input"
-					placeholder="/opt/nettap/pcap/capture.pcap"
-					bind:value={pcapPath}
-					onkeydown={handleAnalyzeKeydown}
-					disabled={loading}
-				/>
+				<div class="pcap-input-row">
+					<input
+						id="pcap-path"
+						type="text"
+						class="input mono-input"
+						placeholder="/opt/nettap/pcap/capture.pcap"
+						bind:value={pcapPath}
+						onkeydown={handleAnalyzeKeydown}
+						disabled={loading}
+					/>
+					<button
+						class="btn btn-secondary btn-sm browse-btn"
+						onclick={loadPcapFiles}
+						disabled={loading}
+						title="Browse available PCAP files"
+					>
+						{#if pcapFilesLoading}
+							<span class="btn-spinner-sm"></span>
+						{:else}
+							<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+							</svg>
+						{/if}
+						Browse
+					</button>
+				</div>
+				{#if showPcapPicker}
+					<div class="pcap-picker">
+						{#if pcapFilesLoading}
+							<div class="pcap-picker-loading">Loading PCAP files...</div>
+						{:else if pcapFiles.length === 0}
+							<div class="pcap-picker-empty">No PCAP files found in /opt/nettap/pcap</div>
+						{:else}
+							<div class="pcap-picker-header">
+								<span>{pcapFiles.length} file{pcapFiles.length !== 1 ? 's' : ''} available</span>
+								<button class="pcap-picker-close" onclick={() => (showPcapPicker = false)}>x</button>
+							</div>
+							<div class="pcap-picker-list">
+								{#each pcapFiles as pcap}
+									<button
+										class="pcap-picker-item"
+										class:selected={pcapPath === pcap.path}
+										onclick={() => selectPcap(pcap)}
+									>
+										<span class="pcap-name">{pcap.name}</span>
+										<span class="pcap-meta">
+											{formatFileSize(pcap.size_bytes)} &middot; {formatFileDate(pcap.modified)}
+										</span>
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
 			</div>
 
 			<!-- Output format + Max packets -->
@@ -386,6 +479,120 @@
 
 	.results-detail-section {
 		min-width: 0;
+	}
+
+	.pcap-input-row {
+		display: flex;
+		gap: var(--space-sm);
+	}
+
+	.pcap-input-row .input {
+		flex: 1;
+	}
+
+	.browse-btn {
+		white-space: nowrap;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.btn-spinner-sm {
+		display: inline-block;
+		width: 12px;
+		height: 12px;
+		border: 2px solid var(--text-muted);
+		border-top-color: var(--text-primary);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	.pcap-picker {
+		margin-top: var(--space-xs);
+		background: var(--bg-primary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		max-height: 240px;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.pcap-picker-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 8px 12px;
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.pcap-picker-close {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		cursor: pointer;
+		font-size: var(--text-sm);
+		padding: 0 4px;
+	}
+
+	.pcap-picker-close:hover {
+		color: var(--text-primary);
+	}
+
+	.pcap-picker-list {
+		overflow-y: auto;
+		max-height: 200px;
+	}
+
+	.pcap-picker-item {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		width: 100%;
+		padding: 8px 12px;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--border-dim);
+		color: var(--text-primary);
+		cursor: pointer;
+		text-align: left;
+		font-size: var(--text-sm);
+		transition: background-color var(--transition-fast);
+	}
+
+	.pcap-picker-item:hover {
+		background: var(--bg-tertiary);
+	}
+
+	.pcap-picker-item.selected {
+		background: var(--bg-tertiary);
+		border-left: 3px solid var(--accent);
+	}
+
+	.pcap-picker-item:last-child {
+		border-bottom: none;
+	}
+
+	.pcap-name {
+		font-family: var(--font-mono);
+		font-weight: 500;
+	}
+
+	.pcap-meta {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		white-space: nowrap;
+		margin-left: var(--space-md);
+	}
+
+	.pcap-picker-loading,
+	.pcap-picker-empty {
+		padding: 16px;
+		text-align: center;
+		color: var(--text-muted);
+		font-size: var(--text-sm);
 	}
 
 	select.input {

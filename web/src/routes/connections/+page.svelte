@@ -4,6 +4,7 @@
 	import { getTSharkStatus } from '$api/tshark';
 	import type { TSharkStatus } from '$api/tshark';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import IPAddress from '$components/IPAddress.svelte';
 
 	// ---------------------------------------------------------------------------
@@ -219,6 +220,28 @@
 			expandedId = id;
 			checkTShark();
 		}
+	}
+
+	function buildTSharkFilter(conn: Connection): string {
+		const srcIp = asString(getField(conn, 'source.ip'));
+		const dstIp = asString(getField(conn, 'destination.ip'));
+		const srcPort = getField(conn, 'source.port');
+		const dstPort = getField(conn, 'destination.port');
+		const proto = asString(getField(conn, 'network.transport')).toLowerCase();
+
+		const parts: string[] = [];
+		if (srcIp) parts.push(`ip.addr == ${srcIp}`);
+		if (dstIp) parts.push(`ip.addr == ${dstIp}`);
+		if (proto && srcPort) parts.push(`${proto}.port == ${srcPort}`);
+		if (proto && dstPort) parts.push(`${proto}.port == ${dstPort}`);
+		return parts.join(' && ');
+	}
+
+	function openInTShark(conn: Connection) {
+		const filter = buildTSharkFilter(conn);
+		const params = new URLSearchParams();
+		if (filter) params.set('filter', filter);
+		goto(`/tools/tshark?${params.toString()}`);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -490,10 +513,17 @@
 														<span class="badge badge-success">TShark Available</span>
 														<span class="text-muted mono">{tsharkStatus.version}</span>
 													</div>
-													<p class="text-muted">
-														TShark is available for deep packet inspection. Use the TShark
-														analysis panel for PCAP file analysis with display filters.
-													</p>
+													<div class="tshark-actions">
+														<button class="btn btn-primary btn-sm" onclick={() => openInTShark(conn)}>
+															<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+																<polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+															</svg>
+															Analyze in TShark
+														</button>
+														<span class="tshark-filter-preview mono">
+															{buildTSharkFilter(conn) || 'no filter'}
+														</span>
+													</div>
 												{/if}
 											</div>
 										</div>
@@ -670,6 +700,22 @@
 		align-items: center;
 		gap: var(--space-sm);
 		margin-bottom: var(--space-sm);
+	}
+
+	.tshark-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		margin-top: var(--space-sm);
+	}
+
+	.tshark-filter-preview {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		background: var(--bg-primary);
+		padding: 4px 8px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--border-dim);
 	}
 
 	/* Loading state */
