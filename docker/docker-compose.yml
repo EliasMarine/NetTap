@@ -612,10 +612,12 @@ services:
     cap_drop:
       - ALL
     # NET_ADMIN: ethtool NIC LED blink via host network namespace
+    # NET_RAW: ping requires ICMP raw socket capability
     # SYS_PTRACE: nsenter -t 1 -n to enter host network namespace
     # SYS_RAWIO: NVMe admin commands for smartctl SMART health queries
     cap_add:
       - NET_ADMIN
+      - NET_RAW
       - SYS_PTRACE
       - SYS_RAWIO
     # pid: host lets nsenter target PID 1 (host init) for network namespace
