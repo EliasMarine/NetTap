@@ -422,7 +422,6 @@ services:
         mkdir -p /pcap
         && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap
         && setcap -r /usr/sbin/netsniff-ng 2>/dev/null
-        && sed -i 's/user=%(ENV_PUSER)s/user=root/' /etc/supervisor.d/netsniff-br0.conf
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
         /usr/local/bin/service_check_passthrough.sh -s pcap-capture
@@ -430,6 +429,11 @@ services:
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *pcap-env]
+      # PUSER=root: netsniff-ng needs capabilities (NET_RAW, NET_ADMIN).
+      # The default user "pcap" triggers EPERM because file capabilities on
+      # the binary conflict with no_new_privs during privilege drop.
+      # Running as root inside this sandboxed container (cap_drop:ALL + cap_add) is safe.
+      PUSER: "root"
       PCAP_ENABLE_NETSNIFF: "true"
       PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-4096}"
       PCAP_ROTATE_MINUTES: "${PCAP_ROTATE_MIN:-10}"
