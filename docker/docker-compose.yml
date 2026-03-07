@@ -415,6 +415,10 @@ services:
     # Without this, netsniff-ng (running as user "pcap") can't write to
     # root-owned /pcap in fresh Docker volumes.
     # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s pcap-capture]
+    # NOTE: docker-uid-gid-setup.sh is SKIPPED because PUSER=root and root is
+    # PID 1 — usermod refuses to modify a user that owns a running process.
+    # Since we stay as root (netsniff-ng needs NET_RAW/NET_ADMIN capabilities),
+    # there's no UID remapping needed.
     entrypoint:
       - /bin/bash
       - -c
@@ -423,7 +427,6 @@ services:
         && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap
         && setcap -r /usr/sbin/netsniff-ng 2>/dev/null
         && exec /usr/bin/tini --
-        /usr/local/bin/docker-uid-gid-setup.sh
         /usr/local/bin/service_check_passthrough.sh -s pcap-capture
         /usr/local/bin/supervisor.sh
     cap_add: *capture-caps
@@ -573,11 +576,12 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
       start_period: 60s
 
-  # KNOWN ISSUE: nginx-proxy is unhealthy because Malcolm's baked-in nginx.conf
-  # references upstream "arkime:8005", but our arkime-live service uses host
-  # networking and is invisible to Docker DNS. This is not critical — NetTap
-  # uses nettap-nginx (port 443) as the edge proxy, not nginx-proxy.
-  # Fix: add a dedicated Arkime viewer service in a future phase.
+  # nginx-proxy provides the 127.0.0.1:9200 OpenSearch proxy that arkime-live
+  # (host networking) needs to reach OpenSearch. Malcolm's baked-in nginx.conf
+  # also references upstream "arkime:8005", but our arkime-live uses host
+  # networking so Docker DNS can't resolve it. This makes the :443 vhost fail,
+  # but the :9200 OpenSearch proxy still works. The health check tests :9200
+  # (OpenSearch proxy) instead of :443 (broken arkime upstream).
   nginx-proxy:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-nginx-proxy
@@ -586,9 +590,11 @@ services:
     labels:
       com.nettap.service: "nginx-proxy"
       com.nettap.component: "infrastructure"
-      com.nettap.description: "Malcolm nginx reverse proxy (internal dashboards)"
+      com.nettap.description: "Malcolm nginx reverse proxy (OpenSearch proxy for host-networked containers)"
     ports:
-      - "${MALCOLM_HTTPS_PORT:-9443}:443"
+      # OLD CODE START — :443 vhost is broken (arkime:8005 unresolvable), not needed by NetTap
+      # - "${MALCOLM_HTTPS_PORT:-9443}:443"
+      # OLD CODE END
       # Bind OpenSearch proxy to loopback only — never expose 9200 externally
       - "127.0.0.1:9200:9200"
     environment:
@@ -622,7 +628,8 @@ services:
       - dashboards
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -skf https://localhost:443 || exit 1"]
+      # Test the OpenSearch proxy (:9200), not the broken :443 vhost
+      test: ["CMD-SHELL", "curl -skf https://localhost:9200 || exit 1"]
       start_period: 120s
 
   # ========================================================================

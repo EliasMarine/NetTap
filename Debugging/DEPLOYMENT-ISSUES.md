@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-06
-> **Status:** 36 issues tracked. 36 RESOLVED. Latest: Tools section (10 tools) — 4 backend services (DNS Recon, MAC Lookup, Ping/Traceroute, SSL Cert), 10 frontend pages, sidebar nav, IP context menu tool links. Daemon tests: 1175 passing. Web tests: 24 tools API tests passing. 17/18 containers healthy on N100.
+> **Last updated:** 2026-03-07
+> **Status:** 41 issues tracked. 41 RESOLVED. Latest: pcap-capture restart loop (usermod root PID 1), nginx-proxy healthcheck (arkime upstream on host networking), nettap.service boot persistence, nettap-nginx SSL key permissions, OpenSearch security bootstrap script. Daemon tests: 1175 passing. Web tests: 24 tools API tests passing. 18/18 containers healthy on N100.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -23,6 +23,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
 - [Chain 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts](#chain-13-opensearch-keyword-suffix--log-search-format--csp-fonts)
 - [Chain 14: Logstash Index Pattern Env Vars Missing](#chain-14-logstash-index-pattern-env-vars-missing)
+- [Chain 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence](#chain-15-pcap-capture-restart-loop--nginx-proxy-healthcheck--boot-persistence)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -40,7 +41,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed — REDIS_HOST/PORT/PASSWORD env vars added (NET-79) |
 | Zeek, Suricata, Arkime | OK | Fixed — `EXTRA_TAGS: ""` + `MANAGE_PCAP_FILES` env vars added (NET-79). Running on N100. |
-| nginx-proxy | **KNOWN ISSUE** | Malcolm's nginx.conf references upstream `arkime:8005` but arkime-live uses host networking (invisible to Docker DNS). nginx crashes on startup. Not critical — nettap-nginx handles all user traffic. Fix: add dedicated Arkime viewer service in future phase. |
+| nginx-proxy | OK | Fixed: healthcheck changed to test `:9200` (OpenSearch proxy) instead of `:443` (broken arkime vhost). Removed `:443` port binding. nginx-proxy's real role is OpenSearch proxy for host-networked containers. |
 | CyberChef | OK | Fixed NET-86: healthcheck `wget /` → `wget /health`. Service was always running fine. |
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
@@ -108,6 +109,12 @@ CHAIN 14: Logstash Index Pattern Env Vars Missing
   Commit 717bd24 (phase-4/webui-v2)
   Logstash format_index_string.rb crashes: MALCOLM_NETWORK_INDEX_PATTERN env var missing.
   89K+ events land in broken literal index %{[@metadata][malcolm_opensearch_index]}.
+
+CHAIN 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence
+  Commits 65e31cf + ed3cf84 (phase-4/webui-v2)
+  pcap-capture: usermod root PID 1 crash. nginx-proxy: arkime:8005 upstream unresolvable.
+  nettap-nginx: SSL key permission denied. OpenSearch: security not initialized.
+  nettap.service: no systemd unit for boot persistence.
 ```
 
 ---
@@ -1198,6 +1205,125 @@ Reindexed 34,992 documents from the broken literal index to correct `arkime_sess
 - `docker/docker-compose.yml` — Added 4 MALCOLM_*_INDEX env vars to logstash service
 
 **Key Insight:** Malcolm's Logstash plugins reference env vars from multiple `.env` files (`opensearch.env`, `upload-common.env`, etc.). When a service needs an env var, check ALL Malcolm services that use that image — the same env vars may be needed by logstash, nginx-proxy, and filebeat independently. An env var set on one service does NOT propagate to others. The `format_index_string.rb` crash was particularly insidious because Logstash didn't stop — it silently misindexed 89K+ events into a garbage index name that looks like an unexpanded variable reference.
+
+---
+
+## Chain 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence
+
+This chain covers 5 deployment issues discovered during N100 hardware testing on 2026-03-07.
+
+### Fix 1: pcap-capture usermod restart loop
+
+| Field | Value |
+|---|---|
+| **Commit** | `65e31cf` |
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** `nettap-pcap-capture` container restart-looping. Logs showed: `usermod: user root is currently used by process 1`.
+
+**Root Cause:** Malcolm's `docker-uid-gid-setup.sh` entrypoint tries to `usermod -u 1000 root`, but root is PID 1 inside the container. The `usermod` command refuses to change the UID of a user that owns the init process. This script is unnecessary when `PUSER=root` because no UID remapping is needed — we run as root for netsniff-ng raw packet capture capabilities.
+
+**Fix:** Set `PUSER=root` environment variable instead of removing the entrypoint script from the chain. With `PUSER=root`, Malcolm's `docker-uid-gid-setup.sh` detects no remapping is needed and skips the `usermod` call entirely.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — pcap-capture entrypoint/environment section
+
+**Key Insight:** Malcolm's `docker-uid-gid-setup.sh` checks `PUSER` and only runs `usermod` if the target user is not already root. Setting `PUSER=root` is the correct way to skip UID remapping, rather than removing the entrypoint script from the chain.
+
+---
+
+### Fix 2: nginx-proxy healthcheck targeting broken vhost
+
+| Field | Value |
+|---|---|
+| **Commit** | `65e31cf` |
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | Normal |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** `nettap-nginx-proxy` marked unhealthy, restart-looping. Logs showed: `host not found in upstream "arkime:8005"`.
+
+**Root Cause:** Malcolm's baked-in `nginx.conf` references upstream `arkime:8005`, but `arkime-live` uses `network_mode: host` so Docker DNS cannot resolve the `arkime` hostname. The `:443` vhost fails to load, but the `:9200` OpenSearch proxy vhost works correctly. The healthcheck was testing `:443`, which was the failing vhost.
+
+**Fix:**
+1. Changed healthcheck to test `:9200` (OpenSearch proxy — the vhost that actually works) instead of `:443` (broken arkime vhost)
+2. Removed the `:443` port binding since NetTap doesn't use it (nettap-nginx handles all user-facing HTTPS)
+3. Updated comments to clarify nginx-proxy's actual role: OpenSearch reverse proxy for host-networked containers
+
+**Files Changed:**
+- `docker/docker-compose.yml` — nginx-proxy section (healthcheck, ports, comments)
+
+**Key Insight:** nginx-proxy's real purpose in NetTap is to provide an OpenSearch proxy endpoint for containers that use `network_mode: host` (like arkime-live). The `:443` vhost with arkime upstream is a Malcolm feature we don't use. Health checks should test the service's actual function, not a baked-in feature that's broken in our topology.
+
+---
+
+### Fix 3: nettap.service boot persistence
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | Normal |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** After a reboot, the Docker Compose stack did not start automatically. Manual `docker compose up -d` was required each time.
+
+**Root Cause:** No systemd service unit existed to auto-start the NetTap Docker stack on boot.
+
+**Fix:** Created `scripts/remote/nettap.service` — a systemd unit that runs `docker compose -f /opt/nettap/docker/docker-compose.yml up -d` after `docker.service` starts. Installed on the N100 via `systemctl enable nettap.service`.
+
+**Files Changed:**
+- `scripts/remote/nettap.service` (new file)
+
+---
+
+### Fix 4: nettap-nginx SSL key permission denied
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** `nettap-nginx` crash-looping with: `cannot load certificate key "/etc/nginx/ssl/nettap.key": Permission denied`.
+
+**Root Cause:** The SSL key file had `0600` permissions (owner-only read/write), but the nginx container drops to a non-root user. Combined with `no-new-privileges` and `read_only: true` security options, the nginx worker process could not read the key.
+
+**Fix:** `chmod 644` on the SSL key file on the device. The key is self-signed and local-only (LAN access), so relaxed permissions are acceptable.
+
+**Key Insight:** Containers with `no-new-privileges` + user drop need files readable by the target user. Self-signed SSL keys on a local-only appliance don't require strict `0600` permissions — `0644` is sufficient since the threat model is LAN-only.
+
+---
+
+### Fix 5: OpenSearch security not initialized after recreate
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** OpenSearch showing `Security not initialized (run securityadmin)` after container recreation. All services using `malcolm_internal` get 403.
+
+**Root Cause:** Every time the OpenSearch container is recreated, the `roles_mapping.yml` reverts to empty (the image default). The `.opendistro_security` index may also need re-initialization. This is the same root cause as Chain 11 but now has a reusable fix script.
+
+**Fix:** Ran security bootstrap (write `roles_mapping.yml` + run `securityadmin.sh`). Created `scripts/remote/fix-opensearch.sh` as a reusable script for future occurrences.
+
+**Files Changed:**
+- `scripts/remote/fix-opensearch.sh` (new file)
+
+**Key Insight:** This is a recurring issue (Chain 11 documented it first). The fix script should be part of the standard deployment workflow. TODO: automate in `nettap.service` post-start hook or an init container.
 
 ---
 

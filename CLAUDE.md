@@ -398,6 +398,19 @@ sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
 
 ---
 
+## Remote Device Workflow
+
+**The NetTap device is a separate physical machine on the local network.** The development machine (where Claude Code runs) cannot execute commands on the NetTap device directly. The user SSHes into the device and copy-pastes commands/files manually.
+
+### Rules for Claude Code
+
+1. **Never assume commands can run on the NetTap device from this machine.** All deployment, debugging, and diagnostic commands are copy-pasted by the user over SSH.
+2. **Long command chains MUST be written to `scripts/remote/` as `.sh` files** instead of given inline in chat. The user will copy the file contents and paste into a new file on the NetTap device. This prevents copy-paste formatting issues (broken YAML, mangled `\n`, heredoc problems).
+3. **Each remote script must be self-contained and idempotent** — include `set -euo pipefail`, echo progress markers, and verify results at the end.
+4. **Keep inline commands short** (1-3 simple commands max). Anything longer goes in a script file.
+
+---
+
 ## Key Design Constraints
 
 - Target hardware: Intel N100 mini PCs, 16GB RAM, 1TB NVMe, dual Intel i226-V 2.5GbE NICs (~$200 BOM)
