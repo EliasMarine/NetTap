@@ -186,7 +186,7 @@ example.com.\t\t300\tIN\tA\t93.184.216.34
             self.assertEqual(result["domain"], "example.com")
             self.assertIn("A", result["records"])
             self.assertEqual(result["total_records"], 1)
-            self.assertIsNone(result["errors"])
+            self.assertEqual(result["errors"], [])
 
         asyncio.run(run_test())
 

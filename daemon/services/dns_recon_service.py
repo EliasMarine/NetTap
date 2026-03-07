@@ -161,5 +161,5 @@ class DnsReconService:
             "records": all_records,
             "total_records": total,
             "record_types_queried": record_types,
-            "errors": errors if errors else None,
+            "errors": errors,
         }

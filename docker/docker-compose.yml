@@ -841,6 +841,7 @@ services:
       - /tmp:size=10M
       - /var/cache/nginx:size=50M
       - /var/run:size=1M
+      - /var/log/nginx:size=1M
     mem_limit: 128m
     cpus: 0.25
     security_opt:
