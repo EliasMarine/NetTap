@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetTap — Ping & Traceroute</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-card: #0f1319;
+  --bg-card-hover: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --blue: #448aff;
+  --blue-dim: rgba(68, 138, 255, 0.12);
+  --teal: #1de9b6;
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
+.page-wrapper {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* Back nav */
+.back-nav { margin-bottom: 24px; }
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.back-btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.back-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Page header */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.header-left h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+.header-left p { color: var(--text-secondary); font-size: 0.9rem; }
+
+/* Input card */
+.input-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.input-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.input-field {
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: var(--font-mono);
+  outline: none;
+  transition: border-color var(--transition);
+  width: 100%;
+}
+
+.input-field::placeholder { color: var(--text-dim); }
+.input-field:focus { border-color: var(--blue); }
+
+.input-sm { max-width: 100px; }
+
+.btn {
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+}
+
+.btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.btn-blue { background: var(--blue); color: #fff; }
+.btn-blue:hover { filter: brightness(1.15); box-shadow: 0 0 16px rgba(68,138,255,0.3); }
+
+.btn-secondary {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+.btn-secondary:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-dim);
+  padding-bottom: 0;
+}
+
+.tab {
+  padding: 10px 20px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all var(--transition);
+  font-family: var(--font-sans);
+}
+
+.tab:hover { color: var(--text-secondary); }
+
+.tab.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+}
+
+/* ============================================================
+   PING RESULTS
+   ============================================================ */
+
+/* Stats grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-card .stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.stat-card .stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-value.green { color: var(--green); }
+.stat-value.blue { color: var(--blue); }
+.stat-value.amber { color: var(--amber); }
+.stat-value.cyan { color: var(--cyan); }
+
+/* RTT chart (visual bars) */
+.rtt-chart {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.rtt-chart-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.rtt-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 100px;
+  padding-bottom: 24px;
+  position: relative;
+}
+
+.rtt-bar-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.rtt-bar {
+  width: 100%;
+  max-width: 48px;
+  border-radius: 4px 4px 0 0;
+  transition: height 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+}
+
+.rtt-bar.good { background: linear-gradient(to top, var(--green), rgba(0,230,118,0.4)); }
+.rtt-bar.medium { background: linear-gradient(to top, var(--amber), rgba(255,171,0,0.4)); }
+.rtt-bar.bad { background: linear-gradient(to top, var(--red), rgba(255,71,87,0.4)); }
+
+.rtt-bar-value {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.rtt-bar-seq {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  position: absolute;
+  bottom: -20px;
+  text-align: center;
+  width: 100%;
+}
+
+/* Ping reply table */
+.reply-table {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.reply-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.reply-table th {
+  text-align: left;
+  padding: 10px 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.reply-table td {
+  padding: 10px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.reply-table tr:last-child td { border-bottom: none; }
+.reply-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* ============================================================
+   TRACEROUTE RESULTS
+   ============================================================ */
+
+.trace-table {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.trace-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.trace-table th {
+  text-align: left;
+  padding: 10px 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.trace-table td {
+  padding: 10px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.trace-table tr:last-child td { border-bottom: none; }
+.trace-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+.hop-num {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  min-width: 40px;
+  display: inline-block;
+}
+
+.host-name { color: var(--text-primary); }
+.host-ip { color: var(--blue); }
+.timeout { color: var(--text-dim); font-style: italic; }
+
+.rtt-cell {
+  font-size: 0.82rem;
+}
+
+.rtt-good { color: var(--green); }
+.rtt-medium { color: var(--amber); }
+.rtt-bad { color: var(--red); }
+
+/* Packet loss bar */
+.loss-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-dim);
+  overflow: hidden;
+  width: 60px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+.loss-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.loss-fill.good { background: var(--green); width: 100%; }
+.loss-fill.partial { background: var(--amber); width: 66%; }
+.loss-fill.bad { background: var(--red); width: 33%; }
+
+/* Visual hop path */
+.hop-path {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 20px;
+  overflow-x: auto;
+  padding: 16px 0;
+}
+
+.hop-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 80px;
+  position: relative;
+}
+
+.hop-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--blue);
+  border: 2px solid var(--bg-void);
+  box-shadow: 0 0 8px rgba(68,138,255,0.4);
+  z-index: 1;
+}
+
+.hop-dot.start { background: var(--green); box-shadow: 0 0 8px rgba(0,230,118,0.4); }
+.hop-dot.end { background: var(--cyan); box-shadow: 0 0 8px rgba(0,212,255,0.4); width: 16px; height: 16px; }
+.hop-dot.timeout { background: var(--text-dim); box-shadow: none; opacity: 0.5; }
+
+.hop-line {
+  flex: 1;
+  height: 2px;
+  background: var(--border-bright);
+  min-width: 30px;
+}
+
+.hop-line.active {
+  background: linear-gradient(90deg, var(--blue), rgba(68,138,255,0.3));
+}
+
+.hop-label {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  text-align: center;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hop-rtt-label {
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+/* Animations */
+.stat-card, .rtt-chart, .reply-table, .trace-table {
+  animation: fade-up 0.4s ease both;
+}
+
+.stat-card:nth-child(1) { animation-delay: 0.05s; }
+.stat-card:nth-child(2) { animation-delay: 0.1s; }
+.stat-card:nth-child(3) { animation-delay: 0.15s; }
+.stat-card:nth-child(4) { animation-delay: 0.2s; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .input-row { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<div class="page-wrapper">
+
+  <!-- Back nav -->
+  <div class="back-nav">
+    <a class="back-btn" href="index.html">
+      <svg viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      Back to Tools
+    </a>
+  </div>
+
+  <!-- Page header -->
+  <div class="page-header">
+    <div class="header-left">
+      <h1>Ping & Traceroute</h1>
+      <p>Test reachability, measure latency, and trace packet routes</p>
+    </div>
+  </div>
+
+  <!-- Input card -->
+  <div class="input-card">
+    <div class="input-row">
+      <div class="input-group">
+        <span class="input-label">Target</span>
+        <input class="input-field" type="text" value="8.8.8.8" placeholder="IP or hostname">
+      </div>
+      <div class="input-group input-sm">
+        <span class="input-label">Count</span>
+        <input class="input-field" type="number" value="4" min="1" max="10">
+      </div>
+      <button class="btn btn-blue">
+        <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Ping
+      </button>
+      <button class="btn btn-secondary">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Traceroute
+      </button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active">Ping Results</button>
+    <button class="tab">Traceroute</button>
+  </div>
+
+  <!-- ========== PING TAB ========== -->
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <span class="stat-value green">0%</span>
+      <span class="stat-label">Packet Loss</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-value cyan">12.0ms</span>
+      <span class="stat-label">Avg RTT</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-value blue">11.8ms</span>
+      <span class="stat-label">Min RTT</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-value amber">12.3ms</span>
+      <span class="stat-label">Max RTT</span>
+    </div>
+  </div>
+
+  <!-- RTT Chart -->
+  <div class="rtt-chart">
+    <div class="rtt-chart-title">Round-Trip Time (ms)</div>
+    <div class="rtt-bars">
+      <div class="rtt-bar-wrapper">
+        <div class="rtt-bar-value">12.3</div>
+        <div class="rtt-bar good" style="height: 82px;"></div>
+        <span class="rtt-bar-seq">#1</span>
+      </div>
+      <div class="rtt-bar-wrapper">
+        <div class="rtt-bar-value">11.8</div>
+        <div class="rtt-bar good" style="height: 72px;"></div>
+        <span class="rtt-bar-seq">#2</span>
+      </div>
+      <div class="rtt-bar-wrapper">
+        <div class="rtt-bar-value">12.1</div>
+        <div class="rtt-bar good" style="height: 78px;"></div>
+        <span class="rtt-bar-seq">#3</span>
+      </div>
+      <div class="rtt-bar-wrapper">
+        <div class="rtt-bar-value">11.9</div>
+        <div class="rtt-bar good" style="height: 74px;"></div>
+        <span class="rtt-bar-seq">#4</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reply table -->
+  <div class="reply-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Seq</th>
+          <th>From</th>
+          <th>Bytes</th>
+          <th>TTL</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="color:var(--text-muted);">1</td>
+          <td style="color:var(--blue);">8.8.8.8</td>
+          <td>64</td>
+          <td>117</td>
+          <td class="rtt-good">12.3 ms</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-muted);">2</td>
+          <td style="color:var(--blue);">8.8.8.8</td>
+          <td>64</td>
+          <td>117</td>
+          <td class="rtt-good">11.8 ms</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-muted);">3</td>
+          <td style="color:var(--blue);">8.8.8.8</td>
+          <td>64</td>
+          <td>117</td>
+          <td class="rtt-good">12.1 ms</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-muted);">4</td>
+          <td style="color:var(--blue);">8.8.8.8</td>
+          <td>64</td>
+          <td>117</td>
+          <td class="rtt-good">11.9 ms</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ========== TRACEROUTE (visual, shown below for mockup) ========== -->
+  <div style="margin-top: 40px; margin-bottom: 20px;">
+    <div class="tabs">
+      <button class="tab">Ping Results</button>
+      <button class="tab active">Traceroute</button>
+    </div>
+  </div>
+
+  <!-- Visual hop path -->
+  <div class="hop-path">
+    <div class="hop-node">
+      <div class="hop-label">NetTap</div>
+      <div class="hop-dot start"></div>
+      <div class="hop-rtt-label">0ms</div>
+    </div>
+    <div class="hop-line active"></div>
+    <div class="hop-node">
+      <div class="hop-label">gateway</div>
+      <div class="hop-dot"></div>
+      <div class="hop-rtt-label">1.2ms</div>
+    </div>
+    <div class="hop-line active"></div>
+    <div class="hop-node">
+      <div class="hop-label">10.0.0.1</div>
+      <div class="hop-dot"></div>
+      <div class="hop-rtt-label">5.7ms</div>
+    </div>
+    <div class="hop-line active"></div>
+    <div class="hop-node">
+      <div class="hop-label">* * *</div>
+      <div class="hop-dot timeout"></div>
+      <div class="hop-rtt-label">timeout</div>
+    </div>
+    <div class="hop-line"></div>
+    <div class="hop-node">
+      <div class="hop-label">72.14.215.85</div>
+      <div class="hop-dot"></div>
+      <div class="hop-rtt-label">9.8ms</div>
+    </div>
+    <div class="hop-line active"></div>
+    <div class="hop-node">
+      <div class="hop-label">dns.google</div>
+      <div class="hop-dot end"></div>
+      <div class="hop-rtt-label">12.3ms</div>
+    </div>
+  </div>
+
+  <!-- Traceroute table -->
+  <div class="trace-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Hop</th>
+          <th>Host</th>
+          <th>IP</th>
+          <th>RTT 1</th>
+          <th>RTT 2</th>
+          <th>RTT 3</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="hop-num">1</span></td>
+          <td class="host-name">gateway</td>
+          <td class="host-ip">192.168.1.1</td>
+          <td class="rtt-good">1.234 ms</td>
+          <td class="rtt-good">1.123 ms</td>
+          <td class="rtt-good">1.456 ms</td>
+        </tr>
+        <tr>
+          <td><span class="hop-num">2</span></td>
+          <td class="host-name">10.0.0.1</td>
+          <td class="host-ip">10.0.0.1</td>
+          <td class="rtt-medium">5.678 ms</td>
+          <td class="rtt-medium">5.432 ms</td>
+          <td class="rtt-medium">5.890 ms</td>
+        </tr>
+        <tr>
+          <td><span class="hop-num">3</span></td>
+          <td class="timeout">* * *</td>
+          <td class="timeout">--</td>
+          <td class="timeout">*</td>
+          <td class="timeout">*</td>
+          <td class="timeout">*</td>
+        </tr>
+        <tr>
+          <td><span class="hop-num">4</span></td>
+          <td class="host-name">72.14.215.85</td>
+          <td class="host-ip">72.14.215.85</td>
+          <td class="rtt-medium">9.812 ms</td>
+          <td class="rtt-medium">9.654 ms</td>
+          <td class="rtt-medium">9.987 ms</td>
+        </tr>
+        <tr>
+          <td><span class="hop-num">5</span></td>
+          <td class="host-name">dns.google</td>
+          <td class="host-ip">8.8.8.8</td>
+          <td class="rtt-good">12.345 ms</td>
+          <td class="rtt-good">12.234 ms</td>
+          <td class="rtt-good">12.456 ms</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+</body>
+</html>
