@@ -84,26 +84,30 @@
 			return;
 		}
 
-		// Pick the PCAP whose modification time is closest to the connection timestamp
+		// Sort PCAPs by closeness to the connection timestamp
+		let sortedPcaps = [...pcapFiles];
 		if (connTimestamp && pcapFiles.length > 1) {
 			const connTime = new Date(connTimestamp).getTime() / 1000;
-			let bestIdx = 0;
-			let bestDiff = Infinity;
-			for (let i = 0; i < pcapFiles.length; i++) {
-				const diff = Math.abs(pcapFiles[i].modified - connTime);
-				if (diff < bestDiff) {
-					bestDiff = diff;
-					bestIdx = i;
-				}
-			}
-			pcapPath = pcapFiles[bestIdx].path;
-		} else {
-			// Default to most recent
-			pcapPath = pcapFiles[0].path;
+			sortedPcaps.sort(
+				(a, b) => Math.abs(a.modified - connTime) - Math.abs(b.modified - connTime)
+			);
 		}
 
-		// Auto-run analysis
-		runAnalysis();
+		// Try up to 5 PCAP files (closest first) until we find matching packets
+		const maxAttempts = Math.min(5, sortedPcaps.length);
+		for (let i = 0; i < maxAttempts; i++) {
+			pcapPath = sortedPcaps[i].path;
+			await runAnalysis();
+
+			if (result && result.packet_count > 0) {
+				return; // Found matching packets
+			}
+		}
+
+		// If no packets matched with the filter, show helpful message
+		if (result && result.packet_count === 0 && displayFilter) {
+			errorMessage = `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
+		}
 	}
 
 	// ---- Fetch TShark status on mount ----
@@ -349,7 +353,7 @@
 			<!-- Display filter -->
 			<div class="form-group filter-group">
 				<span class="label">Display Filter</span>
-				<FilterInput onsubmit={handleFilterSubmit} disabled={loading} />
+				<FilterInput onsubmit={handleFilterSubmit} disabled={loading} value={displayFilter} />
 			</div>
 		</div>
 	</div>
