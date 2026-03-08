@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
-> **Last updated:** 2026-03-06
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete.** NET-100 Web UI v2 complete redesign — 7 SIEM pages, 3 new daemon API modules, new design system. PR #92: .keyword suffix fix for all aggregation fields + log search _source wrapper + CSP fonts. Commit 717bd24: Logstash index pattern env var fix — 89K+ misindexed events recovered. Commit 5b1b4d4: IP context menu expansion — WHOIS/DNS lookups, 8 right-click actions on all IPs, alerts IP filter. Commit 32d4ab2: Tools section — 10 tools, 4 backend services, 97+24 new tests. Daemon tests: 1175 passing. Web tools tests: 24 passing.
+> **Last updated:** 2026-03-07
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete — 18/18 containers healthy.** pcap-capture fixed (PUSER=root), nginx-proxy fixed (healthcheck :9200), nettap-nginx SSL fixed, OpenSearch security re-bootstrapped, boot persistence via nettap.service. Daemon tests: 1175 passing. Web tools tests: 24 passing.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-03 | Elias | 18 containers running, 17 healthy. Dashboard loads for the first time. Setup wizard completes end-to-end (Steps 1-5 including account creation). System page works (null SMART values handled). SSE notification stream working through nginx. **Issues fixed this session:** NET-82 (nginx proxy_set_header inheritance — real CSRF 403 root cause), NET-83 (null-safe SMART health), NET-85 (filebeat pgrep healthcheck), NET-86 (dashboards/helper/cyberchef healthchecks). **Known issue:** nginx-proxy unhealthy — Malcolm's nginx references `arkime:8005` upstream but arkime-live uses host networking (invisible to Docker DNS). Not critical — nettap-nginx handles all user traffic. **Remaining:** Confirm logstash/filebeat process logs correctly after security bootstrap. |
+| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-07 | Elias | **18/18 containers healthy.** All previous known issues resolved. pcap-capture fixed (PUSER=root skips usermod on PID 1). nginx-proxy fixed (healthcheck on :9200, removed :443). nettap-nginx SSL fixed (chmod 644). OpenSearch security re-bootstrapped (fix-opensearch.sh). Boot persistence via nettap.service systemd unit. Dashboard loads, setup wizard completes, data pipeline flowing. **Remaining:** Full end-to-end data verification (Zeek + Suricata + Arkime all producing indexed data). |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -146,6 +146,11 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-06 | Dev (macOS) | vitest | ALL PASSED | 691 | 0 | 0 | Claude | After IP context menu expansion: 691 tests (up from 683). 16 files changed, 1214 lines added. |
 | 2026-03-06 | Dev (macOS) | svelte-check | ALL PASSED | 665 | 0 | 0 | Claude | 665 files (up from 620), 0 errors, 4 pre-existing a11y warnings. |
 | 2026-03-06 | N100 (Ubuntu) | H1: Alerts page | **VERIFIED** | — | — | — | Claude | Alerts now show real signatures, severities (1/2/3), categories, timestamps via `docker exec` API test. ECS/Malcolm/Suricata field normalization working. |
+| 2026-03-07 | N100 (Ubuntu) | H1: pcap-capture fix | **FIXED** | — | — | — | Elias | pcap-capture was restart-looping: `usermod: user root is currently used by process 1`. Fix: PUSER=root skips UID remapping. Container now healthy, netsniff-ng capturing. |
+| 2026-03-07 | N100 (Ubuntu) | H1: nginx-proxy fix | **FIXED** | — | — | — | Elias | nginx-proxy was unhealthy: `host not found in upstream "arkime:8005"`. Fix: healthcheck on :9200 (OpenSearch proxy), removed :443 port. Container now healthy. **18/18 containers healthy.** |
+| 2026-03-07 | N100 (Ubuntu) | H1: nettap-nginx SSL | **FIXED** | — | — | — | Elias | nettap-nginx crash-looping: SSL key permission denied. Fix: chmod 644 on self-signed key. Container now serving HTTPS. |
+| 2026-03-07 | N100 (Ubuntu) | H1: OpenSearch security | **FIXED** | — | — | — | Elias | OpenSearch security not initialized after recreate. Fix: ran fix-opensearch.sh (roles_mapping.yml + securityadmin.sh). All services authenticated. |
+| 2026-03-07 | N100 (Ubuntu) | H1: Boot persistence | **VERIFIED** | — | — | — | Elias | nettap.service systemd unit installed and enabled. Docker stack auto-starts on reboot. |
 
 ---
 

@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
-> Last updated: 2026-03-06
-> Status: 7/7 subsystems production-ready
+> Last updated: 2026-03-07
+> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100.
 
 ## Purpose
 
@@ -32,6 +32,11 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | WHOIS/DNS Lookup API | OK | 2026-03-06 | -- | NEW: `GET /api/lookup/whois/{ip}` (async subprocess, 15s timeout, parsed fields) + `GET /api/lookup/dns/{ip}` (reverse + forward DNS). Requires `whois` package in Dockerfile. |
 | IP Context Menu | OK | 2026-03-06 | -- | NEW: 8 right-click actions on every IP (Copy, Device, GeoIP, WHOIS, DNS, Alerts, Filter From, Filter To). IPAddress component on Devices, Logs, Alerts pages. Filter from/to bug fixed (was using identical URL). |
 | Tools Section | OK | 2026-03-06 | -- | NEW: 10 tools — DNS Recon (dig), MAC Lookup (OUI db), Ping/Traceroute (subprocess), SSL Cert (openssl), Subnet Calculator (pure JS), Port Reference (static), Base64/Hex (pure JS), TShark (existing), CyberChef (moved). 4 backend services, 5 proxy routes, 10 pages, sidebar nav, IP context menu links. 97 backend + 24 frontend tests. |
+| pcap-capture | OK | 2026-03-07 | -- | Fixed: PUSER=root skips usermod on root PID 1. netsniff-ng capturing packets. |
+| nginx-proxy | OK | 2026-03-07 | -- | Fixed: healthcheck targets :9200 (OpenSearch proxy) instead of :443 (broken arkime vhost). Removed :443 port binding. 18/18 containers now healthy. |
+| nettap-nginx (SSL) | OK | 2026-03-07 | -- | Fixed: SSL key chmod 644 for non-root nginx worker. Self-signed cert, LAN-only. |
+| OpenSearch (security) | OK | 2026-03-07 | -- | Reusable fix-opensearch.sh script created. Security bootstrap after container recreate. |
+| Boot Persistence | OK | 2026-03-07 | -- | NEW: nettap.service systemd unit — auto-starts Docker stack after docker.service on reboot. |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -69,6 +74,11 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-06 | Alerts API | All alert signatures show "unknown", severities all "info" | Daemon passed raw `_source` without normalizing ECS/Malcolm/Suricata field paths (`rule.name` vs `suricata.alert.signature` vs `alert.signature`). Category stored as array. Timestamp as epoch millis. | Added `_normalize_alert_source()` + `_extract_severity()` to merge all 3 paths, flatten array categories, prefer ISO `@timestamp`. Fixed severity count string-key parsing. | -- | Commits cf960e4 + 4c26c26 (phase-4/webui-v2) |
 | 2026-03-06 | Web UI (IPAddress) | "Filter from" and "Filter to" use identical URL | Both menu items navigated to `/connections?ip={ip}` — no src/dst distinction | Fixed: "from" → `?src_ip=`, "to" → `?dst_ip=` | -- | Commit 5b1b4d4 (phase-4/webui-v2) |
 | 2026-03-06 | Web UI (IP Context Menu) | IP addresses on Devices, Logs, Alerts pages rendered as plain text — no right-click actions | IPAddress component only used on Connections and Device Detail pages | Added IPAddress to Devices (3 locations), Log Explorer (IP column detection), Alerts (IP filter badge). Added WHOIS/DNS/Alerts menu items. Created daemon lookup API + pages. | -- | Commit 5b1b4d4 (phase-4/webui-v2) |
+| 2026-03-07 | pcap-capture | Container restart-looping: `usermod: user root is currently used by process 1` | Malcolm's `docker-uid-gid-setup.sh` tries `usermod -u 1000 root` but root is PID 1 | Set `PUSER=root` to skip UID remapping entirely | -- | Commit 65e31cf (phase-4/webui-v2) |
+| 2026-03-07 | nginx-proxy | Container unhealthy, restart-looping: `host not found in upstream "arkime:8005"` | Healthcheck tested `:443` (broken arkime vhost) instead of `:9200` (working OpenSearch proxy) | Changed healthcheck to `:9200`, removed `:443` port binding | -- | Commit 65e31cf (phase-4/webui-v2) |
+| 2026-03-07 | nettap-nginx | Crash-looping: `cannot load certificate key: Permission denied` | SSL key `0600` perms, nginx drops to non-root user with no-new-privileges | `chmod 644` on SSL key file (self-signed, LAN-only) | -- | Manual fix on device |
+| 2026-03-07 | OpenSearch | `Security not initialized` after container recreate — all services 403 | `roles_mapping.yml` reverts to empty on container recreate | Ran security bootstrap, created `scripts/remote/fix-opensearch.sh` | -- | Manual fix + script |
+| 2026-03-07 | Boot Persistence | Docker stack not starting after reboot — manual `docker compose up -d` required | No systemd service unit for NetTap | Created `scripts/remote/nettap.service` systemd unit | -- | phase-4/webui-v2 |
 
 ## Reliability Lessons Learned
 
@@ -98,6 +108,10 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 24. **OpenSearch `.keyword` aggregation returns string keys, not ints.** When aggregating on `suricata.severity.keyword`, bucket keys come back as `"1"`, `"2"`, `"3"` (strings), not integers. Severity map lookups fail silently if they only handle int keys. Always parse string keys with `int()` before lookup.
 25. **Malcolm may store ECS fields as arrays.** `rule.category` can be `["Generic Protocol Command Decode"]` (array) or `"Generic Protocol Command Decode"` (string). Always check `isinstance(val, list)` and flatten before using as a display string.
 26. **Prefer `@timestamp` (ISO) over `timestamp` (epoch millis).** Malcolm documents have both — `@timestamp` in ISO 8601 and `timestamp` as raw epoch milliseconds. Frontend `formatTimestamp()` expects ISO strings. Always normalize to the ISO form.
+27. **Set `PUSER=root` for capture containers, don't remove entrypoint scripts.** Malcolm's `docker-uid-gid-setup.sh` checks `PUSER` and skips `usermod` when the target is already root. This is safer than modifying the entrypoint chain.
+28. **Health checks must test the service's actual useful function.** nginx-proxy serves as an OpenSearch proxy (`:9200`) in NetTap, not as an arkime reverse proxy (`:443`). Testing the wrong vhost caused unnecessary restart loops.
+29. **Appliances need systemd boot persistence.** Without a `nettap.service` unit, a power cycle leaves the entire stack down until manual SSH intervention. Unacceptable for an appliance that sits inline on a network path.
+30. **Create reusable fix scripts for recurring manual operations.** OpenSearch security bootstrap is needed after every container recreate. A script (`fix-opensearch.sh`) prevents typos and ensures the correct sequence every time.
 
 ## Verification Checklist
 
@@ -129,3 +143,7 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-05 | Logstash index pattern fix | N100 production | PASS | Zero Ruby exceptions after adding MALCOLM_*_INDEX env vars. Suricata events flowing to arkime_sessions3-*. 34,992 docs reindexed from broken index. |
 | 2026-03-06 | Alerts normalization + IP context menu | Dev macOS | PASS | svelte-check: 665 files, 0 errors. vitest: 691/691 passed. pytest: 1078/1078 passed. Alerts fix verified via docker exec — signatures, severities, categories all populated. IP context menu: 16 files changed, 1214 lines added. |
 | 2026-03-06 | Tools section (10 tools) | Dev macOS | PASS | pytest: 1175/1175 passed (97 new tools tests). vitest: 24/24 tools API tests passed. svelte-check: 692 files, 0 errors. 4 backend services, 10 frontend pages, sidebar nav, context menu links. |
+| 2026-03-07 | pcap-capture + nginx-proxy fixes | N100 production | PASS | pcap-capture healthy (PUSER=root, netsniff-ng running). nginx-proxy healthy (healthcheck on :9200). 18/18 containers healthy. |
+| 2026-03-07 | nettap-nginx SSL fix | N100 production | PASS | SSL key chmod 644, nginx serving HTTPS correctly. |
+| 2026-03-07 | OpenSearch security bootstrap | N100 production | PASS | fix-opensearch.sh ran successfully, all services authenticated. |
+| 2026-03-07 | Boot persistence (nettap.service) | N100 production | PASS | systemd unit enabled, Docker stack auto-starts on reboot. |

@@ -1333,7 +1333,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1364,6 +1364,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `web/src/routes/lookup/whois/[ip]/+page.svelte` | 5b1b4d4 | NEW: WHOIS lookup page with parsed fields + raw output toggle. |
 | `web/src/routes/lookup/dns/[ip]/+page.svelte` | 5b1b4d4 | NEW: DNS lookup page with reverse/forward DNS display. |
 | `web/src/routes/infrastructure/+page.svelte` | NET-100 | NEW: Infrastructure page |
+| `scripts/remote/nettap.service` | Chain 15 | NEW: systemd unit for boot persistence — starts Docker stack after docker.service |
+| `scripts/remote/fix-opensearch.sh` | Chain 15 | NEW: reusable OpenSearch security bootstrap script |
+| `scripts/remote/fix-pcap-and-proxy.sh` | Chain 15 | NEW: deploy script for pcap-capture + nginx-proxy fixes |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1445,6 +1448,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 60. **Malcolm may store ECS fields as arrays** — `rule.category` can be `["Generic Protocol Command Decode"]` or a plain string. Always `isinstance(val, list)` check and flatten to first element before using as display text.
 61. **Prefer `@timestamp` (ISO 8601) over `timestamp` (epoch millis)** — Malcolm documents have both fields. Frontend `formatTimestamp()` expects ISO strings. Normalization must copy `@timestamp` into `timestamp` to avoid displaying raw epoch milliseconds.
 
+### Container Capture & Proxy (NEW — Chain 15)
+62. **Malcolm's `docker-uid-gid-setup.sh` fails when trying to `usermod` root as PID 1** — the `usermod` command refuses to change the UID of a user that owns the init process. For containers that must run as root (e.g., netsniff-ng packet capture), set `PUSER=root` to skip UID remapping entirely rather than removing the entrypoint script.
+63. **Health checks must test the service's actual function, not a baked-in default** — nginx-proxy's real role in NetTap is OpenSearch proxy (`:9200`), not the Malcolm `:443` vhost with arkime upstream. Healthchecking a broken vhost causes unnecessary restart loops even though the service's useful function works fine.
+64. **Self-signed SSL keys on LAN-only appliances don't need `0600` permissions** — when a container drops privileges, the target user must be able to read the key. `0644` is acceptable for a self-signed cert on a local network appliance. The threat model doesn't include protecting the key from other local users.
+65. **Every `docker compose down` + `up` cycle requires OpenSearch security re-bootstrap** — create a reusable script (`fix-opensearch.sh`) and document it prominently. This is the #1 recurring deployment issue (Chain 11, Chain 15). TODO: automate via init container or systemd post-start hook.
+66. **Systemd service units are essential for appliance-grade reliability** — without `nettap.service`, a reboot leaves the stack down until manual intervention. An appliance must self-heal on power cycle.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1473,6 +1483,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
+| SSL key permissions reset on cert regeneration | nettap-nginx crash-loops with "Permission denied" on key file | After regenerating SSL certs, always `chmod 644` the key file. Document in deployment guide. |
+| OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | TODO: add post-start hook to `nettap.service` or create an init container that runs securityadmin.sh |
 | Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
 
 ---
@@ -1509,3 +1521,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | 717bd24 | Logstash index pattern env vars missing — 89K+ events misindexed | 2026-03-05 |
 | — | 32d4ab2 | Tools section: 4 backend services + API routes + Dockerfile + 97 tests | 2026-03-06 |
 | — | 2c00031 | Tools section: design docs + mockups | 2026-03-06 |
+| — | 65e31cf | pcap-capture PUSER=root + nginx-proxy healthcheck :9200 | 2026-03-07 |
+| — | manual | nettap-nginx SSL key chmod 644 | 2026-03-07 |
+| — | manual | OpenSearch security re-bootstrap + fix-opensearch.sh script | 2026-03-07 |
+| — | manual | nettap.service systemd boot persistence | 2026-03-07 |
