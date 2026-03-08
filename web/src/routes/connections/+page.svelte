@@ -66,6 +66,55 @@
 	let tsharkStatus = $state<TSharkStatus | null>(null);
 	let tsharkChecked = $state(false);
 
+	// Column sorting
+	type SortKey = 'timestamp' | 'src' | 'dst' | 'protocol' | 'service' | 'duration' | 'bytesIn' | 'bytesOut' | 'state';
+	let sortKey = $state<SortKey | null>(null);
+	let sortDir = $state<'asc' | 'desc'>('desc');
+
+	function toggleSort(key: SortKey) {
+		if (sortKey === key) {
+			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortKey = key;
+			sortDir = key === 'timestamp' ? 'desc' : 'asc';
+		}
+	}
+
+	function sortValue(conn: Connection, key: SortKey): string | number {
+		switch (key) {
+			case 'timestamp': return conn['@timestamp'] as string ?? '';
+			case 'src': return asString(getField(conn, 'source.ip'));
+			case 'dst': return asString(getField(conn, 'destination.ip'));
+			case 'protocol': return asString(getField(conn, 'network.transport'));
+			case 'service': return asString(getField(conn, 'protocol'));
+			case 'duration': {
+				const start = getField(conn, 'event.start') as string | undefined;
+				const end = getField(conn, 'event.end') as string | undefined;
+				if (!start || !end) return 0;
+				return new Date(end).getTime() - new Date(start).getTime();
+			}
+			case 'bytesIn': return (getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes') ?? 0) as number;
+			case 'bytesOut': return (getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes') ?? 0) as number;
+			case 'state': return connState(conn);
+		}
+	}
+
+	let sortedConnections = $derived(() => {
+		if (!sortKey) return connections;
+		const key = sortKey;
+		const dir = sortDir;
+		return [...connections].sort((a, b) => {
+			const va = sortValue(a, key);
+			const vb = sortValue(b, key);
+			if (typeof va === 'number' && typeof vb === 'number') {
+				return dir === 'asc' ? va - vb : vb - va;
+			}
+			const sa = String(va);
+			const sb = String(vb);
+			return dir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
+		});
+	});
+
 	// ---------------------------------------------------------------------------
 	// Nested field accessor for ECS dot-notation paths
 	// ---------------------------------------------------------------------------
@@ -403,19 +452,37 @@
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>Timestamp</th>
-							<th>Source</th>
-							<th>Destination</th>
-							<th>Protocol</th>
-							<th>Service</th>
-							<th>Duration</th>
-							<th>Bytes In</th>
-							<th>Bytes Out</th>
-							<th>State</th>
+							<th class="sortable" onclick={() => toggleSort('timestamp')}>
+								Timestamp {sortKey === 'timestamp' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('src')}>
+								Source {sortKey === 'src' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('dst')}>
+								Destination {sortKey === 'dst' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('protocol')}>
+								Protocol {sortKey === 'protocol' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('service')}>
+								Service {sortKey === 'service' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('duration')}>
+								Duration {sortKey === 'duration' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('bytesIn')}>
+								Bytes In {sortKey === 'bytesIn' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('bytesOut')}>
+								Bytes Out {sortKey === 'bytesOut' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('state')}>
+								State {sortKey === 'state' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+							</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each connections as conn (conn._id)}
+						{#each sortedConnections() as conn (conn._id)}
 							<tr
 								class="conn-row"
 								class:expanded={expandedId === conn._id}
@@ -644,6 +711,17 @@
 	.table-scroll {
 		overflow-x: auto;
 		max-height: 70vh;
+	}
+
+	th.sortable {
+		cursor: pointer;
+		user-select: none;
+		white-space: nowrap;
+		transition: color var(--transition-fast);
+	}
+
+	th.sortable:hover {
+		color: var(--accent);
 	}
 
 	.conn-row {
