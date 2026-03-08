@@ -32,7 +32,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | WHOIS/DNS Lookup API | OK | 2026-03-06 | -- | NEW: `GET /api/lookup/whois/{ip}` (async subprocess, 15s timeout, parsed fields) + `GET /api/lookup/dns/{ip}` (reverse + forward DNS). Requires `whois` package in Dockerfile. |
 | IP Context Menu | OK | 2026-03-06 | -- | NEW: 8 right-click actions on every IP (Copy, Device, GeoIP, WHOIS, DNS, Alerts, Filter From, Filter To). IPAddress component on Devices, Logs, Alerts pages. Filter from/to bug fixed (was using identical URL). |
 | Tools Section | OK | 2026-03-06 | -- | NEW: 10 tools — DNS Recon (dig), MAC Lookup (OUI db), Ping/Traceroute (subprocess), SSL Cert (openssl), Subnet Calculator (pure JS), Port Reference (static), Base64/Hex (pure JS), TShark (existing), CyberChef (moved). 4 backend services, 5 proxy routes, 10 pages, sidebar nav, IP context menu links. 97 backend + 24 frontend tests. |
-| pcap-capture | OK | 2026-03-07 | -- | Fixed: PUSER=root skips usermod on root PID 1. netsniff-ng capturing packets. |
+| pcap-capture | OK | 2026-03-07 | -- | Fixed: PUSER=root skips usermod on root PID 1. SETFCAP cap_add strips file capabilities so netsniff-ng doesn't EPERM. netsniff-ng capturing packets. |
 | nginx-proxy | OK | 2026-03-07 | -- | Fixed: healthcheck targets :9200 (OpenSearch proxy) instead of :443 (broken arkime vhost). Removed :443 port binding. 18/18 containers now healthy. |
 | nettap-nginx (SSL) | OK | 2026-03-07 | -- | Fixed: SSL key chmod 644 for non-root nginx worker. Self-signed cert, LAN-only. |
 | OpenSearch (security) | OK | 2026-03-07 | -- | Reusable fix-opensearch.sh script created. Security bootstrap after container recreate. |
@@ -79,6 +79,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-07 | nettap-nginx | Crash-looping: `cannot load certificate key: Permission denied` | SSL key `0600` perms, nginx drops to non-root user with no-new-privileges | `chmod 644` on SSL key file (self-signed, LAN-only) | -- | Manual fix on device |
 | 2026-03-07 | OpenSearch | `Security not initialized` after container recreate — all services 403 | `roles_mapping.yml` reverts to empty on container recreate | Ran security bootstrap, created `scripts/remote/fix-opensearch.sh` | -- | Manual fix + script |
 | 2026-03-07 | Boot Persistence | Docker stack not starting after reboot — manual `docker compose up -d` required | No systemd service unit for NetTap | Created `scripts/remote/nettap.service` systemd unit | -- | phase-4/webui-v2 |
+| 2026-03-07 | pcap-capture | netsniff-ng EPERM on exec — file capabilities exceed container bounding set | netsniff-ng has `cap_sys_admin=eip` file caps; `setcap -r` fails without `CAP_SETFCAP` (hidden by `2>/dev/null`) | Added `SETFCAP` to pcap-capture `cap_add` so `setcap -r` can strip file caps | -- | phase-4/webui-v2 |
 
 ## Reliability Lessons Learned
 
@@ -112,6 +113,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 28. **Health checks must test the service's actual useful function.** nginx-proxy serves as an OpenSearch proxy (`:9200`) in NetTap, not as an arkime reverse proxy (`:443`). Testing the wrong vhost caused unnecessary restart loops.
 29. **Appliances need systemd boot persistence.** Without a `nettap.service` unit, a power cycle leaves the entire stack down until manual SSH intervention. Unacceptable for an appliance that sits inline on a network path.
 30. **Create reusable fix scripts for recurring manual operations.** OpenSearch security bootstrap is needed after every container recreate. A script (`fix-opensearch.sh`) prevents typos and ensures the correct sequence every time.
+31. **File capabilities on binaries cause EPERM even with sufficient ambient caps.** If a binary has file capabilities (e.g., `cap_sys_admin=eip` on netsniff-ng), ALL file caps must be in the container's bounding set or `execve` fails with EPERM. Add `SETFCAP` to `cap_add` so the entrypoint can strip file caps with `setcap -r`. Never suppress `setcap` errors with `2>/dev/null` — silent failures cause mysterious EPERM on exec later.
 
 ## Verification Checklist
 
@@ -147,3 +149,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-07 | nettap-nginx SSL fix | N100 production | PASS | SSL key chmod 644, nginx serving HTTPS correctly. |
 | 2026-03-07 | OpenSearch security bootstrap | N100 production | PASS | fix-opensearch.sh ran successfully, all services authenticated. |
 | 2026-03-07 | Boot persistence (nettap.service) | N100 production | PASS | systemd unit enabled, Docker stack auto-starts on reboot. |
+| 2026-03-07 | netsniff-ng EPERM fix (SETFCAP) | N100 production | PASS | Added SETFCAP to cap_add, setcap -r strips file caps, netsniff-ng executes without EPERM. |

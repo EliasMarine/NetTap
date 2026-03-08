@@ -1327,13 +1327,36 @@ This chain covers 5 deployment issues discovered during N100 hardware testing on
 
 ---
 
+### Fix 6: netsniff-ng EPERM due to file capabilities exceeding bounding set
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** netsniff-ng in pcap-capture container gets EPERM on exec. supervisord logs show: `couldn't exec /usr/sbin/netsniff-ng: EPERM`.
+
+**Root Cause:** The netsniff-ng binary ships with file capabilities `cap_net_admin,cap_net_raw,cap_ipc_lock,cap_sys_admin=eip`. `cap_sys_admin` is NOT in the container's bounding set (cap_add only has IPC_LOCK, SYS_RESOURCE, NET_ADMIN, NET_RAW, SYS_NICE). The Linux kernel blocks exec of binaries whose file capabilities exceed the bounding set. The entrypoint runs `setcap -r` to strip file caps, but `setcap` itself needs `CAP_SETFCAP`, which Docker doesn't grant by default — so `setcap -r` fails silently (was hidden by `2>/dev/null`).
+
+**Fix:** Added `SETFCAP` to pcap-capture's `cap_add` list in `docker/docker-compose.yml`. This allows `setcap -r` to succeed, stripping the file capabilities from the netsniff-ng binary. netsniff-ng then runs with just the container's ambient capabilities (NET_RAW, NET_ADMIN, etc.) which are sufficient for packet capture.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added `SETFCAP` to pcap-capture `cap_add` section
+
+**Key Insight:** When a binary has file capabilities (visible via `getcap /path/to/binary`), ALL file caps must be in the container's bounding set or `exec` fails with EPERM. This is a kernel security check, not a Docker/supervisord issue. Two solutions: (1) add the missing caps to `cap_add` (grants the capability to the container), or (2) add `SETFCAP` to `cap_add` so the entrypoint can strip file caps with `setcap -r` (preferred — doesn't grant the capability, just removes the file cap). Never hide `setcap` errors with `2>/dev/null` — silent failures here cause mysterious EPERM later.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SETFCAP cap_add (strip netsniff-ng file caps)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1454,6 +1477,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 64. **Self-signed SSL keys on LAN-only appliances don't need `0600` permissions** — when a container drops privileges, the target user must be able to read the key. `0644` is acceptable for a self-signed cert on a local network appliance. The threat model doesn't include protecting the key from other local users.
 65. **Every `docker compose down` + `up` cycle requires OpenSearch security re-bootstrap** — create a reusable script (`fix-opensearch.sh`) and document it prominently. This is the #1 recurring deployment issue (Chain 11, Chain 15). TODO: automate via init container or systemd post-start hook.
 66. **Systemd service units are essential for appliance-grade reliability** — without `nettap.service`, a reboot leaves the stack down until manual intervention. An appliance must self-heal on power cycle.
+67. **File capabilities on binaries can cause EPERM even when the container has sufficient ambient caps** — if a binary has file capabilities (e.g., `cap_sys_admin=eip` on netsniff-ng), ALL file caps must be in the container's bounding set or `exec` fails. Add `SETFCAP` to `cap_add` so the entrypoint can strip file caps with `setcap -r`. Never hide `setcap` errors with `2>/dev/null`.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
@@ -1484,6 +1508,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
 | SSL key permissions reset on cert regeneration | nettap-nginx crash-loops with "Permission denied" on key file | After regenerating SSL certs, always `chmod 644` the key file. Document in deployment guide. |
+| Malcolm image updates may add/change file capabilities on binaries | EPERM on exec if file caps exceed bounding set | After Malcolm tag bumps, run `getcap` on capture binaries inside the image. Ensure all file caps are in `cap_add` or stripped by entrypoint via `SETFCAP`. |
 | OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | TODO: add post-start hook to `nettap.service` or create an init container that runs securityadmin.sh |
 | Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
 
@@ -1525,3 +1550,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | manual | nettap-nginx SSL key chmod 644 | 2026-03-07 |
 | — | manual | OpenSearch security re-bootstrap + fix-opensearch.sh script | 2026-03-07 |
 | — | manual | nettap.service systemd boot persistence | 2026-03-07 |
+| — | phase-4/webui-v2 | netsniff-ng EPERM: SETFCAP cap_add to strip file capabilities | 2026-03-07 |

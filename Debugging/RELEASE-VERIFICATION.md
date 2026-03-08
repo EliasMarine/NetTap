@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-07 | Elias | **18/18 containers healthy.** All previous known issues resolved. pcap-capture fixed (PUSER=root skips usermod on PID 1). nginx-proxy fixed (healthcheck on :9200, removed :443). nettap-nginx SSL fixed (chmod 644). OpenSearch security re-bootstrapped (fix-opensearch.sh). Boot persistence via nettap.service systemd unit. Dashboard loads, setup wizard completes, data pipeline flowing. **Remaining:** Full end-to-end data verification (Zeek + Suricata + Arkime all producing indexed data). |
+| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-07 | Elias | **18/18 containers healthy.** All previous known issues resolved. pcap-capture fixed (PUSER=root skips usermod on PID 1, SETFCAP cap_add strips netsniff-ng file caps to avoid EPERM). nginx-proxy fixed (healthcheck on :9200, removed :443). nettap-nginx SSL fixed (chmod 644). OpenSearch security re-bootstrapped (fix-opensearch.sh). Boot persistence via nettap.service systemd unit. Dashboard loads, setup wizard completes, data pipeline flowing. **Remaining:** Full end-to-end data verification (Zeek + Suricata + Arkime all producing indexed data). |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -151,6 +151,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-07 | N100 (Ubuntu) | H1: nettap-nginx SSL | **FIXED** | — | — | — | Elias | nettap-nginx crash-looping: SSL key permission denied. Fix: chmod 644 on self-signed key. Container now serving HTTPS. |
 | 2026-03-07 | N100 (Ubuntu) | H1: OpenSearch security | **FIXED** | — | — | — | Elias | OpenSearch security not initialized after recreate. Fix: ran fix-opensearch.sh (roles_mapping.yml + securityadmin.sh). All services authenticated. |
 | 2026-03-07 | N100 (Ubuntu) | H1: Boot persistence | **VERIFIED** | — | — | — | Elias | nettap.service systemd unit installed and enabled. Docker stack auto-starts on reboot. |
+| 2026-03-07 | N100 (Ubuntu) | H1: netsniff-ng EPERM fix | **FIXED** | — | — | — | Elias | netsniff-ng had file capabilities (`cap_sys_admin=eip`) exceeding container bounding set. `setcap -r` failed silently (hidden by `2>/dev/null`) because `CAP_SETFCAP` was missing. Fix: added `SETFCAP` to pcap-capture `cap_add`. netsniff-ng now executes without EPERM. |
 
 ---
 
