@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
 > **Last updated:** 2026-03-07
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete — 18/18 containers healthy.** pcap-capture fixed (PUSER=root), nginx-proxy fixed (healthcheck :9200), nettap-nginx SSL fixed, OpenSearch security re-bootstrapped, boot persistence via nettap.service. Daemon tests: 1175 passing. Web tools tests: 24 passing.
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete — 18/18 containers healthy.** pcap-capture fixed (PUSER=root + SYS_ADMIN cap_add), nginx-proxy fixed (healthcheck :9200), nettap-nginx SSL fixed, OpenSearch security re-bootstrapped, boot persistence via nettap.service. Daemon tests: 1175 passing. Web tools tests: 24 passing.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -86,7 +86,7 @@ These 7 checks require the full Docker stack running on the N100 target hardware
 
 | # | Check | Target | Status | Date | Operator | Notes |
 |---|---|---|---|---|---|---|
-| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-07 | Elias | **18/18 containers healthy.** All previous known issues resolved. pcap-capture fixed (PUSER=root skips usermod on PID 1, SETFCAP cap_add strips netsniff-ng file caps to avoid EPERM). nginx-proxy fixed (healthcheck on :9200, removed :443). nettap-nginx SSL fixed (chmod 644). OpenSearch security re-bootstrapped (fix-opensearch.sh). Boot persistence via nettap.service systemd unit. Dashboard loads, setup wizard completes, data pipeline flowing. **Remaining:** Full end-to-end data verification (Zeek + Suricata + Arkime all producing indexed data). |
+| H1 | Integration test — full Docker stack up | N100 | **NEAR COMPLETE** | 2026-03-07 | Elias | **18/18 containers healthy.** All previous known issues resolved. pcap-capture fixed (PUSER=root skips usermod on PID 1, SYS_ADMIN cap_add covers netsniff-ng file caps — setcap -r unreliable on overlay2). nginx-proxy fixed (healthcheck on :9200, removed :443). nettap-nginx SSL fixed (chmod 644). OpenSearch security re-bootstrapped (fix-opensearch.sh). Boot persistence via nettap.service systemd unit. Dashboard loads, setup wizard completes, data pipeline flowing. **Remaining:** Full end-to-end data verification (Zeek + Suricata + Arkime all producing indexed data). |
 | H2 | Manual E2E install from scratch | N100 | NOT TESTED | — | — | Run `install.sh` on fresh Ubuntu, verify full setup |
 | H3 | Bridge 500Mbps zero packet loss | N100 | NOT TESTED | — | — | iperf3 through br0, verify 0 drops at 500Mbps sustained |
 | H4 | Dashboard loads < 3s on LAN | N100 | NOT TESTED | — | — | Measure TTFB + full load of main dashboard page |
@@ -151,7 +151,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-07 | N100 (Ubuntu) | H1: nettap-nginx SSL | **FIXED** | — | — | — | Elias | nettap-nginx crash-looping: SSL key permission denied. Fix: chmod 644 on self-signed key. Container now serving HTTPS. |
 | 2026-03-07 | N100 (Ubuntu) | H1: OpenSearch security | **FIXED** | — | — | — | Elias | OpenSearch security not initialized after recreate. Fix: ran fix-opensearch.sh (roles_mapping.yml + securityadmin.sh). All services authenticated. |
 | 2026-03-07 | N100 (Ubuntu) | H1: Boot persistence | **VERIFIED** | — | — | — | Elias | nettap.service systemd unit installed and enabled. Docker stack auto-starts on reboot. |
-| 2026-03-07 | N100 (Ubuntu) | H1: netsniff-ng EPERM fix | **FIXED** | — | — | — | Elias | netsniff-ng had file capabilities (`cap_sys_admin=eip`) exceeding container bounding set. `setcap -r` failed silently (hidden by `2>/dev/null`) because `CAP_SETFCAP` was missing. Fix: added `SETFCAP` to pcap-capture `cap_add`. netsniff-ng now executes without EPERM. |
+| 2026-03-07 | N100 (Ubuntu) | H1: netsniff-ng EPERM fix | **FIXED** | — | — | — | Elias | netsniff-ng had file capabilities (`cap_sys_admin=eip`) exceeding container bounding set. Initial fix (SETFCAP + `setcap -r`) returned exit 0 but was a no-op on overlay2 — xattrs from image layers persist through overlay. Working fix: added `SYS_ADMIN` to pcap-capture `cap_add` so bounding set covers all file caps. Removed useless `setcap -r`. Acceptable: pcap-capture already runs as root with network_mode: host. |
 
 ---
 
