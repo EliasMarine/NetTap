@@ -531,8 +531,8 @@
 	}
 
 	.results-layout {
-		flex: 1;
-		min-height: 500px;
+		height: calc(100vh - 320px);
+		min-height: 400px;
 		position: relative;
 	}
 

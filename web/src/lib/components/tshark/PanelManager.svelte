@@ -205,8 +205,8 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		min-height: 500px;
 		position: relative;
+		overflow: hidden;
 	}
 
 	.top-panel {
