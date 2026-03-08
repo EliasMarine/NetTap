@@ -48,6 +48,7 @@ class TSharkRequest:
     max_packets: int = DEFAULT_MAX_PACKETS
     output_format: str = "json"
     fields: list[str] = field(default_factory=list)
+    include_hex: bool = False
 
 
 @dataclass
@@ -194,6 +195,10 @@ class TSharkService:
         elif request.output_format == "pdml":
             cmd.extend(["-T", "pdml"])
         # "text" is the default -- no -T flag needed
+
+        # Hex dump flag
+        if request.include_hex:
+            cmd.append("-x")
 
         return cmd
 

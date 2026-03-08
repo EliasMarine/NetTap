@@ -14,6 +14,7 @@ export interface TSharkAnalyzeRequest {
 	max_packets?: number;
 	output_format?: 'json' | 'text';
 	fields?: string[];
+	include_hex?: boolean;
 }
 
 export interface TSharkPacket {
