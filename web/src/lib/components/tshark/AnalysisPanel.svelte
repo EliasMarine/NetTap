@@ -13,8 +13,11 @@
 	 */
 
 	import FilterInput from './FilterInput.svelte';
-	import PacketTable from './PacketTable.svelte';
-	import ProtocolTree from './ProtocolTree.svelte';
+	// OLD CODE START — replaced PacketTable + ProtocolTree with PanelManager (3-pane layout)
+	// import PacketTable from './PacketTable.svelte';
+	// import ProtocolTree from './ProtocolTree.svelte';
+	// OLD CODE END
+	import PanelManager from './PanelManager.svelte';
 	import {
 		analyzePcap,
 		getTSharkStatus,
@@ -375,7 +378,7 @@
 		</div>
 	{/if}
 
-	<!-- Split view: packet table + protocol tree -->
+	<!-- OLD CODE START — replaced 2-panel split with PanelManager 3-pane layout
 	<div class="results-layout">
 		<div class="results-table-section">
 			<PacketTable
@@ -389,6 +392,18 @@
 		<div class="results-detail-section">
 			<ProtocolTree packet={selectedPacket} />
 		</div>
+	</div>
+	OLD CODE END -->
+
+	<!-- 3-pane results layout -->
+	<div class="results-layout">
+		<PanelManager
+			packets={result?.packets ?? []}
+			{loading}
+			selectedPacket={selectedPacket}
+			{selectedPacketIndex}
+			onPacketSelect={handlePacketSelect}
+		/>
 	</div>
 </div>
 
@@ -516,18 +531,9 @@
 	}
 
 	.results-layout {
-		display: grid;
-		grid-template-columns: 1fr 380px;
-		gap: var(--space-md);
-		min-height: 300px;
-	}
-
-	.results-table-section {
-		min-width: 0;
-	}
-
-	.results-detail-section {
-		min-width: 0;
+		flex: 1;
+		min-height: 500px;
+		position: relative;
 	}
 
 	.pcap-input-row {
@@ -647,12 +653,6 @@
 	select.input {
 		appearance: auto;
 		cursor: pointer;
-	}
-
-	@media (max-width: 1024px) {
-		.results-layout {
-			grid-template-columns: 1fr;
-		}
 	}
 
 	@media (max-width: 640px) {
