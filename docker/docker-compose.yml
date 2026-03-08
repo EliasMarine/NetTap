@@ -430,23 +430,24 @@ services:
       - -c
       - >-
         mkdir -p /pcap
-        && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap
-        && setcap -r /usr/sbin/netsniff-ng
-        && exec /usr/bin/tini --
+        && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap &&
+        exec /usr/bin/tini --
         /usr/local/bin/service_check_passthrough.sh -s pcap-capture
         /usr/local/bin/supervisor.sh
     cap_add:
-      # Same as *capture-caps plus SETFCAP (can't merge YAML anchor lists)
+      # Same as *capture-caps plus SYS_ADMIN (can't merge YAML anchor lists)
       - IPC_LOCK
       - SYS_RESOURCE
       - NET_ADMIN
       - NET_RAW
       - SYS_NICE
-      # SETFCAP: needed by entrypoint to strip file capabilities from netsniff-ng.
-      # The binary ships with cap_net_admin,cap_net_raw,cap_ipc_lock,cap_sys_admin=eip.
-      # cap_sys_admin is NOT in our bounding set, so exec gets EPERM. Stripping
-      # file caps lets netsniff-ng run with just the container's ambient caps.
-      - SETFCAP
+      # SYS_ADMIN: netsniff-ng binary ships with file capabilities that include
+      # cap_sys_admin=eip. If cap_sys_admin is NOT in the container's bounding
+      # set, the kernel blocks exec with EPERM. setcap -r doesn't work on
+      # overlay2 (returns 0 but xattrs persist from image layer). Adding
+      # SYS_ADMIN to the bounding set is the only reliable fix. Acceptable
+      # because pcap-capture already runs as root with host networking.
+      - SYS_ADMIN
     environment:
       <<: [*process-env, *pcap-env]
       # PUSER=root: netsniff-ng needs capabilities (NET_RAW, NET_ADMIN).
