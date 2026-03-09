@@ -83,7 +83,7 @@ import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable
 
 logger = logging.getLogger("nettap.smart")
 
@@ -395,17 +395,41 @@ class SmartMonitor:
                 list(data.keys()),
             )
 
-        # Temperature: smartctl provides temperature in the top-level
-        # "temperature" object and inside the nvme health log
+        # Temperature: try multiple fallback paths for firmware variants
+        # 1. nvme_smart_health_information_log.temperature (primary — most NVMe)
+        # 2. temperature.current (top-level — smartctl normalized)
+        # 3. nvme_smart_health_information_log.temperature_sensors[0] (Samsung fallback)
         temperature_c = None
-        temp_obj = data.get("temperature", {})
-        if "current" in temp_obj:
-            temperature_c = temp_obj["current"]
-        elif "temperature" in nvme_log:
-            temperature_c = nvme_log["temperature"]
+        temp_source = None
 
+        if "temperature" in nvme_log and nvme_log["temperature"] is not None:
+            temperature_c = nvme_log["temperature"]
+            temp_source = "nvme_smart_health_information_log.temperature"
+        elif data.get("temperature", {}).get("current") is not None:
+            temperature_c = data["temperature"]["current"]
+            temp_source = "temperature.current"
+        else:
+            # Samsung firmware variant: temperature_sensors array
+            sensors = nvme_log.get("temperature_sensors")
+            if sensors and isinstance(sensors, list) and len(sensors) > 0:
+                if sensors[0] is not None and sensors[0] != 0:
+                    temperature_c = sensors[0]
+                    temp_source = "nvme_smart_health_information_log.temperature_sensors[0]"
+
+        if temp_source:
+            logger.debug("NVMe temperature sourced from %s = %s", temp_source, temperature_c)
+
+        # percentage_used: 0 is valid (new drive), only None means missing
         percentage_used = nvme_log.get("percentage_used")
+
+        # power_on_hours: try primary location, then fallback to top-level
         power_on_hours = nvme_log.get("power_on_hours")
+        if power_on_hours is None:
+            # Some firmware variants put this at top level
+            poh_top = data.get("power_on_time", {})
+            if isinstance(poh_top, dict) and "hours" in poh_top:
+                power_on_hours = poh_top["hours"]
+                logger.debug("power_on_hours sourced from power_on_time.hours fallback")
 
         # TBW calculation:
         # data_units_written is in 512-byte units * 1000
@@ -826,3 +850,158 @@ class SmartMonitor:
         except Exception as exc:
             logger.debug("sysfs fallback failed: %s", exc)
             return {}
+
+    # ------------------------------------------------------------------
+    # Startup self-test & diagnostics
+    # ------------------------------------------------------------------
+
+    def run_self_test(self) -> dict[str, Any]:
+        """Run a startup diagnostic test and return results.
+
+        Queries smartctl, logs full output at DEBUG level, and checks
+        for missing key fields. Returns a diagnostics dict suitable
+        for the /api/smart/diagnostics endpoint.
+
+        Returns:
+            Dict with keys: device, device_type, model, raw_output_available,
+            missing_fields, guidance.
+        """
+        raw_data = self.get_raw_data()
+        raw_available = bool(raw_data)
+
+        logger.debug(
+            "SMART self-test raw output for %s: %s",
+            self.device,
+            json.dumps(raw_data, indent=2) if raw_data else "(empty)",
+        )
+
+        device_type = self.detect_device_type(raw_data)
+        model, serial = self._extract_identity(raw_data)
+
+        # Extract metrics to check what's missing
+        if device_type == "nvme":
+            extracted = self._extract_nvme_metrics(raw_data)
+        else:
+            extracted = self._extract_sata_metrics(raw_data)
+
+        # Check which key fields are missing
+        key_fields = ["temperature_c", "percentage_used", "power_on_hours"]
+        missing_fields: list[str] = []
+        for field_name in key_fields:
+            if extracted.get(field_name) is None:
+                missing_fields.append(field_name)
+
+        # Build guidance messages for missing fields
+        guidance: list[str] = []
+        if missing_fields:
+            if not raw_available:
+                guidance.append(
+                    "smartctl returned no data — check that smartmontools is "
+                    "installed and the device path is correct"
+                )
+            else:
+                nvme_log = raw_data.get("nvme_smart_health_information_log", {})
+                if device_type == "nvme" and not nvme_log:
+                    guidance.append(
+                        "NVMe health log empty — check /dev mount (must not "
+                        "be :ro) and SYS_RAWIO capability"
+                    )
+                if "temperature_c" in missing_fields:
+                    guidance.append(
+                        "temperature field missing — check "
+                        "nvme_smart_health_information_log and temperature.current"
+                    )
+                if "percentage_used" in missing_fields:
+                    guidance.append(
+                        "percentage_used field missing — NVMe health log may "
+                        "not be accessible (check /dev mount and SYS_RAWIO)"
+                    )
+                if "power_on_hours" in missing_fields:
+                    guidance.append(
+                        "power_on_hours field missing — check NVMe health log "
+                        "or power_on_time.hours fallback"
+                    )
+
+        # Log warnings for missing fields
+        if missing_fields:
+            logger.warning(
+                "SMART self-test for %s: missing fields %s",
+                self.device,
+                missing_fields,
+            )
+            for msg in guidance:
+                logger.warning("SMART guidance: %s", msg)
+        else:
+            logger.info(
+                "SMART self-test for %s: all key fields present", self.device
+            )
+
+        self._diagnostics = {
+            "device": self.device,
+            "device_type": device_type,
+            "model": model,
+            "serial": serial,
+            "raw_output_available": raw_available,
+            "missing_fields": missing_fields,
+            "guidance": guidance,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        return self._diagnostics
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Return the most recent diagnostics dict.
+
+        If run_self_test() has not been called yet, runs it first.
+        """
+        if not hasattr(self, "_diagnostics") or not self._diagnostics:
+            return self.run_self_test()
+        return self._diagnostics
+
+    # ------------------------------------------------------------------
+    # OpenSearch indexing
+    # ------------------------------------------------------------------
+
+    def index_to_opensearch(self, metrics: SmartMetrics, client: Any) -> bool:
+        """Index SMART metrics to OpenSearch for historical tracking.
+
+        Creates one document per check in the nettap-smart-YYYY.MM.DD index.
+
+        Args:
+            metrics: The SmartMetrics to index.
+            client: An opensearch-py OpenSearch client instance.
+
+        Returns:
+            True if indexing succeeded, False otherwise.
+        """
+        now = datetime.now(timezone.utc)
+        index_name = f"nettap-smart-{now.strftime('%Y.%m.%d')}"
+
+        doc = {
+            "@timestamp": now.isoformat(),
+            "device": metrics.device,
+            "device_type": metrics.device_type,
+            "model": metrics.model,
+            "serial": metrics.serial,
+            "temperature_c": metrics.temperature_c,
+            "percentage_used": metrics.percentage_used,
+            "power_on_hours": metrics.power_on_hours,
+            "total_bytes_written": metrics.total_bytes_written,
+            "total_bytes_read": metrics.total_bytes_read,
+            "media_errors": metrics.media_errors,
+            "reallocated_sectors": metrics.reallocated_sectors,
+            "healthy": metrics.healthy,
+            "warnings": metrics.warnings,
+        }
+
+        try:
+            client.index(index=index_name, body=doc)
+            logger.debug(
+                "Indexed SMART metrics to %s for %s", index_name, metrics.device
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to index SMART metrics to %s: %s", index_name, exc
+            )
+            return False

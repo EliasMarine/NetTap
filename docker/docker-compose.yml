@@ -10,7 +10,8 @@
 #
 # Prerequisites:
 #   - Run scripts/install/deploy-malcolm.sh first to generate configs/certs
-#   - Bridge (br0) must be configured before starting capture containers
+#   - Set PCAP_IFACE to your capture interface (defaults to br0 for bridge mode;
+#     use a mirror/SPAN port interface like eth2 for tap-less deployments)
 #
 # Security:
 #   - Malcolm images must NOT have no-new-privileges or cap_drop: ALL — their
@@ -358,6 +359,9 @@ services:
     volumes:
       - zeek-live-logs:/zeek/live
       - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   suricata-live:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -405,6 +409,10 @@ services:
       - suricata-live-logs:/var/log/suricata
       - suricata-rules:/var/lib/suricata/rules
       - ../config/suricata/nettap.yaml:/etc/suricata/nettap.yaml:ro
+      - ../config/suricata/update-sources.yaml:/etc/suricata/update-sources.yaml:ro
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   pcap-capture:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -461,6 +469,9 @@ services:
       PCAP_FILTER: ""
     volumes:
       - pcap-data:/pcap
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   arkime-live:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -505,6 +516,9 @@ services:
       EXTRA_TAGS: ""
     volumes:
       - pcap-data:/data/pcap
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   # ========================================================================
   # INFRASTRUCTURE

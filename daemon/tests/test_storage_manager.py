@@ -7,12 +7,29 @@ tiered pruning, emergency pruning, run_cycle behaviour, and status
 reporting.
 """
 
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager
+
+
+def _init_manager_attrs(mgr):
+    """Initialize attributes added by storage hardening (Phase C).
+
+    Tests that bypass __init__ via StorageManager.__new__() need these
+    attributes set manually to avoid AttributeError.
+    """
+    if not hasattr(mgr, "_usage_history"):
+        mgr._usage_history = deque(maxlen=StorageManager._USAGE_HISTORY_MAX)
+    if not hasattr(mgr, "_prediction_alert_active"):
+        mgr._prediction_alert_active = False
+    if not hasattr(mgr, "_ilm_verified"):
+        mgr._ilm_verified = True  # Skip ILM check in existing tests
+    if not hasattr(mgr, "_http_auth"):
+        mgr._http_auth = None
 
 
 # =========================================================================
@@ -398,6 +415,7 @@ class TestRunCycle:
         mgr.config = retention_config
         mgr._client = mock_client
         mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
         return mgr
 
     def test_run_cycle_no_action_below_threshold(
@@ -410,6 +428,8 @@ class TestRunCycle:
             patch.object(mgr, "check_disk_usage", return_value=0.50),
             patch.object(mgr, "prune_oldest_indices") as mock_prune,
             patch.object(mgr, "prune_emergency") as mock_emergency,
+            patch.object(mgr, "get_disk_prediction", return_value={}),
+            patch.object(mgr, "is_capture_stopped", return_value=False),
         ):
             mgr.run_cycle()
 
@@ -423,25 +443,27 @@ class TestRunCycle:
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.85),
             patch.object(mgr, "prune_oldest_indices", return_value=2) as mock_prune,
-            patch.object(mgr, "prune_emergency") as mock_emergency,
+            patch.object(mgr, "emergency_cascade") as mock_cascade,
+            patch.object(mgr, "get_disk_prediction", return_value={}),
         ):
             mgr.run_cycle()
 
         mock_prune.assert_called_once()
-        mock_emergency.assert_not_called()
+        mock_cascade.assert_not_called()
 
     def test_run_cycle_emergency_prune(self, retention_config, mock_opensearch_client):
-        """Mock disk at 95% and verify prune_emergency is called."""
+        """Mock disk at 95% and verify emergency_cascade is called."""
         mgr = self._make_manager(retention_config, mock_opensearch_client)
 
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.95),
             patch.object(mgr, "prune_oldest_indices") as mock_prune,
-            patch.object(mgr, "prune_emergency", return_value=5) as mock_emergency,
+            patch.object(mgr, "emergency_cascade", return_value=5) as mock_cascade,
+            patch.object(mgr, "get_disk_prediction", return_value={}),
         ):
             mgr.run_cycle()
 
-        mock_emergency.assert_called_once()
+        mock_cascade.assert_called_once()
         mock_prune.assert_not_called()
 
 

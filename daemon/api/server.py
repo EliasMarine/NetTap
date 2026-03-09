@@ -45,11 +45,26 @@ from api.reports import register_report_routes
 from api.bridge import register_bridge_routes
 from api.updates import register_update_routes
 from api.nic_discovery import register_nic_discovery_routes
+from api.setup import register_setup_routes
 from api.logs import register_log_routes
 from api.opensearch_cluster import register_opensearch_cluster_routes
 from api.logstash import register_logstash_routes
 from api.lookup import register_lookup_routes
 from api.tools import register_tools_routes
+from api.capture import register_capture_routes
+from api.devices_v2 import register_devices_v2_routes
+from api.live import register_live_routes
+from api.bandwidth import register_bandwidth_routes
+from api.notifications_hub import register_notification_hub_routes
+from api.changelog import register_changelog_routes
+from api.certificates import register_certificate_routes
+from api.dns import register_dns_routes
+from api.iot import register_iot_routes
+from api.lan_security import register_lan_security_routes
+from api.suricata_rules import register_suricata_rules_routes
+from api.mac_correlation import register_mac_correlation_routes
+from api.pcap import register_pcap_routes
+from api.backup import register_backup_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -69,6 +84,17 @@ from services.ssl_cert_service import SslCertService
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
 from services.update_executor import UpdateExecutor
+from services.device_registry import DeviceRegistry
+from services.unifi_integration import UnifiIntegration
+from services.live_connections import LiveConnectionTracker
+from services.bandwidth_tracker import BandwidthTracker
+from services.notification_hub import NotificationHub
+from services.changelog import ChangelogService
+from services.cert_monitor import CertificateMonitor
+from services.suricata_rules import SuricataRuleManager
+from services.mac_correlator import MACCorrelator
+from services.pcap_search import PcapSearchService
+from services.config_backup import ConfigBackup
 
 logger = logging.getLogger("nettap.api")
 
@@ -223,6 +249,42 @@ async def handle_smart_health(request: web.Request) -> web.Response:
         )
 
 
+async def handle_smart_diagnostics(request: web.Request) -> web.Response:
+    """GET /api/smart/diagnostics -- SMART self-test diagnostics."""
+    try:
+        smart: SmartMonitor = request.app["smart"]
+        loop = asyncio.get_running_loop()
+        diagnostics = await loop.run_in_executor(None, smart.get_diagnostics)
+        return web.json_response(diagnostics)
+    except Exception as exc:
+        logger.exception("Error fetching SMART diagnostics")
+        return web.json_response(
+            {"error": f"Failed to fetch SMART diagnostics: {exc}"},
+            status=500,
+        )
+
+
+async def handle_smart_test(request: web.Request) -> web.Response:
+    """POST /api/smart/test -- Trigger on-demand SMART check with fresh results."""
+    try:
+        smart: SmartMonitor = request.app["smart"]
+        loop = asyncio.get_running_loop()
+        # Run self-test for diagnostics
+        diagnostics = await loop.run_in_executor(None, smart.run_self_test)
+        # Also get fresh metrics
+        status = await loop.run_in_executor(None, smart.get_status)
+        return web.json_response({
+            "diagnostics": diagnostics,
+            "health": status,
+        })
+    except Exception as exc:
+        logger.exception("Error running SMART test")
+        return web.json_response(
+            {"error": f"SMART test failed: {exc}"},
+            status=500,
+        )
+
+
 async def handle_indices(request: web.Request) -> web.Response:
     """GET /api/indices -- List all tracked OpenSearch indices."""
     try:
@@ -363,6 +425,8 @@ def create_app(
     app.router.add_get("/api/storage/retention", handle_storage_retention)
     app.router.add_post("/api/storage/prune", handle_storage_prune)
     app.router.add_get("/api/smart/health", handle_smart_health)
+    app.router.add_get("/api/smart/diagnostics", handle_smart_diagnostics)
+    app.router.add_post("/api/smart/test", handle_smart_test)
     app.router.add_get("/api/indices", handle_indices)
     app.router.add_get("/api/system/health", handle_system_health)
     app.router.add_post("/api/ilm/apply", handle_ilm_apply)
@@ -500,6 +564,9 @@ def create_app(
     # NIC discovery (setup wizard interface detection from host sysfs)
     register_nic_discovery_routes(app)
 
+    # Setup wizard configuration (capture mode + .env writer)
+    register_setup_routes(app)
+
     # Log search API (generic Zeek/Suricata log browser)
     register_log_routes(app, storage)
 
@@ -508,6 +575,72 @@ def create_app(
 
     # Logstash monitoring (pipeline stats, JVM, throughput)
     register_logstash_routes(app)
+
+    # Capture mode API (mode-agnostic bridge/mirror endpoints)
+    register_capture_routes(app)
+
+    # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
+    device_registry = DeviceRegistry(client=storage._client)
+    unifi_integration = UnifiIntegration()
+    register_devices_v2_routes(app, device_registry, unifi_integration)
+
+    # Live connection tracking (real-time connection monitor)
+    live_tracker = LiveConnectionTracker(client=storage._client)
+    register_live_routes(app, live_tracker)
+
+    # Bandwidth tracking (monthly/daily usage, data cap, heatmap)
+    bandwidth_tracker = BandwidthTracker(client=storage._client)
+    register_bandwidth_routes(app, bandwidth_tracker)
+
+    # Notification hub (multi-channel notifications + routing rules)
+    notification_config = os.environ.get(
+        "NOTIFICATION_CONFIG", "/opt/nettap/data/notifications.json"
+    )
+    notification_hub = NotificationHub(config_path=notification_config)
+    register_notification_hub_routes(app, notification_hub)
+
+    # Changelog (network event audit log)
+    changelog_service = ChangelogService(client=storage._client)
+    register_changelog_routes(app, changelog_service)
+
+    # Certificate monitor (TLS certificate tracking from Zeek SSL logs)
+    cert_monitor = CertificateMonitor(client=storage._client)
+    register_certificate_routes(app, cert_monitor)
+
+    # DNS analytics (domain stats, NXDOMAIN, tunneling detection)
+    register_dns_routes(app, storage)
+
+    # IoT device monitoring (classification, baselines, anomaly detection)
+    register_iot_routes(app, storage)
+
+    # LAN security (ARP spoofing, rogue DHCP, IP conflicts)
+    register_lan_security_routes(app, storage)
+
+    # Suricata rule source management (update-sources.yaml + docker exec)
+    suricata_sources_config = os.environ.get(
+        "SURICATA_SOURCES_CONFIG",
+        os.path.join(os.path.dirname(__file__), "../config/suricata/update-sources.yaml"),
+    )
+    suricata_rule_manager = SuricataRuleManager(sources_config=suricata_sources_config)
+    register_suricata_rules_routes(app, suricata_rule_manager)
+
+    # MAC correlation (randomized MAC detection + device merging)
+    mac_merge_file = os.environ.get(
+        "MAC_MERGE_FILE", "/opt/nettap/data/mac_merges.json"
+    )
+    mac_correlator = MACCorrelator(
+        client=storage._client, merge_file=mac_merge_file
+    )
+    register_mac_correlation_routes(app, mac_correlator)
+
+    # PCAP search (file listing, BPF filter search, preview, download)
+    pcap_search_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
+    pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
+    register_pcap_routes(app, pcap_search_service)
+
+    # Config backup/restore (export/import all settings)
+    config_backup = ConfigBackup()
+    register_backup_routes(app, config_backup)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

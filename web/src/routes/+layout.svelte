@@ -2,11 +2,22 @@
 	import '$lib/styles/global.css';
 	import { page } from '$app/stores';
 	import NotificationBell from '$components/NotificationBell.svelte';
+	import { getCaptureMode } from '$api/capture';
+	import type { CaptureMode } from '$api/capture';
 
 	let { children } = $props();
 
 	let sidebarCollapsed = $state(false);
 	let mobileOpen = $state(false);
+	let captureMode = $state<CaptureMode | null>(null);
+
+	$effect(() => {
+		getCaptureMode().then((mode) => {
+			captureMode = mode;
+		}).catch(() => {
+			// Silently fail — badge just won't show
+		});
+	});
 
 	const navItems = [
 		{ href: '/', label: 'Home', icon: 'home' },
@@ -14,6 +25,10 @@
 		{ href: '/devices', label: 'Devices', icon: 'monitor' },
 		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
 		{ href: '/connections', label: 'Connections', icon: 'link' },
+		{ href: '/live', label: 'Live Monitor', icon: 'activity' },
+		{ href: '/bandwidth', label: 'Bandwidth', icon: 'bar-chart-2' },
+		{ href: '/dns', label: 'DNS Analytics', icon: 'globe' },
+		{ href: '/iot', label: 'IoT & LAN', icon: 'shield' },
 		{ href: '/tools', label: 'Tools', icon: 'tool' },
 		{ href: '/infrastructure', label: 'Infrastructure', icon: 'server' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' },
@@ -134,6 +149,12 @@
 				<h1 class="topbar-title">{getPageTitle($page.url.pathname)}</h1>
 
 				<div class="topbar-right">
+					{#if captureMode}
+						<span class="mode-badge {captureMode.mode === 'mirror' ? 'mode-mirror' : 'mode-bridge'}" title="Capture mode: {captureMode.mode}">
+							{captureMode.mode === 'mirror' ? 'Mirror' : 'Bridge'}
+						</span>
+					{/if}
+
 					<div class="status-indicator">
 						<span class="health-dot green"></span>
 						<span class="status-text">Online</span>
@@ -345,6 +366,28 @@
 
 	.mobile-menu-btn:hover {
 		color: var(--text-primary);
+	}
+
+	/* Capture mode badge */
+	.mode-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 2px 8px;
+		font-size: 11px;
+		font-weight: 600;
+		border-radius: var(--radius-full);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.mode-mirror {
+		background-color: var(--cyan-dim);
+		color: var(--cyan);
+	}
+
+	.mode-bridge {
+		background-color: var(--green-dim);
+		color: var(--green);
 	}
 
 	.desktop-only {

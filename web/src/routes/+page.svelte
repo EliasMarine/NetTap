@@ -24,9 +24,23 @@
 	import DashboardFilters from '$components/DashboardFilters.svelte';
 	import type { FilterState } from '$components/DashboardFilters.svelte';
 
+	// Mirror mode components
+	import { getCaptureMode } from '$api/capture';
+	import type { CaptureMode } from '$api/capture';
+	import { getRegistryDevices } from '$api/devices-registry';
+	import type { RegistryDevice } from '$api/devices-registry';
+	import DeviceGrid from '$components/DeviceGrid.svelte';
+	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
+	import CaptureHealthPanel from '$components/CaptureHealthPanel.svelte';
+
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
+
+	// Capture mode detection
+	let captureMode = $state<CaptureMode | null>(null);
+	let isMirrorMode = $derived(captureMode?.mode === 'mirror');
+	let registryDevices = $state<RegistryDevice[]>([]);
 
 	let autoRefresh = $state(true);
 	let loading = $state(true);
@@ -81,6 +95,23 @@
 	async function fetchAllData() {
 		loading = true;
 		error = false;
+
+		// Fetch capture mode first (or in parallel)
+		try {
+			captureMode = await getCaptureMode();
+		} catch {
+			captureMode = { mode: 'bridge', interface: '' };
+		}
+
+		// If mirror mode, also fetch registry devices
+		if (captureMode?.mode === 'mirror') {
+			try {
+				const regResult = await getRegistryDevices({ limit: 200 });
+				registryDevices = regResult.devices;
+			} catch {
+				registryDevices = [];
+			}
+		}
 
 		// Build time range params from active filters
 		const timeParams: { from?: string; to?: string } = {};
@@ -382,11 +413,20 @@
 		</div>
 	{/if}
 
+	<!-- New device detection banner (mirror mode) -->
+	{#if isMirrorMode && registryDevices.length > 0}
+		<NewDeviceBanner devices={registryDevices} />
+	{/if}
+
 	<!-- Dashboard header -->
 	<div class="dashboard-header">
 		<div class="header-left">
-			<h2>Network Overview</h2>
-			<p class="text-muted">Real-time traffic, alerts, and system health.</p>
+			<h2>{isMirrorMode ? 'Device Overview' : 'Network Overview'}</h2>
+			<p class="text-muted">
+				{isMirrorMode
+					? 'Devices on your network, organized by type.'
+					: 'Real-time traffic, alerts, and system health.'}
+			</p>
 		</div>
 		<div class="header-controls">
 			{#if lastUpdated}
@@ -418,7 +458,19 @@
 		onchange={handleFilterChange}
 	/>
 
-	<!-- Row 1: Stat Cards -->
+	<!-- Mirror mode: Device grid + capture health -->
+	{#if isMirrorMode}
+		<div class="grid grid-cols-2 mirror-mode-grid">
+			<div class="mirror-main">
+				<DeviceGrid devices={registryDevices} loading={loading} />
+			</div>
+			<div class="mirror-sidebar">
+				<CaptureHealthPanel />
+			</div>
+		</div>
+	{/if}
+
+	<!-- Row 1: Stat Cards (always shown) -->
 	<div class="grid stat-grid stat-grid-5">
 		<!-- Total Bandwidth (24h) -->
 		<div class="card stat-card">
@@ -1179,6 +1231,25 @@
 
 	@media (max-width: 480px) {
 		.stat-grid-5 {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	/* Mirror mode layout */
+	.mirror-mode-grid {
+		grid-template-columns: 2fr 1fr;
+	}
+
+	.mirror-main {
+		min-width: 0;
+	}
+
+	.mirror-sidebar {
+		min-width: 0;
+	}
+
+	@media (max-width: 1024px) {
+		.mirror-mode-grid {
 			grid-template-columns: 1fr;
 		}
 	}

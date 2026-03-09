@@ -1,142 +1,218 @@
 <script lang="ts">
 	/**
-	 * Notification Settings — Configure email, webhook, and in-app notification channels.
+	 * Notification Settings — Multi-channel notification management.
 	 *
-	 * Reads current config from environment defaults and allows the user to
-	 * test and save notification preferences.
+	 * Supports 6 channel types: Email (SMTP), Discord, Slack, Telegram,
+	 * Pushover, and Webhook. Includes routing rules engine and delivery log.
 	 */
 
-	// Notification config form state
-	let emailEnabled = $state(false);
-	let smtpHost = $state('');
-	let smtpPort = $state(587);
-	let smtpUser = $state('');
-	let smtpPass = $state('');
-	let smtpFrom = $state('nettap@localhost');
-	let notifyEmail = $state('');
+	import {
+		getChannels,
+		createChannel,
+		deleteChannel,
+		testChannel,
+		getDeliveryLog,
+		getRules,
+		createRule,
+		deleteRule,
+		type NotificationChannel,
+		type RoutingRule,
+		type DeliveryLogEntry,
+	} from '$lib/api/notification-hub';
 
-	let webhookEnabled = $state(false);
-	let webhookUrl = $state('');
+	// State
+	let channels = $state<NotificationChannel[]>([]);
+	let rules = $state<RoutingRule[]>([]);
+	let deliveryLog = $state<DeliveryLogEntry[]>([]);
+	let loading = $state(true);
+	let message = $state('');
+	let messageType = $state<'success' | 'error'>('success');
 
-	let inAppEnabled = $state(true);
-	let severityThreshold = $state(3);
+	// Add channel form
+	let showAddForm = $state(false);
+	let newChannelType = $state<string>('discord');
+	let newChannelName = $state('');
+	let newChannelConfig = $state<Record<string, string>>({});
+	let addingChannel = $state(false);
 
-	let saving = $state(false);
-	let testing = $state(false);
-	let saveMessage = $state('');
-	let testMessage = $state('');
+	// Add rule form
+	let showRuleForm = $state(false);
+	let newRuleEventType = $state('alert');
+	let newRuleChannels = $state<string[]>([]);
+	let newRuleSeverity = $state(3);
+	let addingRule = $state(false);
 
-	// Load current config on mount
+	// Testing state
+	let testingChannelId = $state('');
+
+	// Channel type configs
+	const channelTypeConfigs: Record<string, { label: string; fields: { key: string; label: string; type: string; placeholder: string }[] }> = {
+		email: {
+			label: 'Email (SMTP)',
+			fields: [
+				{ key: 'smtp_host', label: 'SMTP Host', type: 'text', placeholder: 'smtp.gmail.com' },
+				{ key: 'smtp_port', label: 'SMTP Port', type: 'number', placeholder: '587' },
+				{ key: 'smtp_user', label: 'SMTP Username', type: 'text', placeholder: 'user@example.com' },
+				{ key: 'smtp_pass', label: 'SMTP Password', type: 'password', placeholder: 'App password' },
+				{ key: 'from_address', label: 'From Address', type: 'email', placeholder: 'nettap@yourdomain.com' },
+				{ key: 'recipients', label: 'Recipients (comma-separated)', type: 'text', placeholder: 'admin@example.com, ops@example.com' },
+			],
+		},
+		discord: {
+			label: 'Discord',
+			fields: [
+				{ key: 'webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://discord.com/api/webhooks/...' },
+			],
+		},
+		slack: {
+			label: 'Slack',
+			fields: [
+				{ key: 'webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://hooks.slack.com/services/...' },
+			],
+		},
+		telegram: {
+			label: 'Telegram',
+			fields: [
+				{ key: 'bot_token', label: 'Bot Token', type: 'text', placeholder: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11' },
+				{ key: 'chat_id', label: 'Chat ID', type: 'text', placeholder: '-1001234567890' },
+			],
+		},
+		pushover: {
+			label: 'Pushover',
+			fields: [
+				{ key: 'user_key', label: 'User Key', type: 'text', placeholder: 'your-user-key' },
+				{ key: 'api_token', label: 'API Token', type: 'text', placeholder: 'your-api-token' },
+			],
+		},
+		webhook: {
+			label: 'Generic Webhook',
+			fields: [
+				{ key: 'url', label: 'Webhook URL', type: 'url', placeholder: 'https://your-server.com/webhook' },
+			],
+		},
+	};
+
+	const eventTypes = [
+		{ value: 'new_device', label: 'New Device' },
+		{ value: 'alert', label: 'Alert' },
+		{ value: 'anomaly', label: 'Anomaly' },
+		{ value: 'storage_warning', label: 'Storage Warning' },
+		{ value: 'smart_warning', label: 'SMART Warning' },
+		{ value: 'capture_error', label: 'Capture Error' },
+		{ value: 'system_error', label: 'System Error' },
+	];
+
+	// Load data on mount
 	$effect(() => {
-		loadConfig();
+		loadAll();
 	});
 
-	async function loadConfig() {
-		try {
-			const res = await fetch('/api/notifications/config');
-			if (res.ok) {
-				const data = await res.json();
-				emailEnabled = data.email?.enabled ?? false;
-				smtpHost = data.email?.smtpHost ?? '';
-				smtpPort = data.email?.smtpPort ?? 587;
-				smtpUser = data.email?.smtpUser ?? '';
-				smtpFrom = data.email?.smtpFrom ?? 'nettap@localhost';
-				notifyEmail = data.email?.recipients?.join(', ') ?? '';
-				webhookEnabled = data.webhook?.enabled ?? false;
-				webhookUrl = data.webhook?.url ?? '';
-				inAppEnabled = data.inApp?.enabled ?? true;
-				severityThreshold = data.severityThreshold ?? 3;
-			}
-		} catch {
-			// Config endpoint may not exist yet; use defaults
+	async function loadAll() {
+		loading = true;
+		const [chRes, ruRes, logRes] = await Promise.all([
+			getChannels(),
+			getRules(),
+			getDeliveryLog(),
+		]);
+		channels = chRes.channels;
+		rules = ruRes.rules;
+		deliveryLog = logRes.log;
+		loading = false;
+	}
+
+	function showMessage(msg: string, type: 'success' | 'error') {
+		message = msg;
+		messageType = type;
+		setTimeout(() => { message = ''; }, 5000);
+	}
+
+	// Channel actions
+	async function handleAddChannel() {
+		addingChannel = true;
+		const config = { ...newChannelConfig };
+		// Convert recipients to array for email
+		if (newChannelType === 'email' && config.recipients) {
+			(config as Record<string, unknown>).recipients = config.recipients.split(',').map((s: string) => s.trim()).filter(Boolean);
+		}
+		const result = await createChannel(newChannelType, newChannelName, config);
+		if (result) {
+			showMessage(`Channel "${newChannelName}" created.`, 'success');
+			showAddForm = false;
+			newChannelName = '';
+			newChannelConfig = {};
+			await loadAll();
+		} else {
+			showMessage('Failed to create channel.', 'error');
+		}
+		addingChannel = false;
+	}
+
+	async function handleDeleteChannel(id: string) {
+		if (await deleteChannel(id)) {
+			showMessage('Channel deleted.', 'success');
+			await loadAll();
+		} else {
+			showMessage('Failed to delete channel.', 'error');
 		}
 	}
 
-	async function saveConfig() {
-		saving = true;
-		saveMessage = '';
-		try {
-			const res = await fetch('/api/notifications/config', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					email: {
-						enabled: emailEnabled,
-						recipients: notifyEmail.split(',').map((s) => s.trim()).filter(Boolean),
-						smtpHost,
-						smtpPort,
-						smtpUser,
-						smtpPass: smtpPass || undefined,
-						smtpFrom,
-					},
-					webhook: {
-						enabled: webhookEnabled,
-						url: webhookUrl,
-					},
-					inApp: {
-						enabled: inAppEnabled,
-					},
-					severityThreshold,
-				}),
-			});
+	async function handleTestChannel(id: string) {
+		testingChannelId = id;
+		const success = await testChannel(id);
+		if (success) {
+			showMessage('Test notification sent successfully.', 'success');
+		} else {
+			showMessage('Test notification failed.', 'error');
+		}
+		testingChannelId = '';
+		// Refresh delivery log
+		const logRes = await getDeliveryLog();
+		deliveryLog = logRes.log;
+	}
 
-			if (res.ok) {
-				saveMessage = 'Notification settings saved successfully.';
-			} else {
-				const data = await res.json().catch(() => ({}));
-				saveMessage = data.error || 'Failed to save settings.';
-			}
-		} catch {
-			saveMessage = 'Failed to connect to server.';
-		} finally {
-			saving = false;
+	// Rule actions
+	async function handleAddRule() {
+		addingRule = true;
+		const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity);
+		if (result) {
+			showMessage('Routing rule created.', 'success');
+			showRuleForm = false;
+			newRuleChannels = [];
+			await loadAll();
+		} else {
+			showMessage('Failed to create rule.', 'error');
+		}
+		addingRule = false;
+	}
+
+	async function handleDeleteRule(id: string) {
+		if (await deleteRule(id)) {
+			showMessage('Rule deleted.', 'success');
+			await loadAll();
+		} else {
+			showMessage('Failed to delete rule.', 'error');
 		}
 	}
 
-	async function sendTestNotification() {
-		testing = true;
-		testMessage = '';
-		try {
-			const res = await fetch('/api/notifications/test', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					email: emailEnabled
-						? {
-								recipients: notifyEmail.split(',').map((s) => s.trim()).filter(Boolean),
-								smtpHost,
-								smtpPort,
-								smtpUser,
-								smtpPass: smtpPass || undefined,
-								smtpFrom,
-							}
-						: undefined,
-					webhook: webhookEnabled
-						? { url: webhookUrl }
-						: undefined,
-				}),
-			});
-
-			if (res.ok) {
-				testMessage = 'Test notification sent successfully.';
-			} else {
-				const data = await res.json().catch(() => ({}));
-				testMessage = data.error || 'Test notification failed.';
-			}
-		} catch {
-			testMessage = 'Failed to send test notification.';
-		} finally {
-			testing = false;
-		}
+	function channelTypeBadge(type: string): string {
+		return channelTypeConfigs[type]?.label ?? type;
 	}
 
 	function severityLabel(level: number): string {
 		switch (level) {
-			case 1: return 'Critical only';
-			case 2: return 'High and above';
-			case 3: return 'Medium and above';
-			case 4: return 'All (including Low)';
-			default: return 'Medium and above';
+			case 1: return 'Critical';
+			case 2: return 'High';
+			case 3: return 'Medium';
+			case 4: return 'Low';
+			default: return `Severity ${level}`;
+		}
+	}
+
+	function toggleRuleChannel(chId: string) {
+		if (newRuleChannels.includes(chId)) {
+			newRuleChannels = newRuleChannels.filter(c => c !== chId);
+		} else {
+			newRuleChannels = [...newRuleChannels, chId];
 		}
 	}
 </script>
@@ -156,131 +232,163 @@
 			</a>
 		</div>
 		<h2>Notification Settings</h2>
-		<p class="text-muted">Configure how and when you receive alerts from NetTap.</p>
+		<p class="text-muted">Configure multi-channel notifications and routing rules.</p>
 	</div>
 
-	{#if saveMessage}
-		<div class="alert {saveMessage.includes('success') ? 'alert-success' : 'alert-danger'}">
-			{saveMessage}
+	{#if message}
+		<div class="alert {messageType === 'success' ? 'alert-success' : 'alert-danger'}">
+			{message}
 		</div>
 	{/if}
 
-	<!-- Severity Threshold -->
-	<div class="card settings-section">
-		<div class="card-header">
-			<span class="card-title">Severity Threshold</span>
+	{#if loading}
+		<div class="card settings-section">
+			<p class="text-muted">Loading notification settings...</p>
 		</div>
-		<p class="section-description">Only send external notifications (email, webhook) for alerts at or above this severity level. In-app notifications are always stored.</p>
-		<div class="form-group">
-			<label class="label" for="severity-threshold">Minimum Severity</label>
-			<select class="input" id="severity-threshold" bind:value={severityThreshold}>
-				<option value={1}>Critical only (severity 1)</option>
-				<option value={2}>High and above (severity 1-2)</option>
-				<option value={3}>Medium and above (severity 1-3)</option>
-				<option value={4}>All notifications (severity 1-4)</option>
-			</select>
-			<p class="field-help">Current: {severityLabel(severityThreshold)}</p>
-		</div>
-	</div>
-
-	<!-- In-App Notifications -->
-	<div class="card settings-section">
-		<div class="card-header">
-			<span class="card-title">In-App Notifications</span>
-			<label class="toggle-label">
-				<input type="checkbox" bind:checked={inAppEnabled} class="toggle-input" />
-				<span class="toggle-switch"></span>
-			</label>
-		</div>
-		<p class="section-description">
-			Display notifications in the dashboard bell icon. Stored locally on the appliance.
-		</p>
-	</div>
-
-	<!-- Email Notifications -->
-	<div class="card settings-section">
-		<div class="card-header">
-			<span class="card-title">Email Notifications</span>
-			<label class="toggle-label">
-				<input type="checkbox" bind:checked={emailEnabled} class="toggle-input" />
-				<span class="toggle-switch"></span>
-			</label>
-		</div>
-		{#if emailEnabled}
-			<div class="email-fields">
-				<div class="smtp-grid">
-					<div class="form-group">
-						<label class="label" for="smtp-host">SMTP Host</label>
-						<input class="input" id="smtp-host" type="text" bind:value={smtpHost} placeholder="smtp.gmail.com" />
-					</div>
-					<div class="form-group">
-						<label class="label" for="smtp-port">SMTP Port</label>
-						<input class="input" id="smtp-port" type="number" bind:value={smtpPort} min={1} max={65535} />
-					</div>
-				</div>
-				<div class="smtp-grid">
-					<div class="form-group">
-						<label class="label" for="smtp-user">SMTP Username</label>
-						<input class="input" id="smtp-user" type="text" bind:value={smtpUser} placeholder="user@example.com" />
-					</div>
-					<div class="form-group">
-						<label class="label" for="smtp-pass">SMTP Password</label>
-						<input class="input" id="smtp-pass" type="password" bind:value={smtpPass} placeholder="App password" />
-						<p class="field-help">Leave blank to keep existing password.</p>
-					</div>
-				</div>
-				<div class="form-group">
-					<label class="label" for="smtp-from">From Address</label>
-					<input class="input" id="smtp-from" type="email" bind:value={smtpFrom} placeholder="nettap@yourdomain.com" />
-				</div>
-				<div class="form-group">
-					<label class="label" for="notify-email">Recipient Email(s)</label>
-					<input class="input" id="notify-email" type="text" bind:value={notifyEmail} placeholder="admin@example.com, backup@example.com" />
-					<p class="field-help">Comma-separated list of email addresses to notify.</p>
-				</div>
+	{:else}
+		<!-- Notification Channels -->
+		<div class="card settings-section">
+			<div class="card-header">
+				<span class="card-title">Notification Channels ({channels.length})</span>
+				<button class="btn btn-sm btn-primary" onclick={() => showAddForm = !showAddForm}>
+					{showAddForm ? 'Cancel' : '+ Add Channel'}
+				</button>
 			</div>
-		{:else}
-			<p class="section-description">
-				Send alert notifications via email. Enable to configure SMTP settings.
-			</p>
-		{/if}
-	</div>
 
-	<!-- Webhook Notifications -->
-	<div class="card settings-section">
-		<div class="card-header">
-			<span class="card-title">Webhook Notifications</span>
-			<label class="toggle-label">
-				<input type="checkbox" bind:checked={webhookEnabled} class="toggle-input" />
-				<span class="toggle-switch"></span>
-			</label>
+			{#if showAddForm}
+				<div class="add-form">
+					<div class="form-group">
+						<label class="label" for="channel-type">Channel Type</label>
+						<select class="input" id="channel-type" bind:value={newChannelType}>
+							{#each Object.entries(channelTypeConfigs) as [key, cfg]}
+								<option value={key}>{cfg.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="form-group">
+						<label class="label" for="channel-name">Name</label>
+						<input class="input" id="channel-name" type="text" bind:value={newChannelName} placeholder="My Discord Server" />
+					</div>
+					{#each channelTypeConfigs[newChannelType]?.fields ?? [] as field}
+						<div class="form-group">
+							<label class="label" for="cfg-{field.key}">{field.label}</label>
+							<input class="input" id="cfg-{field.key}" type={field.type} bind:value={newChannelConfig[field.key]} placeholder={field.placeholder} />
+						</div>
+					{/each}
+					<button class="btn btn-primary" onclick={handleAddChannel} disabled={addingChannel || !newChannelName}>
+						{addingChannel ? 'Creating...' : 'Create Channel'}
+					</button>
+				</div>
+			{/if}
+
+			{#if channels.length === 0}
+				<p class="text-muted section-description">No channels configured. Add one to start receiving notifications.</p>
+			{:else}
+				<div class="channel-list">
+					{#each channels as ch}
+						<div class="channel-item">
+							<div class="channel-info">
+								<span class="badge badge-{ch.type}">{channelTypeBadge(ch.type)}</span>
+								<strong>{ch.name}</strong>
+							</div>
+							<div class="channel-actions">
+								<button class="btn btn-sm btn-secondary" onclick={() => handleTestChannel(ch.id)} disabled={testingChannelId === ch.id}>
+									{testingChannelId === ch.id ? 'Testing...' : 'Test'}
+								</button>
+								<button class="btn btn-sm btn-danger" onclick={() => handleDeleteChannel(ch.id)}>Delete</button>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
-		{#if webhookEnabled}
-			<div class="form-group">
-				<label class="label" for="webhook-url">Webhook URL</label>
-				<input class="input mono" id="webhook-url" type="url" bind:value={webhookUrl} placeholder="https://hooks.slack.com/services/..." />
-				<p class="field-help">POST request with JSON payload will be sent to this URL for each notification.</p>
+
+		<!-- Routing Rules -->
+		<div class="card settings-section">
+			<div class="card-header">
+				<span class="card-title">Routing Rules ({rules.length})</span>
+				<button class="btn btn-sm btn-primary" onclick={() => showRuleForm = !showRuleForm} disabled={channels.length === 0}>
+					{showRuleForm ? 'Cancel' : '+ Add Rule'}
+				</button>
 			</div>
-		{:else}
-			<p class="section-description">
-				Send notifications to a webhook endpoint (e.g. Slack, Discord, custom HTTP endpoint).
-			</p>
-		{/if}
-	</div>
 
-	<!-- Actions -->
-	<div class="actions-row">
-		<button class="btn btn-primary" onclick={saveConfig} disabled={saving}>
-			{saving ? 'Saving...' : 'Save Settings'}
-		</button>
-		<button class="btn btn-secondary" onclick={sendTestNotification} disabled={testing}>
-			{testing ? 'Sending...' : 'Send Test Notification'}
-		</button>
-	</div>
+			<p class="section-description">Map event types to notification channels with severity filtering.</p>
 
-	{#if testMessage}
-		<div class="alert {testMessage.includes('success') ? 'alert-success' : 'alert-danger'}">
-			{testMessage}
+			{#if showRuleForm}
+				<div class="add-form">
+					<div class="form-group">
+						<label class="label" for="rule-event">Event Type</label>
+						<select class="input" id="rule-event" bind:value={newRuleEventType}>
+							{#each eventTypes as et}
+								<option value={et.value}>{et.label}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="form-group">
+						<label class="label">Send To Channels</label>
+						<div class="checkbox-group">
+							{#each channels as ch}
+								<label class="checkbox-label">
+									<input type="checkbox" checked={newRuleChannels.includes(ch.id)} onchange={() => toggleRuleChannel(ch.id)} />
+									{ch.name} ({channelTypeBadge(ch.type)})
+								</label>
+							{/each}
+						</div>
+					</div>
+					<div class="form-group">
+						<label class="label" for="rule-severity">Minimum Severity</label>
+						<select class="input" id="rule-severity" bind:value={newRuleSeverity}>
+							<option value={1}>Critical only</option>
+							<option value={2}>High and above</option>
+							<option value={3}>Medium and above</option>
+							<option value={4}>All (including Low)</option>
+						</select>
+					</div>
+					<button class="btn btn-primary" onclick={handleAddRule} disabled={addingRule || newRuleChannels.length === 0}>
+						{addingRule ? 'Creating...' : 'Create Rule'}
+					</button>
+				</div>
+			{/if}
+
+			{#if rules.length === 0}
+				<p class="text-muted">No routing rules configured.</p>
+			{:else}
+				<div class="rules-list">
+					{#each rules as rule}
+						<div class="rule-item">
+							<div class="rule-info">
+								<span class="badge">{eventTypes.find(e => e.value === rule.event_type)?.label ?? rule.event_type}</span>
+								<span class="rule-arrow">--></span>
+								<span class="rule-channels">{rule.channels.length} channel{rule.channels.length !== 1 ? 's' : ''}</span>
+								<span class="badge badge-severity">Min: {severityLabel(rule.min_severity)}</span>
+							</div>
+							<button class="btn btn-sm btn-danger" onclick={() => handleDeleteRule(rule.id)}>Delete</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		<!-- Delivery Log -->
+		<div class="card settings-section">
+			<div class="card-header">
+				<span class="card-title">Recent Deliveries</span>
+			</div>
+
+			{#if deliveryLog.length === 0}
+				<p class="text-muted section-description">No delivery attempts yet.</p>
+			{:else}
+				<div class="log-list">
+					{#each deliveryLog.slice(0, 20) as entry}
+						<div class="log-entry {entry.success ? 'log-success' : 'log-failure'}">
+							<span class="log-status">{entry.success ? 'OK' : 'FAIL'}</span>
+							<span class="log-channel">{entry.channel_type}</span>
+							<span class="log-title">{entry.title}</span>
+							<span class="log-time">{new Date(entry.timestamp).toLocaleString()}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -290,7 +398,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
-		max-width: 720px;
+		max-width: 800px;
 	}
 
 	.settings-header h2 {
@@ -326,83 +434,148 @@
 		margin-bottom: var(--space-md);
 	}
 
-	.field-help {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		margin-top: var(--space-xs);
-	}
-
-	.smtp-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-md);
-	}
-
-	.email-fields {
+	.add-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+		padding: var(--space-md);
+		background: var(--bg-secondary);
+		border-radius: var(--radius-md);
+		margin-bottom: var(--space-md);
 	}
 
-	/* Toggle switch */
-	.toggle-label {
+	/* Channel list */
+	.channel-list, .rules-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		margin-top: var(--space-md);
+	}
+
+	.channel-item, .rule-item {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-sm) var(--space-md);
+		background: var(--bg-secondary);
+		border-radius: var(--radius-md);
+		border: 1px solid var(--border-default);
+	}
+
+	.channel-info, .rule-info {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.channel-actions {
+		display: flex;
+		gap: var(--space-xs);
+	}
+
+	.badge {
+		display: inline-block;
+		padding: 2px 8px;
+		font-size: var(--text-xs);
+		font-weight: 600;
+		border-radius: var(--radius-full);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.badge-severity {
+		background: var(--accent-muted);
+		color: var(--accent);
+	}
+
+	.rule-arrow {
+		color: var(--text-muted);
+		font-family: monospace;
+	}
+
+	.rule-channels {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+	}
+
+	/* Checkbox group */
+	.checkbox-group {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-sm);
 		cursor: pointer;
 	}
 
-	.toggle-input {
-		position: absolute;
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.toggle-switch {
-		position: relative;
-		width: 40px;
-		height: 22px;
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-full);
-		transition: all var(--transition-fast);
-	}
-
-	.toggle-switch::after {
-		content: '';
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 16px;
-		height: 16px;
-		background-color: var(--text-muted);
-		border-radius: 50%;
-		transition: all var(--transition-fast);
-	}
-
-	.toggle-input:checked + .toggle-switch {
-		background-color: var(--accent-muted);
-		border-color: var(--accent);
-	}
-
-	.toggle-input:checked + .toggle-switch::after {
-		transform: translateX(18px);
-		background-color: var(--accent);
-	}
-
-	/* Actions */
-	.actions-row {
+	/* Delivery log */
+	.log-list {
 		display: flex;
-		gap: var(--space-md);
+		flex-direction: column;
+		gap: 2px;
+		margin-top: var(--space-sm);
+	}
+
+	.log-entry {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-sm);
+		font-size: var(--text-sm);
+		border-radius: var(--radius-sm);
+	}
+
+	.log-success {
+		background: color-mix(in srgb, var(--status-success) 10%, transparent);
+	}
+
+	.log-failure {
+		background: color-mix(in srgb, var(--status-critical) 10%, transparent);
+	}
+
+	.log-status {
+		font-weight: 700;
+		font-size: var(--text-xs);
+		min-width: 32px;
+	}
+
+	.log-success .log-status { color: var(--status-success); }
+	.log-failure .log-status { color: var(--status-critical); }
+
+	.log-channel {
+		font-weight: 600;
+		min-width: 60px;
+		text-transform: uppercase;
+		font-size: var(--text-xs);
+		color: var(--text-secondary);
+	}
+
+	.log-title {
+		flex: 1;
+		color: var(--text-primary);
+	}
+
+	.log-time {
+		color: var(--text-muted);
+		font-size: var(--text-xs);
 	}
 
 	@media (max-width: 640px) {
-		.smtp-grid {
-			grid-template-columns: 1fr;
+		.channel-item, .rule-item {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: var(--space-sm);
 		}
 
-		.actions-row {
-			flex-direction: column;
+		.channel-actions {
+			width: 100%;
 		}
 	}
 </style>
