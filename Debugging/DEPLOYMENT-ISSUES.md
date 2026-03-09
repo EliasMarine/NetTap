@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-07
-> **Status:** 41 issues tracked. 41 RESOLVED. Latest: pcap-capture restart loop (usermod root PID 1), nginx-proxy healthcheck (arkime upstream on host networking), nettap.service boot persistence, nettap-nginx SSL key permissions, OpenSearch security bootstrap script. Daemon tests: 1175 passing. Web tests: 24 tools API tests passing. 18/18 containers healthy on N100.
+> **Last updated:** 2026-03-09
+> **Status:** 44 issues tracked. 44 RESOLVED. Latest: full-stack-test.sh missing nginx recreate (upstream DNS stale after web recreate), PyYAML missing from daemon requirements.txt (suricata_rules.py crash), daemon port 8880 expose-only (not published — use docker exec for API tests). Daemon tests: 1175 passing. Web tests: 24 tools API tests passing. 18/18 containers healthy on N100. Full-stack test: 59/59 passing.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -115,6 +115,30 @@ CHAIN 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence
   pcap-capture: usermod root PID 1 crash. nginx-proxy: arkime:8005 upstream unresolvable.
   nettap-nginx: SSL key permission denied. OpenSearch: security not initialized.
   nettap.service: no systemd unit for boot persistence.
+
+CHAIN 16: Mirror/SPAN Full-Stack Test Issues (phase-5/mirror-span-mode)
+  Commit f6b40b5
+  1. Daemon crash-loop: PyYAML missing from requirements.txt (suricata_rules.py imports yaml).
+  2. Full-stack test HTTP 000 on all API checks: port 8880 is Docker `expose` only (internal),
+     not `ports` published. Fix: use `docker exec` to curl from inside daemon container.
+  3. Full-stack test script dies mid-way: `set -euo pipefail` kills on first non-zero. Fix: remove set -e.
+  4. $HOME resolves to /root under sudo: hard-coded NETTAP_DIR=/home/nettap/NetTap.
+  5. Web UI unchanged after rebuild: only daemon was rebuilt, not nettap-web. Fix: rebuild both.
+  6. Nav items invisible: new sidebar entries referenced icon names with no SVG paths. Fix: added 8 SVG icon paths.
+  7. Web checks fail HTTP 301: nginx HTTP→HTTPS redirect not in accepted codes. Fix: accept 301.
+  8. Nginx stale upstream after web recreate: full-stack script only recreated daemon+web, not nginx.
+     Fix: added nettap-nginx to `docker compose up -d ... --force-recreate`.
+  9. OpenSearch _cat/indices returns empty: wrong auth credentials (-u admin:admin). Must use curlrc.
+  10. OpenSearch queries via curl return empty with http://: daemon uses https://opensearch:9200
+      (set via OPENSEARCH_URL env var). Must use https:// + --insecure for all manual queries.
+  11. Dashboard pages (traffic, devices, bandwidth, DNS, IoT, live) all show zeros despite 15M+
+      docs in OpenSearch: ALL dashboard queries filter on event.dataset=conn (Zeek connection logs).
+      Root cause: ZEEK_JSON env var missing from zeek-live service in docker-compose.yml.
+      Zeek's local.zeek checks `getenv("ZEEK_JSON")` — without it, Zeek outputs TSV format
+      instead of JSON. Logstash can't parse TSV → conn/dns/http/tls logs land in broken
+      `%{[@metadata][malcolm_opensearch_index]}` index (124K orphaned docs) or get dropped entirely.
+      Metadata logs (known_hosts, etc.) use a different code path that works without JSON.
+      Fix: Added `ZEEK_JSON: "true"` to zeek-live environment in docker-compose.yml.
 ```
 
 ---

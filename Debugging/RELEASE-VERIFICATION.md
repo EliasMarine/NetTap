@@ -1,7 +1,7 @@
 # NetTap v1.0.0 Release Verification — Source of Truth
 
-> **Last updated:** 2026-03-07
-> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete — 18/18 containers healthy.** pcap-capture fixed (PUSER=root + SYS_ADMIN cap_add), nginx-proxy fixed (healthcheck :9200), nettap-nginx SSL fixed, OpenSearch security re-bootstrapped, boot persistence via nettap.service. Daemon tests: 1175 passing. Web tools tests: 24 passing.
+> **Last updated:** 2026-03-09
+> **Status:** 16/17 checks verified across 2 environments (Dev + N100) — ALL automated checks PASS. Hardware checks (H1–H7) in progress. **H1 near-complete — 18/18 containers healthy.** Full-stack test (full-stack-test.sh) 59/59 passing — covers all Mirror/SPAN API endpoints + web UI pages. Data pipeline: capture containers running but capture mode unconfigured (0 data in OpenSearch). Daemon tests: 1175 passing. Web tools tests: 24 passing.
 > **Target:** v1.0.0
 
 This document tracks every verification test run, its environment, results, and what's still outstanding. It is the **single source of truth** for release readiness — consult it before any release-related work and update it after every test run.
@@ -152,6 +152,8 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-03-07 | N100 (Ubuntu) | H1: OpenSearch security | **FIXED** | — | — | — | Elias | OpenSearch security not initialized after recreate. Fix: ran fix-opensearch.sh (roles_mapping.yml + securityadmin.sh). All services authenticated. |
 | 2026-03-07 | N100 (Ubuntu) | H1: Boot persistence | **VERIFIED** | — | — | — | Elias | nettap.service systemd unit installed and enabled. Docker stack auto-starts on reboot. |
 | 2026-03-07 | N100 (Ubuntu) | H1: netsniff-ng EPERM fix | **FIXED** | — | — | — | Elias | netsniff-ng had file capabilities (`cap_sys_admin=eip`) exceeding container bounding set. Initial fix (SETFCAP + `setcap -r`) returned exit 0 but was a no-op on overlay2 — xattrs from image layers persist through overlay. Working fix: added `SYS_ADMIN` to pcap-capture `cap_add` so bounding set covers all file caps. Removed useless `setcap -r`. Acceptable: pcap-capture already runs as root with network_mode: host. |
+| 2026-03-09 | N100 (Ubuntu) | Full-stack test (Mirror/SPAN) | **ALL PASSED** | 59 | 0 | 0 | Elias | full-stack-test.sh: 59/59 checks pass. Covers: 6 core API, 4 capture mode API (503 expected), SMART, storage, device registry, live connections, bandwidth, DNS, IoT/LAN, notifications, changelog, certificates, MAC, PCAP, backup, suricata rules, 12 web UI pages, OpenSearch health. Fixed during testing: PyYAML missing, docker exec for internal APIs, nginx recreate, HTTP 301 acceptance. |
+| 2026-03-09 | N100 (Ubuntu) | Data pipeline verification | **PARTIAL** | — | — | — | Elias | OpenSearch has 15M+ docs across 7 arkime_sessions3-* indices. Suricata working: 1.3M alerts/day. Zeek PARTIALLY broken: produces metadata logs (known_hosts=8660, known_services=6160, known_certs=731, x509=301) but ZERO conn/dns/http/tls logs on March 9. Older indices (260305-260308) have millions of conn logs. Bridge reconfiguration likely broke Zeek's capture interface. All dashboard pages that query event.dataset=conn return zeros. Log Explorer and Alerts pages work (query all datasets / suricata alerts respectively). |
 
 ---
 

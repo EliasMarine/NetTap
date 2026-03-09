@@ -97,7 +97,7 @@ check_web() {
     local desc="$2"
     local status
     status=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo "000")
-    if [ "$status" = "200" ] || [ "$status" = "302" ] || [ "$status" = "303" ]; then
+    if [ "$status" = "200" ] || [ "$status" = "301" ] || [ "$status" = "302" ] || [ "$status" = "303" ]; then
         green "$desc (HTTP $status)"
         PASS=$((PASS + 1))
     else
@@ -156,8 +156,8 @@ docker compose -f "$COMPOSE_FILE" build nettap-storage-daemon nettap-web || {
 }
 echo ""
 
-blue "Recreating daemon + web containers..."
-docker compose -f "$COMPOSE_FILE" up -d nettap-storage-daemon nettap-web --force-recreate || {
+blue "Recreating daemon + web + nginx containers..."
+docker compose -f "$COMPOSE_FILE" up -d nettap-storage-daemon nettap-web nettap-nginx --force-recreate || {
     red "Docker up failed!"
     FAIL=$((FAIL + 1))
     ERRORS="${ERRORS}\n  - Docker up failed"
