@@ -349,51 +349,27 @@ curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
 
 This applies to all deployment, testing, debugging, and diagnostic instructions.
 
-**When there are multiple sequential commands, chain them into a single copy-paste block** using `&&` and `\` line continuations. The user should be able to paste ONE block and walk away. Never give 5 separate code blocks when one chained block works.
+**When there are multiple sequential commands for the remote device, ALWAYS write them as a script file in `scripts/remote/`.** Multi-line commands with `\` and `&&` chains BREAK when copy-pasted into SSH terminals. This has caused repeated problems and wasted time.
 
-Example — **BAD:**
-```bash
-git pull origin phase-4/webui-v2
-```
-```bash
-sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
-```
-```bash
-sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate
-```
-
-Example — **GOOD:**
+Example — **BAD (inline commands — NEVER DO THIS):**
 ```bash
 cd ~/NetTap && \
 git pull origin phase-4/webui-v2 && \
 sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon && \
-sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate && \
-sleep 10 && \
-echo "=== Verify ===" && \
-sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep daemon
-```
-
-**Test/verification commands must include the FULL deployment flow.** Never give bare test commands (e.g. `docker exec ... nsenter`) without the prerequisite steps a normal user needs to run first. Always include: pull latest code → build affected container(s) → recreate/restart → then test.
-
-Example — **BAD:**
-```bash
-# Test nsenter works:
-sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
-```
-
-Example — **GOOD:**
-```bash
-# Pull latest and rebuild
-cd ~/NetTap
-sudo git pull origin develop
-sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
 sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate
+```
 
-# Verify container is healthy
-sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep daemon
+Example — **GOOD (write a script, tell user to run it):**
+Write the commands into `scripts/remote/deploy-daemon.sh`, push to git, then tell user:
+```bash
+sudo bash scripts/remote/deploy-daemon.sh
+```
 
-# Test nsenter works
-sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
+**Every remote script must include the FULL workflow.** Pull code → build → deploy → wait → verify. The user runs ONE command and walks away.
+
+**The only exception** is single, short commands (one line, no chaining):
+```bash
+sudo docker logs nettap-storage-daemon --tail 50
 ```
 
 ---
@@ -405,9 +381,12 @@ sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
 ### Rules for Claude Code
 
 1. **Never assume commands can run on the NetTap device from this machine.** All deployment, debugging, and diagnostic commands are copy-pasted by the user over SSH.
-2. **Long command chains MUST be written to `scripts/remote/` as `.sh` files** instead of given inline in chat. The user will copy the file contents and paste into a new file on the NetTap device. This prevents copy-paste formatting issues (broken YAML, mangled `\n`, heredoc problems).
-3. **Each remote script must be self-contained and idempotent** — include `set -euo pipefail`, echo progress markers, and verify results at the end.
-4. **Keep inline commands short** (1-3 simple commands max). Anything longer goes in a script file.
+2. **NEVER give multi-line commands with `\` continuations or `&&` chains for the remote device.** They ALWAYS break when copy-pasted into SSH terminals (trailing spaces after `\` become escaped spaces, `&&` chains fail silently). This has caused repeated frustration.
+3. **ALL remote commands MUST be written as self-contained `.sh` script files in `scripts/remote/`.** No exceptions. Even 2-3 commands go in a script. The user will `git pull` to get the script onto the device (or copy-paste the script contents into a file), then run `sudo bash scripts/remote/<script>.sh`.
+4. **Every remote script must include the full workflow.** Pull latest code, build containers, deploy, wait for startup, then run the actual task. The user runs ONE script and walks away. Never separate "deploy" and "test" into different steps.
+5. **Each remote script must be self-contained and idempotent** — include progress markers (`echo "→ Step..."`), error handling (no `set -e`, use per-command `|| true` or explicit error messages), and verify results at the end.
+6. **The ONLY inline command allowed is the script runner itself:** `sudo bash scripts/remote/<script>.sh`
+7. **If the user needs to get the script onto the device first** (before `git pull` works), provide the script contents in a single code block they can paste into `cat > script.sh << 'SCRIPT' ... SCRIPT`.
 
 ---
 
