@@ -148,24 +148,24 @@ git checkout phase-5/mirror-span-mode 2>/dev/null || true
 git pull origin phase-5/mirror-span-mode || true
 echo ""
 
-blue "Rebuilding daemon container..."
-docker compose -f "$COMPOSE_FILE" build nettap-storage-daemon || {
+blue "Rebuilding daemon + web containers..."
+docker compose -f "$COMPOSE_FILE" build nettap-storage-daemon nettap-web || {
     red "Docker build failed!"
     FAIL=$((FAIL + 1))
     ERRORS="${ERRORS}\n  - Docker build failed"
 }
 echo ""
 
-blue "Recreating daemon container..."
-docker compose -f "$COMPOSE_FILE" up -d nettap-storage-daemon --force-recreate || {
+blue "Recreating daemon + web containers..."
+docker compose -f "$COMPOSE_FILE" up -d nettap-storage-daemon nettap-web --force-recreate || {
     red "Docker up failed!"
     FAIL=$((FAIL + 1))
     ERRORS="${ERRORS}\n  - Docker up failed"
 }
 echo ""
 
-blue "Waiting 20s for daemon to start..."
-sleep 20
+blue "Waiting 25s for daemon + web to start..."
+sleep 25
 
 # Quick crash-loop check — if daemon is restarting, show logs and warn
 DAEMON_STATUS=$(docker ps --format '{{.Status}}' --filter "name=^${DAEMON_CONTAINER}$" 2>/dev/null || echo "")

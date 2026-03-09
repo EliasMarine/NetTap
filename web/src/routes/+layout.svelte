@@ -29,6 +29,9 @@
 		{ href: '/bandwidth', label: 'Bandwidth', icon: 'bar-chart-2' },
 		{ href: '/dns', label: 'DNS Analytics', icon: 'globe' },
 		{ href: '/iot', label: 'IoT & LAN', icon: 'shield' },
+		{ href: '/changelog', label: 'Changelog', icon: 'clock' },
+		{ href: '/certificates', label: 'Certificates', icon: 'lock' },
+		{ href: '/pcap', label: 'PCAP Search', icon: 'download' },
 		{ href: '/tools', label: 'Tools', icon: 'tool' },
 		{ href: '/infrastructure', label: 'Infrastructure', icon: 'server' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' },
@@ -116,6 +119,22 @@
 								<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" />
 							{:else if item.icon === 'link'}
 								<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+							{:else if item.icon === 'activity'}
+								<polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
+							{:else if item.icon === 'bar-chart-2'}
+								<line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
+							{:else if item.icon === 'globe'}
+								<circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
+							{:else if item.icon === 'shield'}
+								<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+							{:else if item.icon === 'clock'}
+								<circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" />
+							{:else if item.icon === 'lock'}
+								<rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" />
+							{:else if item.icon === 'file-text'}
+								<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" />
+							{:else if item.icon === 'download'}
+								<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7,10 12,15 17,10" /><line x1="12" y1="15" x2="12" y2="3" />
 							{:else if item.icon === 'tool'}
 								<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
 							{:else if item.icon === 'server'}
