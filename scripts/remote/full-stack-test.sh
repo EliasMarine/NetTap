@@ -64,14 +64,16 @@ check() {
 # Daemon API check — runs curl INSIDE the daemon container via docker exec.
 # This is required because port 8880 is only exposed within the Docker
 # network (not published to the host).
+# Optional 3rd arg: space-separated acceptable status codes (default: "200")
 check_api() {
     local desc="$1"
     local endpoint="$2"
+    local accept="${3:-200}"
     local status
     status=$(docker exec "$DAEMON_CONTAINER" \
         curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
         "${DAEMON_URL}${endpoint}" 2>/dev/null || echo "000")
-    if [ "$status" = "200" ]; then
+    if echo " $accept " | grep -q " $status "; then
         green "$desc (HTTP $status)"
         PASS=$((PASS + 1))
     else
@@ -89,12 +91,13 @@ api_json() {
 }
 
 # Web UI check — goes through nginx (published on 80/443)
+# Accepts 200 and 302 (redirect to /setup or /login means app is alive and routing)
 check_web() {
     local url="$1"
     local desc="$2"
     local status
     status=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo "000")
-    if [ "$status" = "200" ]; then
+    if [ "$status" = "200" ] || [ "$status" = "302" ] || [ "$status" = "303" ]; then
         green "$desc (HTTP $status)"
         PASS=$((PASS + 1))
     else
@@ -230,10 +233,11 @@ check_api "GET /api/system/health" "/api/system/health"
 
 header "4. CAPTURE MODE API (Phase A)"
 
-check_api "GET /api/capture/mode" "/api/capture/mode"
-check_api "GET /api/capture/health" "/api/capture/health"
-check_api "GET /api/capture/stats" "/api/capture/stats"
-check_api "GET /api/capture/interface" "/api/capture/interface"
+# 503 = capture mode not configured yet (expected on fresh device)
+check_api "GET /api/capture/mode" "/api/capture/mode" "200 503"
+check_api "GET /api/capture/health" "/api/capture/health" "200 503"
+check_api "GET /api/capture/stats" "/api/capture/stats" "200 503"
+check_api "GET /api/capture/interface" "/api/capture/interface" "200 503"
 
 blue "Current capture mode:"
 api_json "/api/capture/mode" | pjson
