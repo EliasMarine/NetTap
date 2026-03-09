@@ -5,13 +5,21 @@
 # Run on the NetTap device after deploying. Tests all services, APIs, and
 # new features end-to-end.
 #
+# Architecture note: The daemon API (port 8880) is internal to the Docker
+# network — NOT published to the host. All daemon API checks use
+# `docker exec` to curl from inside the container. Web UI checks go
+# through nginx (ports 80/443), which is the only published entry point.
+#
 # Usage: sudo bash full-stack-test.sh
 # =============================================================================
 
 # Do NOT use set -e — we want the script to keep running through failures
 set -uo pipefail
 
-# Resolve NETTAP_DIR: prefer explicit env, then ~nettap/NetTap, then fallback
+# ---------------------------------------------------------------------------
+# Resolve paths
+# ---------------------------------------------------------------------------
+
 if [ -z "${NETTAP_DIR:-}" ]; then
     if [ -d "/home/nettap/NetTap" ]; then
         NETTAP_DIR="/home/nettap/NetTap"
@@ -24,7 +32,8 @@ if [ -z "${NETTAP_DIR:-}" ]; then
 fi
 
 COMPOSE_FILE="${NETTAP_DIR}/docker/docker-compose.yml"
-API_BASE="http://localhost:8880"
+DAEMON_CONTAINER="nettap-storage-daemon"
+DAEMON_URL="http://localhost:8880"
 PASS=0
 FAIL=0
 SKIP=0
@@ -52,11 +61,16 @@ check() {
     fi
 }
 
+# Daemon API check — runs curl INSIDE the daemon container via docker exec.
+# This is required because port 8880 is only exposed within the Docker
+# network (not published to the host).
 check_api() {
     local desc="$1"
     local endpoint="$2"
     local status
-    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${API_BASE}${endpoint}" 2>/dev/null || echo "000")
+    status=$(docker exec "$DAEMON_CONTAINER" \
+        curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        "${DAEMON_URL}${endpoint}" 2>/dev/null || echo "000")
     if [ "$status" = "200" ]; then
         green "$desc (HTTP $status)"
         PASS=$((PASS + 1))
@@ -67,11 +81,19 @@ check_api() {
     fi
 }
 
+# Fetch JSON from daemon API via docker exec, pretty-print with python3
+api_json() {
+    local endpoint="$1"
+    docker exec "$DAEMON_CONTAINER" \
+        curl -s --max-time 5 "${DAEMON_URL}${endpoint}" 2>/dev/null
+}
+
+# Web UI check — goes through nginx (published on 80/443)
 check_web() {
     local url="$1"
     local desc="$2"
     local status
-    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo "000")
+    status=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo "000")
     if [ "$status" = "200" ]; then
         green "$desc (HTTP $status)"
         PASS=$((PASS + 1))
@@ -94,7 +116,7 @@ header() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
-# Print JSON via python, swallow errors
+# Pretty-print JSON via python3
 pjson() {
     python3 -m json.tool 2>/dev/null || echo "  (could not parse)"
 }
@@ -139,16 +161,16 @@ docker compose -f "$COMPOSE_FILE" up -d nettap-storage-daemon --force-recreate |
 }
 echo ""
 
-blue "Waiting 15s for daemon to start..."
-sleep 15
+blue "Waiting 20s for daemon to start..."
+sleep 20
 
 # Quick crash-loop check — if daemon is restarting, show logs and warn
-DAEMON_STATUS=$(docker ps --format '{{.Status}}' --filter name=nettap-storage-daemon 2>/dev/null || echo "")
+DAEMON_STATUS=$(docker ps --format '{{.Status}}' --filter "name=^${DAEMON_CONTAINER}$" 2>/dev/null || echo "")
 if echo "$DAEMON_STATUS" | grep -qi "restarting"; then
     echo ""
-    red "DAEMON IS CRASH-LOOPING — last 20 log lines:"
+    red "DAEMON IS CRASH-LOOPING — last 30 log lines:"
     echo "────────────────────────────────────────"
-    docker logs nettap-storage-daemon --tail 20 2>&1 || true
+    docker logs "$DAEMON_CONTAINER" --tail 30 2>&1 || true
     echo "────────────────────────────────────────"
     echo ""
     red "Fix the daemon crash before API tests can pass."
@@ -167,17 +189,26 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "nettap
 echo ""
 
 check "Daemon container running (not restarting)" \
-    "docker ps --format '{{.Names}}\t{{.Status}}' | grep nettap-storage-daemon | grep -qv Restarting"
+    "docker ps --format '{{.Names}}\t{{.Status}}' | grep $DAEMON_CONTAINER | grep -qv Restarting"
 check "OpenSearch container running" \
     "docker ps --format '{{.Names}}' | grep -q nettap-opensearch"
 
-# Capture containers (optional — may not be configured)
+# Capture containers (optional)
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "zeek-live|suricata-live"; then
     check "Zeek container running" "docker ps --format '{{.Names}}' | grep -q zeek-live"
     check "Suricata container running" "docker ps --format '{{.Names}}' | grep -q suricata-live"
 else
     skip_check "Capture containers not running (expected if bridge/mirror not configured)"
-    SKIP=$((SKIP + 1))  # count as 2 skips total (skip_check adds 1)
+    SKIP=$((SKIP + 1))
+fi
+
+# Verify curl is available inside daemon container
+if ! docker exec "$DAEMON_CONTAINER" which curl >/dev/null 2>&1; then
+    echo ""
+    red "curl not found in daemon container — Dockerfile needs 'curl' in apt-get install."
+    red "All API checks will fail. Rebuild with updated Dockerfile."
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}\n  - curl missing from daemon container"
 fi
 
 # ---------------------------------------------------------------------------
@@ -205,7 +236,7 @@ check_api "GET /api/capture/stats" "/api/capture/stats"
 check_api "GET /api/capture/interface" "/api/capture/interface"
 
 blue "Current capture mode:"
-curl -s --max-time 5 "${API_BASE}/api/capture/mode" 2>/dev/null | pjson
+api_json "/api/capture/mode" | pjson
 
 # ---------------------------------------------------------------------------
 # 5. SMART Health (Phase B)
@@ -214,7 +245,7 @@ curl -s --max-time 5 "${API_BASE}/api/capture/mode" 2>/dev/null | pjson
 header "5. SMART HEALTH (Phase B)"
 
 blue "SMART health data:"
-curl -s --max-time 5 "${API_BASE}/api/smart/health" 2>/dev/null | python3 -c "
+api_json "/api/smart/health" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -232,7 +263,7 @@ except: print('  (could not parse)')
 header "6. STORAGE HARDENING (Phase C)"
 
 blue "Disk usage:"
-curl -s --max-time 5 "${API_BASE}/api/storage/status" 2>/dev/null | python3 -c "
+api_json "/api/storage/status" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -254,7 +285,7 @@ check_api "GET /api/devices/registry" "/api/devices/registry"
 check_api "GET /api/integrations/unifi/status" "/api/integrations/unifi/status"
 
 blue "Discovered devices:"
-curl -s --max-time 5 "${API_BASE}/api/devices/registry?limit=10" 2>/dev/null | python3 -c "
+api_json "/api/devices/registry?limit=10" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -277,7 +308,7 @@ check_api "GET /api/live/connections" "/api/live/connections"
 check_api "GET /api/live/rate" "/api/live/rate"
 
 blue "Connection rate:"
-curl -s --max-time 5 "${API_BASE}/api/live/rate" 2>/dev/null | pjson
+api_json "/api/live/rate" | pjson
 
 # ---------------------------------------------------------------------------
 # 9. Bandwidth (Phase G)
@@ -374,7 +405,7 @@ check_api "GET /api/suricata/rules/stats" "/api/suricata/rules/stats"
 check_api "GET /api/suricata/rules/schedule" "/api/suricata/rules/schedule"
 
 blue "Rule sources:"
-curl -s --max-time 5 "${API_BASE}/api/suricata/rules/sources" 2>/dev/null | python3 -c "
+api_json "/api/suricata/rules/sources" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -386,26 +417,25 @@ except: print('  (could not parse)')
 " 2>/dev/null || echo "  (daemon unreachable)"
 
 # ---------------------------------------------------------------------------
-# 19. Web UI
+# 19. Web UI (through nginx on ports 80/443)
 # ---------------------------------------------------------------------------
 
-header "19. WEB UI"
+header "19. WEB UI (via nginx)"
 
-# Try common web ports: 3000 (nettap-web container), 80/443 (nginx), 5173 (dev)
+# Nginx is the only published entry point (ports 80/443).
+# Try HTTPS first (self-signed cert, so use -k), then HTTP.
 WEB_URL=""
-for port in 3000 80 443 5173; do
-    proto="http"
-    [ "$port" = "443" ] && proto="https"
-    if curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "${proto}://localhost:${port}" 2>/dev/null | grep -q "200"; then
-        WEB_URL="${proto}://localhost:${port}"
-        blue "Web UI detected on port ${port}"
+for candidate in "https://localhost" "http://localhost"; do
+    status=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 "$candidate" 2>/dev/null || echo "000")
+    if [ "$status" = "200" ] || [ "$status" = "302" ] || [ "$status" = "301" ]; then
+        WEB_URL="$candidate"
+        blue "Web UI reachable at ${WEB_URL} (HTTP $status)"
         break
     fi
 done
 
 if [ -n "$WEB_URL" ]; then
-    CURL_FLAGS="-sk --max-time 5"
-    check_web "$WEB_URL" "Web UI root"
+    check_web "$WEB_URL/" "Web UI root"
     check_web "$WEB_URL/live" "Live connections page"
     check_web "$WEB_URL/bandwidth" "Bandwidth page"
     check_web "$WEB_URL/dns" "DNS analytics page"
@@ -418,8 +448,8 @@ if [ -n "$WEB_URL" ]; then
     check_web "$WEB_URL/settings/suricata-rules" "Suricata rules settings"
     check_web "$WEB_URL/setup" "Setup wizard"
 else
-    skip_check "Web UI not reachable on ports 3000/80/443/5173"
-    SKIP=$((SKIP + 11))  # skip_check adds 1, plus 11 more
+    skip_check "Web UI not reachable via nginx (ports 80/443)"
+    SKIP=$((SKIP + 11))
 fi
 
 # ---------------------------------------------------------------------------
@@ -461,7 +491,7 @@ header "21. DAEMON LOG TAIL"
 
 blue "Last 15 daemon log lines:"
 echo "────────────────────────────────────────"
-docker logs nettap-storage-daemon --tail 15 2>&1 || echo "  (could not fetch logs)"
+docker logs "$DAEMON_CONTAINER" --tail 15 2>&1 || echo "  (could not fetch logs)"
 echo "────────────────────────────────────────"
 
 # ---------------------------------------------------------------------------

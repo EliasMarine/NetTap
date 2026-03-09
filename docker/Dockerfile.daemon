@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     traceroute \
     iputils-ping \
     openssl \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/nettap/daemon
