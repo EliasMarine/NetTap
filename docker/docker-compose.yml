@@ -346,6 +346,7 @@ services:
     environment:
       <<: *process-env
       ZEEK_LIVE_CAPTURE: "true"
+      ZEEK_JSON: "true"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
       ZEEK_LOG_PATH: "/zeek/live"
