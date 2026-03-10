@@ -132,6 +132,14 @@ _LOG_TYPE_LABELS = {
     "files": "Files", "dhcp": "DHCP", "smtp": "SMTP", "alert": "Suricata",
 }
 
+# Exclude Suricata alerts from log explorer aggregations (they have their own page)
+_EXCLUDE_ALERTS_FILTER = {"must_not": [{"term": {"event.dataset": "alert"}}]}
+
+# Exclude Zeek internal noise from DNS aggregations
+_EXCLUDE_DNS_NOISE = [
+    {"term": {"zeek.dns.query.keyword": "pcap-monitor"}},
+]
+
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Parse and validate from/to time range from query params."""
@@ -266,7 +274,8 @@ async def handle_log_stats(request: web.Request) -> web.Response:
         "track_total_hits": True,
         "query": {
             "bool": {
-                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
+                **_EXCLUDE_ALERTS_FILTER,
             }
         },
         "aggs": {
@@ -316,7 +325,8 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
         "size": 0,
         "query": {
             "bool": {
-                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
+                **_EXCLUDE_ALERTS_FILTER,
             }
         },
         "aggs": {
@@ -372,7 +382,8 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
         "size": 0,
         "query": {
             "bool": {
-                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
+                **_EXCLUDE_ALERTS_FILTER,
             }
         },
         "aggs": {
@@ -408,7 +419,8 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
         "size": 0,
         "query": {
             "bool": {
-                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
+                **_EXCLUDE_ALERTS_FILTER,
             }
         },
         "aggs": {
@@ -453,7 +465,8 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
         "size": 0,
         "query": {
             "bool": {
-                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
+                **_EXCLUDE_ALERTS_FILTER,
             }
         },
         "aggs": {
@@ -496,6 +509,7 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "dns"}},
                 ],
+                "must_not": _EXCLUDE_DNS_NOISE,
             }
         },
         "aggs": {

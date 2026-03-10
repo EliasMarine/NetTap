@@ -101,7 +101,8 @@
 	]);
 
 	// Protocol types used for timeline stacking (order matters for visual stacking)
-	const PROTOCOL_KEYS = ['conn', 'dns', 'http', 'ssl', 'files', 'dhcp', 'smtp', 'alert'] as const;
+	// Alert data is excluded from log explorer aggregations (has its own Alerts page)
+	const PROTOCOL_KEYS = ['conn', 'dns', 'http', 'ssl', 'files', 'dhcp', 'smtp'] as const;
 
 	// ---------------------------------------------------------------------------
 	// State
