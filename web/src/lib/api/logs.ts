@@ -240,23 +240,23 @@ export function formatCompactNumber(n: number): string {
 export function protocolColor(protocol: string): string {
 	switch (protocol) {
 		case 'conn':
-			return 'var(--cyan)';
+			return '#00b8d4';
 		case 'dns':
-			return 'var(--green)';
+			return '#00e676';
 		case 'http':
-			return 'var(--orange)';
+			return '#ff9100';
 		case 'ssl':
-			return 'var(--purple)';
+			return '#aa66ff';
 		case 'files':
-			return 'var(--yellow, #ffd600)';
+			return '#ffd600';
 		case 'dhcp':
-			return 'var(--pink, #ff80ab)';
+			return '#ff4081';
 		case 'smtp':
-			return 'var(--teal, #64ffda)';
+			return '#18ffff';
 		case 'alert':
-			return 'var(--red)';
+			return '#ff1744';
 		default:
-			return 'var(--text-muted)';
+			return '#888';
 	}
 }
 

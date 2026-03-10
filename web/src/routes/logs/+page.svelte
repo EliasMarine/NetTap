@@ -148,6 +148,8 @@
 	// Chart interaction
 	let hoveredBarIndex = $state<number | null>(null);
 	let chartWidth = $state(800);
+	let tooltipX = $state(0);
+	let tooltipBucket = $state<LogTimelineBucket | null>(null);
 
 	// ---------------------------------------------------------------------------
 	// Derived
@@ -605,7 +607,7 @@
 			onclick={() => document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Total Events</span>
-			<span class="stat-value">{formatCompactNumber(totalEvents)}</span>
+			<span class="stat-value text-white">{formatCompactNumber(totalEvents)}</span>
 			<span class="stat-hint">All log entries in range</span>
 		</button>
 		<button
@@ -651,78 +653,72 @@
 		</div>
 		<div class="chart-wrapper" bind:clientWidth={chartWidth}>
 			{#if timeline.length > 0}
-				<svg viewBox="0 0 {chartWidth} 220" width="100%" height="220">
-					<!-- Grid lines -->
-					{#each [0, 0.25, 0.5, 0.75, 1] as frac}
-						<line
-							x1="50" y1={200 - frac * 180}
-							x2={chartWidth} y2={200 - frac * 180}
-							stroke="var(--border-default)" stroke-width="0.5" opacity="0.4"
-						/>
-						<text x="45" y={200 - frac * 180 + 4} text-anchor="end"
-							fill="var(--text-muted)" font-size="10">
-							{formatCompactNumber(Math.round(maxBucketTotal * frac))}
-						</text>
-					{/each}
-
-					<!-- Stacked bars -->
-					{#each timeline as bucket, i}
-						{@const barW = Math.max(2, (chartWidth - 60) / timeline.length - 2)}
-						{@const x = 55 + i * ((chartWidth - 60) / timeline.length)}
-						{@const isHovered = hoveredBarIndex === i}
-
-						<!-- Compute stacked heights -->
-						{@const heights = PROTOCOL_KEYS.map((k) => ((bucket[k] || 0) / maxBucketTotal) * 180)}
-						{@const totalH = heights.reduce((a, b) => a + b, 0)}
-
-						<g
-							role="img"
-							onmouseenter={() => (hoveredBarIndex = i)}
-							onmouseleave={() => (hoveredBarIndex = null)}
-							style="cursor: pointer;"
-						>
-							<!-- Background bar for hover -->
-							<rect
-								x={x} y={200 - totalH} width={barW} height={totalH}
-								fill="transparent"
+				<div class="chart-container">
+					<svg role="img" aria-label="Activity timeline chart" viewBox="0 0 {chartWidth} 220" width="100%" height="220"
+						onmouseleave={() => { hoveredBarIndex = null; tooltipBucket = null; }}>
+						<!-- Grid lines -->
+						{#each [0, 0.25, 0.5, 0.75, 1] as frac}
+							<line
+								x1="50" y1={200 - frac * 180}
+								x2={chartWidth} y2={200 - frac * 180}
+								stroke="var(--border-default)" stroke-width="0.5" opacity="0.4"
 							/>
-							<!-- Stacked segments (bottom to top) -->
-							{#each PROTOCOL_KEYS as pk, j}
-								{@const h = heights[j]}
-								{@const yOffset = heights.slice(j + 1).reduce((a, b) => a + b, 0)}
-								{#if h > 0}
-									<rect
-										role="button"
-										tabindex="-1"
-										x={x} y={200 - yOffset - h} width={barW} height={h}
-										fill={protocolColor(pk)}
-										opacity={isHovered ? 1 : 0.8}
-										rx="1"
-										onclick={() => drillByProtocol(pk)}
-										onkeydown={(e) => { if (e.key === 'Enter') drillByProtocol(pk); }}
-									/>
-								{/if}
-							{/each}
-						</g>
+							<text x="45" y={200 - frac * 180 + 4} text-anchor="end"
+								fill="var(--text-muted)" font-size="10">
+								{formatCompactNumber(Math.round(maxBucketTotal * frac))}
+							</text>
+						{/each}
 
-						<!-- Hover tooltip -->
-						{#if isHovered}
-							<g transform="translate({Math.min(x, chartWidth - 160)}, 5)">
-								<rect x="0" y="0" width="150" height={30 + PROTOCOL_KEYS.filter((k) => (bucket[k] || 0) > 0).length * 14}
-									fill="var(--bg-elevated)" stroke="var(--border-default)" rx="4" opacity="0.95" />
-								<text x="8" y="16" fill="var(--text-primary)" font-size="11" font-weight="600">
-									{formatShortTimestamp(bucket.timestamp)}
-								</text>
-								{#each PROTOCOL_KEYS.filter((k) => (bucket[k] || 0) > 0) as pk, ti}
-									<circle cx="12" cy={30 + ti * 14} r="3" fill={protocolColor(pk)} />
-									<text x="20" y={34 + ti * 14} fill="var(--text-secondary)" font-size="10">
-										{protocolLabel(pk)}: {(bucket[pk] || 0).toLocaleString()}
-									</text>
+						<!-- Stacked bars -->
+						{#each timeline as bucket, i}
+							{@const barW = Math.max(2, (chartWidth - 60) / timeline.length - 2)}
+							{@const x = 55 + i * ((chartWidth - 60) / timeline.length)}
+
+							<!-- Compute stacked heights -->
+							{@const heights = PROTOCOL_KEYS.map((k) => ((bucket[k] || 0) / maxBucketTotal) * 180)}
+							{@const totalH = heights.reduce((a, b) => a + b, 0)}
+
+							<g
+								role="img"
+								onmouseenter={() => { hoveredBarIndex = i; tooltipX = x; tooltipBucket = bucket; }}
+								style="cursor: pointer;"
+							>
+								<!-- Invisible full-height hitbox for smooth hovering -->
+								<rect x={x} y="0" width={barW} height="200" fill="transparent" />
+								<!-- Stacked segments (bottom to top) -->
+								{#each PROTOCOL_KEYS as pk, j}
+									{@const h = heights[j]}
+									{@const yOffset = heights.slice(j + 1).reduce((a, b) => a + b, 0)}
+									{#if h > 0}
+										<rect
+											role="button"
+											tabindex="-1"
+											x={x} y={200 - yOffset - h} width={barW} height={h}
+											fill={protocolColor(pk)}
+											rx="1"
+											onclick={() => drillByProtocol(pk)}
+											onkeydown={(e) => { if (e.key === 'Enter') drillByProtocol(pk); }}
+										/>
+									{/if}
 								{/each}
 							</g>
-						{/if}
-					{/each}
-				</svg>
+						{/each}
+					</svg>
+
+					<!-- HTML tooltip overlay (avoids SVG re-render flicker) -->
+					{#if tooltipBucket && hoveredBarIndex !== null}
+						<div class="chart-tooltip" style="left: {Math.min(tooltipX, chartWidth - 170)}px;">
+							<div class="chart-tooltip-title">{formatShortTimestamp(tooltipBucket.timestamp)}</div>
+							{#each PROTOCOL_KEYS.filter((k) => (tooltipBucket?.[k] || 0) > 0) as pk}
+								<div class="chart-tooltip-row">
+									<span class="chart-tooltip-dot" style="background: {protocolColor(pk)};"></span>
+									<span class="chart-tooltip-label">{protocolLabel(pk)}</span>
+									<span class="chart-tooltip-val">{(tooltipBucket?.[pk] || 0).toLocaleString()}</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			{:else if loading}
 				<div class="chart-placeholder">
 					<div class="loading-spinner"></div>
@@ -1138,6 +1134,7 @@
 		margin-top: 2px;
 	}
 
+	.text-white { color: #fff; }
 	.text-cyan { color: var(--cyan); }
 	.text-green { color: var(--green); }
 	.text-purple { color: var(--purple); }
@@ -1208,6 +1205,56 @@
 	.chart-wrapper {
 		width: 100%;
 		overflow: hidden;
+	}
+
+	.chart-container {
+		position: relative;
+	}
+
+	.chart-tooltip {
+		position: absolute;
+		top: 4px;
+		pointer-events: none;
+		background: var(--bg-elevated);
+		border: 1px solid var(--border-default);
+		border-radius: 6px;
+		padding: 8px 10px;
+		min-width: 150px;
+		z-index: 10;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+	}
+
+	.chart-tooltip-title {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-primary);
+		margin-bottom: 4px;
+	}
+
+	.chart-tooltip-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 10px;
+		line-height: 1.6;
+	}
+
+	.chart-tooltip-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.chart-tooltip-label {
+		color: var(--text-secondary);
+		flex: 1;
+	}
+
+	.chart-tooltip-val {
+		color: var(--text-primary);
+		font-weight: 500;
+		font-family: var(--font-mono);
 	}
 
 	.chart-placeholder {

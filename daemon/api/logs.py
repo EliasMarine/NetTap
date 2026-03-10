@@ -263,6 +263,7 @@ async def handle_log_stats(request: web.Request) -> web.Response:
 
     body: dict = {
         "size": 0,
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]

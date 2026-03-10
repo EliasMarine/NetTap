@@ -327,19 +327,19 @@ describe('formatCompactNumber', () => {
 
 describe('protocolColor', () => {
 	it('returns correct colors for known protocols', () => {
-		expect(protocolColor('conn')).toBe('var(--cyan)');
-		expect(protocolColor('dns')).toBe('var(--green)');
-		expect(protocolColor('http')).toBe('var(--orange)');
-		expect(protocolColor('ssl')).toBe('var(--purple)');
-		expect(protocolColor('files')).toBe('var(--yellow, #ffd600)');
-		expect(protocolColor('dhcp')).toBe('var(--pink, #ff80ab)');
-		expect(protocolColor('smtp')).toBe('var(--teal, #64ffda)');
-		expect(protocolColor('alert')).toBe('var(--red)');
+		expect(protocolColor('conn')).toBe('#00b8d4');
+		expect(protocolColor('dns')).toBe('#00e676');
+		expect(protocolColor('http')).toBe('#ff9100');
+		expect(protocolColor('ssl')).toBe('#aa66ff');
+		expect(protocolColor('files')).toBe('#ffd600');
+		expect(protocolColor('dhcp')).toBe('#ff4081');
+		expect(protocolColor('smtp')).toBe('#18ffff');
+		expect(protocolColor('alert')).toBe('#ff1744');
 	});
 
 	it('returns muted color for unknown protocol', () => {
-		expect(protocolColor('unknown')).toBe('var(--text-muted)');
-		expect(protocolColor('')).toBe('var(--text-muted)');
+		expect(protocolColor('unknown')).toBe('#888');
+		expect(protocolColor('')).toBe('#888');
 	});
 });
 
