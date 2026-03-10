@@ -20,8 +20,10 @@ logger = logging.getLogger("nettap.services.pcap_search")
 
 _DEFAULT_PCAP_DIR = os.environ.get("PCAP_DIR", "/data/pcap")
 
-# BPF filter validation — reject obviously dangerous patterns
-_BPF_FORBIDDEN = re.compile(r"[;&|`$]")
+# Display filter validation — reject shell metacharacters.
+# We allow & and | because Wireshark display filters use && (AND) and || (OR).
+# Commands use asyncio.create_subprocess_exec (no shell), so pipes aren't dangerous.
+_FILTER_FORBIDDEN = re.compile(r"[;`$]")
 
 # Supported PCAP file extensions
 _PCAP_EXTENSIONS = {".pcap", ".pcapng", ".cap"}
@@ -96,7 +98,7 @@ class PcapSearchService:
 
         bpf_filter = bpf_filter.strip()
 
-        if _BPF_FORBIDDEN.search(bpf_filter):
+        if _FILTER_FORBIDDEN.search(bpf_filter):
             return False, "Filter contains forbidden characters"
 
         if len(bpf_filter) > 1000:
@@ -117,7 +119,7 @@ class PcapSearchService:
         """
         valid, err = self.validate_bpf_filter(bpf_filter)
         if not valid:
-            raise ValueError(f"Invalid BPF filter: {err}")
+            raise ValueError(f"Invalid display filter: {err}")
 
         pcaps = self.get_available_pcaps(from_ts, to_ts)
         if not pcaps:
@@ -219,7 +221,7 @@ class PcapSearchService:
         if bpf_filter:
             valid, err = self.validate_bpf_filter(bpf_filter)
             if not valid:
-                raise ValueError(f"Invalid BPF filter: {err}")
+                raise ValueError(f"Invalid display filter: {err}")
             cmd.extend(["-Y", bpf_filter])
 
         try:
@@ -280,7 +282,7 @@ class PcapSearchService:
         """
         valid, err = self.validate_bpf_filter(bpf_filter)
         if not valid:
-            raise ValueError(f"Invalid BPF filter: {err}")
+            raise ValueError(f"Invalid display filter: {err}")
 
         pcaps = self.get_available_pcaps(from_ts, to_ts)
         if not pcaps:
