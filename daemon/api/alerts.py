@@ -278,7 +278,7 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         try:
             severity = int(severity_raw)
             if severity in (1, 2, 3):
-                filter_clauses.append({"term": {"suricata.severity": severity}})
+                filter_clauses.append({"term": {"suricata.alert.severity": severity}})
         except (ValueError, TypeError):
             pass
 
@@ -293,8 +293,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         filter_clauses.append({
             "bool": {
                 "should": [
-                    {"term": {"source.ip": ip_filter}},
-                    {"term": {"destination.ip": ip_filter}},
+                    {"term": {"source.ip.keyword": ip_filter}},
+                    {"term": {"destination.ip.keyword": ip_filter}},
                 ],
                 "minimum_should_match": 1,
             }
@@ -379,7 +379,7 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
             # OLD CODE START — Zeek-native: "alert.severity"
             # "by_severity": {"terms": {"field": "alert.severity", "size": 10}},
             # OLD CODE END
-            "by_severity": {"terms": {"field": "suricata.severity.keyword", "size": 10}},
+            "by_severity": {"terms": {"field": "suricata.alert.severity", "size": 10}},
         },
     }
 
@@ -566,7 +566,7 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                 },
                 "aggs": {
                     "by_severity": {
-                        "terms": {"field": "suricata.severity.keyword", "size": 5}
+                        "terms": {"field": "suricata.alert.severity", "size": 5}
                     }
                 },
             }
@@ -628,7 +628,7 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
                 "terms": {"field": "rule.name.keyword", "size": limit, "missing": "Unknown"},
                 "aggs": {
                     "severity": {
-                        "terms": {"field": "suricata.severity.keyword", "size": 3}
+                        "terms": {"field": "suricata.alert.severity", "size": 3}
                     }
                 },
             }
@@ -678,7 +678,7 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
         direction = "dest"
     client = _get_client(request)
 
-    field = "source.ip" if direction == "src" else "destination.ip"
+    field = "source.ip.keyword" if direction == "src" else "destination.ip.keyword"
 
     query = {
         "size": 0,
