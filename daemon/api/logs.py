@@ -269,8 +269,8 @@ async def handle_log_stats(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "unique_sources": {"cardinality": {"field": "source.ip"}},
-            "protocol_count": {"cardinality": {"field": "event.dataset"}},
+            "unique_sources": {"cardinality": {"field": "source.ip.keyword"}},
+            "protocol_count": {"cardinality": {"field": "event.dataset.keyword"}},
             "src_bytes": {"sum": {"field": "source.bytes"}},
             "dst_bytes": {"sum": {"field": "destination.bytes"}},
         },
@@ -325,7 +325,7 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
                     "fixed_interval": interval,
                 },
                 "aggs": {
-                    "by_type": {"terms": {"field": "event.dataset", "size": 20}},
+                    "by_type": {"terms": {"field": "event.dataset.keyword", "size": 20}},
                 },
             }
         },
@@ -375,7 +375,7 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "top_sources": {"terms": {"field": "source.ip", "size": limit}},
+            "top_sources": {"terms": {"field": "source.ip.keyword", "size": limit}},
         },
     }
 
@@ -411,7 +411,7 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "protocols": {"terms": {"field": "event.dataset", "size": 20}},
+            "protocols": {"terms": {"field": "event.dataset.keyword", "size": 20}},
         },
     }
 
@@ -456,7 +456,7 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "top_destinations": {"terms": {"field": "destination.ip", "size": limit}},
+            "top_destinations": {"terms": {"field": "destination.ip.keyword", "size": limit}},
         },
     }
 

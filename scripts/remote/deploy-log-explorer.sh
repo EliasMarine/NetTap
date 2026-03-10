@@ -6,9 +6,10 @@ set -u
 
 BRANCH="phase-5/mirror-span-mode"
 COMPOSE="docker/docker-compose.yml"
+NETTAP_DIR="/home/nettap/NetTap"
 
 echo "=== Step 1: Pull latest code ==="
-cd ~/NetTap
+cd "$NETTAP_DIR"
 git fetch origin "$BRANCH"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
 git pull origin "$BRANCH"
@@ -26,13 +27,15 @@ echo "=== Step 4: Verify containers are running ==="
 sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-storage-daemon|nettap-web"
 
 echo ""
-echo "=== Step 5: Test daemon log endpoints ==="
+echo "=== Step 5: Test daemon log endpoints (from inside container) ==="
+DCURL="sudo docker exec nettap-storage-daemon curl -s"
+
 echo "--- /api/logs/stats ---"
-curl -s http://localhost:8880/api/logs/stats 2>/dev/null | python3 -m json.tool 2>/dev/null | head -10 || echo "FAILED"
+$DCURL http://localhost:8880/api/logs/stats | python3 -m json.tool 2>/dev/null | head -10 || echo "FAILED"
 
 echo ""
 echo "--- /api/logs/timeline ---"
-curl -s http://localhost:8880/api/logs/timeline 2>/dev/null | python3 -c "
+$DCURL http://localhost:8880/api/logs/timeline | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 print(f'Timeline: {len(d.get(\"buckets\",[]))} buckets, interval={d.get(\"interval\",\"?\")}')
@@ -40,7 +43,7 @@ print(f'Timeline: {len(d.get(\"buckets\",[]))} buckets, interval={d.get(\"interv
 
 echo ""
 echo "--- /api/logs/protocol-breakdown ---"
-curl -s http://localhost:8880/api/logs/protocol-breakdown 2>/dev/null | python3 -c "
+$DCURL http://localhost:8880/api/logs/protocol-breakdown | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for p in d.get('protocols',[]):
@@ -49,7 +52,7 @@ for p in d.get('protocols',[]):
 
 echo ""
 echo "--- /api/logs/top-talkers ---"
-curl -s http://localhost:8880/api/logs/top-talkers 2>/dev/null | python3 -c "
+$DCURL http://localhost:8880/api/logs/top-talkers | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for t in d.get('talkers',[])[:5]:
@@ -58,7 +61,7 @@ for t in d.get('talkers',[])[:5]:
 
 echo ""
 echo "--- /api/logs/top-dns ---"
-curl -s http://localhost:8880/api/logs/top-dns 2>/dev/null | python3 -c "
+$DCURL http://localhost:8880/api/logs/top-dns | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for q in d.get('queries',[])[:5]:
