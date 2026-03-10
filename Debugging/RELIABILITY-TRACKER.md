@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-09
-> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. Full-stack test (full-stack-test.sh): 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Data pipeline: Suricata working (1.3M alerts/day), Zeek partially broken — produces metadata logs (known_hosts, known_services) but ZERO conn/dns/http/tls logs on March 9. Investigating Zeek capture interface config.
+> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. Full-stack test (full-stack-test.sh): 59/59 passing. Mirror/SPAN mode: all API endpoints verified + catch-all SvelteKit proxy route added for feature pages. Web tests: 1034/1034 passing (74 test files). svelte-check: 0 errors. Data pipeline: Suricata working (1.3M alerts/day), Zeek partially broken — produces metadata logs (known_hosts, known_services) but ZERO conn/dns/http/tls logs on March 9. Investigating Zeek capture interface config.
 
 ## Purpose
 
@@ -84,6 +84,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-09 | Full-Stack Test | All API checks HTTP 000 (connection refused) | Port 8880 is Docker `expose` only (internal), not `ports` published to host | Changed test script to use `docker exec` curl from inside daemon container | -- | phase-5/mirror-span-mode |
 | 2026-03-09 | Full-Stack Test | nginx returns stale upstream after web container recreate | Script only recreated daemon+web, not nginx. Nginx cached old container IP | Added nettap-nginx to `docker compose up -d --force-recreate` in test script | -- | phase-5/mirror-span-mode |
 | 2026-03-09 | Zeek Capture | Dashboard pages all show zeros — no Zeek conn/dns/http/tls logs indexed | Two causes: (1) `ZEEK_JSON` env var missing → Zeek outputs TSV, Logstash can't parse. (2) After fixing JSON, `event.id` type conflict: Suricata indexed first with numeric IDs (mapped as `long`), Zeek string UIDs rejected. | Added `ZEEK_JSON: "true"` to docker-compose.yml. Deleted conflicted 260310 index. Updated malcolm_template to map `event.id` as `keyword`. 7,427+ conn docs flowing. | -- | phase-5/mirror-span-mode |
+| 2026-03-09 | Web UI (Mirror/SPAN pages) | 7 Mirror/SPAN feature pages (Live Monitor, Bandwidth, DNS Analytics, IoT & LAN, Changelog, Certificates, PCAP Search) show no data | Missing SvelteKit `+server.ts` proxy routes for `/api/*` endpoints (404 silently). `VITE_API_URL` defaults to Docker-internal port 8880 (unreachable from browser). | Created catch-all `[...path]/+server.ts` proxy via `daemonFetch()`. Fixed 5 API clients + setup page to use relative paths. 8 tests added. | -- | phase-5/mirror-span-mode |
 
 ## Reliability Lessons Learned
 
@@ -127,6 +128,8 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 34. **Diagnose OpenSearch data gaps by aggregating `event.provider.keyword` + `event.dataset.keyword`.** A single `terms` aggregation on these fields instantly reveals what data types exist in any index. If `conn` is missing but `known_hosts` exists, the issue is log format or ingestion pipeline, not capture.
 35. **OpenSearch dynamic mapping creates type conflicts when data sources arrive out of order.** If Suricata indexes first with numeric `event.id`, OpenSearch maps it as `long`. When Zeek arrives with string UIDs, ALL Zeek docs fail with `mapper_parsing_exception`. The first document to an index determines field types unless an index template pre-defines them. Fix: delete the conflicted index and ensure a proper template exists.
 36. **Index-order-dependent field type conflicts are silent until you check Logstash logs.** OpenSearch returns 400 per-document but Logstash only logs WARN, not ERROR. The overall pipeline appears healthy — documents just silently disappear. Always check `docker logs nettap-logstash 2>&1 | grep -i "mapper_parsing\|400"` when data is missing.
+37. **Every new daemon API endpoint needs a SvelteKit `+server.ts` proxy route.** In production, browser requests to `/api/*` go through nginx → SvelteKit. Without a route handler, SvelteKit returns 404 silently (client shows empty data, no error). Use a catch-all `[...path]/+server.ts` as a fallback proxy for daemon endpoints without dedicated routes.
+38. **Never use `VITE_API_URL` defaulting to `http://localhost:PORT` in Docker deployments.** Docker `expose` ports are internal-only (container-to-container via Docker DNS), not published to host. Browser fetch to `localhost:8880` fails. All API client files must use relative paths (`/api/...`) so requests flow through the reverse proxy chain.
 28. **Health checks must test the service's actual useful function.** nginx-proxy serves as an OpenSearch proxy (`:9200`) in NetTap, not as an arkime reverse proxy (`:443`). Testing the wrong vhost caused unnecessary restart loops.
 29. **Appliances need systemd boot persistence.** Without a `nettap.service` unit, a power cycle leaves the entire stack down until manual SSH intervention. Unacceptable for an appliance that sits inline on a network path.
 30. **Create reusable fix scripts for recurring manual operations.** OpenSearch security bootstrap is needed after every container recreate. A script (`fix-opensearch.sh`) prevents typos and ensures the correct sequence every time.
@@ -168,3 +171,4 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-07 | OpenSearch security bootstrap | N100 production | PASS | fix-opensearch.sh ran successfully, all services authenticated. |
 | 2026-03-07 | Boot persistence (nettap.service) | N100 production | PASS | systemd unit enabled, Docker stack auto-starts on reboot. |
 | 2026-03-07 | netsniff-ng EPERM fix (SYS_ADMIN) | N100 production | PASS | Added SYS_ADMIN to cap_add (bounding set covers all file caps). Previous SETFCAP + setcap -r approach failed silently on overlay2. netsniff-ng executes without EPERM. |
+| 2026-03-09 | Mirror/SPAN proxy route fix | Dev macOS | PASS | Created catch-all `[...path]/+server.ts` proxy + fixed 5 API clients using `VITE_API_URL`. vitest: 1034/1034 passed (74 test files). svelte-check: 0 errors. 8 new proxy route tests. |

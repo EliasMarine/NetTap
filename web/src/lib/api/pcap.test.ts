@@ -4,6 +4,7 @@ import {
 	searchPcaps,
 	previewPcap,
 	getDownloadUrl,
+	getFileDownloadUrl,
 	formatBytes,
 } from './pcap';
 
@@ -176,6 +177,15 @@ describe('pcap API client', () => {
 			expect(url).toContain('/api/pcap/download');
 			expect(url).toContain('filter=tcp+port+80');
 			expect(url).toContain('from=2026-03-01');
+		});
+	});
+
+	// -- getFileDownloadUrl -----------------------------------------------
+
+	describe('getFileDownloadUrl', () => {
+		it('builds correct URL for single file download', () => {
+			const url = getFileDownloadUrl('/data/pcap/capture_001.pcap');
+			expect(url).toBe('/api/pcap/download-file?file=%2Fdata%2Fpcap%2Fcapture_001.pcap');
 		});
 	});
 

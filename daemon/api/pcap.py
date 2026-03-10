@@ -109,6 +109,39 @@ async def handle_pcap_preview(request: web.Request) -> web.Response:
     })
 
 
+async def handle_pcap_download_file(request: web.Request) -> web.Response:
+    """GET /api/pcap/download-file?file= — Download a single PCAP file."""
+    pcap_service: PcapSearchService = request.app["pcap_search"]
+
+    pcap_file = request.query.get("file", "").strip()
+    if not pcap_file:
+        return web.json_response(
+            {"error": "file parameter is required"}, status=400
+        )
+
+    # Security: ensure file is within pcap directory
+    pcap_path = os.path.abspath(pcap_file)
+    pcap_dir = os.path.abspath(str(pcap_service._pcap_dir))
+    if not pcap_path.startswith(pcap_dir):
+        return web.json_response(
+            {"error": "File must be within the PCAP directory"}, status=400
+        )
+
+    if not os.path.exists(pcap_path):
+        return web.json_response(
+            {"error": "PCAP file not found"}, status=404
+        )
+
+    filename = os.path.basename(pcap_path)
+    return web.FileResponse(
+        pcap_path,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Type": "application/vnd.tcpdump.pcap",
+        },
+    )
+
+
 async def handle_pcap_download(request: web.Request) -> web.Response:
     """GET /api/pcap/download?filter=&from=&to= — Download filtered PCAP."""
     pcap_service: PcapSearchService = request.app["pcap_search"]
@@ -175,5 +208,6 @@ def register_pcap_routes(
     app.router.add_get("/api/pcap/search", handle_pcap_search)
     app.router.add_get("/api/pcap/preview", handle_pcap_preview)
     app.router.add_get("/api/pcap/download", handle_pcap_download)
+    app.router.add_get("/api/pcap/download-file", handle_pcap_download_file)
 
-    logger.info("PCAP search API routes registered (4 endpoints)")
+    logger.info("PCAP search API routes registered (5 endpoints)")

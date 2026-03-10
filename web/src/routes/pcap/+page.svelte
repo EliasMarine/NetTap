@@ -5,6 +5,7 @@
 		searchPcaps,
 		previewPcap,
 		getDownloadUrl,
+		getFileDownloadUrl,
 		formatBytes,
 		QUICK_FILTERS,
 	} from '$lib/api/pcap';
@@ -54,6 +55,16 @@
 	let previewFile = $state('');
 	let previewLoading = $state(false);
 
+	// Sorting — Available Files table
+	type FileSortKey = 'name' | 'size_bytes' | 'modified';
+	let fileSortColumn = $state<FileSortKey>('modified');
+	let fileSortDirection = $state<'asc' | 'desc'>('desc');
+
+	// Sorting — Search Results table
+	type ResultSortKey = 'name' | 'matching_packets' | 'size_bytes' | 'modified';
+	let resultSortColumn = $state<ResultSortKey>('matching_packets');
+	let resultSortDirection = $state<'asc' | 'desc'>('desc');
+
 	// ---------------------------------------------------------------------------
 	// Helpers
 	// ---------------------------------------------------------------------------
@@ -68,6 +79,52 @@
 			to: now.toISOString(),
 		};
 	}
+
+	// ---------------------------------------------------------------------------
+	// Sorting
+	// ---------------------------------------------------------------------------
+
+	function sortFiles(column: FileSortKey) {
+		if (fileSortColumn === column) {
+			fileSortDirection = fileSortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			fileSortColumn = column;
+			fileSortDirection = column === 'modified' || column === 'size_bytes' ? 'desc' : 'asc';
+		}
+	}
+
+	function sortResults(column: ResultSortKey) {
+		if (resultSortColumn === column) {
+			resultSortDirection = resultSortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			resultSortColumn = column;
+			resultSortDirection = column === 'modified' || column === 'size_bytes' || column === 'matching_packets' ? 'desc' : 'asc';
+		}
+	}
+
+	function sortIndicator(active: boolean, direction: 'asc' | 'desc'): string {
+		if (!active) return '';
+		return direction === 'asc' ? ' \u2191' : ' \u2193';
+	}
+
+	function compareValues(a: unknown, b: unknown): number {
+		if (typeof a === 'number' && typeof b === 'number') return a - b;
+		return String(a).localeCompare(String(b));
+	}
+
+	let sortedFiles = $derived(
+		[...files].sort((a, b) => {
+			const cmp = compareValues(a[fileSortColumn], b[fileSortColumn]);
+			return fileSortDirection === 'asc' ? cmp : -cmp;
+		})
+	);
+
+	let sortedResults = $derived(
+		[...searchResults].sort((a, b) => {
+			const cmp = compareValues(a[resultSortColumn], b[resultSortColumn]);
+			return resultSortDirection === 'asc' ? cmp : -cmp;
+		})
+	);
 
 	// ---------------------------------------------------------------------------
 	// Actions
@@ -88,7 +145,7 @@
 
 	async function runSearch() {
 		if (!bpfFilter.trim()) {
-			error = 'Enter a BPF filter to search';
+			error = 'Enter a display filter to search';
 			return;
 		}
 
@@ -115,6 +172,7 @@
 		previewLoading = true;
 		previewFile = file;
 		previewPackets = [];
+		error = '';
 
 		try {
 			const response = await previewPcap(file, {
@@ -126,7 +184,17 @@
 			error = e instanceof Error ? e.message : 'Preview failed';
 		} finally {
 			previewLoading = false;
+			// Scroll to the preview section so user can see it
+			setTimeout(() => {
+				const el = document.querySelector('.preview-section');
+				if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			}, 50);
 		}
+	}
+
+	function downloadFile(file: string) {
+		const url = getFileDownloadUrl(file);
+		window.open(url, '_blank');
 	}
 
 	function applyQuickFilter(filter: string) {
@@ -165,7 +233,7 @@
 			<input
 				type="text"
 				class="bpf-input"
-				placeholder="Enter BPF filter (e.g., tcp port 80, host 192.168.1.1, udp and port 53)"
+				placeholder="Wireshark display filter (e.g., tcp.port == 80, ip.addr == 192.168.1.1, dns)"
 				bind:value={bpfFilter}
 				onkeydown={(e) => e.key === 'Enter' && runSearch()}
 			/>
@@ -211,11 +279,12 @@
 		</div>
 
 		<div class="syntax-hints">
-			<span class="hint">Syntax:</span>
-			<code>host 1.2.3.4</code>
-			<code>tcp port 443</code>
-			<code>net 192.168.1.0/24</code>
-			<code>src host 10.0.0.1 and dst port 80</code>
+			<span class="hint">Display filter syntax:</span>
+			<code>ip.addr == 1.2.3.4</code>
+			<code>tcp.port == 443</code>
+			<code>ip.src == 10.0.0.1 && tcp.dstport == 80</code>
+			<code>http.request</code>
+			<code>dns</code>
 		</div>
 	</div>
 
@@ -234,26 +303,48 @@
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>File</th>
-								<th>Matching Packets</th>
-								<th>Size</th>
-								<th>Modified</th>
+								<th>
+									<button class="sort-btn" class:active-sort={resultSortColumn === 'name'} onclick={() => sortResults('name')}>
+										File{sortIndicator(resultSortColumn === 'name', resultSortDirection)}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={resultSortColumn === 'matching_packets'} onclick={() => sortResults('matching_packets')}>
+										Matching Packets{sortIndicator(resultSortColumn === 'matching_packets', resultSortDirection)}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={resultSortColumn === 'size_bytes'} onclick={() => sortResults('size_bytes')}>
+										Size{sortIndicator(resultSortColumn === 'size_bytes', resultSortDirection)}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={resultSortColumn === 'modified'} onclick={() => sortResults('modified')}>
+										Modified{sortIndicator(resultSortColumn === 'modified', resultSortDirection)}
+									</button>
+								</th>
 								<th>Actions</th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each searchResults as result}
+							{#each sortedResults as result}
 								<tr>
 									<td class="mono">{result.name}</td>
 									<td>{result.matching_packets}</td>
 									<td>{formatBytes(result.size_bytes)}</td>
 									<td>{new Date(result.modified).toLocaleString()}</td>
-									<td>
+									<td class="actions-cell">
 										<button
 											class="btn btn-sm"
 											onclick={() => showPreview(result.file)}
 										>
 											Preview
+										</button>
+										<button
+											class="btn btn-sm"
+											onclick={() => downloadFile(result.file)}
+										>
+											Download
 										</button>
 									</td>
 								</tr>
@@ -324,26 +415,44 @@
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>File</th>
-							<th>Size</th>
-							<th>Modified</th>
+							<th>
+								<button class="sort-btn" class:active-sort={fileSortColumn === 'name'} onclick={() => sortFiles('name')}>
+									File{sortIndicator(fileSortColumn === 'name', fileSortDirection)}
+								</button>
+							</th>
+							<th>
+								<button class="sort-btn" class:active-sort={fileSortColumn === 'size_bytes'} onclick={() => sortFiles('size_bytes')}>
+									Size{sortIndicator(fileSortColumn === 'size_bytes', fileSortDirection)}
+								</button>
+							</th>
+							<th>
+								<button class="sort-btn" class:active-sort={fileSortColumn === 'modified'} onclick={() => sortFiles('modified')}>
+									Modified{sortIndicator(fileSortColumn === 'modified', fileSortDirection)}
+								</button>
+							</th>
 							<th>Path</th>
 							<th>Actions</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each files as file}
+						{#each sortedFiles as file}
 							<tr>
 								<td class="mono">{file.name}</td>
 								<td>{formatBytes(file.size_bytes)}</td>
 								<td>{new Date(file.modified).toLocaleString()}</td>
 								<td class="mono path-cell">{file.relative_path}</td>
-								<td>
+								<td class="actions-cell">
 									<button
 										class="btn btn-sm"
 										onclick={() => showPreview(file.file)}
 									>
 										Preview
+									</button>
+									<button
+										class="btn btn-sm"
+										onclick={() => downloadFile(file.file)}
+									>
+										Download
 									</button>
 								</td>
 							</tr>
@@ -574,6 +683,31 @@
 		max-width: 300px;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.sort-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary, #a1a1aa);
+		font-weight: 600;
+		font-size: 0.8125rem;
+		cursor: pointer;
+		padding: 0;
+		white-space: nowrap;
+	}
+
+	.sort-btn:hover {
+		color: var(--text-primary, #e4e4e7);
+	}
+
+	.sort-btn.active-sort {
+		color: var(--accent-blue, #3b82f6);
+	}
+
+	.actions-cell {
+		display: flex;
+		gap: 0.375rem;
+		white-space: nowrap;
 	}
 
 	.empty-state {

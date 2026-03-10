@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-09
-> **Status:** 44 issues tracked. 44 RESOLVED. Latest: full-stack-test.sh missing nginx recreate (upstream DNS stale after web recreate), PyYAML missing from daemon requirements.txt (suricata_rules.py crash), daemon port 8880 expose-only (not published — use docker exec for API tests). Daemon tests: 1175 passing. Web tests: 24 tools API tests passing. 18/18 containers healthy on N100. Full-stack test: 59/59 passing.
+> **Status:** 45 issues tracked. 45 RESOLVED. Latest: Mirror/SPAN feature pages (Live Monitor, Bandwidth, DNS Analytics, IoT & LAN, Changelog, Certificates, PCAP Search) showed no data — missing SvelteKit server-side proxy routes (`+server.ts`) for `/api/*` endpoints + `VITE_API_URL` pointing to Docker-internal port 8880. Fix: catch-all `[...path]/+server.ts` proxy + relative paths in 5 API clients. Daemon tests: 1175 passing. Web tests: 1034/1034 passing (74 test files). svelte-check: 0 errors. 18/18 containers healthy on N100. Full-stack test: 59/59 passing.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -153,6 +153,18 @@ CHAIN 16: Mirror/SPAN Full-Stack Test Issues (phase-5/mirror-span-mode)
       (e.g., "Ctn46L1IGV1awTb9wj") → ALL Zeek conn docs rejected with 400.
       Fix: delete today's index and let it recreate with correct template mapping.
       Prevention: ensure Malcolm index template maps event.id as keyword, not dynamic.
+  15. Mirror/SPAN feature pages show no data — missing SvelteKit proxy routes.
+      7 new pages (Live Monitor, Bandwidth, DNS Analytics, IoT & LAN, Changelog,
+      Certificates, PCAP Search) all empty despite data flowing in OpenSearch.
+      Root cause: client-side API files fetch `/api/live/connections`, `/api/bandwidth/monthly`,
+      etc. — no `+server.ts` route handlers existed. SvelteKit returned 404 silently.
+      Additionally, changelog.ts/certificates.ts used `VITE_API_URL || 'http://localhost:8880'`
+      which tries to reach daemon port 8880 directly from browser — but 8880 is Docker
+      `expose`-only (container-to-container), not published to host.
+      Fix: (a) Created catch-all `web/src/routes/api/[...path]/+server.ts` that proxies
+      unhandled `/api/*` requests to daemon via `daemonFetch()`. SvelteKit routing gives
+      priority to existing explicit routes. (b) Fixed 5 API client files + setup page to
+      use relative paths instead of `VITE_API_URL`.
 ```
 
 ---
@@ -1430,6 +1442,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `scripts/remote/nettap.service` | Chain 15 | NEW: systemd unit for boot persistence — starts Docker stack after docker.service |
 | `scripts/remote/fix-opensearch.sh` | Chain 15 | NEW: reusable OpenSearch security bootstrap script |
 | `scripts/remote/fix-pcap-and-proxy.sh` | Chain 15 | NEW: deploy script for pcap-capture + nginx-proxy fixes |
+| `web/src/routes/api/[...path]/+server.ts` | Chain 16.15 | NEW: Catch-all SvelteKit proxy — forwards unhandled `/api/*` requests to daemon via `daemonFetch()`. Lowest priority (existing explicit routes take precedence). |
+| `web/src/lib/api/changelog.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/certificates.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/capture.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/devices-registry.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/notification-hub.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/routes/setup/+page.svelte` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1519,6 +1538,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 66. **Systemd service units are essential for appliance-grade reliability** — without `nettap.service`, a reboot leaves the stack down until manual intervention. An appliance must self-heal on power cycle.
 67. **File capabilities on binaries can cause EPERM even when the container has sufficient ambient caps** — if a binary has file capabilities (e.g., `cap_sys_admin=eip` on netsniff-ng), ALL file caps must be in the container's bounding set or `exec` fails. Do NOT rely on `setcap -r` to strip file caps at runtime — it returns exit 0 on overlay2 but the xattrs from image layers persist (see lesson 68). Instead, add the missing caps directly to `cap_add`.
 68. **`setcap -r` is unreliable on Docker overlay2 filesystems** — it returns success (exit 0) but `getcap` still shows the original file capabilities. The xattrs from the image layer persist through the overlay — the writable layer's "removal" doesn't override the lower layer's xattrs. Never rely on runtime `setcap` in Docker containers. Instead, ensure the bounding set covers all file capabilities, or build a custom image without file caps.
+
+### SvelteKit Proxy / API Routing (NEW — Chain 16.15)
+69. **Client-side fetch to `/api/*` requires SvelteKit `+server.ts` route handlers** — in production, browser requests go through nginx → SvelteKit. If no `+server.ts` exists for a path, SvelteKit returns 404. The client error handling shows empty data with no visible error. Always create proxy routes for new daemon API endpoints.
+70. **`VITE_API_URL` defaulting to `http://localhost:8880` is broken in Docker deployment** — port 8880 is `expose`-only (container-to-container), never published to host. Browser can never reach it. All API client files must use relative paths (`/api/...`) so requests flow through nginx → SvelteKit → daemon.
+71. **SvelteKit `[...path]` catch-all routes are lowest priority** — they don't conflict with existing explicit route files. A catch-all `api/[...path]/+server.ts` is a safe fallback proxy for any daemon endpoint that doesn't have a dedicated SvelteKit route. Existing explicit routes (e.g., `api/traffic/+server.ts`) always win.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.

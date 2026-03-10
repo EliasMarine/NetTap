@@ -128,15 +128,23 @@ export function getDownloadUrl(
 	return `/api/pcap/download${query}`;
 }
 
+/**
+ * Get download URL for a single PCAP file (no filter).
+ */
+export function getFileDownloadUrl(file: string): string {
+	const query = buildQuery({ file });
+	return `/api/pcap/download-file${query}`;
+}
+
 // ---------------------------------------------------------------------------
 // BPF filter quick filters
 // ---------------------------------------------------------------------------
 
 export const QUICK_FILTERS = [
-	{ label: 'DNS Traffic', filter: 'udp port 53' },
-	{ label: 'HTTP Traffic', filter: 'tcp port 80 or tcp port 443' },
-	{ label: 'SSH Traffic', filter: 'tcp port 22' },
-	{ label: 'DHCP Traffic', filter: 'udp port 67 or udp port 68' },
+	{ label: 'DNS Traffic', filter: 'dns' },
+	{ label: 'HTTP Traffic', filter: 'http || tls' },
+	{ label: 'SSH Traffic', filter: 'ssh' },
+	{ label: 'DHCP Traffic', filter: 'dhcp' },
 	{ label: 'ICMP', filter: 'icmp' },
 	{ label: 'ARP', filter: 'arp' },
 ] as const;
