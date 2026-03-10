@@ -57,7 +57,7 @@ class DNSAnalytics:
             "aggs": {
                 "top_domains": {
                     "terms": {
-                        "field": "dns.question.name.keyword",
+                        "field": "zeek.dns.query.keyword",
                         "size": limit,
                         "order": {"_count": "desc"},
                     },
@@ -101,14 +101,14 @@ class DNSAnalytics:
             "aggs": {
                 "domains": {
                     "terms": {
-                        "field": "dns.question.name.keyword",
+                        "field": "zeek.dns.query.keyword",
                         "size": 200,
                         "order": {"_count": "desc"},
                     },
                     "aggs": {
                         "query_types": {
                             "terms": {
-                                "field": "dns.question.type.keyword",
+                                "field": "zeek.dns.qtype_name.keyword",
                                 "size": 10,
                             }
                         }
@@ -144,14 +144,14 @@ class DNSAnalytics:
                 "bool": {
                     "filter": [
                         *_base_bool_filter(from_ts, to_ts),
-                        {"term": {"dns.response_code.keyword": "NXDOMAIN"}},
+                        {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}},
                     ]
                 }
             },
             "aggs": {
                 "nxdomains": {
                     "terms": {
-                        "field": "dns.question.name.keyword",
+                        "field": "zeek.dns.query.keyword",
                         "size": 100,
                         "order": {"_count": "desc"},
                     },
@@ -193,7 +193,7 @@ class DNSAnalytics:
             "aggs": {
                 "query_types": {
                     "terms": {
-                        "field": "dns.question.type.keyword",
+                        "field": "zeek.dns.qtype_name.keyword",
                         "size": 20,
                     }
                 }
@@ -289,14 +289,14 @@ class DNSAnalytics:
                 "bool": {
                     "filter": [
                         *_base_bool_filter(from_ts, to_ts),
-                        {"term": {"dns.question.type.keyword": "TXT"}},
+                        {"term": {"zeek.dns.qtype_name.keyword": "TXT"}},
                     ]
                 }
             },
             "aggs": {
                 "txt_domains": {
                     "terms": {
-                        "field": "dns.question.name.keyword",
+                        "field": "zeek.dns.query.keyword",
                         "size": 20,
                         "order": {"_count": "desc"},
                     }
@@ -371,15 +371,15 @@ class DNSAnalytics:
             "query": {"bool": {"filter": _base_bool_filter(from_ts, to_ts)}},
             "aggs": {
                 "unique_domains": {
-                    "cardinality": {"field": "dns.question.name.keyword"}
+                    "cardinality": {"field": "zeek.dns.query.keyword"}
                 },
                 "nxdomain_count": {
                     "filter": {
-                        "term": {"dns.response_code.keyword": "NXDOMAIN"}
+                        "term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}
                     }
                 },
                 "avg_rtt": {
-                    "avg": {"field": "event.duration", "missing": 0}
+                    "avg": {"field": "zeek.dns.rtt", "missing": 0}
                 },
             },
         }
@@ -398,7 +398,7 @@ class DNSAnalytics:
             "unique_domains": aggs.get("unique_domains", {}).get("value", 0),
             "nxdomain_count": aggs.get("nxdomain_count", {}).get("doc_count", 0),
             "avg_resolution_ms": round(
-                (aggs.get("avg_rtt", {}).get("value", 0) or 0) / 1_000_000, 2
+                (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
             ),
         }
 
