@@ -519,6 +519,250 @@ async def handle_alert_acknowledge(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Aggregation endpoints (timeline, top signatures, top IPs, categories)
+# ---------------------------------------------------------------------------
+
+# Allowed intervals for the timeline endpoint (prevents injection).
+_ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"}
+
+# Severity number → label mapping (shared by timeline and top-signatures).
+_SEVERITY_MAP = {1: "high", 2: "medium", 3: "low"}
+
+
+async def handle_alerts_timeline(request: web.Request) -> web.Response:
+    """GET /api/alerts/timeline?from=&to=&interval=
+
+    Returns time-series alert counts bucketed by interval and severity.
+    Uses a date_histogram aggregation with a severity sub-aggregation.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    interval = request.query.get("interval", "1h")
+    if interval not in _ALLOWED_INTERVALS:
+        interval = "1h"
+    client = _get_client(request)
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ]
+            }
+        },
+        "aggs": {
+            "over_time": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": interval,
+                    "min_doc_count": 0,
+                    "extended_bounds": {"min": from_ts, "max": to_ts},
+                },
+                "aggs": {
+                    "by_severity": {
+                        "terms": {"field": "suricata.severity.keyword", "size": 5}
+                    }
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alerts/timeline: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    buckets = []
+    for bucket in result.get("aggregations", {}).get("over_time", {}).get("buckets", []):
+        entry = {"timestamp": bucket.get("key_as_string", ""), "high": 0, "medium": 0, "low": 0}
+        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+            key = sev_bucket.get("key")
+            try:
+                int_key = int(key)
+            except (ValueError, TypeError):
+                continue
+            label = _SEVERITY_MAP.get(int_key)
+            if label:
+                entry[label] = sev_bucket.get("doc_count", 0)
+        buckets.append(entry)
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "interval": interval,
+        "buckets": buckets,
+    })
+
+
+async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
+    """GET /api/alerts/top-signatures?from=&to=&limit=
+
+    Returns the most frequently triggered alert signatures with their
+    primary severity level.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    limit = min(_parse_int_param(request, "limit", 20), 100)
+    client = _get_client(request)
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ]
+            }
+        },
+        "aggs": {
+            "top_sigs": {
+                "terms": {"field": "rule.name.keyword", "size": limit, "missing": "Unknown"},
+                "aggs": {
+                    "severity": {
+                        "terms": {"field": "suricata.severity.keyword", "size": 3}
+                    }
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alerts/top-signatures: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    signatures = []
+    for bucket in result.get("aggregations", {}).get("top_sigs", {}).get("buckets", []):
+        sev_buckets = bucket.get("severity", {}).get("buckets", [])
+        primary_severity = 3  # default: low
+        if sev_buckets:
+            try:
+                primary_severity = int(sev_buckets[0].get("key", 3))
+            except (ValueError, TypeError):
+                primary_severity = 3
+        signatures.append({
+            "signature": bucket.get("key", "Unknown"),
+            "count": bucket.get("doc_count", 0),
+            "severity": primary_severity,
+        })
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "signatures": signatures,
+    })
+
+
+async def handle_alerts_top_ips(request: web.Request) -> web.Response:
+    """GET /api/alerts/top-ips?from=&to=&limit=&direction=src|dest
+
+    Returns the most frequently seen IPs in alerts, either as source
+    (attacker) or destination (target) addresses.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    limit = min(_parse_int_param(request, "limit", 10), 50)
+    direction = request.query.get("direction", "dest")
+    if direction not in ("src", "dest"):
+        direction = "dest"
+    client = _get_client(request)
+
+    field = "source.ip" if direction == "src" else "destination.ip"
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ]
+            }
+        },
+        "aggs": {
+            "top_ips": {
+                "terms": {"field": field, "size": limit}
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alerts/top-ips: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    ips = []
+    for bucket in result.get("aggregations", {}).get("top_ips", {}).get("buckets", []):
+        ips.append({
+            "ip": bucket.get("key", ""),
+            "count": bucket.get("doc_count", 0),
+        })
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "direction": direction,
+        "ips": ips,
+    })
+
+
+async def handle_alerts_categories(request: web.Request) -> web.Response:
+    """GET /api/alerts/categories?from=&to=
+
+    Returns alert counts grouped by rule category.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ]
+            }
+        },
+        "aggs": {
+            "by_category": {
+                "terms": {"field": "rule.category.keyword", "size": 20, "missing": "Uncategorized"}
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alerts/categories: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    categories = []
+    for bucket in result.get("aggregations", {}).get("by_category", {}).get("buckets", []):
+        categories.append({
+            "category": bucket.get("key", "Uncategorized"),
+            "count": bucket.get("doc_count", 0),
+        })
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "categories": categories,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -531,8 +775,13 @@ def register_alert_routes(
     The StorageManager is expected to already be stored in app['storage']
     by create_app(). This function registers the route handlers.
     """
+    # Static routes must be registered BEFORE {id} param route
     app.router.add_get("/api/alerts", handle_alerts_list)
     app.router.add_get("/api/alerts/count", handle_alerts_count)
+    app.router.add_get("/api/alerts/timeline", handle_alerts_timeline)
+    app.router.add_get("/api/alerts/top-signatures", handle_alerts_top_signatures)
+    app.router.add_get("/api/alerts/top-ips", handle_alerts_top_ips)
+    app.router.add_get("/api/alerts/categories", handle_alerts_categories)
     app.router.add_get("/api/alerts/{id}", handle_alert_detail)
     app.router.add_post("/api/alerts/{id}/acknowledge", handle_alert_acknowledge)
-    logger.info("Alert API routes registered (4 endpoints)")
+    logger.info("Alert API routes registered (8 endpoints)")

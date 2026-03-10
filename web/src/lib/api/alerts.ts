@@ -68,6 +68,55 @@ export interface AlertAcknowledgeResponse {
 	acknowledged_by: string;
 }
 
+export interface AlertTimelineBucket {
+	timestamp: string;
+	high: number;
+	medium: number;
+	low: number;
+}
+
+export interface AlertTimelineResponse {
+	from: string;
+	to: string;
+	interval: string;
+	buckets: AlertTimelineBucket[];
+}
+
+export interface AlertSignature {
+	signature: string;
+	count: number;
+	severity: number;
+}
+
+export interface AlertTopSignaturesResponse {
+	from: string;
+	to: string;
+	signatures: AlertSignature[];
+}
+
+export interface AlertIpEntry {
+	ip: string;
+	count: number;
+}
+
+export interface AlertTopIpsResponse {
+	from: string;
+	to: string;
+	direction: string;
+	ips: AlertIpEntry[];
+}
+
+export interface AlertCategoryEntry {
+	category: string;
+	count: number;
+}
+
+export interface AlertCategoriesResponse {
+	from: string;
+	to: string;
+	categories: AlertCategoryEntry[];
+}
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -175,4 +224,118 @@ export async function acknowledgeAlert(
 	}
 
 	return res.json();
+}
+
+/**
+ * Get alert timeline (date_histogram bucketed by severity).
+ */
+export async function getAlertTimeline(
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<AlertTimelineResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
+	const res = await fetch(`/api/alerts/timeline${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', interval: opts.interval || '1h', buckets: [] };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get top triggered alert signatures.
+ */
+export async function getAlertTopSignatures(
+	opts: TimeRangeParams & { limit?: number } = {}
+): Promise<AlertTopSignaturesResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
+	const res = await fetch(`/api/alerts/top-signatures${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', signatures: [] };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get top IPs seen in alerts (source or destination).
+ */
+export async function getAlertTopIps(
+	opts: TimeRangeParams & { limit?: number; direction?: string } = {}
+): Promise<AlertTopIpsResponse> {
+	const query = buildQuery({
+		from: opts.from,
+		to: opts.to,
+		limit: opts.limit,
+		direction: opts.direction,
+	});
+	const res = await fetch(`/api/alerts/top-ips${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', direction: opts.direction || 'dest', ips: [] };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get alert counts grouped by rule category.
+ */
+export async function getAlertCategories(
+	opts: TimeRangeParams = {}
+): Promise<AlertCategoriesResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/alerts/categories${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', categories: [] };
+	}
+
+	return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a number with compact notation (e.g. 1.2K, 3.4M).
+ */
+export function formatNumber(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	return String(n);
+}
+
+/**
+ * Severity number to human label.
+ */
+export function severityLabel(severity: number | undefined): string {
+	switch (severity) {
+		case 1:
+			return 'HIGH';
+		case 2:
+			return 'MEDIUM';
+		case 3:
+			return 'LOW';
+		default:
+			return 'INFO';
+	}
+}
+
+/**
+ * Severity number to CSS badge class.
+ */
+export function severityBadgeClass(severity: number | undefined): string {
+	switch (severity) {
+		case 1:
+			return 'badge severity-high';
+		case 2:
+			return 'badge severity-medium';
+		case 3:
+			return 'badge severity-low';
+		default:
+			return 'badge severity-info';
+	}
 }
