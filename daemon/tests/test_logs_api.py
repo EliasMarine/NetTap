@@ -162,6 +162,207 @@ class TestLogSearchAPI(AioHTTPTestCase):
         data = await resp.json()
         self.assertIn("error", data)
 
+    # ── Stats endpoint tests ──────────────────────────────────────────
+
+    def _mock_stats_response(self, total=1234, unique_src=42, protocols=5, src_bytes=100000, dst_bytes=200000):
+        """Helper to create a mock OpenSearch stats aggregation response."""
+        return {
+            "hits": {"total": {"value": total}, "hits": []},
+            "aggregations": {
+                "unique_sources": {"value": unique_src},
+                "protocol_count": {"value": protocols},
+                "src_bytes": {"value": src_bytes},
+                "dst_bytes": {"value": dst_bytes},
+            },
+        }
+
+    async def test_stats_returns_aggregates(self):
+        """GET /api/logs/stats returns total_events, unique_sources, protocol_count, total_bytes."""
+        self.mock_client.search.return_value = self._mock_stats_response(
+            total=5000, unique_src=25, protocols=7, src_bytes=100000, dst_bytes=200000
+        )
+        resp = await self.client.request("GET", "/api/logs/stats")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["total_events"], 5000)
+        self.assertEqual(data["unique_sources"], 25)
+        self.assertEqual(data["protocol_count"], 7)
+        self.assertEqual(data["total_bytes"], 300000)
+        self.assertIn("from", data)
+        self.assertIn("to", data)
+
+    async def test_stats_with_time_range(self):
+        """Stats endpoint respects from/to params."""
+        self.mock_client.search.return_value = self._mock_stats_response()
+        resp = await self.client.request(
+            "GET", "/api/logs/stats?from=2026-03-01T00:00:00Z&to=2026-03-05T00:00:00Z"
+        )
+        self.assertEqual(resp.status, 200)
+        call_body = self.mock_client.search.call_args[1]["body"]
+        time_filter = call_body["query"]["bool"]["filter"][0]
+        self.assertIn("range", time_filter)
+        self.assertEqual(
+            time_filter["range"]["@timestamp"]["gte"], "2026-03-01T00:00:00Z"
+        )
+
+    async def test_stats_opensearch_error(self):
+        """Stats endpoint returns 502 on OpenSearch error."""
+        from opensearchpy import OpenSearchException
+        self.mock_client.search.side_effect = OpenSearchException("timeout")
+        resp = await self.client.request("GET", "/api/logs/stats")
+        self.assertEqual(resp.status, 502)
+        data = await resp.json()
+        self.assertIn("error", data)
+
+    # ── Timeline endpoint tests ───────────────────────────────────────
+
+    async def test_timeline_returns_buckets(self):
+        """GET /api/logs/timeline returns time-series buckets by log type."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 100}, "hits": []},
+            "aggregations": {
+                "timeline": {
+                    "buckets": [
+                        {
+                            "key_as_string": "2026-03-05T12:00:00Z",
+                            "key": 1772928000000,
+                            "doc_count": 50,
+                            "by_type": {
+                                "buckets": [
+                                    {"key": "conn", "doc_count": 30},
+                                    {"key": "dns", "doc_count": 20},
+                                ]
+                            },
+                        }
+                    ]
+                }
+            },
+        }
+        resp = await self.client.request("GET", "/api/logs/timeline")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["interval"], "1h")
+        self.assertEqual(len(data["buckets"]), 1)
+        bucket = data["buckets"][0]
+        self.assertEqual(bucket["total"], 50)
+        self.assertEqual(bucket["conn"], 30)
+        self.assertEqual(bucket["dns"], 20)
+        self.assertEqual(bucket["http"], 0)  # missing type defaults to 0
+
+    async def test_timeline_validates_interval(self):
+        """Invalid interval falls back to 1h."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []},
+            "aggregations": {"timeline": {"buckets": []}},
+        }
+        resp = await self.client.request("GET", "/api/logs/timeline?interval=99x")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["interval"], "1h")
+        # Verify the actual query used 1h
+        call_body = self.mock_client.search.call_args[1]["body"]
+        self.assertEqual(
+            call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"], "1h"
+        )
+
+    # ── Top talkers endpoint tests ────────────────────────────────────
+
+    async def test_top_talkers_returns_ips(self):
+        """GET /api/logs/top-talkers returns source IP aggregation."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 500}, "hits": []},
+            "aggregations": {
+                "top_sources": {
+                    "buckets": [
+                        {"key": "192.168.1.100", "doc_count": 200},
+                        {"key": "192.168.1.101", "doc_count": 150},
+                    ]
+                }
+            },
+        }
+        resp = await self.client.request("GET", "/api/logs/top-talkers")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(data["talkers"]), 2)
+        self.assertEqual(data["talkers"][0]["ip"], "192.168.1.100")
+        self.assertEqual(data["talkers"][0]["count"], 200)
+
+    # ── Protocol breakdown endpoint tests ─────────────────────────────
+
+    async def test_protocol_breakdown_returns_protocols(self):
+        """GET /api/logs/protocol-breakdown returns event.dataset aggregation."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 1000}, "hits": []},
+            "aggregations": {
+                "protocols": {
+                    "buckets": [
+                        {"key": "conn", "doc_count": 600},
+                        {"key": "dns", "doc_count": 300},
+                        {"key": "http", "doc_count": 100},
+                    ]
+                }
+            },
+        }
+        resp = await self.client.request("GET", "/api/logs/protocol-breakdown")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(data["protocols"]), 3)
+        self.assertEqual(data["protocols"][0]["protocol"], "conn")
+        self.assertEqual(data["protocols"][0]["label"], "Connections")
+        self.assertEqual(data["protocols"][0]["count"], 600)
+        self.assertEqual(data["protocols"][1]["label"], "DNS")
+
+    # ── Top destinations endpoint tests ───────────────────────────────
+
+    async def test_top_destinations_returns_ips(self):
+        """GET /api/logs/top-destinations returns destination IP aggregation."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 500}, "hits": []},
+            "aggregations": {
+                "top_destinations": {
+                    "buckets": [
+                        {"key": "8.8.8.8", "doc_count": 300},
+                        {"key": "1.1.1.1", "doc_count": 100},
+                    ]
+                }
+            },
+        }
+        resp = await self.client.request("GET", "/api/logs/top-destinations")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(data["destinations"]), 2)
+        self.assertEqual(data["destinations"][0]["ip"], "8.8.8.8")
+        self.assertEqual(data["destinations"][0]["count"], 300)
+
+    # ── Top DNS endpoint tests ────────────────────────────────────────
+
+    async def test_top_dns_returns_queries(self):
+        """GET /api/logs/top-dns returns DNS query aggregation."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 200}, "hits": []},
+            "aggregations": {
+                "top_queries": {
+                    "buckets": [
+                        {"key": "google.com", "doc_count": 80},
+                        {"key": "facebook.com", "doc_count": 40},
+                    ]
+                }
+            },
+        }
+        resp = await self.client.request("GET", "/api/logs/top-dns")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(data["queries"]), 2)
+        self.assertEqual(data["queries"][0]["domain"], "google.com")
+        self.assertEqual(data["queries"][0]["count"], 80)
+        # Verify DNS-specific filters in the query
+        call_body = self.mock_client.search.call_args[1]["body"]
+        filters = call_body["query"]["bool"]["filter"]
+        providers = [f["term"]["event.provider"] for f in filters if "event.provider" in f.get("term", {})]
+        datasets = [f["term"]["event.dataset"] for f in filters if "event.dataset" in f.get("term", {})]
+        self.assertIn("zeek", providers)
+        self.assertIn("dns", datasets)
+
 
 if __name__ == "__main__":
     unittest.main()

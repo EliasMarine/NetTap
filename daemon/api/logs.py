@@ -125,6 +125,13 @@ _DEFAULT_RANGE_HOURS = 24
 _MAX_SIZE = 500
 _DEFAULT_SIZE = 50
 
+_ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"}
+
+_LOG_TYPE_LABELS = {
+    "conn": "Connections", "dns": "DNS", "http": "HTTP", "ssl": "TLS",
+    "files": "Files", "dhcp": "DHCP", "smtp": "SMTP", "alert": "Suricata",
+}
+
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Parse and validate from/to time range from query params."""
@@ -249,8 +256,279 @@ async def handle_log_fields(request: web.Request) -> web.Response:
     return web.json_response({"log_type": log_type, "fields": FIELD_DEFINITIONS[log_type]})
 
 
+async def handle_log_stats(request: web.Request) -> web.Response:
+    """GET /api/logs/stats — Aggregate statistics for the log explorer."""
+    storage: StorageManager = request.app["storage"]
+    from_ts, to_ts = _parse_time_range(request)
+
+    body: dict = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+            }
+        },
+        "aggs": {
+            "unique_sources": {"cardinality": {"field": "source.ip"}},
+            "protocol_count": {"cardinality": {"field": "event.dataset"}},
+            "src_bytes": {"sum": {"field": "source.bytes"}},
+            "dst_bytes": {"sum": {"field": "destination.bytes"}},
+        },
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        )
+
+        aggs = result.get("aggregations", {})
+        total_events = result.get("hits", {}).get("total", {}).get("value", 0)
+        total_bytes = (
+            aggs.get("src_bytes", {}).get("value", 0)
+            + aggs.get("dst_bytes", {}).get("value", 0)
+        )
+
+        return web.json_response({
+            "from": from_ts,
+            "to": to_ts,
+            "total_events": total_events,
+            "unique_sources": aggs.get("unique_sources", {}).get("value", 0),
+            "protocol_count": aggs.get("protocol_count", {}).get("value", 0),
+            "total_bytes": total_bytes,
+        })
+    except OpenSearchException as exc:
+        logger.exception("Log stats query failed")
+        return web.json_response({"error": f"Stats query failed: {exc}"}, status=502)
+
+
+async def handle_log_timeline(request: web.Request) -> web.Response:
+    """GET /api/logs/timeline — Time-series event counts by log type."""
+    storage: StorageManager = request.app["storage"]
+    from_ts, to_ts = _parse_time_range(request)
+
+    interval = request.query.get("interval", "1h")
+    if interval not in _ALLOWED_INTERVALS:
+        interval = "1h"
+
+    body: dict = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+            }
+        },
+        "aggs": {
+            "timeline": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": interval,
+                },
+                "aggs": {
+                    "by_type": {"terms": {"field": "event.dataset", "size": 20}},
+                },
+            }
+        },
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        )
+
+        raw_buckets = result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        buckets = []
+        for b in raw_buckets:
+            entry: dict = {
+                "timestamp": b.get("key_as_string", b.get("key")),
+                "total": b.get("doc_count", 0),
+            }
+            type_buckets = {tb["key"]: tb["doc_count"] for tb in b.get("by_type", {}).get("buckets", [])}
+            for key in _LOG_TYPE_LABELS:
+                entry[key] = type_buckets.get(key, 0)
+            buckets.append(entry)
+
+        return web.json_response({
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "buckets": buckets,
+        })
+    except OpenSearchException as exc:
+        logger.exception("Log timeline query failed")
+        return web.json_response({"error": f"Timeline query failed: {exc}"}, status=502)
+
+
+async def handle_log_top_talkers(request: web.Request) -> web.Response:
+    """GET /api/logs/top-talkers — Top source IPs by event count."""
+    storage: StorageManager = request.app["storage"]
+    from_ts, to_ts = _parse_time_range(request)
+
+    limit = min(int(request.query.get("limit", "10")), 50)
+
+    body: dict = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+            }
+        },
+        "aggs": {
+            "top_sources": {"terms": {"field": "source.ip", "size": limit}},
+        },
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        )
+
+        raw = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        talkers = [{"ip": b["key"], "count": b["doc_count"]} for b in raw]
+
+        return web.json_response({
+            "from": from_ts,
+            "to": to_ts,
+            "talkers": talkers,
+        })
+    except OpenSearchException as exc:
+        logger.exception("Top talkers query failed")
+        return web.json_response({"error": f"Top talkers query failed: {exc}"}, status=502)
+
+
+async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
+    """GET /api/logs/protocol-breakdown — Event counts by protocol/dataset."""
+    storage: StorageManager = request.app["storage"]
+    from_ts, to_ts = _parse_time_range(request)
+
+    body: dict = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+            }
+        },
+        "aggs": {
+            "protocols": {"terms": {"field": "event.dataset", "size": 20}},
+        },
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        )
+
+        raw = result.get("aggregations", {}).get("protocols", {}).get("buckets", [])
+        protocols = [
+            {
+                "protocol": b["key"],
+                "label": _LOG_TYPE_LABELS.get(b["key"], b["key"]),
+                "count": b["doc_count"],
+            }
+            for b in raw
+        ]
+
+        return web.json_response({
+            "from": from_ts,
+            "to": to_ts,
+            "protocols": protocols,
+        })
+    except OpenSearchException as exc:
+        logger.exception("Protocol breakdown query failed")
+        return web.json_response({"error": f"Protocol breakdown query failed: {exc}"}, status=502)
+
+
+async def handle_log_top_destinations(request: web.Request) -> web.Response:
+    """GET /api/logs/top-destinations — Top destination IPs by event count."""
+    storage: StorageManager = request.app["storage"]
+    from_ts, to_ts = _parse_time_range(request)
+
+    limit = min(int(request.query.get("limit", "10")), 50)
+
+    body: dict = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
+            }
+        },
+        "aggs": {
+            "top_destinations": {"terms": {"field": "destination.ip", "size": limit}},
+        },
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        )
+
+        raw = result.get("aggregations", {}).get("top_destinations", {}).get("buckets", [])
+        destinations = [{"ip": b["key"], "count": b["doc_count"]} for b in raw]
+
+        return web.json_response({
+            "from": from_ts,
+            "to": to_ts,
+            "destinations": destinations,
+        })
+    except OpenSearchException as exc:
+        logger.exception("Top destinations query failed")
+        return web.json_response({"error": f"Top destinations query failed: {exc}"}, status=502)
+
+
+async def handle_log_top_dns(request: web.Request) -> web.Response:
+    """GET /api/logs/top-dns — Top DNS queries by frequency."""
+    storage: StorageManager = request.app["storage"]
+    from_ts, to_ts = _parse_time_range(request)
+
+    limit = min(int(request.query.get("limit", "10")), 50)
+
+    body: dict = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "dns"}},
+                ],
+            }
+        },
+        "aggs": {
+            "top_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": limit}},
+        },
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        )
+
+        raw = result.get("aggregations", {}).get("top_queries", {}).get("buckets", [])
+        queries = [{"domain": b["key"], "count": b["doc_count"]} for b in raw]
+
+        return web.json_response({
+            "from": from_ts,
+            "to": to_ts,
+            "queries": queries,
+        })
+    except OpenSearchException as exc:
+        logger.exception("Top DNS query failed")
+        return web.json_response({"error": f"Top DNS query failed: {exc}"}, status=502)
+
+
 def register_log_routes(app: web.Application, storage: StorageManager) -> None:
     app["storage"] = storage
     app.router.add_get("/api/logs/search", handle_log_search)
+    app.router.add_get("/api/logs/stats", handle_log_stats)
+    app.router.add_get("/api/logs/timeline", handle_log_timeline)
+    app.router.add_get("/api/logs/top-talkers", handle_log_top_talkers)
+    app.router.add_get("/api/logs/protocol-breakdown", handle_log_protocol_breakdown)
+    app.router.add_get("/api/logs/top-destinations", handle_log_top_destinations)
+    app.router.add_get("/api/logs/top-dns", handle_log_top_dns)
     app.router.add_get("/api/logs/fields/{log_type}", handle_log_fields)
-    logger.info("Log search API routes registered (2 endpoints)")
+    logger.info("Log search API routes registered (8 endpoints)")
