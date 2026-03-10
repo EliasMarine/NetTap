@@ -2,7 +2,10 @@
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 
-	const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
+	// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
+	// Port 8880 is Docker-internal only. Use relative paths through SvelteKit proxy.
+	// OLD CODE END
+	const API_BASE = '';
 
 	let { form } = $props();
 

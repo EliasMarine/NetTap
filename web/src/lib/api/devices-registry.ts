@@ -45,8 +45,6 @@ export interface DeviceTraffic {
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
-
 /**
  * Get all devices from the registry.
  */
@@ -57,7 +55,7 @@ export async function getRegistryDevices(
 	if (opts.limit !== undefined) params.set('limit', String(opts.limit));
 	if (opts.offset !== undefined) params.set('offset', String(opts.offset));
 	const qs = params.toString();
-	const url = `${API_BASE}/api/devices/registry${qs ? `?${qs}` : ''}`;
+	const url = `/api/devices/registry${qs ? `?${qs}` : ''}`;
 
 	try {
 		const res = await fetch(url);
@@ -75,7 +73,7 @@ export async function getRegistryDevices(
  */
 export async function getRegistryDevice(mac: string): Promise<RegistryDevice | null> {
 	try {
-		const res = await fetch(`${API_BASE}/api/devices/registry/${encodeURIComponent(mac)}`);
+		const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}`);
 		if (!res.ok) return null;
 		return res.json();
 	} catch {
@@ -89,7 +87,7 @@ export async function getRegistryDevice(mac: string): Promise<RegistryDevice | n
 export async function getDeviceTraffic(mac: string): Promise<DeviceTraffic | null> {
 	try {
 		const res = await fetch(
-			`${API_BASE}/api/devices/registry/${encodeURIComponent(mac)}/traffic`
+			`/api/devices/registry/${encodeURIComponent(mac)}/traffic`
 		);
 		if (!res.ok) return null;
 		return res.json();
@@ -104,7 +102,7 @@ export async function getDeviceTraffic(mac: string): Promise<DeviceTraffic | nul
 export async function acknowledgeDevice(mac: string): Promise<boolean> {
 	try {
 		const res = await fetch(
-			`${API_BASE}/api/devices/registry/${encodeURIComponent(mac)}`,
+			`/api/devices/registry/${encodeURIComponent(mac)}`,
 			{
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },

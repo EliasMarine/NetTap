@@ -29,8 +29,6 @@ export interface EventTypesResponse {
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
-
 /**
  * Query changelog events with optional filters.
  */
@@ -47,7 +45,7 @@ export async function getChangelogEvents(params?: {
 		if (params?.type) qs.set('type', params.type);
 		if (params?.limit) qs.set('limit', String(params.limit));
 
-		const res = await fetch(`${API_BASE}/api/changelog?${qs.toString()}`);
+		const res = await fetch(`/api/changelog?${qs.toString()}`);
 		if (!res.ok) return { events: [], count: 0 };
 		return res.json();
 	} catch {
@@ -60,7 +58,7 @@ export async function getChangelogEvents(params?: {
  */
 export async function getEventTypes(): Promise<string[]> {
 	try {
-		const res = await fetch(`${API_BASE}/api/changelog/types`);
+		const res = await fetch('/api/changelog/types');
 		if (!res.ok) return [];
 		const data: EventTypesResponse = await res.json();
 		return data.event_types;

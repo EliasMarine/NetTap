@@ -139,6 +139,20 @@ CHAIN 16: Mirror/SPAN Full-Stack Test Issues (phase-5/mirror-span-mode)
       `%{[@metadata][malcolm_opensearch_index]}` index (124K orphaned docs) or get dropped entirely.
       Metadata logs (known_hosts, etc.) use a different code path that works without JSON.
       Fix: Added `ZEEK_JSON: "true"` to zeek-live environment in docker-compose.yml.
+  12. Docker compose service names don't include `nettap-` prefix: `docker compose up -d
+      zeek-live` not `nettap-zeek-live`. Container names have the prefix (set via
+      container_name), but compose commands use the service name from the YAML key.
+  13. Malcolm Filebeat processes ROTATED Zeek logs, not active current/ files.
+      `filebeat-process-zeek-folder.sh` runs every minute via cron. Zeek rotates logs hourly.
+      After fixing ZEEK_JSON, conn.log in current/ is JSON but won't reach OpenSearch until
+      the next hourly rotation. Restarting Filebeat alone doesn't help — must wait for rotation
+      or manually trigger it.
+  14. OpenSearch mapper_parsing_exception on event.id: type [long] vs string UID.
+      arkime_sessions3-260310 was created by Suricata alerts first (Zeek was broken).
+      Suricata's event.id is numeric → mapped as long. Zeek's event.id is string UID
+      (e.g., "Ctn46L1IGV1awTb9wj") → ALL Zeek conn docs rejected with 400.
+      Fix: delete today's index and let it recreate with correct template mapping.
+      Prevention: ensure Malcolm index template maps event.id as keyword, not dynamic.
 ```
 
 ---

@@ -61,8 +61,6 @@ export interface CertStats {
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
-
 function buildTimeQuery(from?: string, to?: string): string {
 	const qs = new URLSearchParams();
 	if (from) qs.set('from', from);
@@ -75,7 +73,7 @@ function buildTimeQuery(from?: string, to?: string): string {
  */
 export async function getCertificates(from?: string, to?: string): Promise<CertificatesResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/certificates?${buildTimeQuery(from, to)}`);
+		const res = await fetch(`/api/certificates?${buildTimeQuery(from, to)}`);
 		if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
 		return res.json();
 	} catch {
@@ -92,7 +90,7 @@ export async function getExpiringCerts(days = 30, from?: string, to?: string): P
 		qs.set('days', String(days));
 		if (from) qs.set('from', from);
 		if (to) qs.set('to', to);
-		const res = await fetch(`${API_BASE}/api/certificates/expiring?${qs.toString()}`);
+		const res = await fetch(`/api/certificates/expiring?${qs.toString()}`);
 		if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
 		return res.json();
 	} catch {
@@ -105,7 +103,7 @@ export async function getExpiringCerts(days = 30, from?: string, to?: string): P
  */
 export async function getSelfSignedCerts(from?: string, to?: string): Promise<CertificatesResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/certificates/self-signed?${buildTimeQuery(from, to)}`);
+		const res = await fetch(`/api/certificates/self-signed?${buildTimeQuery(from, to)}`);
 		if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
 		return res.json();
 	} catch {
@@ -118,7 +116,7 @@ export async function getSelfSignedCerts(from?: string, to?: string): Promise<Ce
  */
 export async function getIssuerChanges(from?: string, to?: string): Promise<IssuerChangesResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/certificates/issuer-changes?${buildTimeQuery(from, to)}`);
+		const res = await fetch(`/api/certificates/issuer-changes?${buildTimeQuery(from, to)}`);
 		if (!res.ok) return { from: '', to: '', changes: [], count: 0 };
 		return res.json();
 	} catch {
@@ -131,7 +129,7 @@ export async function getIssuerChanges(from?: string, to?: string): Promise<Issu
  */
 export async function getCertStats(from?: string, to?: string): Promise<CertStats> {
 	try {
-		const res = await fetch(`${API_BASE}/api/certificates/stats?${buildTimeQuery(from, to)}`);
+		const res = await fetch(`/api/certificates/stats?${buildTimeQuery(from, to)}`);
 		if (!res.ok) {
 			return {
 				total_certs: 0,

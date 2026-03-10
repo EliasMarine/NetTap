@@ -38,15 +38,12 @@ export interface CaptureStatsResponse {
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
-
 /**
  * Get the current capture mode (bridge or mirror).
  */
 export async function getCaptureMode(): Promise<CaptureMode> {
 	try {
-		const res = await fetch(`${API_BASE}/api/capture/mode`);
-		if (!res.ok) {
+		const res = await fetch('/api/capture/mode');		if (!res.ok) {
 			return { mode: 'bridge', interface: '' };
 		}
 		return res.json();
@@ -60,7 +57,7 @@ export async function getCaptureMode(): Promise<CaptureMode> {
  */
 export async function getCaptureHealth(): Promise<CaptureHealthResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/capture/health`);
+		const res = await fetch('/api/capture/health');
 		if (!res.ok) {
 			return {
 				mode: 'bridge',
@@ -89,7 +86,7 @@ export async function getCaptureHealth(): Promise<CaptureHealthResponse> {
  */
 export async function getCaptureStats(): Promise<CaptureStatsResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/capture/stats`);
+		const res = await fetch('/api/capture/stats');
 		if (!res.ok) {
 			return {
 				capture_interface: '',

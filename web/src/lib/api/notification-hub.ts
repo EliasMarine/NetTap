@@ -51,14 +51,17 @@ export interface DeliveryLogResponse {
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
+// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
+// Port 8880 is Docker-internal (expose, not ports). All API calls go through
+// the SvelteKit catch-all proxy at /api/[...path] which forwards to the daemon.
+// OLD CODE END
 
 /**
  * List all configured notification channels.
  */
 export async function getChannels(): Promise<ChannelsResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/channels`);
+		const res = await fetch(`/api/notifications/channels`);
 		if (!res.ok) return { channels: [], count: 0 };
 		return res.json();
 	} catch {
@@ -75,7 +78,7 @@ export async function createChannel(
 	config: Record<string, unknown>,
 ): Promise<NotificationChannel | null> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/channels`, {
+		const res = await fetch(`/api/notifications/channels`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ type, name, config: { ...config, name } }),
@@ -92,7 +95,7 @@ export async function createChannel(
  */
 export async function deleteChannel(id: string): Promise<boolean> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/channels/${id}`, {
+		const res = await fetch(`/api/notifications/channels/${id}`, {
 			method: 'DELETE',
 		});
 		return res.ok;
@@ -106,7 +109,7 @@ export async function deleteChannel(id: string): Promise<boolean> {
  */
 export async function testChannel(id: string): Promise<boolean> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/channels/${id}/test`, {
+		const res = await fetch(`/api/notifications/channels/${id}/test`, {
 			method: 'POST',
 		});
 		if (!res.ok) return false;
@@ -122,7 +125,7 @@ export async function testChannel(id: string): Promise<boolean> {
  */
 export async function getDeliveryLog(): Promise<DeliveryLogResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/log`);
+		const res = await fetch(`/api/notifications/log`);
 		if (!res.ok) return { log: [], count: 0 };
 		return res.json();
 	} catch {
@@ -135,7 +138,7 @@ export async function getDeliveryLog(): Promise<DeliveryLogResponse> {
  */
 export async function getRules(): Promise<RulesResponse> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/rules`);
+		const res = await fetch(`/api/notifications/rules`);
 		if (!res.ok) return { rules: [], count: 0 };
 		return res.json();
 	} catch {
@@ -152,7 +155,7 @@ export async function createRule(
 	min_severity: number,
 ): Promise<RoutingRule | null> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/rules`, {
+		const res = await fetch(`/api/notifications/rules`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ event_type, channels, min_severity }),
@@ -169,7 +172,7 @@ export async function createRule(
  */
 export async function deleteRule(id: string): Promise<boolean> {
 	try {
-		const res = await fetch(`${API_BASE}/api/notifications/rules/${id}`, {
+		const res = await fetch(`/api/notifications/rules/${id}`, {
 			method: 'DELETE',
 		});
 		return res.ok;
