@@ -883,7 +883,15 @@
 	.sort-btn:hover { color: var(--text-primary, #e4e4e7); }
 	.sort-btn.active-sort { color: var(--accent-blue, #3b82f6); }
 
-	.copy-btn { opacity: 0; transition: opacity 0.15s; }
+	.copy-btn {
+		opacity: 0;
+		transition: opacity 0.15s;
+		font-size: 1.25rem;
+		color: var(--accent-blue, #3b82f6);
+		padding: 0.25rem 0.5rem;
+	}
+
+	.copy-btn:hover { color: #60a5fa; }
 	.clickable-row:hover .copy-btn { opacity: 1; }
 
 	.table-footer {

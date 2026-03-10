@@ -162,3 +162,36 @@ export function formatBytes(bytes: number): string {
 	const i = Math.floor(Math.log(bytes) / Math.log(1024));
 	return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
+
+/**
+ * Format an ISO timestamp as a relative time string (e.g., "2 hours ago").
+ */
+export function formatRelativeTime(iso: string): string {
+	const diff = Date.now() - new Date(iso).getTime();
+	const sec = Math.floor(diff / 1000);
+	if (sec < 60) return 'just now';
+	const min = Math.floor(sec / 60);
+	if (min < 60) return `${min}m ago`;
+	const hrs = Math.floor(min / 60);
+	if (hrs < 24) return `${hrs}h ago`;
+	const days = Math.floor(hrs / 24);
+	return `${days}d ago`;
+}
+
+/**
+ * Map protocol names to Wireshark display filters.
+ */
+export const PROTO_FILTER_MAP: Record<string, string> = {
+	HTTP: 'http',
+	TLS: 'tls',
+	HTTPS: 'tls',
+	DNS: 'dns',
+	TCP: 'tcp',
+	UDP: 'udp',
+	ICMP: 'icmp',
+	ARP: 'arp',
+	SSH: 'ssh',
+	DHCP: 'dhcp',
+	SMTP: 'smtp',
+	FTP: 'ftp',
+};
