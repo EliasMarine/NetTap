@@ -75,6 +75,7 @@
 	// Filters
 	let activeFilter = $state<SeverityFilter>('all');
 	let signatureSearch = $state('');
+	let signatureFilter = $state('');
 	let ipFilter = $derived($page.url.searchParams.get('ip') || '');
 
 	// Pagination
@@ -256,6 +257,7 @@
 				page: 1,
 				size: pageSize,
 				ip: ipFilter || undefined,
+				signature: signatureFilter || undefined,
 			}),
 		]);
 
@@ -286,6 +288,7 @@
 				page: pg,
 				size: pageSize,
 				ip: ipFilter || undefined,
+				signature: signatureFilter || undefined,
 			});
 			alerts = r.alerts;
 			totalPages = r.total_pages;
@@ -311,8 +314,22 @@
 	}
 
 	function filterBySignature(sig: string) {
-		signatureSearch = sig;
-		document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' });
+		// Toggle: click same signature again to clear filter
+		if (signatureFilter === sig) {
+			signatureFilter = '';
+		} else {
+			signatureFilter = sig;
+		}
+		if (initialized) {
+			fetchAlerts(1).then(() => {
+				document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' });
+			});
+		}
+	}
+
+	function clearSignatureFilter() {
+		signatureFilter = '';
+		if (initialized) fetchAlerts(1);
 	}
 
 	// Pagination
@@ -559,6 +576,12 @@
 			placeholder="Search signatures..."
 			bind:value={signatureSearch}
 		/>
+		{#if signatureFilter}
+			<span class="badge badge-accent">
+				Sig: {signatureFilter.length > 40 ? signatureFilter.slice(0, 40) + '...' : signatureFilter}
+				<button class="filter-clear" onclick={clearSignatureFilter} title="Clear signature filter">&times;</button>
+			</span>
+		{/if}
 		{#if ipFilter}
 			<span class="badge badge-info">
 				IP: {ipFilter}
@@ -580,7 +603,7 @@
 			{#if filteredSignatures.length > 0}
 				<div class="bar-list">
 					{#each filteredSignatures as sig, i}
-						<button class="bar-row clickable-row" onclick={() => filterBySignature(sig.signature)}>
+						<button class="bar-row clickable-row" class:bar-row-active={signatureFilter === sig.signature} onclick={() => filterBySignature(sig.signature)}>
 							<span class="bar-rank">{i + 1}</span>
 							<span class={severityBadgeClass(sig.severity)} style="flex-shrink: 0;">
 								{severityLabel(sig.severity)}
@@ -939,6 +962,7 @@
 		font-family: var(--font-mono);
 		line-height: 1;
 		margin-top: var(--space-xs);
+		color: var(--text-primary);
 	}
 
 	.text-red { color: var(--red); }
@@ -1096,6 +1120,17 @@
 
 	.bar-row.clickable-row:hover {
 		background-color: var(--bg-tertiary);
+	}
+
+	.bar-row-active {
+		background-color: var(--accent-muted, rgba(59, 130, 246, 0.15)) !important;
+		border-left: 3px solid var(--accent);
+	}
+
+	.badge-accent {
+		background-color: var(--accent-muted, rgba(59, 130, 246, 0.15));
+		color: var(--accent);
+		border: 1px solid var(--accent);
 	}
 
 	.bar-rank {

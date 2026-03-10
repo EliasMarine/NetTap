@@ -141,7 +141,13 @@ function buildQuery(params: Record<string, string | number | undefined>): string
  * Severity: 1=high, 2=medium, 3=low.
  */
 export async function getAlerts(
-	opts: TimeRangeParams & { severity?: number; page?: number; size?: number; ip?: string } = {}
+	opts: TimeRangeParams & {
+		severity?: number;
+		page?: number;
+		size?: number;
+		ip?: string;
+		signature?: string;
+	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
 		from: opts.from,
@@ -150,6 +156,7 @@ export async function getAlerts(
 		page: opts.page,
 		size: opts.size,
 		ip: opts.ip,
+		signature: opts.signature,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 

@@ -282,6 +282,11 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         except (ValueError, TypeError):
             pass
 
+    # Optional signature filter (wildcard match on rule.name)
+    sig_filter = request.query.get("signature", "")
+    if sig_filter:
+        filter_clauses.append({"match_phrase": {"rule.name": sig_filter}})
+
     # Optional IP filter (matches source OR destination)
     ip_filter = request.query.get("ip", "")
     if ip_filter:
