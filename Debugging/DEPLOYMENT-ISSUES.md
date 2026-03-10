@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
 > **Last updated:** 2026-03-09
-> **Status:** 45 issues tracked. 45 RESOLVED. Latest: Mirror/SPAN feature pages (Live Monitor, Bandwidth, DNS Analytics, IoT & LAN, Changelog, Certificates, PCAP Search) showed no data — missing SvelteKit server-side proxy routes (`+server.ts`) for `/api/*` endpoints + `VITE_API_URL` pointing to Docker-internal port 8880. Fix: catch-all `[...path]/+server.ts` proxy + relative paths in 5 API clients. Daemon tests: 1175 passing. Web tests: 1034/1034 passing (74 test files). svelte-check: 0 errors. 18/18 containers healthy on N100. Full-stack test: 59/59 passing.
+> **Status:** 47 issues tracked. 47 RESOLVED. Latest: (1) PCAP Search quick filters used BPF syntax but tshark `-Y` requires Wireshark display filters; filter validation blocked `|`/`&` needed for display filter `||`/`&&`; added per-file PCAP download + auto-scroll preview + sortable columns. (2) DNS Analytics aggregations returned 0 — field names used ECS `dns.*` prefix instead of Malcolm's `zeek.dns.*`; RTT conversion inverted (divided by 1M assuming nanoseconds, but Zeek stores RTT in seconds). Daemon tests: 1175 passing. Web tests: 1034/1034 passing (74 test files). svelte-check: 0 errors. 18/18 containers healthy on N100. Full-stack test: 59/59 passing.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -57,7 +57,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **14 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **16 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -165,6 +165,26 @@ CHAIN 16: Mirror/SPAN Full-Stack Test Issues (phase-5/mirror-span-mode)
       unhandled `/api/*` requests to daemon via `daemonFetch()`. SvelteKit routing gives
       priority to existing explicit routes. (b) Fixed 5 API client files + setup page to
       use relative paths instead of `VITE_API_URL`.
+
+CHAIN 17: PCAP Search Filter Syntax + DNS Analytics Field Mismatch (phase-5/mirror-span-mode)
+  Commits 6a853e4 + 8763d07 + 5e8acf8
+  1. PCAP Search quick filters used BPF syntax (`udp port 53`) but tshark `-Y` requires
+     Wireshark display filter syntax (`dns`, `http || tls`, etc.). Changed all quick filters.
+  2. Filter validation regex `[;&|` + backtick + `$]` blocked `|` and `&` chars needed for
+     display filter `||` and `&&` operators. Removed `|` and `&` from forbidden chars — safe
+     because `asyncio.create_subprocess_exec` prevents shell injection (no shell involved).
+  3. No per-file PCAP download — only full search results download existed. Added
+     `GET /api/pcap/download-file` daemon endpoint + Download buttons in UI.
+  4. Preview button appeared broken — no auto-scroll to preview section. Added scrollIntoView.
+  5. Tables unsortable — added ascending/descending column sorting to both tables.
+  6. DNS Analytics all aggregations returned 0: field names used ECS `dns.*` prefix instead of
+     Malcolm's `zeek.dns.*` prefix. Remapped: `dns.question.name` → `zeek.dns.query`,
+     `dns.question.type` → `zeek.dns.qtype_name`, `dns.response_code` → `zeek.dns.rcode_name`,
+     `event.duration` → `zeek.dns.rtt`.
+  7. DNS RTT conversion inverted: divided by 1,000,000 assuming nanoseconds, but Zeek stores
+     RTT in seconds. Fixed to multiply by 1000 for milliseconds display.
+  8. Complete DNS Analytics page redesign: interactive SVG timeline with tooltips, sortable
+     tables, cross-section linking, time range pills, per-device DNS split panel, empty states.
 ```
 
 ---
@@ -1449,6 +1469,12 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `web/src/lib/api/devices-registry.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
 | `web/src/lib/api/notification-hub.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
 | `web/src/routes/setup/+page.svelte` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `daemon/api/pcap.py` | Chain 17 | Added `GET /api/pcap/download-file` endpoint for per-file PCAP download. |
+| `daemon/services/pcap_search.py` | Chain 17 | Fixed filter validation: removed `|` and `&` from forbidden chars (safe with `create_subprocess_exec`). |
+| `web/src/routes/pcap/+page.svelte` | Chain 17 | Fixed quick filters from BPF to display filter syntax. Added Download buttons, auto-scroll to preview, sortable columns. |
+| `web/src/lib/api/pcap.ts` | Chain 17 | Added `downloadPcapFile()` API client function for per-file download. |
+| `daemon/services/dns_analytics.py` | Chain 17 | Remapped all field names: `dns.*` → `zeek.dns.*`. Fixed RTT conversion: `÷1M` → `×1000`. |
+| `web/src/routes/dns/+page.svelte` | Chain 17 | Complete redesign: interactive SVG timeline, sortable tables, time range pills, per-device DNS panel, empty states. |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1544,6 +1570,12 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 70. **`VITE_API_URL` defaulting to `http://localhost:8880` is broken in Docker deployment** — port 8880 is `expose`-only (container-to-container), never published to host. Browser can never reach it. All API client files must use relative paths (`/api/...`) so requests flow through nginx → SvelteKit → daemon.
 71. **SvelteKit `[...path]` catch-all routes are lowest priority** — they don't conflict with existing explicit route files. A catch-all `api/[...path]/+server.ts` is a safe fallback proxy for any daemon endpoint that doesn't have a dedicated SvelteKit route. Existing explicit routes (e.g., `api/traffic/+server.ts`) always win.
 
+### PCAP / tshark / DNS Analytics (NEW — Chain 17)
+72. **tshark `-Y` only accepts Wireshark display filter syntax, NOT BPF** — `udp port 53` is BPF (used by tcpdump/libpcap). tshark's `-Y` flag requires display filters like `dns`, `http`, `tls`, `tcp.port == 80`. Using BPF syntax with `-Y` produces `tshark: Neither "udp" nor "port" are field or protocol names`. Always verify filter syntax against the tool's documentation.
+73. **`asyncio.create_subprocess_exec` prevents shell injection — filter validation can be relaxed** — `create_subprocess_exec` passes arguments directly to the kernel (no shell), so characters like `|`, `&`, `;` have no special meaning. Input validation that blocks these chars to prevent "shell injection" is overly aggressive and breaks legitimate display filter operators like `||` (or) and `&&` (and). Only validate against actual security risks for the execution method being used.
+74. **Malcolm/Zeek stores DNS data with `zeek.dns.*` prefix, NOT ECS `dns.*` prefix** — Zeek DNS fields use `zeek.dns.query` (not `dns.question.name`), `zeek.dns.qtype_name` (not `dns.question.type`), `zeek.dns.rcode_name` (not `dns.response_code`), `zeek.dns.rtt` (not `event.duration`). Always verify field names against actual OpenSearch documents before writing queries — ECS and Zeek-prefixed fields coexist but map to different data.
+75. **Zeek DNS RTT field (`zeek.dns.rtt`) is in seconds, NOT nanoseconds** — Zeek stores round-trip time as floating-point seconds (e.g., `0.045` = 45ms). Code that divides by 1,000,000 (assuming nanoseconds like ECS `event.duration`) will show microsecond-scale values instead of millisecond-scale. Multiply by 1000 for millisecond display.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1616,3 +1648,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | manual | OpenSearch security re-bootstrap + fix-opensearch.sh script | 2026-03-07 |
 | — | manual | nettap.service systemd boot persistence | 2026-03-07 |
 | — | phase-4/webui-v2 | netsniff-ng EPERM: SYS_ADMIN cap_add (setcap -r fails on overlay2) | 2026-03-07 |
+| — | 6a853e4 + 8763d07 | PCAP Search: BPF→display filter syntax, filter validation fix, download endpoint, sortable columns | 2026-03-09 |
+| — | 5e8acf8 | DNS Analytics: zeek.dns.* field remapping, RTT conversion fix, page redesign | 2026-03-09 |
