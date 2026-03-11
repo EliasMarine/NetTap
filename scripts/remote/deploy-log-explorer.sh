@@ -91,7 +91,10 @@ echo "  -> OpenSearch: ready"
 
 echo ""
 echo "=== Step 3: Rebuild and deploy daemon + web ==="
-sudo docker compose -f "$COMPOSE" up -d --force-recreate --build nettap-storage-daemon nettap-web
+# IMPORTANT: Must include nettap-nginx in the recreate. Nginx caches upstream
+# DNS at startup — if nettap-web gets a new IP, nginx keeps the old one and
+# routes requests to the wrong container (e.g., Grafana instead of SvelteKit).
+sudo docker compose -f "$COMPOSE" up -d --force-recreate --build nettap-storage-daemon nettap-web nettap-nginx
 
 echo ""
 echo "=== Step 4: Wait 15s for containers to start ==="
