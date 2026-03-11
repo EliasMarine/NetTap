@@ -26,7 +26,7 @@
 </script>
 
 <div class="kv-row">
-	<span class="kv-label">{label}</span>
+	<span class="kv-label" title={label}>{label}</span>
 	{#if value == null || value === '' || value === undefined}
 		<span class="kv-value kv-empty">--</span>
 	{:else}
@@ -64,13 +64,17 @@
 
 	.kv-label {
 		flex-shrink: 0;
-		width: 120px;
+		width: 160px;
+		min-width: 160px;
 		font-size: var(--text-xs);
 		font-weight: 600;
 		color: var(--text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		padding-top: 2px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.kv-value {
