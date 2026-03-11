@@ -6,6 +6,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -114,30 +115,6 @@
 			return dir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
 		});
 	});
-
-	// ---------------------------------------------------------------------------
-	// Nested field accessor for ECS dot-notation paths
-	// ---------------------------------------------------------------------------
-
-	function getField(obj: Record<string, unknown>, path: string): unknown {
-		const parts = path.split('.');
-		let current: unknown = obj;
-		for (const part of parts) {
-			if (current == null || typeof current !== 'object') return undefined;
-			current = (current as Record<string, unknown>)[part];
-		}
-		return current;
-	}
-
-	// ---------------------------------------------------------------------------
-	// Safe value extractors (OpenSearch may return arrays for ECS fields)
-	// ---------------------------------------------------------------------------
-
-	function asString(val: unknown): string {
-		if (Array.isArray(val)) return val[0] ?? '';
-		if (typeof val === 'string') return val;
-		return '';
-	}
 
 	// ---------------------------------------------------------------------------
 	// Display helpers
@@ -269,21 +246,6 @@
 			expandedId = id;
 			checkTShark();
 		}
-	}
-
-	function buildTSharkFilter(conn: Connection): string {
-		const srcIp = asString(getField(conn, 'source.ip'));
-		const dstIp = asString(getField(conn, 'destination.ip'));
-		const srcPort = getField(conn, 'source.port');
-		const dstPort = getField(conn, 'destination.port');
-		const proto = asString(getField(conn, 'network.transport')).toLowerCase();
-
-		const parts: string[] = [];
-		if (srcIp) parts.push(`ip.addr == ${srcIp}`);
-		if (dstIp) parts.push(`ip.addr == ${dstIp}`);
-		if (proto && srcPort) parts.push(`${proto}.port == ${srcPort}`);
-		if (proto && dstPort) parts.push(`${proto}.port == ${dstPort}`);
-		return parts.join(' && ');
 	}
 
 	function openInTShark(conn: Connection) {
