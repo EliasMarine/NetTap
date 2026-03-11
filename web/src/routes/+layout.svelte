@@ -4,6 +4,7 @@
 	import NotificationBell from '$components/NotificationBell.svelte';
 	import { getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
+	import { initCaptureMode } from '$lib/stores/captureMode';
 
 	let { children } = $props();
 
@@ -17,6 +18,8 @@
 		}).catch(() => {
 			// Silently fail — badge just won't show
 		});
+		// Also populate the global store for drawer components
+		initCaptureMode();
 	});
 
 	const navItems = [

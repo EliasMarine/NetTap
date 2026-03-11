@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import IPAddress from '$components/IPAddress.svelte';
+	import DetailDrawer from '$components/DetailDrawer.svelte';
+	import LogDrawerContent from '$components/drawer/content/LogDrawerContent.svelte';
+	import { goto } from '$app/navigation';
+	import { getWhois } from '$api/lookup';
 	import {
 		getLogStats,
 		getLogTimeline,
@@ -136,10 +141,20 @@
 	let loadingMore = $state(false);
 	let sortField = $state('@timestamp');
 	let sortDir = $state<'desc' | 'asc'>('desc');
-	let expandedRow = $state<string | null>(null);
-	let fullDoc = $state<Record<string, unknown> | null>(null);
-	let fullDocLoading = $state(false);
-	let copySuccess = $state(false);
+	// OLD CODE START — replaced by DetailDrawer
+	// let expandedRow = $state<string | null>(null);
+	// let fullDoc = $state<Record<string, unknown> | null>(null);
+	// let fullDocLoading = $state(false);
+	// let copySuccess = $state(false);
+	// OLD CODE END
+
+	// Detail drawer state
+	let drawerHit = $state<LogHit | null>(null);
+	let drawerTab = $state('fields');
+	const LOG_DRAWER_TABS = [
+		{ id: 'fields', label: 'Fields' },
+		{ id: 'raw', label: 'Raw JSON' },
+	];
 	let fieldDefs = $state<Record<string, string>>({});
 
 	// Active filters from chart clicks
@@ -470,38 +485,25 @@
 		}
 	}
 
-	// Row expansion
-	async function fetchFullDocument(hit: LogHit) {
-		fullDocLoading = true;
-		try {
-			const params = new URLSearchParams();
-			params.set('query', `_id:${hit._id}`);
-			params.set('size', '1');
-			params.set('from', timeRangeToISO(selectedTimeRange));
-			params.set('to', new Date().toISOString());
-			const res = await fetch(`/api/logs/search?${params.toString()}`);
-			if (res.ok) {
-				const data = await res.json();
-				if (data.hits && data.hits.length > 0) {
-					fullDoc = data.hits[0]._source;
-				}
-			}
-		} catch {
-			// Fall back to projected data
-		} finally {
-			fullDocLoading = false;
-		}
+	// OLD CODE START — row expansion replaced by DetailDrawer
+	// async function fetchFullDocument(hit: LogHit) { ... }
+	// function toggleRow(id: string) { ... }
+	// OLD CODE END
+
+	function openDrawer(hit: LogHit) {
+		drawerHit = hit;
+		drawerTab = 'fields';
 	}
 
-	function toggleRow(id: string) {
-		if (expandedRow === id) {
-			expandedRow = null;
-			fullDoc = null;
-		} else {
-			expandedRow = id;
-			const hit = results.find((h) => h._id === id);
-			if (hit) fetchFullDocument(hit);
-		}
+	function closeDrawer() {
+		drawerHit = null;
+		drawerTab = 'fields';
+	}
+
+	function drawerViewSourceDevice() {
+		if (!drawerHit) return;
+		const src = drawerHit._source['source.ip'] || (drawerHit._source['source'] as Record<string, unknown>)?.['ip'];
+		if (src) goto(`/devices/${encodeURIComponent(String(Array.isArray(src) ? src[0] : src))}`);
 	}
 
 	// CSV export
@@ -543,6 +545,18 @@
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
+		// Read URL params for deep-linking from other pages (e.g., /logs?filter=1.2.3.4)
+		const urlFilter = $page.url.searchParams.get('filter');
+		const urlIp = $page.url.searchParams.get('ip');
+		const urlQuery = $page.url.searchParams.get('query');
+		if (urlFilter) {
+			activeIpFilter = urlFilter;
+		} else if (urlIp) {
+			activeIpFilter = urlIp;
+		} else if (urlQuery) {
+			query = urlQuery;
+		}
+
 		fetchAll().then(() => {
 			initialized = true;
 		});
@@ -984,11 +998,11 @@
 						{#each results as hit (hit._id)}
 							<tr
 								class="log-row"
-								class:expanded={expandedRow === hit._id}
-								onclick={() => toggleRow(hit._id)}
+								class:expanded={drawerHit?._id === hit._id}
+								onclick={() => openDrawer(hit)}
 							>
 								<td class="expand-cell">
-									<span class="expand-icon" class:rotated={expandedRow === hit._id}>&#9654;</span>
+									<span class="expand-icon" class:rotated={drawerHit?._id === hit._id}>&#9654;</span>
 								</td>
 								{#each COLUMNS[logType] as col}
 									{@const value = getNestedValue(hit._source, col)}
@@ -1001,40 +1015,6 @@
 									</td>
 								{/each}
 							</tr>
-							{#if expandedRow === hit._id}
-								<tr class="expanded-row">
-									<td colspan={COLUMNS[logType].length + 1}>
-										<div class="expanded-content">
-											<div class="expanded-fields">
-												<h4>Fields</h4>
-												{#if fullDocLoading}
-													<div class="loading-spinner" style="width: 14px; height: 14px;"></div>
-												{/if}
-												<div class="field-grid">
-													{#each Object.entries(flattenObject(fullDoc || hit._source)) as [key, val]}
-														<div class="field-key mono">{key}</div>
-														<div class="field-val mono">{String(val ?? '--')}</div>
-													{/each}
-												</div>
-											</div>
-											<div class="expanded-raw">
-												<div class="raw-header">
-													<h4>Raw JSON</h4>
-													<button class="btn btn-secondary btn-xs copy-btn" onclick={(e: MouseEvent) => {
-														e.stopPropagation();
-														navigator.clipboard.writeText(JSON.stringify(fullDoc || hit._source, null, 2));
-														copySuccess = true;
-														setTimeout(() => { copySuccess = false; }, 2000);
-													}}>
-														{copySuccess ? 'Copied!' : 'Copy'}
-													</button>
-												</div>
-												<pre>{JSON.stringify(fullDoc || hit._source, null, 2)}</pre>
-											</div>
-										</div>
-									</td>
-								</tr>
-							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -1060,6 +1040,28 @@
 		{/if}
 	</section>
 </div>
+
+<!-- Detail Drawer -->
+<DetailDrawer
+	open={drawerHit !== null}
+	title={drawerHit ? String(drawerHit._source['event.dataset'] ?? drawerHit._source['event.provider'] ?? 'Log Entry') : ''}
+	subtitle={drawerHit ? String(drawerHit._source['@timestamp'] ?? '') : ''}
+	tabs={LOG_DRAWER_TABS}
+	activeTab={drawerTab}
+	onclose={closeDrawer}
+	ontabchange={(t) => drawerTab = t}
+>
+	{#snippet children()}
+		{#if drawerHit}
+			<LogDrawerContent hit={drawerHit} activeTab={drawerTab} timeRange={timeRangeToISO(selectedTimeRange)} />
+		{/if}
+	{/snippet}
+	{#snippet actions()}
+		<button class="btn btn-secondary btn-sm" onclick={drawerViewSourceDevice}>
+			View Source Device
+		</button>
+	{/snippet}
+</DetailDrawer>
 
 <script lang="ts" module>
 	export function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string, unknown> {
@@ -1504,69 +1506,9 @@
 		border-bottom-color: var(--border-bright);
 	}
 
-	/* Expanded row */
-	.expanded-row td {
-		padding: 0 !important;
-		background-color: var(--bg-primary);
-	}
-
-	.expanded-content {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-md);
-		padding: var(--space-md);
-		max-height: 400px;
-		overflow-y: auto;
-	}
-
-	.expanded-content h4 {
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		margin-bottom: var(--space-sm);
-	}
-
-	.field-grid {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 2px var(--space-md);
-		font-size: var(--text-xs);
-	}
-
-	.field-key {
-		color: var(--cyan);
-		white-space: nowrap;
-	}
-
-	.field-val {
-		color: var(--text-secondary);
-		word-break: break-all;
-	}
-
-	.raw-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: var(--space-sm);
-	}
-
-	.raw-header h4 {
-		margin-bottom: 0;
-	}
-
-	.copy-btn {
-		font-size: var(--text-xs);
-		padding: 2px 8px;
-	}
-
-	.expanded-raw pre {
-		font-size: var(--text-xs);
-		max-height: 340px;
-		overflow: auto;
-		margin: 0;
-	}
+	/* OLD CODE START — expanded row styles replaced by DetailDrawer */
+	/* .expanded-row td, .expanded-content, .field-grid, .expanded-raw — moved to drawer */
+	/* OLD CODE END */
 
 	/* Loading state */
 	.loading-state {
@@ -1603,10 +1545,6 @@
 		.search-bar {
 			flex-direction: column;
 			align-items: stretch;
-		}
-
-		.expanded-content {
-			grid-template-columns: 1fr;
 		}
 
 		.page-header {

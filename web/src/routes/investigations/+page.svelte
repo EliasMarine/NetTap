@@ -9,6 +9,8 @@
 		getInvestigationStats,
 	} from '$api/investigations';
 	import type { Investigation, InvestigationStats } from '$api/investigations';
+	import DetailDrawer from '$components/DetailDrawer.svelte';
+	import InvestigationDrawerContent from '$components/drawer/content/InvestigationDrawerContent.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -25,8 +27,37 @@
 	let loading = $state(false);
 	let activeFilter = $state<StatusFilter>('all');
 
-	// Expanded investigation
+	// Expanded investigation (keep accordion for cards)
 	let expandedId = $state<string | null>(null);
+
+	// Detail drawer state
+	let drawerInvestigation = $state<Investigation | null>(null);
+	let drawerTab = $state('details');
+	const INV_DRAWER_TABS = [
+		{ id: 'details', label: 'Details' },
+		{ id: 'notes', label: 'Notes' },
+		{ id: 'linked', label: 'Linked Items' },
+	];
+
+	function openDrawer(inv: Investigation) {
+		drawerInvestigation = inv;
+		drawerTab = 'details';
+	}
+
+	function closeDrawer() {
+		drawerInvestigation = null;
+		drawerTab = 'details';
+	}
+
+	async function handleDrawerStatusChange(id: string, status: string) {
+		await updateInvestigation(id, { status });
+		fetchAll();
+	}
+
+	async function handleDrawerNoteAdded(id: string, noteText: string) {
+		await addNote(id, noteText);
+		fetchAll();
+	}
 
 	// New investigation form
 	let showNewForm = $state(false);
@@ -85,6 +116,21 @@
 				return 'badge';
 			default:
 				return 'badge';
+		}
+	}
+
+	function severityLabel(severity: string): string {
+		switch (severity) {
+			case 'critical':
+				return 'Critical';
+			case 'high':
+				return 'High';
+			case 'medium':
+				return 'Medium';
+			case 'low':
+				return 'Low';
+			default:
+				return severity.charAt(0).toUpperCase() + severity.slice(1);
 		}
 	}
 
@@ -522,6 +568,16 @@
 								</div>
 							{/if}
 
+							<!-- View Details Drawer -->
+							<div class="detail-section">
+								<button class="btn btn-primary btn-sm" onclick={() => openDrawer(inv)}>
+									<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+									</svg>
+									View Full Details
+								</button>
+							</div>
+
 							<!-- Delete -->
 							<div class="detail-section detail-section-danger">
 								{#if deleteConfirmId === inv.id}
@@ -550,6 +606,33 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Detail Drawer -->
+<DetailDrawer
+	open={!!drawerInvestigation}
+	title={drawerInvestigation?.title ?? ''}
+	subtitle={drawerInvestigation ? `${severityLabel(drawerInvestigation.severity)} — ${statusLabel(drawerInvestigation.status)}` : ''}
+	tabs={INV_DRAWER_TABS}
+	activeTab={drawerTab}
+	onclose={closeDrawer}
+	ontabchange={(tab) => (drawerTab = tab)}
+>
+	{#snippet children()}
+		{#if drawerInvestigation}
+			<InvestigationDrawerContent
+				investigation={drawerInvestigation}
+				activeTab={drawerTab}
+				onstatuschange={(_id, status) => handleDrawerStatusChange(_id, status)}
+				onnoteadded={(_id, note) => handleDrawerNoteAdded(_id, note)}
+			/>
+		{/if}
+	{/snippet}
+	{#snippet actions()}
+		<button class="btn btn-secondary btn-sm" onclick={closeDrawer}>
+			Close
+		</button>
+	{/snippet}
+</DetailDrawer>
 
 <style>
 	.investigations-page {

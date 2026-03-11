@@ -7,6 +7,9 @@
 	import { goto } from '$app/navigation';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
+	import DetailDrawer from '$components/DetailDrawer.svelte';
+	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
+	import { captureMode } from '$lib/stores/captureMode';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -62,10 +65,24 @@
 	let ipFilter = $state('');
 	let stateFilter = $state<StateFilter>('all');
 
-	// Expanded row + TShark
-	let expandedId = $state<string | null>(null);
-	let tsharkStatus = $state<TSharkStatus | null>(null);
-	let tsharkChecked = $state(false);
+	// OLD CODE START — replaced by DetailDrawer
+	// let expandedId = $state<string | null>(null);
+	// let tsharkStatus = $state<TSharkStatus | null>(null);
+	// let tsharkChecked = $state(false);
+	// OLD CODE END
+
+	// Detail drawer state
+	let drawerConn = $state<Connection | null>(null);
+	let drawerTab = $state('details');
+	let isMirrorMode = $state(false);
+	const CONN_DRAWER_TABS = [
+		{ id: 'details', label: 'Details' },
+		{ id: 'tshark', label: 'TShark Analysis' },
+		{ id: 'raw', label: 'Raw JSON' },
+	];
+
+	// Subscribe to capture mode store
+	captureMode.subscribe((mode) => { isMirrorMode = mode === 'mirror'; });
 
 	// Column sorting
 	type SortKey = 'timestamp' | 'src' | 'dst' | 'protocol' | 'service' | 'duration' | 'bytesIn' | 'bytesOut' | 'state';
@@ -229,33 +246,20 @@
 	// TShark
 	// ---------------------------------------------------------------------------
 
-	async function checkTShark() {
-		if (tsharkChecked) return;
-		try {
-			tsharkStatus = await getTSharkStatus();
-		} catch {
-			tsharkStatus = { available: false, version: '', container_running: false, container_name: '' };
-		}
-		tsharkChecked = true;
+	// OLD CODE START — TShark/expand replaced by DetailDrawer
+	// async function checkTShark() { ... }
+	// function toggleRow(id: string) { ... }
+	// function openInTShark(conn: Connection) { ... }
+	// OLD CODE END
+
+	function openDrawer(conn: Connection) {
+		drawerConn = conn;
+		drawerTab = 'details';
 	}
 
-	function toggleRow(id: string) {
-		if (expandedId === id) {
-			expandedId = null;
-		} else {
-			expandedId = id;
-			checkTShark();
-		}
-	}
-
-	function openInTShark(conn: Connection) {
-		const filter = buildTSharkFilter(conn);
-		const ts = conn['@timestamp'] as string | undefined;
-		const params = new URLSearchParams();
-		if (filter) params.set('filter', filter);
-		if (ts) params.set('ts', ts);
-		params.set('auto', '1');
-		goto(`/tools/tshark?${params.toString()}`);
+	function closeDrawer() {
+		drawerConn = null;
+		drawerTab = 'details';
 	}
 
 	// ---------------------------------------------------------------------------
@@ -447,8 +451,8 @@
 						{#each sortedConnections() as conn (conn._id)}
 							<tr
 								class="conn-row"
-								class:expanded={expandedId === conn._id}
-								onclick={() => toggleRow(conn._id)}
+								class:expanded={drawerConn?._id === conn._id}
+								onclick={() => openDrawer(conn)}
 							>
 								<td class="mono">{formatTimestamp(conn['@timestamp'] as string | undefined)}</td>
 								<td class="mono">
@@ -478,90 +482,6 @@
 									</span>
 								</td>
 							</tr>
-							{#if expandedId === conn._id}
-								<tr class="detail-row">
-									<td colspan="9">
-										<div class="detail-panel">
-											<h4>Connection Details</h4>
-											<div class="detail-grid">
-												<div class="detail-item">
-													<span class="label">UID</span>
-													<span class="mono">{getField(conn, 'zeek.session_id') || conn._id}</span>
-												</div>
-												<div class="detail-item">
-													<span class="label">Index</span>
-													<span class="mono">{conn._index}</span>
-												</div>
-												{#if getField(conn, 'source.packets')}
-													<div class="detail-item">
-														<span class="label">Orig Packets</span>
-														<span class="mono">{getField(conn, 'source.packets')}</span>
-													</div>
-												{/if}
-												{#if getField(conn, 'destination.packets')}
-													<div class="detail-item">
-														<span class="label">Resp Packets</span>
-														<span class="mono">{getField(conn, 'destination.packets')}</span>
-													</div>
-												{/if}
-												{#if getField(conn, 'zeek.conn.conn_state')}
-												<div class="detail-item">
-													<span class="label">Conn State</span>
-													<span class="mono">{asString(getField(conn, 'zeek.conn.conn_state'))}</span>
-												</div>
-											{/if}
-											{#if getField(conn, 'zeek.conn.conn_state_description')}
-												<div class="detail-item">
-													<span class="label">State Description</span>
-													<span>{asString(getField(conn, 'zeek.conn.conn_state_description'))}</span>
-												</div>
-											{/if}
-											{#if getField(conn, 'zeek.conn.history')}
-													<div class="detail-item">
-														<span class="label">History</span>
-														<span class="mono">{getField(conn, 'zeek.conn.history')}</span>
-													</div>
-												{/if}
-												{#if getField(conn, 'network.community_id')}
-													<div class="detail-item">
-														<span class="label">Community ID</span>
-														<span class="mono">{asString(getField(conn, 'network.community_id'))}</span>
-													</div>
-												{/if}
-											</div>
-
-											<!-- TShark section -->
-											<div class="tshark-section">
-												<h4>Packet Analysis (TShark)</h4>
-												{#if !tsharkChecked}
-													<p class="text-muted">Checking TShark availability...</p>
-												{:else if !tsharkStatus?.available}
-													<div class="alert alert-warning">
-														TShark is not available. The packet capture container may not be running,
-														or TShark is not installed. PCAP drill-down requires a running TShark instance.
-													</div>
-												{:else}
-													<div class="tshark-info">
-														<span class="badge badge-success">TShark Available</span>
-														<span class="text-muted mono">{tsharkStatus.version}</span>
-													</div>
-													<div class="tshark-actions">
-														<button class="btn btn-primary btn-sm" onclick={() => openInTShark(conn)}>
-															<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-																<polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-															</svg>
-															Analyze in TShark
-														</button>
-														<span class="tshark-filter-preview mono">
-															{buildTSharkFilter(conn) || 'no filter'}
-														</span>
-													</div>
-												{/if}
-											</div>
-										</div>
-									</td>
-								</tr>
-							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -593,6 +513,44 @@
 		{/if}
 	{/if}
 </div>
+
+<!-- Detail Drawer -->
+<DetailDrawer
+	open={drawerConn !== null}
+	title={drawerConn ? `${asString(getField(drawerConn, 'source.ip'))} → ${asString(getField(drawerConn, 'destination.ip'))}` : ''}
+	subtitle={drawerConn ? `${asString(getField(drawerConn, 'network.transport')).toUpperCase()} · ${formatTimestamp(drawerConn['@timestamp'] as string | undefined)}` : ''}
+	tabs={CONN_DRAWER_TABS}
+	activeTab={drawerTab}
+	onclose={closeDrawer}
+	ontabchange={(t) => drawerTab = t}
+>
+	{#snippet children()}
+		{#if drawerConn}
+			<ConnectionDrawerContent connection={drawerConn} activeTab={drawerTab} {isMirrorMode} />
+		{/if}
+	{/snippet}
+	{#snippet actions()}
+		{#if drawerConn}
+			{@const srcIp = asString(getField(drawerConn, 'source.ip'))}
+			{@const dstIp = asString(getField(drawerConn, 'destination.ip'))}
+			{#if srcIp}
+				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(srcIp)}`)}>
+					View Source Device
+				</button>
+			{/if}
+			{#if dstIp}
+				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(dstIp)}`)}>
+					View Dest Device
+				</button>
+			{/if}
+			{#if isMirrorMode}
+				<button class="btn btn-secondary btn-sm" disabled title="Not available in mirror/SPAN mode">
+					Block IP (unavailable)
+				</button>
+			{/if}
+		{/if}
+	{/snippet}
+</DetailDrawer>
 
 <style>
 	.connections-page {
@@ -696,70 +654,9 @@
 		border-bottom-color: transparent;
 	}
 
-	.detail-row td {
-		padding: 0;
-		background-color: var(--bg-tertiary);
-	}
-
-	.detail-panel {
-		padding: var(--space-md) var(--space-lg);
-		border-top: 1px solid var(--border-dim);
-	}
-
-	.detail-panel h4 {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-secondary);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		margin-bottom: var(--space-md);
-	}
-
-	.detail-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-		gap: var(--space-md);
-		margin-bottom: var(--space-lg);
-	}
-
-	.detail-item {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.detail-item .label {
-		margin-bottom: 0;
-	}
-
-	/* TShark section */
-	.tshark-section {
-		border-top: 1px solid var(--border-dim);
-		padding-top: var(--space-md);
-	}
-
-	.tshark-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-sm);
-	}
-
-	.tshark-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-		margin-top: var(--space-sm);
-	}
-
-	.tshark-filter-preview {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		background: var(--bg-primary);
-		padding: var(--space-xs) var(--space-sm);
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--border-dim);
-	}
+	/* OLD CODE START — detail-row/panel/tshark styles replaced by DetailDrawer */
+	/* .detail-row, .detail-panel, .detail-grid, .tshark-section — moved to drawer */
+	/* OLD CODE END */
 
 	/* Loading state */
 	.loading-state {

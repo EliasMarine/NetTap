@@ -20,8 +20,13 @@
 		AlertIpEntry,
 		AlertCategoryEntry,
 	} from '$api/alerts';
-	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
+	// OLD CODE START — AlertDetailPanel replaced by DetailDrawer
+	// import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
+	// OLD CODE END
 	import IPAddress from '$components/IPAddress.svelte';
+	import DetailDrawer from '$components/DetailDrawer.svelte';
+	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
+	import { acknowledgeAlert } from '$api/alerts';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -84,9 +89,19 @@
 	let totalAlerts = $state(0);
 	const pageSize = 50;
 
-	// Interaction
-	let selectedAlert = $state<Alert | null>(null);
-	let expandedAlertId = $state<string | null>(null);
+	// OLD CODE START — replaced by DetailDrawer
+	// let selectedAlert = $state<Alert | null>(null);
+	// let expandedAlertId = $state<string | null>(null);
+	// OLD CODE END
+
+	// Detail drawer state
+	let drawerAlert = $state<Alert | null>(null);
+	let drawerTab = $state('summary');
+	const ALERT_DRAWER_TABS = [
+		{ id: 'summary', label: 'Summary' },
+		{ id: 'related', label: 'Related Events' },
+		{ id: 'raw', label: 'Raw JSON' },
+	];
 	let hoveredBarIndex = $state<number | null>(null);
 	let chartWidth = $state(800);
 
@@ -349,15 +364,28 @@
 		}
 	}
 
-	// Detail panel
-	function openAlertDetail(alert: Alert) {
-		selectedAlert = alert;
+	// OLD CODE START — replaced by DetailDrawer
+	// function openAlertDetail(alert: Alert) { selectedAlert = alert; }
+	// function closeAlertDetail() { selectedAlert = null; }
+	// function toggleExpandRow(alertId: string) { ... }
+	// OLD CODE END
+
+	function openDrawer(alert: Alert) {
+		drawerAlert = alert;
+		drawerTab = 'summary';
 	}
-	function closeAlertDetail() {
-		selectedAlert = null;
+
+	function closeDrawer() {
+		drawerAlert = null;
+		drawerTab = 'summary';
 	}
-	function toggleExpandRow(alertId: string) {
-		expandedAlertId = expandedAlertId === alertId ? null : alertId;
+
+	async function handleDrawerAcknowledge(alertId: string) {
+		const result = await acknowledgeAlert(alertId);
+		if (result && drawerAlert) {
+			drawerAlert.acknowledged = true;
+			drawerAlert.acknowledged_at = result.acknowledged_at;
+		}
 	}
 
 	// ---------------------------------------------------------------------------
@@ -749,12 +777,12 @@
 						{#each sortedAlerts as alert (alert._id)}
 							<tr
 								class="clickable-row"
-								class:row-expanded={expandedAlertId === alert._id}
+								class:row-expanded={drawerAlert?._id === alert._id}
 								class:row-acked={alert.acknowledged}
-								onclick={() => toggleExpandRow(alert._id)}
+								onclick={() => openDrawer(alert)}
 								role="button"
 								tabindex="0"
-								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpandRow(alert._id); }}}
+								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(alert); }}}
 							>
 								<td class="mono">{formatTimestamp(alert.timestamp)}</td>
 								<td>
@@ -794,67 +822,6 @@
 									{/if}
 								</td>
 							</tr>
-							<!-- Expanded detail row -->
-							{#if expandedAlertId === alert._id}
-								<tr class="expanded-row">
-									<td colspan="7">
-										<div class="expanded-detail">
-											<div class="expanded-top">
-												<div class="expanded-section">
-													<h4 class="expanded-sig">{alert.alert?.signature || 'Unknown Alert'}</h4>
-													{#if alert.plain_description}
-														<p class="expanded-desc">{alert.plain_description}</p>
-													{/if}
-													{#if alert.risk_context}
-														<p class="expanded-risk">{alert.risk_context}</p>
-													{/if}
-												</div>
-												<div class="expanded-actions">
-													<button
-														class="btn btn-sm btn-secondary"
-														onclick={(e) => { e.stopPropagation(); openAlertDetail(alert); }}
-													>
-														Full details
-													</button>
-													{#if alert.src_ip && alert.dest_ip}
-														<a
-															class="btn btn-sm btn-secondary"
-															href="/logs?log_type=zeek&src_ip={encodeURIComponent(alert.src_ip)}&dest_ip={encodeURIComponent(alert.dest_ip)}"
-															onclick={(e) => e.stopPropagation()}
-														>
-															Related Zeek logs
-														</a>
-														<a
-															class="btn btn-sm btn-secondary"
-															href="/connections?filter=ip.src=={encodeURIComponent(alert.src_ip)}%20AND%20ip.dst=={encodeURIComponent(alert.dest_ip)}"
-															onclick={(e) => e.stopPropagation()}
-														>
-															View connection
-														</a>
-													{/if}
-												</div>
-											</div>
-											<div class="expanded-meta">
-												{#if alert.src_port}
-													<span class="meta-tag mono">src:{alert.src_ip}:{alert.src_port}</span>
-												{/if}
-												{#if alert.dest_port}
-													<span class="meta-tag mono">dst:{alert.dest_ip}:{alert.dest_port}</span>
-												{/if}
-												{#if alert.alert?.signature_id}
-													<span class="meta-tag mono">SID:{alert.alert.signature_id}</span>
-												{/if}
-												{#if (alert as Record<string, any>).geoip_src?.country_name}
-													<span class="meta-tag">Src: {(alert as Record<string, any>).geoip_src.country_name}</span>
-												{/if}
-												{#if (alert as Record<string, any>).geoip_dest?.country_name}
-													<span class="meta-tag">Dst: {(alert as Record<string, any>).geoip_dest.country_name}</span>
-												{/if}
-											</div>
-										</div>
-									</td>
-								</tr>
-							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -879,8 +846,48 @@
 	{/if}
 </div>
 
-<!-- Alert detail slide-out panel -->
-<AlertDetailPanel alert={selectedAlert} onclose={closeAlertDetail} />
+<!-- Detail Drawer -->
+<DetailDrawer
+	open={drawerAlert !== null}
+	title={drawerAlert?.alert?.signature || 'Alert'}
+	subtitle={drawerAlert ? `${severityLabel(drawerAlert.alert?.severity)} · ${formatTimestamp(drawerAlert.timestamp)}` : ''}
+	tabs={ALERT_DRAWER_TABS}
+	activeTab={drawerTab}
+	onclose={closeDrawer}
+	ontabchange={(t) => drawerTab = t}
+>
+	{#snippet children()}
+		{#if drawerAlert}
+			<AlertDrawerContent alert={drawerAlert} activeTab={drawerTab} onacknowledge={handleDrawerAcknowledge} />
+		{/if}
+	{/snippet}
+	{#snippet actions()}
+		{#if drawerAlert}
+			{#if !drawerAlert.acknowledged}
+				<button class="btn btn-primary btn-sm" onclick={() => handleDrawerAcknowledge(drawerAlert!._id)}>
+					Acknowledge Alert
+				</button>
+			{/if}
+			{#if drawerAlert.src_ip}
+				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(drawerAlert!.src_ip!)}`)}>
+					View Source Device
+				</button>
+			{/if}
+			{#if drawerAlert.dest_ip}
+				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(drawerAlert!.dest_ip!)}`)}>
+					View Dest Device
+				</button>
+			{/if}
+			<button class="btn btn-secondary btn-sm" onclick={() => {
+				const ips = [drawerAlert!.src_ip, drawerAlert!.dest_ip].filter(Boolean);
+				const query = ips.map(ip => `(source.ip:"${ip}" OR destination.ip:"${ip}")`).join(' OR ');
+				goto(`/logs?query=${encodeURIComponent(query)}`);
+			}}>
+				View in Log Explorer
+			</button>
+		{/if}
+	{/snippet}
+</DetailDrawer>
 
 <style>
 	/* ------------------------------------------------------------------ */

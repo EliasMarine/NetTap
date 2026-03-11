@@ -13,11 +13,14 @@
 	 */
 
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { getDevices, getDeviceConnections } from '$api/devices';
 	import type { Device, DeviceListResponse, DeviceConnection, DeviceConnectionsResponse } from '$api/devices';
 	import { getRiskScores } from '$api/risk';
 	import type { DeviceRiskScore } from '$api/risk';
 	import IPAddress from '$components/IPAddress.svelte';
+	import DetailDrawer from '$components/DetailDrawer.svelte';
+	import DeviceDrawerContent from '$components/drawer/content/DeviceDrawerContent.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -31,9 +34,20 @@
 	let sortDirection = $state<'asc' | 'desc'>('desc');
 	let autoRefresh = $state(false);
 	let lastUpdated = $state('');
-	let expandedIp = $state<string | null>(null);
-	let expandedConnections = $state<DeviceConnection[]>([]);
-	let expandedLoading = $state(false);
+	// OLD CODE START — replaced by DetailDrawer
+	// let expandedIp = $state<string | null>(null);
+	// let expandedConnections = $state<DeviceConnection[]>([]);
+	// let expandedLoading = $state(false);
+	// OLD CODE END
+
+	// Detail drawer state
+	let drawerDevice = $state<Device | null>(null);
+	let drawerTab = $state('overview');
+	const DEVICE_DRAWER_TABS = [
+		{ id: 'overview', label: 'Overview' },
+		{ id: 'connections', label: 'Connections' },
+		{ id: 'traffic', label: 'Traffic' },
+	];
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -62,17 +76,9 @@
 		}
 	}
 
-	async function fetchConnections(ip: string) {
-		expandedLoading = true;
-		try {
-			const res: DeviceConnectionsResponse = await getDeviceConnections(ip, { size: 10 });
-			expandedConnections = res.connections;
-		} catch {
-			expandedConnections = [];
-		} finally {
-			expandedLoading = false;
-		}
-	}
+	// OLD CODE START — fetchConnections moved to DeviceDrawerContent
+	// async function fetchConnections(ip: string) { ... }
+	// OLD CODE END
 
 	// Initial fetch + auto-refresh
 	onMount(() => {
@@ -90,14 +96,18 @@
 	// Expand/collapse
 	// ---------------------------------------------------------------------------
 
-	function toggleExpand(ip: string) {
-		if (expandedIp === ip) {
-			expandedIp = null;
-			expandedConnections = [];
-		} else {
-			expandedIp = ip;
-			fetchConnections(ip);
-		}
+	// OLD CODE START — replaced by DetailDrawer
+	// function toggleExpand(ip: string) { ... }
+	// OLD CODE END
+
+	function openDrawer(device: Device) {
+		drawerDevice = device;
+		drawerTab = 'overview';
+	}
+
+	function closeDrawer() {
+		drawerDevice = null;
+		drawerTab = 'overview';
 	}
 
 	// ---------------------------------------------------------------------------
@@ -362,14 +372,14 @@
 						{#each filteredDevices as device (device.ip)}
 							{@const risk = riskScores.get(device.ip)}
 							{@const isNew = isNewDevice(device.first_seen)}
-							{@const isExpanded = expandedIp === device.ip}
+							{@const isExpanded = drawerDevice?.ip === device.ip}
 							<tr
 								class="device-row"
 								class:expanded={isExpanded}
-								onclick={() => toggleExpand(device.ip)}
+								onclick={() => openDrawer(device)}
 								role="button"
 								tabindex="0"
-								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(device.ip); } }}
+								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(device); } }}
 							>
 								<td class="mono ip-cell">
 									<IPAddress ip={device.ip} />
@@ -396,108 +406,6 @@
 									{/if}
 								</td>
 							</tr>
-							{#if isExpanded}
-								<tr class="detail-row">
-									<td colspan="9">
-										<div class="detail-panel">
-											<div class="detail-grid">
-												<!-- Device summary -->
-												<div class="detail-section">
-													<h4>Device Info</h4>
-													<dl class="detail-list">
-														<div class="detail-item">
-															<dt>IP Address</dt>
-															<dd class="mono"><IPAddress ip={device.ip} /></dd>
-														</div>
-														<div class="detail-item">
-															<dt>MAC Address</dt>
-															<dd class="mono">{device.mac || 'Unknown'}</dd>
-														</div>
-														<div class="detail-item">
-															<dt>Hostname</dt>
-															<dd>{device.hostname || 'Unknown'}</dd>
-														</div>
-														<div class="detail-item">
-															<dt>Manufacturer</dt>
-															<dd>{device.manufacturer || 'Unknown'}</dd>
-														</div>
-														{#if device.os_hint}
-															<div class="detail-item">
-																<dt>OS Hint</dt>
-																<dd>{device.os_hint}</dd>
-															</div>
-														{/if}
-														<div class="detail-item">
-															<dt>Protocols</dt>
-															<dd>
-																{#if device.protocols.length > 0}
-																	{#each device.protocols as proto}
-																		<span class="badge badge-muted protocol-badge">{proto}</span>
-																	{/each}
-																{:else}
-																	<span class="text-muted">None</span>
-																{/if}
-															</dd>
-														</div>
-														<div class="detail-item">
-															<dt>Alerts</dt>
-															<dd>
-																{#if device.alert_count > 0}
-																	<span class="badge badge-danger">{device.alert_count}</span>
-																{:else}
-																	<span class="text-muted">0</span>
-																{/if}
-															</dd>
-														</div>
-														{#if risk}
-															<div class="detail-item">
-																<dt>Risk Score</dt>
-																<dd>
-																	<span class="badge {getRiskBadgeClass(risk.score)}">{risk.score} ({risk.level})</span>
-																</dd>
-															</div>
-														{/if}
-													</dl>
-													<a class="btn btn-sm btn-secondary detail-link" href="/logs?filter={encodeURIComponent(device.ip)}">
-														View in Log Explorer
-													</a>
-												</div>
-
-												<!-- Recent connections -->
-												<div class="detail-section">
-													<h4>Recent Connections</h4>
-													{#if expandedLoading}
-														<div class="detail-loading">
-															<div class="loading-spinner"></div>
-															<span class="text-muted">Loading connections...</span>
-														</div>
-													{:else if expandedConnections.length === 0}
-														<p class="text-muted">No recent connections found.</p>
-													{:else}
-														<div class="connections-list">
-															{#each expandedConnections as conn}
-																{@const svc = getField(conn, 'network.protocol')}
-																{@const destIp = getField(conn, 'destination.ip')}
-																<div class="connection-item">
-																	<span class="conn-time">{conn['@timestamp'] ? timeAgo(String(conn['@timestamp'])) : '--'}</span>
-																	<span class="badge badge-muted">{(asString(getField(conn, 'network.transport')) || '?').toUpperCase()}</span>
-																	{#if svc}
-																		<span class="badge badge-info">{asString(svc)}</span>
-																	{/if}
-																	{#if destIp}
-																		<span style="font-size: var(--text-xs)">&rarr; <IPAddress ip={String(destIp)} /></span>
-																	{/if}
-																	<span class="mono conn-id">{conn._id.substring(0, 8)}</span>
-																</div>
-															{/each}
-														</div>
-													{/if}
-												</div>
-											</div>
-										</div>
-									</td>
-								</tr>
-							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -505,6 +413,33 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Detail Drawer -->
+<DetailDrawer
+	open={drawerDevice !== null}
+	title={drawerDevice ? (drawerDevice.hostname || drawerDevice.ip) : ''}
+	subtitle={drawerDevice ? (drawerDevice.manufacturer || drawerDevice.mac || '') : ''}
+	tabs={DEVICE_DRAWER_TABS}
+	activeTab={drawerTab}
+	onclose={closeDrawer}
+	ontabchange={(t) => drawerTab = t}
+>
+	{#snippet children()}
+		{#if drawerDevice}
+			<DeviceDrawerContent device={drawerDevice} activeTab={drawerTab} />
+		{/if}
+	{/snippet}
+	{#snippet actions()}
+		{#if drawerDevice}
+			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(drawerDevice!.ip)}`)}>
+				View Full Device Page
+			</button>
+			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/logs?filter=${encodeURIComponent(drawerDevice!.ip)}`)}>
+				View in Log Explorer
+			</button>
+		{/if}
+	{/snippet}
+</DetailDrawer>
 
 <style>
 	.devices-page {

@@ -95,6 +95,7 @@ from services.suricata_rules import SuricataRuleManager
 from services.mac_correlator import MACCorrelator
 from services.pcap_search import PcapSearchService
 from services.config_backup import ConfigBackup
+from services.capture_mode_stub import CaptureManagerStub
 
 logger = logging.getLogger("nettap.api")
 
@@ -577,6 +578,14 @@ def create_app(
     register_logstash_routes(app)
 
     # Capture mode API (mode-agnostic bridge/mirror endpoints)
+    # OLD CODE START — capture_manager was never set, causing 503 on /api/capture/* (2026-03-11)
+    # register_capture_routes(app)   # registered without a capture_manager in the app dict
+    # OLD CODE END
+    # Provide a stub CaptureManager so endpoints work immediately. The daemon's
+    # run() coroutine will replace this with the real BridgeCaptureAdapter or
+    # MirrorManager once it finishes initialising the capture pipeline.
+    if "capture_manager" not in app:
+        app["capture_manager"] = CaptureManagerStub()
     register_capture_routes(app)
 
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)

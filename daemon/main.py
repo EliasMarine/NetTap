@@ -497,6 +497,16 @@ async def async_main() -> None:
         capture_manager = mirror_manager
         logger.info("Capture manager: MirrorManager (mirror mode)")
 
+    # --- Wire real capture manager into the HTTP API app ---
+    # create_app() installs a CaptureManagerStub so endpoints work during
+    # startup. Now that the real manager is ready, replace the stub.
+    if capture_manager is not None and api_runner.app is not None:
+        api_runner.app["capture_manager"] = capture_manager
+        logger.info(
+            "Replaced CaptureManagerStub with %s in API app",
+            type(capture_manager).__name__,
+        )
+
     # --- Start monitoring tasks ---
     storage_task = asyncio.create_task(
         storage_loop(storage, cfg["storage_check_interval"], shutdown_event),
