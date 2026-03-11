@@ -184,7 +184,11 @@ async def handle_log_search(request: web.Request) -> web.Response:
         must.append({"query_string": {"query": query_str, "default_operator": "AND"}})
 
     body: dict = {
-        "query": {"bool": {"must": must if must else [{"match_all": {}}], "filter": filters}},
+        "query": {"bool": {
+            "must": must if must else [{"match_all": {}}],
+            "filter": filters,
+            "must_not": _EXCLUDE_DNS_NOISE,
+        }},
         "size": size,
         "sort": [],
     }
