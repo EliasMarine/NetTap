@@ -65,6 +65,19 @@
 	// Alert detail panel state
 	let selectedAlert = $state<Alert | null>(null);
 
+	// Alert table sort state
+	let alertSortField = $state<'severity' | 'signature' | 'src_ip' | 'dest_ip'>('severity');
+	let alertSortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleAlertSort(field: typeof alertSortField) {
+		if (alertSortField === field) {
+			alertSortDir = alertSortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			alertSortField = field;
+			alertSortDir = 'asc';
+		}
+	}
+
 	// Filter bar state
 	let activeFilters = $state<FilterState>({
 		timeRange: '24h',
@@ -266,6 +279,26 @@
 
 	// Total alert count with fallback
 	let totalAlerts = $derived(alertCount?.counts?.total ?? 0);
+
+	// Sorted recent alerts for the table
+	let sortedAlerts = $derived.by(() => {
+		const alerts = recentAlerts.slice(0, 10);
+		const dir = alertSortDir === 'asc' ? 1 : -1;
+		return [...alerts].sort((a, b) => {
+			switch (alertSortField) {
+				case 'severity':
+					return ((a.alert?.severity ?? 99) - (b.alert?.severity ?? 99)) * dir;
+				case 'signature':
+					return (a.alert?.signature ?? '').localeCompare(b.alert?.signature ?? '') * dir;
+				case 'src_ip':
+					return (a.src_ip ?? '').localeCompare(b.src_ip ?? '') * dir;
+				case 'dest_ip':
+					return (a.dest_ip ?? '').localeCompare(b.dest_ip ?? '') * dir;
+				default:
+					return 0;
+			}
+		});
+	});
 
 	// ---------------------------------------------------------------------------
 	// Trend indicators (compare current vs previous period)
@@ -750,14 +783,22 @@
 					<table class="data-table alerts-table">
 						<thead>
 							<tr>
-								<th>Severity</th>
-								<th>Signature</th>
-								<th>Source</th>
-								<th>Dest</th>
+								<th class="sortable-th" onclick={() => toggleAlertSort('severity')}>
+									Severity {alertSortField === 'severity' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+								</th>
+								<th class="sortable-th" onclick={() => toggleAlertSort('signature')}>
+									Signature {alertSortField === 'signature' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+								</th>
+								<th class="sortable-th" onclick={() => toggleAlertSort('src_ip')}>
+									Source {alertSortField === 'src_ip' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+								</th>
+								<th class="sortable-th" onclick={() => toggleAlertSort('dest_ip')}>
+									Dest {alertSortField === 'dest_ip' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+								</th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each recentAlerts.slice(0, 10) as alertItem}
+							{#each sortedAlerts as alertItem}
 								{@const sev = severityBadge(alertItem.alert?.severity)}
 								<tr
 									class="alert-row-clickable"
@@ -849,7 +890,7 @@
 	.refresh-btn {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: var(--space-xs);
 	}
 
 	.refresh-icon {
@@ -1043,7 +1084,7 @@
 	.sparkline-legend-item {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: var(--space-xs);
 		font-size: var(--text-xs);
 		color: var(--text-muted);
 	}
@@ -1123,6 +1164,16 @@
 	.data-table td {
 		padding: var(--space-sm) var(--space-sm);
 		border-bottom: 1px solid var(--border-muted);
+		color: var(--text-primary);
+	}
+
+	.sortable-th {
+		cursor: pointer;
+		user-select: none;
+		transition: color var(--transition-fast);
+	}
+
+	.sortable-th:hover {
 		color: var(--text-primary);
 	}
 

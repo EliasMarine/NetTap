@@ -36,9 +36,9 @@
 	}
 
 	function progressColor(percent: number): string {
-		if (percent >= 90) return 'var(--danger, #ef4444)';
-		if (percent >= 75) return 'var(--warning, #f59e0b)';
-		return 'var(--accent, #3b82f6)';
+		if (percent >= 90) return 'var(--red)';
+		if (percent >= 75) return 'var(--amber)';
+		return 'var(--accent)';
 	}
 
 	// Daily chart helpers
@@ -64,10 +64,10 @@
 	const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 	function heatmapColor(value: number, maxVal: number): string {
-		if (maxVal <= 0 || value <= 0) return 'var(--bg-tertiary, #1e293b)';
+		if (maxVal <= 0 || value <= 0) return 'var(--bg-tertiary)';
 		const intensity = Math.min(1, value / maxVal);
 		const alpha = 0.1 + intensity * 0.9;
-		return `rgba(59, 130, 246, ${alpha.toFixed(2)})`;
+		return `rgba(0, 212, 255, ${alpha.toFixed(2)})`;
 	}
 
 	function heatmapMax(): number {
@@ -80,6 +80,59 @@
 		}
 		return max || 1;
 	}
+
+	// ---------------------------------------------------------------------------
+	// Sort state for per-device table
+	// ---------------------------------------------------------------------------
+
+	type DeviceSortColumn = 'ip' | 'total_bytes' | 'orig_bytes' | 'resp_bytes' | 'connection_count' | 'percent_of_total';
+
+	let sortColumn = $state<DeviceSortColumn>('total_bytes');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
+
+	const deviceColumnDefs: { key: DeviceSortColumn; label: string }[] = [
+		{ key: 'ip', label: 'Device' },
+		{ key: 'total_bytes', label: 'Total' },
+		{ key: 'orig_bytes', label: 'Upload' },
+		{ key: 'resp_bytes', label: 'Download' },
+		{ key: 'connection_count', label: 'Connections' },
+		{ key: 'percent_of_total', label: '% of Total' },
+	];
+
+	function handleSort(column: DeviceSortColumn) {
+		if (sortColumn === column) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortColumn = column;
+			sortDirection = column === 'ip' ? 'asc' : 'desc';
+		}
+	}
+
+	function getSortIndicator(column: DeviceSortColumn): string {
+		if (sortColumn !== column) return '';
+		return sortDirection === 'asc' ? ' \u2191' : ' \u2193';
+	}
+
+	let sortedDevices = $derived.by(() => {
+		if (devices.length === 0) return [];
+		return [...devices].sort((a, b) => {
+			const aVal = a[sortColumn];
+			const bVal = b[sortColumn];
+
+			if (aVal == null && bVal == null) return 0;
+			if (aVal == null) return 1;
+			if (bVal == null) return -1;
+
+			let cmp = 0;
+			if (typeof aVal === 'number' && typeof bVal === 'number') {
+				cmp = aVal - bVal;
+			} else {
+				cmp = String(aVal).localeCompare(String(bVal));
+			}
+
+			return sortDirection === 'asc' ? cmp : -cmp;
+		});
+	});
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -222,16 +275,17 @@
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>Device</th>
-								<th>Total</th>
-								<th>Upload</th>
-								<th>Download</th>
-								<th>Connections</th>
-								<th>% of Total</th>
+								{#each deviceColumnDefs as col}
+									<th class="sortable">
+										<button class="sort-btn" class:active-sort={sortColumn === col.key} onclick={() => handleSort(col.key)}>
+											{col.label}{getSortIndicator(col.key)}
+										</button>
+									</th>
+								{/each}
 							</tr>
 						</thead>
 						<tbody>
-							{#each devices as device}
+							{#each sortedDevices as device}
 								<tr>
 									<td class="mono"><IPAddress ip={device.ip} /></td>
 									<td class="mono">{formatBytes(device.total_bytes)}</td>
@@ -327,7 +381,7 @@
 	}
 
 	.hero-number {
-		font-size: var(--text-3xl, 2.5rem);
+		font-size: var(--text-4xl);
 		font-weight: 700;
 		color: var(--text-primary);
 	}
@@ -349,7 +403,7 @@
 	.progress-fill {
 		height: 100%;
 		border-radius: var(--radius-sm);
-		transition: width 0.3s ease;
+		transition: width var(--transition-normal);
 	}
 
 	.hero-projection {
@@ -382,7 +436,7 @@
 	.chart-bars {
 		display: flex;
 		align-items: flex-end;
-		gap: 4px;
+		gap: var(--space-xs);
 		min-height: 220px;
 	}
 
@@ -397,9 +451,9 @@
 	.bar {
 		width: 100%;
 		max-width: 40px;
-		background: var(--accent, #3b82f6);
+		background: var(--accent);
 		border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-		transition: height 0.3s ease;
+		transition: height var(--transition-normal);
 	}
 
 	.bar-label {
@@ -425,7 +479,7 @@
 
 	.percent-fill {
 		height: 100%;
-		background: var(--accent, #3b82f6);
+		background: var(--accent);
 		opacity: 0.3;
 		border-radius: var(--radius-sm);
 	}
@@ -453,6 +507,30 @@
 
 	.heatmap-corner { }
 
+	/* Sort button styles */
+	.sort-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		cursor: pointer;
+		padding: 0;
+		white-space: nowrap;
+		transition: color var(--transition-fast);
+	}
+
+	.sort-btn:hover {
+		color: var(--text-primary);
+	}
+
+	.sort-btn.active-sort {
+		color: var(--accent);
+	}
+
 	.heatmap-hour-label {
 		font-size: var(--text-xs);
 		color: var(--text-muted);
@@ -470,7 +548,7 @@
 		aspect-ratio: 1;
 		min-width: 16px;
 		min-height: 16px;
-		border-radius: 2px;
+		border-radius: var(--radius-sm);
 		cursor: default;
 	}
 
@@ -488,7 +566,7 @@
 		height: 32px;
 		border: 3px solid var(--border-default);
 		border-top-color: var(--accent);
-		border-radius: 50%;
+		border-radius: var(--radius-full);
 		animation: spin 0.8s linear infinite;
 	}
 

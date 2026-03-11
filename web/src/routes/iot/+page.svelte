@@ -23,9 +23,9 @@
 
 	function severityColor(severity: string): string {
 		switch (severity) {
-			case 'critical': return 'var(--danger, #ef4444)';
-			case 'high': return 'var(--danger, #ef4444)';
-			case 'medium': return 'var(--warning, #f59e0b)';
+			case 'critical': return 'var(--danger)';
+			case 'high': return 'var(--danger)';
+			case 'medium': return 'var(--warning)';
 			default: return 'var(--text-muted)';
 		}
 	}
@@ -296,11 +296,11 @@
 	}
 
 	.stat-card.alert-stat {
-		border-color: var(--warning, #f59e0b);
+		border-color: var(--warning);
 	}
 
 	.stat-value {
-		font-size: var(--text-2xl, 1.75rem);
+		font-size: var(--text-2xl);
 		font-weight: 700;
 	}
 
@@ -337,15 +337,15 @@
 		padding: var(--space-md);
 		cursor: pointer;
 		text-align: left;
-		transition: border-color 0.2s;
+		transition: border-color var(--transition-fast);
 	}
 
 	.device-card:hover {
-		border-color: var(--accent, #3b82f6);
+		border-color: var(--accent);
 	}
 
 	.device-card.selected {
-		border-color: var(--accent, #3b82f6);
+		border-color: var(--accent);
 		background: var(--bg-secondary);
 	}
 
@@ -383,7 +383,7 @@
 	}
 
 	.tag {
-		padding: 2px 8px;
+		padding: var(--space-xs) var(--space-sm);
 		background: var(--bg-tertiary);
 		border: 1px solid var(--border-dim);
 		border-radius: var(--radius-sm);

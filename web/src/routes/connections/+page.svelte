@@ -763,7 +763,7 @@
 	.detail-item {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--space-xs);
 	}
 
 	.detail-item .label {
@@ -794,7 +794,7 @@
 		font-size: var(--text-xs);
 		color: var(--text-muted);
 		background: var(--bg-primary);
-		padding: 4px 8px;
+		padding: var(--space-xs) var(--space-sm);
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--border-dim);
 	}

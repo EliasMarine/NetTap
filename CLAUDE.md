@@ -284,6 +284,25 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 
 **CRITICAL: After completing any task from `plans/comprehensive-build-plan.md`, you MUST update the task's status in that file.** Mark completed tasks with a `[x]` checkbox prefix and add a completion note. This applies to all phases going forward. When starting a new phase, review the plan to see what's already done.
 
+## Design System (MANDATORY)
+
+**CRITICAL: Before ANY frontend/UI work, read `web/DESIGN-SYSTEM.md` first.** This document is the canonical design reference for all NetTap pages. It codifies the colors, spacing, typography, component patterns, and layout rules that every page MUST follow.
+
+- **Location:** `web/DESIGN-SYSTEM.md`
+- **Reference implementation:** `web/src/routes/logs/+page.svelte` (Log Explorer page)
+- **Global CSS tokens:** `web/src/lib/styles/global.css`
+- **Before any UI change:** Check the design system for the correct pattern, variable, or component
+- **After any UI change:** Verify the page still follows the design system rules (no hardcoded colors, spacing, or font sizes)
+
+### Key Rules
+1. **NEVER hardcode hex colors** — use CSS variables (`var(--red)`, not `#ff4757`)
+2. **NEVER hardcode spacing** — use spacing vars (`var(--space-md)`, not `16px`)
+3. **NEVER hardcode font sizes** — use text vars (`var(--text-sm)`, not `0.8125rem`)
+4. **NEVER set max-width on page containers** — pages are always full-width
+5. **ALL tables MUST be sortable** — ascending/descending on every column
+
+---
+
 ## SIEM Feature Integration Policy
 
 **Reference:** `plans/siem-features-gameplan.md` contains the full implementation plan for 20 SIEM-inspired features (10 Must-Have + 10 Should-Have).

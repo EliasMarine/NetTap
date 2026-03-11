@@ -145,6 +145,140 @@
 		activeTab = tab;
 	}
 
+	// Sort state — Indices table
+	type IndexSortKey = 'health' | 'index' | 'docs' | 'pri_size' | 'total_size' | 'created';
+	let indexSortKey = $state<IndexSortKey>('index');
+	let indexSortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleIndexSort(key: IndexSortKey) {
+		if (indexSortKey === key) {
+			indexSortDir = indexSortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			indexSortKey = key;
+			indexSortDir = 'asc';
+		}
+	}
+
+	function indexSortIndicator(key: IndexSortKey): string {
+		if (indexSortKey !== key) return '';
+		return indexSortDir === 'asc' ? ' \u2191' : ' \u2193';
+	}
+
+	let sortedIndices = $derived.by(() => {
+		if (!Array.isArray(indices) || indices.length === 0) return indices;
+		const list = [...indices];
+		list.sort((a, b) => {
+			let cmp = 0;
+			switch (indexSortKey) {
+				case 'health':
+					cmp = (a.health || '').localeCompare(b.health || '');
+					break;
+				case 'index':
+					cmp = (a.index ?? a.name ?? '').localeCompare(b.index ?? b.name ?? '');
+					break;
+				case 'docs':
+					cmp = (a.docs_count ?? a.docs ?? 0) - (b.docs_count ?? b.docs ?? 0);
+					break;
+				case 'pri_size':
+					cmp = (a.primary_size_bytes ?? 0) - (b.primary_size_bytes ?? 0);
+					break;
+				case 'total_size':
+					cmp = (a.total_size_bytes ?? 0) - (b.total_size_bytes ?? 0);
+					break;
+				case 'created':
+					cmp = (a.creation_date ?? a.created ?? '').localeCompare(b.creation_date ?? b.created ?? '');
+					break;
+			}
+			return indexSortDir === 'asc' ? cmp : -cmp;
+		});
+		return list;
+	});
+
+	// Sort state — Templates table
+	type TemplateSortKey = 'name' | 'patterns' | 'order';
+	let templateSortKey = $state<TemplateSortKey>('name');
+	let templateSortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleTemplateSort(key: TemplateSortKey) {
+		if (templateSortKey === key) {
+			templateSortDir = templateSortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			templateSortKey = key;
+			templateSortDir = 'asc';
+		}
+	}
+
+	function templateSortIndicator(key: TemplateSortKey): string {
+		if (templateSortKey !== key) return '';
+		return templateSortDir === 'asc' ? ' \u2191' : ' \u2193';
+	}
+
+	let sortedTemplates = $derived.by(() => {
+		if (!Array.isArray(templates) || templates.length === 0) return templates;
+		const list = [...templates];
+		list.sort((a, b) => {
+			let cmp = 0;
+			switch (templateSortKey) {
+				case 'name':
+					cmp = (a.name ?? '').localeCompare(b.name ?? '');
+					break;
+				case 'patterns':
+					cmp = String(Array.isArray(a.index_patterns) ? a.index_patterns.join(', ') : a.index_patterns ?? '').localeCompare(
+						String(Array.isArray(b.index_patterns) ? b.index_patterns.join(', ') : b.index_patterns ?? '')
+					);
+					break;
+				case 'order':
+					cmp = (a.order ?? a.priority ?? 0) - (b.order ?? b.priority ?? 0);
+					break;
+			}
+			return templateSortDir === 'asc' ? cmp : -cmp;
+		});
+		return list;
+	});
+
+	// Sort state — Pipelines table
+	type PipelineSortKey = 'name' | 'events_in' | 'events_out' | 'duration';
+	let pipelineSortKey = $state<PipelineSortKey>('name');
+	let pipelineSortDir = $state<'asc' | 'desc'>('asc');
+
+	function togglePipelineSort(key: PipelineSortKey) {
+		if (pipelineSortKey === key) {
+			pipelineSortDir = pipelineSortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			pipelineSortKey = key;
+			pipelineSortDir = 'asc';
+		}
+	}
+
+	function pipelineSortIndicator(key: PipelineSortKey): string {
+		if (pipelineSortKey !== key) return '';
+		return pipelineSortDir === 'asc' ? ' \u2191' : ' \u2193';
+	}
+
+	let sortedPipelines = $derived.by(() => {
+		if (logstashPipelines.length === 0) return logstashPipelines;
+		const list = [...logstashPipelines];
+		list.sort((a, b) => {
+			let cmp = 0;
+			switch (pipelineSortKey) {
+				case 'name':
+					cmp = (a.name ?? a.id ?? '').localeCompare(b.name ?? b.id ?? '');
+					break;
+				case 'events_in':
+					cmp = (a.events_in ?? a.events?.in ?? 0) - (b.events_in ?? b.events?.in ?? 0);
+					break;
+				case 'events_out':
+					cmp = (a.events_out ?? a.events?.out ?? 0) - (b.events_out ?? b.events?.out ?? 0);
+					break;
+				case 'duration':
+					cmp = (a.duration_in_millis ?? a.events?.duration_in_millis ?? 0) - (b.duration_in_millis ?? b.events?.duration_in_millis ?? 0);
+					break;
+			}
+			return pipelineSortDir === 'asc' ? cmp : -cmp;
+		});
+		return list;
+	});
+
 	$effect(() => {
 		// Re-fetch when tab changes
 		const _tab = activeTab;
@@ -274,16 +408,16 @@
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th></th>
-								<th>Index</th>
-								<th>Docs</th>
-								<th>Primary Size</th>
-								<th>Total Size</th>
-								<th>Created</th>
+								<th><button class="sort-btn" class:active-sort={indexSortKey === 'health'} onclick={() => toggleIndexSort('health')}>H{indexSortIndicator('health')}</button></th>
+								<th><button class="sort-btn" class:active-sort={indexSortKey === 'index'} onclick={() => toggleIndexSort('index')}>Index{indexSortIndicator('index')}</button></th>
+								<th><button class="sort-btn" class:active-sort={indexSortKey === 'docs'} onclick={() => toggleIndexSort('docs')}>Docs{indexSortIndicator('docs')}</button></th>
+								<th><button class="sort-btn" class:active-sort={indexSortKey === 'pri_size'} onclick={() => toggleIndexSort('pri_size')}>Primary Size{indexSortIndicator('pri_size')}</button></th>
+								<th><button class="sort-btn" class:active-sort={indexSortKey === 'total_size'} onclick={() => toggleIndexSort('total_size')}>Total Size{indexSortIndicator('total_size')}</button></th>
+								<th><button class="sort-btn" class:active-sort={indexSortKey === 'created'} onclick={() => toggleIndexSort('created')}>Created{indexSortIndicator('created')}</button></th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each indices as idx}
+							{#each sortedIndices as idx}
 								<tr>
 									<td><span class="health-dot {healthDotClass(idx.health)}"></span></td>
 									<td class="mono">{idx.index ?? idx.name ?? '--'}</td>
@@ -318,13 +452,13 @@
 						<table class="data-table">
 							<thead>
 								<tr>
-									<th>Name</th>
-									<th>Index Patterns</th>
-									<th>Order</th>
+									<th><button class="sort-btn" class:active-sort={templateSortKey === 'name'} onclick={() => toggleTemplateSort('name')}>Name{templateSortIndicator('name')}</button></th>
+									<th><button class="sort-btn" class:active-sort={templateSortKey === 'patterns'} onclick={() => toggleTemplateSort('patterns')}>Index Patterns{templateSortIndicator('patterns')}</button></th>
+									<th><button class="sort-btn" class:active-sort={templateSortKey === 'order'} onclick={() => toggleTemplateSort('order')}>Order{templateSortIndicator('order')}</button></th>
 								</tr>
 							</thead>
 							<tbody>
-								{#each templates as tmpl}
+								{#each sortedTemplates as tmpl}
 									<tr>
 										<td class="mono">{tmpl.name ?? '--'}</td>
 										<td class="mono">{Array.isArray(tmpl.index_patterns) ? tmpl.index_patterns.join(', ') : tmpl.index_patterns ?? '--'}</td>
@@ -416,14 +550,14 @@
 						<table class="data-table">
 							<thead>
 								<tr>
-									<th>Pipeline</th>
-									<th>Events In</th>
-									<th>Events Out</th>
-									<th>Duration (ms)</th>
+									<th><button class="sort-btn" class:active-sort={pipelineSortKey === 'name'} onclick={() => togglePipelineSort('name')}>Pipeline{pipelineSortIndicator('name')}</button></th>
+									<th><button class="sort-btn" class:active-sort={pipelineSortKey === 'events_in'} onclick={() => togglePipelineSort('events_in')}>Events In{pipelineSortIndicator('events_in')}</button></th>
+									<th><button class="sort-btn" class:active-sort={pipelineSortKey === 'events_out'} onclick={() => togglePipelineSort('events_out')}>Events Out{pipelineSortIndicator('events_out')}</button></th>
+									<th><button class="sort-btn" class:active-sort={pipelineSortKey === 'duration'} onclick={() => togglePipelineSort('duration')}>Duration (ms){pipelineSortIndicator('duration')}</button></th>
 								</tr>
 							</thead>
 							<tbody>
-								{#each logstashPipelines as p}
+								{#each sortedPipelines as p}
 									<tr>
 										<td class="mono">{p.name ?? p.id ?? '--'}</td>
 										<td class="mono">{formatNumber(p.events_in ?? p.events?.in)}</td>
@@ -699,6 +833,28 @@
 		letter-spacing: 0.04em;
 	}
 
+	/* Sort buttons */
+	.sort-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		font-weight: 600;
+		font-size: var(--text-xs);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		cursor: pointer;
+		padding: 0;
+		white-space: nowrap;
+	}
+
+	.sort-btn:hover {
+		color: var(--text-primary);
+	}
+
+	.sort-btn.active-sort {
+		color: var(--accent);
+	}
+
 	/* Table scroll container */
 	.table-scroll {
 		overflow-x: auto;
@@ -793,7 +949,7 @@
 
 	.retention-tag {
 		font-size: var(--text-xs);
-		padding: 2px 8px;
+		padding: var(--space-xs) var(--space-sm);
 		background: var(--bg-tertiary);
 		border-radius: var(--radius-sm);
 		color: var(--text-secondary);

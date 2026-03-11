@@ -25,6 +25,57 @@
 	let statusFilter = $state('all');
 	let selectedCert = $state<Certificate | null>(null);
 
+	// Sort state
+	let sortField = $state('domain');
+	let sortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleSort(field: string) {
+		if (sortField === field) {
+			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+		} else {
+			sortField = field;
+			sortDir = field === 'not_after' ? 'asc' : 'desc';
+		}
+	}
+
+	let sortedCertificates = $derived.by(() => {
+		const sorted = [...certificates];
+		sorted.sort((a, b) => {
+			let aVal: string | number = '';
+			let bVal: string | number = '';
+			switch (sortField) {
+				case 'domain':
+					aVal = (a.domain || a.server_name || '').toLowerCase();
+					bVal = (b.domain || b.server_name || '').toLowerCase();
+					break;
+				case 'issuer':
+					aVal = (a.issuer || '').toLowerCase();
+					bVal = (b.issuer || '').toLowerCase();
+					break;
+				case 'not_before':
+					aVal = a.not_before || '';
+					bVal = b.not_before || '';
+					break;
+				case 'not_after':
+					aVal = a.not_after || '';
+					bVal = b.not_after || '';
+					break;
+				case 'status':
+					aVal = (a.status || '').toLowerCase();
+					bVal = (b.status || '').toLowerCase();
+					break;
+				case 'source_ip':
+					aVal = (a.source_ip || '').toLowerCase();
+					bVal = (b.source_ip || '').toLowerCase();
+					break;
+			}
+			if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+			if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+			return 0;
+		});
+		return sorted;
+	});
+
 	// Load data on mount
 	$effect(() => {
 		loadData();
@@ -148,16 +199,28 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Domain</th>
-						<th>Issuer</th>
-						<th>Valid From</th>
-						<th>Valid To</th>
-						<th>Status</th>
-						<th>Source</th>
+						<th class="sortable" onclick={() => toggleSort('domain')}>
+							Domain {sortField === 'domain' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+						</th>
+						<th class="sortable" onclick={() => toggleSort('issuer')}>
+							Issuer {sortField === 'issuer' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+						</th>
+						<th class="sortable" onclick={() => toggleSort('not_before')}>
+							Valid From {sortField === 'not_before' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+						</th>
+						<th class="sortable" onclick={() => toggleSort('not_after')}>
+							Valid To {sortField === 'not_after' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+						</th>
+						<th class="sortable" onclick={() => toggleSort('status')}>
+							Status {sortField === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+						</th>
+						<th class="sortable" onclick={() => toggleSort('source_ip')}>
+							Source {sortField === 'source_ip' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+						</th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each certificates as cert}
+					{#each sortedCertificates as cert}
 						<tr onclick={() => selectedCert = cert} class="clickable-row">
 							<td class="mono">{truncate(cert.domain || cert.server_name, 40)}</td>
 							<td>{truncate(cert.issuer, 30)}</td>
@@ -279,9 +342,9 @@
 		margin-top: var(--space-xs);
 	}
 
-	.stat-warning .stat-value { color: var(--status-warning); }
+	.stat-warning .stat-value { color: var(--amber); }
 	.stat-info .stat-value { color: var(--accent); }
-	.stat-critical .stat-value { color: var(--status-critical); }
+	.stat-critical .stat-value { color: var(--red); }
 
 	/* Issuer change alerts */
 	.issuer-change-detail {
@@ -330,18 +393,28 @@
 	.data-table th {
 		padding: var(--space-sm) var(--space-md);
 		text-align: left;
-		font-weight: 600;
+		font-weight: 500;
 		background: var(--bg-secondary);
 		border-bottom: 1px solid var(--border-default);
-		color: var(--text-secondary);
+		color: var(--text-muted);
 		font-size: var(--text-xs);
 		text-transform: uppercase;
-		letter-spacing: 0.5px;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+	}
+
+	.data-table th.sortable {
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.data-table th.sortable:hover {
+		color: var(--text-primary);
 	}
 
 	.data-table td {
 		padding: var(--space-sm) var(--space-md);
-		border-bottom: 1px solid var(--border-subtle);
+		border-bottom: 1px solid var(--border-dim);
 	}
 
 	.clickable-row {
@@ -361,23 +434,23 @@
 	/* Status badges */
 	.status-badge {
 		display: inline-block;
-		padding: 2px 8px;
+		padding: var(--space-xs) var(--space-sm);
 		font-size: var(--text-xs);
 		font-weight: 600;
 		border-radius: var(--radius-full);
 		text-transform: uppercase;
 	}
 
-	.status-valid { background: color-mix(in srgb, var(--status-success) 15%, transparent); color: var(--status-success); }
-	.status-warning { background: color-mix(in srgb, var(--status-warning) 15%, transparent); color: var(--status-warning); }
-	.status-critical { background: color-mix(in srgb, var(--status-critical) 15%, transparent); color: var(--status-critical); }
-	.status-info { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+	.status-valid { background: var(--green-dim); color: var(--green); }
+	.status-warning { background: var(--amber-dim); color: var(--amber); }
+	.status-critical { background: var(--red-dim); color: var(--red); }
+	.status-info { background: var(--cyan-dim); color: var(--accent); }
 
 	/* Modal */
 	.modal-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.6);
+		background: var(--bg-overlay);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -417,7 +490,7 @@
 		display: flex;
 		gap: var(--space-md);
 		padding: var(--space-xs) 0;
-		border-bottom: 1px solid var(--border-subtle);
+		border-bottom: 1px solid var(--border-dim);
 	}
 
 	.detail-label {

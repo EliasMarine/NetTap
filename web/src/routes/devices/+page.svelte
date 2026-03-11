@@ -559,7 +559,7 @@
 
 	/* Search */
 	.search-bar {
-		max-width: 480px;
+		width: 100%;
 	}
 
 	.search-input-wrapper {
@@ -881,7 +881,7 @@
 		}
 
 		.search-bar {
-			max-width: 100%;
+			width: 100%;
 		}
 
 		.detail-grid {

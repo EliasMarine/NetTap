@@ -969,9 +969,9 @@
 	.text-amber { color: var(--amber); }
 	.text-blue { color: var(--blue); }
 
-	.stat-card-high { border-color: rgba(255, 71, 87, 0.3) !important; }
-	.stat-card-medium { border-color: rgba(255, 171, 0, 0.3) !important; }
-	.stat-card-low { border-color: rgba(68, 138, 255, 0.3) !important; }
+	.stat-card-high { border-color: var(--red-dim) !important; }
+	.stat-card-medium { border-color: var(--amber-dim) !important; }
+	.stat-card-low { border-color: var(--blue-dim) !important; }
 
 	/* ------------------------------------------------------------------ */
 	/* Chart                                                              */
@@ -1046,7 +1046,7 @@
 	.pill-count {
 		font-size: var(--text-xs);
 		opacity: 0.7;
-		margin-left: 2px;
+		margin-left: var(--space-xs);
 	}
 
 	.search-input {
@@ -1096,7 +1096,7 @@
 	.bar-list {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--space-xs);
 	}
 
 	.bar-row {
@@ -1123,12 +1123,12 @@
 	}
 
 	.bar-row-active {
-		background-color: var(--accent-muted, rgba(59, 130, 246, 0.15)) !important;
+		background-color: var(--accent-muted) !important;
 		border-left: 3px solid var(--accent);
 	}
 
 	.badge-accent {
-		background-color: var(--accent-muted, rgba(59, 130, 246, 0.15));
+		background-color: var(--accent-muted);
 		color: var(--accent);
 		border: 1px solid var(--accent);
 	}
@@ -1178,7 +1178,7 @@
 	.bar-fill-accent { background-color: var(--accent); }
 	.bar-fill-red { background-color: var(--red); }
 	.bar-fill-amber { background-color: var(--amber); }
-	.bar-fill-green { background-color: var(--green, #22c55e); }
+	.bar-fill-green { background-color: var(--green); }
 
 	.bar-count {
 		flex-shrink: 0;
@@ -1191,18 +1191,18 @@
 	/* Copy button */
 	.copy-btn {
 		opacity: 0;
-		transition: opacity 0.15s;
-		font-size: 1.25rem;
-		color: var(--accent-blue, #3b82f6);
+		transition: opacity var(--transition-fast);
+		font-size: var(--text-lg);
+		color: var(--accent);
 		background: none;
 		border: none;
 		cursor: pointer;
-		padding: 0.25rem 0.5rem;
+		padding: var(--space-xs) var(--space-sm);
 		line-height: 1;
 	}
 
 	.copy-btn:hover {
-		color: #60a5fa;
+		color: var(--accent-hover);
 	}
 
 	.clickable-row:hover .copy-btn {
@@ -1393,7 +1393,7 @@
 		font-size: var(--text-xs);
 		color: var(--text-muted);
 		background-color: var(--bg-secondary);
-		padding: 2px 8px;
+		padding: var(--space-xs) var(--space-sm);
 		border-radius: var(--radius-full);
 		border: 1px solid var(--border-default);
 	}
