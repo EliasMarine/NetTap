@@ -4,7 +4,7 @@
 
 set -u
 
-REPO_DIR="$HOME/NetTap"
+REPO_DIR="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)/NetTap"
 COMPOSE="docker compose -f $REPO_DIR/docker/docker-compose.yml"
 
 echo "=== NetTap: Deploy nvme-cli SMART Monitoring ==="
