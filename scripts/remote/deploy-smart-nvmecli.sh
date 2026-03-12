@@ -18,13 +18,13 @@ git pull origin phase-5/mirror-span-mode || { echo "FAIL: git pull failed"; exit
 echo "  OK"
 echo ""
 
-# --- Step 2: Rebuild daemon container (picks up nvme-cli package + SYS_ADMIN cap) ---
+# --- Step 2: Rebuild daemon container ---
 echo "→ Step 2: Rebuilding nettap-storage-daemon image..."
 sudo $COMPOSE build nettap-storage-daemon || { echo "FAIL: build failed"; exit 1; }
 echo "  OK"
 echo ""
 
-# --- Step 3: Recreate daemon container ---
+# --- Step 3: Recreate daemon container (picks up device_cgroup_rules + SYS_ADMIN) ---
 echo "→ Step 3: Recreating daemon container..."
 sudo $COMPOSE up -d nettap-storage-daemon --force-recreate || { echo "FAIL: up failed"; exit 1; }
 echo "  OK"
@@ -53,9 +53,12 @@ echo "→ Step 5: Checking nvme-cli installed in container..."
 sudo docker exec nettap-storage-daemon nvme version 2>&1 || echo "  WARNING: nvme-cli not found in container"
 echo ""
 
-# --- Step 6: Verify SYS_ADMIN capability ---
+# --- Step 6: Verify capabilities + device cgroup rules ---
 echo "→ Step 6: Checking container capabilities..."
 sudo docker inspect --format='{{.HostConfig.CapAdd}}' nettap-storage-daemon
+echo ""
+echo "  Device cgroup rules:"
+sudo docker inspect --format='{{range .HostConfig.DeviceCgroupRules}}  {{.}}{{"\n"}}{{end}}' nettap-storage-daemon 2>/dev/null || echo "  (none)"
 echo ""
 
 # --- Step 7: Test nvme-cli directly inside the container ---
