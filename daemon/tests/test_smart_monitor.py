@@ -764,6 +764,66 @@ class TestExtractNvmeCliMetrics:
         metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
         assert metrics["reallocated_sectors"] is None
 
+    def test_string_typed_numeric_values(self):
+        """nvme-cli 2.x returns large numbers as JSON strings — must handle."""
+        monitor = SmartMonitor()
+        # Real-world nvme-cli 2.3 output from Samsung 970 EVO Plus
+        data = {
+            "critical_warning": 0,
+            "temperature": 347,
+            "avail_spare": 100,
+            "spare_thresh": 10,
+            "percent_used": 0,
+            "data_units_read": "54498994",
+            "data_units_written": "16375391",
+            "host_read_commands": "1251806011",
+            "host_write_commands": "158895483",
+            "controller_busy_time": "1615",
+            "power_cycles": "33821",
+            "power_on_hours": "7415",
+            "unsafe_shutdowns": "19167",
+            "media_errors": "0",
+            "num_err_log_entries": "10",
+            "warning_temp_time": 0,
+            "critical_comp_time": 0,
+        }
+        metrics = monitor._extract_nvme_cli_metrics(data)
+
+        # All values should be proper ints, not strings
+        assert metrics["temperature_c"] == 74  # 347K - 273
+        assert metrics["percentage_used"] == 0
+        assert metrics["power_on_hours"] == 7415
+        assert metrics["media_errors"] == 0
+        assert metrics["critical_warning"] == 0
+        assert metrics["total_bytes_written"] == 16375391 * 512 * 1000
+        assert metrics["total_bytes_read"] == 54498994 * 512 * 1000
+        # Verify types are int, not str
+        assert isinstance(metrics["media_errors"], int)
+        assert isinstance(metrics["power_on_hours"], int)
+        assert isinstance(metrics["total_bytes_written"], int)
+
+
+# =========================================================================
+# _safe_int helper
+# =========================================================================
+
+
+class TestSafeInt:
+    def test_int_passthrough(self):
+        assert SmartMonitor._safe_int(42) == 42
+
+    def test_string_conversion(self):
+        assert SmartMonitor._safe_int("16375391") == 16375391
+
+    def test_zero_string(self):
+        assert SmartMonitor._safe_int("0") == 0
+
+    def test_none_returns_none(self):
+        assert SmartMonitor._safe_int(None) is None
+
+    def test_invalid_string_returns_none(self):
+        assert SmartMonitor._safe_int("not_a_number") is None
+
 
 # =========================================================================
 # nvme-cli device detection

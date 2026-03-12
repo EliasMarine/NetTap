@@ -512,37 +512,55 @@ class SmartMonitor:
             "critical_warning": None, "reallocated_sectors": None,
         }
 
+    @staticmethod
+    def _safe_int(value) -> int | None:
+        """Convert a value to int, handling nvme-cli's string-typed numbers.
+
+        nvme-cli 2.x returns large numeric values as JSON strings
+        (e.g., "data_units_written":"16375391", "media_errors":"0").
+        This safely converts both int and str to int.
+        """
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+
     def _extract_nvme_cli_metrics(self, nvme_log: dict) -> dict:
         """Extract metrics from nvme-cli smart-log JSON output.
 
         Field names follow the NVMe spec as output by nvme-cli:
         temperature (Kelvin), avail_spare, percent_used, data_units_written,
         power_on_hours, media_errors, etc.
+
+        Note: nvme-cli 2.x returns some numeric fields as JSON strings
+        (large values). All fields are passed through _safe_int().
         """
         # Temperature: nvme-cli reports in Kelvin — convert to Celsius
         temperature_c = None
-        temp_raw = nvme_log.get("temperature")
+        temp_raw = self._safe_int(nvme_log.get("temperature"))
         if temp_raw is not None:
             # nvme-cli returns Kelvin (e.g., 311 = 38C)
             temperature_c = temp_raw - 273 if temp_raw > 200 else temp_raw
             logger.debug("NVMe temperature from nvme-cli: %dK -> %dC", temp_raw, temperature_c)
 
-        percentage_used = nvme_log.get("percent_used")
-        power_on_hours = nvme_log.get("power_on_hours")
+        percentage_used = self._safe_int(nvme_log.get("percent_used"))
+        power_on_hours = self._safe_int(nvme_log.get("power_on_hours"))
 
         # TBW: data_units_written * 512 * 1000 bytes
-        data_units_written = nvme_log.get("data_units_written")
+        data_units_written = self._safe_int(nvme_log.get("data_units_written"))
         total_bytes_written = None
         if data_units_written is not None:
             total_bytes_written = data_units_written * self.NVME_DATA_UNIT_BYTES
 
-        data_units_read = nvme_log.get("data_units_read")
+        data_units_read = self._safe_int(nvme_log.get("data_units_read"))
         total_bytes_read = None
         if data_units_read is not None:
             total_bytes_read = data_units_read * self.NVME_DATA_UNIT_BYTES
 
-        media_errors = nvme_log.get("media_errors")
-        critical_warning = nvme_log.get("critical_warning")
+        media_errors = self._safe_int(nvme_log.get("media_errors"))
+        critical_warning = self._safe_int(nvme_log.get("critical_warning"))
 
         return {
             "temperature_c": temperature_c,
