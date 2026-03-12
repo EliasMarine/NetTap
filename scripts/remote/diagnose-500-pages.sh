@@ -16,51 +16,55 @@ echo "=== Step 2: Web container recent errors ==="
 sudo docker logs nettap-web --tail 200 2>&1 | grep -iE "error|500|crash|fail|exception|ERR_|ECONNREFUSED|TypeError|ReferenceError" | tail -40
 
 echo ""
-echo "=== Step 3: HTTP status codes for each broken page ==="
+echo "=== Step 3: HTTP status codes via nginx (host port 80) ==="
+echo "--- Broken pages ---"
 for page in certificates tools infrastructure settings; do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/$page)
+    STATUS=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost/$page 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" http://localhost/$page 2>/dev/null || echo "000")
+    echo "  /$page -> HTTP $STATUS"
+done
+echo "--- Working pages (comparison) ---"
+for page in logs alerts connections devices; do
+    STATUS=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost/$page 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" http://localhost/$page 2>/dev/null || echo "000")
     echo "  /$page -> HTTP $STATUS"
 done
 
 echo ""
-echo "=== Step 4: Full error body from /certificates ==="
-curl -s http://localhost:3000/certificates 2>&1 | tail -50
+echo "=== Step 4: Error bodies from inside web container ==="
+WCURL="sudo docker exec nettap-web curl -s"
+
+echo "--- /certificates ---"
+$WCURL http://localhost:3000/certificates 2>&1 | tail -30
+echo ""
+echo "--- /tools ---"
+$WCURL http://localhost:3000/tools 2>&1 | tail -30
+echo ""
+echo "--- /infrastructure ---"
+$WCURL http://localhost:3000/infrastructure 2>&1 | tail -30
+echo ""
+echo "--- /settings ---"
+$WCURL http://localhost:3000/settings 2>&1 | tail -30
 
 echo ""
-echo "=== Step 5: Full error body from /infrastructure ==="
-curl -s http://localhost:3000/infrastructure 2>&1 | tail -50
-
-echo ""
-echo "=== Step 6: Full error body from /settings ==="
-curl -s http://localhost:3000/settings 2>&1 | tail -50
-
-echo ""
-echo "=== Step 7: Full error body from /tools ==="
-curl -s http://localhost:3000/tools 2>&1 | tail -50
-
-echo ""
-echo "=== Step 8: Daemon API endpoint checks (port 8880) ==="
+echo "=== Step 5: Daemon API checks from inside daemon container ==="
+DCURL="sudo docker exec nettap-storage-daemon curl -s"
 for endpoint in /api/certificates/stats /api/system/health /api/bridge/health /api/storage/status /api/smart/health; do
-    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8880$endpoint)
+    RESP=$($DCURL -o /dev/null -w "%{http_code}" http://localhost:8880$endpoint)
     echo "  daemon $endpoint -> HTTP $RESP"
 done
 
 echo ""
-echo "=== Step 9: SvelteKit API proxy checks (port 3000) ==="
+echo "=== Step 6: SvelteKit API proxy from inside web container ==="
 for endpoint in /api/opensearch/cluster /api/notifications/config /api/system/health /api/certificates/stats; do
-    RESP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000$endpoint)
+    RESP=$($WCURL -o /dev/null -w "%{http_code}" http://localhost:3000$endpoint)
     echo "  sveltekit $endpoint -> HTTP $RESP"
 done
 
 echo ""
-echo "=== Step 10: Check working pages for comparison ==="
-for page in logs alerts connections devices; do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/$page)
-    echo "  /$page -> HTTP $STATUS"
-done
+echo "=== Step 7: Nginx error log ==="
+sudo docker logs nettap-nginx --tail 30 2>&1 | grep -iE "error|502|500|upstream" | tail -15
 
 echo ""
-echo "=== Step 11: Web container full recent log (last 50 lines) ==="
+echo "=== Step 8: Web container full recent log (last 50 lines) ==="
 sudo docker logs nettap-web --tail 50 2>&1
 
 echo ""
