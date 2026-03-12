@@ -1164,6 +1164,9 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
+		width: 140px;
+		min-width: 140px;
+		flex-shrink: 0;
 	}
 
 	.bar-track {
