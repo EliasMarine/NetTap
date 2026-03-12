@@ -16,6 +16,7 @@ from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
+from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 
 logger = logging.getLogger("nettap.api.devices")
 
@@ -145,17 +146,25 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # Fetch more than needed if sorting by alerts (post-query sort)
     fetch_size = limit * 2 if sort_field == "alerts" else limit
 
-    query = {
-        "size": 0,
-        "query": {"bool": {"filter": [
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    bool_query: dict = {
+        "filter": [
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
-        ]}},
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+        ],
+    }
+    if excluded:
+        bool_query["must_not"] = excluded
+
+    query = {
+        "size": 0,
+        "query": {"bool": bool_query},
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "source.ip",
+                    "field": "source.ip.keyword",
                     "size": fetch_size,
                     "order": {agg_sort_key: sort_order},
                 },
@@ -168,7 +177,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "protocols": {"terms": {"field": "network.transport", "size": 10}},
+                    "protocols": {"terms": {"field": "network.transport.keyword", "size": 10}},
                     "first_seen": {"min": {"field": "@timestamp"}},
                     "last_seen": {"max": {"field": "@timestamp"}},
                 },
@@ -212,7 +221,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     ]
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}},
+            "aggs": {"by_ip": {"terms": {"field": "source.ip.keyword", "size": len(device_ips)}}},
         }
 
         try:
@@ -311,11 +320,11 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     }
                 }
             },
-            "protocols": {"terms": {"field": "network.transport", "size": 10}},
+            "protocols": {"terms": {"field": "network.transport.keyword", "size": 10}},
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
             "top_destinations": {
-                "terms": {"field": "destination.ip", "size": 20},
+                "terms": {"field": "destination.ip.keyword", "size": 20},
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -405,7 +414,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 ]
             }
         },
-        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50}}},
+        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": 50}}},
     }
 
     dns_queries = []

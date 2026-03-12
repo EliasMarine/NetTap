@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetTap — Connections</title>
+<style>
+/* ============================================================
+   NetTap Connections v2 — Mission Control Aesthetic
+   Matches dashboard-v2 design system exactly
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-card: #0f1319;
+  --bg-card-hover: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --cyan-glow: rgba(0, 212, 255, 0.25);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --purple: #b388ff;
+  --purple-dim: rgba(179, 136, 255, 0.12);
+  --orange: #ff6d00;
+  --blue: #448aff;
+  --blue-dim: rgba(68, 138, 255, 0.12);
+  --pink: #ff4081;
+  --teal: #1de9b6;
+
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --sidebar-w: 220px;
+  --topbar-h: 52px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+}
+
+.sidebar-brand {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.brand-icon {
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #fff; font-size: 13px;
+  box-shadow: 0 0 16px var(--cyan-glow);
+}
+
+.brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+  position: relative;
+}
+
+.nav-item:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  background: var(--cyan);
+  border-radius: 0 2px 2px 0;
+}
+
+.nav-icon {
+  width: 18px; height: 18px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.nav-item.active .nav-icon { opacity: 1; }
+
+.sidebar-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-dim);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.5);
+}
+
+/* ============================================================
+   MAIN CONTENT
+   ============================================================ */
+.main {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ---- Topbar ---- */
+.topbar {
+  height: var(--topbar-h);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.topbar-spacer { flex: 1; }
+
+.time-selector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.time-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.time-btn:hover { color: var(--text-primary); background: var(--bg-elevated); }
+.time-btn.active { color: var(--cyan); background: var(--cyan-dim); }
+
+.refresh-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.refresh-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.last-updated {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.topbar-status .status-dot { width: 5px; height: 5px; }
+
+/* ---- Content ---- */
+.content {
+  flex: 1;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ============================================================
+   STAT CARDS (4-column for connections)
+   ============================================================ */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+}
+
+.stat-card:nth-child(1)::before { background: linear-gradient(90deg, var(--green), transparent); }
+.stat-card:nth-child(2)::before { background: linear-gradient(90deg, var(--cyan), transparent); }
+.stat-card:nth-child(3)::before { background: linear-gradient(90deg, var(--blue), transparent); }
+.stat-card:nth-child(4)::before { background: linear-gradient(90deg, var(--purple), transparent); }
+
+.stat-card:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-card-hover);
+  cursor: pointer;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.stat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.stat-icon {
+  width: 16px; height: 16px;
+  opacity: 0.5;
+}
+
+.stat-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.stat-unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.stat-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   FILTER BAR
+   ============================================================ */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+}
+
+.filter-bar select,
+.filter-bar input {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.filter-bar select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23555f73' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+.filter-bar select:focus,
+.filter-bar input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px var(--cyan-dim);
+}
+
+.filter-bar select option {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.filter-bar input::placeholder {
+  color: var(--text-dim);
+}
+
+.filter-bar input {
+  min-width: 180px;
+}
+
+.filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.filter-spacer { flex: 1; }
+
+.btn-apply {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--cyan);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 18px;
+  cursor: pointer;
+  transition: all var(--transition);
+  letter-spacing: 0.02em;
+}
+
+.btn-apply:hover {
+  background: #00b8e6;
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+/* ============================================================
+   CONNECTION TABLE
+   ============================================================ */
+.table-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.conn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.conn-table thead th {
+  background: var(--bg-elevated);
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-dim);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.conn-table tbody tr {
+  border-bottom: 1px solid var(--border-dim);
+  transition: background var(--transition);
+  cursor: pointer;
+}
+
+.conn-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.conn-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.conn-table td {
+  padding: 9px 12px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.cell-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.cell-ts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.cell-src {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--cyan);
+}
+
+.cell-dst {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.cell-bytes {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.cell-duration {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Protocol badges */
+.badge-proto {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+}
+
+.badge-tcp {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+}
+
+.badge-udp {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(255, 171, 0, 0.2);
+}
+
+.badge-icmp {
+  background: var(--purple-dim);
+  color: var(--purple);
+  border: 1px solid rgba(179, 136, 255, 0.2);
+}
+
+/* Service badges */
+.badge-svc {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-dim);
+}
+
+/* State badges */
+.badge-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+
+.badge-established {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+}
+
+.badge-closed {
+  background: rgba(136, 146, 164, 0.08);
+  color: var(--text-secondary);
+  border: 1px solid rgba(136, 146, 164, 0.15);
+}
+
+.badge-rejected {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(255, 71, 87, 0.2);
+}
+
+.badge-timeout {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(255, 171, 0, 0.2);
+}
+
+.state-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.state-dot-green { background: var(--green); box-shadow: 0 0 6px rgba(0, 230, 118, 0.5); }
+.state-dot-gray { background: var(--text-muted); }
+.state-dot-red { background: var(--red); box-shadow: 0 0 6px rgba(255, 71, 87, 0.5); }
+.state-dot-amber { background: var(--amber); box-shadow: 0 0 6px rgba(255, 171, 0, 0.5); }
+
+/* ============================================================
+   EXPANDED ROW — TShark Panel
+   ============================================================ */
+.expanded-row td {
+  padding: 0 !important;
+  background: var(--bg-void);
+}
+
+.expanded-panel {
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--border-dim);
+}
+
+.expanded-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--cyan);
+}
+
+.expanded-summary strong {
+  color: var(--text-primary);
+}
+
+.tshark-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tshark-section-title svg {
+  width: 14px; height: 14px;
+  opacity: 0.5;
+}
+
+/* Packet list table */
+.pkt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  margin-bottom: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.pkt-table thead th {
+  background: var(--bg-elevated);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.pkt-table tbody tr {
+  border-bottom: 1px solid rgba(26, 31, 46, 0.5);
+}
+
+.pkt-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.pkt-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.pkt-table td {
+  padding: 5px 10px;
+  color: var(--text-secondary);
+}
+
+.pkt-table .pkt-no {
+  color: var(--text-dim);
+  text-align: right;
+  width: 40px;
+}
+
+.pkt-table .pkt-time {
+  color: var(--text-muted);
+  width: 80px;
+}
+
+.pkt-table .pkt-proto {
+  font-weight: 600;
+}
+
+.pkt-proto-tcp { color: var(--cyan); }
+.pkt-proto-tls { color: var(--green); }
+
+.pkt-table .pkt-info {
+  color: var(--text-secondary);
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pkt-highlight {
+  background: rgba(0, 212, 255, 0.05) !important;
+}
+
+/* Protocol tree */
+.proto-tree {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tree-node {
+  padding: 3px 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-node:hover {
+  color: var(--text-primary);
+}
+
+.tree-arrow {
+  width: 12px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.tree-label {
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.tree-value {
+  color: var(--text-secondary);
+}
+
+.tree-children {
+  padding-left: 20px;
+  border-left: 1px solid var(--border-dim);
+  margin-left: 5px;
+}
+
+.tree-detail {
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  display: flex;
+  gap: 6px;
+  padding-left: 18px;
+}
+
+.tree-detail-key {
+  color: var(--text-secondary);
+}
+
+.tree-detail-val {
+  color: var(--text-primary);
+}
+
+/* Action buttons */
+.expanded-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+
+.btn-action svg {
+  width: 13px; height: 13px;
+}
+
+.btn-action-primary {
+  background: var(--cyan);
+  color: #fff;
+  border-color: var(--cyan);
+}
+
+.btn-action-primary:hover {
+  background: #00b8e6;
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+.btn-action-secondary {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.btn-action-secondary:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+}
+
+/* ============================================================
+   CONNECTION STATE LEGEND
+   ============================================================ */
+.legend-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+}
+
+.legend-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.legend-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.legend-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.legend-entry-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.legend-entry-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 1200px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .legend-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; }
+  .stat-grid { grid-template-columns: 1fr; }
+  .filter-bar { flex-wrap: wrap; }
+  .legend-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     SIDEBAR
+     ============================================================ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">N</div>
+    <span class="brand-name">NetTap</span>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </svg>
+      <span>Home</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <span>Log Explorer</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      <span>Devices</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
+      </svg>
+      <span>Alerts</span>
+    </a>
+    <a class="nav-item active" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+      </svg>
+      <span>Connections</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+      </svg>
+      <span>Infrastructure</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+      <span>Settings</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="status-dot"></span>
+    <span>System Online &middot; v0.4.0</span>
+  </div>
+</aside>
+
+<!-- ============================================================
+     MAIN
+     ============================================================ -->
+<div class="main">
+  <!-- Topbar -->
+  <header class="topbar">
+    <span class="topbar-title">Connections</span>
+    <span class="topbar-spacer"></span>
+
+    <div class="time-selector">
+      <button class="time-btn">15m</button>
+      <button class="time-btn">1h</button>
+      <button class="time-btn">4h</button>
+      <button class="time-btn active">24h</button>
+      <button class="time-btn">7d</button>
+      <button class="time-btn">30d</button>
+    </div>
+
+    <div class="refresh-group">
+      <button class="refresh-toggle">
+        <span class="refresh-dot"></span>
+        Auto 30s
+      </button>
+      <span class="last-updated">Updated 03:21:35</span>
+    </div>
+
+    <div class="topbar-status">
+      <span class="status-dot"></span>
+      <span>OpenSearch</span>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- ========== SUMMARY STRIP ========== -->
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Active Connections</span>
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+        </div>
+        <div class="stat-value-row">
+          <span class="stat-value" style="color: var(--green)">342</span>
+        </div>
+        <span class="stat-sub">Currently established sessions</span>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Total (24h)</span>
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <div class="stat-value-row">
+          <span class="stat-value" style="color: var(--cyan)">24,180</span>
+        </div>
+        <span class="stat-sub">TCP 18.2K / UDP 5.8K / ICMP 180</span>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Avg Duration</span>
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="stat-value-row">
+          <span class="stat-value" style="color: var(--blue)">4.2</span>
+          <span class="stat-unit">s</span>
+        </div>
+        <span class="stat-sub">Median 0.8s / P99 42.1s</span>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Data Transferred</span>
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+        <div class="stat-value-row">
+          <span class="stat-value" style="color: var(--purple)">769.8</span>
+          <span class="stat-unit">MB</span>
+        </div>
+        <span class="stat-sub">673.5 MB in / 96.3 MB out</span>
+      </div>
+    </div>
+
+    <!-- ========== FILTER BAR ========== -->
+    <div class="filter-bar">
+      <span class="filter-label">Filters</span>
+      <select>
+        <option>All Protocols</option>
+        <option>TCP</option>
+        <option>UDP</option>
+        <option>ICMP</option>
+      </select>
+      <select>
+        <option>All Services</option>
+        <option>DNS</option>
+        <option>HTTP</option>
+        <option>HTTPS</option>
+        <option>SSH</option>
+        <option>SMTP</option>
+      </select>
+      <input type="text" placeholder="Filter by IP...">
+      <select>
+        <option>All States</option>
+        <option>Established</option>
+        <option>Closed</option>
+        <option>Rejected</option>
+        <option>Timeout</option>
+      </select>
+      <span class="filter-spacer"></span>
+      <button class="btn-apply">Apply</button>
+    </div>
+
+    <!-- ========== CONNECTION TABLE ========== -->
+    <div class="table-card">
+      <table class="conn-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th>Protocol</th>
+            <th>Service</th>
+            <th>Duration</th>
+            <th style="text-align:right">Bytes In</th>
+            <th style="text-align:right">Bytes Out</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Row 1 -->
+          <tr>
+            <td class="cell-ts">03:21:18.004</td>
+            <td class="cell-src">192.168.1.12:43821</td>
+            <td class="cell-dst">1.1.1.1:53</td>
+            <td><span class="badge-proto badge-udp">UDP</span></td>
+            <td><span class="badge-svc">dns</span></td>
+            <td class="cell-duration">0.002s</td>
+            <td class="cell-bytes">72 B</td>
+            <td class="cell-bytes">128 B</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <!-- Row 2 -->
+          <tr>
+            <td class="cell-ts">03:21:14.892</td>
+            <td class="cell-src">192.168.1.45:52341</td>
+            <td class="cell-dst">142.250.80.46:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">3.418s</td>
+            <td class="cell-bytes">12.4 KB</td>
+            <td class="cell-bytes">1.8 KB</td>
+            <td><span class="badge-state badge-established"><span class="state-dot state-dot-green"></span>Established</span></td>
+          </tr>
+          <!-- Row 3 -->
+          <tr>
+            <td class="cell-ts">03:21:12.331</td>
+            <td class="cell-src">192.168.1.100:55920</td>
+            <td class="cell-dst">52.84.12.97:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">8.210s</td>
+            <td class="cell-bytes">45.2 KB</td>
+            <td class="cell-bytes">3.1 KB</td>
+            <td><span class="badge-state badge-established"><span class="state-dot state-dot-green"></span>Established</span></td>
+          </tr>
+          <!-- Row 4 — EXPANDED -->
+          <tr style="background: rgba(0, 212, 255, 0.04); border-bottom: none;">
+            <td class="cell-ts">03:18:42.571</td>
+            <td class="cell-src">192.168.1.45:49872</td>
+            <td class="cell-dst">93.184.216.34:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">14.5s</td>
+            <td class="cell-bytes">2.1 MB</td>
+            <td class="cell-bytes">18.4 KB</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <tr class="expanded-row">
+            <td colspan="9">
+              <div class="expanded-panel">
+                <div class="expanded-summary">
+                  <strong>TCP connection</strong> from <strong style="color:var(--cyan)">192.168.1.45</strong> to <strong>93.184.216.34</strong> (HTTPS) &mdash; 14.5s duration, <strong>2.1 MB</strong> transferred. Resolved hostname: <strong>example.com</strong>
+                </div>
+
+                <!-- Packet List -->
+                <div class="tshark-section-title">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="2" y1="8" x2="22" y2="8"/></svg>
+                  Packet Analysis (TShark)
+                </div>
+                <table class="pkt-table">
+                  <thead>
+                    <tr>
+                      <th>No.</th>
+                      <th>Time</th>
+                      <th>Source</th>
+                      <th>Destination</th>
+                      <th>Protocol</th>
+                      <th>Length</th>
+                      <th>Info</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="pkt-no">1</td>
+                      <td class="pkt-time">0.000000</td>
+                      <td>192.168.1.45</td>
+                      <td>93.184.216.34</td>
+                      <td class="pkt-proto pkt-proto-tcp">TCP</td>
+                      <td>74</td>
+                      <td class="pkt-info">49872 &rarr; 443 [SYN] Seq=0 Win=64240 Len=0 MSS=1460 WS=256</td>
+                    </tr>
+                    <tr>
+                      <td class="pkt-no">2</td>
+                      <td class="pkt-time">0.023415</td>
+                      <td>93.184.216.34</td>
+                      <td>192.168.1.45</td>
+                      <td class="pkt-proto pkt-proto-tcp">TCP</td>
+                      <td>74</td>
+                      <td class="pkt-info">443 &rarr; 49872 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0 MSS=1460</td>
+                    </tr>
+                    <tr>
+                      <td class="pkt-no">3</td>
+                      <td class="pkt-time">0.023502</td>
+                      <td>192.168.1.45</td>
+                      <td>93.184.216.34</td>
+                      <td class="pkt-proto pkt-proto-tcp">TCP</td>
+                      <td>66</td>
+                      <td class="pkt-info">49872 &rarr; 443 [ACK] Seq=1 Ack=1 Win=64240 Len=0</td>
+                    </tr>
+                    <tr class="pkt-highlight">
+                      <td class="pkt-no">4</td>
+                      <td class="pkt-time">0.024118</td>
+                      <td>192.168.1.45</td>
+                      <td>93.184.216.34</td>
+                      <td class="pkt-proto pkt-proto-tls">TLSv1.3</td>
+                      <td>583</td>
+                      <td class="pkt-info">Client Hello, SNI=example.com</td>
+                    </tr>
+                    <tr class="pkt-highlight">
+                      <td class="pkt-no">5</td>
+                      <td class="pkt-time">0.048721</td>
+                      <td>93.184.216.34</td>
+                      <td>192.168.1.45</td>
+                      <td class="pkt-proto pkt-proto-tls">TLSv1.3</td>
+                      <td>1514</td>
+                      <td class="pkt-info">Server Hello, Change Cipher Spec, Encrypted Extensions, Certificate</td>
+                    </tr>
+                    <tr>
+                      <td class="pkt-no">6</td>
+                      <td class="pkt-time">0.102334</td>
+                      <td>192.168.1.45</td>
+                      <td>93.184.216.34</td>
+                      <td class="pkt-proto pkt-proto-tls">TLSv1.3</td>
+                      <td>130</td>
+                      <td class="pkt-info">Application Data (encrypted)</td>
+                    </tr>
+                    <tr>
+                      <td class="pkt-no">7</td>
+                      <td class="pkt-time">0.156890</td>
+                      <td>93.184.216.34</td>
+                      <td>192.168.1.45</td>
+                      <td class="pkt-proto pkt-proto-tls">TLSv1.3</td>
+                      <td>1514</td>
+                      <td class="pkt-info">Application Data (encrypted)</td>
+                    </tr>
+                    <tr>
+                      <td class="pkt-no">8</td>
+                      <td class="pkt-time">14.501223</td>
+                      <td>192.168.1.45</td>
+                      <td>93.184.216.34</td>
+                      <td class="pkt-proto pkt-proto-tcp">TCP</td>
+                      <td>66</td>
+                      <td class="pkt-info">49872 &rarr; 443 [FIN, ACK] Seq=2201145 Ack=18421 Win=64240 Len=0</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <!-- Protocol Tree -->
+                <div class="tshark-section-title" style="margin-top: 12px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18"/><path d="M6 9h6"/><path d="M6 15h8"/><path d="M6 3h4"/></svg>
+                  Protocol Tree (Packet #4)
+                </div>
+                <div class="proto-tree">
+                  <div class="tree-node">
+                    <span class="tree-arrow">&#9660;</span>
+                    <span class="tree-label">Frame 4:</span>
+                    <span class="tree-value">583 bytes on wire (4664 bits), 583 bytes captured</span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-node">
+                      <span class="tree-arrow">&#9660;</span>
+                      <span class="tree-label">Ethernet II</span>
+                      <span class="tree-value">Src: 00:1a:2b:3c:4d:5e, Dst: 00:5e:4d:3c:2b:1a</span>
+                    </div>
+                    <div class="tree-children">
+                      <div class="tree-detail"><span class="tree-detail-key">Type:</span> <span class="tree-detail-val">IPv4 (0x0800)</span></div>
+                    </div>
+                    <div class="tree-node">
+                      <span class="tree-arrow">&#9660;</span>
+                      <span class="tree-label">Internet Protocol Version 4</span>
+                      <span class="tree-value">Src: 192.168.1.45, Dst: 93.184.216.34</span>
+                    </div>
+                    <div class="tree-children">
+                      <div class="tree-detail"><span class="tree-detail-key">TTL:</span> <span class="tree-detail-val">64</span></div>
+                      <div class="tree-detail"><span class="tree-detail-key">Protocol:</span> <span class="tree-detail-val">TCP (6)</span></div>
+                      <div class="tree-detail"><span class="tree-detail-key">Header Length:</span> <span class="tree-detail-val">20 bytes</span></div>
+                    </div>
+                    <div class="tree-node">
+                      <span class="tree-arrow">&#9660;</span>
+                      <span class="tree-label">Transmission Control Protocol</span>
+                      <span class="tree-value">Src Port: 49872, Dst Port: 443, Seq: 1, Ack: 1</span>
+                    </div>
+                    <div class="tree-children">
+                      <div class="tree-detail"><span class="tree-detail-key">Flags:</span> <span class="tree-detail-val">0x018 [PSH, ACK]</span></div>
+                      <div class="tree-detail"><span class="tree-detail-key">Window:</span> <span class="tree-detail-val">64240</span></div>
+                    </div>
+                    <div class="tree-node">
+                      <span class="tree-arrow">&#9660;</span>
+                      <span class="tree-label">Transport Layer Security</span>
+                      <span class="tree-value">TLSv1.3 Record Layer: Handshake Protocol: Client Hello</span>
+                    </div>
+                    <div class="tree-children">
+                      <div class="tree-detail"><span class="tree-detail-key">Content Type:</span> <span class="tree-detail-val">Handshake (22)</span></div>
+                      <div class="tree-detail"><span class="tree-detail-key">Version:</span> <span class="tree-detail-val">TLS 1.0 (0x0301)</span></div>
+                      <div class="tree-detail"><span class="tree-detail-key">SNI:</span> <span class="tree-detail-val" style="color:var(--cyan)">example.com</span></div>
+                      <div class="tree-detail"><span class="tree-detail-key">Cipher Suites:</span> <span class="tree-detail-val">TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256, TLS_AES_128_GCM_SHA256</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="expanded-actions">
+                  <button class="btn-action btn-action-primary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download PCAP
+                  </button>
+                  <button class="btn-action btn-action-secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                    Open in CyberChef
+                  </button>
+                  <button class="btn-action btn-action-secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    View in Log Explorer
+                  </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+          <!-- Row 5 -->
+          <tr>
+            <td class="cell-ts">03:18:39.102</td>
+            <td class="cell-src">192.168.1.22:60114</td>
+            <td class="cell-dst">8.8.8.8:53</td>
+            <td><span class="badge-proto badge-udp">UDP</span></td>
+            <td><span class="badge-svc">dns</span></td>
+            <td class="cell-duration">0.004s</td>
+            <td class="cell-bytes">68 B</td>
+            <td class="cell-bytes">142 B</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <!-- Row 6 -->
+          <tr>
+            <td class="cell-ts">03:18:35.844</td>
+            <td class="cell-src">192.168.1.45:52900</td>
+            <td class="cell-dst">151.101.1.69:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">2.102s</td>
+            <td class="cell-bytes">8.7 KB</td>
+            <td class="cell-bytes">1.2 KB</td>
+            <td><span class="badge-state badge-established"><span class="state-dot state-dot-green"></span>Established</span></td>
+          </tr>
+          <!-- Row 7 -->
+          <tr>
+            <td class="cell-ts">03:18:31.223</td>
+            <td class="cell-src">192.168.1.100:22</td>
+            <td class="cell-dst">10.0.0.5:48210</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssh</span></td>
+            <td class="cell-duration">142.8s</td>
+            <td class="cell-bytes">24.1 KB</td>
+            <td class="cell-bytes">18.6 KB</td>
+            <td><span class="badge-state badge-established"><span class="state-dot state-dot-green"></span>Established</span></td>
+          </tr>
+          <!-- Row 8 -->
+          <tr>
+            <td class="cell-ts">03:18:28.110</td>
+            <td class="cell-src">192.168.1.12:55123</td>
+            <td class="cell-dst">104.16.132.229:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">0.891s</td>
+            <td class="cell-bytes">3.4 KB</td>
+            <td class="cell-bytes">892 B</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <!-- Row 9 -->
+          <tr>
+            <td class="cell-ts">03:18:24.567</td>
+            <td class="cell-src">192.168.1.33:41002</td>
+            <td class="cell-dst">185.199.108.133:80</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">http</span></td>
+            <td class="cell-duration">1.234s</td>
+            <td class="cell-bytes">5.6 KB</td>
+            <td class="cell-bytes">412 B</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <!-- Row 10 -->
+          <tr>
+            <td class="cell-ts">03:18:20.891</td>
+            <td class="cell-src">192.168.1.22:37891</td>
+            <td class="cell-dst">172.217.14.99:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">0.000s</td>
+            <td class="cell-bytes">0 B</td>
+            <td class="cell-bytes">74 B</td>
+            <td><span class="badge-state badge-timeout"><span class="state-dot state-dot-amber"></span>S0</span></td>
+          </tr>
+          <!-- Row 11 -->
+          <tr>
+            <td class="cell-ts">03:18:18.440</td>
+            <td class="cell-src">192.168.1.45:60200</td>
+            <td class="cell-dst">1.1.1.1:53</td>
+            <td><span class="badge-proto badge-udp">UDP</span></td>
+            <td><span class="badge-svc">dns</span></td>
+            <td class="cell-duration">0.001s</td>
+            <td class="cell-bytes">64 B</td>
+            <td class="cell-bytes">96 B</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <!-- Row 12 -->
+          <tr>
+            <td class="cell-ts">03:18:15.202</td>
+            <td class="cell-src">192.168.1.12:48990</td>
+            <td class="cell-dst">34.107.243.93:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">4.612s</td>
+            <td class="cell-bytes">156.2 KB</td>
+            <td class="cell-bytes">8.4 KB</td>
+            <td><span class="badge-state badge-established"><span class="state-dot state-dot-green"></span>Established</span></td>
+          </tr>
+          <!-- Row 13 -->
+          <tr>
+            <td class="cell-ts">03:18:11.990</td>
+            <td class="cell-src">10.0.0.1:0</td>
+            <td class="cell-dst">192.168.1.45:0</td>
+            <td><span class="badge-proto badge-icmp">ICMP</span></td>
+            <td><span class="badge-svc">-</span></td>
+            <td class="cell-duration">0.001s</td>
+            <td class="cell-bytes">84 B</td>
+            <td class="cell-bytes">84 B</td>
+            <td><span class="badge-state badge-closed"><span class="state-dot state-dot-gray"></span>SF</span></td>
+          </tr>
+          <!-- Row 14 -->
+          <tr>
+            <td class="cell-ts">03:18:08.334</td>
+            <td class="cell-src">192.168.1.33:59001</td>
+            <td class="cell-dst">23.45.67.89:25</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">smtp</span></td>
+            <td class="cell-duration">0.000s</td>
+            <td class="cell-bytes">0 B</td>
+            <td class="cell-bytes">74 B</td>
+            <td><span class="badge-state badge-rejected"><span class="state-dot state-dot-red"></span>REJ</span></td>
+          </tr>
+          <!-- Row 15 -->
+          <tr>
+            <td class="cell-ts">03:18:05.112</td>
+            <td class="cell-src">192.168.1.100:43220</td>
+            <td class="cell-dst">13.107.42.14:443</td>
+            <td><span class="badge-proto badge-tcp">TCP</span></td>
+            <td><span class="badge-svc">ssl</span></td>
+            <td class="cell-duration">6.330s</td>
+            <td class="cell-bytes">82.1 KB</td>
+            <td class="cell-bytes">4.2 KB</td>
+            <td><span class="badge-state badge-established"><span class="state-dot state-dot-green"></span>Established</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ========== CONNECTION STATE LEGEND ========== -->
+    <div class="legend-card">
+      <div class="legend-title">Connection State Reference</div>
+      <div class="legend-grid">
+        <div class="legend-entry">
+          <span class="badge-state badge-established" style="flex-shrink:0"><span class="state-dot state-dot-green"></span>Established</span>
+          <div>
+            <div class="legend-entry-desc">Connection is currently active with bidirectional data flow. The TCP handshake completed successfully and both sides are communicating.</div>
+          </div>
+        </div>
+        <div class="legend-entry">
+          <span class="badge-state badge-closed" style="flex-shrink:0"><span class="state-dot state-dot-gray"></span>SF</span>
+          <div>
+            <div class="legend-entry-desc">Normal connection termination. Both sides sent FIN packets (or UDP exchange completed). This is the expected end state for healthy connections.</div>
+          </div>
+        </div>
+        <div class="legend-entry">
+          <span class="badge-state badge-rejected" style="flex-shrink:0"><span class="state-dot state-dot-red"></span>REJ</span>
+          <div>
+            <div class="legend-entry-desc">Connection was actively refused by the destination. Typically means the target port is closed or a firewall sent a RST (reset) packet.</div>
+          </div>
+        </div>
+        <div class="legend-entry">
+          <span class="badge-state badge-timeout" style="flex-shrink:0"><span class="state-dot state-dot-amber"></span>S0</span>
+          <div>
+            <div class="legend-entry-desc">Connection attempt with no response. A SYN was sent but no SYN-ACK came back. Often indicates the host is down, unreachable, or being filtered.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+</body>
+</html>

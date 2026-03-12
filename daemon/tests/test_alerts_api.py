@@ -143,9 +143,30 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertEqual(data["page"], 1)
         self.assertEqual(data["size"], 50)
         self.assertEqual(len(data["alerts"]), 1)
-        self.assertEqual(data["alerts"][0]["_id"], "alert-1")
-        self.assertEqual(data["alerts"][0]["rule"]["name"], "ET TROJAN Test")
-        self.assertFalse(data["alerts"][0]["acknowledged"])
+
+        alert = data["alerts"][0]
+        self.assertEqual(alert["_id"], "alert-1")
+        self.assertFalse(alert["acknowledged"])
+
+        # Verify normalization: ECS rule.* → alert.* sub-dict
+        self.assertEqual(alert["alert"]["signature"], "ET TROJAN Test")
+        self.assertEqual(alert["alert"]["signature_id"], 2001)
+        self.assertEqual(alert["alert"]["severity"], 1)
+        self.assertEqual(alert["alert"]["category"], "Trojan")
+
+        # Verify flattened network fields
+        self.assertEqual(alert["src_ip"], "192.168.1.100")
+        self.assertEqual(alert["dest_ip"], "10.0.0.1")
+        self.assertEqual(alert["proto"], "tcp")
+        self.assertEqual(alert["timestamp"], "2026-02-25T12:00:00Z")
+
+        # Verify enrichment ran with correct data
+        self.assertIn("plain_description", alert)
+        self.assertIn("risk_context", alert)
+        self.assertIn("recommendation", alert)
+
+        # Original ECS fields are preserved too
+        self.assertEqual(alert["rule"]["name"], "ET TROJAN Test")
 
     @unittest_run_loop
     async def test_alerts_list_with_severity_filter(self):
@@ -265,6 +286,29 @@ class TestAlertCountHandler(AioHTTPTestCase):
         self.assertEqual(data["counts"]["low"], 60)
 
     @unittest_run_loop
+    async def test_count_string_severity_keys(self):
+        """Severity buckets with string keys (from .keyword field) are handled."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 50}},
+            "aggregations": {
+                "by_severity": {
+                    "buckets": [
+                        {"key": "1", "doc_count": 5},
+                        {"key": "2", "doc_count": 15},
+                        {"key": "3", "doc_count": 30},
+                    ]
+                }
+            },
+        }
+
+        resp = await self.client.request("GET", "/api/alerts/count")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["counts"]["high"], 5)
+        self.assertEqual(data["counts"]["medium"], 15)
+        self.assertEqual(data["counts"]["low"], 30)
+
+    @unittest_run_loop
     async def test_count_empty(self):
         """Zero alerts returns all-zero counts."""
         self.mock_client.search.return_value = {
@@ -332,8 +376,17 @@ class TestAlertDetailHandler(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/alerts/alert-123")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertEqual(data["alert"]["_id"], "alert-123")
-        self.assertEqual(data["alert"]["suricata"]["severity"], 2)
+        alert = data["alert"]
+        self.assertEqual(alert["_id"], "alert-123")
+
+        # Verify normalization
+        self.assertEqual(alert["alert"]["signature"], "ET SCAN Test")
+        self.assertEqual(alert["alert"]["severity"], 2)
+        self.assertEqual(alert["src_ip"], "10.0.0.1")
+        self.assertEqual(alert["dest_ip"], "192.168.1.1")
+
+        # Original ECS fields preserved
+        self.assertEqual(alert["suricata"]["severity"], 2)
 
     @unittest_run_loop
     async def test_detail_not_found(self):

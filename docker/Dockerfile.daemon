@@ -1,3 +1,4 @@
+FROM docker:27-cli AS docker-cli
 FROM python:3.12-slim-bookworm
 
 # -- Metadata ----------------------------------------------------------------
@@ -7,11 +8,21 @@ LABEL org.opencontainers.image.description="NetTap storage & health daemon — r
 LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
+# Docker CLI for docker exec into sibling containers (TShark)
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    nvme-cli \
     smartmontools \
     ethtool \
     iproute2 \
     util-linux \
+    whois \
+    dnsutils \
+    traceroute \
+    iputils-ping \
+    openssl \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/nettap/daemon

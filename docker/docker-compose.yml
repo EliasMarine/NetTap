@@ -10,7 +10,8 @@
 #
 # Prerequisites:
 #   - Run scripts/install/deploy-malcolm.sh first to generate configs/certs
-#   - Bridge (br0) must be configured before starting capture containers
+#   - Set PCAP_IFACE to your capture interface (defaults to br0 for bridge mode;
+#     use a mirror/SPAN port interface like eth2 for tap-less deployments)
 #
 # Security:
 #   - Malcolm images must NOT have no-new-privileges or cap_drop: ALL — their
@@ -117,6 +118,12 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    ports:
+      # Expose OpenSearch to localhost for host-networked containers (arkime-live,
+      # pcap-capture). Previously nginx-proxy provided this, but Malcolm's baked-in
+      # nginx.conf references upstream "arkime:8005" which crashes nginx on startup,
+      # making the :9200 proxy unreachable. Direct binding is simpler and reliable.
+      - "127.0.0.1:9200:9200"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - opensearch-backup:/opt/opensearch/backup
@@ -220,6 +227,13 @@ services:
       LOGSTASH_OUI_LOOKUP: "true"
       LOGSTASH_SEVERITY_SCORING: "true"
       LOGSTASH_REVERSE_DNS: "false"
+      # Index name patterns — required by format_index_string.rb to resolve
+      # [@metadata][malcolm_opensearch_index]. Without these, the Ruby script
+      # crashes (nil.delete_suffix) and events land in a broken literal index.
+      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+      MALCOLM_NETWORK_INDEX_SUFFIX: "%{%y%m%d}"
+      MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
+      MALCOLM_OTHER_INDEX_SUFFIX: "%{%y%m%d}"
       BEATS_SSL: "false"
       LOGSTASH_HOST: "logstash:5044"
     # NOTE: No cert mount needed — BEATS_SSL is false, so logstash accepts
@@ -274,7 +288,9 @@ services:
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
       - zeek-live-logs:/zeek/live:ro
-      - suricata-live-logs:/var/log/suricata:ro
+      # Mount at /suricata to match FILEBEAT_SURICATA_LOG_PATH env var.
+      # Was /var/log/suricata which didn't match, so filebeat never found eve logs.
+      - suricata-live-logs:/suricata:ro
       - filebeat-registry:/usr/share/filebeat/data
       - ./curlrc:/var/local/curlrc:ro
     networks:
@@ -330,6 +346,7 @@ services:
     environment:
       <<: *process-env
       ZEEK_LIVE_CAPTURE: "true"
+      ZEEK_JSON: "true"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
       ZEEK_LOG_PATH: "/zeek/live"
@@ -343,6 +360,9 @@ services:
     volumes:
       - zeek-live-logs:/zeek/live
       - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   suricata-live:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -390,6 +410,10 @@ services:
       - suricata-live-logs:/var/log/suricata
       - suricata-rules:/var/lib/suricata/rules
       - ../config/suricata/nettap.yaml:/etc/suricata/nettap.yaml:ro
+      - ../config/suricata/update-sources.yaml:/etc/suricata/update-sources.yaml:ro
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   pcap-capture:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -401,17 +425,54 @@ services:
       com.nettap.service: "pcap-capture"
       com.nettap.component: "capture"
       com.nettap.description: "Raw packet capture (netsniff-ng)"
-    # Malcolm's entrypoint needs root for directory creation in fresh volumes
     user: "root"
-    cap_add: *capture-caps
+    # Wrap the original entrypoint to create/chown PCAP output directory.
+    # Without this, netsniff-ng (running as user "pcap") can't write to
+    # root-owned /pcap in fresh Docker volumes.
+    # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s pcap-capture]
+    # NOTE: docker-uid-gid-setup.sh is SKIPPED because PUSER=root and root is
+    # PID 1 — usermod refuses to modify a user that owns a running process.
+    # Since we stay as root (netsniff-ng needs NET_RAW/NET_ADMIN capabilities),
+    # there's no UID remapping needed.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        mkdir -p /pcap
+        && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap &&
+        exec /usr/bin/tini --
+        /usr/local/bin/service_check_passthrough.sh -s pcap-capture
+        /usr/local/bin/supervisor.sh
+    cap_add:
+      # Same as *capture-caps plus SYS_ADMIN (can't merge YAML anchor lists)
+      - IPC_LOCK
+      - SYS_RESOURCE
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+      # SYS_ADMIN: netsniff-ng binary ships with file capabilities that include
+      # cap_sys_admin=eip. If cap_sys_admin is NOT in the container's bounding
+      # set, the kernel blocks exec with EPERM. setcap -r doesn't work on
+      # overlay2 (returns 0 but xattrs persist from image layer). Adding
+      # SYS_ADMIN to the bounding set is the only reliable fix. Acceptable
+      # because pcap-capture already runs as root with host networking.
+      - SYS_ADMIN
     environment:
       <<: [*process-env, *pcap-env]
+      # PUSER=root: netsniff-ng needs capabilities (NET_RAW, NET_ADMIN).
+      # The default user "pcap" triggers EPERM because file capabilities on
+      # the binary conflict with no_new_privs during privilege drop.
+      # Running as root inside this sandboxed container (cap_drop:ALL + cap_add) is safe.
+      PUSER: "root"
       PCAP_ENABLE_NETSNIFF: "true"
       PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-4096}"
       PCAP_ROTATE_MINUTES: "${PCAP_ROTATE_MIN:-10}"
       PCAP_FILTER: ""
     volumes:
       - pcap-data:/pcap
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   arkime-live:
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
@@ -423,9 +484,28 @@ services:
       com.nettap.service: "arkime-live"
       com.nettap.component: "capture"
       com.nettap.description: "Arkime full packet capture and session indexer"
+    user: "root"
+    # Wrap the original entrypoint to create PCAP output directory.
+    # Arkime's supervisor does chdir to /data/pcap/arkime-live which must
+    # exist and be writable by PUID:PGID. Fresh volumes are root-owned.
+    # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s arkime docker_entrypoint.sh]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        mkdir -p /data/pcap/arkime-live
+        && chown -R $${PUID:-1000}:$${PGID:-1000} /data/pcap
+        && exec /usr/bin/tini --
+        /usr/local/bin/docker-uid-gid-setup.sh
+        /usr/local/bin/service_check_passthrough.sh -s arkime
+        /usr/local/bin/docker_entrypoint.sh
+        /usr/local/bin/supervisord -c /etc/supervisord.conf -n
     cap_add: *capture-caps
     environment:
       <<: [*process-env, *opensearch-env, *pcap-env]
+      # Override OPENSEARCH_URL for host networking — Docker DNS (opensearch:9200)
+      # doesn't resolve on the host network. nginx-proxy binds 127.0.0.1:9200.
+      OPENSEARCH_URL: "https://localhost:9200"
       ARKIME_LIVE_CAPTURE: "true"
       ARKIME_VIEWER_PORT: "8005"
       ARKIME_ROTATE_INDEX: "daily"
@@ -435,10 +515,11 @@ services:
       MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
       EXTRA_TAGS: ""
-    # NOTE: Arkime self-generates viewer.crt/viewer.key inside the container
-    # at startup via initarkime.sh. No host-side cert mount needed.
     volumes:
       - pcap-data:/data/pcap
+    depends_on:
+      nettap-storage-daemon:
+        condition: service_healthy
 
   # ========================================================================
   # INFRASTRUCTURE
@@ -528,57 +609,21 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
       start_period: 60s
 
-  # KNOWN ISSUE: nginx-proxy is unhealthy because Malcolm's baked-in nginx.conf
-  # references upstream "arkime:8005", but our arkime-live service uses host
-  # networking and is invisible to Docker DNS. This is not critical — NetTap
-  # uses nettap-nginx (port 443) as the edge proxy, not nginx-proxy.
-  # Fix: add a dedicated Arkime viewer service in a future phase.
-  nginx-proxy:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
-    container_name: nettap-nginx-proxy
-    restart: unless-stopped
-    <<: *logging-defaults
-    labels:
-      com.nettap.service: "nginx-proxy"
-      com.nettap.component: "infrastructure"
-      com.nettap.description: "Malcolm nginx reverse proxy (internal dashboards)"
-    ports:
-      - "${MALCOLM_HTTPS_PORT:-9443}:443"
-      # Bind OpenSearch proxy to loopback only — never expose 9200 externally
-      - "127.0.0.1:9200:9200"
-    environment:
-      <<: [*process-env, *opensearch-env]
-      NGINX_SSL: "true"
-      NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
-      NGINX_LOG_ACCESS_AND_ERRORS: "false"
-      # dashboards.env — nginx-proxy templates use envsubst; DASHBOARDS_URL
-      # is parsed by the entrypoint to derive PREFIX and PROXY_PASS values
-      DASHBOARDS_URL: "http://dashboards:5601/dashboards"
-      # arkime.env — ARKIME_SSL is used as an envsubst map key in
-      # 01_template_variables.conf:21. If unset, envsubst produces
-      # "map  $arkime_protocol {" (1 arg) which crashes nginx.
-      ARKIME_SSL: "true"
-      ARKIME_VIEWER_PORT: "8005"
-      MANAGE_PCAP_FILES: "false"
-      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
-      # auth-common.env — ROLE_BASED_ACCESS is also an envsubst map key.
-      # Must be set to prevent another "invalid number of arguments" error.
-      ROLE_BASED_ACCESS: "false"
-      ROLE_ADMIN: "admin"
-      ROLE_CAPTURE_SERVICE: "capture_service"
-    volumes:
-      - ${MALCOLM_CERTS_DIR:-./certs}:/etc/nginx/certs:ro
-      - ${MALCOLM_AUTH_DIR:-./auth}:/etc/nginx/auth:ro
-      - ./curlrc:/var/local/curlrc:ro
-    networks:
-      - default
-    depends_on:
-      - api
-      - dashboards
-    healthcheck:
-      <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -skf https://localhost:443 || exit 1"]
-      start_period: 120s
+  # OLD CODE START — nginx-proxy disabled. Malcolm's baked-in nginx.conf
+  # references upstream "arkime:8005" which crashes nginx on startup because
+  # arkime-live uses host networking (invisible to Docker DNS). This made the
+  # :9200 OpenSearch proxy unreachable. OpenSearch now binds 127.0.0.1:9200
+  # directly, making nginx-proxy unnecessary. Kept commented for reference.
+  # nginx-proxy:
+  #   image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
+  #   container_name: nettap-nginx-proxy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "127.0.0.1:9200:9200"
+  #   depends_on:
+  #     - api
+  #     - dashboards
+  # OLD CODE END
 
   # ========================================================================
   # NETTAP SERVICES
@@ -603,10 +648,14 @@ services:
     cap_drop:
       - ALL
     # NET_ADMIN: ethtool NIC LED blink via host network namespace
+    # NET_RAW: ping requires ICMP raw socket capability
+    # SYS_ADMIN: NVMe admin commands (nvme smart-log) require this capability
     # SYS_PTRACE: nsenter -t 1 -n to enter host network namespace
-    # SYS_RAWIO: NVMe admin commands for smartctl SMART health queries
+    # SYS_RAWIO: SATA SMART queries via smartctl
     cap_add:
       - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
       - SYS_PTRACE
       - SYS_RAWIO
     # pid: host lets nsenter target PID 1 (host init) for network namespace
@@ -614,6 +663,16 @@ services:
     # Override Dockerfile USER — capabilities only work for root in Docker.
     # Security maintained via cap_drop: ALL + selective cap_add + read_only.
     user: "root"
+    # Device cgroup rules — /dev:/dev makes devices VISIBLE but Docker's device
+    # cgroup still blocks open()/ioctl() on them. These rules whitelist storage
+    # devices so nvme-cli and smartctl can query SMART health data.
+    # NVMe controller char device major is dynamically assigned — wildcard needed.
+    # Security note: container already has root + SYS_ADMIN + docker socket +
+    # pid host, so device cgroup is not a meaningful security boundary here.
+    device_cgroup_rules:
+      - 'c *:* rmw'
+      - 'b 259:* rmw'
+      - 'b 8:* rmw'
     read_only: true
     tmpfs:
       - /tmp:size=50M
@@ -625,10 +684,14 @@ services:
       # causing all SMART metrics to return null. See Debugging/RELIABILITY-TRACKER.md.
       - /dev:/dev
       - storage-data:/var/lib/nettap
+      - nettap-appdata:/opt/nettap/data
       - pcap-data:/opt/nettap/pcap:ro
       # OpenSearch credentials — daemon needs Basic Auth to query OpenSearch.
       # Without this, StorageManager gets 403 on all API calls.
       - ./curlrc:/var/local/curlrc:ro
+      # Docker socket — daemon uses docker exec for TShark PCAP analysis.
+      # Read-only: daemon only inspects/execs, never creates/removes containers.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Host sysfs — mount ALL of /sys so that symlinks resolve correctly.
       # /sys/class/net/<iface> is a symlink to /sys/devices/pci.../net/<iface>;
       # mounting only /sys/class/net leaves dangling targets inside the container.
@@ -653,6 +716,8 @@ services:
       HOST_SYSCTL_DIR: "/host/etc/sysctl.d"
       BRIDGE_CHECK_INTERVAL: "${BRIDGE_CHECK_INTERVAL:-30}"
       OPENSEARCH_NETWORK_INDEX: "${OPENSEARCH_NETWORK_INDEX:-arkime_sessions3-*}"
+      CAPTURE_MODE: "${CAPTURE_MODE:-bridge}"
+      PCAP_IFACE: "${PCAP_IFACE:-br0}"
     # Daemon port is internal-only — only the web container needs it
     expose:
       - "8880"
@@ -831,6 +896,7 @@ services:
       - /tmp:size=10M
       - /var/cache/nginx:size=50M
       - /var/run:size=1M
+      - /var/log/nginx:size=1M
     mem_limit: 128m
     cpus: 0.25
     security_opt:
@@ -845,7 +911,7 @@ services:
       - default
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8443/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8443/health || exit 1"]
       start_period: 10s
 
 # ==========================================================================
@@ -868,5 +934,6 @@ volumes:
 
   # NetTap data volumes
   storage-data:
+  nettap-appdata:
   web-data:
   grafana-data:

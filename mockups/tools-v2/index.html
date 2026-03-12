@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetTap — Tools</title>
+<style>
+/* ============================================================
+   NetTap Tools Section — Industrial Toolkit Aesthetic
+   Tool cards as instruments on a workbench. Category-coded
+   accent strips, live status indicators, subtle depth layers.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-card: #0f1319;
+  --bg-card-hover: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --cyan-glow: rgba(0, 212, 255, 0.25);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --purple: #b388ff;
+  --purple-dim: rgba(179, 136, 255, 0.12);
+  --orange: #ff6d00;
+  --blue: #448aff;
+  --blue-dim: rgba(68, 138, 255, 0.12);
+  --teal: #1de9b6;
+  --teal-dim: rgba(29, 233, 182, 0.12);
+
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --sidebar-w: 220px;
+  --topbar-h: 52px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+}
+
+.sidebar-brand {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.brand-icon {
+  width: 24px; height: 24px;
+  background: var(--cyan);
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.brand-icon svg { width: 14px; height: 14px; }
+
+.brand-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all var(--transition);
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: rgba(255,255,255,0.04);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.nav-item svg {
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sidebar-footer {
+  padding: 8px 20px;
+  border-top: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+}
+
+.version {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   MAIN AREA
+   ============================================================ */
+.main {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topbar {
+  height: var(--topbar-h);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.status-dot {
+  width: 7px; height: 7px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--green);
+}
+
+.status-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+  background: var(--bg-void);
+}
+
+/* ============================================================
+   TOOLS PAGE
+   ============================================================ */
+.tools-page {
+  max-width: 1200px;
+}
+
+/* Page header with description */
+.page-header {
+  margin-bottom: 32px;
+}
+
+.page-header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.page-header p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+/* Search bar */
+.tools-search {
+  margin-bottom: 28px;
+  position: relative;
+}
+
+.tools-search input {
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 14px 10px 38px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.tools-search input::placeholder { color: var(--text-muted); }
+.tools-search input:focus { border-color: var(--cyan); }
+
+.tools-search .search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px; height: 16px;
+  color: var(--text-muted);
+}
+
+/* Category sections */
+.tool-category {
+  margin-bottom: 32px;
+}
+
+.category-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.category-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.category-icon svg {
+  width: 16px; height: 16px;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.category-icon.network { background: var(--blue-dim); color: var(--blue); }
+.category-icon.analysis { background: var(--purple-dim); color: var(--purple); }
+.category-icon.lookup { background: var(--teal-dim); color: var(--teal); }
+
+.category-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.category-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Tool card grid */
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+/* Tool cards */
+.tool-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  cursor: pointer;
+  transition: all 200ms ease;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+/* Left accent strip */
+.tool-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  transition: height 200ms ease, opacity 200ms ease;
+}
+
+.tool-card.network::before { background: var(--blue); }
+.tool-card.analysis::before { background: var(--purple); }
+.tool-card.lookup::before { background: var(--teal); }
+
+.tool-card:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.tool-card.network:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(68, 138, 255, 0.15); }
+.tool-card.analysis:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(179, 136, 255, 0.15); }
+.tool-card.lookup:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(29, 233, 182, 0.15); }
+
+/* Card header row */
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-icon {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.card-icon svg {
+  width: 20px; height: 20px;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.card-icon.network { background: var(--blue-dim); color: var(--blue); }
+.card-icon.analysis { background: var(--purple-dim); color: var(--purple); }
+.card-icon.lookup { background: var(--teal-dim); color: var(--teal); }
+
+/* Status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.status-badge.available {
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.status-badge.available .dot {
+  width: 5px; height: 5px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.status-badge.frontend {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Card content */
+.card-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.card-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+/* Card footer with tags */
+.card-tags {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border-dim);
+}
+
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+.tool-card {
+  animation: card-in 0.4s ease both;
+}
+
+.tool-card:nth-child(1) { animation-delay: 0.05s; }
+.tool-card:nth-child(2) { animation-delay: 0.1s; }
+.tool-card:nth-child(3) { animation-delay: 0.15s; }
+.tool-card:nth-child(4) { animation-delay: 0.2s; }
+.tool-card:nth-child(5) { animation-delay: 0.25s; }
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Quick access bar */
+.quick-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+
+.quick-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: 20px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+
+.quick-pill:hover {
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+.quick-pill svg {
+  width: 14px; height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.quick-pill.active {
+  background: var(--cyan-dim);
+  border-color: rgba(0,212,255,0.25);
+  color: var(--cyan);
+}
+
+/* Stats bar */
+.stats-bar {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 28px;
+  padding: 14px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--cyan);
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; }
+  .tool-grid { grid-template-columns: 1fr; }
+  .stats-bar { flex-wrap: wrap; gap: 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     SIDEBAR (consistent with other mockups)
+     ============================================================ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 28 28" fill="none">
+        <path d="M7 14h14M14 7v14" stroke="#000" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="14" cy="14" r="4" stroke="#000" stroke-width="1.5" fill="none"/>
+      </svg>
+    </div>
+    <span class="brand-name">NetTap</span>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
+      Home
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Log Explorer
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Devices
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      Alerts
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+      Connections
+    </a>
+    <a class="nav-item active" href="#">
+      <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+      Tools
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      Infrastructure
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      Settings
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="version">v0.4.0-dev</span>
+  </div>
+</aside>
+
+<!-- ============================================================
+     MAIN
+     ============================================================ -->
+<div class="main">
+  <header class="topbar">
+    <h1 class="topbar-title">Tools</h1>
+    <div class="topbar-right">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span class="status-dot"></span>
+        <span class="status-text">Online</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="content">
+    <div class="tools-page">
+
+      <!-- Page header -->
+      <div class="page-header">
+        <h1>Network Tools</h1>
+        <p>Analysis, diagnostics, and lookup utilities running directly on your NetTap appliance. No cloud dependencies.</p>
+      </div>
+
+      <!-- Stats bar -->
+      <div class="stats-bar">
+        <div class="stat-item">
+          <span class="stat-value">10</span>
+          <span class="stat-label">Tools Available</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" style="color: var(--green);">7</span>
+          <span class="stat-label">Backend Online</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value" style="color: var(--purple);">3</span>
+          <span class="stat-label">Frontend-Only</span>
+        </div>
+      </div>
+
+      <!-- Filter pills -->
+      <div class="quick-bar">
+        <a class="quick-pill active" href="#">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          All Tools
+        </a>
+        <a class="quick-pill" href="#">
+          <svg viewBox="0 0 24 24" style="color:var(--blue);"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          Network
+        </a>
+        <a class="quick-pill" href="#">
+          <svg viewBox="0 0 24 24" style="color:var(--purple);"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          Analysis
+        </a>
+        <a class="quick-pill" href="#">
+          <svg viewBox="0 0 24 24" style="color:var(--teal);"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Lookup
+        </a>
+      </div>
+
+      <!-- Search -->
+      <div class="tools-search">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" placeholder="Search tools... (e.g. ping, certificate, decode)">
+      </div>
+
+      <!-- ========== NETWORK CATEGORY ========== -->
+      <div class="tool-category">
+        <div class="category-header">
+          <div class="category-icon network">
+            <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <span class="category-label">Network</span>
+          <span class="category-count">3 tools</span>
+        </div>
+
+        <div class="tool-grid">
+          <!-- Ping & Traceroute -->
+          <a class="tool-card network" href="ping.html">
+            <div class="card-top">
+              <div class="card-icon network">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">Ping & Traceroute</div>
+            <div class="card-desc">Test network reachability, measure RTT latency, and trace the route packets take to any destination.</div>
+            <div class="card-tags">
+              <span class="tag">ICMP</span>
+              <span class="tag">diagnostics</span>
+            </div>
+          </a>
+
+          <!-- Subnet Calculator -->
+          <a class="tool-card network" href="subnet-calc.html">
+            <div class="card-top">
+              <div class="card-icon network">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="2" y="2" width="20" height="20" rx="5"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
+              </div>
+              <span class="status-badge frontend">Client-side</span>
+            </div>
+            <div class="card-name">Subnet Calculator</div>
+            <div class="card-desc">Calculate CIDR ranges, netmasks, broadcast addresses, and usable host counts from any IP/prefix.</div>
+            <div class="card-tags">
+              <span class="tag">CIDR</span>
+              <span class="tag">IPv4</span>
+            </div>
+          </a>
+
+          <!-- Port Reference -->
+          <a class="tool-card network" href="#">
+            <div class="card-top">
+              <div class="card-icon network">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+              </div>
+              <span class="status-badge frontend">Client-side</span>
+            </div>
+            <div class="card-name">Port Reference</div>
+            <div class="card-desc">Searchable table of well-known ports, services, and protocols. Quickly identify what's running on any port.</div>
+            <div class="card-tags">
+              <span class="tag">TCP</span>
+              <span class="tag">UDP</span>
+              <span class="tag">reference</span>
+            </div>
+          </a>
+        </div>
+      </div>
+
+      <!-- ========== ANALYSIS CATEGORY ========== -->
+      <div class="tool-category">
+        <div class="category-header">
+          <div class="category-icon analysis">
+            <svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <span class="category-label">Analysis</span>
+          <span class="category-count">3 tools</span>
+        </div>
+
+        <div class="tool-grid">
+          <!-- TShark -->
+          <a class="tool-card analysis" href="#">
+            <div class="card-top">
+              <div class="card-icon analysis">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">TShark Packet Analysis</div>
+            <div class="card-desc">Deep packet inspection with Wireshark display filters. Analyze PCAPs, extract fields, and explore protocol layers.</div>
+            <div class="card-tags">
+              <span class="tag">PCAP</span>
+              <span class="tag">Wireshark</span>
+              <span class="tag">deep inspect</span>
+            </div>
+          </a>
+
+          <!-- CyberChef -->
+          <a class="tool-card analysis" href="#">
+            <div class="card-top">
+              <div class="card-icon analysis">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">CyberChef</div>
+            <div class="card-desc">Data encoding, decoding, compression, and analysis. The cyber Swiss Army knife for security analysts.</div>
+            <div class="card-tags">
+              <span class="tag">encode</span>
+              <span class="tag">decode</span>
+              <span class="tag">recipes</span>
+            </div>
+          </a>
+
+          <!-- Base64/Hex -->
+          <a class="tool-card analysis" href="#">
+            <div class="card-top">
+              <div class="card-icon analysis">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              </div>
+              <span class="status-badge frontend">Client-side</span>
+            </div>
+            <div class="card-name">Base64 / Hex Converter</div>
+            <div class="card-desc">Quick encode and decode operations: Base64, hexadecimal, and URL encoding. No data leaves your browser.</div>
+            <div class="card-tags">
+              <span class="tag">base64</span>
+              <span class="tag">hex</span>
+              <span class="tag">URL</span>
+            </div>
+          </a>
+        </div>
+      </div>
+
+      <!-- ========== LOOKUP CATEGORY ========== -->
+      <div class="tool-category">
+        <div class="category-header">
+          <div class="category-icon lookup">
+            <svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <span class="category-label">Lookup</span>
+          <span class="category-count">5 tools</span>
+        </div>
+
+        <div class="tool-grid">
+          <!-- DNS Recon -->
+          <a class="tool-card lookup" href="dns-recon.html">
+            <div class="card-top">
+              <div class="card-icon lookup">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">DNS Reconnaissance</div>
+            <div class="card-desc">Enumerate all DNS records for any domain: A, AAAA, MX, NS, TXT, SOA, CNAME. Map domain infrastructure.</div>
+            <div class="card-tags">
+              <span class="tag">dig</span>
+              <span class="tag">records</span>
+              <span class="tag">enumeration</span>
+            </div>
+          </a>
+
+          <!-- WHOIS -->
+          <a class="tool-card lookup" href="#">
+            <div class="card-top">
+              <div class="card-icon lookup">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><path d="M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">WHOIS Lookup</div>
+            <div class="card-desc">Query registration data for any IP address: owner, ASN, CIDR range, registrar, and contact information.</div>
+            <div class="card-tags">
+              <span class="tag">registration</span>
+              <span class="tag">ASN</span>
+            </div>
+          </a>
+
+          <!-- DNS Lookup -->
+          <a class="tool-card lookup" href="#">
+            <div class="card-top">
+              <div class="card-icon lookup">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">Reverse DNS Lookup</div>
+            <div class="card-desc">Resolve IP addresses to hostnames and perform forward verification. Identify what's behind any IP.</div>
+            <div class="card-tags">
+              <span class="tag">PTR</span>
+              <span class="tag">hostname</span>
+            </div>
+          </a>
+
+          <!-- MAC Lookup -->
+          <a class="tool-card lookup" href="#">
+            <div class="card-top">
+              <div class="card-icon lookup">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">MAC Vendor Lookup</div>
+            <div class="card-desc">Identify device manufacturers from MAC addresses using the IEEE OUI database. Works offline.</div>
+            <div class="card-tags">
+              <span class="tag">OUI</span>
+              <span class="tag">vendor</span>
+              <span class="tag">offline</span>
+            </div>
+          </a>
+
+          <!-- SSL Cert -->
+          <a class="tool-card lookup" href="ssl-cert.html">
+            <div class="card-top">
+              <div class="card-icon lookup">
+                <svg viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              </div>
+              <span class="status-badge available"><span class="dot"></span> Online</span>
+            </div>
+            <div class="card-name">SSL Certificate Viewer</div>
+            <div class="card-desc">Inspect TLS certificate chains: subject, issuer, validity, SANs, and fingerprints for any host.</div>
+            <div class="card-tags">
+              <span class="tag">TLS</span>
+              <span class="tag">x509</span>
+              <span class="tag">chain</span>
+            </div>
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

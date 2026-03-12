@@ -14,6 +14,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
+	import IPAddress from '$components/IPAddress.svelte';
 	import { getDeviceDetail, getDeviceConnections } from '$api/devices';
 	import type {
 		DeviceDetail,
@@ -21,6 +22,8 @@
 		DeviceConnection,
 		DeviceConnectionsResponse,
 	} from '$api/devices';
+	import { getDeviceRiskScore } from '$api/risk';
+	import type { DeviceRiskScore } from '$api/risk';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -30,6 +33,8 @@
 
 	let loading = $state(true);
 	let device = $state<DeviceDetail | null>(null);
+
+	let riskScore = $state<DeviceRiskScore | null>(null);
 
 	let connections = $state<DeviceConnection[]>([]);
 	let connectionsLoading = $state(false);
@@ -45,10 +50,15 @@
 	async function fetchDevice() {
 		loading = true;
 		try {
-			const response: DeviceDetailResponse = await getDeviceDetail(deviceIp);
-			device = response.device;
+			const [deviceRes, riskRes] = await Promise.all([
+				getDeviceDetail(deviceIp),
+				getDeviceRiskScore(deviceIp),
+			]);
+			device = deviceRes.device;
+			riskScore = riskRes;
 		} catch {
 			device = null;
+			riskScore = null;
 		} finally {
 			loading = false;
 		}
@@ -161,6 +171,76 @@
 			return ts;
 		}
 	}
+
+	function isNewDevice(firstSeen: string): boolean {
+		if (!firstSeen) return false;
+		const diff = Date.now() - new Date(firstSeen).getTime();
+		return diff < 24 * 60 * 60 * 1000;
+	}
+
+	function getRiskBadgeClass(score: number): string {
+		if (score <= 30) return 'badge-success';
+		if (score <= 60) return 'badge-warning';
+		return 'badge-danger';
+	}
+
+	/**
+	 * Calculate and format duration from event.start and event.end timestamps.
+	 * event.duration does not exist as a usable field in Arkime/Malcolm ECS data,
+	 * so we compute the difference from start/end ISO timestamps instead.
+	 */
+	function formatDuration(startVal: unknown, endVal: unknown): string {
+		const startStr = asString(startVal);
+		const endStr = asString(endVal);
+		if (!startStr || !endStr) return '--';
+		const startMs = new Date(startStr).getTime();
+		const endMs = new Date(endStr).getTime();
+		if (isNaN(startMs) || isNaN(endMs)) return '--';
+		const diffMs = endMs - startMs;
+		if (diffMs < 0) return '--';
+		if (diffMs < 1000) return `${Math.round(diffMs)}ms`;
+		const seconds = diffMs / 1000;
+		if (seconds < 60) return `${seconds.toFixed(1)}s`;
+		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+	}
+
+	/**
+	 * Safely access nested ECS fields (e.g. "destination.ip", "network.transport").
+	 * OpenSearch returns ECS data as nested objects, not flat Zeek field names.
+	 */
+	function getField(obj: Record<string, unknown>, path: string): unknown {
+		const parts = path.split('.');
+		let current: unknown = obj;
+		for (const part of parts) {
+			if (current == null || typeof current !== 'object') return undefined;
+			current = (current as Record<string, unknown>)[part];
+		}
+		return current;
+	}
+
+	/**
+	 * Coerce an ECS field value to a string. In Arkime/Malcolm OpenSearch data,
+	 * fields like network.transport and network.protocol are arrays (e.g. ["tcp"]),
+	 * not plain strings. This helper safely extracts the first element.
+	 */
+	function asString(val: unknown): string {
+		if (Array.isArray(val)) return String(val[0] ?? '');
+		if (typeof val === 'string') return val;
+		if (val != null) return String(val);
+		return '';
+	}
+
+	// OLD CODE START — asNumber removed: event.duration field doesn't exist in
+	// Arkime/Malcolm ECS data. Duration is now calculated from event.start/event.end
+	// timestamps via formatDuration(). Kept as comment per code preservation policy.
+	// function asNumber(val: unknown): number | undefined {
+	// 	if (Array.isArray(val)) val = val[0];
+	// 	if (typeof val === 'number') return val;
+	// 	if (typeof val === 'string') { const n = Number(val); return isNaN(n) ? undefined : n; }
+	// 	return undefined;
+	// }
+	// OLD CODE END
 </script>
 
 <svelte:head>
@@ -209,8 +289,17 @@
 			<div class="device-header-main">
 				<div class="device-ip-row">
 					<h2 class="mono">{device.ip}</h2>
+					{#if device.hostname}
+						<span class="header-hostname">{device.hostname}</span>
+					{/if}
+					{#if riskScore}
+						<span class="badge {getRiskBadgeClass(riskScore.score)}">{riskScore.score} ({riskScore.level})</span>
+					{/if}
 					{#if device.alert_count > 0}
 						<span class="badge badge-danger">{device.alert_count} alert{device.alert_count !== 1 ? 's' : ''}</span>
+					{/if}
+					{#if isNewDevice(device.first_seen)}
+						<span class="badge badge-info">NEW</span>
 					{/if}
 				</div>
 				<div class="device-meta">
@@ -350,7 +439,7 @@
 							<tbody>
 								{#each device.top_destinations as dest}
 									<tr>
-										<td class="mono ip-cell">{dest.ip}</td>
+										<td class="ip-cell"><IPAddress ip={dest.ip} /></td>
 										<td class="mono">{formatBytes(dest.bytes)}</td>
 										<td class="mono">{formatNumber(dest.connections)}</td>
 									</tr>
@@ -424,24 +513,40 @@
 						<thead>
 							<tr>
 								<th>Timestamp</th>
+								<th>Destination</th>
 								<th>Protocol</th>
 								<th>Service</th>
-								<th>Destination</th>
+								<th>Duration</th>
+								<th>Bytes</th>
 							</tr>
 						</thead>
 						<tbody>
 							{#each connections as conn (conn._id)}
+								{@const destIp = getField(conn, 'destination.ip')}
+								{@const transport = getField(conn, 'network.transport')}
+								{@const service = getField(conn, 'protocol')}
+								{@const eventStart = getField(conn, 'event.start')}
+								{@const eventEnd = getField(conn, 'event.end')}
+								{@const srcBytes = getField(conn, 'source.bytes')}
 								<tr>
-									<td class="mono timestamp-cell">{formatTimestamp(conn.ts)}</td>
-									<td>
-										{#if conn.proto}
-											<span class="badge">{conn.proto}</span>
+									<td class="mono timestamp-cell">{formatTimestamp(conn['@timestamp'] as string | undefined)}</td>
+									<td class="ip-cell">
+										{#if destIp}
+											<IPAddress ip={String(destIp)} />
 										{:else}
 											<span class="text-muted">--</span>
 										{/if}
 									</td>
-									<td>{conn.service || '--'}</td>
-									<td class="mono ip-cell">{conn['id.resp_h'] as string || conn['dest_ip'] as string || '--'}</td>
+									<td>
+										{#if transport}
+											<span class="badge">{asString(transport).toUpperCase()}</span>
+										{:else}
+											<span class="text-muted">--</span>
+										{/if}
+									</td>
+									<td>{service ? asString(service) : '--'}</td>
+									<td class="mono">{formatDuration(eventStart, eventEnd)}</td>
+									<td class="mono">{srcBytes != null ? formatBytes(Number(srcBytes)) : '--'}</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -471,6 +576,22 @@
 					</div>
 				{/if}
 			{/if}
+		</div>
+
+		<!-- Quick Actions -->
+		<div class="quick-actions">
+			<a class="btn btn-secondary btn-sm" href="/logs?filter={encodeURIComponent(device.ip)}">
+				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" />
+				</svg>
+				View in Log Explorer
+			</a>
+			<a class="btn btn-secondary btn-sm" href="/connections?ip={encodeURIComponent(device.ip)}">
+				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+				</svg>
+				Filter Connections
+			</a>
 		</div>
 	{/if}
 </div>
@@ -504,6 +625,12 @@
 		font-size: var(--text-3xl);
 		font-weight: 700;
 		color: var(--accent);
+	}
+
+	.header-hostname {
+		font-size: var(--text-lg);
+		color: var(--text-secondary);
+		font-weight: 400;
 	}
 
 	.device-meta {
@@ -669,6 +796,19 @@
 	.pagination-info {
 		font-size: var(--text-sm);
 		color: var(--text-secondary);
+	}
+
+	/* Quick actions */
+	.quick-actions {
+		display: flex;
+		gap: var(--space-sm);
+		flex-wrap: wrap;
+	}
+
+	.quick-actions .btn {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
 	}
 
 	/* Loading & empty states */

@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetTap — Log Explorer</title>
+<style>
+/* ============================================================
+   NetTap Log Explorer — Kibana Discover-style log browser
+   Same design system as Dashboard v2
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-card: #0f1319;
+  --bg-card-hover: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --cyan-glow: rgba(0, 212, 255, 0.25);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --purple: #b388ff;
+  --purple-dim: rgba(179, 136, 255, 0.12);
+  --orange: #ff6d00;
+  --blue: #448aff;
+  --blue-dim: rgba(68, 138, 255, 0.12);
+  --pink: #ff4081;
+  --teal: #1de9b6;
+
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --sidebar-w: 220px;
+  --topbar-h: 52px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+}
+
+.sidebar-brand {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.brand-icon {
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #fff; font-size: 13px;
+  box-shadow: 0 0 16px var(--cyan-glow);
+}
+
+.brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+  position: relative;
+}
+
+.nav-item:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  background: var(--cyan);
+  border-radius: 0 2px 2px 0;
+}
+
+.nav-icon {
+  width: 18px; height: 18px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.nav-item.active .nav-icon { opacity: 1; }
+
+.sidebar-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-dim);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.5);
+}
+
+/* ============================================================
+   MAIN CONTENT
+   ============================================================ */
+.main {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ---- Topbar ---- */
+.topbar {
+  height: var(--topbar-h);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.topbar-spacer { flex: 1; }
+
+.time-selector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.time-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.time-btn:hover { color: var(--text-primary); background: var(--bg-elevated); }
+.time-btn.active { color: var(--cyan); background: var(--cyan-dim); }
+
+.refresh-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.refresh-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.last-updated {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.topbar-status .status-dot { width: 5px; height: 5px; }
+
+/* ============================================================
+   CONTENT AREA
+   ============================================================ */
+.content {
+  flex: 1;
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ============================================================
+   LOG TYPE TABS (pill style)
+   ============================================================ */
+.log-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.log-tab {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.log-tab:hover {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+  background: var(--bg-card-hover);
+}
+
+.log-tab.active {
+  color: var(--cyan);
+  background: var(--cyan-dim);
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+/* ============================================================
+   SEARCH BAR
+   ============================================================ */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color var(--transition);
+}
+
+.search-bar:focus-within {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px var(--cyan-dim);
+}
+
+.search-icon {
+  padding: 0 14px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.search-input {
+  flex: 1;
+  padding: 10px 0;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.search-btn {
+  padding: 10px 20px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  border: none;
+  cursor: pointer;
+  transition: opacity var(--transition);
+}
+
+.search-btn:hover { opacity: 0.85; }
+
+/* ============================================================
+   TOOLBAR ROW
+   ============================================================ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.result-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.result-count strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.toolbar-spacer { flex: 1; }
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+}
+
+.toolbar-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+  background: var(--bg-card-hover);
+}
+
+.toolbar-btn svg {
+  width: 14px; height: 14px;
+  opacity: 0.6;
+}
+
+.toolbar-btn:hover svg { opacity: 1; }
+
+/* Export dropdown */
+.export-dropdown {
+  position: relative;
+}
+
+.export-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  min-width: 100px;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  overflow: hidden;
+}
+
+.export-dropdown:hover .export-menu { display: block; }
+
+.export-option {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.export-option:hover {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+/* ============================================================
+   MAIN LAYOUT: Table + Field Stats sidebar
+   ============================================================ */
+.explorer-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.table-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ============================================================
+   RESULTS TABLE
+   ============================================================ */
+.results-table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex: 1;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.results-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-elevated);
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+  cursor: help;
+  position: relative;
+}
+
+.results-table thead th .tooltip-text {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  white-space: nowrap;
+  z-index: 30;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  pointer-events: none;
+  transition: opacity 150ms ease, visibility 150ms ease;
+}
+
+.results-table thead th .tooltip-text::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border-bright);
+}
+
+.results-table thead th:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+.results-table tbody tr {
+  border-bottom: 1px solid var(--border-dim);
+  transition: background var(--transition);
+  cursor: pointer;
+}
+
+.results-table tbody tr:nth-child(even) {
+  background: rgba(255,255,255, 0.008);
+}
+
+.results-table tbody tr:hover {
+  background: var(--bg-card-hover);
+}
+
+.results-table tbody td {
+  padding: 8px 12px;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* Cell styling */
+.cell-ts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.cell-ip-src {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--cyan);
+}
+
+.cell-ip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.cell-query {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--cyan);
+  font-weight: 500;
+}
+
+.cell-answers {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-type {
+  background: var(--blue-dim);
+  color: var(--blue);
+  border: 1px solid rgba(68, 138, 255, 0.2);
+}
+
+.badge-type-cname {
+  background: var(--purple-dim);
+  color: var(--purple);
+  border: 1px solid rgba(179, 136, 255, 0.2);
+}
+
+.badge-noerror {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+}
+
+.badge-nxdomain {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(255, 71, 87, 0.2);
+}
+
+.badge-servfail {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(255, 171, 0, 0.2);
+}
+
+/* ============================================================
+   EXPANDED ROW
+   ============================================================ */
+.expanded-row td {
+  padding: 0 !important;
+  background: var(--bg-void) !important;
+}
+
+.expanded-content {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.expanded-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.expanded-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.expanded-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.expanded-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+  border: none;
+}
+
+.expanded-btn-primary {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+}
+
+.expanded-btn-primary:hover {
+  background: rgba(0, 212, 255, 0.2);
+}
+
+.expanded-btn-secondary {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+
+.expanded-btn-secondary:hover {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+}
+
+.json-block {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  padding: 16px 20px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text-secondary);
+}
+
+.json-key { color: var(--purple); }
+.json-string { color: var(--green); }
+.json-number { color: var(--cyan); }
+.json-bool { color: var(--amber); }
+.json-null { color: var(--text-muted); }
+.json-brace { color: var(--text-muted); }
+
+/* ============================================================
+   FIELD STATISTICS SIDEBAR
+   ============================================================ */
+.field-stats {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field-stats-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.field-stats-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+
+.field-group {
+  margin-bottom: 16px;
+}
+
+.field-group:last-child { margin-bottom: 0; }
+
+.field-name {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--cyan);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.field-value-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.field-value-label {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  min-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-bar-track {
+  flex: 1;
+  height: 14px;
+  background: var(--bg-void);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.field-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.field-value-count {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 42px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   PAGINATION
+   ============================================================ */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+}
+
+.page-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.page-size select {
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.page-size select:focus {
+  border-color: var(--cyan);
+}
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+  min-width: 32px;
+  text-align: center;
+}
+
+.page-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+}
+
+.page-btn.active {
+  color: var(--cyan);
+  background: var(--cyan-dim);
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.page-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page-ellipsis {
+  padding: 5px 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 1400px) {
+  .field-stats { width: 240px; }
+}
+
+@media (max-width: 1200px) {
+  .field-stats { display: none; }
+}
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; }
+  .log-tabs { overflow-x: auto; flex-wrap: nowrap; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     SIDEBAR (identical to dashboard, "Log Explorer" active)
+     ============================================================ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">N</div>
+    <span class="brand-name">NetTap</span>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </svg>
+      <span>Home</span>
+    </a>
+    <a class="nav-item active" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <span>Log Explorer</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      <span>Devices</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
+      </svg>
+      <span>Alerts</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+      </svg>
+      <span>Connections</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+      </svg>
+      <span>Infrastructure</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+      <span>Settings</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="status-dot"></span>
+    <span>System Online &middot; v0.4.0</span>
+  </div>
+</aside>
+
+<!-- ============================================================
+     MAIN
+     ============================================================ -->
+<div class="main">
+  <!-- Topbar -->
+  <header class="topbar">
+    <span class="topbar-title">Log Explorer</span>
+    <span class="topbar-spacer"></span>
+
+    <div class="time-selector">
+      <button class="time-btn">15m</button>
+      <button class="time-btn">1h</button>
+      <button class="time-btn active">4h</button>
+      <button class="time-btn">24h</button>
+      <button class="time-btn">7d</button>
+      <button class="time-btn">30d</button>
+    </div>
+
+    <div class="refresh-group">
+      <button class="refresh-toggle">
+        <span class="refresh-dot"></span>
+        Auto 30s
+      </button>
+      <span class="last-updated">Updated 03:18:55</span>
+    </div>
+
+    <div class="topbar-status">
+      <span class="status-dot"></span>
+      <span>OpenSearch</span>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- ========== LOG TYPE TABS ========== -->
+    <div class="log-tabs">
+      <button class="log-tab">All</button>
+      <button class="log-tab">Zeek Conn</button>
+      <button class="log-tab active">Zeek DNS</button>
+      <button class="log-tab">Zeek HTTP</button>
+      <button class="log-tab">Zeek TLS</button>
+      <button class="log-tab">Zeek Files</button>
+      <button class="log-tab">Zeek DHCP</button>
+      <button class="log-tab">Suricata Alerts</button>
+    </div>
+
+    <!-- ========== SEARCH BAR ========== -->
+    <div class="search-bar">
+      <span class="search-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </span>
+      <input class="search-input" type="text" placeholder='Search logs... e.g. zeek.dns.query:google.com OR source.ip:192.168.1.*'>
+      <button class="search-btn">Search</button>
+    </div>
+
+    <!-- ========== TOOLBAR ========== -->
+    <div class="toolbar">
+      <span class="result-count">Showing <strong>1&ndash;50</strong> of <strong>20,017</strong> results</span>
+      <span class="toolbar-spacer"></span>
+
+      <button class="toolbar-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3h7a2 2 0 012 2v14a2 2 0 01-2 2h-7m0-18H5a2 2 0 00-2 2v14a2 2 0 002 2h7m0-18v18"/>
+        </svg>
+        Columns
+      </button>
+
+      <div class="export-dropdown">
+        <button class="toolbar-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Export
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="export-menu">
+          <div class="export-option">Export CSV</div>
+          <div class="export-option">Export JSON</div>
+        </div>
+      </div>
+
+      <button class="toolbar-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+        </svg>
+        Refresh
+      </button>
+    </div>
+
+    <!-- ========== MAIN BODY: Table + Field Stats ========== -->
+    <div class="explorer-body">
+
+      <!-- TABLE PANEL -->
+      <div class="table-panel">
+        <div class="results-table-wrap">
+          <table class="results-table">
+            <thead>
+              <tr>
+                <th>Timestamp <span class="tooltip-text">Exact time this DNS query was logged</span></th>
+                <th>Source IP <span class="tooltip-text">Device on your network that made the request</span></th>
+                <th>Dest IP <span class="tooltip-text">DNS server that handled the request</span></th>
+                <th>Query <span class="tooltip-text">Domain name that was looked up</span></th>
+                <th>Type <span class="tooltip-text">DNS record type (A = IPv4, AAAA = IPv6, CNAME = alias)</span></th>
+                <th>Response <span class="tooltip-text">DNS server response code</span></th>
+                <th>Answers <span class="tooltip-text">Resolved IP addresses or records returned</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Row 1 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:42.571</td>
+                <td class="cell-ip-src">192.168.1.142</td>
+                <td class="cell-ip">8.8.8.8</td>
+                <td class="cell-query">www.google.com</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">142.250.80.68</td>
+              </tr>
+              <!-- Row 2 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:41.203</td>
+                <td class="cell-ip-src">192.168.1.105</td>
+                <td class="cell-ip">1.1.1.1</td>
+                <td class="cell-query">api.github.com</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">140.82.121.6</td>
+              </tr>
+              <!-- Row 3 (will be expanded) -->
+              <tr style="background: rgba(0, 212, 255, 0.04);">
+                <td class="cell-ts">2026-03-05 03:18:40.887</td>
+                <td class="cell-ip-src">192.168.1.142</td>
+                <td class="cell-ip">1.0.0.1</td>
+                <td class="cell-query">dns.cloudflare.com</td>
+                <td><span class="badge badge-type">AAAA</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">2606:4700::6810:f8f9</td>
+              </tr>
+              <!-- Row 3 EXPANDED -->
+              <tr class="expanded-row">
+                <td colspan="7">
+                  <div class="expanded-content">
+                    <div class="expanded-header">
+                      <span class="expanded-title">Raw Document &mdash; zeek.dns</span>
+                      <div class="expanded-actions">
+                        <button class="expanded-btn expanded-btn-primary">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                          View in Connections
+                        </button>
+                        <button class="expanded-btn expanded-btn-secondary">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                          Copy JSON
+                        </button>
+                      </div>
+                    </div>
+                    <div class="json-block"><span class="json-brace">{</span>
+  <span class="json-key">"@timestamp"</span>: <span class="json-string">"2026-03-05T03:18:40.887Z"</span>,
+  <span class="json-key">"source"</span>: <span class="json-brace">{</span>
+    <span class="json-key">"ip"</span>: <span class="json-string">"192.168.1.142"</span>,
+    <span class="json-key">"port"</span>: <span class="json-number">52847</span>,
+    <span class="json-key">"mac"</span>: <span class="json-string">"a4:83:e7:2d:f1:09"</span>
+  <span class="json-brace">}</span>,
+  <span class="json-key">"destination"</span>: <span class="json-brace">{</span>
+    <span class="json-key">"ip"</span>: <span class="json-string">"1.0.0.1"</span>,
+    <span class="json-key">"port"</span>: <span class="json-number">53</span>
+  <span class="json-brace">}</span>,
+  <span class="json-key">"zeek"</span>: <span class="json-brace">{</span>
+    <span class="json-key">"uid"</span>: <span class="json-string">"CYj8oH3bN7mFvB9dOi"</span>,
+    <span class="json-key">"dns"</span>: <span class="json-brace">{</span>
+      <span class="json-key">"query"</span>: <span class="json-string">"dns.cloudflare.com"</span>,
+      <span class="json-key">"qtype"</span>: <span class="json-number">28</span>,
+      <span class="json-key">"qtype_name"</span>: <span class="json-string">"AAAA"</span>,
+      <span class="json-key">"rcode"</span>: <span class="json-number">0</span>,
+      <span class="json-key">"rcode_name"</span>: <span class="json-string">"NOERROR"</span>,
+      <span class="json-key">"AA"</span>: <span class="json-bool">false</span>,
+      <span class="json-key">"TC"</span>: <span class="json-bool">false</span>,
+      <span class="json-key">"RD"</span>: <span class="json-bool">true</span>,
+      <span class="json-key">"RA"</span>: <span class="json-bool">true</span>,
+      <span class="json-key">"answers"</span>: <span class="json-brace">[</span><span class="json-string">"2606:4700::6810:f8f9"</span>, <span class="json-string">"2606:4700::6810:f9f9"</span><span class="json-brace">]</span>,
+      <span class="json-key">"TTLs"</span>: <span class="json-brace">[</span><span class="json-number">300</span>, <span class="json-number">300</span><span class="json-brace">]</span>,
+      <span class="json-key">"rejected"</span>: <span class="json-bool">false</span>
+    <span class="json-brace">}</span>
+  <span class="json-brace">}</span>,
+  <span class="json-key">"network"</span>: <span class="json-brace">{</span>
+    <span class="json-key">"transport"</span>: <span class="json-string">"udp"</span>,
+    <span class="json-key">"protocol"</span>: <span class="json-string">"dns"</span>
+  <span class="json-brace">}</span>,
+  <span class="json-key">"event"</span>: <span class="json-brace">{</span>
+    <span class="json-key">"dataset"</span>: <span class="json-string">"zeek.dns"</span>,
+    <span class="json-key">"duration"</span>: <span class="json-number">12400000</span>
+  <span class="json-brace">}</span>
+<span class="json-brace">}</span></div>
+                  </div>
+                </td>
+              </tr>
+              <!-- Row 4 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:39.445</td>
+                <td class="cell-ip-src">192.168.1.201</td>
+                <td class="cell-ip">8.8.4.4</td>
+                <td class="cell-query">tracker.example.net</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-nxdomain">NXDOMAIN</span></td>
+                <td class="cell-answers" style="color: var(--text-dim);">&mdash;</td>
+              </tr>
+              <!-- Row 5 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:38.102</td>
+                <td class="cell-ip-src">192.168.1.105</td>
+                <td class="cell-ip">1.1.1.1</td>
+                <td class="cell-query">cdn.jsdelivr.net</td>
+                <td><span class="badge badge-type-cname">CNAME</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">104.16.85.20</td>
+              </tr>
+              <!-- Row 6 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:36.771</td>
+                <td class="cell-ip-src">192.168.1.118</td>
+                <td class="cell-ip">8.8.8.8</td>
+                <td class="cell-query">smtp.gmail.com</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">142.250.153.108</td>
+              </tr>
+              <!-- Row 7 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:35.319</td>
+                <td class="cell-ip-src">192.168.1.142</td>
+                <td class="cell-ip">1.0.0.1</td>
+                <td class="cell-query">analytics.tiktok.com</td>
+                <td><span class="badge badge-type">AAAA</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">2a06:98c1:3121::3</td>
+              </tr>
+              <!-- Row 8 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:34.008</td>
+                <td class="cell-ip-src">192.168.1.201</td>
+                <td class="cell-ip">8.8.8.8</td>
+                <td class="cell-query">malware-c2.baddomain.xyz</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-nxdomain">NXDOMAIN</span></td>
+                <td class="cell-answers" style="color: var(--text-dim);">&mdash;</td>
+              </tr>
+              <!-- Row 9 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:32.654</td>
+                <td class="cell-ip-src">192.168.1.105</td>
+                <td class="cell-ip">1.1.1.1</td>
+                <td class="cell-query">registry.npmjs.org</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">104.16.23.35</td>
+              </tr>
+              <!-- Row 10 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:31.290</td>
+                <td class="cell-ip-src">192.168.1.118</td>
+                <td class="cell-ip">8.8.4.4</td>
+                <td class="cell-query">ocsp.digicert.com</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">93.184.220.29</td>
+              </tr>
+              <!-- Row 11 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:29.882</td>
+                <td class="cell-ip-src">192.168.1.142</td>
+                <td class="cell-ip">1.0.0.1</td>
+                <td class="cell-query">dns.google</td>
+                <td><span class="badge badge-type">A</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">8.8.8.8, 8.8.4.4</td>
+              </tr>
+              <!-- Row 12 -->
+              <tr>
+                <td class="cell-ts">2026-03-05 03:18:28.441</td>
+                <td class="cell-ip-src">192.168.1.201</td>
+                <td class="cell-ip">8.8.8.8</td>
+                <td class="cell-query">update.microsoft.com</td>
+                <td><span class="badge badge-type-cname">CNAME</span></td>
+                <td><span class="badge badge-noerror">NOERROR</span></td>
+                <td class="cell-answers">13.107.4.52</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ========== PAGINATION ========== -->
+        <div class="pagination-bar">
+          <div class="page-size">
+            <span>Rows per page:</span>
+            <select>
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+
+          <div class="page-nav">
+            <button class="page-btn disabled">Previous</button>
+            <button class="page-btn active">1</button>
+            <button class="page-btn">2</button>
+            <button class="page-btn">3</button>
+            <span class="page-ellipsis">...</span>
+            <button class="page-btn">401</button>
+            <button class="page-btn">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== FIELD STATISTICS SIDEBAR ========== -->
+      <div class="field-stats">
+        <div class="field-stats-card">
+          <div class="field-stats-title">Field Statistics</div>
+
+          <!-- zeek.dns.query -->
+          <div class="field-group">
+            <div class="field-name">zeek.dns.query</div>
+
+            <div class="field-value-row">
+              <span class="field-value-label">dns.google</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 100%; background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.4));"></div>
+              </div>
+              <span class="field-value-count">4,201</span>
+            </div>
+            <div class="field-value-row">
+              <span class="field-value-label">cloudflare.com</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 92%; background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.4));"></div>
+              </div>
+              <span class="field-value-count">3,891</span>
+            </div>
+            <div class="field-value-row">
+              <span class="field-value-label">www.google.com</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 58%; background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.4));"></div>
+              </div>
+              <span class="field-value-count">2,447</span>
+            </div>
+            <div class="field-value-row">
+              <span class="field-value-label">ocsp.digicert.com</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 41%; background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.4));"></div>
+              </div>
+              <span class="field-value-count">1,723</span>
+            </div>
+            <div class="field-value-row">
+              <span class="field-value-label">api.github.com</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 29%; background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.4));"></div>
+              </div>
+              <span class="field-value-count">1,208</span>
+            </div>
+          </div>
+
+          <!-- zeek.dns.rcode_name -->
+          <div class="field-group">
+            <div class="field-name">zeek.dns.rcode_name</div>
+
+            <div class="field-value-row">
+              <span class="field-value-label">NOERROR</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 100%; background: linear-gradient(90deg, var(--green), rgba(0, 230, 118, 0.4));"></div>
+              </div>
+              <span class="field-value-count">18,442</span>
+            </div>
+            <div class="field-value-row">
+              <span class="field-value-label">NXDOMAIN</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 6.5%; background: linear-gradient(90deg, var(--red), rgba(255, 71, 87, 0.4));"></div>
+              </div>
+              <span class="field-value-count">1,201</span>
+            </div>
+            <div class="field-value-row">
+              <span class="field-value-label">SERVFAIL</span>
+              <div class="field-bar-track">
+                <div class="field-bar-fill" style="width: 2%; background: linear-gradient(90deg, var(--amber), rgba(255, 171, 0, 0.4));"></div>
+              </div>
+              <span class="field-value-count">374</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /explorer-body -->
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+</body>
+</html>

@@ -1,14 +1,11 @@
 """
 GeoIP lookup service for NetTap.
 
-Provides IP-to-location resolution using MaxMind GeoLite2 database
-(when available) with fallback to RFC1918 detection and a built-in
-well-known IP database.
-
-Three tiers of lookup:
+Provides IP-to-location resolution using multiple strategies:
 1. RFC1918/private IP detection (always available, no external DB)
 2. MaxMind GeoLite2-City database via maxminddb package (optional)
-3. Built-in well-known IP database for common services (fallback)
+3. OpenSearch enriched traffic data (queries Malcolm's GeoIP-enriched sessions)
+4. Built-in well-known IP database for common services (fallback)
 """
 
 import ipaddress
@@ -19,8 +16,7 @@ from functools import lru_cache
 logger = logging.getLogger("nettap.geoip")
 
 # ---------------------------------------------------------------------------
-# Well-known IP ranges for fallback when no GeoLite2 DB is available.
-# These cover major DNS providers, CDNs, and cloud services.
+# Well-known IP ranges for fallback when no other source is available.
 # ---------------------------------------------------------------------------
 
 WELL_KNOWN_IPS: dict[str, dict] = {
@@ -267,18 +263,23 @@ class GeoIPResult:
 
 
 class GeoIPService:
-    """GeoIP lookup with MaxMind DB + fallback.
+    """GeoIP lookup with OpenSearch enrichment data + MaxMind DB + fallback.
 
-    Attempts to load a MaxMind GeoLite2-City database on init.  If the
-    ``maxminddb`` package is not installed or the database file is
-    missing, the service falls back to RFC1918 detection and a built-in
-    well-known IP database -- no exceptions raised, no features lost
-    aside from full geo resolution of arbitrary public IPs.
+    Resolution order:
+    1. RFC1918 / private range check
+    2. MaxMind GeoLite2 database (if loaded)
+    3. OpenSearch enriched sessions (Malcolm adds GeoIP to traffic data)
+    4. Built-in well-known IP database
+    5. Unknown (country="Unknown", country_code="XX")
     """
 
-    def __init__(self, db_path: str | None = None):
+    def __init__(self, db_path: str | None = None, opensearch_client=None):
         self._reader = None
         self._db_available = False
+        self._os_client = opensearch_client
+        # In-memory cache for OpenSearch lookups (TTL managed by LRU eviction)
+        self._os_cache: dict[str, GeoIPResult] = {}
+        self._OS_CACHE_MAX = 2048
 
         # Try to load MaxMind database
         if db_path is None:
@@ -302,6 +303,9 @@ class GeoIPService:
         except Exception as exc:
             logger.warning("Failed to load GeoLite2 database: %s", exc)
 
+        if self._os_client:
+            logger.info("GeoIP OpenSearch enrichment lookup enabled")
+
     @property
     def db_available(self) -> bool:
         """Whether the MaxMind GeoLite2 database was successfully loaded."""
@@ -320,6 +324,133 @@ class GeoIPService:
         except ValueError:
             return False
 
+    def _lookup_opensearch(self, ip: str) -> GeoIPResult | None:
+        """Query OpenSearch for GeoIP data enriched by Malcolm's logstash pipeline.
+
+        Malcolm enriches traffic sessions with GeoIP fields:
+        - source.geo.country_name, destination.geo.country_name
+        - source.geo.city_name, destination.geo.city_name
+        - source.geo.country_iso_code, destination.geo.country_iso_code
+        - source.geo.location (lat/lon)
+        - source.as.number, source.as.organization.name
+
+        We query for any recent session where this IP appears as source or
+        destination and extract the geo fields.
+        """
+        if not self._os_client:
+            return None
+
+        # Check in-memory cache first
+        if ip in self._os_cache:
+            return self._os_cache[ip]
+
+        try:
+            # Search for this IP in recent sessions, try both source and destination
+            body = {
+                "size": 1,
+                "sort": [{"@timestamp": {"order": "desc"}}],
+                "query": {
+                    "bool": {
+                        "should": [
+                            {"term": {"source.ip": ip}},
+                            {"term": {"destination.ip": ip}},
+                        ],
+                        "minimum_should_match": 1,
+                        # Only look at docs that have geo data
+                        "filter": {
+                            "bool": {
+                                "should": [
+                                    {"exists": {"field": "source.geo.country_name"}},
+                                    {"exists": {"field": "destination.geo.country_name"}},
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        },
+                    }
+                },
+                "_source": [
+                    "source.ip", "destination.ip",
+                    "source.geo.*", "destination.geo.*",
+                    "source.as.*", "destination.as.*",
+                ],
+            }
+
+            resp = self._os_client.search(index="arkime_sessions3-*", body=body)
+            hits = resp.get("hits", {}).get("hits", [])
+            if not hits:
+                return None
+
+            src = hits[0].get("_source", {})
+
+            # Determine which side (source/destination) has this IP
+            src_ip = src.get("source", {}).get("ip")
+            dst_ip = src.get("destination", {}).get("ip")
+
+            if src_ip == ip:
+                geo = src.get("source", {}).get("geo", {})
+                as_info = src.get("source", {}).get("as", {})
+            elif dst_ip == ip:
+                geo = src.get("destination", {}).get("geo", {})
+                as_info = src.get("destination", {}).get("as", {})
+            else:
+                return None
+
+            country = geo.get("country_name")
+            if not country:
+                return None
+
+            location = geo.get("location", {})
+            lat = location.get("lat") if isinstance(location, dict) else None
+            lon = location.get("lon") if isinstance(location, dict) else None
+            # Fall back to top-level latitude/longitude if location dict missing
+            if lat is None:
+                lat = geo.get("latitude")
+            if lon is None:
+                lon = geo.get("longitude")
+
+            # Parse ASN from Malcolm's "as.full" field: "AS16509 Amazon.com, Inc."
+            asn_number = as_info.get("number")
+            org_name = as_info.get("organization")
+            if isinstance(org_name, dict):
+                org_name = org_name.get("name")
+            as_full = as_info.get("full", "")
+            if as_full and (asn_number is None or org_name is None):
+                # Parse "AS16509 Amazon.com, Inc." → (16509, "Amazon.com, Inc.")
+                if as_full.upper().startswith("AS"):
+                    parts = as_full.split(" ", 1)
+                    if len(parts) >= 1 and asn_number is None:
+                        try:
+                            asn_number = int(parts[0][2:])
+                        except ValueError:
+                            pass
+                    if len(parts) == 2 and org_name is None:
+                        org_name = parts[1]
+
+            result = GeoIPResult(
+                ip=ip,
+                country=country,
+                country_code=geo.get("country_iso_code", "XX"),
+                city=geo.get("city_name"),
+                latitude=lat,
+                longitude=lon,
+                asn=asn_number,
+                organization=org_name,
+            )
+
+            # Cache the result
+            if len(self._os_cache) >= self._OS_CACHE_MAX:
+                # Evict oldest entries (simple strategy: clear half)
+                keys = list(self._os_cache.keys())
+                for k in keys[: len(keys) // 2]:
+                    del self._os_cache[k]
+            self._os_cache[ip] = result
+
+            return result
+
+        except Exception as exc:
+            logger.debug("OpenSearch GeoIP lookup failed for %s: %s", ip, exc)
+            return None
+
     @lru_cache(maxsize=4096)
     def lookup(self, ip: str) -> GeoIPResult:
         """Look up GeoIP data for a single IP address.
@@ -327,8 +458,9 @@ class GeoIPService:
         Resolution order:
         1. RFC1918 / private range check
         2. MaxMind GeoLite2 database (if loaded)
-        3. Built-in well-known IP database
-        4. Unknown (country="Unknown", country_code="XX")
+        3. OpenSearch enriched session data
+        4. Built-in well-known IP database
+        5. Unknown (country="Unknown", country_code="XX")
         """
         # Check private ranges first
         if self.is_private(ip):
@@ -361,6 +493,11 @@ class GeoIPService:
                     )
             except Exception as exc:
                 logger.debug("MaxMind lookup failed for %s: %s", ip, exc)
+
+        # Try OpenSearch enrichment data
+        os_result = self._lookup_opensearch(ip)
+        if os_result:
+            return os_result
 
         # Fallback: check well-known IPs
         if ip in WELL_KNOWN_IPS:

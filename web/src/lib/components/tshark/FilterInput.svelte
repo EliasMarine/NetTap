@@ -10,12 +10,20 @@
 	interface Props {
 		onsubmit: (filter: string) => void;
 		disabled?: boolean;
+		value?: string;
 	}
 
-	let { onsubmit, disabled = false }: Props = $props();
+	let { onsubmit, disabled = false, value = '' }: Props = $props();
 
 	// ---- State ----
 	let filterText = $state('');
+
+	// Sync filterText when parent value changes (e.g. URL-derived filter)
+	$effect(() => {
+		if (value && !filterText) {
+			filterText = value;
+		}
+	});
 	let validationStatus = $state<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
 	let validationMessage = $state('');
 	let showPresets = $state(false);

@@ -95,8 +95,51 @@
 			label: 'GeoIP lookup',
 			icon: 'geoip',
 			action: () => {
-				// Open GeoIP lookup in a new tab (using an external service as fallback)
-				window.open(`https://ipinfo.io/${encodeURIComponent(ip)}`, '_blank', 'noopener');
+				goto(`/geoip/${encodeURIComponent(ip)}`);
+			},
+		},
+		{
+			label: 'WHOIS lookup',
+			icon: 'whois',
+			action: () => {
+				goto(`/lookup/whois/${encodeURIComponent(ip)}`);
+			},
+		},
+		{
+			label: 'DNS lookup',
+			icon: 'dns',
+			action: () => {
+				goto(`/lookup/dns/${encodeURIComponent(ip)}`);
+			},
+		},
+		{
+			label: 'Ping this IP',
+			icon: 'ping',
+			action: () => {
+				goto(`/tools/ping?target=${encodeURIComponent(ip)}`);
+			},
+		},
+		{
+			label: 'Traceroute to this IP',
+			icon: 'ping',
+			action: () => {
+				goto(`/tools/ping?target=${encodeURIComponent(ip)}&tab=traceroute`);
+			},
+		},
+		{
+			label: 'SSL certificate check',
+			icon: 'ssl',
+			separator: true,
+			action: () => {
+				goto(`/tools/ssl-cert?host=${encodeURIComponent(ip)}`);
+			},
+		},
+		{
+			label: 'View alerts for this IP',
+			icon: 'alert',
+			separator: true,
+			action: () => {
+				goto(`/alerts?ip=${encodeURIComponent(ip)}`);
 			},
 		},
 		{
@@ -104,14 +147,14 @@
 			icon: 'search',
 			separator: true,
 			action: () => {
-				goto(`/connections?filter=ip.src==${encodeURIComponent(ip)}`);
+				goto(`/connections?src_ip=${encodeURIComponent(ip)}`);
 			},
 		},
 		{
 			label: 'Filter connections to this IP',
 			icon: 'search',
 			action: () => {
-				goto(`/connections?filter=ip.dst==${encodeURIComponent(ip)}`);
+				goto(`/connections?dst_ip=${encodeURIComponent(ip)}`);
 			},
 		},
 	]);

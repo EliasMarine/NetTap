@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetTap — DNS Reconnaissance</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-card: #0f1319;
+  --bg-card-hover: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --purple: #b388ff;
+  --purple-dim: rgba(179, 136, 255, 0.12);
+  --blue: #448aff;
+  --blue-dim: rgba(68, 138, 255, 0.12);
+  --teal: #1de9b6;
+  --teal-dim: rgba(29, 233, 182, 0.12);
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --sidebar-w: 220px;
+  --topbar-h: 52px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
+/* Simulated content area (no sidebar for cleaner tool-page mockup) */
+.page-wrapper {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* Back nav */
+.back-nav {
+  margin-bottom: 24px;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.back-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.back-btn svg {
+  width: 14px; height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Page header */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.header-left h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+
+.header-left p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--teal-dim);
+  border: 1px solid rgba(29,233,182,0.2);
+  border-radius: 20px;
+  color: var(--teal);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.header-badge .dot {
+  width: 6px; height: 6px;
+  background: var(--teal);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--teal);
+}
+
+/* Input card */
+.input-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: flex-end;
+}
+
+.input-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.input-field {
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: var(--font-mono);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.input-field::placeholder { color: var(--text-dim); }
+.input-field:focus { border-color: var(--teal); }
+
+.btn {
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--teal);
+  color: #000;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 16px rgba(29,233,182,0.3);
+}
+
+.btn svg {
+  width: 16px; height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Record type checkboxes */
+.record-types {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.record-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-dim);
+  border-radius: 20px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  user-select: none;
+}
+
+.record-type-chip:hover {
+  border-color: var(--border-bright);
+  color: var(--text-secondary);
+}
+
+.record-type-chip.selected {
+  background: var(--teal-dim);
+  border-color: rgba(29,233,182,0.3);
+  color: var(--teal);
+}
+
+/* Results summary */
+.results-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.result-badge {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.result-badge.count {
+  background: var(--teal-dim);
+  color: var(--teal);
+}
+
+.result-badge.time {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+/* Record section */
+.record-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  margin-bottom: 12px;
+  overflow: hidden;
+  animation: fade-up 0.3s ease both;
+}
+
+.record-section:nth-child(2) { animation-delay: 0.05s; }
+.record-section:nth-child(3) { animation-delay: 0.1s; }
+.record-section:nth-child(4) { animation-delay: 0.15s; }
+.record-section:nth-child(5) { animation-delay: 0.2s; }
+.record-section:nth-child(6) { animation-delay: 0.25s; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.record-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-dim);
+  cursor: pointer;
+}
+
+.record-type-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.type-badge {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.type-badge.A { background: var(--blue-dim); color: var(--blue); }
+.type-badge.AAAA { background: var(--purple-dim); color: var(--purple); }
+.type-badge.MX { background: var(--amber-dim); color: var(--amber); }
+.type-badge.NS { background: var(--green-dim); color: var(--green); }
+.type-badge.TXT { background: var(--teal-dim); color: var(--teal); }
+.type-badge.SOA { background: var(--red-dim); color: var(--red); }
+.type-badge.CNAME { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+.record-count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Record table */
+.record-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.record-table th {
+  text-align: left;
+  padding: 10px 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.record-table td {
+  padding: 10px 20px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.record-table tr:last-child td {
+  border-bottom: none;
+}
+
+.record-table tr:hover td {
+  background: rgba(255,255,255,0.02);
+}
+
+.ttl-value {
+  color: var(--text-muted);
+}
+
+.record-value {
+  color: var(--teal);
+  word-break: break-all;
+}
+
+/* Empty state for no records */
+.no-records {
+  padding: 16px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .input-row { flex-direction: column; }
+  .record-table { font-size: 0.78rem; }
+  .record-table th, .record-table td { padding: 8px 12px; }
+}
+</style>
+</head>
+<body>
+
+<div class="page-wrapper">
+
+  <!-- Back nav -->
+  <div class="back-nav">
+    <a class="back-btn" href="index.html">
+      <svg viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      Back to Tools
+    </a>
+  </div>
+
+  <!-- Page header -->
+  <div class="page-header">
+    <div class="header-left">
+      <h1>DNS Reconnaissance</h1>
+      <p>Enumerate all DNS records for any domain using dig</p>
+    </div>
+    <span class="header-badge"><span class="dot"></span> dig available</span>
+  </div>
+
+  <!-- Input card -->
+  <div class="input-card">
+    <div class="input-row">
+      <div class="input-group">
+        <span class="input-label">Domain</span>
+        <input class="input-field" type="text" value="github.com" placeholder="example.com">
+      </div>
+      <button class="btn btn-primary">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Lookup
+      </button>
+    </div>
+
+    <div>
+      <span class="input-label" style="margin-bottom: 8px; display:block;">Record Types</span>
+      <div class="record-types">
+        <span class="record-type-chip selected">A</span>
+        <span class="record-type-chip selected">AAAA</span>
+        <span class="record-type-chip selected">CNAME</span>
+        <span class="record-type-chip selected">MX</span>
+        <span class="record-type-chip selected">NS</span>
+        <span class="record-type-chip selected">TXT</span>
+        <span class="record-type-chip selected">SOA</span>
+        <span class="record-type-chip">PTR</span>
+        <span class="record-type-chip">SRV</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results summary -->
+  <div class="results-summary">
+    <span class="result-badge count">14 records found</span>
+    <span class="result-badge time">7 queries &middot; 284ms</span>
+  </div>
+
+  <!-- Results by type -->
+
+  <!-- A Records -->
+  <div class="record-section">
+    <div class="record-header">
+      <div class="record-type-label">
+        <span class="type-badge A">A</span>
+        <span style="font-weight:500;">Address Records</span>
+      </div>
+      <span class="record-count">1 record</span>
+    </div>
+    <table class="record-table">
+      <thead>
+        <tr><th>Name</th><th>TTL</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">60</td>
+          <td class="record-value">20.27.177.113</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- AAAA Records -->
+  <div class="record-section">
+    <div class="record-header">
+      <div class="record-type-label">
+        <span class="type-badge AAAA">AAAA</span>
+        <span style="font-weight:500;">IPv6 Address Records</span>
+      </div>
+      <span class="record-count">0 records</span>
+    </div>
+    <div class="no-records">No AAAA records found</div>
+  </div>
+
+  <!-- MX Records -->
+  <div class="record-section">
+    <div class="record-header">
+      <div class="record-type-label">
+        <span class="type-badge MX">MX</span>
+        <span style="font-weight:500;">Mail Exchange Records</span>
+      </div>
+      <span class="record-count">4 records</span>
+    </div>
+    <table class="record-table">
+      <thead>
+        <tr><th>Name</th><th>TTL</th><th>Priority</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="ttl-value">1</td>
+          <td class="record-value">aspmx.l.google.com</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="ttl-value">5</td>
+          <td class="record-value">alt1.aspmx.l.google.com</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="ttl-value">5</td>
+          <td class="record-value">alt2.aspmx.l.google.com</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="ttl-value">10</td>
+          <td class="record-value">alt3.aspmx.l.google.com</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- NS Records -->
+  <div class="record-section">
+    <div class="record-header">
+      <div class="record-type-label">
+        <span class="type-badge NS">NS</span>
+        <span style="font-weight:500;">Name Server Records</span>
+      </div>
+      <span class="record-count">4 records</span>
+    </div>
+    <table class="record-table">
+      <thead>
+        <tr><th>Name</th><th>TTL</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">900</td>
+          <td class="record-value">dns1.p08.nsone.net</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">900</td>
+          <td class="record-value">dns2.p08.nsone.net</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">900</td>
+          <td class="record-value">dns3.p08.nsone.net</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">900</td>
+          <td class="record-value">dns4.p08.nsone.net</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- TXT Records -->
+  <div class="record-section">
+    <div class="record-header">
+      <div class="record-type-label">
+        <span class="type-badge TXT">TXT</span>
+        <span style="font-weight:500;">Text Records</span>
+      </div>
+      <span class="record-count">4 records</span>
+    </div>
+    <table class="record-table">
+      <thead>
+        <tr><th>Name</th><th>TTL</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="record-value" style="font-size:0.78rem;">v=spf1 ip4:192.30.252.0/22 include:_netblocks.google.com include:email.github.com ~all</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="record-value" style="font-size:0.78rem;">MS=ms58704441</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="record-value" style="font-size:0.78rem;">docusign=087098e3-3d46-47b7-9b4e-8a23028154cd</td>
+        </tr>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">3600</td>
+          <td class="record-value" style="font-size:0.78rem;">apple-domain-verification=30afIBcvSuDV2PLX</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SOA Record -->
+  <div class="record-section">
+    <div class="record-header">
+      <div class="record-type-label">
+        <span class="type-badge SOA">SOA</span>
+        <span style="font-weight:500;">Start of Authority</span>
+      </div>
+      <span class="record-count">1 record</span>
+    </div>
+    <table class="record-table">
+      <thead>
+        <tr><th>Name</th><th>TTL</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>github.com</td>
+          <td class="ttl-value">900</td>
+          <td class="record-value" style="font-size:0.78rem;">dns1.p08.nsone.net hostmaster.nsone.net 1 43200 7200 1209600 3600</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -259,30 +259,44 @@
 						</div>
 						<div class="info-row">
 							<span class="info-label">Temperature</span>
-							<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c ?? 0)}">
-								{smartHealth.temperature_c ?? '--'}&deg;C
-							</span>
+							{#if smartHealth.temperature_c != null}
+								<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c)}">
+									{smartHealth.temperature_c}&deg;C
+								</span>
+							{:else}
+								<span class="info-value unavailable" title="SMART temperature data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+							{/if}
 						</div>
 						<div class="info-row">
 							<span class="info-label">Wear</span>
-							<div class="wear-cell">
-								<div class="wear-bar-container">
-									<div
-										class="wear-bar"
-										style="width: {Math.min(smartHealth.percentage_used ?? 0, 100)}%; background-color: {(smartHealth.percentage_used ?? 0) > 80 ? 'var(--danger)' : (smartHealth.percentage_used ?? 0) > 50 ? 'var(--warning)' : 'var(--success)'}"
-									></div>
+							{#if smartHealth.percentage_used != null}
+								<div class="wear-cell">
+									<div class="wear-bar-container">
+										<div
+											class="wear-bar"
+											style="width: {Math.min(smartHealth.percentage_used, 100)}%; background-color: {smartHealth.percentage_used > 80 ? 'var(--danger)' : smartHealth.percentage_used > 50 ? 'var(--warning)' : 'var(--success)'}"
+										></div>
+									</div>
+									<span class="mono wear-text">{smartHealth.percentage_used}%</span>
 								</div>
-								<span class="mono wear-text">{smartHealth.percentage_used ?? '--'}%</span>
-							</div>
+							{:else}
+								<span class="info-value unavailable" title="SMART wear level data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+							{/if}
 						</div>
 						<div class="info-row">
 							<span class="info-label">Power-On Hours</span>
-							<span class="info-value mono">{smartHealth.power_on_hours != null ? smartHealth.power_on_hours.toLocaleString() : '--'}</span>
+							{#if smartHealth.power_on_hours != null}
+								<span class="info-value mono">{smartHealth.power_on_hours.toLocaleString()}</span>
+							{:else}
+								<span class="info-value unavailable" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+							{/if}
 						</div>
 					</div>
 					{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}
 						<div class="alert alert-info os-help">
-							SMART metrics are unavailable. The device was detected but no data could be read. Check that the /dev volume is mounted without :ro in Docker Compose, as NVMe drives require write access for admin commands.
+							SMART metrics are unavailable. The device was detected but no data could be read.
+							Check that the /dev volume is mounted without :ro in Docker Compose, as NVMe drives require write access for admin commands.
+							<a href="/api/smart/diagnostics" target="_blank" class="diag-link">View diagnostics</a>
 						</div>
 					{/if}
 					{#if smartHealth.warnings && smartHealth.warnings.length > 0}
@@ -552,6 +566,23 @@
 
 	.os-help li {
 		margin-bottom: var(--space-xs);
+	}
+
+	/* Unavailable metric indicator */
+	.unavailable {
+		color: var(--text-muted);
+		font-size: var(--text-xs);
+		font-style: italic;
+		cursor: help;
+		border-bottom: 1px dotted var(--text-muted);
+	}
+
+	.diag-link {
+		display: inline-block;
+		margin-top: var(--space-xs);
+		color: var(--accent);
+		text-decoration: underline;
+		font-size: var(--text-xs);
 	}
 
 	/* SMART warnings */

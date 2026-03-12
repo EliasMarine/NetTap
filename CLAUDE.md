@@ -284,6 +284,25 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 
 **CRITICAL: After completing any task from `plans/comprehensive-build-plan.md`, you MUST update the task's status in that file.** Mark completed tasks with a `[x]` checkbox prefix and add a completion note. This applies to all phases going forward. When starting a new phase, review the plan to see what's already done.
 
+## Design System (MANDATORY)
+
+**CRITICAL: Before ANY frontend/UI work, read `web/DESIGN-SYSTEM.md` first.** This document is the canonical design reference for all NetTap pages. It codifies the colors, spacing, typography, component patterns, and layout rules that every page MUST follow.
+
+- **Location:** `web/DESIGN-SYSTEM.md`
+- **Reference implementation:** `web/src/routes/logs/+page.svelte` (Log Explorer page)
+- **Global CSS tokens:** `web/src/lib/styles/global.css`
+- **Before any UI change:** Check the design system for the correct pattern, variable, or component
+- **After any UI change:** Verify the page still follows the design system rules (no hardcoded colors, spacing, or font sizes)
+
+### Key Rules
+1. **NEVER hardcode hex colors** — use CSS variables (`var(--red)`, not `#ff4757`)
+2. **NEVER hardcode spacing** — use spacing vars (`var(--space-md)`, not `16px`)
+3. **NEVER hardcode font sizes** — use text vars (`var(--text-sm)`, not `0.8125rem`)
+4. **NEVER set max-width on page containers** — pages are always full-width
+5. **ALL tables MUST be sortable** — ascending/descending on every column
+
+---
+
 ## SIEM Feature Integration Policy
 
 **Reference:** `plans/siem-features-gameplan.md` contains the full implementation plan for 20 SIEM-inspired features (10 Must-Have + 10 Should-Have).
@@ -349,28 +368,44 @@ curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
 
 This applies to all deployment, testing, debugging, and diagnostic instructions.
 
-**Test/verification commands must include the FULL deployment flow.** Never give bare test commands (e.g. `docker exec ... nsenter`) without the prerequisite steps a normal user needs to run first. Always include: pull latest code → build affected container(s) → recreate/restart → then test.
+**When there are multiple sequential commands for the remote device, ALWAYS write them as a script file in `scripts/remote/`.** Multi-line commands with `\` and `&&` chains BREAK when copy-pasted into SSH terminals. This has caused repeated problems and wasted time.
 
-Example — **BAD:**
+Example — **BAD (inline commands — NEVER DO THIS):**
 ```bash
-# Test nsenter works:
-sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
-```
-
-Example — **GOOD:**
-```bash
-# Pull latest and rebuild
-cd ~/NetTap
-sudo git pull origin develop
-sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+cd ~/NetTap && \
+git pull origin phase-4/webui-v2 && \
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon && \
 sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate
-
-# Verify container is healthy
-sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep daemon
-
-# Test nsenter works
-sudo docker exec nettap-storage-daemon nsenter -t 1 -n -- ip link show
 ```
+
+Example — **GOOD (write a script, tell user to run it):**
+Write the commands into `scripts/remote/deploy-daemon.sh`, push to git, then tell user:
+```bash
+sudo bash scripts/remote/deploy-daemon.sh
+```
+
+**Every remote script must include the FULL workflow.** Pull code → build → deploy → wait → verify. The user runs ONE command and walks away.
+
+**The only exception** is single, short commands (one line, no chaining):
+```bash
+sudo docker logs nettap-storage-daemon --tail 50
+```
+
+---
+
+## Remote Device Workflow
+
+**The NetTap device is a separate physical machine on the local network.** The development machine (where Claude Code runs) cannot execute commands on the NetTap device directly. The user SSHes into the device and copy-pastes commands/files manually.
+
+### Rules for Claude Code
+
+1. **Never assume commands can run on the NetTap device from this machine.** All deployment, debugging, and diagnostic commands are copy-pasted by the user over SSH.
+2. **NEVER give multi-line commands with `\` continuations or `&&` chains for the remote device.** They ALWAYS break when copy-pasted into SSH terminals (trailing spaces after `\` become escaped spaces, `&&` chains fail silently). This has caused repeated frustration.
+3. **ALL remote commands MUST be written as self-contained `.sh` script files in `scripts/remote/`.** No exceptions. Even 2-3 commands go in a script. This includes **diagnostic and debugging commands** — never give a list of `curl` or `docker logs` commands inline. Write a `diagnose-*.sh` script instead. The user will `git pull` to get the script onto the device (or copy-paste the script contents into a file), then run `sudo bash scripts/remote/<script>.sh`.
+4. **Every remote script must include the full workflow.** Pull latest code, build containers, deploy, wait for startup, then run the actual task. The user runs ONE script and walks away. Never separate "deploy" and "test" into different steps.
+5. **Each remote script must be self-contained and idempotent** — include progress markers (`echo "→ Step..."`), error handling (no `set -e`, use per-command `|| true` or explicit error messages), and verify results at the end.
+6. **The ONLY inline command allowed is the script runner itself:** `sudo bash scripts/remote/<script>.sh`
+7. **If the user needs to get the script onto the device first** (before `git pull` works), provide the script contents in a single code block they can paste into `cat > script.sh << 'SCRIPT' ... SCRIPT`.
 
 ---
 

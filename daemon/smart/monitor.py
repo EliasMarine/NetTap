@@ -1,9 +1,14 @@
 """
 NetTap SMART Monitor — Phase 2 Expanded Implementation
 
-Monitors SSD/NVMe health via smartctl with support for both NVMe and SATA
-drives, TBW calculation, temperature monitoring, and an extensible alert
-system with configurable callbacks.
+Monitors SSD/NVMe health via nvme-cli (primary for NVMe) and smartctl
+(fallback for SATA). Supports both NVMe and SATA drives, TBW calculation,
+temperature monitoring, and an extensible alert system with configurable
+callbacks.
+
+nvme-cli speaks directly to the NVMe driver via ioctl — no SCSI
+translation layer. This gives more reliable results than smartctl for
+NVMe drives. smartctl is retained as fallback for SATA/SSD devices.
 
 Phase 1 code is preserved in OLD CODE blocks below per project code
 preservation policy.
@@ -75,15 +80,45 @@ preservation policy.
 
 from __future__ import annotations
 
+import glob as globmod
+import os
 import subprocess
 import json
 import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable
 
 logger = logging.getLogger("nettap.smart")
+
+
+def auto_detect_device() -> str:
+    """Auto-detect the primary storage device for SMART monitoring.
+
+    Checks common NVMe and SATA device paths in order of likelihood.
+    Falls back to /dev/nvme0n1 if nothing is found.
+    """
+    # Try NVMe devices first (most common on N100 mini PCs)
+    nvme_devices = sorted(globmod.glob("/dev/nvme[0-9]n[0-9]"))
+    if nvme_devices:
+        logger.info("SMART auto-detect: found NVMe device %s", nvme_devices[0])
+        return nvme_devices[0]
+
+    # Try SATA/SSD devices
+    sata_devices = sorted(globmod.glob("/dev/sd[a-z]"))
+    if sata_devices:
+        logger.info("SMART auto-detect: found SATA device %s", sata_devices[0])
+        return sata_devices[0]
+
+    # Try virtio (VMs)
+    vd_devices = sorted(globmod.glob("/dev/vd[a-z]"))
+    if vd_devices:
+        logger.info("SMART auto-detect: found virtio device %s", vd_devices[0])
+        return vd_devices[0]
+
+    logger.warning("SMART auto-detect: no block devices found, defaulting to /dev/nvme0n1")
+    return "/dev/nvme0n1"
 
 
 # ---------------------------------------------------------------------------
@@ -197,10 +232,11 @@ class AlertThresholds:
 
 
 class SmartMonitor:
-    """Monitors NVMe and SATA/SSD health using smartmontools.
+    """Monitors NVMe and SATA/SSD health using nvme-cli and smartmontools.
 
-    Supports auto-detection of device type (NVMe vs SATA), extracts
-    device-specific metrics, calculates TBW, and fires alerts via
+    Uses nvme-cli (``nvme smart-log``) as the primary tool for NVMe drives
+    and smartctl as fallback for SATA/SSD devices. Auto-detects device type,
+    extracts device-specific metrics, calculates TBW, and fires alerts via
     configurable callbacks.
 
     Args:
@@ -258,12 +294,101 @@ class SmartMonitor:
     # Raw data retrieval
     # ------------------------------------------------------------------
 
-    def get_raw_data(self) -> dict:
-        """Query SMART health data from the drive via smartctl JSON output.
+    def _get_nvme_controller(self) -> str:
+        """Derive the NVMe controller device from the namespace device.
+
+        nvme-cli admin commands target the controller (/dev/nvme0), not the
+        namespace (/dev/nvme0n1). This extracts the controller path.
 
         Returns:
-            Parsed JSON dict from smartctl, or empty dict on failure.
+            Controller device path (e.g., "/dev/nvme0").
         """
+        import re
+        m = re.match(r"(/dev/nvme\d+)", self.device)
+        if m:
+            return m.group(1)
+        return self.device
+
+    def _get_nvme_raw_data(self) -> dict:
+        """Query NVMe SMART data via nvme-cli (primary tool for NVMe).
+
+        Uses ``nvme smart-log /dev/nvmeX -o json`` which speaks directly
+        to the NVMe driver via ioctl — no SCSI translation layer.
+
+        Returns:
+            Parsed JSON dict from nvme-cli, or empty dict on failure.
+        """
+        ctrl = self._get_nvme_controller()
+        try:
+            result = subprocess.run(
+                ["nvme", "smart-log", ctrl, "-o", "json"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "nvme smart-log exited with code %d for %s: %s",
+                    result.returncode,
+                    ctrl,
+                    result.stderr.strip() if result.stderr else "",
+                )
+                return {}
+            data = json.loads(result.stdout)
+            logger.debug("nvme smart-log returned %d fields for %s", len(data), ctrl)
+            return data
+        except FileNotFoundError:
+            logger.warning("nvme-cli not installed — falling back to smartctl")
+            return {}
+        except subprocess.SubprocessError as e:
+            logger.error("Failed to run nvme smart-log for %s: %s", ctrl, e)
+            return {}
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse nvme-cli JSON for %s: %s", ctrl, e)
+            return {}
+
+    def _get_nvme_identity(self) -> tuple[str, str]:
+        """Get NVMe model and serial via nvme-cli id-ctrl.
+
+        Returns:
+            Tuple of (model_name, serial_number). Uses "Unknown" as fallback.
+        """
+        ctrl = self._get_nvme_controller()
+        try:
+            result = subprocess.run(
+                ["nvme", "id-ctrl", ctrl, "-o", "json"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                return "Unknown", "Unknown"
+            data = json.loads(result.stdout)
+            model = (data.get("mn") or "Unknown").strip()
+            serial = (data.get("sn") or "Unknown").strip()
+            return model, serial
+        except (FileNotFoundError, subprocess.SubprocessError, json.JSONDecodeError):
+            return "Unknown", "Unknown"
+
+    def get_raw_data(self) -> dict:
+        """Query SMART health data from the drive.
+
+        For NVMe devices, uses nvme-cli as the primary source. Falls back
+        to smartctl for SATA drives or when nvme-cli is unavailable.
+
+        Returns:
+            Parsed JSON dict, or empty dict on failure.
+        """
+        # Try nvme-cli first for NVMe devices
+        if "nvme" in self.device.lower():
+            nvme_data = self._get_nvme_raw_data()
+            if nvme_data:
+                # Wrap in a structure compatible with the rest of the code
+                self._raw_data = {"_source": "nvme-cli", "_nvme_smart_log": nvme_data}
+                return self._raw_data
+            logger.info("nvme-cli returned no data for %s, falling back to smartctl", self.device)
+
+        # Fallback: smartctl (SATA primary, NVMe fallback)
         try:
             result = subprocess.run(
                 ["smartctl", "-j", "-a", self.device],
@@ -318,6 +443,11 @@ class SmartMonitor:
         """
         data = raw_data or self._raw_data or self.get_raw_data()
 
+        # nvme-cli source is always NVMe
+        if data.get("_source") == "nvme-cli":
+            self._device_type = "nvme"
+            return "nvme"
+
         # Check device.type from smartctl
         device_info = data.get("device", {})
         device_type = device_info.get("type", "").lower()
@@ -349,37 +479,126 @@ class SmartMonitor:
     # ------------------------------------------------------------------
 
     def _extract_nvme_metrics(self, data: dict) -> dict:
-        """Extract health metrics from NVMe smartctl JSON output.
+        """Extract health metrics from NVMe data.
 
-        NVMe drives expose metrics through the
-        nvme_smart_health_information_log section of smartctl output.
+        Supports two data sources:
+        1. nvme-cli (``nvme smart-log -o json``) — primary, via _nvme_smart_log key
+        2. smartctl JSON — fallback, via nvme_smart_health_information_log key
+
+        nvme-cli reports temperature in Kelvin; smartctl in Celsius.
 
         Returns dict with normalized metric keys.
         """
-        nvme_log = data.get("nvme_smart_health_information_log", {})
-        if not nvme_log:
-            logger.warning(
-                "NVMe SMART health log is empty for %s. smartctl may lack "
-                "SYS_RAWIO capability for NVMe admin commands. Available keys: %s",
-                self.device,
-                list(data.keys()),
-            )
+        # Determine data source
+        nvme_cli_data = data.get("_nvme_smart_log", {})
+        smartctl_log = data.get("nvme_smart_health_information_log", {})
 
-        # Temperature: smartctl provides temperature in the top-level
-        # "temperature" object and inside the nvme health log
+        if nvme_cli_data:
+            return self._extract_nvme_cli_metrics(nvme_cli_data)
+
+        if smartctl_log:
+            return self._extract_nvme_smartctl_metrics(data, smartctl_log)
+
+        logger.warning(
+            "No NVMe SMART data found for %s. Check SYS_ADMIN capability "
+            "and /dev mount. Available keys: %s",
+            self.device,
+            list(data.keys()),
+        )
+        return {
+            "temperature_c": None, "percentage_used": None,
+            "power_on_hours": None, "total_bytes_written": None,
+            "total_bytes_read": None, "media_errors": None,
+            "critical_warning": None, "reallocated_sectors": None,
+        }
+
+    @staticmethod
+    def _safe_int(value) -> int | None:
+        """Convert a value to int, handling nvme-cli's string-typed numbers.
+
+        nvme-cli 2.x returns large numeric values as JSON strings
+        (e.g., "data_units_written":"16375391", "media_errors":"0").
+        This safely converts both int and str to int.
+        """
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+
+    def _extract_nvme_cli_metrics(self, nvme_log: dict) -> dict:
+        """Extract metrics from nvme-cli smart-log JSON output.
+
+        Field names follow the NVMe spec as output by nvme-cli:
+        temperature (Kelvin), avail_spare, percent_used, data_units_written,
+        power_on_hours, media_errors, etc.
+
+        Note: nvme-cli 2.x returns some numeric fields as JSON strings
+        (large values). All fields are passed through _safe_int().
+        """
+        # Temperature: nvme-cli reports in Kelvin — convert to Celsius
         temperature_c = None
-        temp_obj = data.get("temperature", {})
-        if "current" in temp_obj:
-            temperature_c = temp_obj["current"]
-        elif "temperature" in nvme_log:
+        temp_raw = self._safe_int(nvme_log.get("temperature"))
+        if temp_raw is not None:
+            # nvme-cli returns Kelvin (e.g., 311 = 38C)
+            temperature_c = temp_raw - 273 if temp_raw > 200 else temp_raw
+            logger.debug("NVMe temperature from nvme-cli: %dK -> %dC", temp_raw, temperature_c)
+
+        percentage_used = self._safe_int(nvme_log.get("percent_used"))
+        power_on_hours = self._safe_int(nvme_log.get("power_on_hours"))
+
+        # TBW: data_units_written * 512 * 1000 bytes
+        data_units_written = self._safe_int(nvme_log.get("data_units_written"))
+        total_bytes_written = None
+        if data_units_written is not None:
+            total_bytes_written = data_units_written * self.NVME_DATA_UNIT_BYTES
+
+        data_units_read = self._safe_int(nvme_log.get("data_units_read"))
+        total_bytes_read = None
+        if data_units_read is not None:
+            total_bytes_read = data_units_read * self.NVME_DATA_UNIT_BYTES
+
+        media_errors = self._safe_int(nvme_log.get("media_errors"))
+        critical_warning = self._safe_int(nvme_log.get("critical_warning"))
+
+        return {
+            "temperature_c": temperature_c,
+            "percentage_used": percentage_used,
+            "power_on_hours": power_on_hours,
+            "total_bytes_written": total_bytes_written,
+            "total_bytes_read": total_bytes_read,
+            "media_errors": media_errors,
+            "critical_warning": critical_warning,
+            "reallocated_sectors": None,
+        }
+
+    def _extract_nvme_smartctl_metrics(self, data: dict, nvme_log: dict) -> dict:
+        """Extract metrics from smartctl JSON (fallback for NVMe).
+
+        Used when nvme-cli is unavailable. Field names follow smartctl's
+        nvme_smart_health_information_log structure.
+        """
+        # Temperature: try multiple fallback paths for firmware variants
+        temperature_c = None
+        if "temperature" in nvme_log and nvme_log["temperature"] is not None:
             temperature_c = nvme_log["temperature"]
+        elif data.get("temperature", {}).get("current") is not None:
+            temperature_c = data["temperature"]["current"]
+        else:
+            sensors = nvme_log.get("temperature_sensors")
+            if sensors and isinstance(sensors, list) and len(sensors) > 0:
+                if sensors[0] is not None and sensors[0] != 0:
+                    temperature_c = sensors[0]
 
         percentage_used = nvme_log.get("percentage_used")
-        power_on_hours = nvme_log.get("power_on_hours")
 
-        # TBW calculation:
-        # data_units_written is in 512-byte units * 1000
-        # So actual bytes = data_units_written * 512 * 1000
+        power_on_hours = nvme_log.get("power_on_hours")
+        if power_on_hours is None:
+            poh_top = data.get("power_on_time", {})
+            if isinstance(poh_top, dict) and "hours" in poh_top:
+                power_on_hours = poh_top["hours"]
+
         data_units_written = nvme_log.get("data_units_written")
         total_bytes_written = None
         if data_units_written is not None:
@@ -390,18 +609,15 @@ class SmartMonitor:
         if data_units_read is not None:
             total_bytes_read = data_units_read * self.NVME_DATA_UNIT_BYTES
 
-        media_errors = nvme_log.get("media_errors")
-        critical_warning = nvme_log.get("critical_warning")
-
         return {
             "temperature_c": temperature_c,
             "percentage_used": percentage_used,
             "power_on_hours": power_on_hours,
             "total_bytes_written": total_bytes_written,
             "total_bytes_read": total_bytes_read,
-            "media_errors": media_errors,
-            "critical_warning": critical_warning,
-            "reallocated_sectors": None,  # Not applicable for NVMe
+            "media_errors": nvme_log.get("media_errors"),
+            "critical_warning": nvme_log.get("critical_warning"),
+            "reallocated_sectors": None,
         }
 
     # ------------------------------------------------------------------
@@ -503,11 +719,16 @@ class SmartMonitor:
     # ------------------------------------------------------------------
 
     def _extract_identity(self, data: dict) -> tuple[str, str]:
-        """Extract model name and serial number from smartctl output.
+        """Extract model name and serial number.
+
+        For nvme-cli sources, uses ``nvme id-ctrl`` to get identity.
+        For smartctl sources, reads model_name and serial_number from JSON.
 
         Returns:
             Tuple of (model_name, serial_number). Uses "Unknown" as fallback.
         """
+        if data.get("_source") == "nvme-cli":
+            return self._get_nvme_identity()
         model = data.get("model_name") or data.get("model_family") or "Unknown"
         serial = data.get("serial_number", "Unknown")
         return model, serial
@@ -668,11 +889,18 @@ class SmartMonitor:
         healthy = True
         warnings: list[str] = []
 
-        # Check smartctl overall health assessment
-        smart_status = raw_data.get("smart_status", {})
-        if smart_status.get("passed") is False:
-            healthy = False
-            warnings.append("smartctl overall-health assessment: FAILED")
+        # Check overall health assessment
+        if raw_data.get("_source") == "nvme-cli":
+            # nvme-cli: critical_warning != 0 means unhealthy
+            cw = raw_data.get("_nvme_smart_log", {}).get("critical_warning")
+            if cw is not None and cw != 0:
+                healthy = False
+                warnings.append(f"NVMe critical warning flag: {cw}")
+        else:
+            smart_status = raw_data.get("smart_status", {})
+            if smart_status.get("passed") is False:
+                healthy = False
+                warnings.append("smartctl overall-health assessment: FAILED")
 
         metrics = SmartMetrics(
             device=self.device,
@@ -737,7 +965,218 @@ class SmartMonitor:
         health data to the web dashboard.
 
         Returns:
-            Dict representation of SmartMetrics.
+            Dict representation of SmartMetrics, or a fallback dict with
+            basic disk info from sysfs if smartctl fails completely.
         """
         metrics = self.get_metrics()
-        return metrics.to_dict()
+        result = metrics.to_dict()
+
+        # If smartctl returned nothing useful, try sysfs fallback for basic info
+        if not result.get("model") or result["model"] == "Unknown":
+            sysfs_info = self._sysfs_fallback()
+            if sysfs_info:
+                result.update(sysfs_info)
+
+        return result
+
+    def _sysfs_fallback(self) -> dict:
+        """Read basic disk info from sysfs when smartctl fails.
+
+        This provides at least model/serial/size even when smartctl
+        can't access the device (permission issues, missing capabilities).
+        """
+        try:
+            # Extract block device name from path (e.g., /dev/nvme0n1 -> nvme0n1)
+            dev_name = os.path.basename(self.device)
+
+            # For NVMe, the sysfs path uses the controller (nvme0) not the namespace
+            if dev_name.startswith("nvme"):
+                # nvme0n1 -> nvme0
+                ctrl = dev_name.split("n")[0] + "n" + dev_name.split("n")[1] if "n" in dev_name else dev_name
+                model_path = f"/sys/block/{dev_name}/device/model"
+                serial_path = f"/sys/block/{dev_name}/device/serial"
+                size_path = f"/sys/block/{dev_name}/size"
+            else:
+                model_path = f"/sys/block/{dev_name}/device/model"
+                serial_path = f"/sys/block/{dev_name}/device/serial"
+                size_path = f"/sys/block/{dev_name}/size"
+
+            info: dict = {}
+
+            if os.path.exists(model_path):
+                with open(model_path) as f:
+                    info["model"] = f.read().strip()
+
+            if os.path.exists(serial_path):
+                with open(serial_path) as f:
+                    info["serial"] = f.read().strip()
+
+            if os.path.exists(size_path):
+                with open(size_path) as f:
+                    # Size is in 512-byte sectors
+                    sectors = int(f.read().strip())
+                    info["total_capacity_bytes"] = sectors * 512
+
+            if info:
+                logger.info("SMART sysfs fallback: found %s", info.get("model", "unknown"))
+
+            return info
+        except Exception as exc:
+            logger.debug("sysfs fallback failed: %s", exc)
+            return {}
+
+    # ------------------------------------------------------------------
+    # Startup self-test & diagnostics
+    # ------------------------------------------------------------------
+
+    def run_self_test(self) -> dict[str, Any]:
+        """Run a startup diagnostic test and return results.
+
+        Queries smartctl, logs full output at DEBUG level, and checks
+        for missing key fields. Returns a diagnostics dict suitable
+        for the /api/smart/diagnostics endpoint.
+
+        Returns:
+            Dict with keys: device, device_type, model, raw_output_available,
+            missing_fields, guidance.
+        """
+        raw_data = self.get_raw_data()
+        raw_available = bool(raw_data)
+
+        logger.debug(
+            "SMART self-test raw output for %s: %s",
+            self.device,
+            json.dumps(raw_data, indent=2) if raw_data else "(empty)",
+        )
+
+        device_type = self.detect_device_type(raw_data)
+        model, serial = self._extract_identity(raw_data)
+
+        # Extract metrics to check what's missing
+        if device_type == "nvme":
+            extracted = self._extract_nvme_metrics(raw_data)
+        else:
+            extracted = self._extract_sata_metrics(raw_data)
+
+        # Check which key fields are missing
+        key_fields = ["temperature_c", "percentage_used", "power_on_hours"]
+        missing_fields: list[str] = []
+        for field_name in key_fields:
+            if extracted.get(field_name) is None:
+                missing_fields.append(field_name)
+
+        # Build guidance messages for missing fields
+        guidance: list[str] = []
+        if missing_fields:
+            if not raw_available:
+                guidance.append(
+                    "smartctl returned no data — check that smartmontools is "
+                    "installed and the device path is correct"
+                )
+            else:
+                nvme_log = raw_data.get("nvme_smart_health_information_log", {})
+                if device_type == "nvme" and not nvme_log:
+                    guidance.append(
+                        "NVMe health log empty — check /dev mount (must not "
+                        "be :ro) and SYS_ADMIN + SYS_RAWIO capabilities. "
+                        "nvme-cli requires SYS_ADMIN for NVMe admin commands."
+                    )
+                if "temperature_c" in missing_fields:
+                    guidance.append(
+                        "temperature field missing — check "
+                        "nvme_smart_health_information_log and temperature.current"
+                    )
+                if "percentage_used" in missing_fields:
+                    guidance.append(
+                        "percentage_used field missing — NVMe health log may "
+                        "not be accessible (check /dev mount and SYS_RAWIO)"
+                    )
+                if "power_on_hours" in missing_fields:
+                    guidance.append(
+                        "power_on_hours field missing — check NVMe health log "
+                        "or power_on_time.hours fallback"
+                    )
+
+        # Log warnings for missing fields
+        if missing_fields:
+            logger.warning(
+                "SMART self-test for %s: missing fields %s",
+                self.device,
+                missing_fields,
+            )
+            for msg in guidance:
+                logger.warning("SMART guidance: %s", msg)
+        else:
+            logger.info(
+                "SMART self-test for %s: all key fields present", self.device
+            )
+
+        self._diagnostics = {
+            "device": self.device,
+            "device_type": device_type,
+            "model": model,
+            "serial": serial,
+            "raw_output_available": raw_available,
+            "missing_fields": missing_fields,
+            "guidance": guidance,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        return self._diagnostics
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Return the most recent diagnostics dict.
+
+        If run_self_test() has not been called yet, runs it first.
+        """
+        if not hasattr(self, "_diagnostics") or not self._diagnostics:
+            return self.run_self_test()
+        return self._diagnostics
+
+    # ------------------------------------------------------------------
+    # OpenSearch indexing
+    # ------------------------------------------------------------------
+
+    def index_to_opensearch(self, metrics: SmartMetrics, client: Any) -> bool:
+        """Index SMART metrics to OpenSearch for historical tracking.
+
+        Creates one document per check in the nettap-smart-YYYY.MM.DD index.
+
+        Args:
+            metrics: The SmartMetrics to index.
+            client: An opensearch-py OpenSearch client instance.
+
+        Returns:
+            True if indexing succeeded, False otherwise.
+        """
+        now = datetime.now(timezone.utc)
+        index_name = f"nettap-smart-{now.strftime('%Y.%m.%d')}"
+
+        doc = {
+            "@timestamp": now.isoformat(),
+            "device": metrics.device,
+            "device_type": metrics.device_type,
+            "model": metrics.model,
+            "serial": metrics.serial,
+            "temperature_c": metrics.temperature_c,
+            "percentage_used": metrics.percentage_used,
+            "power_on_hours": metrics.power_on_hours,
+            "total_bytes_written": metrics.total_bytes_written,
+            "total_bytes_read": metrics.total_bytes_read,
+            "media_errors": metrics.media_errors,
+            "reallocated_sectors": metrics.reallocated_sectors,
+            "healthy": metrics.healthy,
+            "warnings": metrics.warnings,
+        }
+
+        try:
+            client.index(index=index_name, body=doc)
+            logger.debug(
+                "Indexed SMART metrics to %s for %s", index_name, metrics.device
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to index SMART metrics to %s: %s", index_name, exc
+            )
+            return False

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.risk_scoring import RiskScorer
 from storage.manager import StorageManager
 
@@ -114,29 +115,33 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     risk_scorer: RiskScorer = request.app["risk_scorer"]
 
     # Query for device connection aggregations
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    risk_bool: dict = {
+        "filter": [
+            {
+                "range": {
+                    "@timestamp": {
+                        "gte": from_ts,
+                        "lte": to_ts,
+                        "format": "strict_date_optional_time",
+                    }
+                }
+            },
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+        ],
+    }
+    if excluded:
+        risk_bool["must_not"] = excluded
+
     conn_query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    {
-                        "range": {
-                            "@timestamp": {
-                                "gte": from_ts,
-                                "lte": to_ts,
-                                "format": "strict_date_optional_time",
-                            }
-                        }
-                    },
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
-                ]
-            }
-        },
+        "query": {"bool": risk_bool},
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "source.ip",
+                    "field": "source.ip.keyword",
                     "size": limit,
                 },
                 "aggs": {
@@ -156,7 +161,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+                    "ports_used": {"terms": {"field": "destination.port.keyword", "size": 50}},
                     "external_conns": {
                         "filter": {
                             "bool": {
@@ -225,7 +230,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     ]
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}},
+            "aggs": {"by_ip": {"terms": {"field": "source.ip.keyword", "size": len(device_ips)}}},
         }
 
         try:
@@ -321,7 +326,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                     }
                 }
             },
-            "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+            "ports_used": {"terms": {"field": "destination.port.keyword", "size": 50}},
             "external_conns": {
                 "filter": {
                     "bool": {
@@ -366,26 +371,29 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     }
 
     # Get network-wide stats for anomaly detection
+    net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    net_bool: dict = {
+        "filter": [
+            {
+                "range": {
+                    "@timestamp": {
+                        "gte": from_ts,
+                        "lte": to_ts,
+                        "format": "strict_date_optional_time",
+                    }
+                }
+            },
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+        ],
+    }
+    if net_excluded:
+        net_bool["must_not"] = net_excluded
+
     network_query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    {
-                        "range": {
-                            "@timestamp": {
-                                "gte": from_ts,
-                                "lte": to_ts,
-                                "format": "strict_date_optional_time",
-                            }
-                        }
-                    },
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
-                ]
-            }
-        },
-        "aggs": {"devices": {"terms": {"field": "source.ip", "size": 500}}},
+        "query": {"bool": net_bool},
+        "aggs": {"devices": {"terms": {"field": "source.ip.keyword", "size": 500}}},
     }
 
     network_avg = 0.0

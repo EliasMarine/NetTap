@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-04
-> **Status:** 30 issues tracked. 30 RESOLVED. Latest: NET-95 OpenSearch field mapping — daemon queries remapped from Zeek-native to ECS (Malcolm's actual field names). 17/18 containers healthy on N100.
+> **Last updated:** 2026-03-12
+> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Switched NVMe SMART monitoring to nvme-cli as primary tool (direct ioctl, no SCSI translation). smartctl retained as SATA fallback. Added SYS_ADMIN capability, removed pySMART. 59 SMART tests passing. Lessons 87–91 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -21,6 +21,9 @@ This document tracks every deployment bug encountered while bringing up the NetT
 - [Chain 8: Storage API Format Mismatch](#chain-8-storage-api-format-mismatch)
 - [Chain 9: NIC LED Identification Permission + Fallback](#chain-9-nic-led-identification-permission--fallback)
 - [Chain 10: Malcolm Capture Services + Proxy Env Vars](#chain-10-malcolm-capture-services--proxy-env-vars)
+- [Chain 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts](#chain-13-opensearch-keyword-suffix--log-search-format--csp-fonts)
+- [Chain 14: Logstash Index Pattern Env Vars Missing](#chain-14-logstash-index-pattern-env-vars-missing)
+- [Chain 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence](#chain-15-pcap-capture-restart-loop--nginx-proxy-healthcheck--boot-persistence)
 - [Key Files Modified](#key-files-modified)
 - [Lessons Learned (Global)](#lessons-learned-global)
 - [Known Risks & Watch Items](#known-risks--watch-items)
@@ -33,12 +36,12 @@ This document tracks every deployment bug encountered while bringing up the NetT
 |---|---|---|
 | OpenSearch | OK | Auth, roles_mapping, bootstrap all working |
 | OpenSearch Dashboards | OK | Depends on OpenSearch healthy |
-| Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running |
+| Logstash (all 7 pipelines) | OK | PR #67 verified — -Xss8m delivered, all 7 pipelines running. Index pattern env vars fixed (717bd24) — MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX now set on logstash service. |
 | Redis | OK | Fixed in PR #71 — list-form command |
 | API | OK | Fixed in PR #69 — explicit `command: gunicorn ...` added |
 | Filebeat | OK | Fixed — REDIS_HOST/PORT/PASSWORD env vars added (NET-79) |
 | Zeek, Suricata, Arkime | OK | Fixed — `EXTRA_TAGS: ""` + `MANAGE_PCAP_FILES` env vars added (NET-79). Running on N100. |
-| nginx-proxy | **KNOWN ISSUE** | Malcolm's nginx.conf references upstream `arkime:8005` but arkime-live uses host networking (invisible to Docker DNS). nginx crashes on startup. Not critical — nettap-nginx handles all user traffic. Fix: add dedicated Arkime viewer service in future phase. |
+| nginx-proxy | OK | Fixed: healthcheck changed to test `:9200` (OpenSearch proxy) instead of `:443` (broken arkime vhost). Removed `:443` port binding. nginx-proxy's real role is OpenSearch proxy for host-networked containers. |
 | CyberChef | OK | Fixed NET-86: healthcheck `wget /` → `wget /health`. Service was always running fine. |
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
@@ -54,7 +57,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **12 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **18 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -96,6 +99,107 @@ CHAIN 12: Setup Wizard CSRF + Volume Permissions (NET-81)
   fix/nic-led-identify-fallback → develop
   Admin account creation silently fails: SvelteKit CSRF 403 behind nginx
   + /var/lib/nettap-web owned by root (nettap user can't write users.json).
+
+CHAIN 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts
+  PR #92 (phase-4/webui-v2)
+  All dashboard aggregations fail 400: text fields not optimised for aggregations.
+  Log search returns flat docs instead of _source wrapper. CSP blocks Google Fonts.
+
+CHAIN 14: Logstash Index Pattern Env Vars Missing
+  Commit 717bd24 (phase-4/webui-v2)
+  Logstash format_index_string.rb crashes: MALCOLM_NETWORK_INDEX_PATTERN env var missing.
+  89K+ events land in broken literal index %{[@metadata][malcolm_opensearch_index]}.
+
+CHAIN 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence
+  Commits 65e31cf + ed3cf84 (phase-4/webui-v2)
+  pcap-capture: usermod root PID 1 crash. nginx-proxy: arkime:8005 upstream unresolvable.
+  nettap-nginx: SSL key permission denied. OpenSearch: security not initialized.
+  nettap.service: no systemd unit for boot persistence.
+
+CHAIN 16: Mirror/SPAN Full-Stack Test Issues (phase-5/mirror-span-mode)
+  Commit f6b40b5
+  1. Daemon crash-loop: PyYAML missing from requirements.txt (suricata_rules.py imports yaml).
+  2. Full-stack test HTTP 000 on all API checks: port 8880 is Docker `expose` only (internal),
+     not `ports` published. Fix: use `docker exec` to curl from inside daemon container.
+  3. Full-stack test script dies mid-way: `set -euo pipefail` kills on first non-zero. Fix: remove set -e.
+  4. $HOME resolves to /root under sudo: hard-coded NETTAP_DIR=/home/nettap/NetTap.
+  5. Web UI unchanged after rebuild: only daemon was rebuilt, not nettap-web. Fix: rebuild both.
+  6. Nav items invisible: new sidebar entries referenced icon names with no SVG paths. Fix: added 8 SVG icon paths.
+  7. Web checks fail HTTP 301: nginx HTTP→HTTPS redirect not in accepted codes. Fix: accept 301.
+  8. Nginx stale upstream after web recreate: full-stack script only recreated daemon+web, not nginx.
+     Fix: added nettap-nginx to `docker compose up -d ... --force-recreate`.
+  9. OpenSearch _cat/indices returns empty: wrong auth credentials (-u admin:admin). Must use curlrc.
+  10. OpenSearch queries via curl return empty with http://: daemon uses https://opensearch:9200
+      (set via OPENSEARCH_URL env var). Must use https:// + --insecure for all manual queries.
+  11. Dashboard pages (traffic, devices, bandwidth, DNS, IoT, live) all show zeros despite 15M+
+      docs in OpenSearch: ALL dashboard queries filter on event.dataset=conn (Zeek connection logs).
+      Root cause: ZEEK_JSON env var missing from zeek-live service in docker-compose.yml.
+      Zeek's local.zeek checks `getenv("ZEEK_JSON")` — without it, Zeek outputs TSV format
+      instead of JSON. Logstash can't parse TSV → conn/dns/http/tls logs land in broken
+      `%{[@metadata][malcolm_opensearch_index]}` index (124K orphaned docs) or get dropped entirely.
+      Metadata logs (known_hosts, etc.) use a different code path that works without JSON.
+      Fix: Added `ZEEK_JSON: "true"` to zeek-live environment in docker-compose.yml.
+  12. Docker compose service names don't include `nettap-` prefix: `docker compose up -d
+      zeek-live` not `nettap-zeek-live`. Container names have the prefix (set via
+      container_name), but compose commands use the service name from the YAML key.
+  13. Malcolm Filebeat processes ROTATED Zeek logs, not active current/ files.
+      `filebeat-process-zeek-folder.sh` runs every minute via cron. Zeek rotates logs hourly.
+      After fixing ZEEK_JSON, conn.log in current/ is JSON but won't reach OpenSearch until
+      the next hourly rotation. Restarting Filebeat alone doesn't help — must wait for rotation
+      or manually trigger it.
+  14. OpenSearch mapper_parsing_exception on event.id: type [long] vs string UID.
+      arkime_sessions3-260310 was created by Suricata alerts first (Zeek was broken).
+      Suricata's event.id is numeric → mapped as long. Zeek's event.id is string UID
+      (e.g., "Ctn46L1IGV1awTb9wj") → ALL Zeek conn docs rejected with 400.
+      Fix: delete today's index and let it recreate with correct template mapping.
+      Prevention: ensure Malcolm index template maps event.id as keyword, not dynamic.
+  15. Mirror/SPAN feature pages show no data — missing SvelteKit proxy routes.
+      7 new pages (Live Monitor, Bandwidth, DNS Analytics, IoT & LAN, Changelog,
+      Certificates, PCAP Search) all empty despite data flowing in OpenSearch.
+      Root cause: client-side API files fetch `/api/live/connections`, `/api/bandwidth/monthly`,
+      etc. — no `+server.ts` route handlers existed. SvelteKit returned 404 silently.
+      Additionally, changelog.ts/certificates.ts used `VITE_API_URL || 'http://localhost:8880'`
+      which tries to reach daemon port 8880 directly from browser — but 8880 is Docker
+      `expose`-only (container-to-container), not published to host.
+      Fix: (a) Created catch-all `web/src/routes/api/[...path]/+server.ts` that proxies
+      unhandled `/api/*` requests to daemon via `daemonFetch()`. SvelteKit routing gives
+      priority to existing explicit routes. (b) Fixed 5 API client files + setup page to
+      use relative paths instead of `VITE_API_URL`.
+
+CHAIN 17: PCAP Search Filter Syntax + DNS Analytics Field Mismatch (phase-5/mirror-span-mode)
+  Commits 6a853e4 + 8763d07 + 5e8acf8
+  1. PCAP Search quick filters used BPF syntax (`udp port 53`) but tshark `-Y` requires
+     Wireshark display filter syntax (`dns`, `http || tls`, etc.). Changed all quick filters.
+  2. Filter validation regex `[;&|` + backtick + `$]` blocked `|` and `&` chars needed for
+     display filter `||` and `&&` operators. Removed `|` and `&` from forbidden chars — safe
+     because `asyncio.create_subprocess_exec` prevents shell injection (no shell involved).
+  3. No per-file PCAP download — only full search results download existed. Added
+     `GET /api/pcap/download-file` daemon endpoint + Download buttons in UI.
+  4. Preview button appeared broken — no auto-scroll to preview section. Added scrollIntoView.
+  5. Tables unsortable — added ascending/descending column sorting to both tables.
+  6. DNS Analytics all aggregations returned 0: field names used ECS `dns.*` prefix instead of
+     Malcolm's `zeek.dns.*` prefix. Remapped: `dns.question.name` → `zeek.dns.query`,
+     `dns.question.type` → `zeek.dns.qtype_name`, `dns.response_code` → `zeek.dns.rcode_name`,
+     `event.duration` → `zeek.dns.rtt`.
+  7. DNS RTT conversion inverted: divided by 1,000,000 assuming nanoseconds, but Zeek stores
+     RTT in seconds. Fixed to multiply by 1000 for milliseconds display.
+  8. Complete DNS Analytics page redesign: interactive SVG timeline with tooltips, sortable
+     tables, cross-section linking, time range pills, per-device DNS split panel, empty states.
+
+CHAIN 18: PCAP Search Page Redesign (phase-5/mirror-span-mode)
+  Commit c02cb9f
+  Full interactive redesign of PCAP Search page to match DNS Analytics quality level.
+  1. Hero stats row: total files, total size, date range, protocol distribution.
+  2. Capture timeline: interactive SVG chart with per-day bars, tooltips, click-to-filter.
+  3. Quick filter chips: protocol-based quick filters (DNS, HTTP, TLS, SSH, etc.).
+  4. Sortable search results: ascending/descending column sorting on all columns.
+  5. Packet preview panel: expandable preview with protocol details.
+  6. Protocol breakdown: visual protocol distribution chart.
+  7. Two-column file browser: side-by-side layout for file list + details.
+  8. Cross-section linking: click stats/timeline to filter results.
+  9. Time range pills: quick time range selection (1h, 6h, 24h, 7d, 30d).
+  10. DNS copy button CSS fix: bigger icon (1.25rem), accent-blue color.
+  11. Added formatRelativeTime and PROTO_FILTER_MAP helpers to pcap.ts API client.
 ```
 
 ---
@@ -1035,13 +1139,311 @@ Browser sends Origin: https://192.168.x.x (TLS terminated by nginx)
 
 ---
 
+## Chain 13: OpenSearch .keyword Suffix + Log Search Format + CSP Fonts
+
+### Issue 13a — All dashboard aggregations fail with 400 error
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **PR** | #92 |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-05 |
+| **Environment** | N100 production hardware |
+
+**Symptoms:**
+Every dashboard page (traffic summary, devices, protocols, top talkers, categories) returned empty data or 400 errors. OpenSearch returned: `"Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default."` on all `terms` aggregation queries.
+
+**Root Cause:**
+Malcolm maps all text fields (source.ip, network.transport, destination.ip, network.protocol, zeek.dns.query, etc.) as **text+keyword multi-fields** in OpenSearch. The `text` type supports full-text search but NOT aggregations. Any `terms` aggregation must use the `.keyword` subfield (e.g., `source.ip.keyword`, `network.transport.keyword`). Without the `.keyword` suffix, OpenSearch refuses the aggregation with a 400 error.
+
+**Causal Chain:**
+```
+Malcolm indexes all fields as text+keyword multi-fields
+  → daemon queries use bare field names (source.ip, network.transport)
+    → OpenSearch tries terms aggregation on text field → 400 error
+      → ALL dashboard pages show empty/error states
+```
+
+**Fix:**
+Added `.keyword` suffix to all 22 field references used in `terms` aggregations across 6 daemon files:
+- `daemon/api/traffic.py` — source.ip.keyword, destination.ip.keyword, network.transport.keyword, network.protocol.keyword
+- `daemon/api/devices.py` — source.ip.keyword, destination.ip.keyword, source.mac.keyword, destination.mac.keyword
+- `daemon/api/alerts.py` — rule.category.keyword, rule.name.keyword, source.ip.keyword, destination.ip.keyword
+- `daemon/api/risk.py` — source.ip.keyword, destination.ip.keyword, rule.category.keyword
+- `daemon/services/traffic_classifier.py` — network.protocol.keyword, destination.port, zeek.dns.query.keyword
+- `daemon/services/device_fingerprint.py` — zeek.dns.query.keyword, zeek.http.user_agent.keyword, source.ip.keyword
+
+### Issue 13b — Log search API returns flat docs instead of _source wrapper
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **PR** | #92 |
+| **Status** | Done |
+| **Severity** | Medium |
+| **Date** | 2026-03-05 |
+
+**Symptoms:**
+Log Explorer page showed empty rows or crashed when trying to access log fields. The frontend expected documents in `{_id, _source: {...}}` format (standard OpenSearch hit structure), but the daemon API was returning flattened documents like `{_id, "source.ip": "...", "destination.ip": "..."}`.
+
+**Root Cause:**
+The `daemon/api/logs.py` endpoint was flattening the `_source` wrapper when serializing search results. The frontend `LogExplorer` component destructured `hit._source` to access fields, which returned `undefined` on flat docs.
+
+**Fix:**
+Updated `daemon/api/logs.py` to preserve the `{_id, _source: {...}}` wrapper format that the frontend expects. Added test coverage in `daemon/tests/test_logs_api.py`.
+
+### Issue 13c — CSP blocking Google Fonts
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **PR** | #92 |
+| **Status** | Done |
+| **Severity** | Low |
+| **Date** | 2026-03-05 |
+
+**Symptoms:**
+Dashboard rendered with fallback system fonts instead of the intended Inter/JetBrains Mono web fonts. Browser console showed Content-Security-Policy violations for `fonts.googleapis.com` and `fonts.gstatic.com`.
+
+**Root Cause:**
+The `docker/nginx.conf` Content-Security-Policy header did not include `fonts.googleapis.com` in the `style-src` directive or `fonts.gstatic.com` in the `font-src` directive.
+
+**Fix:**
+Updated `docker/nginx.conf` CSP header to allow:
+- `style-src`: added `fonts.googleapis.com`
+- `font-src`: added `fonts.gstatic.com`
+
+**Files Changed (all three issues):**
+- `daemon/api/traffic.py` — .keyword suffix on aggregation fields
+- `daemon/api/devices.py` — .keyword suffix on aggregation fields
+- `daemon/api/alerts.py` — .keyword suffix on aggregation fields
+- `daemon/api/risk.py` — .keyword suffix on aggregation fields
+- `daemon/services/traffic_classifier.py` — .keyword suffix on aggregation fields
+- `daemon/services/device_fingerprint.py` — .keyword suffix on aggregation fields
+- `daemon/api/logs.py` — _source wrapper format fix
+- `daemon/tests/test_logs_api.py` — test coverage for _source format
+- `docker/nginx.conf` — CSP font allowlisting
+
+---
+
+## Chain 14: Logstash Index Pattern Env Vars Missing
+
+### Logstash format_index_string.rb crashes — 89K+ events misindexed
+
+| Field | Value |
+|---|---|
+| **Commit** | `717bd24` |
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | Urgent |
+| **Date** | 2026-03-05 |
+| **Environment** | N100 production hardware |
+
+**Symptoms:**
+- Logstash logs flooded with `NoMethodError: undefined method 'delete_suffix' for nil:NilClass` from Malcolm's `format_index_string.rb` filter plugin
+- 89,000+ events (including ALL Suricata events) landed in a broken literal index named `%{[@metadata][malcolm_opensearch_index]}` instead of the correct `arkime_sessions3-YYMMDD`
+- Suricata event count in `arkime_sessions3-*` was 0 despite Suricata generating alerts
+- Dashboard showed zero Suricata alerts despite the IDS engine running correctly
+
+**Root Cause:**
+Malcolm's `format_index_string.rb` Logstash filter plugin constructs the destination index name using two environment variables:
+- `MALCOLM_NETWORK_INDEX_PATTERN` — the base index pattern (e.g., `arkime_sessions3-*`)
+- `MALCOLM_NETWORK_INDEX_SUFFIX` — the date suffix format (e.g., `%{%y%m%d}`)
+
+The plugin calls `.delete_suffix('*')` on the pattern value to strip the wildcard and construct the final index name (e.g., `arkime_sessions3-260305`). When the env var is missing, Ruby's `ENV.fetch()` returns `nil`, and calling `.delete_suffix` on `nil` raises `NoMethodError`.
+
+These 4 env vars (`MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX`) were set on the `nginx-proxy` service (added in Chain 10 / NET-79 for template rendering) but were never added to the `logstash` service. Malcolm's upstream compose loads these from `opensearch.env` via `env_file:`, which we don't use.
+
+When the Ruby filter crashed, Logstash's error handling set `[@metadata][malcolm_opensearch_index]` to the literal string `%{[@metadata][malcolm_opensearch_index]}` (unexpanded). The OpenSearch output plugin then created an index with that literal name — a valid index name that silently swallowed all events.
+
+**Causal Chain:**
+```
+Malcolm's format_index_string.rb reads MALCOLM_NETWORK_INDEX_PATTERN from ENV
+  → env var not set on logstash service (only on nginx-proxy)
+    → ENV.fetch returns nil → .delete_suffix('*') on nil → NoMethodError
+      → Logstash error handler sets index to literal "%{[@metadata][malcolm_opensearch_index]}"
+        → OpenSearch creates index with that literal name
+          → 89K+ events land in broken index → 0 events in arkime_sessions3-*
+            → ALL dashboard Suricata data missing
+```
+
+**Fix:**
+Added 4 env vars to the logstash service in `docker/docker-compose.yml`:
+```yaml
+MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+MALCOLM_NETWORK_INDEX_SUFFIX: "%{%y%m%d}"
+MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
+MALCOLM_OTHER_INDEX_SUFFIX: "%{%y%m%d}"
+```
+
+**Post-fix recovery:**
+Reindexed 34,992 documents from the broken literal index to correct `arkime_sessions3-*` indices using the OpenSearch `_reindex` API. Deleted the broken index afterward.
+
+**Verification:**
+- Zero Ruby exceptions in logstash logs after fix
+- Suricata events flowing to correct `arkime_sessions3-*` index (count went from 0 to 20+ within minutes)
+- Dashboard Suricata alert panels populated correctly
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added 4 MALCOLM_*_INDEX env vars to logstash service
+
+**Key Insight:** Malcolm's Logstash plugins reference env vars from multiple `.env` files (`opensearch.env`, `upload-common.env`, etc.). When a service needs an env var, check ALL Malcolm services that use that image — the same env vars may be needed by logstash, nginx-proxy, and filebeat independently. An env var set on one service does NOT propagate to others. The `format_index_string.rb` crash was particularly insidious because Logstash didn't stop — it silently misindexed 89K+ events into a garbage index name that looks like an unexpanded variable reference.
+
+---
+
+## Chain 15: pcap-capture Restart Loop + nginx-proxy Healthcheck + Boot Persistence
+
+This chain covers 5 deployment issues discovered during N100 hardware testing on 2026-03-07.
+
+### Fix 1: pcap-capture usermod restart loop
+
+| Field | Value |
+|---|---|
+| **Commit** | `65e31cf` |
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** `nettap-pcap-capture` container restart-looping. Logs showed: `usermod: user root is currently used by process 1`.
+
+**Root Cause:** Malcolm's `docker-uid-gid-setup.sh` entrypoint tries to `usermod -u 1000 root`, but root is PID 1 inside the container. The `usermod` command refuses to change the UID of a user that owns the init process. This script is unnecessary when `PUSER=root` because no UID remapping is needed — we run as root for netsniff-ng raw packet capture capabilities.
+
+**Fix:** Set `PUSER=root` environment variable instead of removing the entrypoint script from the chain. With `PUSER=root`, Malcolm's `docker-uid-gid-setup.sh` detects no remapping is needed and skips the `usermod` call entirely.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — pcap-capture entrypoint/environment section
+
+**Key Insight:** Malcolm's `docker-uid-gid-setup.sh` checks `PUSER` and only runs `usermod` if the target user is not already root. Setting `PUSER=root` is the correct way to skip UID remapping, rather than removing the entrypoint script from the chain.
+
+---
+
+### Fix 2: nginx-proxy healthcheck targeting broken vhost
+
+| Field | Value |
+|---|---|
+| **Commit** | `65e31cf` |
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | Normal |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** `nettap-nginx-proxy` marked unhealthy, restart-looping. Logs showed: `host not found in upstream "arkime:8005"`.
+
+**Root Cause:** Malcolm's baked-in `nginx.conf` references upstream `arkime:8005`, but `arkime-live` uses `network_mode: host` so Docker DNS cannot resolve the `arkime` hostname. The `:443` vhost fails to load, but the `:9200` OpenSearch proxy vhost works correctly. The healthcheck was testing `:443`, which was the failing vhost.
+
+**Fix:**
+1. Changed healthcheck to test `:9200` (OpenSearch proxy — the vhost that actually works) instead of `:443` (broken arkime vhost)
+2. Removed the `:443` port binding since NetTap doesn't use it (nettap-nginx handles all user-facing HTTPS)
+3. Updated comments to clarify nginx-proxy's actual role: OpenSearch reverse proxy for host-networked containers
+
+**Files Changed:**
+- `docker/docker-compose.yml` — nginx-proxy section (healthcheck, ports, comments)
+
+**Key Insight:** nginx-proxy's real purpose in NetTap is to provide an OpenSearch proxy endpoint for containers that use `network_mode: host` (like arkime-live). The `:443` vhost with arkime upstream is a Malcolm feature we don't use. Health checks should test the service's actual function, not a baked-in feature that's broken in our topology.
+
+---
+
+### Fix 3: nettap.service boot persistence
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | Normal |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** After a reboot, the Docker Compose stack did not start automatically. Manual `docker compose up -d` was required each time.
+
+**Root Cause:** No systemd service unit existed to auto-start the NetTap Docker stack on boot.
+
+**Fix:** Created `scripts/remote/nettap.service` — a systemd unit that runs `docker compose -f /opt/nettap/docker/docker-compose.yml up -d` after `docker.service` starts. Installed on the N100 via `systemctl enable nettap.service`.
+
+**Files Changed:**
+- `scripts/remote/nettap.service` (new file)
+
+---
+
+### Fix 4: nettap-nginx SSL key permission denied
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** `nettap-nginx` crash-looping with: `cannot load certificate key "/etc/nginx/ssl/nettap.key": Permission denied`.
+
+**Root Cause:** The SSL key file had `0600` permissions (owner-only read/write), but the nginx container drops to a non-root user. Combined with `no-new-privileges` and `read_only: true` security options, the nginx worker process could not read the key.
+
+**Fix:** `chmod 644` on the SSL key file on the device. The key is self-signed and local-only (LAN access), so relaxed permissions are acceptable.
+
+**Key Insight:** Containers with `no-new-privileges` + user drop need files readable by the target user. Self-signed SSL keys on a local-only appliance don't require strict `0600` permissions — `0644` is sufficient since the threat model is LAN-only.
+
+---
+
+### Fix 5: OpenSearch security not initialized after recreate
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** OpenSearch showing `Security not initialized (run securityadmin)` after container recreation. All services using `malcolm_internal` get 403.
+
+**Root Cause:** Every time the OpenSearch container is recreated, the `roles_mapping.yml` reverts to empty (the image default). The `.opendistro_security` index may also need re-initialization. This is the same root cause as Chain 11 but now has a reusable fix script.
+
+**Fix:** Ran security bootstrap (write `roles_mapping.yml` + run `securityadmin.sh`). Created `scripts/remote/fix-opensearch.sh` as a reusable script for future occurrences.
+
+**Files Changed:**
+- `scripts/remote/fix-opensearch.sh` (new file)
+
+**Key Insight:** This is a recurring issue (Chain 11 documented it first). The fix script should be part of the standard deployment workflow. TODO: automate in `nettap.service` post-start hook or an init container.
+
+---
+
+### Fix 6: netsniff-ng EPERM due to file capabilities exceeding bounding set
+
+| Field | Value |
+|---|---|
+| **Branch** | `phase-4/webui-v2` |
+| **Status** | Done |
+| **Severity** | High |
+| **Date** | 2026-03-07 |
+| **Environment** | N100 production hardware |
+
+**Symptom:** netsniff-ng in pcap-capture container gets EPERM on exec. supervisord logs show: `couldn't exec /usr/sbin/netsniff-ng: EPERM`.
+
+**Root Cause:** The netsniff-ng binary ships with file capabilities `cap_net_admin,cap_net_raw,cap_ipc_lock,cap_sys_admin=eip`. `cap_sys_admin` is NOT in the container's bounding set (cap_add only has IPC_LOCK, SYS_RESOURCE, NET_ADMIN, NET_RAW, SYS_NICE). The Linux kernel blocks exec of binaries whose file capabilities exceed the bounding set. The entrypoint runs `setcap -r` to strip file caps, but `setcap` itself needs `CAP_SETFCAP`, which Docker doesn't grant by default — so `setcap -r` fails silently (was hidden by `2>/dev/null`).
+
+**Fix (attempt 1 — FAILED):** Added `SETFCAP` to pcap-capture's `cap_add` list in `docker/docker-compose.yml`. This allows `setcap -r` to run (exit 0), but on Docker's overlay2 filesystem the xattrs from the image layer persist — `getcap` still shows the original file capabilities after `setcap -r` returns success. The removal writes to the writable upper layer but does NOT override the lower (image) layer's xattrs.
+
+**Fix (attempt 2 — WORKING):** Added `SYS_ADMIN` directly to pcap-capture's `cap_add`. Since netsniff-ng's file caps include `cap_sys_admin=eip`, the bounding set now covers all file caps, and exec succeeds. Removed the useless `setcap -r` from the entrypoint. This is acceptable because pcap-capture already runs as root with `network_mode: host` — `SYS_ADMIN` doesn't meaningfully expand the attack surface.
+
+**Files Changed:**
+- `docker/docker-compose.yml` — Added `SYS_ADMIN` to pcap-capture `cap_add` section, removed `SETFCAP` (useless on overlay2), removed `setcap -r` from entrypoint
+
+**Key Insight:** `setcap -r` is unreliable on Docker overlay2 filesystems. It returns exit 0 (appears to succeed) but `getcap` still shows the original file capabilities — xattrs from image layers persist through the overlay and the writable layer's "removal" doesn't override them. **Never rely on runtime `setcap` in Docker containers.** Instead, ensure the container's bounding set covers all file capabilities (add the missing caps to `cap_add`), or build a custom image without file caps. The SETFCAP approach was a red herring — it let `setcap -r` run without error, but the underlying overlay2 limitation made the operation a no-op.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
 
 | File | PRs | Current State |
 |---|---|---|
-| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95 | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SYS_ADMIN cap_add (covers netsniff-ng file caps — setcap -r unreliable on overlay2)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1050,13 +1452,60 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/supervisord.conf` | #62, #63, #66, #67 | fix-perms (chown + -Xss8m inject + supervisorctl start logstash) + logstash (autostart=false, user=logstash) |
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
-| `daemon/api/traffic.py` | NET-95 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters |
-| `daemon/api/alerts.py` | NET-95 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields |
-| `daemon/api/devices.py` | NET-95 | Device queries use `NETWORK_INDEX` + ECS fields |
-| `daemon/api/risk.py` | NET-95 | Risk scoring uses `NETWORK_INDEX` + ECS fields |
-| `daemon/services/traffic_classifier.py` | NET-95 | Category classification uses `NETWORK_INDEX` + ECS fields |
-| `daemon/services/device_fingerprint.py` | NET-95 | Fingerprinting uses `NETWORK_INDEX` + ECS fields (zeek.dns.query, zeek.http.user_agent, etc.) |
+| `daemon/api/traffic.py` | NET-95, PR #92 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters. **All aggregation fields use .keyword suffix.** |
+| `daemon/api/alerts.py` | NET-95, PR #92, cf960e4+4c26c26+5b1b4d4, 4009faf | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields. **Aggregation fields use .keyword suffix.** `_normalize_alert_source()` merges ECS/Malcolm/raw field paths. IP filter (`source.ip` OR `destination.ip`) via `ip` query param. **4 new aggregation endpoints: /api/alerts/timeline (date_histogram), /api/alerts/top-signatures (terms), /api/alerts/top-ips (src/dest), /api/alerts/categories. 8 endpoints total. _ALLOWED_INTERVALS, _SEVERITY_MAP constants.** |
+| `daemon/api/lookup.py` | 5b1b4d4 | NEW: WHOIS + DNS lookup endpoints. Async subprocess for whois, thread executor for socket DNS. IP validation, 15s timeout, parsed field extraction. |
+| `daemon/api/devices.py` | NET-95, PR #92 | Device queries use `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/api/risk.py` | NET-95, PR #92 | Risk scoring uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/services/traffic_classifier.py` | NET-95, PR #92 | Category classification uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
+| `daemon/services/device_fingerprint.py` | NET-95, PR #92 | Fingerprinting uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix (zeek.dns.query.keyword, etc.).** |
 | `daemon/services/nl_search.py` | NET-95 | NL search uses `NETWORK_INDEX` + ECS fields |
+| `daemon/api/logs.py` | NET-100, PR #92 | Log Search API — generic Zeek/Suricata browser. **Fixed _source wrapper format for frontend compatibility.** |
+| `docker/nginx.conf` | PR #92 | CSP header updated to allow fonts.googleapis.com (style-src) and fonts.gstatic.com (font-src) |
+| `daemon/api/opensearch_cluster.py` | NET-100 | OpenSearch cluster visibility API |
+| `daemon/api/logstash.py` | NET-100 | Logstash monitoring API |
+| `web/src/lib/styles/global.css` | NET-100 | Complete CSS redesign (Datadog/Grafana aesthetic) |
+| `web/src/routes/+layout.svelte` | NET-100 | New layout shell + navigation |
+| `web/src/routes/logs/+page.svelte` | NET-100, 5b1b4d4 | NEW: Log Explorer page. **IPAddress component added for IP columns.** |
+| `web/src/routes/devices/+page.svelte` | 5b1b4d4 | **IPAddress component added in 3 locations** (table row, detail panel, connections dest IP). |
+| `web/src/routes/alerts/+page.svelte` | 5b1b4d4, 4009faf | **Full redesign (4009faf):** hero stats, SVG timeline chart with hover tooltips, two-col signatures+categories, two-col attacked+source IPs with copy buttons, sortable table, time range pills, severity filter pills, Promise.allSettled, initialized guard. **Previous:** IP filter support via `ip` URL param. |
+| `web/src/lib/api/alerts.ts` | 4009faf | **4 new fetch functions** (getAlertTimeline, getAlertTopSignatures, getAlertTopIps, getAlertCategories), 7 new types, 3 formatting helpers (formatNumber, severityLabel, severityBadgeClass). |
+| `web/src/lib/api/alerts.test.ts` | 4009faf | **25 total tests** (18 new) covering all 4 new API functions + formatting helpers. |
+| `web/src/routes/api/alerts/timeline/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/timeline`. |
+| `web/src/routes/api/alerts/top-signatures/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/top-signatures`. |
+| `web/src/routes/api/alerts/top-ips/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/top-ips`. |
+| `web/src/routes/api/alerts/categories/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/categories`. |
+| `web/src/lib/components/IPAddress.svelte` | 5b1b4d4 | **8 menu items** (was 5). Fixed filter from/to bug. Added WHOIS, DNS, View Alerts actions. |
+| `web/src/lib/components/ContextMenu.svelte` | 5b1b4d4 | **3 new icons** (whois, dns, alert). |
+| `web/src/routes/lookup/whois/[ip]/+page.svelte` | 5b1b4d4 | NEW: WHOIS lookup page with parsed fields + raw output toggle. |
+| `web/src/routes/lookup/dns/[ip]/+page.svelte` | 5b1b4d4 | NEW: DNS lookup page with reverse/forward DNS display. |
+| `web/src/routes/infrastructure/+page.svelte` | NET-100 | NEW: Infrastructure page |
+| `scripts/remote/nettap.service` | Chain 15 | NEW: systemd unit for boot persistence — starts Docker stack after docker.service |
+| `scripts/remote/fix-opensearch.sh` | Chain 15 | NEW: reusable OpenSearch security bootstrap script |
+| `scripts/remote/fix-pcap-and-proxy.sh` | Chain 15 | NEW: deploy script for pcap-capture + nginx-proxy fixes |
+| `web/src/routes/api/[...path]/+server.ts` | Chain 16.15 | NEW: Catch-all SvelteKit proxy — forwards unhandled `/api/*` requests to daemon via `daemonFetch()`. Lowest priority (existing explicit routes take precedence). |
+| `web/src/lib/api/changelog.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/certificates.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/capture.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/devices-registry.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/lib/api/notification-hub.ts` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `web/src/routes/setup/+page.svelte` | Chain 16.15 | Removed `VITE_API_URL`, uses relative `/api/` paths |
+| `daemon/api/pcap.py` | Chain 17 | Added `GET /api/pcap/download-file` endpoint for per-file PCAP download. |
+| `daemon/services/pcap_search.py` | Chain 17 | Fixed filter validation: removed `|` and `&` from forbidden chars (safe with `create_subprocess_exec`). |
+| `web/src/routes/pcap/+page.svelte` | Chain 17 | Fixed quick filters from BPF to display filter syntax. Added Download buttons, auto-scroll to preview, sortable columns. |
+| `web/src/lib/api/pcap.ts` | Chain 17 | Added `downloadPcapFile()` API client function for per-file download. |
+| `daemon/services/dns_analytics.py` | Chain 17 | Remapped all field names: `dns.*` → `zeek.dns.*`. Fixed RTT conversion: `÷1M` → `×1000`. |
+| `web/src/routes/dns/+page.svelte` | Chain 17, Chain 18 | Complete redesign: interactive SVG timeline, sortable tables, time range pills, per-device DNS panel, empty states. **Chain 18: copy button CSS fix (1.25rem, accent-blue).** |
+| `web/src/routes/pcap/+page.svelte` | Chain 17, Chain 18 | Chain 17: BPF→display filter, download buttons, auto-scroll, sortable columns. **Chain 18: Full redesign — hero stats, capture timeline SVG, quick filter chips, packet preview panel, protocol breakdown, two-column file browser, cross-section linking, time range pills.** |
+| `web/src/lib/api/pcap.ts` | Chain 17, Chain 18 | Chain 17: `downloadPcapFile()`. **Chain 18: Added `formatRelativeTime`, `PROTO_FILTER_MAP` helpers.** |
+| `daemon/api/logs.py` | NET-100, 1f85e8e+245d4af+8e09867 | Log Explorer: .keyword suffix on 6 agg fields, `track_total_hits: True`, `_EXCLUDE_ALERTS_FILTER` (must_not event.dataset:alert), `_EXCLUDE_DNS_NOISE` (must_not zeek.dns.query:pcap-monitor). Applied to all 6 agg endpoints + search endpoint. |
+| `web/src/routes/logs/+page.svelte` | NET-100, 6c70af4 | Log Explorer: text-white stat fix, SVG→HTML tooltip overlay (flicker fix), removed 'alert' from PROTOCOL_KEYS. |
+| `web/src/lib/api/logs.ts` | NET-100, 6c70af4 | `protocolColor()` changed from CSS vars to bold hex values (#00b8d4, #00e676, #ff9100, #aa66ff, #ffd600, #ff4081, #18ffff). |
+| `web/DESIGN-SYSTEM.md` | 0e10121 | NEW: Canonical design reference — CSS variables, component patterns, layout rules, 10 mandatory rules. Reference impl: Log Explorer page. |
+| `web/src/lib/utils/tshark-filter.ts` | 7912342 | NEW: Extracted `buildTSharkFilter`, `getField`, `asString`. Handles TCP/UDP/ICMP/ICMPv6/IPv4/IPv6. |
+| `web/src/lib/utils/tshark-filter.test.ts` | 7912342 | NEW: 18 tests — TCP, UDP, ICMP, ICMPv6, IPv4, IPv6, mixed addressing, OpenSearch array values. |
+| `web/src/routes/connections/+page.svelte` | 7912342 | TShark filter fix: imports from tshark-filter.ts utility, removed inline getField/asString/buildTSharkFilter. |
+| `scripts/remote/deploy-log-explorer.sh` | 1ce47e3 | Deploy script: checks OpenSearch health before deploying, restarts if unhealthy, waits up to 180s, runs security bootstrap as fallback. |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1126,6 +1575,59 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 49. **Malcolm's Logstash routes ALL data into `arkime_sessions3-*`** — there are no separate `zeek-*` or `suricata-*` indices. Zeek and Suricata data are distinguished by `event.provider` and `event.dataset` fields. Never assume a separate index per tool.
 50. **ECS field naming is universal in Malcolm** — all Zeek-native field names (`id.orig_h`, `orig_bytes`, `ts`) are remapped to ECS format (`source.ip`, `client.bytes`, `@timestamp`). Zeek-specific fields are prefixed: `zeek.dns.query`, `zeek.http.user_agent`, `zeek.ssl.ja3`. Suricata fields: `suricata.severity`, `rule.name`, `rule.category`.
 51. **Use `NETWORK_INDEX` env var for index configurability** — hardcoded index names break across Malcolm versions. The `OPENSEARCH_NETWORK_INDEX` env var lets operators override the index pattern without code changes.
+53. **Malcolm maps ALL text fields as text+keyword multi-fields. Every OpenSearch `terms` aggregation MUST use `.keyword` suffix** (e.g., `source.ip.keyword`, `network.transport.keyword`). Without it, aggregations fail with 400: "Text fields are not optimised for operations that require per-document field data like aggregations." This applies to every field used in `terms`, `cardinality`, or `composite` aggregations — NOT to `match`, `range`, or `bool` filter queries.
+54. **Preserve OpenSearch `_source` wrapper in API responses** — frontends expect `{_id, _source: {...}}` (the standard OpenSearch hit structure). Flattening to `{_id, "field": "value"}` breaks destructuring like `hit._source.field`. Always pass through the raw hit structure.
+55. **CSP headers must explicitly allow external font CDNs** — Google Fonts requires `fonts.googleapis.com` in `style-src` (for CSS) and `fonts.gstatic.com` in `font-src` (for font files). Missing either causes silent fallback to system fonts with only console CSP violations as evidence.
+56. **Logstash env vars must be set on the logstash service, not just nginx-proxy** — Malcolm's `format_index_string.rb` filter reads `MALCOLM_NETWORK_INDEX_PATTERN` and `MALCOLM_NETWORK_INDEX_SUFFIX` from the process environment. These were set on nginx-proxy (for template rendering) but missing from logstash. Each Docker service has its own isolated environment — env vars do NOT propagate between services. When an env var is needed by multiple services, it must be explicitly set on each one.
+57. **Logstash silently misindexes on Ruby filter errors instead of dropping events** — When `format_index_string.rb` crashes with NoMethodError, Logstash catches the exception and sets `[@metadata][malcolm_opensearch_index]` to the literal unexpanded string `%{[@metadata][malcolm_opensearch_index]}`. OpenSearch happily creates an index with that name. The result is 89K+ events in a garbage index with zero errors visible in the pipeline stats — only the Ruby exception in logs reveals the problem.
+
+### Alert/ECS Field Normalization (NEW — 2026-03-06)
+58. **Malcolm stores Suricata fields under 3 different paths depending on ECS normalization** — ECS: `rule.name`/`rule.id`/`rule.category`. Malcolm: `suricata.alert.signature`/`suricata.severity`. Raw Suricata EVE: `alert.signature`/`alert.severity`. A normalization layer must check all 3 with fallback priority. The frontend only reads one path (`alert.signature`), so normalization must happen in the daemon before the response is sent.
+59. **OpenSearch `.keyword` aggregation returns string keys, not ints** — `suricata.severity.keyword` bucket keys are `"1"`, `"2"`, `"3"` (strings). Severity map lookups using int keys silently return `None`. Always `int()` parse string keys before lookup.
+60. **Malcolm may store ECS fields as arrays** — `rule.category` can be `["Generic Protocol Command Decode"]` or a plain string. Always `isinstance(val, list)` check and flatten to first element before using as display text.
+61. **Prefer `@timestamp` (ISO 8601) over `timestamp` (epoch millis)** — Malcolm documents have both fields. Frontend `formatTimestamp()` expects ISO strings. Normalization must copy `@timestamp` into `timestamp` to avoid displaying raw epoch milliseconds.
+
+### Container Capture & Proxy (NEW — Chain 15)
+62. **Malcolm's `docker-uid-gid-setup.sh` fails when trying to `usermod` root as PID 1** — the `usermod` command refuses to change the UID of a user that owns the init process. For containers that must run as root (e.g., netsniff-ng packet capture), set `PUSER=root` to skip UID remapping entirely rather than removing the entrypoint script.
+63. **Health checks must test the service's actual function, not a baked-in default** — nginx-proxy's real role in NetTap is OpenSearch proxy (`:9200`), not the Malcolm `:443` vhost with arkime upstream. Healthchecking a broken vhost causes unnecessary restart loops even though the service's useful function works fine.
+64. **Self-signed SSL keys on LAN-only appliances don't need `0600` permissions** — when a container drops privileges, the target user must be able to read the key. `0644` is acceptable for a self-signed cert on a local network appliance. The threat model doesn't include protecting the key from other local users.
+65. **Every `docker compose down` + `up` cycle requires OpenSearch security re-bootstrap** — create a reusable script (`fix-opensearch.sh`) and document it prominently. This is the #1 recurring deployment issue (Chain 11, Chain 15). TODO: automate via init container or systemd post-start hook.
+66. **Systemd service units are essential for appliance-grade reliability** — without `nettap.service`, a reboot leaves the stack down until manual intervention. An appliance must self-heal on power cycle.
+67. **File capabilities on binaries can cause EPERM even when the container has sufficient ambient caps** — if a binary has file capabilities (e.g., `cap_sys_admin=eip` on netsniff-ng), ALL file caps must be in the container's bounding set or `exec` fails. Do NOT rely on `setcap -r` to strip file caps at runtime — it returns exit 0 on overlay2 but the xattrs from image layers persist (see lesson 68). Instead, add the missing caps directly to `cap_add`.
+68. **`setcap -r` is unreliable on Docker overlay2 filesystems** — it returns success (exit 0) but `getcap` still shows the original file capabilities. The xattrs from the image layer persist through the overlay — the writable layer's "removal" doesn't override the lower layer's xattrs. Never rely on runtime `setcap` in Docker containers. Instead, ensure the bounding set covers all file capabilities, or build a custom image without file caps.
+
+### SvelteKit Proxy / API Routing (NEW — Chain 16.15)
+69. **Client-side fetch to `/api/*` requires SvelteKit `+server.ts` route handlers** — in production, browser requests go through nginx → SvelteKit. If no `+server.ts` exists for a path, SvelteKit returns 404. The client error handling shows empty data with no visible error. Always create proxy routes for new daemon API endpoints.
+70. **`VITE_API_URL` defaulting to `http://localhost:8880` is broken in Docker deployment** — port 8880 is `expose`-only (container-to-container), never published to host. Browser can never reach it. All API client files must use relative paths (`/api/...`) so requests flow through nginx → SvelteKit → daemon.
+71. **SvelteKit `[...path]` catch-all routes are lowest priority** — they don't conflict with existing explicit route files. A catch-all `api/[...path]/+server.ts` is a safe fallback proxy for any daemon endpoint that doesn't have a dedicated SvelteKit route. Existing explicit routes (e.g., `api/traffic/+server.ts`) always win.
+
+### PCAP / tshark / DNS Analytics (NEW — Chain 17)
+72. **tshark `-Y` only accepts Wireshark display filter syntax, NOT BPF** — `udp port 53` is BPF (used by tcpdump/libpcap). tshark's `-Y` flag requires display filters like `dns`, `http`, `tls`, `tcp.port == 80`. Using BPF syntax with `-Y` produces `tshark: Neither "udp" nor "port" are field or protocol names`. Always verify filter syntax against the tool's documentation.
+73. **`asyncio.create_subprocess_exec` prevents shell injection — filter validation can be relaxed** — `create_subprocess_exec` passes arguments directly to the kernel (no shell), so characters like `|`, `&`, `;` have no special meaning. Input validation that blocks these chars to prevent "shell injection" is overly aggressive and breaks legitimate display filter operators like `||` (or) and `&&` (and). Only validate against actual security risks for the execution method being used.
+74. **Malcolm/Zeek stores DNS data with `zeek.dns.*` prefix, NOT ECS `dns.*` prefix** — Zeek DNS fields use `zeek.dns.query` (not `dns.question.name`), `zeek.dns.qtype_name` (not `dns.question.type`), `zeek.dns.rcode_name` (not `dns.response_code`), `zeek.dns.rtt` (not `event.duration`). Always verify field names against actual OpenSearch documents before writing queries — ECS and Zeek-prefixed fields coexist but map to different data.
+75. **Zeek DNS RTT field (`zeek.dns.rtt`) is in seconds, NOT nanoseconds** — Zeek stores round-trip time as floating-point seconds (e.g., `0.045` = 45ms). Code that divides by 1,000,000 (assuming nanoseconds like ECS `event.duration`) will show microsecond-scale values instead of millisecond-scale. Multiply by 1000 for millisecond display.
+
+### Log Explorer / TShark / Design System (NEW — 2026-03-10)
+76. **OpenSearch `track_total_hits` defaults to 10,000** — queries without `"track_total_hits": true` in the body will report `total.value: 10000` as the cap, even when millions of documents match. Always set this for stats/count endpoints.
+77. **SVG tooltip flickering in Svelte is caused by reactivity re-rendering the entire SVG** — when a state variable (like `hoveredBarIndex`) is used inside an SVG, Svelte re-renders the whole SVG on change, destroying and recreating tooltip elements. Fix: move tooltips to an HTML overlay `<div>` outside the SVG, positioned via absolute CSS.
+78. **Suricata alerts can dominate log explorer stats** — with 4.3M+ alert events vs. a few hundred thousand Zeek logs, aggregation-based charts and stats become meaningless. Use `must_not: [{"term": {"event.dataset": "alert"}}]` to exclude alerts from log explorer views.
+79. **Zeek pcap-monitor DNS noise pollutes real DNS analytics** — Zeek's internal `pcap-monitor` generates millions of DNS lookups that show up as the #1 query in DNS aggregations. Exclude with `must_not: [{"term": {"zeek.dns.query.keyword": "pcap-monitor"}}]` on both aggregation AND search endpoints.
+80. **Wireshark `tcp.port` matches EITHER source or destination** — `tcp.port == 443 && tcp.port == 53284` requires BOTH ports to be found on one side of the packet, which is impossible. The ephemeral source port should NEVER be in TShark filters for rotated PCAP analysis.
+81. **ICMP has no ports — `icmp.port` is not a valid TShark display filter field** — Zeek may store ICMP type/code in port fields, but TShark rejects `icmp.port`. For ICMP connections, use bare `icmp` or `icmpv6` as the protocol filter instead.
+82. **IPv6 addresses require `ipv6.addr` in TShark filters, not `ip.addr`** — `ip.addr == 2001:db8::1` matches zero packets. Detect IPv6 by checking for `:` in the address string.
+83. **Deploy scripts must check upstream dependency health before recreating dependent containers** — `docker compose up -d --force-recreate` fails when a dependency (OpenSearch) is unhealthy because `depends_on: condition: service_healthy` blocks startup. Always check and fix unhealthy dependencies first.
+84. **CSS design tokens prevent cross-page inconsistency** — creating a canonical design system (`web/DESIGN-SYSTEM.md`) with CSS custom properties (`var(--red)`, `var(--space-md)`) and enforcing it across all 10+ pages prevents visual drift as different developers/sessions modify different pages.
+
+### Docker Networking / Diagnostic Scripts (NEW — 2026-03-12)
+85. **Container `expose:` ports are NOT reachable from the host** — `expose: ["3000"]` makes a port available container-to-container on the Docker network, but NOT on `localhost` from the host. Only `ports: ["3000:3000"]` publishes to the host. In NetTap, nettap-web exposes 3000 internally and nettap-nginx publishes 80/443 to the host. Diagnostic scripts that `curl http://localhost:3000` from the host will always get HTTP 000 (connection refused). Must either: (a) curl through nginx on the published port (`curl -k https://localhost/path`), or (b) `docker exec nettap-web curl http://localhost:3000/path` from inside the container.
+86. **Diagnostic and debugging commands for the remote device MUST be scripts, not inline commands** — even a "quick" set of `curl` and `docker logs` commands must go in `scripts/remote/diagnose-*.sh`. Multi-command blocks break when copy-pasted over SSH, and the user has to re-run them one-by-one to debug which failed. A single script file is copy-paste-proof and reproducible.
+
+### SMART Monitoring / nvme-cli (NEW — 2026-03-12)
+87. **nvme-cli reports temperature in Kelvin, smartctl in Celsius** — `nvme smart-log` returns temperature as 311 (Kelvin) while smartctl returns 38 (Celsius). Must detect the source and convert: `temp_c = temp_k - 273` when value > 200 (heuristic: no drive runs above 200°C).
+88. **nvme-cli field names differ from smartctl** — `percent_used` (nvme-cli) vs `percentage_used` (smartctl), `avail_spare` vs `available_spare`, `media_errors` is the same. The extraction layer must handle both naming conventions.
+89. **nvme-cli admin commands target the controller, not the namespace** — `nvme smart-log /dev/nvme0` works, `nvme smart-log /dev/nvme0n1` may fail depending on version. Derive controller path by stripping the namespace suffix (`/dev/nvme0n1` → `/dev/nvme0`).
+90. **NVMe admin commands require SYS_ADMIN capability** — both `nvme smart-log` and `nvme id-ctrl` use NVMe admin ioctls that need `CAP_SYS_ADMIN`. SYS_RAWIO alone is insufficient for NVMe (though it works for SATA smartctl). The daemon container needs both caps: SYS_ADMIN for NVMe, SYS_RAWIO for SATA.
+91. **pySMART is unnecessary — nvme-cli + smartctl directly is better** — pySMART wraps smartctl with text parsing and has documented NVMe bugs. Using nvme-cli (native NVMe ioctl) + smartctl (SATA fallback) directly with JSON output is more reliable and removes a dependency.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
@@ -1134,6 +1636,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 23. **Test with the actual execution path** — `docker exec -u 1000` is NOT equivalent to the entrypoint's `su` heredoc.
 24. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
 25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
+52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
 
 ---
 
@@ -1154,6 +1657,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
+| SSL key permissions reset on cert regeneration | nettap-nginx crash-loops with "Permission denied" on key file | After regenerating SSL certs, always `chmod 644` the key file. Document in deployment guide. |
+| Malcolm image updates may add/change file capabilities on binaries | EPERM on exec if file caps exceed bounding set | After Malcolm tag bumps, run `getcap` on capture binaries inside the image. Ensure all file caps are in `cap_add`. Do NOT rely on `setcap -r` to strip caps at runtime — it silently fails on overlay2. |
+| OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | TODO: add post-start hook to `nettap.service` or create an init container that runs securityadmin.sh |
+| Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
+| TShark filter may not find packets in very old PCAPs | Arkime rotates PCAP files by size (256MB default), older sessions may span files not in the 5-file search window | The auto-analyze heuristic tries 5 closest PCAPs by modified time. For very old connections, manual PCAP search may be needed. Could increase window or improve heuristic later. |
+| Suricata alert exclusion is hardcoded in logs.py | If event.dataset naming changes in Malcolm upgrade, alerts may leak back into log stats | Check `event.dataset` values after Malcolm version bumps. The `_EXCLUDE_ALERTS_FILTER` constant uses `{"term": {"event.dataset": "alert"}}`. |
+| pcap-monitor DNS exclusion is query-name based | If Zeek internal monitoring changes, the exclusion pattern breaks | The `_EXCLUDE_DNS_NOISE` filter matches `zeek.dns.query.keyword: "pcap-monitor"` literally. Check after Zeek/Malcolm upgrades. |
 
 ---
 
@@ -1186,3 +1696,21 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-80 | develop | Storage API format mismatch — disk_free_gb, wrong types | 2026-03-03 |
 | — | manual | OpenSearch security reset + logstash bootstrap deadlock | 2026-03-03 |
 | NET-81 | develop | Setup wizard CSRF 403 + volume permissions | 2026-03-03 |
+| — | 717bd24 | Logstash index pattern env vars missing — 89K+ events misindexed | 2026-03-05 |
+| — | 32d4ab2 | Tools section: 4 backend services + API routes + Dockerfile + 97 tests | 2026-03-06 |
+| — | 2c00031 | Tools section: design docs + mockups | 2026-03-06 |
+| — | 65e31cf | pcap-capture PUSER=root + nginx-proxy healthcheck :9200 | 2026-03-07 |
+| — | manual | nettap-nginx SSL key chmod 644 | 2026-03-07 |
+| — | manual | OpenSearch security re-bootstrap + fix-opensearch.sh script | 2026-03-07 |
+| — | manual | nettap.service systemd boot persistence | 2026-03-07 |
+| — | phase-4/webui-v2 | netsniff-ng EPERM: SYS_ADMIN cap_add (setcap -r fails on overlay2) | 2026-03-07 |
+| — | 6a853e4 + 8763d07 | PCAP Search: BPF→display filter syntax, filter validation fix, download endpoint, sortable columns | 2026-03-09 |
+| — | 5e8acf8 | DNS Analytics: zeek.dns.* field remapping, RTT conversion fix, page redesign | 2026-03-09 |
+| — | 4009faf | Alerts page redesign: 4 new aggregation endpoints, interactive SVG timeline, severity/time filters, sortable table | 2026-03-09 |
+| NET-105 | 1f85e8e | Log Explorer: .keyword suffix on all 6 aggregation fields | 2026-03-10 |
+| NET-106 | 6c70af4 | Log Explorer: 10K event cap fix, stat text color, chart flicker, bar colors | 2026-03-10 |
+| NET-107 | 245d4af | Log Explorer: exclude Suricata alerts + pcap-monitor noise from aggregations | 2026-03-10 |
+| NET-108 | 8e09867 | Log Explorer: exclude pcap-monitor noise from search results | 2026-03-10 |
+| NET-109 | 0e10121 | Design system guide + 10-page standardization + sortable tables everywhere | 2026-03-10 |
+| NET-110 | 7912342 | TShark filter fix: drop ephemeral port, handle ICMP/IPv6 | 2026-03-10 |
+| — | 1ce47e3 | Deploy script: check OpenSearch health before deploying daemon/web | 2026-03-11 |

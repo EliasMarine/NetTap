@@ -48,6 +48,7 @@ class TSharkRequest:
     max_packets: int = DEFAULT_MAX_PACKETS
     output_format: str = "json"
     fields: list[str] = field(default_factory=list)
+    include_hex: bool = False
 
 
 @dataclass
@@ -194,6 +195,10 @@ class TSharkService:
         elif request.output_format == "pdml":
             cmd.extend(["-T", "pdml"])
         # "text" is the default -- no -T flag needed
+
+        # Hex dump flag
+        if request.include_hex:
+            cmd.append("-x")
 
         return cmd
 
@@ -408,6 +413,32 @@ class TSharkService:
                 "container_name": TSHARK_CONTAINER,
                 "error": str(e),
             }
+
+    def list_pcap_files(self) -> list[dict]:
+        """List available PCAP files in the pcap base directory."""
+        import os
+        pcaps = []
+        base = self.pcap_base_dir
+        if not os.path.isdir(base):
+            return []
+        for root, _dirs, files in os.walk(base):
+            for f in files:
+                if f.lower().endswith((".pcap", ".pcapng", ".cap")):
+                    full = os.path.join(root, f)
+                    rel = os.path.relpath(full, base)
+                    try:
+                        stat = os.stat(full)
+                        pcaps.append({
+                            "path": full,
+                            "relative_path": rel,
+                            "name": f,
+                            "size_bytes": stat.st_size,
+                            "modified": stat.st_mtime,
+                        })
+                    except OSError:
+                        continue
+        pcaps.sort(key=lambda p: p["modified"], reverse=True)
+        return pcaps
 
     async def validate_filter_dry_run(self, display_filter: str) -> bool:
         """Validate a display filter by running tshark -Y <filter> -r /dev/null.

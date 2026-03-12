@@ -33,6 +33,7 @@ async def handle_tshark_analyze(request: web.Request) -> web.Response:
             max_packets=int(body.get("max_packets", 100)),
             output_format=body.get("output_format", "json"),
             fields=body.get("fields", []),
+            include_hex=bool(body.get("include_hex", False)),
         )
         result = await tshark.analyze(req)
         return web.json_response(result.to_dict())
@@ -77,6 +78,17 @@ async def handle_tshark_status(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+async def handle_tshark_pcaps(request: web.Request) -> web.Response:
+    """GET /api/tshark/pcaps -- List available PCAP files."""
+    tshark: TSharkService = request.app["tshark"]
+    try:
+        pcaps = tshark.list_pcap_files()
+        return web.json_response({"pcaps": pcaps, "count": len(pcaps)})
+    except Exception as exc:
+        logger.exception("Failed to list PCAP files")
+        return web.json_response({"error": str(exc)}, status=500)
+
+
 def register_tshark_routes(app: web.Application, tshark: TSharkService) -> None:
     """Register all TShark API routes on the given aiohttp application.
 
@@ -87,4 +99,5 @@ def register_tshark_routes(app: web.Application, tshark: TSharkService) -> None:
     app.router.add_get("/api/tshark/protocols", handle_tshark_protocols)
     app.router.add_get("/api/tshark/fields", handle_tshark_fields)
     app.router.add_get("/api/tshark/status", handle_tshark_status)
-    logger.info("TShark API routes registered (4 endpoints)")
+    app.router.add_get("/api/tshark/pcaps", handle_tshark_pcaps)
+    logger.info("TShark API routes registered (5 endpoints)")

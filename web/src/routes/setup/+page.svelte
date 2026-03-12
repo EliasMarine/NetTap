@@ -2,23 +2,53 @@
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 
+	// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
+	// Port 8880 is Docker-internal only. Use relative paths through SvelteKit proxy.
+	// OLD CODE END
+	const API_BASE = '';
+
 	let { form } = $props();
 
 	// ----- Wizard state -----
 	let currentStep = $state(1);
-	const totalSteps = 5;
-	const stepLabels = ['Welcome', 'Interfaces', 'Bridge', 'Storage', 'Account'];
+
+	// OLD CODE START — fixed totalSteps / stepLabels for bridge-only wizard
+	// const totalSteps = 5;
+	// const stepLabels = ['Welcome', 'Interfaces', 'Bridge', 'Storage', 'Account'];
+	// OLD CODE END
+
+	// Capture mode: 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge)
+	type CaptureMode = 'mirror' | 'bridge' | '';
+	let selectedMode = $state<CaptureMode>('');
+
+	// Dynamic step labels based on mode
+	// Mirror: Welcome -> Capture Mode -> Interfaces (mirror) -> Storage -> Device Enrichment -> Account
+	// Bridge: Welcome -> Capture Mode -> Interfaces (bridge) -> Bridge Config -> Storage -> Account
+	// Before mode selected: Welcome -> Capture Mode (only 2 steps available)
+	let stepLabels = $derived.by(() => {
+		if (selectedMode === 'mirror') {
+			return ['Welcome', 'Capture Mode', 'Interfaces', 'Storage', 'Enrichment', 'Account'];
+		} else if (selectedMode === 'bridge') {
+			return ['Welcome', 'Capture Mode', 'Interfaces', 'Bridge', 'Storage', 'Account'];
+		}
+		return ['Welcome', 'Capture Mode'];
+	});
+
+	let totalSteps = $derived(stepLabels.length);
 
 	// ----- Step 1: Welcome -----
 	let requirementsChecked = $state(false);
 	let checkingRequirements = $state(false);
 	let requirements = $state({
-		nics: { label: 'Two or more network interfaces', status: 'pending' as 'pending' | 'pass' | 'fail' },
+		nics: { label: 'One or more network interfaces', status: 'pending' as 'pending' | 'pass' | 'fail' },
 		docker: { label: 'Docker is running', status: 'pending' as 'pending' | 'pass' | 'fail' },
 		disk: { label: 'Sufficient disk space (100GB+)', status: 'pending' as 'pending' | 'pass' | 'fail' },
 	});
 
-	// ----- Step 2: Network Interfaces -----
+	// Track detected NIC count for mode-dependent validation
+	let detectedEthernetNicCount = $state(0);
+
+	// ----- Step 3: Network Interfaces -----
 	interface NetworkInterface {
 		name: string;
 		mac: string;
@@ -33,8 +63,14 @@
 	let nicsLoading = $state(false);
 	let nicsError = $state('');
 	let nicsSource = $state('');
+
+	// Bridge mode NIC selection
 	let selectedWan = $state('');
 	let selectedLan = $state('');
+
+	// Mirror mode NIC selection
+	let selectedMirrorNic = $state('');
+	let selectedManagementNic = $state('');
 
 	// Filter to only usable (non-loopback) interfaces for NIC selection
 	let selectableInterfaces = $derived(
@@ -49,12 +85,22 @@
 		interfaces.find((iface) => iface.name === selectedLan)
 	);
 
-	let nicSelectionValid = $derived(
-		selectedWan !== '' && selectedLan !== '' && selectedWan !== selectedLan
+	let selectedMirrorNicDetails = $derived(
+		interfaces.find((iface) => iface.name === selectedMirrorNic)
 	);
 
+	let selectedManagementNicDetails = $derived(
+		interfaces.find((iface) => iface.name === selectedManagementNic)
+	);
 
-	// ----- Step 3: Bridge Configuration -----
+	let nicSelectionValid = $derived.by(() => {
+		if (selectedMode === 'mirror') {
+			return selectedMirrorNic !== '';
+		}
+		return selectedWan !== '' && selectedLan !== '' && selectedWan !== selectedLan;
+	});
+
+	// ----- Step 4 (bridge mode): Bridge Configuration -----
 	interface BridgeConfig {
 		config_preview: string;
 		wan: string;
@@ -70,7 +116,7 @@
 	let bridgeError = $state('');
 	let bridgeVerified = $state(false);
 
-	// ----- Step 4: Storage Configuration -----
+	// ----- Storage Configuration -----
 	interface StorageStatus {
 		disk_total_gb: number;
 		disk_used_gb: number;
@@ -112,7 +158,16 @@
 		return 'var(--success)';
 	});
 
-	// ----- Step 5: Admin Account -----
+	// ----- Device Enrichment (mirror mode only) -----
+	let useUnifi = $state(false);
+	let unifiUrl = $state('');
+	let unifiUsername = $state('');
+	let unifiPassword = $state('');
+	let unifiTesting = $state(false);
+	let unifiTestResult = $state<'success' | 'fail' | ''>('');
+	let unifiTestError = $state('');
+
+	// ----- Admin Account -----
 	let adminLoading = $state(false);
 	let adminUsername = $state('');
 	let adminPassword = $state('');
@@ -133,19 +188,33 @@
 		adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
 	);
 
+	// ----- Saving config on completion -----
+	let configSaving = $state(false);
+	let configSaveError = $state('');
+
+	// ----- Helper: get the logical step name for the current step number -----
+	function getStepName(step: number): string {
+		return stepLabels[step - 1] || '';
+	}
+
 	// ----- Navigation logic -----
 	function canAdvance(): boolean {
-		switch (currentStep) {
-			case 1:
+		const stepName = getStepName(currentStep);
+		switch (stepName) {
+			case 'Welcome':
 				return requirementsChecked;
-			case 2:
+			case 'Capture Mode':
+				return selectedMode !== '';
+			case 'Interfaces':
 				return nicSelectionValid;
-			case 3:
+			case 'Bridge':
 				return true; // Bridge verification is optional
-			case 4:
+			case 'Storage':
 				return true; // Storage config has defaults
-			case 5:
-				return false; // Step 5 uses form submission, not Next
+			case 'Enrichment':
+				return true; // Enrichment is optional
+			case 'Account':
+				return false; // Step uses form submission, not Next
 			default:
 				return false;
 		}
@@ -173,10 +242,11 @@
 	}
 
 	function onStepEnter(step: number): void {
-		if (step === 2 && interfaces.length === 0) {
+		const stepName = getStepName(step);
+		if (stepName === 'Interfaces' && interfaces.length === 0) {
 			fetchNics();
 		}
-		if (step === 4 && !storageStatus) {
+		if (stepName === 'Storage' && !storageStatus) {
 			fetchStorage();
 		}
 	}
@@ -200,16 +270,22 @@
 			} catch {
 				throw new Error('Server returned invalid data');
 			}
-			// Count non-loopback, non-virtual interfaces available for bridge duty
+			// Count non-loopback, non-virtual interfaces available
 			const bridgeableNics = (nicData.interfaces || []).filter(
 				(iface: NetworkInterface) => iface.type === 'ethernet'
 			);
+			detectedEthernetNicCount = bridgeableNics.length;
+
+			// Before mode is selected, require at least 1 NIC (minimum for mirror)
+			// Once mode is selected, mirror needs 1+, bridge needs 2+
+			const minNics = selectedMode === 'bridge' ? 2 : 1;
 			requirements.nics = {
 				...requirements.nics,
-				status: bridgeableNics.length >= 2 ? 'pass' : 'fail',
+				label: minNics >= 2 ? 'Two or more network interfaces' : 'One or more network interfaces',
+				status: bridgeableNics.length >= minNics ? 'pass' : 'fail',
 			};
 
-			// Pre-populate interfaces for step 2
+			// Pre-populate interfaces for step 3
 			interfaces = nicData.interfaces || [];
 			nicsSource = nicData.source || '';
 		} catch {
@@ -247,7 +323,7 @@
 		checkingRequirements = false;
 	}
 
-	// ----- Step 2: Fetch NICs -----
+	// ----- Step 3: Fetch NICs -----
 	async function fetchNics(): Promise<void> {
 		nicsLoading = true;
 		nicsError = '';
@@ -269,7 +345,7 @@
 		nicsLoading = false;
 	}
 
-	// ----- Step 3: Verify bridge -----
+	// ----- Bridge verify -----
 	async function verifyBridge(): Promise<void> {
 		bridgeLoading = true;
 		bridgeError = '';
@@ -299,7 +375,7 @@
 		bridgeLoading = false;
 	}
 
-	// ----- Step 4: Fetch storage -----
+	// ----- Storage fetch/save -----
 	async function fetchStorage(): Promise<void> {
 		storageLoading = true;
 		storageError = '';
@@ -348,13 +424,91 @@
 		storageSaving = false;
 	}
 
-	// ----- Handle form result for step 5 -----
+	// ----- Device Enrichment: test UniFi connection -----
+	async function testUnifiConnection(): Promise<void> {
+		unifiTesting = true;
+		unifiTestResult = '';
+		unifiTestError = '';
+		try {
+			const res = await fetch(`${API_BASE}/api/integrations/unifi/test`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					url: unifiUrl,
+					username: unifiUsername,
+					password: unifiPassword,
+				}),
+			});
+			if (!res.ok) {
+				const data = await res.json();
+				throw new Error(data.error || `HTTP ${res.status}`);
+			}
+			unifiTestResult = 'success';
+		} catch (err) {
+			unifiTestResult = 'fail';
+			unifiTestError = err instanceof Error ? err.message : 'Connection test failed';
+		}
+		unifiTesting = false;
+	}
+
+	// ----- Save setup configuration -----
+	async function saveSetupConfig(): Promise<void> {
+		configSaving = true;
+		configSaveError = '';
+		try {
+			const payload: Record<string, unknown> = {
+				capture_mode: selectedMode,
+			};
+
+			if (selectedMode === 'mirror') {
+				payload.capture_interface = selectedMirrorNic;
+				if (selectedManagementNic) {
+					payload.management_interface = selectedManagementNic;
+				}
+				if (useUnifi) {
+					payload.unifi = {
+						url: unifiUrl,
+						username: unifiUsername,
+						password: unifiPassword,
+					};
+				}
+			} else {
+				payload.wan_interface = selectedWan;
+				payload.lan_interface = selectedLan;
+			}
+
+			payload.storage = {
+				hot_days: hotDays,
+				warm_days: warmDays,
+				cold_days: coldDays,
+				disk_threshold_percent: diskThreshold,
+				emergency_threshold_percent: emergencyThreshold,
+			};
+
+			const res = await fetch(`${API_BASE}/api/setup/configure`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			if (!res.ok) {
+				const data = await res.json();
+				throw new Error(data.error || `HTTP ${res.status}`);
+			}
+		} catch (err) {
+			configSaveError = err instanceof Error ? err.message : 'Failed to save configuration';
+		}
+		configSaving = false;
+	}
+
+	// ----- Handle form result for Account step -----
 	$effect(() => {
 		if (form?.success) {
-			// Account created — redirect to dashboard after a brief delay
-			setTimeout(() => {
-				goto('/go-live');
-			}, 1500);
+			// Account created — save config then redirect
+			saveSetupConfig().then(() => {
+				setTimeout(() => {
+					goto('/go-live');
+				}, 1500);
+			});
 		}
 		if (form?.error) {
 			adminLoading = false;
@@ -411,8 +565,8 @@
 
 		<!-- Step content -->
 		<div class="step-content">
-			<!-- ===== STEP 1: Welcome ===== -->
-			{#if currentStep === 1}
+			<!-- ===== STEP: Welcome ===== -->
+			{#if getStepName(currentStep) === 'Welcome'}
 				<div class="step-panel">
 					<div class="welcome-header">
 						<svg class="logo" viewBox="0 0 48 48" width="64" height="64" fill="none">
@@ -421,8 +575,7 @@
 						</svg>
 						<h1>Welcome to NetTap</h1>
 						<p class="text-muted">
-							NetTap is a network visibility appliance that sits transparently between your
-							modem and router to monitor all network traffic. It provides enterprise-grade
+							NetTap is a network visibility appliance that provides enterprise-grade
 							network telemetry via a polished web dashboard without requiring deep networking knowledge.
 						</p>
 					</div>
@@ -430,8 +583,8 @@
 					<div class="info-box">
 						<h3>What this wizard will configure:</h3>
 						<ol class="setup-list">
-							<li>Detect and select network interfaces (WAN and LAN)</li>
-							<li>Configure a transparent network bridge</li>
+							<li>Choose your capture mode (Mirror/SPAN or Inline Bridge)</li>
+							<li>Detect and select network interfaces</li>
 							<li>Set up storage retention policies</li>
 							<li>Create your admin account</li>
 						</ol>
@@ -486,182 +639,382 @@
 					</div>
 				</div>
 
-			<!-- ===== STEP 2: Network Interfaces ===== -->
-			{:else if currentStep === 2}
+			<!-- ===== STEP: Capture Mode ===== -->
+			{:else if getStepName(currentStep) === 'Capture Mode'}
 				<div class="step-panel">
-					<h2>Select Network Interfaces</h2>
+					<h2>Choose Capture Mode</h2>
 					<p class="text-muted step-desc">
-						Choose which network interfaces to use for the WAN (modem) and LAN (router) connections.
-						NetTap will create a transparent bridge between these two interfaces.
+						Select how NetTap will capture network traffic. This determines the hardware
+						setup and what traffic NetTap can see.
 					</p>
 
-					{#if nicsSource === 'mock'}
-						<div class="alert alert-warning" style="margin-bottom: var(--space-md);">
-							Daemon unavailable — showing sample interface data. Actual interfaces will be detected on the target system.
-						</div>
-					{/if}
-
-					{#if nicsError}
-						<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
-							{nicsError}
-							<button class="btn btn-sm" style="margin-left: var(--space-sm);" onclick={fetchNics} type="button">Retry</button>
-						</div>
-					{/if}
-
-					{#if nicsLoading}
-						<div class="loading-container">
-							<span class="spinner"></span>
-							<span>Detecting network interfaces...</span>
-						</div>
-					{:else}
-						<!-- Network Diagram -->
-						<div class="network-diagram">
-							<div class="diagram-node">
-								<div class="diagram-icon modem-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-										<rect x="3" y="6" width="18" height="12" rx="2"/>
-										<circle cx="7" cy="12" r="1.5" fill="currentColor"/>
-										<line x1="12" y1="9" x2="12" y2="15"/>
-										<line x1="15" y1="9" x2="15" y2="15"/>
-										<line x1="18" y1="9" x2="18" y2="15"/>
-									</svg>
-								</div>
-								<span class="diagram-label">Modem</span>
-							</div>
-							<div class="diagram-arrow">
-								<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
-									<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					<div class="mode-cards">
+						<button
+							class="mode-card"
+							class:selected={selectedMode === 'mirror'}
+							onclick={() => { selectedMode = 'mirror'; }}
+							type="button"
+						>
+							<div class="mode-badge recommended">Recommended</div>
+							<div class="mode-icon">
+								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
+									<rect x="4" y="8" width="24" height="16" rx="3"/>
+									<path d="M10 16h4M18 16h4"/>
+									<path d="M16 4v4" stroke-dasharray="2 2"/>
+									<circle cx="16" cy="3" r="1.5" fill="currentColor"/>
 								</svg>
 							</div>
-							<div class="diagram-node" class:selected={selectedWan !== ''}>
-								<div class="diagram-icon wan-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-										<rect x="2" y="4" width="20" height="16" rx="2"/>
-										<path d="M6 12h4M14 12h4"/>
-									</svg>
-								</div>
-								<span class="diagram-label">{selectedWan || 'WAN NIC'}</span>
-							</div>
-							<div class="diagram-arrow">
-								<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
-									<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</div>
-							<div class="diagram-node bridge-node">
-								<div class="diagram-icon bridge-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-										<rect x="4" y="8" width="16" height="8" rx="2"/>
-										<path d="M8 8V5M16 8V5M4 12h16"/>
-									</svg>
-								</div>
-								<span class="diagram-label">NetTap Bridge</span>
-							</div>
-							<div class="diagram-arrow">
-								<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
-									<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</div>
-							<div class="diagram-node" class:selected={selectedLan !== ''}>
-								<div class="diagram-icon lan-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-										<rect x="2" y="4" width="20" height="16" rx="2"/>
-										<path d="M6 12h4M14 12h4"/>
-									</svg>
-								</div>
-								<span class="diagram-label">{selectedLan || 'LAN NIC'}</span>
-							</div>
-							<div class="diagram-arrow">
-								<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
-									<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</div>
-							<div class="diagram-node">
-								<div class="diagram-icon router-icon">
-									<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-										<rect x="3" y="8" width="18" height="8" rx="2"/>
-										<path d="M12 4v4M8 4l4 0M12 4l4 0"/>
-										<circle cx="7" cy="12" r="1" fill="currentColor"/>
-										<circle cx="11" cy="12" r="1" fill="currentColor"/>
-									</svg>
-								</div>
-								<span class="diagram-label">Router</span>
-							</div>
-						</div>
-
-						<!-- Interface Selectors -->
-						<div class="nic-selectors">
-							<div class="form-group">
-								<label for="wan-select" class="label">
-									WAN Interface
-									<span class="text-muted">(connects to modem)</span>
-								</label>
-								<select id="wan-select" class="input" bind:value={selectedWan}>
-									<option value="">-- Select WAN interface --</option>
-									{#each selectableInterfaces as iface}
-										<option value={iface.name} disabled={iface.name === selectedLan}>
-											{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
-										</option>
-									{/each}
-								</select>
-								{#if selectedWanDetails}
-									<div class="nic-details">
-										<span class="badge badge-accent">{selectedWanDetails.driver || 'unknown'}</span>
-										<span class="badge">{selectedWanDetails.speed || 'N/A'}</span>
-										<span class="badge" class:badge-success={selectedWanDetails.state === 'up'} class:badge-danger={selectedWanDetails.state === 'down'}>
-											{selectedWanDetails.state}
-										</span>
-										{#if selectedWanDetails.ipv4}
-											<span class="badge">{selectedWanDetails.ipv4}</span>
-										{/if}
-									</div>
-								{/if}
-							</div>
-
-							<div class="form-group">
-								<label for="lan-select" class="label">
-									LAN Interface
-									<span class="text-muted">(connects to router)</span>
-								</label>
-								<select id="lan-select" class="input" bind:value={selectedLan}>
-									<option value="">-- Select LAN interface --</option>
-									{#each selectableInterfaces as iface}
-										<option value={iface.name} disabled={iface.name === selectedWan}>
-											{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
-										</option>
-									{/each}
-								</select>
-								{#if selectedLanDetails}
-									<div class="nic-details">
-										<span class="badge badge-accent">{selectedLanDetails.driver || 'unknown'}</span>
-										<span class="badge">{selectedLanDetails.speed || 'N/A'}</span>
-										<span class="badge" class:badge-success={selectedLanDetails.state === 'up'} class:badge-danger={selectedLanDetails.state === 'down'}>
-											{selectedLanDetails.state}
-										</span>
-										{#if selectedLanDetails.ipv4}
-											<span class="badge">{selectedLanDetails.ipv4}</span>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						</div>
-
-
-
-						{#if selectedWan && selectedLan && selectedWan === selectedLan}
-							<div class="alert alert-danger">
-								WAN and LAN interfaces must be different.
-							</div>
-						{/if}
-
-
-						<button class="btn btn-sm btn-secondary" onclick={fetchNics} type="button" style="margin-top: var(--space-sm);">
-							Refresh Interfaces
+							<h3>Mirror / SPAN</h3>
+							<p class="mode-desc">
+								My managed switch sends a copy of network traffic to NetTap.
+								Zero risk to your network. Best for per-device visibility.
+							</p>
+							<ul class="mode-features">
+								<li>Requires 1 NIC for capture</li>
+								<li>No inline risk — switch handles mirroring</li>
+								<li>See traffic per device on the LAN</li>
+							</ul>
 						</button>
+
+						<button
+							class="mode-card"
+							class:selected={selectedMode === 'bridge'}
+							onclick={() => { selectedMode = 'bridge'; }}
+							type="button"
+						>
+							<div class="mode-icon">
+								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
+									<rect x="2" y="12" width="12" height="8" rx="2"/>
+									<rect x="18" y="12" width="12" height="8" rx="2"/>
+									<path d="M14 16h4"/>
+									<path d="M8 12V8M24 12V8"/>
+								</svg>
+							</div>
+							<h3>Inline Bridge</h3>
+							<p class="mode-desc">
+								NetTap sits between your modem and router. Sees all WAN traffic.
+								Requires two dedicated NICs.
+							</p>
+							<ul class="mode-features">
+								<li>Requires 2 NICs (WAN + LAN)</li>
+								<li>Transparent Layer 2 bridge</li>
+								<li>Sees all WAN ingress/egress</li>
+							</ul>
+						</button>
+					</div>
+
+					{#if selectedMode === 'bridge' && detectedEthernetNicCount < 2}
+						<div class="alert alert-warning" style="margin-top: var(--space-md);">
+							Bridge mode requires 2 Ethernet NICs, but only {detectedEthernetNicCount} were detected.
+							You may continue, but bridge configuration will fail without 2 NICs.
+						</div>
 					{/if}
 				</div>
 
-			<!-- ===== STEP 3: Bridge Configuration ===== -->
-			{:else if currentStep === 3}
+			<!-- ===== STEP: Interfaces (mode-dependent) ===== -->
+			{:else if getStepName(currentStep) === 'Interfaces'}
+				<div class="step-panel">
+					{#if selectedMode === 'mirror'}
+						<!-- Mirror mode: select capture NIC + optional management NIC -->
+						<h2>Select Capture Interface</h2>
+						<p class="text-muted step-desc">
+							Choose which network interface receives the mirrored/SPAN traffic from your switch.
+							This NIC will have no IP address assigned — it captures traffic in promiscuous mode.
+						</p>
+
+						{#if nicsSource === 'mock'}
+							<div class="alert alert-warning" style="margin-bottom: var(--space-md);">
+								Daemon unavailable — showing sample interface data. Actual interfaces will be detected on the target system.
+							</div>
+						{/if}
+
+						{#if nicsError}
+							<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+								{nicsError}
+								<button class="btn btn-sm" style="margin-left: var(--space-sm);" onclick={fetchNics} type="button">Retry</button>
+							</div>
+						{/if}
+
+						{#if nicsLoading}
+							<div class="loading-container">
+								<span class="spinner"></span>
+								<span>Detecting network interfaces...</span>
+							</div>
+						{:else}
+							<!-- Mirror Network Diagram -->
+							<div class="network-diagram">
+								<div class="diagram-node">
+									<div class="diagram-icon router-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="3" y="8" width="18" height="8" rx="2"/>
+											<path d="M12 4v4M8 4l4 0M12 4l4 0"/>
+											<circle cx="7" cy="12" r="1" fill="currentColor"/>
+											<circle cx="11" cy="12" r="1" fill="currentColor"/>
+										</svg>
+									</div>
+									<span class="diagram-label">Switch</span>
+								</div>
+								<div class="diagram-arrow">
+									<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
+										<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</div>
+								<div class="diagram-node" class:selected={selectedMirrorNic !== ''}>
+									<div class="diagram-icon wan-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="2" y="4" width="20" height="16" rx="2"/>
+											<path d="M6 12h4M14 12h4"/>
+										</svg>
+									</div>
+									<span class="diagram-label">{selectedMirrorNic || 'Capture NIC'}</span>
+								</div>
+								<div class="diagram-arrow">
+									<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
+										<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</div>
+								<div class="diagram-node bridge-node">
+									<div class="diagram-icon bridge-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="4" y="8" width="16" height="8" rx="2"/>
+											<path d="M8 8V5M16 8V5M4 12h16"/>
+										</svg>
+									</div>
+									<span class="diagram-label">NetTap</span>
+								</div>
+							</div>
+
+							<div class="nic-selectors">
+								<div class="form-group">
+									<label for="mirror-select" class="label">
+										Capture Interface
+										<span class="text-muted">(receives mirrored traffic)</span>
+									</label>
+									<select id="mirror-select" class="input" bind:value={selectedMirrorNic}>
+										<option value="">-- Select capture interface --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name} disabled={iface.name === selectedManagementNic}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+											</option>
+										{/each}
+									</select>
+									{#if selectedMirrorNicDetails}
+										<div class="nic-details">
+											<span class="badge badge-accent">{selectedMirrorNicDetails.driver || 'unknown'}</span>
+											<span class="badge">{selectedMirrorNicDetails.speed || 'N/A'}</span>
+											<span class="badge" class:badge-success={selectedMirrorNicDetails.state === 'up'} class:badge-danger={selectedMirrorNicDetails.state === 'down'}>
+												{selectedMirrorNicDetails.state}
+											</span>
+										</div>
+										<div class="alert alert-info" style="margin-top: var(--space-sm);">
+											This NIC will have no IP address. It captures traffic in promiscuous mode only.
+										</div>
+									{/if}
+								</div>
+
+								<div class="form-group">
+									<label for="mgmt-select" class="label">
+										Management Interface
+										<span class="text-muted">(optional — for dashboard access)</span>
+									</label>
+									<select id="mgmt-select" class="input" bind:value={selectedManagementNic}>
+										<option value="">-- Auto-detect (default) --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name} disabled={iface.name === selectedMirrorNic}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+												{#if iface.ipv4} ({iface.ipv4}){/if}
+											</option>
+										{/each}
+									</select>
+									{#if selectedManagementNicDetails}
+										<div class="nic-details">
+											<span class="badge badge-accent">{selectedManagementNicDetails.driver || 'unknown'}</span>
+											<span class="badge">{selectedManagementNicDetails.speed || 'N/A'}</span>
+											{#if selectedManagementNicDetails.ipv4}
+												<span class="badge">{selectedManagementNicDetails.ipv4}</span>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+
+							<button class="btn btn-sm btn-secondary" onclick={fetchNics} type="button" style="margin-top: var(--space-sm);">
+								Refresh Interfaces
+							</button>
+						{/if}
+					{:else}
+						<!-- Bridge mode: WAN + LAN NIC selection (original flow) -->
+						<h2>Select Network Interfaces</h2>
+						<p class="text-muted step-desc">
+							Choose which network interfaces to use for the WAN (modem) and LAN (router) connections.
+							NetTap will create a transparent bridge between these two interfaces.
+						</p>
+
+						{#if nicsSource === 'mock'}
+							<div class="alert alert-warning" style="margin-bottom: var(--space-md);">
+								Daemon unavailable — showing sample interface data. Actual interfaces will be detected on the target system.
+							</div>
+						{/if}
+
+						{#if nicsError}
+							<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+								{nicsError}
+								<button class="btn btn-sm" style="margin-left: var(--space-sm);" onclick={fetchNics} type="button">Retry</button>
+							</div>
+						{/if}
+
+						{#if nicsLoading}
+							<div class="loading-container">
+								<span class="spinner"></span>
+								<span>Detecting network interfaces...</span>
+							</div>
+						{:else}
+							<!-- Network Diagram -->
+							<div class="network-diagram">
+								<div class="diagram-node">
+									<div class="diagram-icon modem-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="3" y="6" width="18" height="12" rx="2"/>
+											<circle cx="7" cy="12" r="1.5" fill="currentColor"/>
+											<line x1="12" y1="9" x2="12" y2="15"/>
+											<line x1="15" y1="9" x2="15" y2="15"/>
+											<line x1="18" y1="9" x2="18" y2="15"/>
+										</svg>
+									</div>
+									<span class="diagram-label">Modem</span>
+								</div>
+								<div class="diagram-arrow">
+									<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
+										<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</div>
+								<div class="diagram-node" class:selected={selectedWan !== ''}>
+									<div class="diagram-icon wan-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="2" y="4" width="20" height="16" rx="2"/>
+											<path d="M6 12h4M14 12h4"/>
+										</svg>
+									</div>
+									<span class="diagram-label">{selectedWan || 'WAN NIC'}</span>
+								</div>
+								<div class="diagram-arrow">
+									<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
+										<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</div>
+								<div class="diagram-node bridge-node">
+									<div class="diagram-icon bridge-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="4" y="8" width="16" height="8" rx="2"/>
+											<path d="M8 8V5M16 8V5M4 12h16"/>
+										</svg>
+									</div>
+									<span class="diagram-label">NetTap Bridge</span>
+								</div>
+								<div class="diagram-arrow">
+									<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
+										<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</div>
+								<div class="diagram-node" class:selected={selectedLan !== ''}>
+									<div class="diagram-icon lan-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="2" y="4" width="20" height="16" rx="2"/>
+											<path d="M6 12h4M14 12h4"/>
+										</svg>
+									</div>
+									<span class="diagram-label">{selectedLan || 'LAN NIC'}</span>
+								</div>
+								<div class="diagram-arrow">
+									<svg width="32" height="16" viewBox="0 0 32 16" fill="none">
+										<path d="M0 8h28M22 3l6 5-6 5" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</div>
+								<div class="diagram-node">
+									<div class="diagram-icon router-icon">
+										<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="3" y="8" width="18" height="8" rx="2"/>
+											<path d="M12 4v4M8 4l4 0M12 4l4 0"/>
+											<circle cx="7" cy="12" r="1" fill="currentColor"/>
+											<circle cx="11" cy="12" r="1" fill="currentColor"/>
+										</svg>
+									</div>
+									<span class="diagram-label">Router</span>
+								</div>
+							</div>
+
+							<!-- Interface Selectors -->
+							<div class="nic-selectors">
+								<div class="form-group">
+									<label for="wan-select" class="label">
+										WAN Interface
+										<span class="text-muted">(connects to modem)</span>
+									</label>
+									<select id="wan-select" class="input" bind:value={selectedWan}>
+										<option value="">-- Select WAN interface --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name} disabled={iface.name === selectedLan}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+											</option>
+										{/each}
+									</select>
+									{#if selectedWanDetails}
+										<div class="nic-details">
+											<span class="badge badge-accent">{selectedWanDetails.driver || 'unknown'}</span>
+											<span class="badge">{selectedWanDetails.speed || 'N/A'}</span>
+											<span class="badge" class:badge-success={selectedWanDetails.state === 'up'} class:badge-danger={selectedWanDetails.state === 'down'}>
+												{selectedWanDetails.state}
+											</span>
+											{#if selectedWanDetails.ipv4}
+												<span class="badge">{selectedWanDetails.ipv4}</span>
+											{/if}
+										</div>
+									{/if}
+								</div>
+
+								<div class="form-group">
+									<label for="lan-select" class="label">
+										LAN Interface
+										<span class="text-muted">(connects to router)</span>
+									</label>
+									<select id="lan-select" class="input" bind:value={selectedLan}>
+										<option value="">-- Select LAN interface --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name} disabled={iface.name === selectedWan}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+											</option>
+										{/each}
+									</select>
+									{#if selectedLanDetails}
+										<div class="nic-details">
+											<span class="badge badge-accent">{selectedLanDetails.driver || 'unknown'}</span>
+											<span class="badge">{selectedLanDetails.speed || 'N/A'}</span>
+											<span class="badge" class:badge-success={selectedLanDetails.state === 'up'} class:badge-danger={selectedLanDetails.state === 'down'}>
+												{selectedLanDetails.state}
+											</span>
+											{#if selectedLanDetails.ipv4}
+												<span class="badge">{selectedLanDetails.ipv4}</span>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+
+							{#if selectedWan && selectedLan && selectedWan === selectedLan}
+								<div class="alert alert-danger">
+									WAN and LAN interfaces must be different.
+								</div>
+							{/if}
+
+							<button class="btn btn-sm btn-secondary" onclick={fetchNics} type="button" style="margin-top: var(--space-sm);">
+								Refresh Interfaces
+							</button>
+						{/if}
+					{/if}
+				</div>
+
+			<!-- ===== STEP: Bridge Configuration (bridge mode only) ===== -->
+			{:else if getStepName(currentStep) === 'Bridge'}
 				<div class="step-panel">
 					<h2>Bridge Configuration</h2>
 					<p class="text-muted step-desc">
@@ -737,8 +1090,8 @@
 					</div>
 				</div>
 
-			<!-- ===== STEP 4: Storage Configuration ===== -->
-			{:else if currentStep === 4}
+			<!-- ===== STEP: Storage Configuration ===== -->
+			{:else if getStepName(currentStep) === 'Storage'}
 				<div class="step-panel">
 					<h2>Storage Configuration</h2>
 					<p class="text-muted step-desc">
@@ -929,17 +1282,119 @@
 					{/if}
 				</div>
 
-			<!-- ===== STEP 5: Admin Account ===== -->
-			{:else if currentStep === 5}
+			<!-- ===== STEP: Device Enrichment (mirror mode only) ===== -->
+			{:else if getStepName(currentStep) === 'Enrichment'}
+				<div class="step-panel">
+					<h2>Device Enrichment</h2>
+					<p class="text-muted step-desc">
+						NetTap automatically identifies devices on your network using passive techniques
+						(MAC OUI, DHCP fingerprinting, mDNS, etc.). Optionally connect to a UniFi controller
+						for richer device names and metadata.
+					</p>
+
+					<div class="enrichment-toggle card">
+						<label class="toggle-row">
+							<span class="toggle-label">
+								<strong>Do you use UniFi network equipment?</strong>
+								<span class="text-muted">Connect your UniFi controller for enhanced device identification.</span>
+							</span>
+							<label class="switch">
+								<input type="checkbox" bind:checked={useUnifi} />
+								<span class="slider"></span>
+							</label>
+						</label>
+					</div>
+
+					{#if useUnifi}
+						<div class="unifi-config card" style="margin-top: var(--space-md);">
+							<h3>UniFi Controller</h3>
+
+							<div class="form-group">
+								<label for="unifi-url" class="label">Controller URL</label>
+								<input
+									id="unifi-url"
+									type="url"
+									class="input"
+									placeholder="https://192.168.1.1:8443"
+									bind:value={unifiUrl}
+								/>
+								<span class="input-hint text-muted">The URL of your UniFi controller or Dream Machine.</span>
+							</div>
+
+							<div class="form-group">
+								<label for="unifi-user" class="label">Username</label>
+								<input
+									id="unifi-user"
+									type="text"
+									class="input"
+									placeholder="admin"
+									bind:value={unifiUsername}
+								/>
+							</div>
+
+							<div class="form-group">
+								<label for="unifi-pass" class="label">Password</label>
+								<input
+									id="unifi-pass"
+									type="password"
+									class="input"
+									placeholder="Controller password"
+									bind:value={unifiPassword}
+								/>
+							</div>
+
+							{#if unifiTestResult === 'success'}
+								<div class="alert alert-success">
+									Successfully connected to UniFi controller.
+								</div>
+							{:else if unifiTestResult === 'fail'}
+								<div class="alert alert-danger">
+									Connection failed: {unifiTestError}
+								</div>
+							{/if}
+
+							<button
+								class="btn btn-primary"
+								onclick={testUnifiConnection}
+								disabled={unifiTesting || !unifiUrl || !unifiUsername || !unifiPassword}
+								type="button"
+							>
+								{#if unifiTesting}
+									<span class="spinner"></span>
+									Testing...
+								{:else}
+									Test Connection
+								{/if}
+							</button>
+						</div>
+					{:else}
+						<div class="info-box" style="margin-top: var(--space-md);">
+							<h3>Passive Identification (automatic)</h3>
+							<p class="text-muted" style="margin-bottom: var(--space-sm);">
+								Without a UniFi integration, NetTap still identifies devices using:
+							</p>
+							<ul class="setup-list">
+								<li>MAC address OUI lookup (manufacturer identification)</li>
+								<li>DHCP fingerprinting (OS and device type)</li>
+								<li>mDNS/SSDP discovery (device names)</li>
+								<li>HTTP User-Agent analysis</li>
+								<li>TLS fingerprinting (JA3/JA4)</li>
+							</ul>
+						</div>
+					{/if}
+				</div>
+
+			<!-- ===== STEP: Admin Account ===== -->
+			{:else if getStepName(currentStep) === 'Account'}
 				<div class="step-panel">
 					<h2>Create Admin Account</h2>
 					<p class="text-muted step-desc">
 						Create your administrator account. This will be used to log in to the NetTap dashboard.
 					</p>
 
-					{#if form?.error || clientError}
+					{#if form?.error || clientError || configSaveError}
 						<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
-							{form?.error || clientError}
+							{form?.error || clientError || configSaveError}
 						</div>
 					{/if}
 
@@ -1054,11 +1509,11 @@
 							<button
 								type="submit"
 								class="btn btn-primary btn-lg finish-btn"
-								disabled={adminLoading || !adminFormValid}
+								disabled={adminLoading || !adminFormValid || configSaving}
 							>
-								{#if adminLoading}
+								{#if adminLoading || configSaving}
 									<span class="spinner"></span>
-									Creating Account...
+									{configSaving ? 'Saving Configuration...' : 'Creating Account...'}
 								{:else}
 									Complete Setup
 								{/if}
@@ -1070,7 +1525,7 @@
 		</div>
 
 		<!-- Navigation buttons -->
-		{#if currentStep < 5 || (currentStep === 5 && form?.success)}
+		{#if getStepName(currentStep) !== 'Account' || form?.success}
 			<div class="wizard-nav">
 				{#if currentStep > 1 && !form?.success}
 					<button class="btn btn-secondary" onclick={prevStep} type="button">
@@ -1083,9 +1538,9 @@
 					<div></div>
 				{/if}
 
-				{#if currentStep < 5}
+				{#if getStepName(currentStep) !== 'Account'}
 					<div class="nav-right">
-						{#if currentStep === 3 || currentStep === 4}
+						{#if getStepName(currentStep) === 'Bridge' || getStepName(currentStep) === 'Storage' || getStepName(currentStep) === 'Enrichment'}
 							<button class="btn btn-secondary" onclick={nextStep} type="button">
 								Skip
 							</button>
@@ -1320,7 +1775,102 @@
 		margin-top: var(--space-sm);
 	}
 
-	/* ===== Step 2: Network Interfaces ===== */
+	/* ===== Capture Mode Selection ===== */
+	.mode-cards {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-lg);
+	}
+
+	@media (max-width: 640px) {
+		.mode-cards {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.mode-card {
+		position: relative;
+		background-color: var(--bg-tertiary);
+		border: 2px solid var(--border-default);
+		border-radius: var(--radius-lg);
+		padding: var(--space-xl) var(--space-lg);
+		cursor: pointer;
+		text-align: left;
+		font-family: var(--font-sans);
+		transition: all var(--transition-fast);
+	}
+
+	.mode-card:hover {
+		border-color: var(--accent);
+		background-color: var(--bg-secondary);
+	}
+
+	.mode-card.selected {
+		border-color: var(--accent);
+		background-color: var(--accent-muted);
+		box-shadow: 0 0 0 1px var(--accent);
+	}
+
+	.mode-badge {
+		position: absolute;
+		top: calc(-1 * var(--space-xs));
+		right: var(--space-md);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		padding: 2px var(--space-sm);
+		border-radius: var(--radius-sm);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.mode-badge.recommended {
+		background-color: var(--success);
+		color: #fff;
+	}
+
+	.mode-icon {
+		margin-bottom: var(--space-md);
+		color: var(--text-secondary);
+	}
+
+	.mode-card.selected .mode-icon {
+		color: var(--accent);
+	}
+
+	.mode-card h3 {
+		font-size: var(--text-lg);
+		font-weight: 700;
+		color: var(--text-primary);
+		margin-bottom: var(--space-sm);
+	}
+
+	.mode-desc {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+		line-height: var(--leading-relaxed);
+		margin-bottom: var(--space-md);
+	}
+
+	.mode-features {
+		list-style: none;
+		padding: 0;
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+	}
+
+	.mode-features li {
+		padding: var(--space-xs) 0;
+		border-top: 1px solid var(--border-muted);
+	}
+
+	.mode-features li::before {
+		content: '\2022 ';
+		color: var(--accent);
+		font-weight: bold;
+		margin-right: var(--space-xs);
+	}
+
+	/* ===== Network Interfaces ===== */
 	.network-diagram {
 		display: flex;
 		align-items: center;
@@ -1404,7 +1954,7 @@
 		margin-top: var(--space-sm);
 	}
 
-	/* ===== Step 3: Bridge Configuration ===== */
+	/* ===== Bridge Configuration ===== */
 	.bridge-summary {
 		margin-bottom: var(--space-lg);
 	}
@@ -1448,7 +1998,7 @@
 		margin-bottom: var(--space-sm);
 	}
 
-	/* ===== Step 4: Storage Configuration ===== */
+	/* ===== Storage Configuration ===== */
 	.storage-overview {
 		margin-bottom: var(--space-lg);
 	}
@@ -1649,7 +2199,92 @@
 		gap: var(--space-md);
 	}
 
-	/* ===== Step 5: Admin Account ===== */
+	/* ===== Device Enrichment ===== */
+	.enrichment-toggle {
+		margin-bottom: var(--space-md);
+	}
+
+	.toggle-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		cursor: pointer;
+	}
+
+	.toggle-label {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+		flex: 1;
+		margin-right: var(--space-lg);
+	}
+
+	.toggle-label strong {
+		font-size: var(--text-base);
+		color: var(--text-primary);
+	}
+
+	.toggle-label .text-muted {
+		font-size: var(--text-sm);
+	}
+
+	.switch {
+		position: relative;
+		display: inline-block;
+		width: 48px;
+		height: 26px;
+		flex-shrink: 0;
+	}
+
+	.switch input {
+		opacity: 0;
+		width: 0;
+		height: 0;
+	}
+
+	.slider {
+		position: absolute;
+		cursor: pointer;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		transition: var(--transition-fast);
+		border-radius: 26px;
+	}
+
+	.slider::before {
+		position: absolute;
+		content: '';
+		height: 20px;
+		width: 20px;
+		left: 2px;
+		bottom: 2px;
+		background-color: var(--text-muted);
+		transition: var(--transition-fast);
+		border-radius: 50%;
+	}
+
+	.switch input:checked + .slider {
+		background-color: var(--accent-muted);
+		border-color: var(--accent);
+	}
+
+	.switch input:checked + .slider::before {
+		transform: translateX(22px);
+		background-color: var(--accent);
+	}
+
+	.unifi-config h3 {
+		font-size: var(--text-lg);
+		font-weight: 600;
+		color: var(--text-primary);
+		margin-bottom: var(--space-md);
+	}
+
+	/* ===== Admin Account ===== */
 	.input-hint {
 		display: block;
 		font-size: var(--text-xs);

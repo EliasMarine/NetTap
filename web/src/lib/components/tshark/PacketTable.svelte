@@ -180,7 +180,7 @@
 
 	.table-scroll {
 		overflow: auto;
-		max-height: 480px;
+		height: 100%;
 	}
 
 	.packet-table {

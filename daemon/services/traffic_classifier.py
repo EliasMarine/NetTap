@@ -329,7 +329,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         "aggs": {
             "top_domains": {
                 "terms": {
-                    "field": "zeek.dns.query",
+                    "field": "zeek.dns.query.keyword",
                     "size": 500,
                 },
             }
@@ -356,7 +356,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         ]}},
         "aggs": {
             "by_service": {
-                "terms": {"field": "network.protocol", "size": 50, "missing": "unknown"},
+                "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
