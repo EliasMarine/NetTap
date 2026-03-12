@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { getSystemHealth, getStorageStatus, getSmartHealth } from '$api/system.js';
 	import { getBridgeHealth } from '$api/bridge.js';
+	import { getCaptureMode } from '$api/capture';
+	import type { CaptureMode } from '$api/capture';
 	import type { SystemHealth, StorageStatus, SmartHealth } from '$api/system.js';
 	import type { BridgeHealth } from '$api/bridge.js';
 
@@ -26,6 +28,7 @@
 	let storageStatus = $state<StorageStatus | null>(null);
 	let smartHealth = $state<SmartHealth | null>(null);
 	let versions = $state<any>(null);
+	let captureMode = $state<CaptureMode | null>(null);
 
 	function formatBytes(bytes: number | null | undefined): string {
 		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
@@ -118,18 +121,20 @@
 	async function fetchSystem() {
 		loading = true;
 		try {
-			const [health, bridge, storage, smart, vers] = await Promise.all([
+			const [health, bridge, storage, smart, vers, capMode] = await Promise.all([
 				getSystemHealth(),
 				getBridgeHealth(),
 				getStorageStatus(),
 				getSmartHealth(),
-				fetchJson('/api/system/versions'),
+					fetchJson('/api/system/versions'),
+				getCaptureMode().catch(() => null),
 			]);
 			systemHealth = health;
 			bridgeHealth = bridge;
 			storageStatus = storage;
 			smartHealth = smart;
 			versions = vers;
+			captureMode = capMode;
 		} finally {
 			loading = false;
 		}
@@ -617,11 +622,13 @@
 			{/if}
 		</div>
 
-		<!-- Bridge Health -->
+		<!-- Capture Mode -->
 		<div class="card">
 			<div class="card-header">
-				<span class="card-title">Bridge</span>
-				{#if bridgeHealth}
+				<span class="card-title">{captureMode?.mode === 'mirror' ? 'Mirror / SPAN' : 'Bridge'}</span>
+				{#if captureMode?.mode === 'mirror'}
+					<span class="badge badge-info">Mirror</span>
+				{:else if bridgeHealth}
 					{@const bstate = bridgeHealth.health_status}
 					<span class="badge {bstate === 'normal' ? 'badge-success' : bstate === 'degraded' ? 'badge-warning' : bstate === 'bypass' ? 'badge-info' : 'badge-danger'}">
 						{bstate === 'not_configured' ? 'Not Configured' : bstate}
@@ -630,7 +637,26 @@
 					<span class="badge badge-muted">Unknown</span>
 				{/if}
 			</div>
-			{#if bridgeHealth && bridgeHealth.bridge_state !== 'not_configured'}
+			{#if captureMode?.mode === 'mirror'}
+				<div class="info-grid">
+					<div class="info-row">
+						<span class="info-label">Capture Mode</span>
+						<span class="info-value"><span class="health-dot green"></span> Mirror / SPAN</span>
+					</div>
+					<div class="info-row">
+						<span class="info-label">Capture Interface</span>
+						<span class="info-value mono">{captureMode.interface || '--'}</span>
+					</div>
+					<div class="info-row">
+						<span class="info-label">Topology</span>
+						<span class="info-value">Passive tap — traffic mirrored from switch SPAN port</span>
+					</div>
+					<div class="info-row">
+						<span class="info-label">Inline Blocking</span>
+						<span class="info-value"><span class="health-dot yellow"></span> Not available (read-only)</span>
+					</div>
+				</div>
+			{:else if bridgeHealth && bridgeHealth.bridge_state !== 'not_configured'}
 				<div class="info-grid">
 					<div class="info-row">
 						<span class="info-label">br0 State</span>
