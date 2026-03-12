@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-09
-> **Status:** 47 issues tracked. 47 RESOLVED. Latest: (1) PCAP Search quick filters used BPF syntax but tshark `-Y` requires Wireshark display filters; filter validation blocked `|`/`&` needed for display filter `||`/`&&`; added per-file PCAP download + auto-scroll preview + sortable columns. (2) DNS Analytics aggregations returned 0 — field names used ECS `dns.*` prefix instead of Malcolm's `zeek.dns.*`; RTT conversion inverted (divided by 1M assuming nanoseconds, but Zeek stores RTT in seconds). Daemon tests: 1175 passing. Web tests: 1034/1034 passing (74 test files). svelte-check: 0 errors. 18/18 containers healthy on N100. Full-stack test: 59/59 passing.
+> **Last updated:** 2026-03-11
+> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Deploy script hardened with OpenSearch health check before deploying dependent containers. Session summary: Log Explorer fully fixed (6 commits — .keyword suffix, 10K cap, text color, chart flicker, colors, noise exclusion), design system created (10 pages standardized), TShark filter fixed (ephemeral port + ICMP + IPv6, 18 tests). Web tests: 1098/1098 passing. svelte-check: 0 errors. NET-105–NET-110.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -57,7 +57,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **16 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **18 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -185,6 +185,21 @@ CHAIN 17: PCAP Search Filter Syntax + DNS Analytics Field Mismatch (phase-5/mirr
      RTT in seconds. Fixed to multiply by 1000 for milliseconds display.
   8. Complete DNS Analytics page redesign: interactive SVG timeline with tooltips, sortable
      tables, cross-section linking, time range pills, per-device DNS split panel, empty states.
+
+CHAIN 18: PCAP Search Page Redesign (phase-5/mirror-span-mode)
+  Commit c02cb9f
+  Full interactive redesign of PCAP Search page to match DNS Analytics quality level.
+  1. Hero stats row: total files, total size, date range, protocol distribution.
+  2. Capture timeline: interactive SVG chart with per-day bars, tooltips, click-to-filter.
+  3. Quick filter chips: protocol-based quick filters (DNS, HTTP, TLS, SSH, etc.).
+  4. Sortable search results: ascending/descending column sorting on all columns.
+  5. Packet preview panel: expandable preview with protocol details.
+  6. Protocol breakdown: visual protocol distribution chart.
+  7. Two-column file browser: side-by-side layout for file list + details.
+  8. Cross-section linking: click stats/timeline to filter results.
+  9. Time range pills: quick time range selection (1h, 6h, 24h, 7d, 30d).
+  10. DNS copy button CSS fix: bigger icon (1.25rem), accent-blue color.
+  11. Added formatRelativeTime and PROTO_FILTER_MAP helpers to pcap.ts API client.
 ```
 
 ---
@@ -1438,7 +1453,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/logstash/jvm.options.d/99-nettap.options` | #65 | DEAD FILE — Logstash ignores jvm.options.d/ (Elasticsearch-only). Volume mount removed in #66. |
 | `scripts/install/deploy-malcolm.sh` | #54, #55, #60 | bootstrap_opensearch_security() + bootstrap_index_templates() + staged startup |
 | `daemon/api/traffic.py` | NET-95, PR #92 | All queries use `NETWORK_INDEX` (arkime_sessions3-*) + ECS field names + event.provider/dataset filters. **All aggregation fields use .keyword suffix.** |
-| `daemon/api/alerts.py` | NET-95, PR #92, cf960e4+4c26c26+5b1b4d4 | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields. **Aggregation fields use .keyword suffix.** `_normalize_alert_source()` merges ECS/Malcolm/raw field paths. IP filter (`source.ip` OR `destination.ip`) via `ip` query param. |
+| `daemon/api/alerts.py` | NET-95, PR #92, cf960e4+4c26c26+5b1b4d4, 4009faf | Suricata alerts query `NETWORK_INDEX` with `event.provider: suricata` + `event.dataset: alert` + ECS fields. **Aggregation fields use .keyword suffix.** `_normalize_alert_source()` merges ECS/Malcolm/raw field paths. IP filter (`source.ip` OR `destination.ip`) via `ip` query param. **4 new aggregation endpoints: /api/alerts/timeline (date_histogram), /api/alerts/top-signatures (terms), /api/alerts/top-ips (src/dest), /api/alerts/categories. 8 endpoints total. _ALLOWED_INTERVALS, _SEVERITY_MAP constants.** |
 | `daemon/api/lookup.py` | 5b1b4d4 | NEW: WHOIS + DNS lookup endpoints. Async subprocess for whois, thread executor for socket DNS. IP validation, 15s timeout, parsed field extraction. |
 | `daemon/api/devices.py` | NET-95, PR #92 | Device queries use `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
 | `daemon/api/risk.py` | NET-95, PR #92 | Risk scoring uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix.** |
@@ -1453,7 +1468,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `web/src/routes/+layout.svelte` | NET-100 | New layout shell + navigation |
 | `web/src/routes/logs/+page.svelte` | NET-100, 5b1b4d4 | NEW: Log Explorer page. **IPAddress component added for IP columns.** |
 | `web/src/routes/devices/+page.svelte` | 5b1b4d4 | **IPAddress component added in 3 locations** (table row, detail panel, connections dest IP). |
-| `web/src/routes/alerts/+page.svelte` | 5b1b4d4 | **IP filter support** — reads `ip` URL param, passes to API, displays filter badge with clear button. |
+| `web/src/routes/alerts/+page.svelte` | 5b1b4d4, 4009faf | **Full redesign (4009faf):** hero stats, SVG timeline chart with hover tooltips, two-col signatures+categories, two-col attacked+source IPs with copy buttons, sortable table, time range pills, severity filter pills, Promise.allSettled, initialized guard. **Previous:** IP filter support via `ip` URL param. |
+| `web/src/lib/api/alerts.ts` | 4009faf | **4 new fetch functions** (getAlertTimeline, getAlertTopSignatures, getAlertTopIps, getAlertCategories), 7 new types, 3 formatting helpers (formatNumber, severityLabel, severityBadgeClass). |
+| `web/src/lib/api/alerts.test.ts` | 4009faf | **25 total tests** (18 new) covering all 4 new API functions + formatting helpers. |
+| `web/src/routes/api/alerts/timeline/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/timeline`. |
+| `web/src/routes/api/alerts/top-signatures/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/top-signatures`. |
+| `web/src/routes/api/alerts/top-ips/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/top-ips`. |
+| `web/src/routes/api/alerts/categories/+server.ts` | 4009faf | NEW: SvelteKit proxy route for `/api/alerts/categories`. |
 | `web/src/lib/components/IPAddress.svelte` | 5b1b4d4 | **8 menu items** (was 5). Fixed filter from/to bug. Added WHOIS, DNS, View Alerts actions. |
 | `web/src/lib/components/ContextMenu.svelte` | 5b1b4d4 | **3 new icons** (whois, dns, alert). |
 | `web/src/routes/lookup/whois/[ip]/+page.svelte` | 5b1b4d4 | NEW: WHOIS lookup page with parsed fields + raw output toggle. |
@@ -1474,7 +1495,17 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `web/src/routes/pcap/+page.svelte` | Chain 17 | Fixed quick filters from BPF to display filter syntax. Added Download buttons, auto-scroll to preview, sortable columns. |
 | `web/src/lib/api/pcap.ts` | Chain 17 | Added `downloadPcapFile()` API client function for per-file download. |
 | `daemon/services/dns_analytics.py` | Chain 17 | Remapped all field names: `dns.*` → `zeek.dns.*`. Fixed RTT conversion: `÷1M` → `×1000`. |
-| `web/src/routes/dns/+page.svelte` | Chain 17 | Complete redesign: interactive SVG timeline, sortable tables, time range pills, per-device DNS panel, empty states. |
+| `web/src/routes/dns/+page.svelte` | Chain 17, Chain 18 | Complete redesign: interactive SVG timeline, sortable tables, time range pills, per-device DNS panel, empty states. **Chain 18: copy button CSS fix (1.25rem, accent-blue).** |
+| `web/src/routes/pcap/+page.svelte` | Chain 17, Chain 18 | Chain 17: BPF→display filter, download buttons, auto-scroll, sortable columns. **Chain 18: Full redesign — hero stats, capture timeline SVG, quick filter chips, packet preview panel, protocol breakdown, two-column file browser, cross-section linking, time range pills.** |
+| `web/src/lib/api/pcap.ts` | Chain 17, Chain 18 | Chain 17: `downloadPcapFile()`. **Chain 18: Added `formatRelativeTime`, `PROTO_FILTER_MAP` helpers.** |
+| `daemon/api/logs.py` | NET-100, 1f85e8e+245d4af+8e09867 | Log Explorer: .keyword suffix on 6 agg fields, `track_total_hits: True`, `_EXCLUDE_ALERTS_FILTER` (must_not event.dataset:alert), `_EXCLUDE_DNS_NOISE` (must_not zeek.dns.query:pcap-monitor). Applied to all 6 agg endpoints + search endpoint. |
+| `web/src/routes/logs/+page.svelte` | NET-100, 6c70af4 | Log Explorer: text-white stat fix, SVG→HTML tooltip overlay (flicker fix), removed 'alert' from PROTOCOL_KEYS. |
+| `web/src/lib/api/logs.ts` | NET-100, 6c70af4 | `protocolColor()` changed from CSS vars to bold hex values (#00b8d4, #00e676, #ff9100, #aa66ff, #ffd600, #ff4081, #18ffff). |
+| `web/DESIGN-SYSTEM.md` | 0e10121 | NEW: Canonical design reference — CSS variables, component patterns, layout rules, 10 mandatory rules. Reference impl: Log Explorer page. |
+| `web/src/lib/utils/tshark-filter.ts` | 7912342 | NEW: Extracted `buildTSharkFilter`, `getField`, `asString`. Handles TCP/UDP/ICMP/ICMPv6/IPv4/IPv6. |
+| `web/src/lib/utils/tshark-filter.test.ts` | 7912342 | NEW: 18 tests — TCP, UDP, ICMP, ICMPv6, IPv4, IPv6, mixed addressing, OpenSearch array values. |
+| `web/src/routes/connections/+page.svelte` | 7912342 | TShark filter fix: imports from tshark-filter.ts utility, removed inline getField/asString/buildTSharkFilter. |
+| `scripts/remote/deploy-log-explorer.sh` | 1ce47e3 | Deploy script: checks OpenSearch health before deploying, restarts if unhealthy, waits up to 180s, runs security bootstrap as fallback. |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
 
@@ -1576,6 +1607,21 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 74. **Malcolm/Zeek stores DNS data with `zeek.dns.*` prefix, NOT ECS `dns.*` prefix** — Zeek DNS fields use `zeek.dns.query` (not `dns.question.name`), `zeek.dns.qtype_name` (not `dns.question.type`), `zeek.dns.rcode_name` (not `dns.response_code`), `zeek.dns.rtt` (not `event.duration`). Always verify field names against actual OpenSearch documents before writing queries — ECS and Zeek-prefixed fields coexist but map to different data.
 75. **Zeek DNS RTT field (`zeek.dns.rtt`) is in seconds, NOT nanoseconds** — Zeek stores round-trip time as floating-point seconds (e.g., `0.045` = 45ms). Code that divides by 1,000,000 (assuming nanoseconds like ECS `event.duration`) will show microsecond-scale values instead of millisecond-scale. Multiply by 1000 for millisecond display.
 
+### Log Explorer / TShark / Design System (NEW — 2026-03-10)
+76. **OpenSearch `track_total_hits` defaults to 10,000** — queries without `"track_total_hits": true` in the body will report `total.value: 10000` as the cap, even when millions of documents match. Always set this for stats/count endpoints.
+77. **SVG tooltip flickering in Svelte is caused by reactivity re-rendering the entire SVG** — when a state variable (like `hoveredBarIndex`) is used inside an SVG, Svelte re-renders the whole SVG on change, destroying and recreating tooltip elements. Fix: move tooltips to an HTML overlay `<div>` outside the SVG, positioned via absolute CSS.
+78. **Suricata alerts can dominate log explorer stats** — with 4.3M+ alert events vs. a few hundred thousand Zeek logs, aggregation-based charts and stats become meaningless. Use `must_not: [{"term": {"event.dataset": "alert"}}]` to exclude alerts from log explorer views.
+79. **Zeek pcap-monitor DNS noise pollutes real DNS analytics** — Zeek's internal `pcap-monitor` generates millions of DNS lookups that show up as the #1 query in DNS aggregations. Exclude with `must_not: [{"term": {"zeek.dns.query.keyword": "pcap-monitor"}}]` on both aggregation AND search endpoints.
+80. **Wireshark `tcp.port` matches EITHER source or destination** — `tcp.port == 443 && tcp.port == 53284` requires BOTH ports to be found on one side of the packet, which is impossible. The ephemeral source port should NEVER be in TShark filters for rotated PCAP analysis.
+81. **ICMP has no ports — `icmp.port` is not a valid TShark display filter field** — Zeek may store ICMP type/code in port fields, but TShark rejects `icmp.port`. For ICMP connections, use bare `icmp` or `icmpv6` as the protocol filter instead.
+82. **IPv6 addresses require `ipv6.addr` in TShark filters, not `ip.addr`** — `ip.addr == 2001:db8::1` matches zero packets. Detect IPv6 by checking for `:` in the address string.
+83. **Deploy scripts must check upstream dependency health before recreating dependent containers** — `docker compose up -d --force-recreate` fails when a dependency (OpenSearch) is unhealthy because `depends_on: condition: service_healthy` blocks startup. Always check and fix unhealthy dependencies first.
+84. **CSS design tokens prevent cross-page inconsistency** — creating a canonical design system (`web/DESIGN-SYSTEM.md`) with CSS custom properties (`var(--red)`, `var(--space-md)`) and enforcing it across all 10+ pages prevents visual drift as different developers/sessions modify different pages.
+
+### Docker Networking / Diagnostic Scripts (NEW — 2026-03-12)
+85. **Container `expose:` ports are NOT reachable from the host** — `expose: ["3000"]` makes a port available container-to-container on the Docker network, but NOT on `localhost` from the host. Only `ports: ["3000:3000"]` publishes to the host. In NetTap, nettap-web exposes 3000 internally and nettap-nginx publishes 80/443 to the host. Diagnostic scripts that `curl http://localhost:3000` from the host will always get HTTP 000 (connection refused). Must either: (a) curl through nginx on the published port (`curl -k https://localhost/path`), or (b) `docker exec nettap-web curl http://localhost:3000/path` from inside the container.
+86. **Diagnostic and debugging commands for the remote device MUST be scripts, not inline commands** — even a "quick" set of `curl` and `docker logs` commands must go in `scripts/remote/diagnose-*.sh`. Multi-command blocks break when copy-pasted over SSH, and the user has to re-run them one-by-one to debug which failed. A single script file is copy-paste-proof and reproducible.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1608,6 +1654,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Malcolm image updates may add/change file capabilities on binaries | EPERM on exec if file caps exceed bounding set | After Malcolm tag bumps, run `getcap` on capture binaries inside the image. Ensure all file caps are in `cap_add`. Do NOT rely on `setcap -r` to strip caps at runtime — it silently fails on overlay2. |
 | OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | TODO: add post-start hook to `nettap.service` or create an init container that runs securityadmin.sh |
 | Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
+| TShark filter may not find packets in very old PCAPs | Arkime rotates PCAP files by size (256MB default), older sessions may span files not in the 5-file search window | The auto-analyze heuristic tries 5 closest PCAPs by modified time. For very old connections, manual PCAP search may be needed. Could increase window or improve heuristic later. |
+| Suricata alert exclusion is hardcoded in logs.py | If event.dataset naming changes in Malcolm upgrade, alerts may leak back into log stats | Check `event.dataset` values after Malcolm version bumps. The `_EXCLUDE_ALERTS_FILTER` constant uses `{"term": {"event.dataset": "alert"}}`. |
+| pcap-monitor DNS exclusion is query-name based | If Zeek internal monitoring changes, the exclusion pattern breaks | The `_EXCLUDE_DNS_NOISE` filter matches `zeek.dns.query.keyword: "pcap-monitor"` literally. Check after Zeek/Malcolm upgrades. |
 
 ---
 
@@ -1650,3 +1699,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | phase-4/webui-v2 | netsniff-ng EPERM: SYS_ADMIN cap_add (setcap -r fails on overlay2) | 2026-03-07 |
 | — | 6a853e4 + 8763d07 | PCAP Search: BPF→display filter syntax, filter validation fix, download endpoint, sortable columns | 2026-03-09 |
 | — | 5e8acf8 | DNS Analytics: zeek.dns.* field remapping, RTT conversion fix, page redesign | 2026-03-09 |
+| — | 4009faf | Alerts page redesign: 4 new aggregation endpoints, interactive SVG timeline, severity/time filters, sortable table | 2026-03-09 |
+| NET-105 | 1f85e8e | Log Explorer: .keyword suffix on all 6 aggregation fields | 2026-03-10 |
+| NET-106 | 6c70af4 | Log Explorer: 10K event cap fix, stat text color, chart flicker, bar colors | 2026-03-10 |
+| NET-107 | 245d4af | Log Explorer: exclude Suricata alerts + pcap-monitor noise from aggregations | 2026-03-10 |
+| NET-108 | 8e09867 | Log Explorer: exclude pcap-monitor noise from search results | 2026-03-10 |
+| NET-109 | 0e10121 | Design system guide + 10-page standardization + sortable tables everywhere | 2026-03-10 |
+| NET-110 | 7912342 | TShark filter fix: drop ephemeral port, handle ICMP/IPv6 | 2026-03-10 |
+| — | 1ce47e3 | Deploy script: check OpenSearch health before deploying daemon/web | 2026-03-11 |

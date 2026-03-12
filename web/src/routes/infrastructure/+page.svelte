@@ -752,15 +752,13 @@
 				<div class="card-header">
 					<span class="card-title">Versions</span>
 				</div>
-				{#if versions && typeof versions === 'object' && !versions.error}
+				{#if versions && Array.isArray(versions.versions) && versions.versions.length > 0}
 					<div class="info-grid">
-						{#each Object.entries(versions) as [component, ver]}
-							{#if component !== 'timestamp' && component !== 'error'}
-								<div class="info-row">
-									<span class="info-label" style="text-transform: capitalize">{component.replace(/_/g, ' ')}</span>
-									<span class="info-value mono">{ver || '--'}</span>
-								</div>
-							{/if}
+						{#each versions.versions as comp}
+							<div class="info-row">
+								<span class="info-label" style="text-transform: capitalize">{comp.name.replace(/_/g, ' ').replace(/-/g, ' ')}</span>
+								<span class="info-value mono">{comp.current_version || '--'}</span>
+							</div>
 						{/each}
 					</div>
 				{:else}
