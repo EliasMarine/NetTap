@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-11
-> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Deploy script hardened with OpenSearch health check before deploying dependent containers. Session summary: Log Explorer fully fixed (6 commits — .keyword suffix, 10K cap, text color, chart flicker, colors, noise exclusion), design system created (10 pages standardized), TShark filter fixed (ephemeral port + ICMP + IPv6, 18 tests). Web tests: 1098/1098 passing. svelte-check: 0 errors. NET-105–NET-110.
+> **Last updated:** 2026-03-12
+> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Switched NVMe SMART monitoring to nvme-cli as primary tool (direct ioctl, no SCSI translation). smartctl retained as SATA fallback. Added SYS_ADMIN capability, removed pySMART. 59 SMART tests passing. Lessons 87–91 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1621,6 +1621,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 ### Docker Networking / Diagnostic Scripts (NEW — 2026-03-12)
 85. **Container `expose:` ports are NOT reachable from the host** — `expose: ["3000"]` makes a port available container-to-container on the Docker network, but NOT on `localhost` from the host. Only `ports: ["3000:3000"]` publishes to the host. In NetTap, nettap-web exposes 3000 internally and nettap-nginx publishes 80/443 to the host. Diagnostic scripts that `curl http://localhost:3000` from the host will always get HTTP 000 (connection refused). Must either: (a) curl through nginx on the published port (`curl -k https://localhost/path`), or (b) `docker exec nettap-web curl http://localhost:3000/path` from inside the container.
 86. **Diagnostic and debugging commands for the remote device MUST be scripts, not inline commands** — even a "quick" set of `curl` and `docker logs` commands must go in `scripts/remote/diagnose-*.sh`. Multi-command blocks break when copy-pasted over SSH, and the user has to re-run them one-by-one to debug which failed. A single script file is copy-paste-proof and reproducible.
+
+### SMART Monitoring / nvme-cli (NEW — 2026-03-12)
+87. **nvme-cli reports temperature in Kelvin, smartctl in Celsius** — `nvme smart-log` returns temperature as 311 (Kelvin) while smartctl returns 38 (Celsius). Must detect the source and convert: `temp_c = temp_k - 273` when value > 200 (heuristic: no drive runs above 200°C).
+88. **nvme-cli field names differ from smartctl** — `percent_used` (nvme-cli) vs `percentage_used` (smartctl), `avail_spare` vs `available_spare`, `media_errors` is the same. The extraction layer must handle both naming conventions.
+89. **nvme-cli admin commands target the controller, not the namespace** — `nvme smart-log /dev/nvme0` works, `nvme smart-log /dev/nvme0n1` may fail depending on version. Derive controller path by stripping the namespace suffix (`/dev/nvme0n1` → `/dev/nvme0`).
+90. **NVMe admin commands require SYS_ADMIN capability** — both `nvme smart-log` and `nvme id-ctrl` use NVMe admin ioctls that need `CAP_SYS_ADMIN`. SYS_RAWIO alone is insufficient for NVMe (though it works for SATA smartctl). The daemon container needs both caps: SYS_ADMIN for NVMe, SYS_RAWIO for SATA.
+91. **pySMART is unnecessary — nvme-cli + smartctl directly is better** — pySMART wraps smartctl with text parsing and has documented NVMe bugs. Using nvme-cli (native NVMe ioctl) + smartctl (SATA fallback) directly with JSON output is more reliable and removes a dependency.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.

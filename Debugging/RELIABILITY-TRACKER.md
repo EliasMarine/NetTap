@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
-> Last updated: 2026-03-10
-> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. Full-stack test (full-stack-test.sh): 59/59 passing. Mirror/SPAN mode: all API endpoints verified + catch-all SvelteKit proxy route added for feature pages. Web tests: 1098/1098 passing. svelte-check: 0 errors. Data pipeline: Suricata working (1.3M alerts/day), Zeek fixed (ZEEK_JSON=true). TShark filter fixed: dropped ephemeral source port, added IPv6/ICMP handling, extracted to utility module with 18 tests (NET-110). Design system created (web/DESIGN-SYSTEM.md), 10 pages standardized. Log Explorer: noise filtering (alerts + pcap-monitor), chart flicker fix, color improvements.
+> Last updated: 2026-03-12
+> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. SMART monitoring upgraded to nvme-cli (direct NVMe ioctl, no SCSI translation). 59 SMART tests passing. SYS_ADMIN cap added. pySMART removed. Full-stack test: 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Web tests: 1098/1098 passing. svelte-check: 0 errors.
 
 ## Purpose
 
@@ -12,7 +12,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | Subsystem | Status | Verified On | Issues | Notes |
 |-----------|--------|-------------|--------|-------|
 | OpenSearch | OK | 2026-03-03 | -- | Fixed: curlrc credential parsing added (PR #81) |
-| SMART Monitoring | OK | 2026-03-03 | NVMe data limited | smartctl code 2 (may lack SYS_RAWIO); health OK but temp/wear null on some devices |
+| SMART Monitoring | OK | 2026-03-12 | -- | Switched to nvme-cli as primary (direct ioctl, no SCSI translation). smartctl retained as SATA fallback. SYS_ADMIN cap added. 59 tests passing. |
 | Bridge Health | OK | 2026-03-04 | -- | Fixed: not_configured state (PR #81), bypass promisc toggle (PR #83), 30s polling loop (PR #83), 8-point readiness check (PR #83) |
 | Bridge Management | OK | 2026-03-04 | -- | NEW: BridgeManager service — create/teardown/readiness via nsenter, host persistence (PR #83) |
 | Internet Health | Fixing | -- | Shows "down" when not configured | Missing `not_configured` state |
@@ -168,13 +168,17 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 46. **A canonical design system document prevents visual drift.** CSS custom properties + reference doc + mandatory pre-read rule keeps 10+ pages consistent.
 47. **Diagnostic scripts must curl through the published port, not internal `expose` ports.** In NetTap, nettap-web exposes 3000 internally and nettap-nginx publishes 80/443 to the host. `curl http://localhost:3000` from the host always returns HTTP 000 (connection refused). Must either: (a) curl through nginx (`curl -k https://localhost/path`), or (b) `docker exec nettap-web curl http://localhost:3000/path` from inside the container.
 48. **ALL remote commands — including diagnostics — must be scripts.** Even a "quick" set of `curl` and `docker logs` commands must go in `scripts/remote/diagnose-*.sh`. Multi-command blocks break when copy-pasted over SSH.
+49. **nvme-cli reports temperature in Kelvin, not Celsius.** `nvme smart-log` returns `"temperature": 311` (Kelvin). Convert with `temp_c = temp_k - 273` when value > 200. smartctl returns Celsius directly.
+50. **nvme-cli uses different field names than smartctl.** `percent_used` (not `percentage_used`), `avail_spare` (not `available_spare`). The extraction layer must normalize both naming conventions to a common internal format.
+51. **NVMe admin ioctls need SYS_ADMIN, not just SYS_RAWIO.** Both `nvme smart-log` and `nvme id-ctrl` require `CAP_SYS_ADMIN`. SYS_RAWIO is sufficient for SATA smartctl only. The daemon container needs both caps.
+52. **nvme-cli targets the controller device, not the namespace.** `nvme smart-log /dev/nvme0` (controller) works. `/dev/nvme0n1` (namespace) may fail. Derive controller by regex: strip trailing `n\d+` from the device path.
 
 ## Verification Checklist
 
 After deploying reliability fixes to N100 hardware:
 
 - [x] `curl -sk https://localhost/api/health | python3 -m json.tool | grep opensearch_reachable` → `true` (verified 2026-03-03)
-- [ ] `curl -sk https://localhost/api/health | python3 -m json.tool | grep -A5 smart` → real temperature/power_on_hours values (NVMe returns null — may need SYS_RAWIO)
+- [ ] `curl -sk https://localhost/api/health | python3 -m json.tool | grep -A5 smart` → real temperature/power_on_hours values (now uses nvme-cli + SYS_ADMIN — pending deploy)
 - [x] `curl -sk https://localhost/api/bridge/health | python3 -m json.tool` → `health_status: "not_configured"` (verified 2026-03-03)
 - [x] Dashboard shows "Healthy" or informational states, no red badges for unconfigured services (verified 2026-03-03)
 - [x] System page shows actionable messages for unreachable OpenSearch (verified 2026-03-03)
