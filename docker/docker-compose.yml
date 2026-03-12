@@ -649,11 +649,13 @@ services:
       - ALL
     # NET_ADMIN: ethtool NIC LED blink via host network namespace
     # NET_RAW: ping requires ICMP raw socket capability
+    # SYS_ADMIN: NVMe admin commands (nvme smart-log) require this capability
     # SYS_PTRACE: nsenter -t 1 -n to enter host network namespace
-    # SYS_RAWIO: NVMe admin commands for smartctl SMART health queries
+    # SYS_RAWIO: SATA SMART queries via smartctl
     cap_add:
       - NET_ADMIN
       - NET_RAW
+      - SYS_ADMIN
       - SYS_PTRACE
       - SYS_RAWIO
     # pid: host lets nsenter target PID 1 (host init) for network namespace

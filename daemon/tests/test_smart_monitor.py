@@ -4,10 +4,12 @@ Tests for daemon/smart/monitor.py — SmartMonitor.
 Covers device type detection, NVMe and SATA metric extraction,
 temperature / wear / media-error alerting, alert callbacks,
 backward-compatible check_health, JSON-serializable status output,
-NVMe fallback parsing for firmware variants, and self-test diagnostics.
+NVMe fallback parsing for firmware variants, self-test diagnostics,
+and nvme-cli as primary NVMe tool.
 """
 
 import json
+import subprocess
 from unittest.mock import patch, MagicMock
 
 
@@ -461,9 +463,9 @@ class TestSelfTest:
         diag = monitor.run_self_test()
 
         assert len(diag["guidance"]) > 0
-        # Should mention /dev mount and SYS_RAWIO
+        # Should mention /dev mount and SYS_ADMIN capability
         guidance_text = " ".join(diag["guidance"])
-        assert "SYS_RAWIO" in guidance_text
+        assert "SYS_ADMIN" in guidance_text
 
     @patch.object(SmartMonitor, "get_raw_data")
     def test_self_test_no_missing_fields_when_all_present(self, mock_get_raw, mock_smartctl_nvme):
@@ -585,3 +587,304 @@ class TestOpenSearchIndexing:
 
         result = monitor.index_to_opensearch(metrics, mock_client)
         assert result is False
+
+
+# =========================================================================
+# nvme-cli controller path extraction
+# =========================================================================
+
+
+class TestNvmeControllerPath:
+    def test_controller_from_namespace(self):
+        """Derive /dev/nvme0 from /dev/nvme0n1."""
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        assert monitor._get_nvme_controller() == "/dev/nvme0"
+
+    def test_controller_from_multi_digit(self):
+        """Derive /dev/nvme1 from /dev/nvme1n1."""
+        monitor = SmartMonitor(device="/dev/nvme1n1")
+        assert monitor._get_nvme_controller() == "/dev/nvme1"
+
+    def test_controller_from_non_nvme(self):
+        """Non-NVMe paths return the device as-is."""
+        monitor = SmartMonitor(device="/dev/sda")
+        assert monitor._get_nvme_controller() == "/dev/sda"
+
+
+# =========================================================================
+# nvme-cli raw data retrieval
+# =========================================================================
+
+
+class TestNvmeCliRawData:
+    @patch("smart.monitor.subprocess.run")
+    def test_get_nvme_raw_data_success(self, mock_run, mock_nvme_cli_smart_log):
+        """nvme smart-log returns valid JSON."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps(mock_nvme_cli_smart_log),
+            stderr="",
+        )
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = monitor._get_nvme_raw_data()
+
+        assert data == mock_nvme_cli_smart_log
+        mock_run.assert_called_once_with(
+            ["nvme", "smart-log", "/dev/nvme0", "-o", "json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+    @patch("smart.monitor.subprocess.run")
+    def test_get_nvme_raw_data_not_installed(self, mock_run):
+        """nvme-cli not installed returns empty dict."""
+        mock_run.side_effect = FileNotFoundError("nvme not found")
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = monitor._get_nvme_raw_data()
+        assert data == {}
+
+    @patch("smart.monitor.subprocess.run")
+    def test_get_nvme_raw_data_nonzero_exit(self, mock_run):
+        """nvme smart-log non-zero exit returns empty dict."""
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="NVMe Status: Permission denied",
+        )
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = monitor._get_nvme_raw_data()
+        assert data == {}
+
+    @patch("smart.monitor.subprocess.run")
+    def test_get_nvme_raw_data_bad_json(self, mock_run):
+        """nvme smart-log returns invalid JSON."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="not json at all",
+            stderr="",
+        )
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = monitor._get_nvme_raw_data()
+        assert data == {}
+
+
+# =========================================================================
+# nvme-cli identity retrieval
+# =========================================================================
+
+
+class TestNvmeCliIdentity:
+    @patch("smart.monitor.subprocess.run")
+    def test_get_nvme_identity_success(self, mock_run, mock_nvme_cli_id_ctrl):
+        """nvme id-ctrl returns model and serial (trimmed)."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps(mock_nvme_cli_id_ctrl),
+            stderr="",
+        )
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        model, serial = monitor._get_nvme_identity()
+
+        assert model == "Samsung 980 PRO 1TB"
+        assert serial == "S6B1NJ0TB12345"
+
+    @patch("smart.monitor.subprocess.run")
+    def test_get_nvme_identity_failure(self, mock_run):
+        """nvme id-ctrl failure returns Unknown."""
+        mock_run.side_effect = FileNotFoundError("nvme not found")
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        model, serial = monitor._get_nvme_identity()
+
+        assert model == "Unknown"
+        assert serial == "Unknown"
+
+
+# =========================================================================
+# nvme-cli metric extraction
+# =========================================================================
+
+
+class TestExtractNvmeCliMetrics:
+    def test_temperature_kelvin_conversion(self, mock_nvme_cli_smart_log):
+        """Temperature in Kelvin (311) converts to Celsius (38)."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        assert metrics["temperature_c"] == 38
+
+    def test_temperature_already_celsius(self):
+        """Temperature < 200 treated as already Celsius."""
+        monitor = SmartMonitor()
+        data = {"temperature": 42, "percent_used": 5, "power_on_hours": 100}
+        metrics = monitor._extract_nvme_cli_metrics(data)
+        assert metrics["temperature_c"] == 42
+
+    def test_percent_used_field_name(self, mock_nvme_cli_smart_log):
+        """nvme-cli uses 'percent_used' not 'percentage_used'."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        assert metrics["percentage_used"] == 3
+
+    def test_tbw_calculation(self, mock_nvme_cli_smart_log):
+        """data_units_written * 512 * 1000."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        expected_tbw = 43285012 * 512 * 1000
+        assert metrics["total_bytes_written"] == expected_tbw
+
+    def test_bytes_read_calculation(self, mock_nvme_cli_smart_log):
+        """data_units_read * 512 * 1000."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        expected = 52459106 * 512 * 1000
+        assert metrics["total_bytes_read"] == expected
+
+    def test_media_errors(self, mock_nvme_cli_smart_log):
+        """media_errors extracted correctly."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        assert metrics["media_errors"] == 0
+
+    def test_critical_warning(self, mock_nvme_cli_smart_log):
+        """critical_warning extracted correctly."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        assert metrics["critical_warning"] == 0
+
+    def test_missing_temperature_returns_none(self):
+        """Missing temperature field returns None."""
+        monitor = SmartMonitor()
+        data = {"percent_used": 5, "power_on_hours": 100}
+        metrics = monitor._extract_nvme_cli_metrics(data)
+        assert metrics["temperature_c"] is None
+
+    def test_reallocated_sectors_always_none(self, mock_nvme_cli_smart_log):
+        """NVMe has no reallocated sectors concept."""
+        monitor = SmartMonitor()
+        metrics = monitor._extract_nvme_cli_metrics(mock_nvme_cli_smart_log)
+        assert metrics["reallocated_sectors"] is None
+
+
+# =========================================================================
+# nvme-cli device detection
+# =========================================================================
+
+
+class TestNvmeCliDeviceDetection:
+    def test_nvme_cli_source_detected_as_nvme(self, mock_nvme_cli_wrapped):
+        """Data with _source='nvme-cli' always detects as nvme."""
+        monitor = SmartMonitor(device="/dev/sda")  # path doesn't matter
+        result = monitor.detect_device_type(mock_nvme_cli_wrapped)
+        assert result == "nvme"
+
+
+# =========================================================================
+# nvme-cli identity routing
+# =========================================================================
+
+
+class TestNvmeCliIdentityRouting:
+    @patch.object(SmartMonitor, "_get_nvme_identity")
+    def test_extract_identity_uses_id_ctrl_for_nvme_cli(self, mock_id):
+        """_extract_identity routes to nvme id-ctrl for nvme-cli source."""
+        mock_id.return_value = ("NVMe Model", "NVMe Serial")
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = {"_source": "nvme-cli", "_nvme_smart_log": {}}
+        model, serial = monitor._extract_identity(data)
+        assert model == "NVMe Model"
+        assert serial == "NVMe Serial"
+        mock_id.assert_called_once()
+
+
+# =========================================================================
+# nvme-cli end-to-end: get_raw_data wrapping
+# =========================================================================
+
+
+class TestNvmeCliGetRawData:
+    @patch.object(SmartMonitor, "_get_nvme_raw_data")
+    def test_get_raw_data_wraps_nvme_cli(self, mock_nvme_raw, mock_nvme_cli_smart_log):
+        """get_raw_data wraps nvme-cli output with _source marker."""
+        mock_nvme_raw.return_value = mock_nvme_cli_smart_log
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = monitor.get_raw_data()
+
+        assert data["_source"] == "nvme-cli"
+        assert data["_nvme_smart_log"] == mock_nvme_cli_smart_log
+
+    @patch("smart.monitor.subprocess.run")
+    @patch.object(SmartMonitor, "_get_nvme_raw_data")
+    def test_get_raw_data_falls_back_to_smartctl(self, mock_nvme_raw, mock_run, mock_smartctl_nvme):
+        """When nvme-cli returns nothing, falls back to smartctl."""
+        mock_nvme_raw.return_value = {}
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps(mock_smartctl_nvme),
+            stderr="",
+        )
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        data = monitor.get_raw_data()
+
+        # Should be smartctl data, not wrapped
+        assert "_source" not in data
+        assert "nvme_smart_health_information_log" in data
+
+
+# =========================================================================
+# nvme-cli health assessment
+# =========================================================================
+
+
+class TestNvmeCliHealthAssessment:
+    @patch.object(SmartMonitor, "get_raw_data")
+    @patch.object(SmartMonitor, "_get_nvme_identity")
+    def test_healthy_when_critical_warning_zero(self, mock_id, mock_get_raw, mock_nvme_cli_wrapped):
+        """critical_warning=0 means healthy."""
+        mock_get_raw.return_value = mock_nvme_cli_wrapped
+        mock_id.return_value = ("Test NVMe", "SN123")
+
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        metrics = monitor.get_metrics()
+
+        assert metrics.healthy is True
+        assert metrics.device_type == "nvme"
+
+    @patch.object(SmartMonitor, "get_raw_data")
+    @patch.object(SmartMonitor, "_get_nvme_identity")
+    def test_unhealthy_when_critical_warning_nonzero(self, mock_id, mock_get_raw):
+        """critical_warning != 0 means unhealthy."""
+        mock_get_raw.return_value = {
+            "_source": "nvme-cli",
+            "_nvme_smart_log": {
+                "critical_warning": 4,
+                "temperature": 311,
+                "percent_used": 3,
+                "power_on_hours": 8760,
+                "data_units_written": 43285012,
+                "data_units_read": 52459106,
+                "media_errors": 0,
+            },
+        }
+        mock_id.return_value = ("Test NVMe", "SN123")
+
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        metrics = monitor.get_metrics()
+
+        assert metrics.healthy is False
+        assert any("critical warning" in w for w in metrics.warnings)
+
+    @patch.object(SmartMonitor, "get_raw_data")
+    @patch.object(SmartMonitor, "_get_nvme_identity")
+    def test_get_status_with_nvme_cli(self, mock_id, mock_get_raw, mock_nvme_cli_wrapped):
+        """get_status returns JSON-serializable dict from nvme-cli data."""
+        mock_get_raw.return_value = mock_nvme_cli_wrapped
+        mock_id.return_value = ("Test NVMe", "SN123")
+
+        monitor = SmartMonitor(device="/dev/nvme0n1")
+        status = monitor.get_status()
+
+        assert isinstance(status, dict)
+        serialized = json.dumps(status)
+        assert isinstance(serialized, str)
+        assert status["device_type"] == "nvme"
+        assert status["temperature_c"] == 38
