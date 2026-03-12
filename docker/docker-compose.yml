@@ -663,6 +663,16 @@ services:
     # Override Dockerfile USER — capabilities only work for root in Docker.
     # Security maintained via cap_drop: ALL + selective cap_add + read_only.
     user: "root"
+    # Device cgroup rules — /dev:/dev makes devices VISIBLE but Docker's device
+    # cgroup still blocks open()/ioctl() on them. These rules whitelist storage
+    # devices so nvme-cli and smartctl can query SMART health data.
+    # NVMe controller char device major is dynamically assigned — wildcard needed.
+    # Security note: container already has root + SYS_ADMIN + docker socket +
+    # pid host, so device cgroup is not a meaningful security boundary here.
+    device_cgroup_rules:
+      - 'c *:* rmw'
+      - 'b 259:* rmw'
+      - 'b 8:* rmw'
     read_only: true
     tmpfs:
       - /tmp:size=50M
