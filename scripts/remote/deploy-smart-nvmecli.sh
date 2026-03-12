@@ -14,19 +14,21 @@ echo ""
 # --- Step 1: Pull latest code ---
 echo "→ Step 1: Pulling latest code..."
 cd "$REPO_DIR" || { echo "FAIL: $REPO_DIR not found"; exit 1; }
-git pull origin phase-5/mirror-span-mode || { echo "FAIL: git pull failed"; exit 1; }
+git fetch origin fix/smart-health-ui-fields || { echo "FAIL: git fetch failed"; exit 1; }
+git checkout fix/smart-health-ui-fields || { echo "FAIL: git checkout failed"; exit 1; }
+git pull origin fix/smart-health-ui-fields || { echo "FAIL: git pull failed"; exit 1; }
 echo "  OK"
 echo ""
 
-# --- Step 2: Rebuild daemon container ---
-echo "→ Step 2: Rebuilding nettap-storage-daemon image..."
-sudo $COMPOSE build nettap-storage-daemon || { echo "FAIL: build failed"; exit 1; }
+# --- Step 2: Rebuild daemon + web containers ---
+echo "→ Step 2: Rebuilding nettap-storage-daemon + nettap-web images..."
+sudo $COMPOSE build nettap-storage-daemon nettap-web || { echo "FAIL: build failed"; exit 1; }
 echo "  OK"
 echo ""
 
-# --- Step 3: Recreate daemon container (picks up device_cgroup_rules + SYS_ADMIN) ---
-echo "→ Step 3: Recreating daemon container..."
-sudo $COMPOSE up -d nettap-storage-daemon --force-recreate || { echo "FAIL: up failed"; exit 1; }
+# --- Step 3: Recreate daemon + web containers ---
+echo "→ Step 3: Recreating daemon + web containers..."
+sudo $COMPOSE up -d nettap-storage-daemon nettap-web --force-recreate || { echo "FAIL: up failed"; exit 1; }
 echo "  OK"
 echo ""
 
