@@ -767,7 +767,7 @@ async def get_category_devices(
         },
         "aggs": {
             "devices": {
-                "terms": {"field": "source.ip", "size": limit},
+                "terms": {"field": "source.ip.keyword", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
