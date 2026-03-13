@@ -561,10 +561,16 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
-    devices, services = await asyncio.gather(
-        traffic_classifier.get_category_devices(client, category, from_ts, to_ts),
-        traffic_classifier.get_category_services(client, category, from_ts, to_ts),
-    )
+    try:
+        devices, services = await asyncio.gather(
+            traffic_classifier.get_category_devices(client, category, from_ts, to_ts),
+            traffic_classifier.get_category_services(client, category, from_ts, to_ts),
+        )
+    except Exception as exc:
+        logger.error("Error in category detail for %s: %s", category, exc)
+        return web.json_response(
+            {"error": f"Category detail query failed: {exc}"}, status=500
+        )
 
     grand_total = sum(d["total_bytes"] for d in devices)
     for d in devices:
