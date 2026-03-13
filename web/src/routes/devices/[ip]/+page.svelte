@@ -24,16 +24,17 @@
 		getDeviceDetail,
 		getDeviceConnections,
 		getDeviceCategories,
-		getDeviceAlerts,
 		getDevicePorts,
 		getDeviceRiskScore,
 	} from '$api/devices';
+	import { getSmartAlerts, suppressAlert } from '$api/alerts';
+	import type { SmartAlert } from '$api/alerts';
 	import type {
 		DeviceDetail,
 		DeviceConnection,
 		DeviceCategory,
-		DeviceAlert,
 		DevicePort,
+		// DeviceAlert removed — using SmartAlert from alerts.ts instead
 		RiskFactor,
 	} from '$api/devices';
 
@@ -65,8 +66,8 @@
 	let loading = $state(true);
 	let device = $state<DeviceDetail | null>(null);
 	let categories = $state<DeviceCategory[]>([]);
-	let alerts = $state<DeviceAlert[]>([]);
-	let alertsTotal = $state(0);
+	let smartAlerts = $state<SmartAlert[]>([]);
+	let smartAlertsTotal = $state(0);
 	let ports = $state<DevicePort[]>([]);
 	let riskScore = $state(0);
 	let riskLevel = $state('low');
@@ -149,17 +150,17 @@
 	async function fetchAll() {
 		loading = true;
 		try {
-			const [deviceRes, catRes, alertRes, portRes, riskRes] = await Promise.all([
+			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
 				getDeviceDetail(deviceIp),
 				getDeviceCategories(deviceIp),
-				getDeviceAlerts(deviceIp, { limit: 10 }),
+				getSmartAlerts({ device_ip: deviceIp, limit: 20 }),
 				getDevicePorts(deviceIp),
 				getDeviceRiskScore(deviceIp),
 			]);
 			device = deviceRes.device;
 			categories = catRes.categories;
-			alerts = alertRes.alerts;
-			alertsTotal = alertRes.total;
+			smartAlerts = smartRes.alerts;
+			smartAlertsTotal = smartRes.total;
 			ports = portRes.ports;
 			riskScore = riskRes.score;
 			riskLevel = riskRes.level;
@@ -523,25 +524,40 @@
 			</div>
 			<div class="card">
 				<div class="card-header">
-					<span class="card-title">Recent Alerts</span>
-					<span class="card-badge">{formatNumber(alertsTotal)} total</span>
+					<span class="card-title">Smart Alerts</span>
+					<span class="card-badge">{smartAlertsTotal} grouped</span>
 				</div>
-				{#if alerts.length > 0}
-					<div class="alert-list">
-						{#each alerts as alert, i (`${alert.signature_id}-${i}`)}
-							<div class="alert-row">
-								<span class="alert-sev {sevClass(alert.severity)}">{sevLabel(alert.severity)}</span>
-								<div class="alert-info">
-									<div class="alert-sig">{alert.signature}</div>
-									<div class="alert-cat">{alert.category}</div>
+				{#if smartAlerts.length > 0}
+					<div class="smart-alert-list">
+						{#each smartAlerts as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
+							<div class="smart-alert-card">
+								<div class="sa-header">
+									<span class="sa-sev {sa.severity <= 1 ? 'sev-critical' : sa.severity === 2 ? 'sev-high' : sa.severity === 3 ? 'sev-med' : 'sev-low'}">{sa.severity_label}</span>
+									<span class="sa-category">{sa.category_label}</span>
+									<span class="sa-count mono">&times;{formatNumber(sa.count)}</span>
+									{#if sa.trend === 'increasing'}
+										<span class="sa-trend trend-up">&uarr;</span>
+									{:else if sa.trend === 'decreasing'}
+										<span class="sa-trend trend-down">&darr;</span>
+									{/if}
 								</div>
-								<span class="alert-time mono">{new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+								<div class="sa-signature">{sa.signature}</div>
+								<div class="sa-meta">
+									<span class="mono">{sa.source_ip}</span>
+									<span class="sa-arrow">&rarr;</span>
+									<span class="mono">{sa.destination_ip}{#if sa.destination_port}:{sa.destination_port}{/if}</span>
+								</div>
+								<div class="sa-assessment">{sa.assessment}</div>
+								<div class="sa-actions">
+									<a href="/alerts?ip={deviceIp}" class="sa-action-btn">Investigate</a>
+									<button class="sa-action-btn" onclick={() => { suppressAlert(sa.signature_id, deviceIp); smartAlerts = smartAlerts.filter(a => a !== sa); }}>Suppress</button>
+								</div>
 							</div>
 						{/each}
 					</div>
 					<a href="/alerts?ip={deviceIp}" class="card-link">View all alerts &rarr;</a>
 				{:else}
-					<p class="empty-msg">No alerts for this device.</p>
+					<p class="empty-msg">No actionable alerts for this device.</p>
 				{/if}
 			</div>
 		</div>
@@ -795,18 +811,29 @@
 	.rf-score { font-size: var(--text-xs); font-weight: 600; min-width: 50px; text-align: right; }
 
 	/* ---------------------------------------------------------------- Alerts */
-	.alert-list { padding: var(--space-xs) 0; }
-	.alert-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--border-dim); transition: background var(--transition-fast); }
-	.alert-row:last-child { border-bottom: none; }
-	.alert-row:hover { background: var(--bg-tertiary); }
-	.alert-sev { padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+	/* ---------------------------------------------------------------- Smart Alerts */
+	.smart-alert-list { padding: var(--space-xs) 0; }
+	.smart-alert-card { padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); transition: background var(--transition-fast); }
+	.smart-alert-card:last-child { border-bottom: none; }
+	.smart-alert-card:hover { background: var(--bg-tertiary); }
+	.sa-header { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs); }
+	.sa-sev { padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+	.sev-critical { background: rgba(255,71,87,0.2); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
 	.sev-high { background: rgba(255,71,87,0.12); color: var(--red); }
 	.sev-med { background: rgba(255,171,0,0.12); color: var(--amber); }
 	.sev-low { background: rgba(0,212,255,0.08); color: var(--cyan); }
-	.alert-info { min-width: 0; }
-	.alert-sig { font-size: var(--text-sm); color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-	.alert-cat { font-size: var(--text-xs); color: var(--text-muted); }
-	.alert-time { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+	.sa-category { font-size: var(--text-xs); color: var(--text-muted); font-weight: 500; }
+	.sa-count { font-size: var(--text-xs); color: var(--text-dim); margin-left: auto; }
+	.sa-trend { font-size: var(--text-xs); font-weight: 700; }
+	.trend-up { color: var(--red); }
+	.trend-down { color: var(--green); }
+	.sa-signature { font-size: var(--text-sm); color: var(--text-primary); font-weight: 500; margin-bottom: 4px; }
+	.sa-meta { font-size: var(--text-xs); color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+	.sa-arrow { color: var(--text-dim); }
+	.sa-assessment { font-size: var(--text-xs); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--space-sm); }
+	.sa-actions { display: flex; gap: var(--space-sm); }
+	.sa-action-btn { padding: 3px 10px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 600; cursor: pointer; transition: all var(--transition-fast); border: 1px solid var(--border-dim); background: var(--bg-tertiary); color: var(--text-secondary); text-decoration: none; font-family: var(--font-sans); }
+	.sa-action-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
 
 	/* ---------------------------------------------------------------- Tables */
 	.table-wrap { overflow-x: auto; }
