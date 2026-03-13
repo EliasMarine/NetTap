@@ -201,13 +201,13 @@
 			onmouseleave={handleMouseLeave}
 		>
 			<defs>
-				<linearGradient id="dl-grad" x1="0" y1="0" x2="0" y2="1">
-					<stop offset="0%" stop-color={downloadColor} stop-opacity="0.3" />
-					<stop offset="100%" stop-color={downloadColor} stop-opacity="0.02" />
+				<linearGradient id="dual-dl-grad" x1="0" y1="0" x2="0" y2="1">
+					<stop offset="0%" stop-color={downloadColor} stop-opacity="0.5" />
+					<stop offset="100%" stop-color={downloadColor} stop-opacity="0.05" />
 				</linearGradient>
-				<linearGradient id="ul-grad" x1="0" y1="0" x2="0" y2="1">
-					<stop offset="0%" stop-color={uploadColor} stop-opacity="0.2" />
-					<stop offset="100%" stop-color={uploadColor} stop-opacity="0.02" />
+				<linearGradient id="dual-ul-grad" x1="0" y1="0" x2="0" y2="1">
+					<stop offset="0%" stop-color={uploadColor} stop-opacity="0.35" />
+					<stop offset="100%" stop-color={uploadColor} stop-opacity="0.05" />
 				</linearGradient>
 			</defs>
 
@@ -223,7 +223,7 @@
 			{/each}
 
 			<!-- Upload area (behind, lower opacity) -->
-			<path d={uploadAreaPath} fill="url(#ul-grad)" />
+			<path d={uploadAreaPath} fill="url(#dual-ul-grad)" />
 
 			<!-- Upload line -->
 			<polyline
@@ -237,14 +237,14 @@
 			/>
 
 			<!-- Download area (front) -->
-			<path d={downloadAreaPath} fill="url(#dl-grad)" />
+			<path d={downloadAreaPath} fill="url(#dual-dl-grad)" />
 
 			<!-- Download line -->
 			<polyline
 				points={downloadLinePath}
 				fill="none"
 				stroke={downloadColor}
-				stroke-width="2"
+				stroke-width="2.5"
 				stroke-linecap="round"
 				stroke-linejoin="round"
 			/>
