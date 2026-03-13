@@ -314,10 +314,11 @@ export async function getCategoryDetail(
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
 	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
 	try {
-		const res = await fetch(url);
+		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 		if (!res.ok) throw new Error(`${res.status}`);
 		return await res.json();
-	} catch {
+	} catch (err) {
+		console.error('[getCategoryDetail] fetch failed for', category, err);
 		return {
 			category,
 			label: category,

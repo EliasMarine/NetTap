@@ -278,7 +278,8 @@ describe('traffic API client', () => {
 			});
 
 			expect(fetch).toHaveBeenCalledWith(
-				expect.stringContaining('/api/traffic/categories/streaming')
+				expect.stringContaining('/api/traffic/categories/streaming'),
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
 			);
 			expect(result.category).toBe('streaming');
 			expect(result.devices).toHaveLength(1);
@@ -306,7 +307,10 @@ describe('traffic API client', () => {
 
 			await getCategoryDetail('file_transfer');
 
-			expect(fetch).toHaveBeenCalledWith('/api/traffic/categories/file_transfer');
+			expect(fetch).toHaveBeenCalledWith(
+				'/api/traffic/categories/file_transfer',
+				expect.objectContaining({ signal: expect.any(AbortSignal) })
+			);
 		});
 	});
 });

@@ -114,14 +114,16 @@
 		return { from: from.toISOString(), to: now.toISOString() };
 	}
 
-	async function fetchData() {
+	async function fetchData(cat: string, range: string) {
 		loading = true;
-		const timeParams = computeTimeParams(selectedRange);
+		const timeParams = computeTimeParams(range);
 
 		try {
-			data = await getCategoryDetail(category, timeParams);
-			topServices = data?.services ?? [];
-		} catch {
+			const result = await getCategoryDetail(cat, timeParams);
+			data = result;
+			topServices = result?.services ?? [];
+		} catch (err) {
+			console.error('[traffic/category] fetchData error:', err);
 			data = null;
 			topServices = [];
 		} finally {
@@ -131,13 +133,11 @@
 
 	// Refetch when selectedRange or category changes
 	$effect(() => {
-		// Read reactive values to track them
-		const _range = selectedRange;
-		const _cat = category;
-		// Avoid unused variable lint warnings
-		void _range;
-		void _cat;
-		fetchData();
+		// Read reactive values to track them — these are the effect's dependencies
+		const cat = category;
+		const range = selectedRange;
+		// Pass values explicitly to avoid reading reactive state inside async function
+		fetchData(cat, range);
 	});
 
 	// ---------------------------------------------------------------------------
