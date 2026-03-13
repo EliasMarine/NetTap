@@ -1629,6 +1629,13 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 90. **NVMe admin commands require SYS_ADMIN capability** — both `nvme smart-log` and `nvme id-ctrl` use NVMe admin ioctls that need `CAP_SYS_ADMIN`. SYS_RAWIO alone is insufficient for NVMe (though it works for SATA smartctl). The daemon container needs both caps: SYS_ADMIN for NVMe, SYS_RAWIO for SATA.
 91. **pySMART is unnecessary — nvme-cli + smartctl directly is better** — pySMART wraps smartctl with text parsing and has documented NVMe bugs. Using nvme-cli (native NVMe ioctl) + smartctl (SATA fallback) directly with JSON output is more reliable and removes a dependency.
 
+### Svelte 5 / Frontend Build (NEW — 2026-03-13)
+92. **Svelte 5 `{@const}` can ONLY be a direct child of block tags** — `{@const}` must be immediately inside `{#each}`, `{#if}`, `{:else}`, `{#snippet}`, or `<Component>`. It CANNOT be inside HTML elements like `<div>`, `<svg>`, `<td>`, etc. This causes silent build failures in Docker (vite build exits 1) while `svelte-check` may not catch it. Fix: move calculations to `$derived` in the script block or inline expressions in attributes.
+93. **Multi-ASN organizations produce duplicate service names after ASN prefix stripping** — OpenSearch aggregates by `destination.as.full.keyword` (e.g., `AS16509 Amazon.com, Inc.`). After stripping the ASN number, the same org name appears multiple times if they operate multiple ASNs (Amazon, Rackspace, etc.). Must merge by name and sum bytes/connections. Duplicate names in Svelte `{#each (item.key)}` blocks crash the renderer with `each_key_duplicate`, leaving the DOM in a stale loading state.
+94. **Svelte render crashes leave the DOM in the previous state** — if `{#each}` throws `each_key_duplicate` during rendering after `loading = false`, the DOM stays showing the loading spinner because the conditional branch that shows data never completed rendering. The error appears in console but the page looks "stuck". Always use index-suffixed keys (`${name}-${i}`) as a safety net.
+95. **Device hostname resolution via DNS answer records works well** — querying `zeek.dns.answers` (the IPs a domain resolves to) and aggregating by `zeek.dns.query.keyword` with `terms size=1` returns the most common hostname for any IP. This is already implemented in `DeviceFingerprint.get_hostname_for_ip()` and adds ~15 hostnames per 37 devices (depends on DNS traffic volume).
+96. **Risk scoring already returns full factor breakdown** — `GET /api/risk/scores/{ip}` returns not just the score/level but an array of `factors` with `{name, score, max, description}` for all 5 weighted factors. No new backend work needed to display the breakdown — just consume the existing API.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1714,3 +1721,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-109 | 0e10121 | Design system guide + 10-page standardization + sortable tables everywhere | 2026-03-10 |
 | NET-110 | 7912342 | TShark filter fix: drop ephemeral port, handle ICMP/IPv6 | 2026-03-10 |
 | — | 1ce47e3 | Deploy script: check OpenSearch health before deploying daemon/web | 2026-03-11 |
+| — | 79fdc8e | Traffic category detail: duplicate ASN service names crash Svelte render | 2026-03-13 |
+| — | a6f44c1 | Traffic category detail v2: bandwidth chart, hostnames, search, auto-refresh, service filter, % column | 2026-03-13 |
+| — | ddfb627 | Svelte build fix: {@const} inside <div> invalid — inline expressions instead | 2026-03-13 |
+| — | 7d44e5d | Device intelligence dashboard v2: 7 sections + TShark drill-down drawer | 2026-03-13 |
+| — | c948e8c | Svelte build fix: {@const} inside <svg> invalid — $derived arc calc instead | 2026-03-13 |

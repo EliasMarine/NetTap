@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-13
-> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. SMART monitoring upgraded to nvme-cli (direct NVMe ioctl, no SCSI translation). 59 SMART tests passing. SYS_ADMIN cap added. pySMART removed. Full-stack test: 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Web tests: 1444/1444 passing. svelte-check: 0 errors. Traffic categories: ASN-based classification working (3 async bugs + Docker build fix). .dockerignore excludes test files from build context.
+> Status: 8/8 subsystems production-ready. 18/18 containers healthy on N100. Traffic category detail v2: 9 features (bandwidth chart, hostnames, search, auto-refresh, service filter, % column, trends). Device detail v2: 7-section intelligence dashboard + TShark drill-down drawer. Svelte 5 {@const} placement rule learned (lessons 92-96). 73 new daemon tests + 46 new web tests this session.
 
 ## Purpose
 
@@ -39,7 +39,8 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | nettap-nginx (SSL) | OK | 2026-03-07 | -- | Fixed: SSL key chmod 644 for non-root nginx worker. Self-signed cert, LAN-only. |
 | OpenSearch (security) | OK | 2026-03-07 | -- | Reusable fix-opensearch.sh script created. Security bootstrap after container recreate. |
 | Boot Persistence | OK | 2026-03-07 | -- | NEW: nettap.service systemd unit — auto-starts Docker stack after docker.service on reboot. |
-| Traffic Categories (ASN) | OK | 2026-03-12 | -- | **FIXED:** 3 async bugs (await on sync client), source.ip.keyword, fetch timeout, $effect reactivity. ASN-based classification with 17 categories. PR #97. |
+| Traffic Categories (ASN) | OK | 2026-03-13 | -- | **FIXED+ENHANCED:** Duplicate ASN service merge, category detail v2 (9 features: bandwidth chart, hostnames, search, auto-refresh, service filter, % column, trends). 56 daemon tests + 22 web tests passing. |
+| Device Detail v2 | OK | 2026-03-13 | -- | **NEW:** 7-section device intelligence dashboard + ConnectionDrawer with TShark drill-down. 3 new daemon endpoints, enhanced detail API. 17+24 tests passing. |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -107,6 +108,10 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-12 | Traffic Categories (daemon) | `get_category_devices` returns empty IP buckets | `source.ip` is a `text` field — `terms` aggregation tokenizes IPs into individual octets | Changed to `source.ip.keyword` (matching working `top_talkers` handler pattern) | -- | claude/angry-payne (PR #97) |
 | 2026-03-12 | Traffic Categories (web) | Category drill-down page shows infinite loading spinner | 1) `getCategoryDetail()` fetch had no timeout (hangs if proxy/daemon slow). 2) `$effect()` called `fetchData()` which read reactive `$state`/`$derived` inside async body — potential Svelte 5 reactivity tracking issues. 3) Web container not rebuilt with latest proxy route code. | Added 15s `AbortSignal.timeout` to fetch. Pass values as plain parameters to `fetchData()`. Rebuilt web container. | -- | claude/angry-payne (PR #97) |
 | 2026-03-13 | Docker Build (web) | Web container build fails: "Files prefixed with + are reserved" | Test files named `+page.server.test.ts` and `+server.test.ts` in route directories rejected by SvelteKit's route scanner during `vite build` | Added `**/*.test.ts` and `**/*.spec.ts` to `.dockerignore` to exclude test files from Docker build context | -- | claude/angry-payne (PR #97) |
+| 2026-03-13 | Traffic Categories | Category detail pages crash on categories with multi-ASN orgs (Cloud, Streaming) | Duplicate service names after ASN prefix strip crash Svelte `{#each}` keyed block | Merge services by name (sum bytes+connections). Use index-suffixed keys as frontend safety net | -- | fix/traffic-category-duplicate-services (79fdc8e) |
+| 2026-03-13 | Traffic Categories v2 | Category detail page redesigned: added bandwidth chart, hostname resolution, search/filter, auto-refresh, service click-through, % column, trend indicators | Feature enhancement | New daemon endpoint `/api/traffic/categories/{category}/bandwidth`. Modified `get_category_devices` for hostname resolution. 9 new features total. | -- | fix/traffic-category-duplicate-services (a6f44c1) |
+| 2026-03-13 | Svelte Build | `{@const}` inside `<div>` or `<svg>` causes Docker build failure | Svelte 5 restricts `{@const}` to direct children of block tags (`{#each}`, `{#if}`, etc.) | Moved calculations to `$derived` in script block or inline style expressions | -- | fix/traffic-category-duplicate-services (ddfb627, c948e8c) |
+| 2026-03-13 | Device Detail v2 | Device detail page redesigned: 7 sections + connection drill-down drawer with TShark analysis | Feature enhancement | 3 new daemon endpoints (`/categories`, `/alerts`, `/ports`), enhanced detail API (DL/UL split, unique dests, top services), ConnectionDrawer component, full page rewrite | -- | fix/traffic-category-duplicate-services (7d44e5d) |
 
 ## Reliability Lessons Learned
 
