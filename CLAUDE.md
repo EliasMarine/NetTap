@@ -221,6 +221,8 @@ cd daemon && python3 main.py
 
 ### OpenSearch Security Bootstrap (run after every `docker compose down` + `up`)
 
+> **THIS IS CRUCIAL TO THE FULL STACK.** Without this bootstrap, OpenSearch returns "Unauthorized" for every request, which means: no data ingestion (logstash/filebeat rejected), no API responses (daemon gets 403), no dashboard data (all pages show empty), and no alerts. The entire NetTap stack is non-functional without a working OpenSearch auth layer. **Always run bootstrap after ANY container recreation.**
+
 **CRITICAL: Every time the OpenSearch container is recreated** (`docker compose down` + `up`, `--force-recreate`, or any operation that resets the container filesystem), the `roles_mapping.yml` reverts to empty. This breaks ALL service authentication (logstash, filebeat, etc. get 403). You MUST re-run these commands. See Chain 11 in `Debugging/DEPLOYMENT-ISSUES.md` for full details.
 
 ```bash
@@ -300,6 +302,7 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 3. **NEVER hardcode font sizes** — use text vars (`var(--text-sm)`, not `0.8125rem`)
 4. **NEVER set max-width on page containers** — pages are always full-width
 5. **ALL tables MUST be sortable** — ascending/descending on every column
+6. **NEVER use hardcoded text colors** (`#fff`, `#000`, `black`, `white`) — always use theme-aware CSS variables (`var(--text-primary)`, `var(--text-secondary)`, `var(--text-muted)`). The UI is dark-mode now but light mode is planned; hardcoded colors will break when themes change. Pay special attention to `<button>` elements whose user-agent default `color: ButtonText` (black) overrides inherited text colors — always set an explicit color class.
 
 ---
 
@@ -395,17 +398,27 @@ sudo docker logs nettap-storage-daemon --tail 50
 
 ## Remote Device Workflow
 
-**The NetTap device is a separate physical machine on the local network.** The development machine (where Claude Code runs) cannot execute commands on the NetTap device directly. The user SSHes into the device and copy-pastes commands/files manually.
+> **HIGHEST PRIORITY — READ THIS FIRST BEFORE ANY DEPLOYMENT WORK**
+
+**The NetTap device is a COMPLETELY SEPARATE physical machine on the local network.** It is NOT the development machine. Claude Code runs on the dev machine. The user SSHes into the NetTap device and copy-pastes commands/scripts manually. These are two entirely different computers with different filesystems, different installed software, and different directory structures.
+
+### Critical Facts About the NetTap Device
+
+1. **The device does NOT have `npm` installed.** All builds happen inside Docker containers via `docker compose build`. NEVER give commands that use `npm` directly on the device.
+2. **The device does NOT have the same directory structure as the dev machine.** The repo lives at `~/NetTap` (i.e., `/home/nettap/NetTap`). There is NO `/opt/nettap`, no `/root/NetTap`.
+3. **`scripts/remote/` does NOT exist on the device** unless manually created. Do NOT push deploy scripts to git and expect them to be pullable — the directory may have permission issues or not exist. Instead, provide scripts via `cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT` for the user to paste directly.
+4. **`sudo` changes `$HOME` to `/root`.** If a script uses `$HOME/NetTap` and runs with `sudo`, it resolves to `/root/NetTap` which doesn't exist. Either: (a) don't use `sudo` for the whole script — only `sudo` individual commands that need it, or (b) hardcode `REPO_DIR="/home/nettap/NetTap"`, or (c) use `$(getent passwd nettap | cut -d: -f6)/NetTap`.
+5. **The device runs Ubuntu Server 22.04** with Docker and Docker Compose. That's it. No Node.js, no npm, no Python pip packages outside of containers.
 
 ### Rules for Claude Code
 
 1. **Never assume commands can run on the NetTap device from this machine.** All deployment, debugging, and diagnostic commands are copy-pasted by the user over SSH.
 2. **NEVER give multi-line commands with `\` continuations or `&&` chains for the remote device.** They ALWAYS break when copy-pasted into SSH terminals (trailing spaces after `\` become escaped spaces, `&&` chains fail silently). This has caused repeated frustration.
-3. **ALL remote commands MUST be written as self-contained `.sh` script files in `scripts/remote/`.** No exceptions. Even 2-3 commands go in a script. This includes **diagnostic and debugging commands** — never give a list of `curl` or `docker logs` commands inline. Write a `diagnose-*.sh` script instead. The user will `git pull` to get the script onto the device (or copy-paste the script contents into a file), then run `sudo bash scripts/remote/<script>.sh`.
+3. **ALL remote commands MUST be provided as a self-contained script** the user can paste into a file on the device (via `cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT`). Do NOT push scripts to `scripts/remote/` in git — the device may not be able to pull them due to permission issues or missing directories.
 4. **Every remote script must include the full workflow.** Pull latest code, build containers, deploy, wait for startup, then run the actual task. The user runs ONE script and walks away. Never separate "deploy" and "test" into different steps.
 5. **Each remote script must be self-contained and idempotent** — include progress markers (`echo "→ Step..."`), error handling (no `set -e`, use per-command `|| true` or explicit error messages), and verify results at the end.
-6. **The ONLY inline command allowed is the script runner itself:** `sudo bash scripts/remote/<script>.sh`
-7. **If the user needs to get the script onto the device first** (before `git pull` works), provide the script contents in a single code block they can paste into `cat > script.sh << 'SCRIPT' ... SCRIPT`.
+6. **Scripts must handle `sudo` correctly.** Run the script as the normal user (`bash /tmp/script.sh`), and only `sudo` individual docker commands inside. NEVER `sudo bash /tmp/script.sh` — this breaks `$HOME`, `git` ownership, etc.
+7. **NEVER use `npm`, `node`, or `python3` directly in device scripts** — these may not be installed. All builds happen via `docker compose build`. All Python/Node execution happens inside containers.
 
 ---
 

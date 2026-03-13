@@ -332,7 +332,7 @@
 	<div class="stats-grid">
 		<button class="stat-card clickable" onclick={() => document.getElementById('files-section')?.scrollIntoView({ behavior: 'smooth' })}>
 			<span class="stat-label">PCAP Files</span>
-			<span class="stat-value">{totalFileCount}</span>
+			<span class="stat-value text-primary">{totalFileCount}</span>
 		</button>
 		<div class="stat-card">
 			<span class="stat-label">Total Captured</span>
@@ -648,7 +648,8 @@
 	/* Stats Grid */
 	.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-md); margin-bottom: var(--space-lg); }
 	.stat-card.clickable { text-align: left; width: 100%; }
-	.stat-label { font-size: 0.7rem; color: var(--text-muted); letter-spacing: 0.05em; margin-top: var(--space-xs); text-transform: uppercase; }
+	.text-primary { color: var(--text-primary); }
+	/* stat-label inherits from global.css */
 
 	/* Cards */
 	.card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; padding: var(--space-lg); margin-bottom: var(--space-lg); }

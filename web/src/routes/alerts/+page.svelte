@@ -950,7 +950,7 @@
 		width: 100%;
 	}
 
-	.text-white { color: #fff; }
+	.text-white { color: var(--text-primary); }
 	.text-red { color: var(--red); }
 	.text-amber { color: var(--amber); }
 	.text-blue { color: var(--blue); }
