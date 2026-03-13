@@ -721,6 +721,7 @@
 							value: cat.total_bytes,
 							formattedValue: formatBytesShort(cat.total_bytes),
 							color: categoryColor(cat.name),
+							href: '/traffic/' + cat.name,
 						}))}
 						maxValue={maxCategoryBytes}
 						showRank={false}
@@ -736,6 +737,7 @@
 							value: cat.total_bytes,
 							formattedValue: formatBytesShort(cat.total_bytes),
 							color: categoryColor(cat.name),
+							href: '/traffic/' + cat.name,
 						}))}
 						maxValue={maxCategoryBytes}
 						showRank={false}
