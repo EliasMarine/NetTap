@@ -288,11 +288,15 @@
 		}
 	});
 
-	// Initial fetch — also read IP filter from URL query params (e.g. from IPAddress context menu)
+	// Initial fetch — also read IP and protocol filter from URL query params (e.g. from IPAddress context menu)
 	$effect(() => {
 		const urlIp = $page.url.searchParams.get('ip');
 		if (urlIp) {
 			ipFilter = urlIp;
+		}
+		const urlProtocol = $page.url.searchParams.get('protocol');
+		if (urlProtocol) {
+			protocolFilter = urlProtocol;
 		}
 		fetchConnections(1);
 		initialized = true;

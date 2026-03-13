@@ -9,6 +9,8 @@
 		getSuspiciousDns,
 		getDeviceDns,
 	} from '$lib/api/dns';
+	import { page } from '$app/stores';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type {
 		DnsStats,
 		TopDomain,
@@ -272,6 +274,17 @@
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
+		// Apply query params from URL
+		const urlDomain = $page.url.searchParams.get('domain') || '';
+		const urlType = $page.url.searchParams.get('type') || '';
+		if (urlDomain) {
+			domainSearch = urlDomain;
+		}
+		if (urlType) {
+			// urlType can pre-filter; stored for potential future use
+			domainSearch = domainSearch || urlType;
+		}
+
 		fetchAll().then(() => {
 			initialized = true;
 		});
@@ -462,19 +475,24 @@
 			{#if queryTypes.length === 0 && !loading}
 				<p class="empty-state">No query type data available.</p>
 			{:else}
-				<div class="type-bars">
-					{#each queryTypes as qt}
-						{@const pct = totalQueryTypeCount > 0 ? (qt.count / totalQueryTypeCount) * 100 : 0}
-						<div class="type-row">
-							<span class="type-label mono">{qt.type}</span>
-							<div class="type-bar-track">
-								<div class="type-bar-fill" style="width: {pct}%"></div>
-							</div>
-							<span class="type-count mono">{qt.count.toLocaleString()}</span>
-							<span class="type-pct">{pct.toFixed(1)}%</span>
-						</div>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={queryTypes.map(qt => {
+						const pct = totalQueryTypeCount > 0 ? (qt.count / totalQueryTypeCount) * 100 : 0;
+						return {
+							key: qt.type,
+							label: qt.type,
+							mono: true,
+							value: qt.count,
+							formattedValue: qt.count.toLocaleString(),
+							color: 'var(--cyan)',
+							secondaryValue: pct.toFixed(1) + '%',
+						};
+					})}
+					maxValue={queryTypes.length > 0 ? queryTypes[0].count : 1}
+					showRank={false}
+					labelWidth={60}
+					barHeight={12}
+				/>
 			{/if}
 		</section>
 	</div>
@@ -942,7 +960,8 @@
 
 	.text-muted { color: var(--text-muted); }
 
-	/* Query Type Distribution */
+	/* OLD CODE START — type-bars replaced by HorizontalBarList component */
+	/*
 	.type-bars {
 		display: flex;
 		flex-direction: column;
@@ -988,6 +1007,8 @@
 		color: var(--text-muted);
 		text-align: right;
 	}
+	*/
+	/* OLD CODE END */
 
 	/* Device Section */
 	.device-layout {

@@ -24,6 +24,7 @@
 	// import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
 	// OLD CODE END
 	import IPAddress from '$components/IPAddress.svelte';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	import { acknowledgeAlert } from '$api/alerts';
@@ -80,7 +81,9 @@
 	// Filters
 	let activeFilter = $state<SeverityFilter>('all');
 	let signatureSearch = $state('');
-	let signatureFilter = $state('');
+	let urlSignature = $page.url.searchParams.get('signature') || '';
+	let urlCategory = $page.url.searchParams.get('category') || '';
+	let signatureFilter = $state(urlSignature);
 	let ipFilter = $derived($page.url.searchParams.get('ip') || '');
 
 	// Pagination
@@ -629,21 +632,22 @@
 				<span class="text-muted text-sm">{topSignatures.length} rules</span>
 			</div>
 			{#if filteredSignatures.length > 0}
-				<div class="bar-list">
-					{#each filteredSignatures as sig, i}
-						<button class="bar-row clickable-row" class:bar-row-active={signatureFilter === sig.signature} onclick={() => filterBySignature(sig.signature)}>
-							<span class="bar-rank">{i + 1}</span>
-							<span class={severityBadgeClass(sig.severity)} style="flex-shrink: 0;">
-								{severityLabel(sig.severity)}
-							</span>
-							<span class="bar-label" title={sig.signature}>{sig.signature}</span>
-							<div class="bar-track">
-								<div class="bar-fill bar-fill-accent" style="width: {(sig.count / maxSigCount) * 100}%"></div>
-							</div>
-							<span class="bar-count mono">{sig.count}</span>
-						</button>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={filteredSignatures.map((sig, i) => ({
+						key: sig.signature,
+						label: sig.signature,
+						value: sig.count,
+						formattedValue: sig.count.toLocaleString(),
+						color: 'var(--accent)',
+						badgeText: severityLabel(sig.severity),
+						badgeClass: severityBadgeClass(sig.severity),
+					}))}
+					showRank={true}
+					labelWidth={220}
+					barHeight={12}
+					activeKey={signatureFilter}
+					onclick={(item) => filterBySignature(item.key)}
+				/>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No signatures found</p>
 			{/if}
@@ -656,18 +660,18 @@
 				<span class="text-muted text-sm">{categories.length} types</span>
 			</div>
 			{#if categories.length > 0}
-				<div class="bar-list">
-					{#each categories as cat, i}
-						<div class="bar-row">
-							<span class="bar-rank">{i + 1}</span>
-							<span class="bar-label" title={cat.category}>{cat.category}</span>
-							<div class="bar-track">
-								<div class="bar-fill bar-fill-green" style="width: {(cat.count / maxCategoryCount) * 100}%"></div>
-							</div>
-							<span class="bar-count mono">{cat.count}</span>
-						</div>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={categories.map((cat, i) => ({
+						key: cat.category,
+						label: cat.category,
+						value: cat.count,
+						formattedValue: cat.count.toLocaleString(),
+						color: 'var(--green)',
+					}))}
+					showRank={true}
+					labelWidth={200}
+					barHeight={12}
+				/>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No categories found</p>
 			{/if}
@@ -685,21 +689,21 @@
 				<span class="text-muted text-sm">destination</span>
 			</div>
 			{#if topDestIps.length > 0}
-				<div class="bar-list">
-					{#each topDestIps as entry, i}
-						<div class="bar-row clickable-row">
-							<span class="bar-rank">{i + 1}</span>
-							<span class="bar-label mono ip-label">
-								{entry.ip}
-								<button class="copy-btn" onclick={(e) => copyToClipboard(entry.ip, e)} title="Copy IP">&#x2398;</button>
-							</span>
-							<div class="bar-track">
-								<div class="bar-fill bar-fill-red" style="width: {(entry.count / maxDestIpCount) * 100}%"></div>
-							</div>
-							<span class="bar-count mono">{entry.count}</span>
-						</div>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={topDestIps.map((entry, i) => ({
+						key: entry.ip,
+						label: entry.ip,
+						isIp: true,
+						mono: true,
+						value: entry.count,
+						formattedValue: entry.count.toLocaleString(),
+						color: 'var(--red)',
+						href: '/devices/' + entry.ip,
+					}))}
+					showRank={true}
+					labelWidth={150}
+					barHeight={12}
+				/>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No destination IPs found</p>
 			{/if}
@@ -712,21 +716,21 @@
 				<span class="text-muted text-sm">attackers</span>
 			</div>
 			{#if topSrcIps.length > 0}
-				<div class="bar-list">
-					{#each topSrcIps as entry, i}
-						<div class="bar-row clickable-row">
-							<span class="bar-rank">{i + 1}</span>
-							<span class="bar-label mono ip-label">
-								{entry.ip}
-								<button class="copy-btn" onclick={(e) => copyToClipboard(entry.ip, e)} title="Copy IP">&#x2398;</button>
-							</span>
-							<div class="bar-track">
-								<div class="bar-fill bar-fill-amber" style="width: {(entry.count / maxSrcIpCount) * 100}%"></div>
-							</div>
-							<span class="bar-count mono">{entry.count}</span>
-						</div>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={topSrcIps.map((entry, i) => ({
+						key: entry.ip,
+						label: entry.ip,
+						isIp: true,
+						mono: true,
+						value: entry.count,
+						formattedValue: entry.count.toLocaleString(),
+						color: 'var(--amber)',
+						href: '/devices/' + entry.ip,
+					}))}
+					showRank={true}
+					labelWidth={150}
+					barHeight={12}
+				/>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No source IPs found</p>
 			{/if}
@@ -1096,10 +1100,8 @@
 		gap: var(--space-md);
 	}
 
-	/* ------------------------------------------------------------------ */
-	/* Bar list (shared by signatures, categories, IPs)                   */
-	/* ------------------------------------------------------------------ */
-
+	/* OLD CODE START — bar-list styles replaced by HorizontalBarList component */
+	/*
 	.bar-list {
 		display: flex;
 		flex-direction: column;
@@ -1198,7 +1200,6 @@
 		text-align: right;
 	}
 
-	/* Copy button */
 	.copy-btn {
 		opacity: 0;
 		transition: opacity var(--transition-fast);
@@ -1218,6 +1219,8 @@
 	.clickable-row:hover .copy-btn {
 		opacity: 1;
 	}
+	*/
+	/* OLD CODE END */
 
 	/* ------------------------------------------------------------------ */
 	/* Loading / empty                                                    */

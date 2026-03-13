@@ -341,33 +341,75 @@ let sorted = $derived(
 </div>
 ```
 
-### Bar List (Horizontal Bars)
+### Bar List (Horizontal Bars) — `HorizontalBarList.svelte`
 
-Used for top-N rankings (IPs, domains, protocols).
+**Canonical component:** `$components/HorizontalBarList.svelte`
 
-```css
-.bar-list { display: flex; flex-direction: column; gap: 2px; }
+Used for top-N rankings (IPs, domains, protocols, categories). All horizontal bar
+graphs MUST use this shared component for consistent alignment, sizing, and drill-down.
 
-.bar-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 1.2fr) 1fr auto;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-sm);
-  background: none;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  text-align: left;
-  width: 100%;
-}
+**Props:**
 
-.bar-row:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--border-dim);
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `items` | `BarItem[]` | `[]` | Array of bar data items |
+| `maxValue` | `number?` | auto | Override max for width calculation |
+| `showRank` | `boolean` | `false` | Show 1, 2, 3… rank numbers |
+| `showDot` | `boolean` | `false` | Show colored dot before label |
+| `labelWidth` | `number` | `140` | Fixed px width for label column |
+| `barHeight` | `number` | `12` | Bar track height in px |
+| `activeKey` | `string?` | — | Highlight row matching this key |
+| `onclick` | `(item, i) => void` | — | Click handler (in-page filtering) |
+| `emptyMessage` | `string` | `'No data available.'` | Empty state text |
+
+**BarItem interface:**
+
+```ts
+interface BarItem {
+  key: string;           // Unique key for {#each} block
+  label: string;         // Display label
+  value: number;         // Numeric value for bar width
+  formattedValue: string;// Display string (e.g., "1.2K", "3.5 GB")
+  color?: string;        // CSS color (e.g., "var(--cyan)")
+  gradient?: string;     // CSS background (overrides color)
+  secondaryValue?: string;// Optional secondary display (e.g., "12.3%")
+  href?: string;         // Navigation link — row becomes <a>
+  mono?: boolean;        // Monospace label font
+  isIp?: boolean;        // Render label with IPAddress component
+  badgeText?: string;    // Badge between rank and label
+  badgeClass?: string;   // Badge CSS class
 }
 ```
+
+**Row rendering:** `<a>` when `href` is set, `<button>` when `onclick` is set, `<div>` otherwise.
+
+**Layout:** CSS grid with a fixed-width label column so all bars start at the
+same horizontal position regardless of label content:
+
+```css
+grid-template-columns: var(--hbar-label-width) 1fr auto;
+/* With secondary values, adds a 4th auto column */
+```
+
+**Usage examples:**
+
+```svelte
+<!-- Static bars with colored dots -->
+<HorizontalBarList items={protocols} showDot={true} labelWidth={100} />
+
+<!-- Ranked list with IP drill-down links -->
+<HorizontalBarList items={topIps} showRank={true} labelWidth={130} />
+
+<!-- In-page filtering with active highlight -->
+<HorizontalBarList
+  items={signatures}
+  activeKey={currentFilter}
+  onclick={(item) => filterBy(item.key)}
+/>
+```
+
+**Standard bar height:** 12px (consistent across all pages). Override with
+`barHeight` prop only when justified.
 
 ### Loading & Empty States
 

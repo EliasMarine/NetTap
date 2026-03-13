@@ -23,6 +23,7 @@
 	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
 	import DashboardFilters from '$components/DashboardFilters.svelte';
 	import type { FilterState } from '$components/DashboardFilters.svelte';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 
 	// Mirror mode components
 	import { getCaptureMode } from '$api/capture';
@@ -685,20 +686,18 @@
 				<span class="card-title">Traffic Categories</span>
 				<span class="card-subtitle">Bandwidth by category</span>
 			</div>
-			<div class="categories-chart">
-				{#each categories.slice(0, 8) as cat}
-					<div class="category-row">
-						<span class="category-label" title={cat.label}>{cat.label}</span>
-						<div class="category-bar-track">
-							<div
-								class="category-bar-fill"
-								style="width: {(cat.total_bytes / maxCategoryBytes) * 100}%; background-color: {categoryColor(cat.name)};"
-							></div>
-						</div>
-						<span class="category-value mono">{formatBytesShort(cat.total_bytes)}</span>
-					</div>
-				{/each}
-			</div>
+			<HorizontalBarList
+				items={categories.slice(0, 8).map(cat => ({
+					key: cat.name,
+					label: cat.label,
+					value: cat.total_bytes,
+					formattedValue: formatBytesShort(cat.total_bytes),
+					color: categoryColor(cat.name),
+				}))}
+				showRank={false}
+				labelWidth={100}
+				barHeight={12}
+			/>
 		</div>
 	{/if}
 
@@ -721,22 +720,21 @@
 					<p class="text-muted">No traffic data available.</p>
 				</div>
 			{:else}
-				<div class="top-talkers-bars">
-					{#each topTalkers.slice(0, 5) as talker, i}
-						<a href="/devices/{talker.ip}" class="talker-row">
-							<span class="talker-rank">{i + 1}</span>
-							<span class="talker-ip mono"><IPAddress ip={talker.ip} /></span>
-							<div class="talker-bar-track">
-								<div
-									class="talker-bar-fill"
-									style="width: {(talker.total_bytes / maxTalkerBytes) * 100}%;"
-								></div>
-							</div>
-							<span class="talker-value mono">{formatBytesShort(talker.total_bytes)}</span>
-							<span class="talker-conns text-muted">{talker.connection_count.toLocaleString()} conn</span>
-						</a>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={topTalkers.slice(0, 5).map((talker, i) => ({
+						key: talker.ip,
+						label: talker.ip,
+						isIp: true,
+						value: talker.total_bytes,
+						formattedValue: formatBytesShort(talker.total_bytes),
+						gradient: 'linear-gradient(90deg, var(--cyan), var(--blue))',
+						secondaryValue: talker.connection_count.toLocaleString() + ' conn',
+						href: '/devices/' + talker.ip,
+					}))}
+					showRank={true}
+					labelWidth={130}
+					barHeight={12}
+				/>
 			{/if}
 		</div>
 
@@ -953,6 +951,8 @@
 		margin-top: var(--space-xs);
 	}
 
+	/* OLD CODE START — replaced by HorizontalBarList component */
+	/*
 	.categories-chart {
 		display: flex;
 		flex-direction: column;
@@ -999,8 +999,11 @@
 		color: var(--text-muted);
 		text-align: right;
 	}
+	*/
+	/* OLD CODE END */
 
-	/* Top Talkers horizontal bars */
+	/* OLD CODE START — replaced by HorizontalBarList component */
+	/*
 	.top-talkers-bars {
 		display: flex;
 		flex-direction: column;
@@ -1067,6 +1070,8 @@
 		font-size: var(--text-xs);
 		text-align: right;
 	}
+	*/
+	/* OLD CODE END */
 
 	/* Alert sparkline */
 	.alert-sparkline-container {
@@ -1270,6 +1275,8 @@
 			max-width: 140px;
 		}
 
+		/* OLD CODE START — replaced by HorizontalBarList component */
+		/*
 		.category-label {
 			width: 70px;
 			font-size: var(--text-xs);
@@ -1278,6 +1285,8 @@
 		.category-value {
 			width: 50px;
 		}
+		*/
+		/* OLD CODE END */
 	}
 
 	@media (max-width: 480px) {
