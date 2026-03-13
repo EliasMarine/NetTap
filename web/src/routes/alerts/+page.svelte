@@ -464,7 +464,7 @@
 			onclick={() => document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Total Alerts</span>
-			<span class="stat-value">{formatNumber(alertCounts.total)}</span>
+			<span class="stat-value text-white">{formatNumber(alertCounts.total)}</span>
 		</button>
 		<button
 			class="stat-card stat-card-high clickable"
@@ -950,6 +950,7 @@
 		width: 100%;
 	}
 
+	.text-white { color: #fff; }
 	.text-red { color: var(--red); }
 	.text-amber { color: var(--amber); }
 	.text-blue { color: var(--blue); }
