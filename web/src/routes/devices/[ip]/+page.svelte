@@ -16,6 +16,7 @@
 	import { goto } from '$app/navigation';
 	import { onDestroy } from 'svelte';
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
+	import DualSeriesChart from '$components/charts/DualSeriesChart.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 	import ConnectionDrawer from '$components/ConnectionDrawer.svelte';
@@ -106,6 +107,19 @@
 		device?.bandwidth_series?.map((p) => ({
 			time: p.timestamp,
 			value: p.bytes,
+		})) ?? [],
+	);
+
+	// Dual-series chart data (DL/UL split)
+	let hasDualSeries = $derived(
+		device?.bandwidth_series?.some((p) => p.download_bytes != null) ?? false,
+	);
+
+	let dualChartData = $derived(
+		device?.bandwidth_series?.map((p) => ({
+			time: p.timestamp,
+			download: p.download_bytes ?? p.bytes,
+			upload: p.upload_bytes ?? 0,
 		})) ?? [],
 	);
 
@@ -417,9 +431,19 @@
 			<div class="section-card">
 				<div class="section-header">
 					<span class="section-title">Bandwidth Over Time</span>
+					{#if hasDualSeries}
+						<div class="chart-legend">
+							<span class="legend-item"><span class="legend-dot" style="background:var(--cyan);"></span> Download</span>
+							<span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span> Upload</span>
+						</div>
+					{/if}
 				</div>
 				<div class="chart-body">
-					<TimeSeriesChart data={chartData} height={220} color="var(--cyan)" formatValue={formatBytes} />
+					{#if hasDualSeries}
+						<DualSeriesChart data={dualChartData} height={220} formatValue={formatBytes} />
+					{:else}
+						<TimeSeriesChart data={chartData} height={220} color="var(--cyan)" formatValue={formatBytes} />
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -736,6 +760,9 @@
 	.section-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
 	.section-title { font-size: var(--text-sm); font-weight: 600; }
 	.chart-body { padding: var(--space-sm) var(--space-md); }
+	.chart-legend { display: flex; gap: var(--space-md); font-size: var(--text-xs); color: var(--text-secondary); }
+	.legend-item { display: flex; align-items: center; gap: 6px; }
+	.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
 	/* ---------------------------------------------------------------- Grid layouts */
 	.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); }

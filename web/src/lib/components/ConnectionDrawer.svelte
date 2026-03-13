@@ -342,22 +342,18 @@
 	{#if isOpen && connection}
 		<!-- ====== Header ====== -->
 		<div class="drawer-header">
-			<div class="header-text">
-				<h3 class="drawer-title">Connection Detail</h3>
-				<p class="drawer-subtitle mono">{subtitle()}</p>
+			<div class="drawer-title-area">
+				<span class="drawer-title">Connection Detail</span>
+				<span class="drawer-subtitle">{subtitle()}</span>
 			</div>
-			<button class="close-btn" onclick={onclose} aria-label="Close panel">
-				<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-				</svg>
-			</button>
+			<button class="drawer-close" onclick={onclose} aria-label="Close panel">&times;</button>
 		</div>
 
 		<!-- ====== Tabs ====== -->
 		<div class="drawer-tabs">
-			<button class="tab-btn" class:active={activeTab === 'detail'} onclick={() => activeTab = 'detail'}>Detail</button>
-			<button class="tab-btn" class:active={activeTab === 'tshark'} onclick={() => activeTab = 'tshark'}>TShark</button>
-			<button class="tab-btn" class:active={activeTab === 'related'} onclick={() => activeTab = 'related'}>Related</button>
+			<button class="drawer-tab" class:active={activeTab === 'detail'} onclick={() => activeTab = 'detail'}>Detail</button>
+			<button class="drawer-tab" class:active={activeTab === 'tshark'} onclick={() => activeTab = 'tshark'}>TShark Analysis</button>
+			<button class="drawer-tab" class:active={activeTab === 'related'} onclick={() => activeTab = 'related'}>Related Activity</button>
 		</div>
 
 		<!-- ====== Scrollable body ====== -->
@@ -368,87 +364,98 @@
 			<!-- ======================================= -->
 			{#if activeTab === 'detail'}
 				<div class="detail-tab">
-					<!-- Connection info -->
-					<section class="section">
-						<h4 class="section-title">Connection</h4>
-						<div class="kv-grid">
-							<span class="kv-label">Source</span>
-							<span class="kv-value mono">{srcIp}{srcPort != null ? ':' + srcPort : ''}</span>
-
-							<span class="kv-label">Destination</span>
-							<span class="kv-value mono">{dstIp}{dstPort != null ? ':' + dstPort : ''}</span>
-
-							<span class="kv-label">Protocol</span>
-							<span class="kv-value">{proto ? proto.toUpperCase() : '--'}{service ? ' / ' + service : ''}</span>
-
-							<span class="kv-label">Duration</span>
-							<span class="kv-value mono">{formatDuration(duration())}</span>
-
-							<span class="kv-label">Download</span>
-							<span class="kv-value mono">{formatBytes(downloadBytes)}</span>
-
-							<span class="kv-label">Upload</span>
-							<span class="kv-value mono">{formatBytes(uploadBytes)}</span>
-
-							<span class="kv-label">Session ID</span>
-							<span class="kv-value mono">{sessionId || '--'}</span>
-
-							<span class="kv-label">Community ID</span>
-							<span class="kv-value mono">{communityId || '--'}</span>
-
-							<span class="kv-label">Conn State</span>
-							<span class="kv-value">
+					<!-- Connection info — 2-column grid -->
+					<div class="detail-grid">
+						<div class="detail-item">
+							<span class="detail-label">Source</span>
+							<span class="detail-value">{srcIp}{srcPort != null ? ':' + srcPort : ''}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Destination</span>
+							<span class="detail-value">{dstIp}{dstPort != null ? ':' + dstPort : ''}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Protocol</span>
+							<span class="detail-value">{proto ? proto.toUpperCase() : '--'}{service ? ' / ' + service : ''}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Duration</span>
+							<span class="detail-value">{formatDuration(duration())}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Download</span>
+							<span class="detail-value detail-value--download">{formatBytes(downloadBytes)}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Upload</span>
+							<span class="detail-value detail-value--upload">{formatBytes(uploadBytes)}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Session ID</span>
+							<span class="detail-value">{sessionId || '--'}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Community ID</span>
+							<span class="detail-value">{communityId || '--'}</span>
+						</div>
+						<div class="detail-item">
+							<span class="detail-label">Conn State</span>
+							<span class="detail-value">
 								{#if connState}
-									<span class="mono">{connState}</span>
-									{#if STATE_DESC[connState]}
-										<span class="state-desc">{STATE_DESC[connState]}</span>
-									{/if}
+									{connState}{#if STATE_DESC[connState]} ({STATE_DESC[connState].split(',')[0]}){/if}
 								{:else}
 									--
 								{/if}
 							</span>
-
-							<span class="kv-label">History</span>
-							<span class="kv-value mono">{history || '--'}</span>
 						</div>
-					</section>
+						<div class="detail-item">
+							<span class="detail-label">History</span>
+							<span class="detail-value">{history || '--'}</span>
+						</div>
+					</div>
 
 					<!-- Destination Enrichment -->
 					{#if dstAsn || dstCountry}
-						<section class="section">
-							<h4 class="section-title">Destination Enrichment</h4>
-							<div class="kv-grid">
-								{#if dstAsn}
-									<span class="kv-label">ASN</span>
-									<span class="kv-value">{dstAsn}</span>
-								{/if}
-								{#if dstCountry}
-									<span class="kv-label">Country</span>
-									<span class="kv-value">{dstCountry}</span>
-								{/if}
-							</div>
-						</section>
+						<div class="detail-section-title">Destination Enrichment</div>
+						<div class="detail-grid">
+							{#if dstAsn}
+								<div class="detail-item">
+									<span class="detail-label">ASN</span>
+									<span class="detail-value">{dstAsn}</span>
+								</div>
+							{/if}
+							{#if dstCountry}
+								<div class="detail-item">
+									<span class="detail-label">Country</span>
+									<span class="detail-value">{dstCountry}</span>
+								</div>
+							{/if}
+						</div>
 					{/if}
 
 					<!-- TLS Details -->
 					{#if hasTls}
-						<section class="section">
-							<h4 class="section-title">TLS Details</h4>
-							<div class="kv-grid">
-								{#if tlsSni}
-									<span class="kv-label">SNI</span>
-									<span class="kv-value mono">{tlsSni}</span>
-								{/if}
-								{#if tlsJa3}
-									<span class="kv-label">JA3</span>
-									<span class="kv-value mono">{tlsJa3}</span>
-								{/if}
-								{#if tlsVersion}
-									<span class="kv-label">Version</span>
-									<span class="kv-value">{tlsVersion}</span>
-								{/if}
-							</div>
-						</section>
+						<div class="detail-section-title">TLS Details</div>
+						<div class="detail-grid">
+							{#if tlsVersion}
+								<div class="detail-item">
+									<span class="detail-label">TLS Version</span>
+									<span class="detail-value">{tlsVersion}</span>
+								</div>
+							{/if}
+							{#if tlsSni}
+								<div class="detail-item">
+									<span class="detail-label">SNI</span>
+									<span class="detail-value">{tlsSni}</span>
+								</div>
+							{/if}
+							{#if tlsJa3}
+								<div class="detail-item">
+									<span class="detail-label">JA3</span>
+									<span class="detail-value detail-value--small">{tlsJa3}</span>
+								</div>
+							{/if}
+						</div>
 					{/if}
 				</div>
 
@@ -457,42 +464,40 @@
 			<!-- ======================================= -->
 			{:else if activeTab === 'tshark'}
 				<div class="tshark-tab">
-					<!-- BPF filter display -->
-					<div class="filter-bar">
-						<span class="filter-label">BPF Filter:</span>
-						<code class="filter-value">{bpfFilter || '(none)'}</code>
-					</div>
-					<div class="filter-bar">
-						<span class="filter-label">Display Filter:</span>
-						<code class="filter-value">{displayFilter || '(none)'}</code>
-					</div>
+					<!-- BPF filter display box -->
+					<div class="tshark-filter-label">Auto-Generated BPF Filter</div>
+					<div class="tshark-filter">{bpfFilter || '(none)'}</div>
+
+					{#if displayFilter && displayFilter !== bpfFilter}
+						<div class="tshark-filter-label">Display Filter</div>
+						<div class="tshark-filter">{displayFilter}</div>
+					{/if}
 
 					<!-- Mode buttons + Analyze -->
 					<div class="tshark-controls">
-						<div class="mode-btns">
-							<button
-								class="mode-btn"
-								class:active={tsharkMode === 'summary'}
-								onclick={() => tsharkMode = 'summary'}
-							>Summary</button>
-							<button
-								class="mode-btn"
-								class:active={tsharkMode === 'verbose'}
-								onclick={() => tsharkMode = 'verbose'}
-							>Verbose</button>
-							<button
-								class="mode-btn"
-								class:active={tsharkMode === 'follow'}
-								onclick={() => tsharkMode = 'follow'}
-							>Follow Stream</button>
-						</div>
 						<button
-							class="btn btn-primary btn-sm analyze-btn"
+							class="tshark-btn tshark-btn-primary"
 							onclick={runAnalysis}
 							disabled={analyzing || tsharkAvailable === false}
 						>
-							{analyzing ? 'Analyzing...' : 'Analyze'}
+							{analyzing ? 'Analyzing...' : '\u25B6 Analyze'}
 						</button>
+						<button
+							class="tshark-btn tshark-btn-secondary"
+							class:active={tsharkMode === 'summary'}
+							onclick={() => tsharkMode = 'summary'}
+						>Summary</button>
+						<button
+							class="tshark-btn tshark-btn-secondary"
+							class:active={tsharkMode === 'verbose'}
+							onclick={() => tsharkMode = 'verbose'}
+						>Verbose (-V)</button>
+						<button
+							class="tshark-btn tshark-btn-secondary"
+							class:active={tsharkMode === 'follow'}
+							onclick={() => tsharkMode = 'follow'}
+						>Follow Stream</button>
+						<a href="/tshark" class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</a>
 					</div>
 
 					<!-- Status / output -->
@@ -521,38 +526,17 @@
 							<p class="status-text error">{tsharkError}</p>
 						</div>
 					{:else if tsharkMode === 'summary' && packets.length > 0}
-						<!-- Summary: packet table -->
-						<div class="packet-table-wrap">
-							<table class="packet-table">
-								<thead>
-									<tr>
-										<th>No.</th>
-										<th>Time</th>
-										<th>Source</th>
-										<th>Destination</th>
-										<th>Proto</th>
-										<th>Len</th>
-									</tr>
-								</thead>
-								<tbody>
-									{#each packets as pkt, i}
-										{@const info = getPacketSummary(pkt)}
-										<tr class="pkt-row">
-											<td class="mono">{info.no}</td>
-											<td class="mono">{info.time}</td>
-											<td class="mono">{info.src}</td>
-											<td class="mono">{info.dst}</td>
-											<td>{info.proto}</td>
-											<td class="mono">{info.len}</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
+						<!-- Summary: terminal-style colored output -->
+						<div class="tshark-terminal">
+							{#each packets as pkt, i}
+								{@const info = getPacketSummary(pkt)}
+								<div class="tshark-line"><span class="tshark-line-no">{String(i + 1).padStart(3, ' ')} </span><span class="tshark-timestamp">{info.time}</span> <span class="tshark-src">{info.src}</span> <span class="tshark-arrow">&rarr;</span> <span class="tshark-dst">{info.dst}</span>  <span class="tshark-proto">{info.proto}</span>  <span class="tshark-info">{info.info || `Len=${info.len}`}</span></div>
+							{/each}
 						</div>
 						<p class="packet-count">{packets.length} packet{packets.length !== 1 ? 's' : ''} matched</p>
 					{:else if (tsharkMode === 'verbose' || tsharkMode === 'follow') && tsharkTextOutput}
 						<!-- Text output: terminal-style -->
-						<div class="terminal-output">{tsharkTextOutput}</div>
+						<div class="tshark-terminal">{tsharkTextOutput}</div>
 					{:else if !analyzing && tsharkAvailable && pcapFiles.length > 0}
 						<div class="tshark-status">
 							<p class="status-text">Click "Analyze" to inspect packets for this connection.</p>
@@ -570,86 +554,39 @@
 			<!-- ======================================= -->
 			{:else if activeTab === 'related'}
 				<div class="related-tab">
-					<section class="section">
-						<h4 class="section-title">Related Activity</h4>
-						<p class="related-desc">Explore activity related to this connection's endpoints.</p>
+					<div class="detail-section-title">Related Activity</div>
 
-						<div class="related-links">
-							{#if dstIp}
-								<a href="/connections?ip={encodeURIComponent(dstIp)}" class="related-link">
-									<span class="link-icon">
-										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
-										</svg>
-									</span>
-									<span class="link-text">
-										<span class="link-title">Other connections to {dstIp}</span>
-										<span class="link-hint">View all connections to this destination</span>
-									</span>
-									<span class="link-arrow">
-										<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<polyline points="9 18 15 12 9 6" />
-										</svg>
-									</span>
-								</a>
-							{/if}
+					<div class="related-list">
+						{#if dstIp}
+							<a href="/connections?ip={encodeURIComponent(dstIp)}" class="related-item">
+								<span class="related-type rt-conn">CONN</span>
+								<span class="related-text">Other connections to {dstIp}</span>
+								<span class="related-arrow">&rsaquo;</span>
+							</a>
+						{/if}
 
-							{#if deviceIp}
-								<a href="/logs?query=dns AND source.ip:{encodeURIComponent(deviceIp)}" class="related-link">
-									<span class="link-icon">
-										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-										</svg>
-									</span>
-									<span class="link-text">
-										<span class="link-title">DNS queries for {deviceIp}</span>
-										<span class="link-hint">View DNS lookups in Log Explorer</span>
-									</span>
-									<span class="link-arrow">
-										<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<polyline points="9 18 15 12 9 6" />
-										</svg>
-									</span>
-								</a>
+						{#if deviceIp}
+							<a href="/logs?filter={encodeURIComponent(deviceIp)}" class="related-item">
+								<span class="related-type rt-dns">DNS</span>
+								<span class="related-text">DNS queries for {deviceIp}</span>
+								<span class="related-arrow">&rsaquo;</span>
+							</a>
 
-								<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="related-link">
-									<span class="link-icon">
-										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-										</svg>
-									</span>
-									<span class="link-text">
-										<span class="link-title">Alerts for {deviceIp}</span>
-										<span class="link-hint">View IDS alerts involving this device</span>
-									</span>
-									<span class="link-arrow">
-										<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<polyline points="9 18 15 12 9 6" />
-										</svg>
-									</span>
-								</a>
-							{/if}
+							<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="related-item">
+								<span class="related-type rt-alert">ALERT</span>
+								<span class="related-text">Alerts for {deviceIp}</span>
+								<span class="related-arrow">&rsaquo;</span>
+							</a>
+						{/if}
 
-							{#if srcIp && srcIp !== deviceIp}
-								<a href="/devices/{encodeURIComponent(srcIp)}" class="related-link">
-									<span class="link-icon">
-										<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
-										</svg>
-									</span>
-									<span class="link-text">
-										<span class="link-title">Device: {srcIp}</span>
-										<span class="link-hint">View source device detail page</span>
-									</span>
-									<span class="link-arrow">
-										<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<polyline points="9 18 15 12 9 6" />
-										</svg>
-									</span>
-								</a>
-							{/if}
-						</div>
-					</section>
+						{#if srcIp && srcIp !== deviceIp}
+							<a href="/devices/{encodeURIComponent(srcIp)}" class="related-item">
+								<span class="related-type rt-conn">CONN</span>
+								<span class="related-text">Device: {srcIp}</span>
+								<span class="related-arrow">&rsaquo;</span>
+							</a>
+						{/if}
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -665,15 +602,15 @@
 		position: fixed;
 		inset: 0;
 		z-index: 998;
-		background-color: var(--bg-overlay);
-		backdrop-filter: blur(2px);
-		-webkit-backdrop-filter: blur(2px);
+		background: rgba(0, 0, 0, 0.5);
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
 		border: none;
 		cursor: pointer;
-		animation: backdropIn 200ms ease-out;
+		animation: fadeIn 0.2s ease;
 	}
 
-	@keyframes backdropIn {
+	@keyframes fadeIn {
 		from { opacity: 0; }
 		to { opacity: 1; }
 	}
@@ -690,13 +627,13 @@
 		width: 560px;
 		max-width: 100vw;
 		z-index: 999;
-		background-color: var(--bg-primary);
-		border-left: 1px solid var(--border-default);
+		background: var(--bg-primary);
+		border-left: 1px solid var(--border-dim);
 		display: flex;
 		flex-direction: column;
 		transform: translateX(100%);
-		transition: transform var(--transition-normal);
-		box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+		transition: transform 0.25s ease;
+		box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
 	}
 
 	.conn-drawer.open {
@@ -709,51 +646,51 @@
 
 	.drawer-header {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: space-between;
 		padding: var(--space-md) var(--space-lg);
-		border-bottom: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		border-bottom: 1px solid var(--border-dim);
+		background: var(--bg-secondary);
 		flex-shrink: 0;
-		gap: var(--space-sm);
 	}
 
-	.header-text {
-		flex: 1;
-		min-width: 0;
+	.drawer-title-area {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 	}
 
 	.drawer-title {
 		font-size: var(--text-lg);
-		font-weight: 700;
+		font-weight: 600;
 		color: var(--text-primary);
-		line-height: 1.3;
 	}
 
 	.drawer-subtitle {
 		font-size: var(--text-xs);
 		color: var(--text-muted);
-		margin-top: 2px;
+		font-family: var(--font-mono);
 		word-break: break-all;
 	}
 
-	.close-btn {
+	.drawer-close {
+		width: 32px;
+		height: 32px;
+		border: 1px solid var(--border-dim);
+		border-radius: var(--radius-sm);
+		background: var(--bg-tertiary);
+		color: var(--text-muted);
+		font-size: 18px;
+		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
-		background: none;
-		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
-		cursor: pointer;
 		transition: all var(--transition-fast);
 		flex-shrink: 0;
 	}
 
-	.close-btn:hover {
-		background-color: var(--bg-tertiary);
+	.drawer-close:hover {
+		border-color: var(--border-bright);
 		color: var(--text-primary);
 	}
 
@@ -763,16 +700,13 @@
 
 	.drawer-tabs {
 		display: flex;
-		border-bottom: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		background: var(--bg-secondary);
+		border-bottom: 1px solid var(--border-dim);
 		flex-shrink: 0;
-		padding: 0 var(--space-lg);
-		gap: 0;
 	}
 
-	.tab-btn {
-		position: relative;
-		padding: var(--space-sm) var(--space-md);
+	.drawer-tab {
+		padding: var(--space-sm) var(--space-lg);
 		font-family: var(--font-sans);
 		font-size: var(--text-sm);
 		font-weight: 500;
@@ -780,26 +714,27 @@
 		background: none;
 		border: none;
 		cursor: pointer;
+		position: relative;
 		transition: color var(--transition-fast);
 		white-space: nowrap;
 	}
 
-	.tab-btn:hover {
-		color: var(--text-primary);
+	.drawer-tab:hover {
+		color: var(--text-secondary);
 	}
 
-	.tab-btn.active {
-		color: var(--accent);
+	.drawer-tab.active {
+		color: var(--cyan);
 	}
 
-	.tab-btn.active::after {
+	.drawer-tab.active::after {
 		content: '';
 		position: absolute;
-		bottom: -1px;
-		left: var(--space-md);
-		right: var(--space-md);
+		bottom: 0;
+		left: var(--space-lg);
+		right: var(--space-lg);
 		height: 2px;
-		background-color: var(--accent);
+		background: var(--cyan);
 		border-radius: 1px;
 	}
 
@@ -813,58 +748,64 @@
 		padding: var(--space-lg);
 	}
 
+	.drawer-body::-webkit-scrollbar { width: 6px; }
+	.drawer-body::-webkit-scrollbar-track { background: transparent; }
+	.drawer-body::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
 	/* ================================================================== */
-	/* Detail tab — sections + key-value grid                             */
+	/* Detail tab — 2-column grid layout                                  */
 	/* ================================================================== */
 
-	.section {
-		margin-bottom: var(--space-lg);
-		padding-bottom: var(--space-lg);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.section:last-child {
-		border-bottom: none;
-		margin-bottom: 0;
-		padding-bottom: 0;
-	}
-
-	.section-title {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin-bottom: var(--space-sm);
-	}
-
-	.kv-grid {
+	.detail-grid {
 		display: grid;
-		grid-template-columns: 120px 1fr;
-		gap: var(--space-xs) var(--space-md);
-		font-size: var(--text-sm);
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-sm) var(--space-lg);
+		margin-bottom: var(--space-lg);
 	}
 
-	.kv-label {
+	.detail-item {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.detail-label {
+		font-size: 10px;
+		color: var(--text-dim);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 500;
+	}
+
+	.detail-value {
+		font-size: var(--text-sm);
+		color: var(--text-primary);
+		font-family: var(--font-mono);
+		word-break: break-all;
+	}
+
+	.detail-value--download {
+		color: var(--cyan);
+	}
+
+	.detail-value--upload {
+		color: var(--purple);
+	}
+
+	.detail-value--small {
+		font-size: 10px;
+	}
+
+	.detail-section-title {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-muted);
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding-top: 2px;
-	}
-
-	.kv-value {
-		color: var(--text-primary);
-		word-break: break-all;
-		line-height: 1.4;
-	}
-
-	.state-desc {
-		display: block;
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		margin-top: 2px;
+		letter-spacing: 0.06em;
+		color: var(--text-muted);
+		margin-bottom: var(--space-sm);
+		margin-top: var(--space-lg);
+		padding-bottom: var(--space-xs);
+		border-bottom: 1px solid var(--border-dim);
 	}
 
 	/* ================================================================== */
@@ -874,81 +815,88 @@
 	.tshark-tab {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: 0;
 	}
 
-	.filter-bar {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+	/* Filter display box */
+	.tshark-filter-label {
+		font-size: 10px;
+		color: var(--text-dim);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		margin-bottom: 4px;
+		font-weight: 500;
 	}
 
-	.filter-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		white-space: nowrap;
-		padding-top: 1px;
-	}
-
-	.filter-value {
+	.tshark-filter {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--accent);
+		padding: var(--space-sm) var(--space-md);
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-dim);
+		border-radius: var(--radius-sm);
+		color: var(--cyan);
+		margin-bottom: var(--space-md);
 		word-break: break-all;
 	}
 
+	/* TShark control buttons */
 	.tshark-controls {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
 		gap: var(--space-sm);
+		margin-bottom: var(--space-md);
 		flex-wrap: wrap;
 	}
 
-	.mode-btns {
-		display: flex;
-		gap: 0;
-		border: 1px solid var(--border-default);
+	.tshark-btn {
+		padding: 6px 14px;
 		border-radius: var(--radius-sm);
-		overflow: hidden;
-	}
-
-	.mode-btn {
-		padding: var(--space-xs) var(--space-sm);
 		font-family: var(--font-sans);
 		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-		background: var(--bg-elevated);
-		border: none;
-		border-right: 1px solid var(--border-default);
+		font-weight: 600;
 		cursor: pointer;
 		transition: all var(--transition-fast);
+		border: 1px solid;
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
 		white-space: nowrap;
 	}
 
-	.mode-btn:last-child {
-		border-right: none;
+	.tshark-btn-primary {
+		background: var(--cyan);
+		color: var(--bg-void);
+		border-color: var(--cyan);
 	}
 
-	.mode-btn:hover {
+	.tshark-btn-primary:hover {
+		box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+	}
+
+	.tshark-btn-primary:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+		box-shadow: none;
+	}
+
+	.tshark-btn-secondary {
+		background: transparent;
+		color: var(--text-secondary);
+		border-color: var(--border-default);
+	}
+
+	.tshark-btn-secondary:hover {
+		border-color: var(--border-bright);
 		color: var(--text-primary);
-		background: var(--bg-tertiary);
 	}
 
-	.mode-btn.active {
-		color: var(--accent);
-		background: var(--accent-muted);
+	.tshark-btn-secondary.active {
+		border-color: var(--cyan);
+		color: var(--cyan);
+		background: var(--cyan-dim);
 	}
 
-	.analyze-btn {
-		flex-shrink: 0;
-	}
-
+	/* TShark status messages */
 	.tshark-status {
 		display: flex;
 		flex-direction: column;
@@ -976,7 +924,7 @@
 		width: 24px;
 		height: 24px;
 		border: 2px solid var(--border-default);
-		border-top-color: var(--accent);
+		border-top-color: var(--cyan);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
 	}
@@ -985,203 +933,137 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* Packet table */
-	.packet-table-wrap {
-		overflow-x: auto;
-		border: 1px solid var(--border-default);
+	/* Terminal output — matches mockup exactly */
+	.tshark-terminal {
+		background: var(--bg-void);
+		border: 1px solid var(--border-dim);
 		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		font-family: var(--font-mono);
+		font-size: 11px;
+		line-height: 1.7;
+		color: var(--text-secondary);
+		max-height: 400px;
+		overflow: auto;
+		white-space: pre;
+		tab-size: 4;
 	}
 
-	.packet-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--text-xs);
+	.tshark-terminal::-webkit-scrollbar { width: 6px; height: 6px; }
+	.tshark-terminal::-webkit-scrollbar-track { background: transparent; }
+	.tshark-terminal::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
+	/* Terminal line color coding */
+	.tshark-line {
+		display: block;
 	}
 
-	.packet-table th {
-		padding: var(--space-xs) var(--space-sm);
-		text-align: left;
-		font-weight: 600;
+	.tshark-line-no {
+		color: var(--text-dim);
+		user-select: none;
+	}
+
+	.tshark-timestamp {
 		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		background-color: var(--bg-tertiary);
-		border-bottom: 1px solid var(--border-default);
-		white-space: nowrap;
 	}
 
-	.packet-table td {
-		padding: var(--space-xs) var(--space-sm);
-		border-bottom: 1px solid var(--border-dim);
-		color: var(--text-primary);
-		white-space: nowrap;
+	.tshark-src {
+		color: var(--cyan);
 	}
 
-	.pkt-row {
-		transition: background-color var(--transition-fast);
+	.tshark-dst {
+		color: var(--purple);
 	}
 
-	.pkt-row:hover {
-		background-color: var(--bg-tertiary);
+	.tshark-proto {
+		color: var(--amber);
+		font-weight: 600;
+	}
+
+	.tshark-info {
+		color: var(--text-secondary);
+	}
+
+	.tshark-arrow {
+		color: var(--text-dim);
 	}
 
 	.packet-count {
 		font-size: var(--text-xs);
 		color: var(--text-muted);
 		text-align: right;
-	}
-
-	/* Terminal output */
-	.terminal-output {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		color: var(--green);
-		background-color: var(--bg-void);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		overflow-x: auto;
-		overflow-y: auto;
-		max-height: 500px;
-		white-space: pre-wrap;
-		word-break: break-all;
-		line-height: 1.5;
+		margin-top: var(--space-xs);
 	}
 
 	/* ================================================================== */
-	/* Related tab                                                        */
+	/* Related tab — badge-based list                                     */
 	/* ================================================================== */
 
-	.related-desc {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		margin-bottom: var(--space-md);
-	}
-
-	.related-links {
+	.related-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
 	}
 
-	.related-link {
+	.related-item {
 		display: flex;
 		align-items: center;
 		gap: var(--space-md);
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		color: var(--text-primary);
+		padding: var(--space-sm) 0;
+		border-bottom: 1px solid var(--border-dim);
+		font-size: var(--text-sm);
 		text-decoration: none;
-		transition: all var(--transition-fast);
+		color: var(--text-secondary);
+		transition: color var(--transition-fast);
 	}
 
-	.related-link:hover {
-		border-color: var(--border-bright);
-		background-color: var(--bg-tertiary);
+	.related-item:last-child {
+		border-bottom: none;
 	}
 
-	.link-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
+	.related-item:hover {
+		color: var(--text-primary);
+	}
+
+	.related-type {
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		padding: 2px 6px;
 		border-radius: var(--radius-sm);
-		background-color: var(--accent-muted);
-		color: var(--accent);
+		min-width: 40px;
+		text-align: center;
 		flex-shrink: 0;
 	}
 
-	.link-text {
+	.rt-conn {
+		background: var(--cyan-dim);
+		color: var(--cyan);
+	}
+
+	.rt-dns {
+		background: var(--purple-dim);
+		color: var(--purple);
+	}
+
+	.rt-alert {
+		background: var(--red-dim);
+		color: var(--red);
+	}
+
+	.related-text {
 		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
+		color: inherit;
 	}
 
-	.link-title {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.link-hint {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.link-arrow {
+	.related-arrow {
 		color: var(--text-dim);
+		font-size: var(--text-lg);
 		flex-shrink: 0;
 		transition: color var(--transition-fast);
 	}
 
-	.related-link:hover .link-arrow {
-		color: var(--accent);
-	}
-
-	/* ================================================================== */
-	/* Shared utility classes (scoped)                                    */
-	/* ================================================================== */
-
-	.mono {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-	}
-
-	/* ================================================================== */
-	/* Button classes matching global design system                       */
-	/* ================================================================== */
-
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-sm);
-		padding: 6px var(--space-md);
-		font-family: var(--font-sans);
-		font-size: var(--text-sm);
-		font-weight: 500;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-sm);
-		background-color: var(--bg-elevated);
-		color: var(--text-primary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		line-height: 1.4;
-		white-space: nowrap;
-	}
-
-	.btn:hover {
-		background-color: var(--border-default);
-	}
-
-	.btn:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.btn-primary {
-		background-color: var(--accent);
-		border-color: var(--accent);
-		color: #000;
-		font-weight: 600;
-	}
-
-	.btn-primary:hover {
-		background-color: var(--accent-hover);
-		border-color: var(--accent-hover);
-	}
-
-	.btn-sm {
-		padding: 3px 8px;
-		font-size: var(--text-xs);
+	.related-item:hover .related-arrow {
+		color: var(--cyan);
 	}
 
 	/* ================================================================== */
@@ -1191,6 +1073,10 @@
 	@media (max-width: 640px) {
 		.conn-drawer {
 			width: 100vw;
+		}
+
+		.detail-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

@@ -204,13 +204,11 @@ class TestDeviceAlertsHandler(AioHTTPTestCase):
                             "source": {"ip": "192.168.1.100", "port": 54321},
                             "destination": {"ip": "10.0.0.5", "port": 80},
                             "suricata": {
-                                "eve": {
-                                    "alert": {
-                                        "severity": 1,
-                                        "signature": "ET MALWARE Bad Traffic",
-                                        "category": "A Network Trojan was Detected",
-                                        "signature_id": 2001219,
-                                    }
+                                "alert": {
+                                    "severity": 1,
+                                    "signature": "ET MALWARE Bad Traffic",
+                                    "category": "A Network Trojan was Detected",
+                                    "signature_id": 2001219,
                                 }
                             },
                         }
@@ -242,7 +240,7 @@ class TestDeviceAlertsHandler(AioHTTPTestCase):
         self.assertIn("to", data)
         self.assertEqual(len(data["alerts"]), 2)
 
-        # First alert — parsed from suricata.eve.alert
+        # First alert — parsed from suricata.alert (Malcolm nested path)
         alert0 = data["alerts"][0]
         self.assertEqual(alert0["timestamp"], "2026-03-12T10:00:00Z")
         self.assertEqual(alert0["severity"], 1)

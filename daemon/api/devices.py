@@ -18,6 +18,7 @@ from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
 from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.traffic_classifier import classify_asn, CATEGORIES
+from api.alerts import _normalize_alert_source
 
 logger = logging.getLogger("nettap.api.devices")
 
@@ -732,17 +733,21 @@ async def handle_device_alerts(request: web.Request) -> web.Response:
     alerts = []
     for hit in hits.get("hits", []):
         src = hit.get("_source", {})
-        alert_info = src.get("suricata", {}).get("eve", {}).get("alert", {}) or src.get("alert", {})
+        # OLD CODE START — extracted from wrong path (suricata.eve.alert)
+        # alert_info = src.get("suricata", {}).get("eve", {}).get("alert", {}) or src.get("alert", {})
+        # OLD CODE END
+        _normalize_alert_source(src)  # Normalizes all ECS/Malcolm field paths into src["alert"]
+        alert = src.get("alert", {})
         alerts.append({
             "timestamp": src.get("@timestamp", ""),
-            "severity": alert_info.get("severity", 3),
-            "signature": alert_info.get("signature", "Unknown alert"),
-            "category": alert_info.get("category", "Unknown"),
-            "signature_id": alert_info.get("signature_id", 0),
-            "source_ip": src.get("source", {}).get("ip", ""),
-            "destination_ip": src.get("destination", {}).get("ip", ""),
-            "source_port": src.get("source", {}).get("port"),
-            "destination_port": src.get("destination", {}).get("port"),
+            "severity": alert.get("severity", 3),
+            "signature": alert.get("signature", "Unknown alert"),
+            "category": alert.get("category", "Unknown"),
+            "signature_id": alert.get("signature_id", 0),
+            "source_ip": src.get("src_ip") or (src.get("source", {}) or {}).get("ip", ""),
+            "destination_ip": src.get("dest_ip") or (src.get("destination", {}) or {}).get("ip", ""),
+            "source_port": src.get("src_port") or (src.get("source", {}) or {}).get("port"),
+            "destination_port": src.get("dest_port") or (src.get("destination", {}) or {}).get("port"),
         })
 
     return web.json_response({
