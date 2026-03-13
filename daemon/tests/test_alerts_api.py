@@ -182,7 +182,7 @@ class TestAlertsListHandler(AioHTTPTestCase):
         body = call_args.kwargs.get("body") or call_args[1].get("body")
         filters = body["query"]["bool"]["filter"]
         has_severity = any(
-            "term" in f and "suricata.severity" in f.get("term", {}) for f in filters
+            "term" in f and "suricata.alert.severity" in f.get("term", {}) for f in filters
         )
         self.assertTrue(has_severity)
 

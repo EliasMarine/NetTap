@@ -346,18 +346,45 @@
 		categories.length > 0 ? Math.max(...categories.map((c) => c.total_bytes)) : 1
 	);
 
-	// Category color palette
+	/** Split categories into two columns for the 2-column layout. */
+	let categoriesLeft = $derived(categories.slice(0, Math.ceil(categories.length / 2)));
+	let categoriesRight = $derived(categories.slice(Math.ceil(categories.length / 2)));
+
+	// OLD CODE START — color keys didn't match backend category keys (social_media vs social, etc.)
+	// const CATEGORY_COLORS: Record<string, string> = {
+	// 	streaming: '#f85149',
+	// 	social_media: '#58a6ff',
+	// 	gaming: '#bc8cff',
+	// 	productivity: '#3fb950',
+	// 	cloud: '#79c0ff',
+	// 	messaging: '#d29922',
+	// 	news: '#8b949e',
+	// 	shopping: '#f0883e',
+	// 	email: '#56d4dd',
+	// 	other: '#6e7681',
+	// };
+	// OLD CODE END
+
+	// Category color palette — keys match backend CATEGORIES dict in traffic_classifier.py
 	const CATEGORY_COLORS: Record<string, string> = {
-		streaming: '#f85149',
-		social_media: '#58a6ff',
-		gaming: '#bc8cff',
-		productivity: '#3fb950',
-		cloud: '#79c0ff',
-		messaging: '#d29922',
-		news: '#8b949e',
-		shopping: '#f0883e',
-		email: '#56d4dd',
-		other: '#6e7681',
+		streaming: 'var(--red)',
+		gaming: 'var(--purple)',
+		social: 'var(--blue)',
+		communication: 'var(--amber)',
+		work: 'var(--green)',
+		iot: 'var(--orange)',
+		cloud: 'var(--cyan)',
+		file_transfer: 'var(--teal)',
+		dns: 'var(--text-muted)',
+		email: 'var(--pink)',
+		web: 'var(--accent)',
+		security: 'var(--yellow)',
+		shopping: 'var(--orange)',
+		news: 'var(--blue)',
+		ads: 'var(--text-muted)',
+		updates: 'var(--teal)',
+		suspicious: 'var(--danger)',
+		other: 'var(--text-muted)',
 	};
 
 	function categoryColor(name: string): string {
@@ -678,25 +705,45 @@
 		</div>
 	</div>
 
-	<!-- Row 2.5: Traffic Categories -->
+	<!-- Row 2.5: Traffic Categories (2-column layout) -->
 	{#if categories.length > 0}
 		<div class="card categories-card">
 			<div class="card-header">
 				<span class="card-title">Traffic Categories</span>
 				<span class="card-subtitle">Bandwidth by category</span>
 			</div>
-			<HorizontalBarList
-				items={categories.slice(0, 8).map(cat => ({
-					key: cat.name,
-					label: cat.label,
-					value: cat.total_bytes,
-					formattedValue: formatBytesShort(cat.total_bytes),
-					color: categoryColor(cat.name),
-				}))}
-				showRank={false}
-				labelWidth={100}
-				barHeight={12}
-			/>
+			<div class="categories-columns">
+				<div class="categories-col">
+					<HorizontalBarList
+						items={categoriesLeft.map(cat => ({
+							key: cat.name,
+							label: cat.label,
+							value: cat.total_bytes,
+							formattedValue: formatBytesShort(cat.total_bytes),
+							color: categoryColor(cat.name),
+						}))}
+						maxValue={maxCategoryBytes}
+						showRank={false}
+						labelWidth={120}
+						barHeight={12}
+					/>
+				</div>
+				<div class="categories-col">
+					<HorizontalBarList
+						items={categoriesRight.map(cat => ({
+							key: cat.name,
+							label: cat.label,
+							value: cat.total_bytes,
+							formattedValue: formatBytesShort(cat.total_bytes),
+							color: categoryColor(cat.name),
+						}))}
+						maxValue={maxCategoryBytes}
+						showRank={false}
+						labelWidth={120}
+						barHeight={12}
+					/>
+				</div>
+			</div>
 		</div>
 	{/if}
 
@@ -960,6 +1007,16 @@
 	/* Traffic Categories */
 	.categories-card {
 		margin-top: var(--space-xs);
+	}
+
+	.categories-columns {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-lg);
+	}
+
+	.categories-col {
+		min-width: 0;
 	}
 
 	/* OLD CODE START — replaced by HorizontalBarList component */

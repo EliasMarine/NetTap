@@ -122,8 +122,13 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
             *_ZEEK_CONN_FILTERS,
         ]}},
         "aggs": {
-            "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-            "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            # OLD CODE START — Arkime session fields (client.bytes/server.bytes) include
+            # protocol overhead and inflate values ~25x vs actual network bytes.
+            # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+            # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            # OLD CODE END
+            "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
             "top_protocol": {"terms": {"field": "network.transport.keyword", "size": 1}},

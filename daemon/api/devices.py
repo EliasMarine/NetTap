@@ -591,7 +591,7 @@ async def handle_device_count(request: web.Request) -> web.Response:
         },
         "aggs": {
             "unique_devices": {
-                "cardinality": {"field": "zeek.dhcp.client_addr"}
+                "cardinality": {"field": "zeek.dhcp.assigned_ip"}
             }
         },
     }

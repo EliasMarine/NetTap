@@ -29,6 +29,10 @@ CATEGORIES = {
     "email": "Email",
     "web": "Web Browsing",
     "security": "Security & VPN",
+    "shopping": "Shopping",
+    "news": "News & Media",
+    "ads": "Ads & Tracking",
+    "updates": "Updates & Downloads",
     "suspicious": "Suspicious",
     "other": "Other",
 }
@@ -57,6 +61,17 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.peacocktv.com", "streaming"),
     ("*.paramountplus.com", "streaming"),
     ("*.apple.com/tv", "streaming"),
+    ("*.pandora.com", "streaming"),
+    ("*.deezer.com", "streaming"),
+    ("*.tidal.com", "streaming"),
+    ("*.roku.com", "streaming"),
+    ("*.fubo.tv", "streaming"),
+    ("*.sling.com", "streaming"),
+    ("*.vudu.com", "streaming"),
+    ("*.britbox.com", "streaming"),
+    ("*.discoveryplus.com", "streaming"),
+    ("*.curiositystream.com", "streaming"),
+    ("*.video.cdn.*.com", "streaming"),
     # Gaming
     ("*.steampowered.com", "gaming"),
     ("*.steamcontent.com", "gaming"),
@@ -72,6 +87,13 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.blizzard.com", "gaming"),
     ("*.battle.net", "gaming"),
     ("*.ea.com", "gaming"),
+    ("*.ubisoft.com", "gaming"),
+    ("*.ubi.com", "gaming"),
+    ("*.rockstargames.com", "gaming"),
+    ("*.activision.com", "gaming"),
+    ("*.mojang.com", "gaming"),
+    ("*.unity3d.com", "gaming"),
+    ("*.roblox.com", "gaming"),
     # Social Media
     ("*.facebook.com", "social"),
     ("*.fbcdn.net", "social"),
@@ -85,6 +107,10 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.redditmedia.com", "social"),
     ("*.linkedin.com", "social"),
     ("*.pinterest.com", "social"),
+    ("*.tumblr.com", "social"),
+    ("*.mastodon.*", "social"),
+    ("*.threads.net", "social"),
+    ("*.bsky.app", "social"),
     # Communication
     ("*.zoom.us", "communication"),
     ("*.zoom.com", "communication"),
@@ -159,6 +185,88 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.outlook.com", "email"),
     ("*.yahoo.com", "email"),
     ("*.mail.com", "email"),
+    # Shopping & E-Commerce
+    ("*.amazon.com", "shopping"),
+    ("*.amazon.co.*", "shopping"),
+    ("*.ebay.com", "shopping"),
+    ("*.etsy.com", "shopping"),
+    ("*.shopify.com", "shopping"),
+    ("*.walmart.com", "shopping"),
+    ("*.target.com", "shopping"),
+    ("*.bestbuy.com", "shopping"),
+    ("*.aliexpress.com", "shopping"),
+    ("*.wish.com", "shopping"),
+    ("*.wayfair.com", "shopping"),
+    ("*.newegg.com", "shopping"),
+    ("*.stripe.com", "shopping"),
+    ("*.paypal.com", "shopping"),
+    # News & Media
+    ("*.cnn.com", "news"),
+    ("*.bbc.com", "news"),
+    ("*.bbc.co.uk", "news"),
+    ("*.nytimes.com", "news"),
+    ("*.washingtonpost.com", "news"),
+    ("*.reuters.com", "news"),
+    ("*.apnews.com", "news"),
+    ("*.foxnews.com", "news"),
+    ("*.nbcnews.com", "news"),
+    ("*.abcnews.com", "news"),
+    ("*.theguardian.com", "news"),
+    ("*.wsj.com", "news"),
+    ("*.medium.com", "news"),
+    ("*.substack.com", "news"),
+    ("*.techcrunch.com", "news"),
+    ("*.theverge.com", "news"),
+    ("*.arstechnica.com", "news"),
+    ("*.wired.com", "news"),
+    # Ads & Tracking
+    ("*.doubleclick.net", "ads"),
+    ("*.googlesyndication.com", "ads"),
+    ("*.googleadservices.com", "ads"),
+    ("*.google-analytics.com", "ads"),
+    ("*.googletagmanager.com", "ads"),
+    ("*.facebook.net", "ads"),
+    ("*.fbsbx.com", "ads"),
+    ("*.adsrvr.org", "ads"),
+    ("*.adnxs.com", "ads"),
+    ("*.criteo.com", "ads"),
+    ("*.criteo.net", "ads"),
+    ("*.taboola.com", "ads"),
+    ("*.outbrain.com", "ads"),
+    ("*.scorecardresearch.com", "ads"),
+    ("*.quantserve.com", "ads"),
+    ("*.rubiconproject.com", "ads"),
+    ("*.pubmatic.com", "ads"),
+    ("*.openx.net", "ads"),
+    ("*.hotjar.com", "ads"),
+    ("*.segment.io", "ads"),
+    ("*.segment.com", "ads"),
+    ("*.mixpanel.com", "ads"),
+    ("*.amplitude.com", "ads"),
+    ("*.branch.io", "ads"),
+    ("*.adjust.com", "ads"),
+    ("*.appsflyer.com", "ads"),
+    # Updates & Downloads
+    ("*.windowsupdate.com", "updates"),
+    ("*.windows.com", "updates"),
+    ("*.microsoft.com/update*", "updates"),
+    ("*.download.microsoft.com", "updates"),
+    ("*.apple.com/software*", "updates"),
+    ("*.swcdn.apple.com", "updates"),
+    ("*.updates.cdn-apple.com", "updates"),
+    ("*.mesu.apple.com", "updates"),
+    ("*.appldnld.apple.com", "updates"),
+    ("*.swdist.apple.com", "updates"),
+    ("*.ubuntu.com", "updates"),
+    ("*.debian.org", "updates"),
+    ("*.fedoraproject.org", "updates"),
+    ("*.npmjs.org", "updates"),
+    ("*.npmjs.com", "updates"),
+    ("*.pypi.org", "updates"),
+    ("*.registry.npmjs.org", "updates"),
+    ("*.docker.io", "updates"),
+    ("*.docker.com", "updates"),
+    ("*.ghcr.io", "updates"),
     # Suspicious (Tor, crypto-mining pools, etc.)
     ("*.onion", "suspicious"),
     ("*.mining.*", "suspicious"),
@@ -358,12 +466,25 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
             "by_service": {
                 "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"},
                 "aggs": {
+                    # OLD CODE START — client.bytes/server.bytes are Arkime session fields that inflate values ~25x
+                    # "total_bytes": {
+                    #     "sum": {
+                    #         "script": {
+                    #             "source": (
+                    #                 "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
+                    #                 " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
+                    #             ),
+                    #             "lang": "painless",
+                    #         }
+                    #     }
+                    # },
+                    # OLD CODE END
                     "total_bytes": {
                         "sum": {
                             "script": {
                                 "source": (
-                                    "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
-                                    " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
+                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
                                 ),
                                 "lang": "painless",
                             }
