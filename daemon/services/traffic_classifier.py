@@ -563,12 +563,18 @@ async def get_category_stats(
         cat_data[cat_key]["total_bytes"] += total_bytes
         cat_data[cat_key]["connection_count"] += doc_count
 
+        # Merge services that share the same org name after stripping ASN prefix.
+        # e.g. "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." both
+        # become "Amazon.com, Inc." — their bytes must be summed.
         service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
-        cat_data[cat_key]["top_services"].append(
-            {"name": service_name, "bytes": total_bytes}
-        )
+        svc_map = cat_data[cat_key].setdefault("_svc_map", {})
+        svc_map[service_name] = svc_map.get(service_name, 0) + total_bytes
 
     for cat in cat_data.values():
+        svc_map = cat.pop("_svc_map", {})
+        cat["top_services"] = [
+            {"name": name, "bytes": total} for name, total in svc_map.items()
+        ]
         cat["top_services"].sort(key=lambda s: s["bytes"], reverse=True)
         cat["top_services"] = cat["top_services"][:10]
 
@@ -860,15 +866,18 @@ async def get_category_services(
         logger.error("get_category_services: OpenSearch query failed for category=%s", category, exc_info=True)
         return []
 
-    services = []
+    # Merge buckets that share the same org name after stripping ASN prefix.
+    # e.g. "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." both
+    # become "Amazon.com, Inc." — their bytes must be summed.
+    merged: dict[str, int] = {}
     for bucket in resp.get("aggregations", {}).get("services", {}).get("buckets", []):
         asn_full = bucket["key"]
         # Strip ASN number prefix (e.g., "AS2906 Netflix Inc" → "Netflix Inc")
         service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
-        services.append({
-            "name": service_name,
-            "bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
-        })
+        merged[service_name] = merged.get(service_name, 0) + int(
+            bucket.get("total_bytes", {}).get("value", 0)
+        )
 
+    services = [{"name": name, "bytes": total} for name, total in merged.items()]
     services.sort(key=lambda s: s["bytes"], reverse=True)
     return services

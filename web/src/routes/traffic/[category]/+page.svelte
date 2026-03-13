@@ -326,8 +326,8 @@
 				</div>
 				{#if topServices.length > 0}
 					<HorizontalBarList
-						items={topServices.map((s) => ({
-							key: s.name,
+						items={topServices.map((s, i) => ({
+							key: `${s.name}-${i}`,
 							label: s.name,
 							value: s.bytes,
 							formattedValue: formatBytes(s.bytes),
