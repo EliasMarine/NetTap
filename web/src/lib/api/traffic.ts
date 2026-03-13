@@ -97,6 +97,25 @@ export interface CategoriesResponse {
 	categories: TrafficCategory[];
 }
 
+export interface CategoryDevice {
+	ip: string;
+	hostname?: string;
+	total_bytes: number;
+	download_bytes: number;
+	upload_bytes: number;
+	connections: number;
+	percent: number;
+}
+
+export interface CategoryDetailResponse {
+	category: string;
+	label: string;
+	device_count: number;
+	total_bytes: number;
+	connection_count: number;
+	devices: CategoryDevice[];
+}
+
 export interface Connection {
 	_id: string;
 	_index: string;
@@ -275,4 +294,29 @@ export async function getTrafficCategories(
 	}
 
 	return res.json();
+}
+
+/**
+ * Get detailed breakdown for a single traffic category, listing per-device usage.
+ */
+export async function getCategoryDetail(
+	category: string,
+	opts: TimeRangeParams = {}
+): Promise<CategoryDetailResponse> {
+	const q = buildQuery(opts);
+	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
+	try {
+		const res = await fetch(url);
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch {
+		return {
+			category,
+			label: category,
+			device_count: 0,
+			total_bytes: 0,
+			connection_count: 0,
+			devices: [],
+		};
+	}
 }
