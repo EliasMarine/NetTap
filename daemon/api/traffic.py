@@ -116,6 +116,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        "track_total_hits": True,
         "query": {"bool": {"filter": [
             _time_range_filter(from_ts, to_ts),
             *_ZEEK_CONN_FILTERS,

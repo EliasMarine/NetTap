@@ -17,8 +17,7 @@
 	import type { AlertCountResponse, Alert } from '$api/alerts';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
-	import { getDevices } from '$api/devices';
-	// DeviceListResponse type is inferred via getDevices() return type
+	import { getDeviceCount } from '$api/devices';
 	import IPAddress from '$components/IPAddress.svelte';
 	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
 	import DashboardFilters from '$components/DashboardFilters.svelte';
@@ -144,7 +143,7 @@
 			const [
 				summaryRes, bandwidthRes, protocolsRes, talkersRes,
 				alertCountRes, alertsRes, healthRes, categoriesRes,
-				devicesRes, prevSummaryRes, prevAlertCountRes,
+				deviceCountRes, prevSummaryRes, prevAlertCountRes,
 			] = await Promise.allSettled([
 				getTrafficSummary(timeParams),
 				getBandwidthTimeSeries({ ...timeParams, interval: '1h' }),
@@ -154,7 +153,7 @@
 				getAlerts({ ...timeParams, size: 10 }),
 				getSystemHealth(),
 				getTrafficCategories(timeParams),
-				getDevices(),
+				getDeviceCount(timeParams),
 				getTrafficSummary(prevTimeParams),
 				getAlertCount(prevTimeParams),
 			]);
@@ -167,7 +166,7 @@
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
 			categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
-			deviceCount = devicesRes.status === 'fulfilled' ? devicesRes.value.devices.length : 0;
+			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
 			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
 
@@ -507,7 +506,7 @@
 	<!-- Row 1: Stat Cards (always shown) -->
 	<div class="grid stat-grid stat-grid-5">
 		<!-- Total Bandwidth (24h) -->
-		<div class="card stat-card">
+		<a href="/logs" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Total Bandwidth (24h)</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -533,10 +532,10 @@
 					Inbound + outbound traffic
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- Active Connections -->
-		<div class="card stat-card">
+		<a href="/logs" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Connections (24h)</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -562,10 +561,10 @@
 					Total observed connections
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- Active Alerts (24h) -->
-		<div class="card stat-card">
+		<a href="/alerts" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Alerts (24h)</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -591,10 +590,10 @@
 					Suricata IDS detections
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- System Health -->
-		<div class="card stat-card">
+		<a href="/infrastructure" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">System Health</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="{healthStatus.healthy ? 'var(--success)' : 'var(--warning)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -615,10 +614,10 @@
 					Daemon + OpenSearch status
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- Device Count -->
-		<div class="card stat-card">
+		<a href="/iot" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Devices</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -633,9 +632,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				Unique devices seen on network
+				DHCP-leased devices on network
 			</p>
-		</div>
+		</a>
 	</div>
 
 	<!-- Row 2: Charts -->
@@ -918,6 +917,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+	}
+
+	.stat-card-link {
+		text-decoration: none;
+		color: inherit;
+		cursor: pointer;
+		transition: border-color 0.15s, box-shadow 0.15s;
+	}
+
+	.stat-card-link:hover {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 1px var(--accent);
 	}
 
 	.stat-icon {

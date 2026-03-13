@@ -367,6 +367,7 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [

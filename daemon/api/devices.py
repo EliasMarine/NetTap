@@ -568,6 +568,52 @@ async def handle_device_connections(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
+async def handle_device_count(request: web.Request) -> web.Response:
+    """GET /api/devices/count?from=&to=
+
+    Returns the count of unique DHCP-leased devices (unique client IPs
+    seen in Zeek DHCP logs). This is more accurate than counting all
+    unique source IPs from conn logs, which includes stale/unleased IPs.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "dhcp"}},
+                ]
+            }
+        },
+        "aggs": {
+            "unique_devices": {
+                "cardinality": {"field": "zeek.dhcp.client_addr"}
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in devices/count: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    aggs = result.get("aggregations", {})
+    count = aggs.get("unique_devices", {}).get("value", 0)
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "count": count,
+    })
+
+
 def register_device_routes(
     app: web.Application, storage_manager: StorageManager
 ) -> None:
@@ -579,7 +625,8 @@ def register_device_routes(
     # Create fingerprint service and store on app
     app["device_fingerprint"] = DeviceFingerprint()
 
+    app.router.add_get("/api/devices/count", handle_device_count)
     app.router.add_get("/api/devices", handle_device_list)
     app.router.add_get("/api/devices/{ip}", handle_device_detail)
     app.router.add_get("/api/devices/{ip}/connections", handle_device_connections)
-    logger.info("Device API routes registered (3 endpoints)")
+    logger.info("Device API routes registered (4 endpoints)")
