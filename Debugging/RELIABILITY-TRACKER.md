@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
 > Last updated: 2026-03-12
-> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. SMART monitoring upgraded to nvme-cli (direct NVMe ioctl, no SCSI translation). 59 SMART tests passing. SYS_ADMIN cap added. pySMART removed. Full-stack test: 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Web tests: 1098/1098 passing. svelte-check: 0 errors.
+> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. SMART monitoring upgraded to nvme-cli (direct NVMe ioctl, no SCSI translation). 59 SMART tests passing. SYS_ADMIN cap added. pySMART removed. Full-stack test: 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Web tests: 1435/1435 passing. svelte-check: 0 errors. Traffic categories: ASN-based classification working (3 async bugs fixed).
 
 ## Purpose
 
@@ -39,6 +39,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | nettap-nginx (SSL) | OK | 2026-03-07 | -- | Fixed: SSL key chmod 644 for non-root nginx worker. Self-signed cert, LAN-only. |
 | OpenSearch (security) | OK | 2026-03-07 | -- | Reusable fix-opensearch.sh script created. Security bootstrap after container recreate. |
 | Boot Persistence | OK | 2026-03-07 | -- | NEW: nettap.service systemd unit — auto-starts Docker stack after docker.service on reboot. |
+| Traffic Categories (ASN) | OK | 2026-03-12 | -- | **FIXED:** 3 async bugs (await on sync client), source.ip.keyword, fetch timeout, $effect reactivity. ASN-based classification with 17 categories. PR #97. |
 
 ### Status Legend
 - **OK**: Verified working in production
@@ -102,6 +103,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-10 | Design System | Cross-page visual inconsistency — 10 pages with hardcoded colors, spacing, fonts, and max-width | No canonical style guide | Created `web/DESIGN-SYSTEM.md`, standardized all 10 pages, added sortable tables everywhere | NET-109 | phase-5/mirror-span-mode (0e10121) |
 | 2026-03-10 | TShark / Connections | "Analyze with TShark" always fails: "No packets matching filter" | `buildTSharkFilter()` included ephemeral source port making filter unmatchable across PCAP rotation. Also: no ICMP/IPv6 handling. | Dropped ephemeral port, added IPv6 (`ipv6.addr`) and ICMP (bare protocol name) support. Extracted to utility module with 18 tests. | NET-110 | phase-5/mirror-span-mode (7912342) |
 | 2026-03-11 | Deploy Script | Deploy fails when OpenSearch is unhealthy | `depends_on: condition: service_healthy` blocks dependent containers | Deploy script now checks OpenSearch health first, restarts if unhealthy, runs security bootstrap as fallback | -- | phase-5/mirror-span-mode (1ce47e3) |
+| 2026-03-12 | Traffic Categories (daemon) | `get_category_stats`, `get_category_devices`, `get_category_services` all return empty | Used `await client.search()` but `opensearch-py` client is SYNCHRONOUS — `await` on a dict triggers `TypeError`, silently caught by `except Exception`, returns `[]` | Removed `await` from all 3 `client.search()` calls. Changed test mocks from `AsyncMock` to `MagicMock`. | -- | claude/angry-payne (PR #97) |
+| 2026-03-12 | Traffic Categories (daemon) | `get_category_devices` returns empty IP buckets | `source.ip` is a `text` field — `terms` aggregation tokenizes IPs into individual octets | Changed to `source.ip.keyword` (matching working `top_talkers` handler pattern) | -- | claude/angry-payne (PR #97) |
+| 2026-03-12 | Traffic Categories (web) | Category drill-down page shows infinite loading spinner | 1) `getCategoryDetail()` fetch had no timeout (hangs if proxy/daemon slow). 2) `$effect()` called `fetchData()` which read reactive `$state`/`$derived` inside async body — potential Svelte 5 reactivity tracking issues. 3) Web container not rebuilt with latest proxy route code. | Added 15s `AbortSignal.timeout` to fetch. Pass values as plain parameters to `fetchData()`. Rebuilt web container. | -- | claude/angry-payne (PR #97) |
 
 ## Reliability Lessons Learned
 
@@ -172,6 +176,12 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 50. **nvme-cli uses different field names than smartctl.** `percent_used` (not `percentage_used`), `avail_spare` (not `available_spare`). The extraction layer must normalize both naming conventions to a common internal format.
 51. **NVMe admin ioctls need SYS_ADMIN, not just SYS_RAWIO.** Both `nvme smart-log` and `nvme id-ctrl` require `CAP_SYS_ADMIN`. SYS_RAWIO is sufficient for SATA smartctl only. The daemon container needs both caps.
 52. **nvme-cli targets the controller device, not the namespace.** `nvme smart-log /dev/nvme0` (controller) works. `/dev/nvme0n1` (namespace) may fail. Derive controller by regex: strip trailing `n\d+` from the device path.
+53. **`opensearch-py` client is SYNCHRONOUS — never `await client.search()`.** The `OpenSearch` client from `opensearch-py` returns plain dicts, not coroutines. Using `await` on a dict raises `TypeError: object dict can't be used in 'await' expression`, but this is silently caught by generic `except Exception` handlers, causing functions to return empty results with no error logged. Compare new code against WORKING handlers (e.g., `top_talkers`) to verify the correct pattern.
+54. **Generic `except Exception` masks critical bugs silently.** When `await` is incorrectly used on a sync client, `TypeError` is caught and the function returns `[]` — no log, no traceback, no indication anything went wrong. Always log the exception in catch blocks, especially during development.
+55. **Svelte 5 `$effect` + async: pass plain values, don't read reactive state inside async body.** When `$effect()` calls an async function, only the synchronous portion (before first `await`) is tracked for dependencies. Reading `$state`/`$derived` values inside the async function body can cause subtle reactivity issues. Best practice: read all reactive values in the `$effect` callback, then pass them as plain parameters to the async function.
+56. **Always add `AbortSignal.timeout()` to client-side fetch calls.** Browser `fetch()` has no default timeout. If the SvelteKit proxy or daemon hangs, the browser request hangs indefinitely, causing permanent loading spinners. Always pass `{ signal: AbortSignal.timeout(15_000) }` or similar.
+57. **Rebuild BOTH web AND daemon containers when fixing full-stack bugs.** Rebuilding only the daemon doesn't update SvelteKit proxy routes or frontend components. The web container must be rebuilt to deploy new `+server.ts` routes, `+page.svelte` components, and API client code. Deploy scripts should explicitly rebuild both.
+58. **Deploy test scripts should wait for container health before testing.** Containers show "health: starting" for 10-30s after `docker compose up`. API tests run immediately get empty responses (connection refused). Wait for health checks to pass, or use `docker compose wait` / polling loops.
 
 ## Verification Checklist
 
@@ -217,3 +227,5 @@ After deploying reliability fixes to N100 hardware:
 | 2026-03-10 | Design system + 10-page standardization | Dev macOS | PASS | Created DESIGN-SYSTEM.md, standardized 10 pages (removed hardcoded colors/spacing/fonts/max-width), added sortable tables to certificates/infrastructure/dashboard. svelte-check: 0 errors. |
 | 2026-03-10 | TShark filter fix + utility extraction | Dev macOS | PASS | Extracted buildTSharkFilter to utility module with IPv6/ICMP handling. 18 new tests. vitest: 1098/1098 passing. svelte-check: 0 errors. Commit 7912342. |
 | 2026-03-11 | Deploy script OpenSearch health check | Dev macOS | PASS | Deploy script now checks OpenSearch health before deploying daemon/web. Restarts if unhealthy, waits up to 180s, runs security bootstrap as fallback. Commit 1ce47e3. |
+| 2026-03-12 | Traffic categories fix (3 bugs) | Dev macOS | PASS | Removed `await` from sync client, `.keyword` on source.ip, fetch timeout, $effect fix. vitest: 1435/1435 passing. svelte-check: 0 errors. pytest: 52/52 traffic tests passing. PR #97. |
+| 2026-03-12 | Traffic categories deploy | N100 production | **PARTIAL** | Web+daemon rebuilt. Containers started. API returned empty during health:starting phase (test ran too early, 5s after start). Dashboard needs manual verification. |
