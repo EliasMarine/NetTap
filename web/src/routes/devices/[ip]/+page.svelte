@@ -111,6 +111,16 @@
 
 	let isNewDevice = $derived(device?.first_seen ? (Date.now() - new Date(device.first_seen).getTime()) < 24 * 60 * 60 * 1000 : false);
 
+	// Risk gauge arc calculation
+	let riskArcPath = $derived.by(() => {
+		const angle = Math.min(riskScore / 100, 1) * 180;
+		const rad = (angle * Math.PI) / 180;
+		const endX = 60 - 50 * Math.cos(rad);
+		const endY = 65 - 50 * Math.sin(rad);
+		const largeArc = angle > 180 ? 1 : 0;
+		return `M 10 65 A 50 50 0 ${largeArc} 1 ${endX} ${endY}`;
+	});
+
 	let lastUpdatedText = $derived.by(() => {
 		const diff = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
 		if (diff < 5) return 'just now';
@@ -349,12 +359,7 @@
 					<div class="risk-gauge">
 						<svg viewBox="0 0 120 70">
 							<path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="var(--bg-tertiary)" stroke-width="10" stroke-linecap="round" />
-							{@const angle = Math.min(riskScore / 100, 1) * 180}
-							{@const rad = (angle * Math.PI) / 180}
-							{@const endX = 60 - 50 * Math.cos(rad)}
-							{@const endY = 65 - 50 * Math.sin(rad)}
-							{@const largeArc = angle > 180 ? 1 : 0}
-							<path d="M 10 65 A 50 50 0 {largeArc} 1 {endX} {endY}" fill="none" stroke={riskColor(riskLevel)} stroke-width="10" stroke-linecap="round" />
+							<path d={riskArcPath} fill="none" stroke={riskColor(riskLevel)} stroke-width="10" stroke-linecap="round" />
 							<text x="60" y="52" text-anchor="middle" fill={riskColor(riskLevel)} font-family="var(--font-mono)" font-size="22" font-weight="700">{riskScore}</text>
 							<text x="60" y="66" text-anchor="middle" fill="var(--text-muted)" font-size="9" font-weight="600" letter-spacing="0.08em">RISK</text>
 						</svg>
