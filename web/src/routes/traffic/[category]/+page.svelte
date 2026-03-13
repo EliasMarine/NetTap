@@ -55,7 +55,7 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let category = $derived($page.params.category);
+	let category = $derived($page.params.category ?? 'other');
 	let meta = $derived(CATEGORY_META[category] ?? CATEGORY_META['other']);
 	let selectedRange = $state('24h');
 	let data = $state<CategoryDetailResponse | null>(null);
@@ -78,9 +78,11 @@
 	let sortedDevices = $derived.by(() => {
 		if (!data?.devices) return [];
 		return [...data.devices].sort((a, b) => {
-			const av = (a as Record<string, unknown>)[sortField] ?? 0;
-			const bv = (b as Record<string, unknown>)[sortField] ?? 0;
-			const cmp = (av as number) < (bv as number) ? -1 : (av as number) > (bv as number) ? 1 : 0;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const av = (a as any)[sortField] ?? 0;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const bv = (b as any)[sortField] ?? 0;
+			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
 	});
