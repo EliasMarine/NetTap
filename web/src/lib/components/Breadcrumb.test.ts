@@ -43,7 +43,7 @@ function buildTrail(pathname: string): Crumb[] {
 		const chain: { label: string; href: string }[] = [];
 		let current: string | undefined = pathname;
 		while (current && ROUTE_MAP[current]) {
-			const entry = ROUTE_MAP[current];
+			const entry: { label: string; parent?: string } = ROUTE_MAP[current];
 			chain.unshift({ label: entry.label, href: current });
 			current = entry.parent;
 		}

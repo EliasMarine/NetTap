@@ -303,7 +303,7 @@ export async function getCategoryDetail(
 	category: string,
 	opts: TimeRangeParams = {}
 ): Promise<CategoryDetailResponse> {
-	const q = buildQuery(opts);
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
 	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
 	try {
 		const res = await fetch(url);
