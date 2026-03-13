@@ -376,10 +376,10 @@
 							<tr
 								class="device-row"
 								class:expanded={isExpanded}
-								onclick={() => openDrawer(device)}
+								onclick={() => goto(`/devices/${encodeURIComponent(device.ip)}`)}
 								role="button"
 								tabindex="0"
-								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(device); } }}
+								onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goto(`/devices/${encodeURIComponent(device.ip)}`); } }}
 							>
 								<td class="mono ip-cell">
 									<IPAddress ip={device.ip} />
