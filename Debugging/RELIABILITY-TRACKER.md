@@ -1,7 +1,7 @@
 # NetTap Reliability Tracker — Source of Truth
 
-> Last updated: 2026-03-12
-> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. SMART monitoring upgraded to nvme-cli (direct NVMe ioctl, no SCSI translation). 59 SMART tests passing. SYS_ADMIN cap added. pySMART removed. Full-stack test: 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Web tests: 1435/1435 passing. svelte-check: 0 errors. Traffic categories: ASN-based classification working (3 async bugs fixed).
+> Last updated: 2026-03-13
+> Status: 7/7 subsystems production-ready. 18/18 containers healthy on N100. SMART monitoring upgraded to nvme-cli (direct NVMe ioctl, no SCSI translation). 59 SMART tests passing. SYS_ADMIN cap added. pySMART removed. Full-stack test: 59/59 passing. Mirror/SPAN mode: all API endpoints verified. Web tests: 1444/1444 passing. svelte-check: 0 errors. Traffic categories: ASN-based classification working (3 async bugs + Docker build fix). .dockerignore excludes test files from build context.
 
 ## Purpose
 
@@ -106,6 +106,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-03-12 | Traffic Categories (daemon) | `get_category_stats`, `get_category_devices`, `get_category_services` all return empty | Used `await client.search()` but `opensearch-py` client is SYNCHRONOUS — `await` on a dict triggers `TypeError`, silently caught by `except Exception`, returns `[]` | Removed `await` from all 3 `client.search()` calls. Changed test mocks from `AsyncMock` to `MagicMock`. | -- | claude/angry-payne (PR #97) |
 | 2026-03-12 | Traffic Categories (daemon) | `get_category_devices` returns empty IP buckets | `source.ip` is a `text` field — `terms` aggregation tokenizes IPs into individual octets | Changed to `source.ip.keyword` (matching working `top_talkers` handler pattern) | -- | claude/angry-payne (PR #97) |
 | 2026-03-12 | Traffic Categories (web) | Category drill-down page shows infinite loading spinner | 1) `getCategoryDetail()` fetch had no timeout (hangs if proxy/daemon slow). 2) `$effect()` called `fetchData()` which read reactive `$state`/`$derived` inside async body — potential Svelte 5 reactivity tracking issues. 3) Web container not rebuilt with latest proxy route code. | Added 15s `AbortSignal.timeout` to fetch. Pass values as plain parameters to `fetchData()`. Rebuilt web container. | -- | claude/angry-payne (PR #97) |
+| 2026-03-13 | Docker Build (web) | Web container build fails: "Files prefixed with + are reserved" | Test files named `+page.server.test.ts` and `+server.test.ts` in route directories rejected by SvelteKit's route scanner during `vite build` | Added `**/*.test.ts` and `**/*.spec.ts` to `.dockerignore` to exclude test files from Docker build context | -- | claude/angry-payne (PR #97) |
 
 ## Reliability Lessons Learned
 
@@ -182,6 +183,8 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 56. **Always add `AbortSignal.timeout()` to client-side fetch calls.** Browser `fetch()` has no default timeout. If the SvelteKit proxy or daemon hangs, the browser request hangs indefinitely, causing permanent loading spinners. Always pass `{ signal: AbortSignal.timeout(15_000) }` or similar.
 57. **Rebuild BOTH web AND daemon containers when fixing full-stack bugs.** Rebuilding only the daemon doesn't update SvelteKit proxy routes or frontend components. The web container must be rebuilt to deploy new `+server.ts` routes, `+page.svelte` components, and API client code. Deploy scripts should explicitly rebuild both.
 58. **Deploy test scripts should wait for container health before testing.** Containers show "health: starting" for 10-30s after `docker compose up`. API tests run immediately get empty responses (connection refused). Wait for health checks to pass, or use `docker compose wait` / polling loops.
+59. **SvelteKit reserves `+` prefixed files in route directories.** Files like `+server.test.ts` or `+page.server.test.ts` cause build failures: `Files prefixed with + are reserved`. Only recognized route files (`+page.svelte`, `+server.ts`, `+layout.svelte`, etc.) may use the `+` prefix. Test files in route directories must either: (a) drop the `+` prefix (e.g., `page.server.test.ts`), or (b) be excluded from the build context via `.dockerignore`.
+60. **Add `**/*.test.ts` to `.dockerignore` to exclude test files from Docker builds.** SvelteKit's route scanner runs during `vite build` inside Docker. If test files are copied into the build context (via `COPY web/ .`), the scanner rejects `+` prefixed test files. The `.dockerignore` patterns filter files BEFORE they enter the build context, so test files never reach the Vite build step. This allows keeping `+` prefixed test names locally (for stop hook matching) while preventing Docker build failures.
 
 ## Verification Checklist
 
