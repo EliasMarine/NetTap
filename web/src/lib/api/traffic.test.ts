@@ -194,9 +194,9 @@ describe('traffic API client', () => {
 						label: 'Streaming',
 						total_bytes: 5000000,
 						connection_count: 1200,
-						top_domains: [
-							{ domain: 'www.netflix.com', count: 500 },
-							{ domain: 'cdn.netflix.com', count: 300 },
+						top_services: [
+							{ name: 'Netflix Inc', bytes: 500000 },
+							{ name: 'Google LLC', bytes: 300000 },
 						],
 					},
 					{
@@ -204,7 +204,7 @@ describe('traffic API client', () => {
 						label: 'Web Browsing',
 						total_bytes: 3000000,
 						connection_count: 800,
-						top_domains: [],
+						top_services: [],
 					},
 				],
 			};
@@ -217,7 +217,7 @@ describe('traffic API client', () => {
 			expect(result.categories[0].name).toBe('streaming');
 			expect(result.categories[0].label).toBe('Streaming');
 			expect(result.categories[0].total_bytes).toBe(5000000);
-			expect(result.categories[0].top_domains).toHaveLength(2);
+			expect(result.categories[0].top_services).toHaveLength(2);
 		});
 
 		it('passes time range parameters', async () => {
@@ -266,6 +266,9 @@ describe('traffic API client', () => {
 						connections: 600,
 						percent: 60,
 					},
+				],
+				services: [
+					{ name: 'Netflix Inc', bytes: 3000000 },
 				],
 			};
 			mockFetchSuccess(mockData);

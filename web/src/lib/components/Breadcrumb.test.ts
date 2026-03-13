@@ -77,7 +77,7 @@ function buildTrail(pathname: string): Crumb[] {
 	const catMatch = pathname.match(/^\/traffic\/(.+)$/);
 	if (catMatch) {
 		const slug = decodeURIComponent(catMatch[1]);
-		crumbs.push({ label: 'Traffic Categories', href: '/traffic' });
+		crumbs.push({ label: 'Traffic Categories', href: '/' });
 		crumbs.push({ label: CATEGORY_LABELS[slug] || slug });
 		return crumbs;
 	}
@@ -146,7 +146,7 @@ describe('Breadcrumb — buildTrail', () => {
 	it('builds trail for traffic category', () => {
 		expect(buildTrail('/traffic/streaming')).toEqual([
 			{ label: 'Home', href: '/' },
-			{ label: 'Traffic Categories', href: '/traffic' },
+			{ label: 'Traffic Categories', href: '/' },
 			{ label: 'Streaming' },
 		]);
 	});
@@ -154,7 +154,7 @@ describe('Breadcrumb — buildTrail', () => {
 	it('uses slug as label for unknown category', () => {
 		expect(buildTrail('/traffic/unknown-cat')).toEqual([
 			{ label: 'Home', href: '/' },
-			{ label: 'Traffic Categories', href: '/traffic' },
+			{ label: 'Traffic Categories', href: '/' },
 			{ label: 'unknown-cat' },
 		]);
 	});

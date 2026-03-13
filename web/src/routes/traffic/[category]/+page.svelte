@@ -5,12 +5,12 @@
 	 * Layout:
 	 *   - Back link, category icon + name, time range pills
 	 *   - Stat cards row: Total Bandwidth, Active Devices, Connections
-	 *   - Content grid: Per-device table (sortable) + Top Domains sidebar
+	 *   - Content grid: Per-device table (sortable) + Top Services sidebar
 	 */
 
 	import { page } from '$app/stores';
-	import { getCategoryDetail, getTrafficCategories } from '$api/traffic';
-	import type { CategoryDetailResponse, TrafficCategoryDomain } from '$api/traffic';
+	import { getCategoryDetail } from '$api/traffic';
+	import type { CategoryDetailResponse, TrafficCategoryService } from '$api/traffic';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 
@@ -60,7 +60,7 @@
 	let selectedRange = $state('24h');
 	let data = $state<CategoryDetailResponse | null>(null);
 	let loading = $state(true);
-	let topDomains = $state<TrafficCategoryDomain[]>([]);
+	let topServices = $state<TrafficCategoryService[]>([]);
 
 	// Sort state
 	let sortField = $state<string>('total_bytes');
@@ -119,25 +119,11 @@
 		const timeParams = computeTimeParams(selectedRange);
 
 		try {
-			const [detailRes, categoriesRes] = await Promise.allSettled([
-				getCategoryDetail(category, timeParams),
-				getTrafficCategories(timeParams),
-			]);
-
-			data = detailRes.status === 'fulfilled' ? detailRes.value : null;
-
-			// Extract top_domains from the matching category in the categories response
-			if (categoriesRes.status === 'fulfilled') {
-				const matchingCat = categoriesRes.value.categories.find(
-					(c) => c.name === category
-				);
-				topDomains = matchingCat?.top_domains ?? [];
-			} else {
-				topDomains = [];
-			}
+			data = await getCategoryDetail(category, timeParams);
+			topServices = data?.services ?? [];
 		} catch {
 			data = null;
-			topDomains = [];
+			topServices = [];
 		} finally {
 			loading = false;
 		}
@@ -333,18 +319,18 @@
 				</div>
 			</div>
 
-			<!-- Top Domains sidebar -->
+			<!-- Top Services sidebar -->
 			<div class="card sidebar-card">
 				<div class="card-header">
-					<span class="card-title">Top Domains</span>
+					<span class="card-title">Top Services</span>
 				</div>
-				{#if topDomains.length > 0}
+				{#if topServices.length > 0}
 					<HorizontalBarList
-						items={topDomains.map((d) => ({
-							key: d.domain,
-							label: d.domain,
-							value: d.count,
-							formattedValue: formatNumber(d.count),
+						items={topServices.map((s) => ({
+							key: s.name,
+							label: s.name,
+							value: s.bytes,
+							formattedValue: formatBytes(s.bytes),
 							color: meta.color,
 						}))}
 						showDot={true}
@@ -352,7 +338,7 @@
 						barHeight={10}
 					/>
 				{:else}
-					<p class="text-muted sidebar-empty">No domain data available.</p>
+					<p class="text-muted sidebar-empty">No service data available.</p>
 				{/if}
 			</div>
 		</div>

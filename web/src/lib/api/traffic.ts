@@ -78,9 +78,16 @@ export interface BandwidthResponse {
 	series: BandwidthPoint[];
 }
 
-export interface TrafficCategoryDomain {
-	domain: string;
-	count: number;
+// OLD CODE START — domain-based type replaced by ASN-based top_services
+// export interface TrafficCategoryDomain {
+// 	domain: string;
+// 	count: number;
+// }
+// OLD CODE END
+
+export interface TrafficCategoryService {
+	name: string;
+	bytes: number;
 }
 
 export interface TrafficCategory {
@@ -88,7 +95,7 @@ export interface TrafficCategory {
 	label: string;
 	total_bytes: number;
 	connection_count: number;
-	top_domains: TrafficCategoryDomain[];
+	top_services: TrafficCategoryService[];
 }
 
 export interface CategoriesResponse {
@@ -114,6 +121,7 @@ export interface CategoryDetailResponse {
 	total_bytes: number;
 	connection_count: number;
 	devices: CategoryDevice[];
+	services: TrafficCategoryService[];
 }
 
 export interface Connection {
@@ -317,6 +325,7 @@ export async function getCategoryDetail(
 			total_bytes: 0,
 			connection_count: 0,
 			devices: [],
+			services: [],
 		};
 	}
 }

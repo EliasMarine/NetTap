@@ -539,8 +539,9 @@ async def get_category_stats(
     }
 
     try:
-        resp = await client.search(index="arkime_sessions3-*", body=query)
+        resp = await client.search(index=NETWORK_INDEX, body=query)
     except Exception:
+        logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
         return []
 
     cat_data: dict[str, dict] = {}
@@ -787,8 +788,9 @@ async def get_category_devices(
     }
 
     try:
-        resp = await client.search(index="arkime_sessions3-*", body=query)
+        resp = await client.search(index=NETWORK_INDEX, body=query)
     except Exception:
+        logger.error("get_category_devices: OpenSearch query failed for category=%s", category, exc_info=True)
         return []
 
     devices = []
@@ -803,3 +805,70 @@ async def get_category_devices(
 
     devices.sort(key=lambda d: d["total_bytes"], reverse=True)
     return devices
+
+
+async def get_category_services(
+    client, category: str, from_ts: str, to_ts: str, limit: int = 10
+) -> list[dict]:
+    """Get top services (ASN orgs) within a traffic category, sorted by bytes."""
+    asn_substrings = _asn_filters_for_category(category)
+    if not asn_substrings:
+        return []
+
+    should_clauses = [
+        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        for substr in asn_substrings
+    ]
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                ],
+                "must": [
+                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+                ],
+            }
+        },
+        "aggs": {
+            "services": {
+                "terms": {"field": "destination.as.full.keyword", "size": limit},
+                "aggs": {
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": (
+                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                                ),
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                },
+            }
+        },
+    }
+
+    try:
+        resp = await client.search(index=NETWORK_INDEX, body=query)
+    except Exception:
+        logger.error("get_category_services: OpenSearch query failed for category=%s", category, exc_info=True)
+        return []
+
+    services = []
+    for bucket in resp.get("aggregations", {}).get("services", {}).get("buckets", []):
+        asn_full = bucket["key"]
+        # Strip ASN number prefix (e.g., "AS2906 Netflix Inc" → "Netflix Inc")
+        service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+        services.append({
+            "name": service_name,
+            "bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
+        })
+
+    services.sort(key=lambda s: s["bytes"], reverse=True)
+    return services

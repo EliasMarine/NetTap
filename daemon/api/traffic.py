@@ -7,6 +7,7 @@ network traffic summaries, top talkers, protocol distributions,
 bandwidth time-series, and paginated connection listings.
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -560,7 +561,10 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
-    devices = await traffic_classifier.get_category_devices(client, category, from_ts, to_ts)
+    devices, services = await asyncio.gather(
+        traffic_classifier.get_category_devices(client, category, from_ts, to_ts),
+        traffic_classifier.get_category_services(client, category, from_ts, to_ts),
+    )
 
     grand_total = sum(d["total_bytes"] for d in devices)
     for d in devices:
@@ -573,6 +577,7 @@ async def handle_category_detail(request: web.Request) -> web.Response:
         "total_bytes": grand_total,
         "connection_count": sum(d["connections"] for d in devices),
         "devices": devices,
+        "services": services,
     })
 
 

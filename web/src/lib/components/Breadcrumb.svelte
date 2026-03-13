@@ -99,7 +99,7 @@
 		const catMatch = pathname.match(/^\/traffic\/(.+)$/);
 		if (catMatch) {
 			const slug = decodeURIComponent(catMatch[1]);
-			crumbs.push({ label: 'Traffic Categories', href: '/traffic' });
+			crumbs.push({ label: 'Traffic Categories', href: '/' });
 			crumbs.push({ label: CATEGORY_LABELS[slug] || slug });
 			return crumbs;
 		}
