@@ -706,12 +706,22 @@
 	</div>
 
 	<!-- Row 2.5: Traffic Categories (2-column layout) -->
-	{#if categories.length > 0}
-		<div class="card categories-card">
-			<div class="card-header">
-				<span class="card-title">Traffic Categories</span>
-				<span class="card-subtitle">Bandwidth by category</span>
+	<div class="card categories-card">
+		<div class="card-header">
+			<span class="card-title">Traffic Categories</span>
+			<span class="card-subtitle">Bandwidth by category</span>
+		</div>
+		{#if loading && categories.length === 0}
+			<div class="skeleton-table">
+				{#each Array(4) as _}
+					<div class="skeleton skeleton-row"></div>
+				{/each}
 			</div>
+		{:else if categories.length === 0}
+			<div class="table-empty">
+				<p class="text-muted">No category data yet. Traffic will appear once Zeek captures ASN-tagged connections.</p>
+			</div>
+		{:else}
 			<div class="categories-columns">
 				<div class="categories-col">
 					<HorizontalBarList
@@ -746,8 +756,8 @@
 					/>
 				</div>
 			</div>
-		</div>
-	{/if}
+		{/if}
+	</div>
 
 	<!-- Row 3: Top Talkers + Alert Sparkline + Recent Alerts -->
 	<div class="grid grid-cols-2 tables-grid">
