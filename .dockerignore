@@ -20,6 +20,10 @@ tests/
 web/e2e/
 coverage/
 .nyc_output/
+**/*.test.ts
+**/*.spec.ts
+**/*.test.js
+**/*.spec.js
 
 # Python caches
 __pycache__/
