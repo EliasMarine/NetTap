@@ -1,5 +1,5 @@
 <script lang="ts">
-	import IPAddress from '$components/IPAddress.svelte';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 
 	interface DeviceUsageItem {
 		ip: string;
@@ -20,24 +20,20 @@
 {#if devices.length > 0}
 	<div class="card top-consumers">
 		<h3 class="card-title">Top Bandwidth Consumers</h3>
-		<div class="consumer-list">
-			{#each devices as device, i}
-				<div class="consumer-item">
-					<span class="consumer-rank">{i + 1}</span>
-					<span class="consumer-ip mono">
-						<IPAddress ip={device.ip} />
-					</span>
-					<div class="consumer-bar-wrapper">
-						<div
-							class="consumer-bar"
-							style="width: {Math.max(2, device.percent_of_total)}%"
-						></div>
-					</div>
-					<span class="consumer-bytes mono">{formatBytes(device.total_bytes)}</span>
-					<span class="consumer-percent">{device.percent_of_total}%</span>
-				</div>
-			{/each}
-		</div>
+		<HorizontalBarList
+			items={devices.map(device => ({
+				key: device.ip,
+				label: device.ip,
+				isIp: true,
+				value: device.total_bytes,
+				formattedValue: formatBytes(device.total_bytes),
+				secondaryValue: device.percent_of_total + '%',
+				href: '/devices/' + device.ip,
+			}))}
+			showRank={true}
+			labelWidth={130}
+			barHeight={12}
+		/>
 	</div>
 {/if}
 
@@ -53,6 +49,8 @@
 		border-bottom: 1px solid var(--border-dim);
 	}
 
+	/* OLD CODE START — consumer-list replaced by HorizontalBarList component */
+	/*
 	.consumer-list {
 		padding: var(--space-md) var(--space-lg);
 		display: flex;
@@ -106,4 +104,6 @@
 		font-size: var(--text-sm);
 		color: var(--text-muted);
 	}
+	*/
+	/* OLD CODE END */
 </style>

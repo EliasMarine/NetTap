@@ -39,6 +39,14 @@ _SURICATA_ALERT_FILTERS: list[dict] = [
     {"term": {"event.dataset": "alert"}},
 ]
 
+# Exclude Suricata internal decoder/stream errors from alert counts and
+# listings.  These fire millions of times (e.g., "SURICATA AF-PACKET
+# truncated packet", "SURICATA IPv4 truncated packet") and are not real
+# security alerts — they indicate capture-layer issues, not threats.
+_SURICATA_NOISE_EXCLUSION: list[dict] = [
+    {"prefix": {"rule.name": "SURICATA "}},
+]
+
 # Path for storing acknowledgement data (local JSON file)
 _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
 
@@ -306,6 +314,7 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         "query": {
             "bool": {
                 "filter": filter_clauses,
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         # OLD CODE START — Zeek-native sort field: "timestamp"
@@ -367,12 +376,14 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
-                ]
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {

@@ -236,53 +236,30 @@ class TestGetCategoryLabel(unittest.TestCase):
 
 
 class TestGetCategoryStats(unittest.TestCase):
-    """Tests for get_category_stats() async function."""
+    """Tests for get_category_stats() async function (ASN-based)."""
+
+    @staticmethod
+    def _asn_response(asn_buckets):
+        """Helper to build a mock OpenSearch ASN aggregation response."""
+        return {
+            "aggregations": {
+                "asn_breakdown": {
+                    "buckets": [
+                        {"key": name, "doc_count": count, "total_bytes": {"value": bytes_val}}
+                        for name, count, bytes_val in asn_buckets
+                    ]
+                }
+            }
+        }
 
     def test_category_stats_success(self):
         """Successful category stats query returns categorized data."""
         mock_client = MagicMock()
-
-        # Mock DNS query results
-        mock_client.search.side_effect = [
-            # First call: DNS domains
-            {
-                "aggregations": {
-                    "top_domains": {
-                        "buckets": [
-                            {"key": "www.netflix.com", "doc_count": 150},
-                            {"key": "cdn.netflix.com", "doc_count": 100},
-                            {"key": "api.github.com", "doc_count": 80},
-                            {"key": "unknown.example.org", "doc_count": 50},
-                            {"key": "play.google.com", "doc_count": 40},
-                        ]
-                    }
-                }
-            },
-            # Second call: Connection stats by service
-            {
-                "aggregations": {
-                    "by_service": {
-                        "buckets": [
-                            {
-                                "key": "ssl",
-                                "doc_count": 5000,
-                                "total_bytes": {"value": 10000000},
-                            },
-                            {
-                                "key": "dns",
-                                "doc_count": 2000,
-                                "total_bytes": {"value": 500000},
-                            },
-                            {
-                                "key": "http",
-                                "doc_count": 1000,
-                                "total_bytes": {"value": 3000000},
-                            },
-                        ]
-                    }
-                }
-            },
-        ]
+        mock_client.search = MagicMock(return_value=self._asn_response([
+            ("AS2906 Netflix Inc", 150, 10_000_000),
+            ("AS15169 Google LLC", 100, 5_000_000),
+            ("AS13335 Cloudflare, Inc.", 80, 3_000_000),
+        ]))
 
         async def run():
             return await get_category_stats(
@@ -297,40 +274,22 @@ class TestGetCategoryStats(unittest.TestCase):
         # Check that categories are present
         names = [r["name"] for r in result]
         self.assertIn("streaming", names)
-        self.assertIn("web", names)
+        self.assertIn("security", names)
 
-        # Verify streaming has the netflix domains
+        # Verify streaming has Netflix and Google (YouTube)
         streaming = next(r for r in result if r["name"] == "streaming")
         self.assertEqual(streaming["label"], "Streaming")
         self.assertTrue(streaming["connection_count"] > 0)
-        domain_names = [d["domain"] for d in streaming["top_domains"]]
-        self.assertIn("www.netflix.com", domain_names)
+        service_names = [s["name"] for s in streaming["top_services"]]
+        self.assertIn("Netflix Inc", service_names)
 
-        # Verify search was called twice (DNS + connections)
-        self.assertEqual(mock_client.search.call_count, 2)
+        # Verify search was called once (single ASN aggregation)
+        self.assertEqual(mock_client.search.call_count, 1)
 
-    def test_category_stats_dns_error(self):
-        """DNS query error returns empty list."""
+    def test_category_stats_error(self):
+        """OpenSearch query error returns empty list."""
         mock_client = MagicMock()
-        mock_client.search.side_effect = Exception("Connection refused")
-
-        async def run():
-            return await get_category_stats(
-                mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
-            )
-
-        result = asyncio.run(run())
-        self.assertEqual(result, [])
-
-    def test_category_stats_conn_error(self):
-        """Connection stats query error returns empty list."""
-        mock_client = MagicMock()
-        mock_client.search.side_effect = [
-            # DNS query succeeds
-            {"aggregations": {"top_domains": {"buckets": []}}},
-            # Connection query fails
-            Exception("Connection refused"),
-        ]
+        mock_client.search = MagicMock(side_effect=Exception("Connection refused"))
 
         async def run():
             return await get_category_stats(
@@ -341,12 +300,9 @@ class TestGetCategoryStats(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_category_stats_empty_results(self):
-        """Empty results from both queries returns empty list."""
+        """Empty ASN buckets returns empty list."""
         mock_client = MagicMock()
-        mock_client.search.side_effect = [
-            {"aggregations": {"top_domains": {"buckets": []}}},
-            {"aggregations": {"by_service": {"buckets": []}}},
-        ]
+        mock_client.search = MagicMock(return_value=self._asn_response([]))
 
         async def run():
             return await get_category_stats(
@@ -359,36 +315,10 @@ class TestGetCategoryStats(unittest.TestCase):
     def test_category_stats_sorted_by_bytes(self):
         """Results are sorted by total_bytes descending."""
         mock_client = MagicMock()
-        mock_client.search.side_effect = [
-            {
-                "aggregations": {
-                    "top_domains": {
-                        "buckets": [
-                            {"key": "www.netflix.com", "doc_count": 10},
-                            {"key": "api.github.com", "doc_count": 5},
-                        ]
-                    }
-                }
-            },
-            {
-                "aggregations": {
-                    "by_service": {
-                        "buckets": [
-                            {
-                                "key": "http",
-                                "doc_count": 100,
-                                "total_bytes": {"value": 50000},
-                            },
-                            {
-                                "key": "dns",
-                                "doc_count": 200,
-                                "total_bytes": {"value": 10000},
-                            },
-                        ]
-                    }
-                }
-            },
-        ]
+        mock_client.search = MagicMock(return_value=self._asn_response([
+            ("AS32934 Meta Platforms", 200, 1_000_000),
+            ("AS2906 Netflix Inc", 500, 5_000_000),
+        ]))
 
         async def run():
             return await get_category_stats(

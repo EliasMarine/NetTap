@@ -100,6 +100,28 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
+export interface DeviceCountResponse {
+	from: string;
+	to: string;
+	count: number;
+}
+
+/**
+ * Get count of unique DHCP-leased devices on the network.
+ */
+export async function getDeviceCount(
+	opts: TimeRangeParams = {}
+): Promise<DeviceCountResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/devices/count${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', count: 0 };
+	}
+
+	return res.json();
+}
+
 /**
  * Get device inventory list with optional sorting and filtering.
  */

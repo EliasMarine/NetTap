@@ -7,6 +7,7 @@ network traffic summaries, top talkers, protocol distributions,
 bandwidth time-series, and paginated connection listings.
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from services.excluded_ips import build_excluded_ips_filter
+from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
 
@@ -116,13 +118,19 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        "track_total_hits": True,
         "query": {"bool": {"filter": [
             _time_range_filter(from_ts, to_ts),
             *_ZEEK_CONN_FILTERS,
         ]}},
         "aggs": {
-            "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-            "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            # OLD CODE START — Arkime session fields (client.bytes/server.bytes) include
+            # protocol overhead and inflate values ~25x vs actual network bytes.
+            # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+            # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            # OLD CODE END
+            "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
             "top_protocol": {"terms": {"field": "network.transport.keyword", "size": 1}},
@@ -543,6 +551,42 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
     )
 
 
+async def handle_category_detail(request: web.Request) -> web.Response:
+    """GET /api/traffic/categories/{category} -- per-device breakdown."""
+    category = request.match_info["category"]
+
+    if category not in traffic_classifier.CATEGORIES:
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
+
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    try:
+        devices, services = await asyncio.gather(
+            traffic_classifier.get_category_devices(client, category, from_ts, to_ts),
+            traffic_classifier.get_category_services(client, category, from_ts, to_ts),
+        )
+    except Exception as exc:
+        logger.error("Error in category detail for %s: %s", category, exc)
+        return web.json_response(
+            {"error": f"Category detail query failed: {exc}"}, status=500
+        )
+
+    grand_total = sum(d["total_bytes"] for d in devices)
+    for d in devices:
+        d["percent"] = round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+
+    return web.json_response({
+        "category": category,
+        "label": traffic_classifier.CATEGORIES[category],
+        "device_count": len(devices),
+        "total_bytes": grand_total,
+        "connection_count": sum(d["connections"] for d in devices),
+        "devices": devices,
+        "services": services,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
@@ -563,4 +607,5 @@ def register_traffic_routes(
     app.router.add_get("/api/traffic/bandwidth", handle_bandwidth)
     app.router.add_get("/api/traffic/connections", handle_connections)
     app.router.add_get("/api/traffic/categories", handle_traffic_categories)
-    logger.info("Traffic API routes registered (7 endpoints)")
+    app.router.add_get("/api/traffic/categories/{category}", handle_category_detail)
+    logger.info("Traffic API routes registered (8 endpoints)")

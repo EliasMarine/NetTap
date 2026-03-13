@@ -78,9 +78,16 @@ export interface BandwidthResponse {
 	series: BandwidthPoint[];
 }
 
-export interface TrafficCategoryDomain {
-	domain: string;
-	count: number;
+// OLD CODE START — domain-based type replaced by ASN-based top_services
+// export interface TrafficCategoryDomain {
+// 	domain: string;
+// 	count: number;
+// }
+// OLD CODE END
+
+export interface TrafficCategoryService {
+	name: string;
+	bytes: number;
 }
 
 export interface TrafficCategory {
@@ -88,13 +95,33 @@ export interface TrafficCategory {
 	label: string;
 	total_bytes: number;
 	connection_count: number;
-	top_domains: TrafficCategoryDomain[];
+	top_services: TrafficCategoryService[];
 }
 
 export interface CategoriesResponse {
 	from: string;
 	to: string;
 	categories: TrafficCategory[];
+}
+
+export interface CategoryDevice {
+	ip: string;
+	hostname?: string;
+	total_bytes: number;
+	download_bytes: number;
+	upload_bytes: number;
+	connections: number;
+	percent: number;
+}
+
+export interface CategoryDetailResponse {
+	category: string;
+	label: string;
+	device_count: number;
+	total_bytes: number;
+	connection_count: number;
+	devices: CategoryDevice[];
+	services: TrafficCategoryService[];
 }
 
 export interface Connection {
@@ -275,4 +302,31 @@ export async function getTrafficCategories(
 	}
 
 	return res.json();
+}
+
+/**
+ * Get detailed breakdown for a single traffic category, listing per-device usage.
+ */
+export async function getCategoryDetail(
+	category: string,
+	opts: TimeRangeParams = {}
+): Promise<CategoryDetailResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
+	try {
+		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch (err) {
+		console.error('[getCategoryDetail] fetch failed for', category, err);
+		return {
+			category,
+			label: category,
+			device_count: 0,
+			total_bytes: 0,
+			connection_count: 0,
+			devices: [],
+			services: [],
+		};
+	}
 }

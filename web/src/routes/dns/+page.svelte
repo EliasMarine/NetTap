@@ -9,6 +9,8 @@
 		getSuspiciousDns,
 		getDeviceDns,
 	} from '$lib/api/dns';
+	import { page } from '$app/stores';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type {
 		DnsStats,
 		TopDomain,
@@ -272,6 +274,17 @@
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
+		// Apply query params from URL
+		const urlDomain = $page.url.searchParams.get('domain') || '';
+		const urlType = $page.url.searchParams.get('type') || '';
+		if (urlDomain) {
+			domainSearch = urlDomain;
+		}
+		if (urlType) {
+			// urlType can pre-filter; stored for potential future use
+			domainSearch = domainSearch || urlType;
+		}
+
 		fetchAll().then(() => {
 			initialized = true;
 		});
@@ -310,20 +323,20 @@
 	<!-- Hero Stats -->
 	<div class="stats-grid">
 		<div class="stat-card">
-			<div class="stat-value mono">{formatNumber(stats.total_queries)}</div>
-			<div class="stat-label">TOTAL QUERIES</div>
+			<span class="stat-label">Total Queries</span>
+			<span class="stat-value">{formatNumber(stats.total_queries)}</span>
 		</div>
 		<div class="stat-card">
-			<div class="stat-value mono">{formatNumber(stats.unique_domains)}</div>
-			<div class="stat-label">UNIQUE DOMAINS</div>
+			<span class="stat-label">Unique Domains</span>
+			<span class="stat-value">{formatNumber(stats.unique_domains)}</span>
 		</div>
 		<button class="stat-card clickable" onclick={() => document.getElementById('nxdomain-section')?.scrollIntoView({ behavior: 'smooth' })}>
-			<div class="stat-value mono" class:text-warning={stats.nxdomain_count > 0}>{formatNumber(stats.nxdomain_count)}</div>
-			<div class="stat-label">NXDOMAIN ERRORS</div>
+			<span class="stat-label">NXDOMAIN Errors</span>
+			<span class="stat-value" class:text-warning={stats.nxdomain_count > 0}>{formatNumber(stats.nxdomain_count)}</span>
 		</button>
 		<div class="stat-card">
-			<div class="stat-value mono">{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span></div>
-			<div class="stat-label">AVG RESOLUTION</div>
+			<span class="stat-label">Avg Resolution</span>
+			<span class="stat-value">{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span></span>
 		</div>
 	</div>
 
@@ -462,19 +475,24 @@
 			{#if queryTypes.length === 0 && !loading}
 				<p class="empty-state">No query type data available.</p>
 			{:else}
-				<div class="type-bars">
-					{#each queryTypes as qt}
-						{@const pct = totalQueryTypeCount > 0 ? (qt.count / totalQueryTypeCount) * 100 : 0}
-						<div class="type-row">
-							<span class="type-label mono">{qt.type}</span>
-							<div class="type-bar-track">
-								<div class="type-bar-fill" style="width: {pct}%"></div>
-							</div>
-							<span class="type-count mono">{qt.count.toLocaleString()}</span>
-							<span class="type-pct">{pct.toFixed(1)}%</span>
-						</div>
-					{/each}
-				</div>
+				<HorizontalBarList
+					items={queryTypes.map(qt => {
+						const pct = totalQueryTypeCount > 0 ? (qt.count / totalQueryTypeCount) * 100 : 0;
+						return {
+							key: qt.type,
+							label: qt.type,
+							mono: true,
+							value: qt.count,
+							formattedValue: qt.count.toLocaleString(),
+							color: 'var(--cyan)',
+							secondaryValue: pct.toFixed(1) + '%',
+						};
+					})}
+					maxValue={queryTypes.length > 0 ? queryTypes[0].count : 1}
+					showRank={false}
+					labelWidth={60}
+					barHeight={12}
+				/>
 			{/if}
 		</section>
 	</div>
@@ -736,42 +754,15 @@
 		margin-bottom: var(--space-lg);
 	}
 
-	.stat-card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		padding: var(--space-lg);
-		text-align: left;
-	}
-
 	.stat-card.clickable {
-		cursor: pointer;
-		transition: border-color 0.15s;
-	}
-
-	.stat-card.clickable:hover {
-		border-color: var(--accent);
-	}
-
-	.stat-value {
-		font-size: 2rem;
-		font-weight: 700;
-		color: var(--text-primary);
-		line-height: 1.2;
+		text-align: left;
+		width: 100%;
 	}
 
 	.stat-unit {
 		font-size: 1rem;
 		color: var(--text-muted);
 		font-weight: 400;
-	}
-
-	.stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		letter-spacing: 0.05em;
-		margin-top: var(--space-xs);
-		text-transform: uppercase;
 	}
 
 	.text-warning { color: var(--amber); }
@@ -942,7 +933,8 @@
 
 	.text-muted { color: var(--text-muted); }
 
-	/* Query Type Distribution */
+	/* OLD CODE START — type-bars replaced by HorizontalBarList component */
+	/*
 	.type-bars {
 		display: flex;
 		flex-direction: column;
@@ -988,6 +980,8 @@
 		color: var(--text-muted);
 		text-align: right;
 	}
+	*/
+	/* OLD CODE END */
 
 	/* Device Section */
 	.device-layout {

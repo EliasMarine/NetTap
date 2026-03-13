@@ -331,20 +331,20 @@
 	<!-- Hero Stats -->
 	<div class="stats-grid">
 		<button class="stat-card clickable" onclick={() => document.getElementById('files-section')?.scrollIntoView({ behavior: 'smooth' })}>
-			<div class="stat-value mono">{totalFileCount}</div>
-			<div class="stat-label">PCAP FILES</div>
+			<span class="stat-label">PCAP Files</span>
+			<span class="stat-value text-primary">{totalFileCount}</span>
 		</button>
 		<div class="stat-card">
-			<div class="stat-value mono">{formatBytes(totalBytes)}</div>
-			<div class="stat-label">TOTAL CAPTURED</div>
+			<span class="stat-label">Total Captured</span>
+			<span class="stat-value">{formatBytes(totalBytes)}</span>
 		</div>
 		<div class="stat-card">
-			<div class="stat-value mono">{newestCapture ? formatRelativeTime(newestCapture) : '\u2014'}</div>
-			<div class="stat-label">NEWEST CAPTURE</div>
+			<span class="stat-label">Newest Capture</span>
+			<span class="stat-value">{newestCapture ? formatRelativeTime(newestCapture) : '\u2014'}</span>
 		</div>
 		<div class="stat-card">
-			<div class="stat-value mono">{protocolBreakdown.length > 0 ? protocolBreakdown[0].protocol : '\u2014'}</div>
-			<div class="stat-label">TOP PROTOCOL</div>
+			<span class="stat-label">Top Protocol</span>
+			<span class="stat-value">{protocolBreakdown.length > 0 ? protocolBreakdown[0].protocol : '\u2014'}</span>
 		</div>
 	</div>
 
@@ -647,11 +647,9 @@
 
 	/* Stats Grid */
 	.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-md); margin-bottom: var(--space-lg); }
-	.stat-card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; padding: var(--space-lg); text-align: left; }
-	.stat-card.clickable { cursor: pointer; transition: border-color 0.15s; }
-	.stat-card.clickable:hover { border-color: var(--accent); }
-	.stat-value { font-size: 2rem; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
-	.stat-label { font-size: 0.7rem; color: var(--text-muted); letter-spacing: 0.05em; margin-top: var(--space-xs); text-transform: uppercase; }
+	.stat-card.clickable { text-align: left; width: 100%; }
+	.text-primary { color: var(--text-primary); }
+	/* stat-label inherits from global.css */
 
 	/* Cards */
 	.card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; padding: var(--space-lg); margin-bottom: var(--space-lg); }

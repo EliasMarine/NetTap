@@ -2,6 +2,7 @@
 	import '$lib/styles/global.css';
 	import { page } from '$app/stores';
 	import NotificationBell from '$components/NotificationBell.svelte';
+	import Breadcrumb from '$components/Breadcrumb.svelte';
 	import { getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { initCaptureMode } from '$lib/stores/captureMode';
@@ -189,6 +190,8 @@
 					</form>
 				</div>
 			</header>
+
+			<Breadcrumb />
 
 			<main class="content">
 				{@render children()}

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import IPAddress from '$components/IPAddress.svelte';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import LogDrawerContent from '$components/drawer/content/LogDrawerContent.svelte';
 	import { goto } from '$app/navigation';
@@ -179,10 +180,12 @@
 		}))
 	);
 
-	let maxTalkerCount = $derived(topTalkers.length > 0 ? topTalkers[0].count : 1);
-	let maxProtocolCount = $derived(protocols.length > 0 ? Math.max(1, ...protocols.map((p) => p.count)) : 1);
-	let maxDestCount = $derived(topDestinations.length > 0 ? topDestinations[0].count : 1);
-	let maxDnsCount = $derived(topDns.length > 0 ? topDns[0].count : 1);
+	// OLD CODE START — max values now computed internally by HorizontalBarList component
+	// let maxTalkerCount = $derived(topTalkers.length > 0 ? topTalkers[0].count : 1);
+	// let maxProtocolCount = $derived(protocols.length > 0 ? Math.max(1, ...protocols.map((p) => p.count)) : 1);
+	// let maxDestCount = $derived(topDestinations.length > 0 ? topDestinations[0].count : 1);
+	// let maxDnsCount = $derived(topDns.length > 0 ? topDns[0].count : 1);
+	// OLD CODE END
 
 	let hasActiveFilters = $derived(activeIpFilter !== '' || activeDnsFilter !== '' || logType !== 'all');
 
@@ -755,27 +758,20 @@
 			<div class="card-header">
 				<h2>Protocol Breakdown</h2>
 			</div>
-			{#if protocols.length > 0}
-				<div class="bar-list">
-					{#each protocols as proto}
-						<button class="bar-row" onclick={() => drillByProtocol(proto.protocol)}>
-							<div class="bar-label">
-								<span class="bar-dot" style="background: {protocolColor(proto.protocol)};"></span>
-								<span class="bar-name">{proto.label || protocolLabel(proto.protocol)}</span>
-							</div>
-							<div class="bar-track">
-								<div
-									class="bar-fill"
-									style="width: {(proto.count / maxProtocolCount) * 100}%; background: {protocolColor(proto.protocol)};"
-								></div>
-							</div>
-							<span class="bar-count mono">{formatCompactNumber(proto.count)}</span>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-muted empty-section">No protocol data</p>
-			{/if}
+			<HorizontalBarList
+				items={protocols.map(proto => ({
+					key: proto.protocol,
+					label: proto.label || protocolLabel(proto.protocol),
+					value: proto.count,
+					formattedValue: formatCompactNumber(proto.count),
+					color: protocolColor(proto.protocol),
+				}))}
+				showDot={true}
+				labelWidth={140}
+				barHeight={12}
+				onclick={(item) => drillByProtocol(item.key)}
+				emptyMessage="No protocol data"
+			/>
 		</section>
 
 		<!-- Top Talkers -->
@@ -784,27 +780,23 @@
 				<h2>Top Source IPs</h2>
 				<span class="card-badge">Most Active Devices</span>
 			</div>
-			{#if topTalkers.length > 0}
-				<div class="bar-list">
-					{#each topTalkers as talker, idx}
-						<button class="bar-row" class:active-filter={activeIpFilter === talker.ip} onclick={() => drillByIp(talker.ip)}>
-							<div class="bar-label">
-								<span class="bar-rank">{idx + 1}</span>
-								<span class="bar-name mono"><IPAddress ip={talker.ip} /></span>
-							</div>
-							<div class="bar-track">
-								<div
-									class="bar-fill"
-									style="width: {(talker.count / maxTalkerCount) * 100}%; background: var(--cyan);"
-								></div>
-							</div>
-							<span class="bar-count mono">{formatCompactNumber(talker.count)}</span>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-muted empty-section">No source IP data</p>
-			{/if}
+			<HorizontalBarList
+				items={topTalkers.map(talker => ({
+					key: talker.ip,
+					label: talker.ip,
+					isIp: true,
+					mono: true,
+					value: talker.count,
+					formattedValue: formatCompactNumber(talker.count),
+					color: 'var(--cyan)',
+				}))}
+				showRank={true}
+				labelWidth={140}
+				barHeight={12}
+				activeKey={activeIpFilter}
+				onclick={(item) => drillByIp(item.key)}
+				emptyMessage="No source IP data"
+			/>
 		</section>
 	</div>
 
@@ -818,27 +810,23 @@
 				<h2>Most Contacted Servers</h2>
 				<span class="card-badge">Destination IPs</span>
 			</div>
-			{#if topDestinations.length > 0}
-				<div class="bar-list">
-					{#each topDestinations as dest, idx}
-						<button class="bar-row" class:active-filter={activeIpFilter === dest.ip} onclick={() => drillByIp(dest.ip)}>
-							<div class="bar-label">
-								<span class="bar-rank">{idx + 1}</span>
-								<span class="bar-name mono"><IPAddress ip={dest.ip} /></span>
-							</div>
-							<div class="bar-track">
-								<div
-									class="bar-fill"
-									style="width: {(dest.count / maxDestCount) * 100}%; background: var(--orange);"
-								></div>
-							</div>
-							<span class="bar-count mono">{formatCompactNumber(dest.count)}</span>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-muted empty-section">No destination data</p>
-			{/if}
+			<HorizontalBarList
+				items={topDestinations.map(dest => ({
+					key: dest.ip,
+					label: dest.ip,
+					isIp: true,
+					mono: true,
+					value: dest.count,
+					formattedValue: formatCompactNumber(dest.count),
+					color: 'var(--orange)',
+				}))}
+				showRank={true}
+				labelWidth={140}
+				barHeight={12}
+				activeKey={activeIpFilter}
+				onclick={(item) => drillByIp(item.key)}
+				emptyMessage="No destination data"
+			/>
 		</section>
 
 		<!-- Top DNS Queries -->
@@ -847,27 +835,22 @@
 				<h2>Top DNS Queries</h2>
 				<span class="card-badge">Most Looked Up Domains</span>
 			</div>
-			{#if topDns.length > 0}
-				<div class="bar-list">
-					{#each topDns as dnsEntry, idx}
-						<button class="bar-row" class:active-filter={activeDnsFilter === dnsEntry.domain} onclick={() => drillByDns(dnsEntry.domain)}>
-							<div class="bar-label">
-								<span class="bar-rank">{idx + 1}</span>
-								<span class="bar-name mono">{dnsEntry.domain}</span>
-							</div>
-							<div class="bar-track">
-								<div
-									class="bar-fill"
-									style="width: {(dnsEntry.count / maxDnsCount) * 100}%; background: var(--green);"
-								></div>
-							</div>
-							<span class="bar-count mono">{formatCompactNumber(dnsEntry.count)}</span>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-muted empty-section">No DNS data</p>
-			{/if}
+			<HorizontalBarList
+				items={topDns.map(dnsEntry => ({
+					key: dnsEntry.domain,
+					label: dnsEntry.domain,
+					mono: true,
+					value: dnsEntry.count,
+					formattedValue: formatCompactNumber(dnsEntry.count),
+					color: 'var(--green)',
+				}))}
+				showRank={true}
+				labelWidth={140}
+				barHeight={12}
+				activeKey={activeDnsFilter}
+				onclick={(item) => drillByDns(item.key)}
+				emptyMessage="No DNS data"
+			/>
 		</section>
 	</div>
 
@@ -1274,7 +1257,8 @@
 		gap: var(--space-md);
 	}
 
-	/* Bar list (used in protocol breakdown, top talkers, destinations, dns) */
+	/* OLD CODE START — bar styles replaced by shared HorizontalBarList component */
+	/*
 	.bar-list {
 		display: flex;
 		flex-direction: column;
@@ -1359,6 +1343,8 @@
 		text-align: right;
 		min-width: 40px;
 	}
+	*/
+	/* OLD CODE END */
 
 	.empty-section {
 		padding: var(--space-xl);

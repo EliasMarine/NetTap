@@ -137,16 +137,16 @@
 		<!-- Stats summary -->
 		<div class="stats-grid">
 			<div class="stat-card">
-				<span class="stat-value">{devices.length}</span>
 				<span class="stat-label">IoT Devices</span>
+				<span class="stat-value">{devices.length}</span>
 			</div>
 			<div class="stat-card" class:alert-stat={anomalies.length > 0}>
-				<span class="stat-value">{anomalies.length}</span>
 				<span class="stat-label">IoT Anomalies</span>
+				<span class="stat-value">{anomalies.length}</span>
 			</div>
 			<div class="stat-card" class:alert-stat={lanAnomalies.length > 0}>
-				<span class="stat-value">{lanAnomalies.length}</span>
 				<span class="stat-label">LAN Anomalies</span>
+				<span class="stat-value">{lanAnomalies.length}</span>
 			</div>
 		</div>
 
@@ -285,28 +285,8 @@
 		gap: var(--space-md);
 	}
 
-	.stat-card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-md);
-		padding: var(--space-lg);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
 	.stat-card.alert-stat {
 		border-color: var(--warning);
-	}
-
-	.stat-value {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-	}
-
-	.stat-label {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
 	}
 
 	/* Card */

@@ -149,20 +149,20 @@
 	<!-- Hero Stats -->
 	<div class="stats-grid">
 		<div class="stat-card">
-			<div class="stat-value">{stats.total_certs}</div>
-			<div class="stat-label">Total Certificates</div>
+			<span class="stat-label">Total Certificates</span>
+			<span class="stat-value">{stats.total_certs}</span>
 		</div>
 		<div class="stat-card" class:stat-warning={stats.expiring_count > 0}>
-			<div class="stat-value">{stats.expiring_count}</div>
-			<div class="stat-label">Expiring (30d)</div>
+			<span class="stat-label">Expiring (30d)</span>
+			<span class="stat-value">{stats.expiring_count}</span>
 		</div>
 		<div class="stat-card" class:stat-info={stats.self_signed_count > 0}>
-			<div class="stat-value">{stats.self_signed_count}</div>
-			<div class="stat-label">Self-Signed</div>
+			<span class="stat-label">Self-Signed</span>
+			<span class="stat-value">{stats.self_signed_count}</span>
 		</div>
 		<div class="stat-card" class:stat-critical={stats.issuer_changes_count > 0}>
-			<div class="stat-value">{stats.issuer_changes_count}</div>
-			<div class="stat-label">Issuer Changes</div>
+			<span class="stat-label">Issuer Changes</span>
+			<span class="stat-value">{stats.issuer_changes_count}</span>
 		</div>
 	</div>
 
@@ -322,25 +322,7 @@
 		gap: var(--space-md);
 	}
 
-	.stat-card {
-		padding: var(--space-md);
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		text-align: center;
-	}
-
-	.stat-value {
-		font-size: var(--text-3xl);
-		font-weight: 800;
-		color: var(--text-primary);
-	}
-
-	.stat-label {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-		margin-top: var(--space-xs);
-	}
+	/* stat-card, stat-value, stat-label inherit from global.css */
 
 	.stat-warning .stat-value { color: var(--amber); }
 	.stat-info .stat-value { color: var(--accent); }

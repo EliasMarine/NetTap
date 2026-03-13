@@ -29,9 +29,108 @@ CATEGORIES = {
     "email": "Email",
     "web": "Web Browsing",
     "security": "Security & VPN",
+    "shopping": "Shopping",
+    "news": "News & Media",
+    "ads": "Ads & Tracking",
+    "updates": "Updates & Downloads",
     "suspicious": "Suspicious",
     "other": "Other",
 }
+
+# ---------------------------------------------------------------------------
+# ASN organisation → category mapping (substring match on destination.as.full)
+# ---------------------------------------------------------------------------
+
+ASN_CATEGORY_MAP: dict[str, str] = {
+    # Streaming
+    "Netflix": "streaming", "Spotify": "streaming", "Hulu": "streaming",
+    "Disney": "streaming", "Twitch": "streaming", "Plex": "streaming",
+    "Roku": "streaming", "Crunchyroll": "streaming", "SoundCloud": "streaming",
+    "Pandora": "streaming", "Deezer": "streaming", "Tidal": "streaming",
+    "Vimeo": "streaming", "DailyMotion": "streaming", "Peacock": "streaming",
+    "Paramount": "streaming", "HBO": "streaming", "Discovery": "streaming",
+    "fuboTV": "streaming", "Sling": "streaming", "Apple TV": "streaming",
+    "iQIYI": "streaming", "YouTube": "streaming",
+    # Gaming
+    "Valve": "gaming", "Riot Games": "gaming", "Epic Games": "gaming",
+    "Nintendo": "gaming", "Electronic Arts": "gaming", "Activision": "gaming",
+    "Blizzard": "gaming", "Ubisoft": "gaming", "Take-Two": "gaming",
+    "Roblox": "gaming", "Bungie": "gaming", "Mojang": "gaming",
+    "Unity": "gaming", "Supercell": "gaming", "miHoYo": "gaming",
+    # Social Media
+    "Facebook": "social", "Instagram": "social", "Meta Platforms": "social",
+    "Twitter": "social", "Snap": "social", "Snapchat": "social",
+    "TikTok": "social", "ByteDance": "social", "Reddit": "social",
+    "Pinterest": "social", "LinkedIn": "social", "Tumblr": "social",
+    # Communication
+    "Zoom": "communication", "Slack": "communication", "Discord": "communication",
+    "Telegram": "communication", "Signal": "communication", "Vonage": "communication",
+    "RingCentral": "communication", "Twilio": "communication",
+    "GoTo": "communication", "Webex": "communication",
+    # Work & Productivity
+    "Atlassian": "work", "Notion": "work", "Salesforce": "work",
+    "Dropbox": "work", "Box, Inc": "work", "DocuSign": "work",
+    "Asana": "work", "Monday.com": "work", "Hubspot": "work",
+    "Zendesk": "work", "Freshworks": "work", "Canva": "work",
+    "Figma": "work", "Adobe": "work", "Intuit": "work", "Autodesk": "work",
+    # Cloud & Hosting
+    "Amazon.com": "cloud", "Amazon Web Services": "cloud",
+    "Amazon Technologies": "cloud", "DigitalOcean": "cloud",
+    "Oracle": "cloud", "IBM": "cloud", "Linode": "cloud",
+    "Vultr": "cloud", "OVH": "cloud", "Hetzner": "cloud",
+    "Rackspace": "cloud", "Heroku": "cloud", "Vercel": "cloud", "Netlify": "cloud",
+    # Shopping
+    "Shopify": "shopping", "eBay": "shopping", "Walmart": "shopping",
+    "Etsy": "shopping", "Target": "shopping", "Wayfair": "shopping",
+    "Best Buy": "shopping", "Alibaba": "shopping", "Wish": "shopping",
+    # News & Media
+    "CNN": "news", "New York Times": "news", "Washington Post": "news",
+    "BBC": "news", "Reuters": "news", "Associated Press": "news",
+    "NPR": "news", "Fox": "news", "NBC": "news", "CBS": "news",
+    "Vox Media": "news", "BuzzFeed": "news", "Conde Nast": "news",
+    "Hearst": "news", "Gannett": "news", "Tribune": "news",
+    # Ads & Tracking
+    "DoubleClick": "ads", "TradeDesk": "ads", "Criteo": "ads",
+    "AppNexus": "ads", "Taboola": "ads", "Outbrain": "ads",
+    "comScore": "ads", "Nielsen": "ads",
+    # Updates & Downloads
+    "Canonical": "updates", "Red Hat": "updates", "SUSE": "updates",
+    # Security & VPN
+    "Cloudflare": "security", "Quad9": "security", "OpenDNS": "security",
+    "CrowdStrike": "security", "Palo Alto": "security", "Fortinet": "security",
+    "Zscaler": "security", "NordVPN": "security", "ExpressVPN": "security",
+    "Mullvad": "security", "Let's Encrypt": "security", "DigiCert": "security",
+    # CDN & Infrastructure
+    "Akamai": "web", "Fastly": "web", "Limelight": "web",
+    "StackPath": "web", "Edgecast": "web",
+    # IoT & Smart Home
+    "Philips": "iot", "TP-Link": "iot", "Tuya": "iot", "ecobee": "iot",
+    "Wyze": "iot", "Arlo": "iot", "iRobot": "iot", "Sonos": "iot",
+    "Nanit": "iot", "Ring": "iot", "Nest": "iot", "SimpliSafe": "iot",
+    "Honeywell": "iot", "Ubiquiti": "iot", "Netgear": "iot",
+    # Big Tech (classified by primary residential use)
+    "Google": "streaming",  # YouTube dominates residential bytes
+    "Microsoft": "work",  # Office 365, Teams
+    "Apple": "updates",  # iCloud, Software Update
+    "PayPal": "shopping", "Stripe": "shopping", "Square": "shopping",
+    # Email
+    "Proton": "email", "Fastmail": "email", "Mailchimp": "email",
+    "SendGrid": "email", "Mailgun": "email",
+    # File Transfer
+    "WeTransfer": "file_transfer", "Mega": "file_transfer",
+    "MediaFire": "file_transfer", "Backblaze": "file_transfer",
+}
+
+
+def classify_asn(asn_full: str) -> str:
+    """Map an ASN full string (e.g. 'AS2906 Netflix Inc') to a category key."""
+    if not asn_full:
+        return "other"
+    for substring, category in ASN_CATEGORY_MAP.items():
+        if substring.lower() in asn_full.lower():
+            return category
+    return "other"
+
 
 # ---------------------------------------------------------------------------
 # Domain patterns to categories (most specific first)
@@ -57,6 +156,17 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.peacocktv.com", "streaming"),
     ("*.paramountplus.com", "streaming"),
     ("*.apple.com/tv", "streaming"),
+    ("*.pandora.com", "streaming"),
+    ("*.deezer.com", "streaming"),
+    ("*.tidal.com", "streaming"),
+    ("*.roku.com", "streaming"),
+    ("*.fubo.tv", "streaming"),
+    ("*.sling.com", "streaming"),
+    ("*.vudu.com", "streaming"),
+    ("*.britbox.com", "streaming"),
+    ("*.discoveryplus.com", "streaming"),
+    ("*.curiositystream.com", "streaming"),
+    ("*.video.cdn.*.com", "streaming"),
     # Gaming
     ("*.steampowered.com", "gaming"),
     ("*.steamcontent.com", "gaming"),
@@ -72,6 +182,13 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.blizzard.com", "gaming"),
     ("*.battle.net", "gaming"),
     ("*.ea.com", "gaming"),
+    ("*.ubisoft.com", "gaming"),
+    ("*.ubi.com", "gaming"),
+    ("*.rockstargames.com", "gaming"),
+    ("*.activision.com", "gaming"),
+    ("*.mojang.com", "gaming"),
+    ("*.unity3d.com", "gaming"),
+    ("*.roblox.com", "gaming"),
     # Social Media
     ("*.facebook.com", "social"),
     ("*.fbcdn.net", "social"),
@@ -85,6 +202,10 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.redditmedia.com", "social"),
     ("*.linkedin.com", "social"),
     ("*.pinterest.com", "social"),
+    ("*.tumblr.com", "social"),
+    ("*.mastodon.*", "social"),
+    ("*.threads.net", "social"),
+    ("*.bsky.app", "social"),
     # Communication
     ("*.zoom.us", "communication"),
     ("*.zoom.com", "communication"),
@@ -159,6 +280,88 @@ DOMAIN_RULES: list[tuple[str, str]] = [
     ("*.outlook.com", "email"),
     ("*.yahoo.com", "email"),
     ("*.mail.com", "email"),
+    # Shopping & E-Commerce
+    ("*.amazon.com", "shopping"),
+    ("*.amazon.co.*", "shopping"),
+    ("*.ebay.com", "shopping"),
+    ("*.etsy.com", "shopping"),
+    ("*.shopify.com", "shopping"),
+    ("*.walmart.com", "shopping"),
+    ("*.target.com", "shopping"),
+    ("*.bestbuy.com", "shopping"),
+    ("*.aliexpress.com", "shopping"),
+    ("*.wish.com", "shopping"),
+    ("*.wayfair.com", "shopping"),
+    ("*.newegg.com", "shopping"),
+    ("*.stripe.com", "shopping"),
+    ("*.paypal.com", "shopping"),
+    # News & Media
+    ("*.cnn.com", "news"),
+    ("*.bbc.com", "news"),
+    ("*.bbc.co.uk", "news"),
+    ("*.nytimes.com", "news"),
+    ("*.washingtonpost.com", "news"),
+    ("*.reuters.com", "news"),
+    ("*.apnews.com", "news"),
+    ("*.foxnews.com", "news"),
+    ("*.nbcnews.com", "news"),
+    ("*.abcnews.com", "news"),
+    ("*.theguardian.com", "news"),
+    ("*.wsj.com", "news"),
+    ("*.medium.com", "news"),
+    ("*.substack.com", "news"),
+    ("*.techcrunch.com", "news"),
+    ("*.theverge.com", "news"),
+    ("*.arstechnica.com", "news"),
+    ("*.wired.com", "news"),
+    # Ads & Tracking
+    ("*.doubleclick.net", "ads"),
+    ("*.googlesyndication.com", "ads"),
+    ("*.googleadservices.com", "ads"),
+    ("*.google-analytics.com", "ads"),
+    ("*.googletagmanager.com", "ads"),
+    ("*.facebook.net", "ads"),
+    ("*.fbsbx.com", "ads"),
+    ("*.adsrvr.org", "ads"),
+    ("*.adnxs.com", "ads"),
+    ("*.criteo.com", "ads"),
+    ("*.criteo.net", "ads"),
+    ("*.taboola.com", "ads"),
+    ("*.outbrain.com", "ads"),
+    ("*.scorecardresearch.com", "ads"),
+    ("*.quantserve.com", "ads"),
+    ("*.rubiconproject.com", "ads"),
+    ("*.pubmatic.com", "ads"),
+    ("*.openx.net", "ads"),
+    ("*.hotjar.com", "ads"),
+    ("*.segment.io", "ads"),
+    ("*.segment.com", "ads"),
+    ("*.mixpanel.com", "ads"),
+    ("*.amplitude.com", "ads"),
+    ("*.branch.io", "ads"),
+    ("*.adjust.com", "ads"),
+    ("*.appsflyer.com", "ads"),
+    # Updates & Downloads
+    ("*.windowsupdate.com", "updates"),
+    ("*.windows.com", "updates"),
+    ("*.microsoft.com/update*", "updates"),
+    ("*.download.microsoft.com", "updates"),
+    ("*.apple.com/software*", "updates"),
+    ("*.swcdn.apple.com", "updates"),
+    ("*.updates.cdn-apple.com", "updates"),
+    ("*.mesu.apple.com", "updates"),
+    ("*.appldnld.apple.com", "updates"),
+    ("*.swdist.apple.com", "updates"),
+    ("*.ubuntu.com", "updates"),
+    ("*.debian.org", "updates"),
+    ("*.fedoraproject.org", "updates"),
+    ("*.npmjs.org", "updates"),
+    ("*.npmjs.com", "updates"),
+    ("*.pypi.org", "updates"),
+    ("*.registry.npmjs.org", "updates"),
+    ("*.docker.io", "updates"),
+    ("*.docker.com", "updates"),
+    ("*.ghcr.io", "updates"),
     # Suspicious (Tor, crypto-mining pools, etc.)
     ("*.onion", "suspicious"),
     ("*.mining.*", "suspicious"),
@@ -297,73 +500,34 @@ def get_category_label(key: str) -> str:
     return CATEGORIES.get(key, key.replace("_", " ").title())
 
 
-async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
-    """Query OpenSearch for traffic grouped by category.
-
-    Strategy:
-    1. Get top domains from zeek-dns-* indices
-    2. Classify each domain into a category
-    3. Aggregate bytes and connection counts per category
-
-    Returns a list of dicts with keys: name, label, total_bytes,
-    connection_count, top_domains.
-    """
-    time_filter = {
-        "range": {
-            "@timestamp": {
-                "gte": from_ts,
-                "lte": to_ts,
-                "format": "strict_date_optional_time",
-            }
-        }
-    }
-
-    # Step 1: Get top domains with their query counts from DNS logs
-    dns_query = {
+async def get_category_stats(
+    client, from_ts: str, to_ts: str
+) -> list[dict]:
+    """Aggregate traffic bytes by ASN organisation, map to categories."""
+    query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            time_filter,
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "dns"}},
-        ]}},
-        "aggs": {
-            "top_domains": {
-                "terms": {
-                    "field": "zeek.dns.query.keyword",
-                    "size": 500,
-                },
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                ]
             }
         },
-    }
-
-    try:
-        dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
-    except Exception as exc:
-        logger.error("OpenSearch error fetching DNS domains: %s", exc)
-        return []
-
-    domain_buckets = (
-        dns_result.get("aggregations", {}).get("top_domains", {}).get("buckets", [])
-    )
-
-    # Step 2: Also get connection-level stats with service and port info
-    conn_query = {
-        "size": 0,
-        "query": {"bool": {"filter": [
-            time_filter,
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-        ]}},
         "aggs": {
-            "by_service": {
-                "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"},
+            "asn_breakdown": {
+                "terms": {
+                    "field": "destination.as.full.keyword",
+                    "size": 500,
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
                                 "source": (
-                                    "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
-                                    " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
+                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
                                 ),
                                 "lang": "painless",
                             }
@@ -375,84 +539,336 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     }
 
     try:
-        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
-    except Exception as exc:
-        logger.error("OpenSearch error fetching connection stats: %s", exc)
+        resp = client.search(index=NETWORK_INDEX, body=query)
+    except Exception:
+        logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
         return []
 
-    service_buckets = (
-        conn_result.get("aggregations", {}).get("by_service", {}).get("buckets", [])
-    )
+    cat_data: dict[str, dict] = {}
+    for bucket in resp.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", []):
+        asn_full = bucket["key"]
+        cat_key = classify_asn(asn_full)
+        total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
+        doc_count = bucket.get("doc_count", 0)
 
-    # Step 3: Build category aggregation
-    # Map: category_key -> {total_bytes, connection_count, top_domains: {domain: count}}
-    category_data: dict[str, dict] = {}
-
-    for cat_key in CATEGORIES:
-        category_data[cat_key] = {
-            "total_bytes": 0,
-            "connection_count": 0,
-            "top_domains": {},
-        }
-
-    # Classify DNS domains
-    for bucket in domain_buckets:
-        domain = bucket.get("key", "")
-        count = bucket.get("doc_count", 0)
-        cat = classify_domain(domain)
-
-        if cat not in category_data:
-            category_data[cat] = {
-                "total_bytes": 0,
-                "connection_count": 0,
-                "top_domains": {},
-            }
-
-        category_data[cat]["connection_count"] += count
-        category_data[cat]["top_domains"][domain] = (
-            category_data[cat]["top_domains"].get(domain, 0) + count
-        )
-
-    # Classify by service (for bytes aggregation)
-    for bucket in service_buckets:
-        service_name = bucket.get("key", "")
-        # OLD CODE START — doc_count was extracted but never used (F841)
-        # doc_count = bucket.get("doc_count", 0)
-        # OLD CODE END
-        total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
-        cat = classify_by_service(service_name)
-
-        if cat not in category_data:
-            category_data[cat] = {
-                "total_bytes": 0,
-                "connection_count": 0,
-                "top_domains": {},
-            }
-
-        category_data[cat]["total_bytes"] += total_bytes
-
-    # Step 4: Build response
-    result = []
-    for cat_key, data in category_data.items():
-        if data["total_bytes"] == 0 and data["connection_count"] == 0:
-            continue
-
-        # Sort top domains by count, take top 10
-        sorted_domains = sorted(
-            data["top_domains"].items(), key=lambda x: x[1], reverse=True
-        )[:10]
-
-        result.append(
-            {
+        if cat_key not in cat_data:
+            cat_data[cat_key] = {
                 "name": cat_key,
-                "label": get_category_label(cat_key),
-                "total_bytes": data["total_bytes"],
-                "connection_count": data["connection_count"],
-                "top_domains": [{"domain": d, "count": c} for d, c in sorted_domains],
+                "label": CATEGORIES.get(cat_key, cat_key.title()),
+                "total_bytes": 0,
+                "connection_count": 0,
+                "top_services": [],
             }
+
+        cat_data[cat_key]["total_bytes"] += total_bytes
+        cat_data[cat_key]["connection_count"] += doc_count
+
+        service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+        cat_data[cat_key]["top_services"].append(
+            {"name": service_name, "bytes": total_bytes}
         )
 
-    # Sort by total_bytes descending
-    result.sort(key=lambda x: x["total_bytes"], reverse=True)
+    for cat in cat_data.values():
+        cat["top_services"].sort(key=lambda s: s["bytes"], reverse=True)
+        cat["top_services"] = cat["top_services"][:10]
 
+    result = sorted(cat_data.values(), key=lambda c: c["total_bytes"], reverse=True)
     return result
+
+
+# OLD CODE START — service/domain-based get_category_stats replaced by ASN-based implementation above
+# async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
+#     """Query OpenSearch for traffic grouped by category.
+#
+#     Strategy:
+#     1. Get top domains from zeek-dns-* indices
+#     2. Classify each domain into a category
+#     3. Aggregate bytes and connection counts per category
+#
+#     Returns a list of dicts with keys: name, label, total_bytes,
+#     connection_count, top_domains.
+#     """
+#     time_filter = {
+#         "range": {
+#             "@timestamp": {
+#                 "gte": from_ts,
+#                 "lte": to_ts,
+#                 "format": "strict_date_optional_time",
+#             }
+#         }
+#     }
+#
+#     # Step 1: Get top domains with their query counts from DNS logs
+#     dns_query = {
+#         "size": 0,
+#         "query": {"bool": {"filter": [
+#             time_filter,
+#             {"term": {"event.provider": "zeek"}},
+#             {"term": {"event.dataset": "dns"}},
+#         ]}},
+#         "aggs": {
+#             "top_domains": {
+#                 "terms": {
+#                     "field": "zeek.dns.query.keyword",
+#                     "size": 500,
+#                 },
+#             }
+#         },
+#     }
+#
+#     try:
+#         dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
+#     except Exception as exc:
+#         logger.error("OpenSearch error fetching DNS domains: %s", exc)
+#         return []
+#
+#     domain_buckets = (
+#         dns_result.get("aggregations", {}).get("top_domains", {}).get("buckets", [])
+#     )
+#
+#     # Step 2: Also get connection-level stats with service and port info
+#     conn_query = {
+#         "size": 0,
+#         "query": {"bool": {"filter": [
+#             time_filter,
+#             {"term": {"event.provider": "zeek"}},
+#             {"term": {"event.dataset": "conn"}},
+#         ]}},
+#         "aggs": {
+#             "by_service": {
+#                 "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"},
+#                 "aggs": {
+#                     "total_bytes": {
+#                         "sum": {
+#                             "script": {
+#                                 "source": (
+#                                     "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+#                                     " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+#                                 ),
+#                                 "lang": "painless",
+#                             }
+#                         }
+#                     },
+#                 },
+#             }
+#         },
+#     }
+#
+#     try:
+#         conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
+#     except Exception as exc:
+#         logger.error("OpenSearch error fetching connection stats: %s", exc)
+#         return []
+#
+#     service_buckets = (
+#         conn_result.get("aggregations", {}).get("by_service", {}).get("buckets", [])
+#     )
+#
+#     # Step 3: Build category aggregation
+#     category_data: dict[str, dict] = {}
+#
+#     for cat_key in CATEGORIES:
+#         category_data[cat_key] = {
+#             "total_bytes": 0,
+#             "connection_count": 0,
+#             "top_domains": {},
+#         }
+#
+#     # Classify DNS domains
+#     for bucket in domain_buckets:
+#         domain = bucket.get("key", "")
+#         count = bucket.get("doc_count", 0)
+#         cat = classify_domain(domain)
+#
+#         if cat not in category_data:
+#             category_data[cat] = {
+#                 "total_bytes": 0,
+#                 "connection_count": 0,
+#                 "top_domains": {},
+#             }
+#
+#         category_data[cat]["connection_count"] += count
+#         category_data[cat]["top_domains"][domain] = (
+#             category_data[cat]["top_domains"].get(domain, 0) + count
+#         )
+#
+#     # Classify by service (for bytes aggregation)
+#     for bucket in service_buckets:
+#         service_name = bucket.get("key", "")
+#         total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
+#         cat = classify_by_service(service_name)
+#
+#         if cat not in category_data:
+#             category_data[cat] = {
+#                 "total_bytes": 0,
+#                 "connection_count": 0,
+#                 "top_domains": {},
+#             }
+#
+#         category_data[cat]["total_bytes"] += total_bytes
+#
+#     # Step 4: Build response
+#     result = []
+#     for cat_key, data in category_data.items():
+#         if data["total_bytes"] == 0 and data["connection_count"] == 0:
+#             continue
+#
+#         sorted_domains = sorted(
+#             data["top_domains"].items(), key=lambda x: x[1], reverse=True
+#         )[:10]
+#
+#         result.append(
+#             {
+#                 "name": cat_key,
+#                 "label": get_category_label(cat_key),
+#                 "total_bytes": data["total_bytes"],
+#                 "connection_count": data["connection_count"],
+#                 "top_domains": [{"domain": d, "count": c} for d, c in sorted_domains],
+#             }
+#         )
+#
+#     result.sort(key=lambda x: x["total_bytes"], reverse=True)
+#
+#     return result
+# OLD CODE END
+
+
+def _asn_filters_for_category(category: str) -> list[str]:
+    """Return list of ASN org substrings that map to the given category."""
+    return [substr for substr, cat in ASN_CATEGORY_MAP.items() if cat == category]
+
+
+async def get_category_devices(
+    client, category: str, from_ts: str, to_ts: str, limit: int = 50
+) -> list[dict]:
+    """Get per-device bandwidth breakdown for a traffic category."""
+    asn_substrings = _asn_filters_for_category(category)
+    if not asn_substrings:
+        return []
+
+    should_clauses = [
+        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        for substr in asn_substrings
+    ]
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                ],
+                "must": [
+                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+                ],
+            }
+        },
+        "aggs": {
+            "devices": {
+                "terms": {"field": "source.ip.keyword", "size": limit},
+                "aggs": {
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": (
+                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                                ),
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                    "download_bytes": {"sum": {"field": "destination.bytes"}},
+                    "upload_bytes": {"sum": {"field": "source.bytes"}},
+                },
+            }
+        },
+    }
+
+    try:
+        resp = client.search(index=NETWORK_INDEX, body=query)
+    except Exception:
+        logger.error("get_category_devices: OpenSearch query failed for category=%s", category, exc_info=True)
+        return []
+
+    devices = []
+    for bucket in resp.get("aggregations", {}).get("devices", {}).get("buckets", []):
+        devices.append({
+            "ip": bucket["key"],
+            "total_bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
+            "download_bytes": int(bucket.get("download_bytes", {}).get("value", 0)),
+            "upload_bytes": int(bucket.get("upload_bytes", {}).get("value", 0)),
+            "connections": bucket.get("doc_count", 0),
+        })
+
+    devices.sort(key=lambda d: d["total_bytes"], reverse=True)
+    return devices
+
+
+async def get_category_services(
+    client, category: str, from_ts: str, to_ts: str, limit: int = 10
+) -> list[dict]:
+    """Get top services (ASN orgs) within a traffic category, sorted by bytes."""
+    asn_substrings = _asn_filters_for_category(category)
+    if not asn_substrings:
+        return []
+
+    should_clauses = [
+        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        for substr in asn_substrings
+    ]
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                ],
+                "must": [
+                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+                ],
+            }
+        },
+        "aggs": {
+            "services": {
+                "terms": {"field": "destination.as.full.keyword", "size": limit},
+                "aggs": {
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": (
+                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                                ),
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                },
+            }
+        },
+    }
+
+    try:
+        resp = client.search(index=NETWORK_INDEX, body=query)
+    except Exception:
+        logger.error("get_category_services: OpenSearch query failed for category=%s", category, exc_info=True)
+        return []
+
+    services = []
+    for bucket in resp.get("aggregations", {}).get("services", {}).get("buckets", []):
+        asn_full = bucket["key"]
+        # Strip ASN number prefix (e.g., "AS2906 Netflix Inc" → "Netflix Inc")
+        service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+        services.append({
+            "name": service_name,
+            "bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
+        })
+
+    services.sort(key=lambda s: s["bytes"], reverse=True)
+    return services
