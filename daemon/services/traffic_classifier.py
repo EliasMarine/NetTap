@@ -500,80 +500,28 @@ def get_category_label(key: str) -> str:
     return CATEGORIES.get(key, key.replace("_", " ").title())
 
 
-async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
-    """Query OpenSearch for traffic grouped by category.
-
-    Strategy:
-    1. Get top domains from zeek-dns-* indices
-    2. Classify each domain into a category
-    3. Aggregate bytes and connection counts per category
-
-    Returns a list of dicts with keys: name, label, total_bytes,
-    connection_count, top_domains.
-    """
-    time_filter = {
-        "range": {
-            "@timestamp": {
-                "gte": from_ts,
-                "lte": to_ts,
-                "format": "strict_date_optional_time",
-            }
-        }
-    }
-
-    # Step 1: Get top domains with their query counts from DNS logs
-    dns_query = {
+async def get_category_stats(
+    client, from_ts: str, to_ts: str
+) -> list[dict]:
+    """Aggregate traffic bytes by ASN organisation, map to categories."""
+    query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            time_filter,
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "dns"}},
-        ]}},
-        "aggs": {
-            "top_domains": {
-                "terms": {
-                    "field": "zeek.dns.query.keyword",
-                    "size": 500,
-                },
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                ]
             }
         },
-    }
-
-    try:
-        dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
-    except Exception as exc:
-        logger.error("OpenSearch error fetching DNS domains: %s", exc)
-        return []
-
-    domain_buckets = (
-        dns_result.get("aggregations", {}).get("top_domains", {}).get("buckets", [])
-    )
-
-    # Step 2: Also get connection-level stats with service and port info
-    conn_query = {
-        "size": 0,
-        "query": {"bool": {"filter": [
-            time_filter,
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-        ]}},
         "aggs": {
-            "by_service": {
-                "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"},
+            "asn_breakdown": {
+                "terms": {
+                    "field": "destination.as.full.keyword",
+                    "size": 500,
+                },
                 "aggs": {
-                    # OLD CODE START — client.bytes/server.bytes are Arkime session fields that inflate values ~25x
-                    # "total_bytes": {
-                    #     "sum": {
-                    #         "script": {
-                    #             "source": (
-                    #                 "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
-                    #                 " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
-                    #             ),
-                    #             "lang": "painless",
-                    #         }
-                    #     }
-                    # },
-                    # OLD CODE END
                     "total_bytes": {
                         "sum": {
                             "script": {
@@ -591,84 +539,194 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     }
 
     try:
-        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
-    except Exception as exc:
-        logger.error("OpenSearch error fetching connection stats: %s", exc)
+        resp = await client.search(index="arkime_sessions3-*", body=query)
+    except Exception:
         return []
 
-    service_buckets = (
-        conn_result.get("aggregations", {}).get("by_service", {}).get("buckets", [])
-    )
+    cat_data: dict[str, dict] = {}
+    for bucket in resp.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", []):
+        asn_full = bucket["key"]
+        cat_key = classify_asn(asn_full)
+        total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
+        doc_count = bucket.get("doc_count", 0)
 
-    # Step 3: Build category aggregation
-    # Map: category_key -> {total_bytes, connection_count, top_domains: {domain: count}}
-    category_data: dict[str, dict] = {}
-
-    for cat_key in CATEGORIES:
-        category_data[cat_key] = {
-            "total_bytes": 0,
-            "connection_count": 0,
-            "top_domains": {},
-        }
-
-    # Classify DNS domains
-    for bucket in domain_buckets:
-        domain = bucket.get("key", "")
-        count = bucket.get("doc_count", 0)
-        cat = classify_domain(domain)
-
-        if cat not in category_data:
-            category_data[cat] = {
-                "total_bytes": 0,
-                "connection_count": 0,
-                "top_domains": {},
-            }
-
-        category_data[cat]["connection_count"] += count
-        category_data[cat]["top_domains"][domain] = (
-            category_data[cat]["top_domains"].get(domain, 0) + count
-        )
-
-    # Classify by service (for bytes aggregation)
-    for bucket in service_buckets:
-        service_name = bucket.get("key", "")
-        # OLD CODE START — doc_count was extracted but never used (F841)
-        # doc_count = bucket.get("doc_count", 0)
-        # OLD CODE END
-        total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
-        cat = classify_by_service(service_name)
-
-        if cat not in category_data:
-            category_data[cat] = {
-                "total_bytes": 0,
-                "connection_count": 0,
-                "top_domains": {},
-            }
-
-        category_data[cat]["total_bytes"] += total_bytes
-
-    # Step 4: Build response
-    result = []
-    for cat_key, data in category_data.items():
-        if data["total_bytes"] == 0 and data["connection_count"] == 0:
-            continue
-
-        # Sort top domains by count, take top 10
-        sorted_domains = sorted(
-            data["top_domains"].items(), key=lambda x: x[1], reverse=True
-        )[:10]
-
-        result.append(
-            {
+        if cat_key not in cat_data:
+            cat_data[cat_key] = {
                 "name": cat_key,
-                "label": get_category_label(cat_key),
-                "total_bytes": data["total_bytes"],
-                "connection_count": data["connection_count"],
-                "top_domains": [{"domain": d, "count": c} for d, c in sorted_domains],
+                "label": CATEGORIES.get(cat_key, cat_key.title()),
+                "total_bytes": 0,
+                "connection_count": 0,
+                "top_services": [],
             }
+
+        cat_data[cat_key]["total_bytes"] += total_bytes
+        cat_data[cat_key]["connection_count"] += doc_count
+
+        service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+        cat_data[cat_key]["top_services"].append(
+            {"name": service_name, "bytes": total_bytes}
         )
 
-    # Sort by total_bytes descending
-    result.sort(key=lambda x: x["total_bytes"], reverse=True)
+    for cat in cat_data.values():
+        cat["top_services"].sort(key=lambda s: s["bytes"], reverse=True)
+        cat["top_services"] = cat["top_services"][:10]
 
+    result = sorted(cat_data.values(), key=lambda c: c["total_bytes"], reverse=True)
     return result
+
+
+# OLD CODE START — service/domain-based get_category_stats replaced by ASN-based implementation above
+# async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
+#     """Query OpenSearch for traffic grouped by category.
+#
+#     Strategy:
+#     1. Get top domains from zeek-dns-* indices
+#     2. Classify each domain into a category
+#     3. Aggregate bytes and connection counts per category
+#
+#     Returns a list of dicts with keys: name, label, total_bytes,
+#     connection_count, top_domains.
+#     """
+#     time_filter = {
+#         "range": {
+#             "@timestamp": {
+#                 "gte": from_ts,
+#                 "lte": to_ts,
+#                 "format": "strict_date_optional_time",
+#             }
+#         }
+#     }
+#
+#     # Step 1: Get top domains with their query counts from DNS logs
+#     dns_query = {
+#         "size": 0,
+#         "query": {"bool": {"filter": [
+#             time_filter,
+#             {"term": {"event.provider": "zeek"}},
+#             {"term": {"event.dataset": "dns"}},
+#         ]}},
+#         "aggs": {
+#             "top_domains": {
+#                 "terms": {
+#                     "field": "zeek.dns.query.keyword",
+#                     "size": 500,
+#                 },
+#             }
+#         },
+#     }
+#
+#     try:
+#         dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
+#     except Exception as exc:
+#         logger.error("OpenSearch error fetching DNS domains: %s", exc)
+#         return []
+#
+#     domain_buckets = (
+#         dns_result.get("aggregations", {}).get("top_domains", {}).get("buckets", [])
+#     )
+#
+#     # Step 2: Also get connection-level stats with service and port info
+#     conn_query = {
+#         "size": 0,
+#         "query": {"bool": {"filter": [
+#             time_filter,
+#             {"term": {"event.provider": "zeek"}},
+#             {"term": {"event.dataset": "conn"}},
+#         ]}},
+#         "aggs": {
+#             "by_service": {
+#                 "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"},
+#                 "aggs": {
+#                     "total_bytes": {
+#                         "sum": {
+#                             "script": {
+#                                 "source": (
+#                                     "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+#                                     " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+#                                 ),
+#                                 "lang": "painless",
+#                             }
+#                         }
+#                     },
+#                 },
+#             }
+#         },
+#     }
+#
+#     try:
+#         conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
+#     except Exception as exc:
+#         logger.error("OpenSearch error fetching connection stats: %s", exc)
+#         return []
+#
+#     service_buckets = (
+#         conn_result.get("aggregations", {}).get("by_service", {}).get("buckets", [])
+#     )
+#
+#     # Step 3: Build category aggregation
+#     category_data: dict[str, dict] = {}
+#
+#     for cat_key in CATEGORIES:
+#         category_data[cat_key] = {
+#             "total_bytes": 0,
+#             "connection_count": 0,
+#             "top_domains": {},
+#         }
+#
+#     # Classify DNS domains
+#     for bucket in domain_buckets:
+#         domain = bucket.get("key", "")
+#         count = bucket.get("doc_count", 0)
+#         cat = classify_domain(domain)
+#
+#         if cat not in category_data:
+#             category_data[cat] = {
+#                 "total_bytes": 0,
+#                 "connection_count": 0,
+#                 "top_domains": {},
+#             }
+#
+#         category_data[cat]["connection_count"] += count
+#         category_data[cat]["top_domains"][domain] = (
+#             category_data[cat]["top_domains"].get(domain, 0) + count
+#         )
+#
+#     # Classify by service (for bytes aggregation)
+#     for bucket in service_buckets:
+#         service_name = bucket.get("key", "")
+#         total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
+#         cat = classify_by_service(service_name)
+#
+#         if cat not in category_data:
+#             category_data[cat] = {
+#                 "total_bytes": 0,
+#                 "connection_count": 0,
+#                 "top_domains": {},
+#             }
+#
+#         category_data[cat]["total_bytes"] += total_bytes
+#
+#     # Step 4: Build response
+#     result = []
+#     for cat_key, data in category_data.items():
+#         if data["total_bytes"] == 0 and data["connection_count"] == 0:
+#             continue
+#
+#         sorted_domains = sorted(
+#             data["top_domains"].items(), key=lambda x: x[1], reverse=True
+#         )[:10]
+#
+#         result.append(
+#             {
+#                 "name": cat_key,
+#                 "label": get_category_label(cat_key),
+#                 "total_bytes": data["total_bytes"],
+#                 "connection_count": data["connection_count"],
+#                 "top_domains": [{"domain": d, "count": c} for d, c in sorted_domains],
+#             }
+#         )
+#
+#     result.sort(key=lambda x: x["total_bytes"], reverse=True)
+#
+#     return result
+# OLD CODE END
