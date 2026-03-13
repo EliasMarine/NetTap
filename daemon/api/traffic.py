@@ -15,6 +15,7 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from services.excluded_ips import build_excluded_ips_filter
+from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
 
@@ -549,6 +550,32 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
     )
 
 
+async def handle_category_detail(request: web.Request) -> web.Response:
+    """GET /api/traffic/categories/{category} -- per-device breakdown."""
+    category = request.match_info["category"]
+
+    if category not in traffic_classifier.CATEGORIES:
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
+
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    devices = await traffic_classifier.get_category_devices(client, category, from_ts, to_ts)
+
+    grand_total = sum(d["total_bytes"] for d in devices)
+    for d in devices:
+        d["percent"] = round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+
+    return web.json_response({
+        "category": category,
+        "label": traffic_classifier.CATEGORIES[category],
+        "device_count": len(devices),
+        "total_bytes": grand_total,
+        "connection_count": sum(d["connections"] for d in devices),
+        "devices": devices,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
@@ -569,4 +596,5 @@ def register_traffic_routes(
     app.router.add_get("/api/traffic/bandwidth", handle_bandwidth)
     app.router.add_get("/api/traffic/connections", handle_connections)
     app.router.add_get("/api/traffic/categories", handle_traffic_categories)
-    logger.info("Traffic API routes registered (7 endpoints)")
+    app.router.add_get("/api/traffic/categories/{category}", handle_category_detail)
+    logger.info("Traffic API routes registered (8 endpoints)")
