@@ -505,9 +505,8 @@
 										<div class="bytes-cell">
 											<span class="mono">{formatBytes(device.total_bytes)}</span>
 											<div class="split-bar">
-												{@const dlPct = device.total_bytes > 0 ? (device.download_bytes / device.total_bytes) * 100 : 50}
-												<div class="split-bar-dl" style="width: {dlPct}%;"></div>
-												<div class="split-bar-ul" style="width: {100 - dlPct}%;"></div>
+												<div class="split-bar-dl" style="width: {device.total_bytes > 0 ? (device.download_bytes / device.total_bytes) * 100 : 50}%;"></div>
+												<div class="split-bar-ul" style="width: {device.total_bytes > 0 ? (device.upload_bytes / device.total_bytes) * 100 : 50}%;"></div>
 											</div>
 										</div>
 									</td>
