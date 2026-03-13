@@ -88,6 +88,7 @@ export interface BandwidthResponse {
 export interface TrafficCategoryService {
 	name: string;
 	bytes: number;
+	connections?: number;
 }
 
 export interface TrafficCategory {
@@ -122,6 +123,22 @@ export interface CategoryDetailResponse {
 	connection_count: number;
 	devices: CategoryDevice[];
 	services: TrafficCategoryService[];
+}
+
+export interface CategoryBandwidthPoint {
+	timestamp: string;
+	download_bytes: number;
+	upload_bytes: number;
+	total_bytes: number;
+	connections: number;
+}
+
+export interface CategoryBandwidthResponse {
+	category: string;
+	from: string;
+	to: string;
+	interval: string;
+	series: CategoryBandwidthPoint[];
 }
 
 export interface Connection {
@@ -327,6 +344,31 @@ export async function getCategoryDetail(
 			connection_count: 0,
 			devices: [],
 			services: [],
+		};
+	}
+}
+
+/**
+ * Get bandwidth time-series for a specific traffic category.
+ */
+export async function getCategoryBandwidth(
+	category: string,
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<CategoryBandwidthResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	const url = `/api/traffic/categories/${encodeURIComponent(category)}/bandwidth${q}`;
+	try {
+		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch (err) {
+		console.error('[getCategoryBandwidth] fetch failed for', category, err);
+		return {
+			category,
+			from: '',
+			to: '',
+			interval: opts.interval ?? '15m',
+			series: [],
 		};
 	}
 }

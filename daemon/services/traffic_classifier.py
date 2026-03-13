@@ -745,7 +745,8 @@ def _asn_filters_for_category(category: str) -> list[str]:
 
 
 async def get_category_devices(
-    client, category: str, from_ts: str, to_ts: str, limit: int = 50
+    client, category: str, from_ts: str, to_ts: str, limit: int = 50,
+    fingerprint=None,
 ) -> list[dict]:
     """Get per-device bandwidth breakdown for a traffic category."""
     asn_substrings = _asn_filters_for_category(category)
@@ -809,6 +810,14 @@ async def get_category_devices(
             "connections": bucket.get("doc_count", 0),
         })
 
+    if fingerprint:
+        for d in devices:
+            try:
+                hostname = fingerprint.get_hostname_for_ip(client, d["ip"], from_ts, to_ts)
+                d["hostname"] = hostname
+            except Exception:
+                d["hostname"] = None
+
     devices.sort(key=lambda d: d["total_bytes"], reverse=True)
     return devices
 
@@ -868,16 +877,83 @@ async def get_category_services(
 
     # Merge buckets that share the same org name after stripping ASN prefix.
     # e.g. "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." both
-    # become "Amazon.com, Inc." — their bytes must be summed.
-    merged: dict[str, int] = {}
+    # become "Amazon.com, Inc." — their bytes and connections must be summed.
+    merged: dict[str, dict] = {}
     for bucket in resp.get("aggregations", {}).get("services", {}).get("buckets", []):
         asn_full = bucket["key"]
         # Strip ASN number prefix (e.g., "AS2906 Netflix Inc" → "Netflix Inc")
         service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
-        merged[service_name] = merged.get(service_name, 0) + int(
+        if service_name not in merged:
+            merged[service_name] = {"bytes": 0, "connections": 0}
+        merged[service_name]["bytes"] += int(
             bucket.get("total_bytes", {}).get("value", 0)
         )
+        merged[service_name]["connections"] += bucket.get("doc_count", 0)
 
-    services = [{"name": name, "bytes": total} for name, total in merged.items()]
+    services = [{"name": name, "bytes": m["bytes"], "connections": m["connections"]} for name, m in merged.items()]
     services.sort(key=lambda s: s["bytes"], reverse=True)
     return services
+
+
+async def get_category_bandwidth(
+    client, category: str, from_ts: str, to_ts: str, interval: str = "15m"
+) -> list[dict]:
+    """Get bandwidth time-series for a traffic category, broken into download/upload."""
+    asn_substrings = _asn_filters_for_category(category)
+    if not asn_substrings:
+        return []
+
+    should_clauses = [
+        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        for substr in asn_substrings
+    ]
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                ],
+                "must": [
+                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+                ],
+            }
+        },
+        "aggs": {
+            "bandwidth_over_time": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": interval,
+                    "min_doc_count": 0,
+                    "extended_bounds": {"min": from_ts, "max": to_ts},
+                },
+                "aggs": {
+                    "download_bytes": {"sum": {"field": "destination.bytes"}},
+                    "upload_bytes": {"sum": {"field": "source.bytes"}},
+                },
+            }
+        },
+    }
+
+    try:
+        resp = client.search(index=NETWORK_INDEX, body=query)
+    except Exception:
+        logger.error("get_category_bandwidth: OpenSearch query failed for category=%s", category, exc_info=True)
+        return []
+
+    series = []
+    for bucket in resp.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", []):
+        dl = int(bucket.get("download_bytes", {}).get("value", 0) or 0)
+        ul = int(bucket.get("upload_bytes", {}).get("value", 0) or 0)
+        series.append({
+            "timestamp": bucket.get("key_as_string", bucket.get("key")),
+            "download_bytes": dl,
+            "upload_bytes": ul,
+            "total_bytes": dl + ul,
+            "connections": bucket.get("doc_count", 0),
+        })
+
+    return series
