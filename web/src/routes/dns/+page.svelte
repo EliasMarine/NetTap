@@ -323,20 +323,20 @@
 	<!-- Hero Stats -->
 	<div class="stats-grid">
 		<div class="stat-card">
-			<div class="stat-value mono">{formatNumber(stats.total_queries)}</div>
-			<div class="stat-label">TOTAL QUERIES</div>
+			<span class="stat-label">Total Queries</span>
+			<span class="stat-value">{formatNumber(stats.total_queries)}</span>
 		</div>
 		<div class="stat-card">
-			<div class="stat-value mono">{formatNumber(stats.unique_domains)}</div>
-			<div class="stat-label">UNIQUE DOMAINS</div>
+			<span class="stat-label">Unique Domains</span>
+			<span class="stat-value">{formatNumber(stats.unique_domains)}</span>
 		</div>
 		<button class="stat-card clickable" onclick={() => document.getElementById('nxdomain-section')?.scrollIntoView({ behavior: 'smooth' })}>
-			<div class="stat-value mono" class:text-warning={stats.nxdomain_count > 0}>{formatNumber(stats.nxdomain_count)}</div>
-			<div class="stat-label">NXDOMAIN ERRORS</div>
+			<span class="stat-label">NXDOMAIN Errors</span>
+			<span class="stat-value" class:text-warning={stats.nxdomain_count > 0}>{formatNumber(stats.nxdomain_count)}</span>
 		</button>
 		<div class="stat-card">
-			<div class="stat-value mono">{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span></div>
-			<div class="stat-label">AVG RESOLUTION</div>
+			<span class="stat-label">Avg Resolution</span>
+			<span class="stat-value">{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span></span>
 		</div>
 	</div>
 
@@ -754,42 +754,15 @@
 		margin-bottom: var(--space-lg);
 	}
 
-	.stat-card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		padding: var(--space-lg);
-		text-align: left;
-	}
-
 	.stat-card.clickable {
-		cursor: pointer;
-		transition: border-color 0.15s;
-	}
-
-	.stat-card.clickable:hover {
-		border-color: var(--accent);
-	}
-
-	.stat-value {
-		font-size: 2rem;
-		font-weight: 700;
-		color: var(--text-primary);
-		line-height: 1.2;
+		text-align: left;
+		width: 100%;
 	}
 
 	.stat-unit {
 		font-size: 1rem;
 		color: var(--text-muted);
 		font-weight: 400;
-	}
-
-	.stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		letter-spacing: 0.05em;
-		margin-top: var(--space-xs);
-		text-transform: uppercase;
 	}
 
 	.text-warning { color: var(--amber); }

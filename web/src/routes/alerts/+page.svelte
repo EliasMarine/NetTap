@@ -946,34 +946,8 @@
 	}
 
 	.stat-card.clickable {
-		cursor: pointer;
 		text-align: left;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		padding: var(--space-md) var(--space-lg);
-		transition: border-color var(--transition-fast), transform var(--transition-fast);
-	}
-
-	.stat-card.clickable:hover {
-		border-color: var(--accent);
-		transform: translateY(-1px);
-	}
-
-	.stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.stat-value {
-		font-size: var(--text-3xl);
-		font-weight: 700;
-		font-family: var(--font-mono);
-		line-height: 1;
-		margin-top: var(--space-xs);
-		color: var(--text-primary);
+		width: 100%;
 	}
 
 	.text-red { color: var(--red); }
