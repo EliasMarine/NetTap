@@ -539,7 +539,7 @@ async def get_category_stats(
     }
 
     try:
-        resp = await client.search(index=NETWORK_INDEX, body=query)
+        resp = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
         logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
         return []
@@ -788,7 +788,7 @@ async def get_category_devices(
     }
 
     try:
-        resp = await client.search(index=NETWORK_INDEX, body=query)
+        resp = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
         logger.error("get_category_devices: OpenSearch query failed for category=%s", category, exc_info=True)
         return []
@@ -855,7 +855,7 @@ async def get_category_services(
     }
 
     try:
-        resp = await client.search(index=NETWORK_INDEX, body=query)
+        resp = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
         logger.error("get_category_services: OpenSearch query failed for category=%s", category, exc_info=True)
         return []

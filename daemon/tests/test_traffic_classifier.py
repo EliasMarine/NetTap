@@ -10,7 +10,7 @@ import asyncio
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -254,8 +254,8 @@ class TestGetCategoryStats(unittest.TestCase):
 
     def test_category_stats_success(self):
         """Successful category stats query returns categorized data."""
-        mock_client = AsyncMock()
-        mock_client.search = AsyncMock(return_value=self._asn_response([
+        mock_client = MagicMock()
+        mock_client.search = MagicMock(return_value=self._asn_response([
             ("AS2906 Netflix Inc", 150, 10_000_000),
             ("AS15169 Google LLC", 100, 5_000_000),
             ("AS13335 Cloudflare, Inc.", 80, 3_000_000),
@@ -288,8 +288,8 @@ class TestGetCategoryStats(unittest.TestCase):
 
     def test_category_stats_error(self):
         """OpenSearch query error returns empty list."""
-        mock_client = AsyncMock()
-        mock_client.search = AsyncMock(side_effect=Exception("Connection refused"))
+        mock_client = MagicMock()
+        mock_client.search = MagicMock(side_effect=Exception("Connection refused"))
 
         async def run():
             return await get_category_stats(
@@ -301,8 +301,8 @@ class TestGetCategoryStats(unittest.TestCase):
 
     def test_category_stats_empty_results(self):
         """Empty ASN buckets returns empty list."""
-        mock_client = AsyncMock()
-        mock_client.search = AsyncMock(return_value=self._asn_response([]))
+        mock_client = MagicMock()
+        mock_client.search = MagicMock(return_value=self._asn_response([]))
 
         async def run():
             return await get_category_stats(
@@ -314,8 +314,8 @@ class TestGetCategoryStats(unittest.TestCase):
 
     def test_category_stats_sorted_by_bytes(self):
         """Results are sorted by total_bytes descending."""
-        mock_client = AsyncMock()
-        mock_client.search = AsyncMock(return_value=self._asn_response([
+        mock_client = MagicMock()
+        mock_client.search = MagicMock(return_value=self._asn_response([
             ("AS32934 Meta Platforms", 200, 1_000_000),
             ("AS2906 Netflix Inc", 500, 5_000_000),
         ]))

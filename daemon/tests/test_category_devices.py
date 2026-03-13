@@ -10,7 +10,7 @@ import asyncio
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -38,8 +38,8 @@ class TestCategoryDevices(unittest.TestCase):
     """Tests for get_category_devices()."""
 
     def test_returns_devices_sorted_by_bytes(self):
-        client = AsyncMock()
-        client.search = AsyncMock(return_value=_mock_device_response([
+        client = MagicMock()
+        client.search = MagicMock(return_value=_mock_device_response([
             ("192.168.1.10", 100, 5_000_000, 4_500_000, 500_000),
             ("192.168.1.20", 200, 8_000_000, 7_000_000, 1_000_000),
         ]))
@@ -52,8 +52,8 @@ class TestCategoryDevices(unittest.TestCase):
         self.assertEqual(result[0]["total_bytes"], 8_000_000)
 
     def test_unknown_category_returns_empty(self):
-        client = AsyncMock()
-        client.search = AsyncMock(return_value=_mock_device_response([]))
+        client = MagicMock()
+        client.search = MagicMock(return_value=_mock_device_response([]))
 
         result = asyncio.run(
             get_category_devices(client, "nonexistent", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
@@ -61,8 +61,8 @@ class TestCategoryDevices(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_device_fields_present(self):
-        client = AsyncMock()
-        client.search = AsyncMock(return_value=_mock_device_response([
+        client = MagicMock()
+        client.search = MagicMock(return_value=_mock_device_response([
             ("192.168.1.10", 50, 1_000_000, 800_000, 200_000),
         ]))
 
@@ -77,8 +77,8 @@ class TestCategoryDevices(unittest.TestCase):
         self.assertIn("connections", device)
 
     def test_opensearch_error_returns_empty(self):
-        client = AsyncMock()
-        client.search = AsyncMock(side_effect=Exception("Connection refused"))
+        client = MagicMock()
+        client.search = MagicMock(side_effect=Exception("Connection refused"))
 
         result = asyncio.run(
             get_category_devices(client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
