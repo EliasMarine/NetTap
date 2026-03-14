@@ -288,7 +288,7 @@
 									<span class="kc-stage-num">STAGE {stage}</span>
 									<span class="kc-stage-name">{STAGE_NAMES[stage]}</span>
 									{#if kc.stages.includes(stage)}
-										<span class="kc-stage-count">{kc.alert_count} alerts</span>
+										<span class="kc-stage-count">Detected</span>
 									{:else}
 										<span class="kc-stage-count">&mdash;</span>
 									{/if}
@@ -353,6 +353,16 @@
 						</div>
 					{/each}
 				{/if}
+				{#if dnsAnomalies.tunnel_suspects?.length}
+					<div class="anomaly-group-header">DNS Tunneling <span class="anomaly-count-badge">{dnsAnomalies.tunnel_suspects.length}</span></div>
+					{#each dnsAnomalies.tunnel_suspects.slice(0, 5) as t, i (`tunnel-${i}`)}
+						<div class="dga-row">
+							<span class="dga-domain mono">{t.domain}</span>
+							<span class="dga-entropy mono">{t.subdomain_length} chars</span>
+							<span class="dga-count mono">{formatNumber(t.query_count)} queries</span>
+						</div>
+					{/each}
+				{/if}
 				{#if dnsAnomalies.nxdomain_spikes?.length}
 					<div class="anomaly-group-header">NXDOMAIN Spikes <span class="anomaly-count-badge">{dnsAnomalies.nxdomain_spikes.length}</span></div>
 					{#each dnsAnomalies.nxdomain_spikes.slice(0, 5) as nx, i (`nx-${i}`)}
@@ -364,7 +374,7 @@
 						</div>
 					{/each}
 				{/if}
-				{#if !dnsAnomalies.dga_suspects?.length && !dnsAnomalies.nxdomain_spikes?.length}
+				{#if !dnsAnomalies.dga_suspects?.length && !dnsAnomalies.tunnel_suspects?.length && !dnsAnomalies.nxdomain_spikes?.length}
 					<p class="empty-msg">No DNS anomalies detected.</p>
 				{/if}
 			</div>

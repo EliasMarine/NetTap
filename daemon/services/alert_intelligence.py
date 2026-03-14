@@ -164,15 +164,15 @@ def reclassify_severity(
     return severity
 
 
+# Use the same INTERNAL_PREFIXES tuple from threat_detection
+_INTERNAL_PREFIXES = ("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
+                      "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+                      "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")
+
+
 def _is_internal_ip(ip: str) -> bool:
     """Check if an IP is RFC1918 private."""
-    return (
-        ip.startswith("10.")
-        or ip.startswith("192.168.")
-        or ip.startswith("172.16.") or ip.startswith("172.17.")
-        or ip.startswith("172.18.") or ip.startswith("172.19.")
-        or ip.startswith("172.2") or ip.startswith("172.3")
-    )
+    return ip.startswith(_INTERNAL_PREFIXES)
 
 
 def categorize_alert(signature: str) -> str:

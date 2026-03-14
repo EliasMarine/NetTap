@@ -91,7 +91,6 @@
 
 	// UI state
 	let searchQuery = $state('');
-	let activeService = $state<string | null>(null);
 	let autoRefresh = $state(false);
 	let lastUpdated = $state<Date>(new Date());
 	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -317,14 +316,9 @@
 		return sortDir === 'asc' ? ' \u25B2' : ' \u25BC';
 	}
 
-	// Service click-through
-	function selectService(name: string) {
-		activeService = activeService === name ? null : name;
-	}
-
-	function clearServiceFilter() {
-		activeService = null;
-	}
+	// NOTE: Service click-through filtering removed — filtering devices by
+	// service requires backend support (per-device service mapping) that is
+	// not yet implemented. The service sidebar remains as display-only.
 </script>
 
 <svelte:head>
@@ -459,11 +453,6 @@
 							bind:value={searchQuery}
 						/>
 					</div>
-					{#if activeService}
-						<button class="filter-badge" onclick={clearServiceFilter}>
-							{activeService} <span class="filter-close">&times;</span>
-						</button>
-					{/if}
 				</div>
 
 				<div class="table-wrap">
@@ -545,12 +534,7 @@
 					<div class="service-list">
 						{#each topServices as service, i (`${service.name}-${i}`)}
 							{@const maxBytes = topServices[0]?.bytes ?? 1}
-							<button
-								class="service-row"
-								class:active={activeService === service.name}
-								onclick={() => selectService(service.name)}
-								type="button"
-							>
+							<div class="service-row">
 								<div class="service-info">
 									<span class="service-name">{service.name}</span>
 									<div class="service-bar-track">
@@ -566,14 +550,9 @@
 										<div class="service-conns mono">{formatNumber(service.connections)} conn</div>
 									{/if}
 								</div>
-							</button>
+							</div>
 						{/each}
 					</div>
-					{#if activeService}
-						<button class="clear-filter-btn" onclick={clearServiceFilter} type="button">
-							Clear filter &middot; Show all devices
-						</button>
-					{/if}
 				{:else}
 					<p class="text-muted sidebar-empty">No service data available.</p>
 				{/if}
@@ -1125,7 +1104,6 @@
 		background: none;
 		border: none;
 		border-left: 3px solid transparent;
-		cursor: pointer;
 		text-align: left;
 		font: inherit;
 		color: inherit;
@@ -1133,11 +1111,6 @@
 	}
 
 	.service-row:hover { background: var(--bg-tertiary); }
-
-	.service-row.active {
-		background: rgba(0, 212, 255, 0.06);
-		border-left-color: var(--cyan);
-	}
 
 	.service-info {
 		display: flex;
@@ -1155,8 +1128,7 @@
 		transition: color var(--transition-fast);
 	}
 
-	.service-row:hover .service-name,
-	.service-row.active .service-name { color: var(--cyan); }
+	.service-row:hover .service-name { color: var(--cyan); }
 
 	.service-bar-track {
 		height: 4px;
@@ -1172,8 +1144,7 @@
 		transition: all var(--transition-slow);
 	}
 
-	.service-row:hover .service-bar-fill,
-	.service-row.active .service-bar-fill { opacity: 1; }
+	.service-row:hover .service-bar-fill { opacity: 1; }
 
 	.service-stats {
 		text-align: right;

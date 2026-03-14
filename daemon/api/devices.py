@@ -174,7 +174,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -317,7 +317,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "total_bytes": {
                 "sum": {
                     "script": {
-                        "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                        "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                         "lang": "painless",
                     }
                 }
@@ -337,7 +337,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -353,7 +353,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -374,7 +374,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }

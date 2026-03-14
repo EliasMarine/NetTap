@@ -62,7 +62,7 @@
 	);
 
 	// Duration: computed from event.start / event.end, fallback to zeek.conn.duration
-	let duration = $derived(() => {
+	let duration = $derived.by(() => {
 		if (!connection) return null;
 		const start = asString(getField(connection, 'event.start'));
 		const end = asString(getField(connection, 'event.end'));
@@ -121,7 +121,7 @@
 	let hasTls = $derived(tlsSni !== '' || tlsJa3 !== '' || tlsVersion !== '');
 
 	// Subtitle for header
-	let subtitle = $derived(() => {
+	let subtitle = $derived.by(() => {
 		const src = srcIp ? `${srcIp}${srcPort != null ? ':' + srcPort : ''}` : '?';
 		const dst = dstIp ? `${dstIp}${dstPort != null ? ':' + dstPort : ''}` : '?';
 		return `${src} \u2192 ${dst}`;
@@ -344,7 +344,7 @@
 		<div class="drawer-header">
 			<div class="drawer-title-area">
 				<span class="drawer-title">Connection Detail</span>
-				<span class="drawer-subtitle">{subtitle()}</span>
+				<span class="drawer-subtitle">{subtitle}</span>
 			</div>
 			<button class="drawer-close" onclick={onclose} aria-label="Close panel">&times;</button>
 		</div>
@@ -380,7 +380,7 @@
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">Duration</span>
-							<span class="detail-value">{formatDuration(duration())}</span>
+							<span class="detail-value">{formatDuration(duration)}</span>
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">Download</span>
