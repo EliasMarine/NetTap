@@ -28,6 +28,7 @@
 		{ href: '/logs', label: 'Log Explorer', icon: 'search' },
 		{ href: '/devices', label: 'Devices', icon: 'monitor' },
 		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
+		{ href: '/threats', label: 'Threats', icon: 'alert-triangle' },
 		{ href: '/connections', label: 'Connections', icon: 'link' },
 		{ href: '/live', label: 'Live Monitor', icon: 'activity' },
 		{ href: '/bandwidth', label: 'Bandwidth', icon: 'bar-chart-2' },
