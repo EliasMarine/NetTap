@@ -53,6 +53,8 @@ SEVERITY_OVERRIDES: dict[str, int] = {
     "SURICATA HTTP": 4,
     "SURICATA STREAM": 4,
     "SURICATA FRAG": 4,
+    "SURICATA Applayer": 4,
+    "SURICATA": 4,
     "GPL": 4,
 }
 
@@ -69,7 +71,7 @@ THREAT_CATEGORIES = {
     "reconnaissance": {"label": "Reconnaissance", "icon": "search", "patterns": ["SCAN", "ENUM", "PROBE"]},
     "exploit": {"label": "Exploit Attempt", "icon": "bug", "patterns": ["EXPLOIT", "WEB_SERVER", "WEB_CLIENT", "SHELLCODE"]},
     "policy": {"label": "Policy Violation", "icon": "shield", "patterns": ["POLICY", "P2P", "GAMES", "CHAT"]},
-    "protocol_anomaly": {"label": "Protocol Anomaly", "icon": "warning", "patterns": ["SURICATA TLS", "SURICATA HTTP", "SURICATA STREAM", "SURICATA FRAG"]},
+    "protocol_anomaly": {"label": "Protocol Anomaly", "icon": "warning", "patterns": ["SURICATA TLS", "SURICATA HTTP", "SURICATA STREAM", "SURICATA FRAG", "SURICATA Applayer", "SURICATA"]},
     "informational": {"label": "Informational", "icon": "info", "patterns": ["INFO", "GPL"]},
 }
 
@@ -284,9 +286,9 @@ async def get_smart_alerts(
                 "composite": {
                     "size": 200,
                     "sources": [
-                        {"sig_id": {"terms": {"field": "alert.signature_id"}}},
-                        {"src_ip": {"terms": {"field": "source.ip.keyword"}}},
-                        {"dst_ip": {"terms": {"field": "destination.ip.keyword"}}},
+                        {"sig_name": {"terms": {"field": "rule.name.keyword", "missing_bucket": True}}},
+                        {"src_ip": {"terms": {"field": "source.ip.keyword", "missing_bucket": True}}},
+                        {"dst_ip": {"terms": {"field": "destination.ip.keyword", "missing_bucket": True}}},
                     ],
                 },
                 "aggs": {
@@ -310,15 +312,17 @@ async def get_smart_alerts(
 
     buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
 
+    from api.alerts import _normalize_alert_source
+
     for bucket in buckets:
-        sig_id = bucket["key"].get("sig_id", 0)
-        src_ip = bucket["key"].get("src_ip", "")
-        dst_ip = bucket["key"].get("dst_ip", "")
+        sig_name_key = bucket["key"].get("sig_name", "")
+        src_ip = bucket["key"].get("src_ip", "") or ""
+        dst_ip = bucket["key"].get("dst_ip", "") or ""
         count = bucket.get("doc_count", 0)
         first_seen = bucket.get("first_seen", {}).get("value_as_string", "")
         last_seen = bucket.get("last_seen", {}).get("value_as_string", "")
 
-        # Get signature from sample hit
+        # Get full alert details from sample hit
         sample_hits = bucket.get("sample", {}).get("hits", {}).get("hits", [])
         if not sample_hits:
             continue
@@ -326,17 +330,21 @@ async def get_smart_alerts(
         sample_src = sample_hits[0].get("_source", {})
 
         # Normalize alert fields using the existing normalizer
-        from api.alerts import _normalize_alert_source
         _normalize_alert_source(sample_src)
         alert_data = sample_src.get("alert", {})
 
-        signature = alert_data.get("signature", "Unknown")
+        signature = alert_data.get("signature") or sig_name_key or "Unknown"
+        sig_id = alert_data.get("signature_id") or 0
+        try:
+            sig_id = int(sig_id)
+        except (ValueError, TypeError):
+            sig_id = 0
         original_severity = alert_data.get("severity", 3)
         category_raw = alert_data.get("category", "Unknown")
 
         # Check suppression
         check_ip = device_ip or src_ip
-        if is_suppressed(sig_id, check_ip):
+        if sig_id and is_suppressed(sig_id, check_ip):
             continue
 
         # Reclassify
