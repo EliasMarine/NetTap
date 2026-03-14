@@ -64,17 +64,14 @@
 	let chartHeight = $derived(height - PADDING_TOP - PADDING_BOTTOM);
 
 	// Compute value bounds (max of both series)
-	let minValue = $derived(
-		data.length > 0
-			? Math.min(...data.map((d) => Math.min(d.download, d.upload)))
-			: 0
-	);
+	// Always start from 0 so area fills are visible from baseline
+	let minValue = 0;
 	let maxValue = $derived(
 		data.length > 0
 			? Math.max(...data.map((d) => Math.max(d.download, d.upload)))
 			: 1
 	);
-	let valueRange = $derived(maxValue - minValue || 1);
+	let valueRange = $derived(maxValue || 1);
 
 	// Scale helpers
 	function xScale(index: number): number {
