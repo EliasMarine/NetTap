@@ -47,6 +47,8 @@ SEVERITY_OVERRIDES: dict[str, int] = {
     "ET DOS": 3,
     "ET COMPROMISED": 2,
     "ET DROP": 2,
+    "ET CINS": 2,
+    "ET DSHIELD": 2,
     # Low — policy violations, usually benign
     "ET POLICY": 4,
     "ET DNS": 4,
@@ -92,12 +94,28 @@ SENSITIVE_PORTS = {22, 23, 445, 3389, 5900, 3306, 5432, 1433, 6379, 27017, 8080,
 # ---------------------------------------------------------------------------
 
 THREAT_CATEGORIES = {
-    "malware_c2": {"label": "Malware & C2", "icon": "alert", "patterns": ["MALWARE", "TROJAN", "C2", "SHELLCODE", "ATTACK_RESPONSE", "CURRENT_EVENTS"]},
-    "exfiltration": {"label": "Data Exfiltration", "icon": "upload", "patterns": ["DNS Tunnel", "Large Outbound", "EXFIL"]},
-    "reconnaissance": {"label": "Reconnaissance", "icon": "search", "patterns": ["SCAN", "ENUM", "PROBE"]},
-    "exploit": {"label": "Exploit Attempt", "icon": "bug", "patterns": ["EXPLOIT", "WEB_SERVER", "WEB_CLIENT"]},
-    "policy": {"label": "Policy Violation", "icon": "shield", "patterns": ["POLICY", "P2P", "GAMES", "CHAT"]},
-    "protocol_anomaly": {"label": "Protocol Anomaly", "icon": "warning", "patterns": ["SURICATA TLS", "SURICATA HTTP", "SURICATA STREAM", "SURICATA FRAG", "SURICATA Applayer", "SURICATA"]},
+    "malware_c2": {"label": "Malware & C2", "icon": "alert", "patterns": [
+        "MALWARE", "TROJAN", "C2", "SHELLCODE", "ATTACK_RESPONSE", "CURRENT_EVENTS",
+        "COMPROMISED", "DROP", "CINS", "DSHIELD", "Hostile", "Threat Intelligence",
+        "Poor Reputation", "Block Listed", "BOTNET", "CnC",
+    ]},
+    "exfiltration": {"label": "Data Exfiltration", "icon": "upload", "patterns": [
+        "DNS Tunnel", "Large Outbound", "EXFIL", "Covert Channel",
+    ]},
+    "reconnaissance": {"label": "Reconnaissance", "icon": "search", "patterns": [
+        "SCAN", "ENUM", "PROBE", "Nmap", "Masscan",
+    ]},
+    "exploit": {"label": "Exploit Attempt", "icon": "bug", "patterns": [
+        "EXPLOIT", "WEB_SERVER", "WEB_CLIENT", "SQL Injection", "XSS", "RCE",
+        "Remote Code", "Buffer Overflow", "CVE-",
+    ]},
+    "policy": {"label": "Policy Violation", "icon": "shield", "patterns": [
+        "POLICY", "P2P", "GAMES", "CHAT", "TOR", "Tor Exit",
+    ]},
+    "protocol_anomaly": {"label": "Protocol Anomaly", "icon": "warning", "patterns": [
+        "SURICATA TLS", "SURICATA HTTP", "SURICATA STREAM", "SURICATA FRAG",
+        "SURICATA Applayer", "SURICATA",
+    ]},
     "informational": {"label": "Informational", "icon": "info", "patterns": ["INFO", "GPL"]},
 }
 
