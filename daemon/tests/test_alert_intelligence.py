@@ -8,6 +8,8 @@ dependencies (OpenSearch calls are not tested here).
 
 import sys
 import os
+import json
+from datetime import datetime, timedelta, timezone
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -322,3 +324,191 @@ class TestSuppressList:
         data = load_suppress_list()
         device_entries = [e for e in data["per_device"].get(device, []) if e["signature_id"] == sig_id]
         assert len(device_entries) == 1
+
+
+# ---------------------------------------------------------------------------
+# Enhancement Tests: Trend, Kill Chain, Baseline, TTL, Destination Boost
+# ---------------------------------------------------------------------------
+
+
+class TestComputeTrend:
+    """Tests for improved trend detection."""
+
+    def test_stable_few_events(self):
+        from services.alert_intelligence import compute_trend
+        result = compute_trend("2026-03-13T00:00:00Z", "2026-03-13T12:00:00Z", 3)
+        assert result == "stable"
+
+    def test_increasing_high_rate(self):
+        from services.alert_intelligence import compute_trend
+        # 500 events in 1 hour = rate 500/hr → increasing
+        result = compute_trend("2026-03-13T00:00:00Z", "2026-03-13T01:00:00Z", 500)
+        assert result == "increasing"
+
+    def test_decreasing_low_rate(self):
+        from services.alert_intelligence import compute_trend
+        # 5 events over 48 hours = rate 0.1/hr → decreasing
+        result = compute_trend("2026-03-11T00:00:00Z", "2026-03-13T00:00:00Z", 5)
+        assert result == "decreasing"
+
+    def test_invalid_timestamps(self):
+        from services.alert_intelligence import compute_trend
+        result = compute_trend("", "", 10)
+        assert result == "stable"
+
+
+class TestKillChainDetection:
+    """Tests for kill chain correlation."""
+
+    def test_detects_two_stage_chain(self):
+        from services.alert_intelligence import detect_kill_chains
+        alerts = [
+            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "ET SCAN"},
+            {"source_ip": "10.0.0.5", "category": "exploit", "signature": "ET EXPLOIT"},
+        ]
+        chains = detect_kill_chains(alerts)
+        assert len(chains) == 1
+        assert chains[0]["source_ip"] == "10.0.0.5"
+        assert len(chains[0]["stages"]) == 2
+        assert 1 in chains[0]["stages"]  # recon
+        assert 2 in chains[0]["stages"]  # exploit
+
+    def test_full_kill_chain(self):
+        from services.alert_intelligence import detect_kill_chains
+        alerts = [
+            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan"},
+            {"source_ip": "10.0.0.5", "category": "exploit", "signature": "exploit"},
+            {"source_ip": "10.0.0.5", "category": "malware_c2", "signature": "c2"},
+            {"source_ip": "10.0.0.5", "category": "exfiltration", "signature": "exfil"},
+        ]
+        chains = detect_kill_chains(alerts)
+        assert len(chains) == 1
+        assert len(chains[0]["stages"]) == 4
+        assert "active intrusion" in chains[0]["assessment"]
+
+    def test_no_chain_single_stage(self):
+        from services.alert_intelligence import detect_kill_chains
+        alerts = [
+            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan"},
+            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan2"},
+        ]
+        chains = detect_kill_chains(alerts)
+        assert len(chains) == 0
+
+    def test_separate_ips_no_chain(self):
+        from services.alert_intelligence import detect_kill_chains
+        alerts = [
+            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan"},
+            {"source_ip": "10.0.0.6", "category": "exploit", "signature": "exploit"},
+        ]
+        chains = detect_kill_chains(alerts)
+        assert len(chains) == 0
+
+    def test_ignores_non_kill_chain_categories(self):
+        from services.alert_intelligence import detect_kill_chains
+        alerts = [
+            {"source_ip": "10.0.0.5", "category": "policy", "signature": "policy"},
+            {"source_ip": "10.0.0.5", "category": "informational", "signature": "info"},
+        ]
+        chains = detect_kill_chains(alerts)
+        assert len(chains) == 0
+
+
+class TestDestinationAwareBoost:
+    """Tests for severity boosting on sensitive internal ports."""
+
+    def test_exploit_on_internal_ssh_boosted(self):
+        from services.alert_intelligence import reclassify_severity
+        # ET EXPLOIT = severity 1, but let's test ET SCAN (3) getting boosted
+        sev = reclassify_severity("ET SCAN portscan", 3, dst_port=22, dst_ip="192.168.1.10")
+        assert sev == 2  # Boosted from 3 → 2
+
+    def test_no_boost_on_external_ip(self):
+        from services.alert_intelligence import reclassify_severity
+        sev = reclassify_severity("ET SCAN portscan", 3, dst_port=22, dst_ip="8.8.8.8")
+        assert sev == 3  # No boost — external IP
+
+    def test_no_boost_on_safe_port(self):
+        from services.alert_intelligence import reclassify_severity
+        sev = reclassify_severity("ET SCAN portscan", 3, dst_port=443, dst_ip="192.168.1.10")
+        assert sev == 3  # 443 not in SENSITIVE_PORTS
+
+    def test_critical_not_boosted_past_1(self):
+        from services.alert_intelligence import reclassify_severity
+        sev = reclassify_severity("ET MALWARE bad", 1, dst_port=22, dst_ip="192.168.1.10")
+        assert sev == 1  # Already critical, can't go higher
+
+
+class TestSuppressTTL:
+    """Tests for TTL-based suppress expiration."""
+
+    def test_expired_suppress_not_blocked(self, monkeypatch, tmp_path):
+        from services import alert_intelligence
+        monkeypatch.setattr(alert_intelligence, "_SUPPRESS_PATH", tmp_path / "suppress.json")
+
+        # Write a suppress entry that expired yesterday
+        expired_entry = {
+            "global": [{
+                "signature_id": 999,
+                "reason": "test",
+                "suppressed_at": "2026-03-01T00:00:00+00:00",
+                "expires_at": "2026-03-12T00:00:00+00:00",  # Expired
+            }],
+            "per_device": {},
+            "false_positives": [],
+        }
+        (tmp_path / "suppress.json").write_text(json.dumps(expired_entry))
+
+        assert not alert_intelligence.is_suppressed(999)
+
+    def test_active_suppress_still_blocks(self, monkeypatch, tmp_path):
+        import json
+        from services import alert_intelligence
+        monkeypatch.setattr(alert_intelligence, "_SUPPRESS_PATH", tmp_path / "suppress.json")
+
+        future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        active_entry = {
+            "global": [{
+                "signature_id": 888,
+                "reason": "test",
+                "suppressed_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": future,
+            }],
+            "per_device": {},
+            "false_positives": [],
+        }
+        (tmp_path / "suppress.json").write_text(json.dumps(active_entry))
+
+        assert alert_intelligence.is_suppressed(888)
+
+
+class TestBaseline:
+    """Tests for baseline management."""
+
+    def test_update_baseline_stores_history(self, monkeypatch, tmp_path):
+        from services import alert_intelligence
+        monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json")
+
+        summary = {"total_events": 100, "threat_score": 25, "categories": {}}
+        result = alert_intelligence.update_baseline(summary)
+
+        assert result["history_points"] == 1
+        assert result["deviation"] == 1.0  # Not enough history for deviation
+
+    def test_baseline_detects_anomaly(self, monkeypatch, tmp_path):
+        from services import alert_intelligence
+        monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json")
+
+        # Seed with 10 low-volume snapshots
+        baselines = {"history": [
+            {"timestamp": f"2026-03-{10+i}T00:00:00Z", "total_events": 10, "threat_score": 5, "categories": {}}
+            for i in range(10)
+        ]}
+        (tmp_path / "baselines.json").write_text(json.dumps(baselines))
+
+        # Current is 10x higher → anomalous
+        summary = {"total_events": 100, "threat_score": 50, "categories": {}}
+        result = alert_intelligence.update_baseline(summary)
+
+        assert result["deviation"] > 2.0
+        assert result["is_anomalous"] is True

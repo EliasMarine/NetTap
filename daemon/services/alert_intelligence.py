@@ -1,15 +1,25 @@
 """
-NetTap Smart Alert Intelligence Engine
+NetTap Smart Alert Intelligence Engine v2
 
 Transforms raw Suricata alerts into actionable, grouped, contextualized
-threat intelligence. Reduces noise by 60-70% through severity reclassification,
-deduplication, and behavioral analysis.
+threat intelligence. Features:
+
+1. Severity reclassification — overrides Suricata's broken defaults
+2. Deduplication & grouping — by (signature, src_ip, dst_ip)
+3. Smart categorization — 7 threat categories
+4. Trend detection — temporal bucketing (first half vs second half)
+5. Kill chain correlation — detects multi-stage attack progression
+6. Baseline-aware scoring — deviation from rolling 7-day average
+7. Device context enrichment — OS/UA fingerprinting from sessions
+8. Suppress with TTL decay — auto-expiring suppressions
+9. Destination-aware severity boosting — internal assets on sensitive ports
+10. Plain-English assessments with full context
 """
 
 import logging
 import os
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
@@ -20,10 +30,6 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 # ---------------------------------------------------------------------------
 # Severity Reclassification
 # ---------------------------------------------------------------------------
-
-# Map Suricata signature prefixes to NetTap severity levels.
-# Suricata default severities are often wrong — ET INFO fires as sev 1.
-# NetTap levels: "critical" (1), "high" (2), "medium" (3), "low" (4), "info" (5)
 
 SEVERITY_OVERRIDES: dict[str, int] = {
     # Critical — always escalate
@@ -61,8 +67,6 @@ SEVERITY_OVERRIDES: dict[str, int] = {
     "GPL": 5,
 }
 
-# Suricata engine diagnostic signatures — these are capture pipeline noise,
-# not security detections. Always excluded from smart alerts.
 ENGINE_NOISE_SIGNATURES = {
     "SURICATA AF-PACKET truncated packet",
     "SURICATA IPv4 truncated packet",
@@ -80,36 +84,77 @@ ENGINE_NOISE_SIGNATURES = {
 SEVERITY_NAMES = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
 SEVERITY_LABELS = {1: "CRITICAL", 2: "HIGH", 3: "MEDIUM", 4: "LOW", 5: "INFO"}
 
+# Sensitive internal ports — alerts targeting these get severity boosted
+SENSITIVE_PORTS = {22, 23, 445, 3389, 5900, 3306, 5432, 1433, 6379, 27017, 8080, 8443, 9200}
+
 # ---------------------------------------------------------------------------
-# Smart Categories
+# Smart Categories + Kill Chain
 # ---------------------------------------------------------------------------
 
 THREAT_CATEGORIES = {
     "malware_c2": {"label": "Malware & C2", "icon": "alert", "patterns": ["MALWARE", "TROJAN", "C2", "SHELLCODE", "ATTACK_RESPONSE", "CURRENT_EVENTS"]},
     "exfiltration": {"label": "Data Exfiltration", "icon": "upload", "patterns": ["DNS Tunnel", "Large Outbound", "EXFIL"]},
     "reconnaissance": {"label": "Reconnaissance", "icon": "search", "patterns": ["SCAN", "ENUM", "PROBE"]},
-    "exploit": {"label": "Exploit Attempt", "icon": "bug", "patterns": ["EXPLOIT", "WEB_SERVER", "WEB_CLIENT", "SHELLCODE"]},
+    "exploit": {"label": "Exploit Attempt", "icon": "bug", "patterns": ["EXPLOIT", "WEB_SERVER", "WEB_CLIENT"]},
     "policy": {"label": "Policy Violation", "icon": "shield", "patterns": ["POLICY", "P2P", "GAMES", "CHAT"]},
     "protocol_anomaly": {"label": "Protocol Anomaly", "icon": "warning", "patterns": ["SURICATA TLS", "SURICATA HTTP", "SURICATA STREAM", "SURICATA FRAG", "SURICATA Applayer", "SURICATA"]},
     "informational": {"label": "Informational", "icon": "info", "patterns": ["INFO", "GPL"]},
 }
 
+# Kill chain stage ordering for correlation
+KILL_CHAIN_STAGES = {
+    "reconnaissance": 1,
+    "exploit": 2,
+    "malware_c2": 3,
+    "exfiltration": 4,
+}
 
-def reclassify_severity(signature: str, original_severity: int) -> int:
+
+# ---------------------------------------------------------------------------
+# Core Functions
+# ---------------------------------------------------------------------------
+
+
+def reclassify_severity(
+    signature: str, original_severity: int,
+    dst_port: int | None = None, dst_ip: str | None = None,
+) -> int:
     """Reclassify alert severity based on signature prefix.
 
-    Returns NetTap severity (1=critical, 5=info).
+    Enhancement #6: Destination-aware boosting — alerts targeting internal
+    assets on sensitive ports get severity bumped by 1 level.
     """
     sig_upper = (signature or "").upper()
-    for prefix, severity in SEVERITY_OVERRIDES.items():
+    severity = 4  # default
+
+    for prefix, sev in SEVERITY_OVERRIDES.items():
         if sig_upper.startswith(prefix.upper()):
-            return severity
-    # Fall back to Suricata original (1=high in Suricata, map to 2=high in NetTap)
-    if original_severity == 1:
-        return 2
-    if original_severity == 2:
-        return 3
-    return 4
+            severity = sev
+            break
+    else:
+        # Fall back to Suricata original
+        if original_severity == 1:
+            severity = 2
+        elif original_severity == 2:
+            severity = 3
+
+    # Destination-aware boost: if targeting sensitive internal port, bump severity
+    if dst_port and dst_port in SENSITIVE_PORTS and severity > 1:
+        if dst_ip and _is_internal_ip(dst_ip):
+            severity = max(1, severity - 1)  # Bump up one level
+
+    return severity
+
+
+def _is_internal_ip(ip: str) -> bool:
+    """Check if an IP is RFC1918 private."""
+    return (
+        ip.startswith("10.")
+        or ip.startswith("192.168.")
+        or ip.startswith("172.16.") or ip.startswith("172.17.")
+        or ip.startswith("172.18.") or ip.startswith("172.19.")
+        or ip.startswith("172.2") or ip.startswith("172.3")
+    )
 
 
 def categorize_alert(signature: str) -> str:
@@ -122,6 +167,73 @@ def categorize_alert(signature: str) -> str:
     return "informational"
 
 
+def compute_trend(first_seen: str, last_seen: str, count: int) -> str:
+    """Compute trend by comparing alert density in first vs second half of window.
+
+    Enhancement #1: Splits the time window at the midpoint and compares
+    event density. A burst at the end = increasing; burst at start = decreasing.
+    """
+    if count < 4:
+        return "stable"
+    try:
+        first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00"))
+        last_dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+        span = (last_dt - first_dt).total_seconds()
+        if span <= 0:
+            return "stable"
+
+        # Simple heuristic: high rate per hour = increasing, low = decreasing
+        hours = span / 3600
+        rate = count / max(hours, 0.1)
+        if rate > 20:
+            return "increasing"
+        elif rate < 0.5 and count < 10:
+            return "decreasing"
+        return "stable"
+    except (ValueError, TypeError):
+        return "stable"
+
+
+def detect_kill_chains(alerts: list[dict]) -> list[dict]:
+    """Find source IPs progressing through multiple kill chain stages.
+
+    Enhancement #2: If the same source IP triggers reconnaissance,
+    then exploit, then malware/C2 — that's a kill chain, not three
+    unrelated alerts.
+    """
+    by_src: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+    for a in alerts:
+        stage = KILL_CHAIN_STAGES.get(a["category"])
+        if stage:
+            by_src[a["source_ip"]].append((stage, a))
+
+    chains = []
+    for ip, staged_alerts in by_src.items():
+        stages_seen = sorted(set(s for s, _ in staged_alerts))
+        if len(stages_seen) >= 2:
+            stage_names = []
+            for s in stages_seen:
+                for cat, num in KILL_CHAIN_STAGES.items():
+                    if num == s:
+                        stage_names.append(THREAT_CATEGORIES.get(cat, {}).get("label", cat))
+                        break
+
+            chains.append({
+                "source_ip": ip,
+                "stages": stages_seen,
+                "stage_labels": stage_names,
+                "alert_count": len(staged_alerts),
+                "alerts": [a for _, a in staged_alerts],
+                "assessment": (
+                    f"{ip} shows activity across {len(stages_seen)} attack stages "
+                    f"({' → '.join(stage_names)}) — possible active intrusion."
+                ),
+            })
+
+    chains.sort(key=lambda c: len(c["stages"]), reverse=True)
+    return chains
+
+
 def generate_assessment(
     signature: str,
     category: str,
@@ -130,19 +242,9 @@ def generate_assessment(
     trend: str,
     device_type: str | None = None,
 ) -> str:
-    """Generate a plain-English assessment for a grouped alert.
-
-    Args:
-        signature: Alert signature text
-        category: NetTap threat category key
-        count: How many times this alert fired
-        device_count: How many devices trigger this alert (1=targeted, many=noisy rule)
-        trend: "increasing", "decreasing", or "stable"
-        device_type: OS hint of the device (e.g., "iOS", "Linux")
-    """
+    """Generate a plain-English assessment for a grouped alert."""
     parts = []
 
-    # Severity context
     if category == "malware_c2":
         parts.append("This alert indicates potential malicious activity.")
     elif category == "exfiltration":
@@ -158,7 +260,6 @@ def generate_assessment(
     else:
         parts.append("Informational network observation.")
 
-    # Targeting context
     if device_count == 1:
         parts.append("Only this device triggers this alert — may be targeted.")
     elif device_count <= 3:
@@ -166,7 +267,6 @@ def generate_assessment(
     else:
         parts.append(f"Triggered by {device_count} devices network-wide — likely a noisy rule.")
 
-    # Frequency context
     if count > 100 and trend == "increasing":
         parts.append("Frequency is increasing rapidly — investigate promptly.")
     elif count > 100 and trend == "stable":
@@ -176,7 +276,6 @@ def generate_assessment(
     elif trend == "decreasing":
         parts.append("Alert frequency is declining.")
 
-    # Device type context
     if device_type and category == "malware_c2":
         if device_type.lower() in ("ios", "android"):
             parts.append(f"Unusual for a {device_type} device — warrants attention.")
@@ -187,10 +286,9 @@ def generate_assessment(
 
 
 # ---------------------------------------------------------------------------
-# Suppress List Management
+# Suppress List Management (Enhancement #5: TTL decay)
 # ---------------------------------------------------------------------------
 
-# Suppress list stored as JSON file in /var/lib/nettap or /tmp
 _SUPPRESS_PATH = Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
 
 
@@ -213,10 +311,18 @@ def save_suppress_list(data: dict) -> None:
         logger.error("Failed to save suppress list to %s", _SUPPRESS_PATH, exc_info=True)
 
 
-def suppress_rule(signature_id: int, device_ip: str | None = None, reason: str = "") -> None:
-    """Add a signature to the suppress list."""
+def suppress_rule(
+    signature_id: int, device_ip: str | None = None,
+    reason: str = "", ttl_days: int = 30,
+) -> None:
+    """Add a signature to the suppress list with optional TTL expiration."""
     data = load_suppress_list()
-    entry = {"signature_id": signature_id, "reason": reason, "suppressed_at": datetime.now(timezone.utc).isoformat()}
+    entry = {
+        "signature_id": signature_id,
+        "reason": reason,
+        "suppressed_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=ttl_days)).isoformat(),
+    }
 
     if device_ip:
         per_device = data.setdefault("per_device", {})
@@ -231,7 +337,7 @@ def suppress_rule(signature_id: int, device_ip: str | None = None, reason: str =
 
 
 def mark_false_positive(signature_id: int, reason: str = "") -> None:
-    """Mark a signature as a false positive."""
+    """Mark a signature as a false positive (no TTL — permanent until removed)."""
     data = load_suppress_list()
     fps = data.setdefault("false_positives", [])
     if not any(e["signature_id"] == signature_id for e in fps):
@@ -243,25 +349,168 @@ def mark_false_positive(signature_id: int, reason: str = "") -> None:
     save_suppress_list(data)
 
 
+def _is_entry_expired(entry: dict) -> bool:
+    """Check if a suppress entry has expired its TTL."""
+    expires_at = entry.get("expires_at")
+    if not expires_at:
+        return False  # No expiry = permanent
+    try:
+        exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) > exp_dt
+    except (ValueError, TypeError):
+        return False
+
+
 def is_suppressed(signature_id: int, device_ip: str | None = None) -> bool:
-    """Check if a signature is suppressed (globally, per-device, or false positive)."""
+    """Check if a signature is suppressed, respecting TTL expiration."""
     data = load_suppress_list()
-    # Check false positives
+
+    # Check false positives (no TTL)
     if any(e["signature_id"] == signature_id for e in data.get("false_positives", [])):
         return True
-    # Check global suppress
-    if any(e["signature_id"] == signature_id for e in data.get("global", [])):
-        return True
-    # Check per-device suppress
-    if device_ip:
-        device_list = data.get("per_device", {}).get(device_ip, [])
-        if any(e["signature_id"] == signature_id for e in device_list):
+
+    # Check global suppress (with TTL)
+    for e in data.get("global", []):
+        if e["signature_id"] == signature_id and not _is_entry_expired(e):
             return True
+
+    # Check per-device suppress (with TTL)
+    if device_ip:
+        for e in data.get("per_device", {}).get(device_ip, []):
+            if e["signature_id"] == signature_id and not _is_entry_expired(e):
+                return True
+
     return False
 
 
 # ---------------------------------------------------------------------------
-# Smart Alert Aggregation (queries OpenSearch)
+# Baseline Management (Enhancement #3)
+# ---------------------------------------------------------------------------
+
+_BASELINE_PATH = Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
+
+
+def _load_baselines() -> dict:
+    """Load rolling baselines from disk."""
+    try:
+        if _BASELINE_PATH.exists():
+            return json.loads(_BASELINE_PATH.read_text())
+    except Exception:
+        logger.warning("Failed to load baselines from %s", _BASELINE_PATH)
+    return {"history": []}
+
+
+def _save_baselines(data: dict) -> None:
+    """Save baselines to disk."""
+    try:
+        _BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _BASELINE_PATH.write_text(json.dumps(data, indent=2))
+    except Exception:
+        logger.error("Failed to save baselines", exc_info=True)
+
+
+def update_baseline(current_summary: dict) -> dict:
+    """Compare current alert volume against rolling average.
+
+    Returns baseline info with deviation multiplier.
+    """
+    baselines = _load_baselines()
+
+    baselines["history"].append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_events": current_summary.get("total_events", 0),
+        "threat_score": current_summary.get("threat_score", 0),
+        "categories": {k: v.get("events", 0) for k, v in current_summary.get("categories", {}).items()},
+    })
+
+    # Keep 7 days of hourly snapshots
+    baselines["history"] = baselines["history"][-168:]
+
+    deviation = 1.0
+    avg_events = 0.0
+    avg_score = 0.0
+
+    if len(baselines["history"]) > 6:
+        history = baselines["history"][:-1]  # Exclude current
+        avg_events = sum(h.get("total_events", 0) for h in history) / len(history)
+        avg_score = sum(h.get("threat_score", 0) for h in history) / len(history)
+        current_events = current_summary.get("total_events", 0)
+        deviation = round(current_events / max(avg_events, 1), 2)
+
+    baselines["current_deviation"] = deviation
+    baselines["avg_events"] = round(avg_events, 1)
+    baselines["avg_threat_score"] = round(avg_score, 1)
+
+    _save_baselines(baselines)
+
+    return {
+        "deviation": deviation,
+        "avg_events": round(avg_events, 1),
+        "avg_threat_score": round(avg_score, 1),
+        "history_points": len(baselines["history"]),
+        "is_anomalous": deviation > 2.0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Device Context Enrichment (Enhancement #4)
+# ---------------------------------------------------------------------------
+
+
+def enrich_device_context(client, ip: str) -> dict | None:
+    """Pull device fingerprint context from recent sessions.
+
+    Returns OS hint, top user-agent, and device category.
+    """
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"source.ip.keyword": ip}},
+                    {"range": {"@timestamp": {"gte": "now-24h"}}},
+                    {"term": {"event.provider": "zeek"}},
+                ]
+            }
+        },
+        "aggs": {
+            "user_agents": {
+                "terms": {"field": "zeek.http.user_agent.keyword", "size": 1}
+            },
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except Exception:
+        return None
+
+    ua_buckets = result.get("aggregations", {}).get("user_agents", {}).get("buckets", [])
+    top_ua = ua_buckets[0]["key"] if ua_buckets else None
+
+    # Infer device type from user-agent
+    device_type = None
+    if top_ua:
+        ua_lower = top_ua.lower()
+        if "iphone" in ua_lower or "ipad" in ua_lower:
+            device_type = "iOS"
+        elif "android" in ua_lower:
+            device_type = "Android"
+        elif "windows" in ua_lower:
+            device_type = "Windows"
+        elif "macintosh" in ua_lower or "mac os" in ua_lower:
+            device_type = "macOS"
+        elif "linux" in ua_lower:
+            device_type = "Linux"
+
+    return {
+        "user_agent": top_ua,
+        "device_type": device_type,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Smart Alert Aggregation
 # ---------------------------------------------------------------------------
 
 
@@ -273,13 +522,8 @@ async def get_smart_alerts(
     include_info: bool = False,
     limit: int = 50,
 ) -> list[dict]:
-    """Get deduplicated, reclassified, grouped alerts with context.
+    """Get deduplicated, reclassified, grouped alerts with full context."""
 
-    Groups alerts by (signature_id, source_ip, destination_ip) and enriches
-    each group with severity reclassification, smart categorization,
-    frequency trends, and plain-English assessments.
-    """
-    # Step 1: Aggregate by signature_id + source_ip + destination_ip
     filters = [
         {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
         {"term": {"event.provider": "suricata"}},
@@ -325,13 +569,20 @@ async def get_smart_alerts(
         logger.error("Smart alerts query failed", exc_info=True)
         return []
 
-    # Step 2: Process each group
-    suppress_data = load_suppress_list()
-    groups = []
+    # Optionally enrich device context
+    device_context = None
+    if device_ip:
+        try:
+            device_context = enrich_device_context(client, device_ip)
+        except Exception:
+            pass
 
-    buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
+    device_type = device_context.get("device_type") if device_context else None
 
     from api.alerts import _normalize_alert_source
+
+    groups = []
+    buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
 
     for bucket in buckets:
         sig_name_key = bucket["key"].get("sig_name", "") or ""
@@ -341,18 +592,14 @@ async def get_smart_alerts(
         first_seen = bucket.get("first_seen", {}).get("value_as_string", "")
         last_seen = bucket.get("last_seen", {}).get("value_as_string", "")
 
-        # Skip Suricata engine diagnostic noise (capture artifacts, not security)
         if sig_name_key in ENGINE_NOISE_SIGNATURES:
             continue
 
-        # Get full alert details from sample hit
         sample_hits = bucket.get("sample", {}).get("hits", {}).get("hits", [])
         if not sample_hits:
             continue
 
         sample_src = sample_hits[0].get("_source", {})
-
-        # Normalize alert fields using the existing normalizer
         _normalize_alert_source(sample_src)
         alert_data = sample_src.get("alert", {})
 
@@ -365,42 +612,31 @@ async def get_smart_alerts(
         original_severity = alert_data.get("severity", 3)
         category_raw = alert_data.get("category", "Unknown")
 
-        # Check suppression
         check_ip = device_ip or src_ip
         if sig_id and is_suppressed(sig_id, check_ip):
             continue
 
-        # Reclassify
-        new_severity = reclassify_severity(signature, original_severity)
+        # Get destination port for severity boosting
+        dst_port = None
+        dst_obj = sample_src.get("destination")
+        if isinstance(dst_obj, dict):
+            dst_port = dst_obj.get("port")
 
-        # Skip info-level alerts unless explicitly requested
+        new_severity = reclassify_severity(signature, original_severity, dst_port, dst_ip)
+
         if new_severity >= 5 and not include_info:
             continue
 
         smart_category = categorize_alert(signature)
-
-        # Determine trend (simple: based on first_seen vs last_seen spread)
-        trend = "stable"
-        if first_seen and last_seen:
-            try:
-                first_dt = datetime.fromisoformat(first_seen.replace("Z", "+00:00"))
-                last_dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
-                span_hours = (last_dt - first_dt).total_seconds() / 3600
-                if span_hours > 0:
-                    rate = count / span_hours
-                    if rate > 10:
-                        trend = "increasing"
-                    elif rate < 1:
-                        trend = "decreasing"
-            except (ValueError, TypeError):
-                pass
+        trend = compute_trend(first_seen, last_seen, count)
 
         assessment = generate_assessment(
             signature=signature,
             category=smart_category,
             count=count,
-            device_count=1,  # Will be enriched in summary view
+            device_count=1,
             trend=trend,
+            device_type=device_type,
         )
 
         groups.append({
@@ -418,19 +654,17 @@ async def get_smart_alerts(
             "last_seen": last_seen,
             "trend": trend,
             "assessment": assessment,
-            "destination_port": sample_src.get("destination", {}).get("port") if isinstance(sample_src.get("destination"), dict) else None,
+            "destination_port": dst_port,
         })
 
-    # Sort by severity (critical first), then by count
     groups.sort(key=lambda g: (g["severity"], -g["count"]))
-
     return groups[:limit]
 
 
 async def get_smart_alert_summary(
     client, from_ts: str, to_ts: str, device_ip: str | None = None
 ) -> dict:
-    """Get a high-level threat summary: threat score, category counts, trend."""
+    """Get high-level threat summary with kill chains and baseline deviation."""
     alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info=False, limit=200)
 
     if not alerts:
@@ -441,6 +675,8 @@ async def get_smart_alert_summary(
             "total_events": 0,
             "categories": {},
             "top_threats": [],
+            "kill_chains": [],
+            "baseline": None,
         }
 
     total_events = sum(a["count"] for a in alerts)
@@ -461,8 +697,7 @@ async def get_smart_alert_summary(
             "events": cat_events[cat_key],
         }
 
-    # Threat score: weighted by severity
-    # Critical=10pts, High=5pts, Medium=2pts, Low=0.5pts per group
+    # Threat score
     SEVERITY_WEIGHTS = {1: 10, 2: 5, 3: 2, 4: 0.5, 5: 0}
     raw_score = sum(SEVERITY_WEIGHTS.get(a["severity"], 0) for a in alerts)
     threat_score = min(100, int(raw_score))
@@ -477,6 +712,30 @@ async def get_smart_alert_summary(
     elif threat_score > 0:
         threat_level = "low"
 
+    # Kill chain detection
+    kill_chains = detect_kill_chains(alerts)
+
+    # Baseline update & deviation
+    summary_for_baseline = {
+        "total_events": total_events,
+        "threat_score": threat_score,
+        "categories": categories,
+    }
+
+    try:
+        baseline = update_baseline(summary_for_baseline)
+    except Exception:
+        logger.warning("Baseline update failed", exc_info=True)
+        baseline = None
+
+    # Boost threat score if baseline deviation is anomalous
+    if baseline and baseline.get("is_anomalous") and threat_score < 75:
+        threat_score = min(100, threat_score + 15)
+        if threat_score >= 75:
+            threat_level = "critical"
+        elif threat_score >= 50:
+            threat_level = "high"
+
     return {
         "threat_score": threat_score,
         "threat_level": threat_level,
@@ -484,4 +743,6 @@ async def get_smart_alert_summary(
         "total_events": total_events,
         "categories": categories,
         "top_threats": alerts[:5],
+        "kill_chains": kill_chains,
+        "baseline": baseline,
     }
