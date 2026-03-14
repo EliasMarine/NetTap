@@ -68,6 +68,8 @@
 	let categories = $state<DeviceCategory[]>([]);
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertsTotal = $state(0);
+	let alertsExpanded = $state(false);
+	const ALERTS_COLLAPSED_COUNT = 3;
 	let ports = $state<DevicePort[]>([]);
 	let riskScore = $state(0);
 	let riskLevel = $state('low');
@@ -153,7 +155,7 @@
 			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
 				getDeviceDetail(deviceIp),
 				getDeviceCategories(deviceIp),
-				getSmartAlerts({ device_ip: deviceIp, limit: 20 }),
+				getSmartAlerts({ device_ip: deviceIp, limit: 10 }),
 				getDevicePorts(deviceIp),
 				getDeviceRiskScore(deviceIp),
 			]);
@@ -529,7 +531,7 @@
 				</div>
 				{#if smartAlerts.length > 0}
 					<div class="smart-alert-list">
-						{#each smartAlerts as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
+						{#each (alertsExpanded ? smartAlerts : smartAlerts.slice(0, ALERTS_COLLAPSED_COUNT)) as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
 							<div class="smart-alert-card">
 								<div class="sa-header">
 									<span class="sa-sev {sa.severity <= 1 ? 'sev-critical' : sa.severity === 2 ? 'sev-high' : sa.severity === 3 ? 'sev-med' : 'sev-low'}">{sa.severity_label}</span>
@@ -555,6 +557,11 @@
 							</div>
 						{/each}
 					</div>
+					{#if smartAlerts.length > ALERTS_COLLAPSED_COUNT}
+						<button class="card-expand-btn" onclick={() => (alertsExpanded = !alertsExpanded)}>
+							{alertsExpanded ? 'Show less' : `Show ${smartAlerts.length - ALERTS_COLLAPSED_COUNT} more alerts`}
+						</button>
+					{/if}
 					<a href="/alerts?ip={deviceIp}" class="card-link">View all alerts &rarr;</a>
 				{:else}
 					<p class="empty-msg">No actionable alerts for this device.</p>
@@ -834,6 +841,8 @@
 	.sa-actions { display: flex; gap: var(--space-sm); }
 	.sa-action-btn { padding: 3px 10px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 600; cursor: pointer; transition: all var(--transition-fast); border: 1px solid var(--border-dim); background: var(--bg-tertiary); color: var(--text-secondary); text-decoration: none; font-family: var(--font-sans); }
 	.sa-action-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
+	.card-expand-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: var(--space-sm) var(--space-md); border: none; border-top: 1px solid var(--border-dim); background: none; font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
+	.card-expand-btn:hover { color: var(--accent); background: var(--bg-tertiary); }
 
 	/* ---------------------------------------------------------------- Tables */
 	.table-wrap { overflow-x: auto; }

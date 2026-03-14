@@ -49,13 +49,32 @@ SEVERITY_OVERRIDES: dict[str, int] = {
     "ET P2P": 4,
     # Info — suppress by default
     "ET INFO": 5,
-    "SURICATA TLS": 4,
-    "SURICATA HTTP": 4,
-    "SURICATA STREAM": 4,
-    "SURICATA FRAG": 4,
-    "SURICATA Applayer": 4,
-    "SURICATA": 4,
-    "GPL": 4,
+    "SURICATA TLS": 5,
+    "SURICATA HTTP": 5,
+    "SURICATA STREAM": 5,
+    "SURICATA FRAG": 5,
+    "SURICATA Applayer": 5,
+    "SURICATA AF-PACKET": 5,
+    "SURICATA IPv4": 5,
+    "SURICATA Ethertype": 5,
+    "SURICATA": 5,
+    "GPL": 5,
+}
+
+# Suricata engine diagnostic signatures — these are capture pipeline noise,
+# not security detections. Always excluded from smart alerts.
+ENGINE_NOISE_SIGNATURES = {
+    "SURICATA AF-PACKET truncated packet",
+    "SURICATA IPv4 truncated packet",
+    "SURICATA Ethertype unknown",
+    "SURICATA IPv4 padding required",
+    "SURICATA IPv4 invalid checksum",
+    "SURICATA TCP invalid checksum",
+    "SURICATA UDP invalid checksum",
+    "SURICATA ICMPv4 invalid checksum",
+    "SURICATA STREAM ESTABLISHED packet out of window",
+    "SURICATA STREAM Packet with invalid ack",
+    "SURICATA STREAM CLOSEWAIT FIN out of window",
 }
 
 SEVERITY_NAMES = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
@@ -315,12 +334,16 @@ async def get_smart_alerts(
     from api.alerts import _normalize_alert_source
 
     for bucket in buckets:
-        sig_name_key = bucket["key"].get("sig_name", "")
+        sig_name_key = bucket["key"].get("sig_name", "") or ""
         src_ip = bucket["key"].get("src_ip", "") or ""
         dst_ip = bucket["key"].get("dst_ip", "") or ""
         count = bucket.get("doc_count", 0)
         first_seen = bucket.get("first_seen", {}).get("value_as_string", "")
         last_seen = bucket.get("last_seen", {}).get("value_as_string", "")
+
+        # Skip Suricata engine diagnostic noise (capture artifacts, not security)
+        if sig_name_key in ENGINE_NOISE_SIGNATURES:
+            continue
 
         # Get full alert details from sample hit
         sample_hits = bucket.get("sample", {}).get("hits", {}).get("hits", [])
