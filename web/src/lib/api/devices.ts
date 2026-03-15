@@ -26,6 +26,7 @@ export interface Device {
 	connection_count: number;
 	protocols: string[];
 	alert_count: number;
+	category?: string;
 }
 
 export interface DeviceListResponse {

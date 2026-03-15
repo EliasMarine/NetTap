@@ -112,6 +112,43 @@ def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
 
 
 # ---------------------------------------------------------------------------
+# Helpers — device classification
+# ---------------------------------------------------------------------------
+
+
+def _device_category(os_hint: str | None, hostname: str | None) -> str:
+    """Classify a device into a broad category based on OS hint and hostname."""
+    if not os_hint:
+        # Fall back to hostname-based heuristics
+        if hostname:
+            hn = hostname.lower()
+            if any(x in hn for x in ["ring", "nest", "hue", "smart", "cam", "thermostat", "switch", "plug", "sensor"]):
+                return "iot"
+            if any(x in hn for x in ["printer", "brother", "hp-", "epson", "canon"]):
+                return "infrastructure"
+            if any(x in hn for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]):
+                return "infrastructure"
+        return "unknown"
+    os_lower = os_hint.lower()
+    if os_lower in ("ios", "android"):
+        return "phone"
+    if os_lower in ("windows", "macos", "linux", "chromeos"):
+        return "computer"
+    if os_lower in ("smart tv", "roku", "fire tv"):
+        return "media"
+    # Check hostname for IoT indicators
+    if hostname:
+        hn = hostname.lower()
+        if any(x in hn for x in ["ring", "nest", "hue", "smart", "cam", "thermostat", "switch", "plug", "sensor"]):
+            return "iot"
+        if any(x in hn for x in ["printer", "brother", "hp-", "epson", "canon"]):
+            return "infrastructure"
+        if any(x in hn for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]):
+            return "infrastructure"
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
 
@@ -134,6 +171,33 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)
+
+    # Step 1: Get DHCP-leased device IPs (the source of truth for "real" devices)
+    dhcp_query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "dhcp"}},
+                ]
+            }
+        },
+        "aggs": {
+            "leased_ips": {
+                "terms": {"field": "zeek.dhcp.assigned_ip.keyword", "size": 500}
+            }
+        },
+    }
+
+    try:
+        dhcp_result = client.search(index=NETWORK_INDEX, body=dhcp_query)
+        dhcp_buckets = dhcp_result.get("aggregations", {}).get("leased_ips", {}).get("buckets", [])
+        leased_ips = [b["key"] for b in dhcp_buckets]
+    except OpenSearchException:
+        leased_ips = []
+        logger.warning("DHCP query failed, falling back to all source IPs")
 
     # Map user-facing sort names to aggregation sort keys
     sort_map = {
@@ -159,6 +223,10 @@ async def handle_device_list(request: web.Request) -> web.Response:
     }
     if excluded:
         bool_query["must_not"] = excluded
+
+    # Step 2: If we got DHCP-leased IPs, restrict conn aggregation to only those IPs
+    if leased_ips:
+        bool_query["filter"].append({"terms": {"source.ip.keyword": leased_ips}})
 
     query = {
         "size": 0,
@@ -253,6 +321,11 @@ async def handle_device_list(request: web.Request) -> web.Response:
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
         os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
+        # Clean up mDNS service names and reverse DNS that aren't real hostnames
+        if hostname:
+            if any(x in hostname for x in ['._tcp.', '._udp.', '.in-addr.arpa', '.ip6.arpa', '_asquic']):
+                hostname = None
+
         devices.append(
             {
                 "ip": ip,
@@ -260,6 +333,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                 "hostname": hostname,
                 "manufacturer": manufacturer,
                 "os_hint": os_hint,
+                "category": _device_category(os_hint, hostname),
                 "first_seen": first_seen,
                 "last_seen": last_seen,
                 "total_bytes": total_bytes,
