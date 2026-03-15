@@ -19,7 +19,26 @@
 	let devices = $state<Device[]>([]);
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
+	let viewMode = $state<'grid' | 'list'>('grid');
 	let autoRefresh = $state(false);
+
+	// List view sort state
+	let sortField = $state<string>('total_bytes');
+	let sortDir = $state<'asc' | 'desc'>('desc');
+
+	function toggleSort(field: string) {
+		if (sortField === field) {
+			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+		} else {
+			sortField = field;
+			sortDir = 'desc';
+		}
+	}
+
+	function sortArrow(field: string): string {
+		if (sortField !== field) return '';
+		return sortDir === 'asc' ? ' \u25B2' : ' \u25BC';
+	}
 	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
 	let lastUpdated = $state('');
 
@@ -118,6 +137,18 @@
 
 	// Max bytes for bar widths
 	let maxBytes = $derived(devices.length > 0 ? Math.max(...devices.map((d) => d.total_bytes), 1) : 1);
+
+	// Sorted list for table view
+	let sortedDevices = $derived.by(() => {
+		return [...filteredDevices].sort((a, b) => {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const av = (a as any)[sortField] ?? 0;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const bv = (b as any)[sortField] ?? 0;
+			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			return sortDir === 'asc' ? cmp : -cmp;
+		});
+	});
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -230,8 +261,14 @@
 					</button>
 				{/each}
 			</div>
-			<div class="search-wrap">
-				<input type="text" class="search-input" placeholder="Search by IP, hostname, or vendor..." bind:value={searchQuery} />
+			<div class="filter-right">
+				<div class="view-toggle">
+					<button class="view-btn" class:active={viewMode === 'grid'} onclick={() => (viewMode = 'grid')} title="Grid view">&#x25A6;</button>
+					<button class="view-btn" class:active={viewMode === 'list'} onclick={() => (viewMode = 'list')} title="List view">&#x2630;</button>
+				</div>
+				<div class="search-wrap">
+					<input type="text" class="search-input" placeholder="Search by IP, hostname, or vendor..." bind:value={searchQuery} />
+				</div>
 			</div>
 		</div>
 
@@ -246,9 +283,10 @@
 					<p class="empty-hint">Devices appear when they obtain an IP from the network's DHCP server.</p>
 				{/if}
 			</div>
-		{:else}
+		{:else if viewMode === 'grid'}
+			<!-- Grid View -->
 			<div class="device-grid">
-				{#each filteredDevices as device, i (`${device.ip}-${i}`)}
+				{#each filteredDevices as device, i (`grid-${device.ip}-${i}`)}
 					<button
 						class="device-card"
 						style="border-left-color: {catColor(device)}; animation-delay: {i * 30}ms;"
@@ -291,6 +329,48 @@
 						{/if}
 					</button>
 				{/each}
+			</div>
+		{:else}
+			<!-- List View -->
+			<div class="list-card">
+				<div class="table-wrap">
+					<table class="data-table">
+						<thead>
+							<tr>
+								<th></th>
+								<th class="sortable" class:sorted={sortField === 'ip'} onclick={() => toggleSort('ip')}>IP Address{sortArrow('ip')}</th>
+								<th class="sortable" class:sorted={sortField === 'hostname'} onclick={() => toggleSort('hostname')}>Hostname{sortArrow('hostname')}</th>
+								<th>Category</th>
+								<th>OS</th>
+								<th>Manufacturer</th>
+								<th class="sortable" class:sorted={sortField === 'total_bytes'} onclick={() => toggleSort('total_bytes')}>Bandwidth{sortArrow('total_bytes')}</th>
+								<th class="sortable" class:sorted={sortField === 'connection_count'} onclick={() => toggleSort('connection_count')}>Connections{sortArrow('connection_count')}</th>
+								<th class="sortable" class:sorted={sortField === 'alert_count'} onclick={() => toggleSort('alert_count')}>Alerts{sortArrow('alert_count')}</th>
+								<th class="sortable" class:sorted={sortField === 'last_seen'} onclick={() => toggleSort('last_seen')}>Last Seen{sortArrow('last_seen')}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each sortedDevices as device, i (`list-${device.ip}-${i}`)}
+								<tr class="list-row" onclick={() => goto(`/devices/${encodeURIComponent(device.ip)}`)}>
+									<td><span class="dc-status" class:online={isOnline(device)} class:idle={isIdle(device)}></span></td>
+									<td class="mono" style="font-size: var(--text-sm); font-weight: 500;">{device.ip}</td>
+									<td style="font-size: var(--text-sm); color: var(--text-secondary);">{device.hostname ?? '--'}</td>
+									<td>
+										<span class="cat-badge" style="color: {catColor(device)}; background: color-mix(in srgb, {catColor(device)} 12%, transparent);">
+											{catIcon(device)} {(device.category ?? 'unknown').replace(/^\w/, (c: string) => c.toUpperCase())}
+										</span>
+									</td>
+									<td style="font-size: var(--text-xs); color: var(--text-muted);">{device.os_hint ?? '--'}</td>
+									<td style="font-size: var(--text-xs); color: var(--text-muted);">{device.manufacturer ?? '--'}</td>
+									<td class="mono" style="font-size: var(--text-sm);">{formatBytes(device.total_bytes)}</td>
+									<td class="mono" style="font-size: var(--text-sm);">{formatNumber(device.connection_count)}</td>
+									<td class="mono" style="font-size: var(--text-sm); {device.alert_count > 0 ? 'color: var(--amber); font-weight: 600;' : ''}">{device.alert_count > 0 ? formatNumber(device.alert_count) : '--'}</td>
+									<td style="font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap;">{timeAgo(device.last_seen)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			</div>
 		{/if}
 	{/if}
@@ -336,6 +416,11 @@
 	.cat-pill.active { background: var(--cyan); color: var(--bg-void); border-color: var(--cyan); font-weight: 600; }
 	.cat-pill-icon { font-size: 14px; }
 	.cat-pill-count { font-family: var(--font-mono); font-size: 10px; opacity: 0.7; }
+	.filter-right { display: flex; align-items: center; gap: var(--space-sm); }
+	.view-toggle { display: flex; gap: 2px; background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border-dim); }
+	.view-btn { width: 32px; height: 28px; border: none; background: transparent; color: var(--text-muted); font-size: 14px; border-radius: 5px; cursor: pointer; transition: all var(--transition-fast); display: flex; align-items: center; justify-content: center; }
+	.view-btn:hover { color: var(--text-primary); background: var(--bg-elevated); }
+	.view-btn.active { background: var(--cyan); color: var(--bg-void); }
 	.search-wrap { max-width: 300px; flex: 1; }
 	.search-input { width: 100%; padding: 7px 14px; background: var(--bg-input); border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-xs); outline: none; transition: border-color var(--transition-fast); }
 	.search-input::placeholder { color: var(--text-dim); }
@@ -392,5 +477,20 @@
 	/* Responsive */
 	@media (max-width: 1280px) { .device-grid { grid-template-columns: repeat(3, 1fr); } }
 	@media (max-width: 1024px) { .device-grid { grid-template-columns: repeat(2, 1fr); } .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+	/* List View */
+	.list-card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); overflow: hidden; }
+	.table-wrap { overflow-x: auto; }
+	.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+	.data-table th { padding: var(--space-sm) var(--space-md); text-align: left; font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-dim); white-space: nowrap; }
+	.data-table th.sortable { cursor: pointer; user-select: none; transition: color var(--transition-fast); }
+	.data-table th.sortable:hover { color: var(--text-primary); }
+	.data-table th.sorted { color: var(--accent); }
+	.data-table td { padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border-dim); vertical-align: middle; }
+	.data-table tbody tr { transition: background var(--transition-fast); }
+	.data-table tbody tr:hover { background: var(--bg-tertiary); }
+	.data-table tbody tr:last-child td { border-bottom: none; }
+	.list-row { cursor: pointer; }
+	.cat-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 600; white-space: nowrap; }
+
 	@media (max-width: 768px) { .device-grid { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: 1fr; } }
 </style>
