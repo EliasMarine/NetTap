@@ -175,6 +175,13 @@
 		return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 	}
 
+	function formatTimestamp(ts: string): string {
+		if (!ts) return '--';
+		try {
+			return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+		} catch { return ts; }
+	}
+
 	const STAGE_NAMES: Record<number, string> = { 1: 'Reconnaissance', 2: 'Exploit', 3: 'Malware & C2', 4: 'Exfiltration' };
 </script>
 
@@ -467,6 +474,23 @@
 												<div class="inv-field"><span class="inv-field-label">Connections (24h)</span><span class="inv-field-value mono">{formatNumber(Number(inv.sections.source_profile.connection_count_24h) || 0)}</span></div>
 												<div class="inv-field"><span class="inv-field-label">Unique Destinations</span><span class="inv-field-value mono">{Number(inv.sections.source_profile.unique_destinations) || 0}</span></div>
 												<div class="inv-field"><span class="inv-field-label">Bytes (24h)</span><span class="inv-field-value mono">{formatBytes(Number(inv.sections.source_profile.total_bytes_24h) || 0)}</span></div>
+												{#if inv.sections.source_profile.protocols}
+													<div class="inv-field"><span class="inv-field-label">Protocols</span><span class="inv-field-value mono">{Array.isArray(inv.sections.source_profile.protocols) ? inv.sections.source_profile.protocols.join(', ') : inv.sections.source_profile.protocols}</span></div>
+												{/if}
+												{#if inv.sections.source_profile.top_ports}
+													<div class="inv-field"><span class="inv-field-label">Top Ports</span><span class="inv-field-value mono">{Array.isArray(inv.sections.source_profile.top_ports) ? inv.sections.source_profile.top_ports.join(', ') : inv.sections.source_profile.top_ports}</span></div>
+												{/if}
+											</div>
+										</div>
+									{/if}
+									{#if inv.sections.destination_profile}
+										<div>
+											<div class="inv-section-title">Destination Host Profile</div>
+											<div class="inv-detail-grid">
+												<div class="inv-field"><span class="inv-field-label">IP</span><span class="inv-field-value mono" style="color: var(--red);">{inv.sections.destination_profile.ip}</span></div>
+												<div class="inv-field"><span class="inv-field-label">Connections (24h)</span><span class="inv-field-value mono">{formatNumber(Number(inv.sections.destination_profile.connection_count_24h) || 0)}</span></div>
+												<div class="inv-field"><span class="inv-field-label">Unique Destinations</span><span class="inv-field-value mono">{Number(inv.sections.destination_profile.unique_destinations) || 0}</span></div>
+												<div class="inv-field"><span class="inv-field-label">Bytes (24h)</span><span class="inv-field-value mono">{formatBytes(Number(inv.sections.destination_profile.total_bytes_24h) || 0)}</span></div>
 											</div>
 										</div>
 									{/if}
@@ -476,8 +500,8 @@
 											<div class="inv-detail-grid">
 												<div class="inv-field"><span class="inv-field-label">Total Connections</span><span class="inv-field-value mono">{formatNumber(Number(inv.sections.connection_history.total_connections_7d) || 0)}</span></div>
 												<div class="inv-field"><span class="inv-field-label">Total Bytes</span><span class="inv-field-value mono">{formatBytes(Number(inv.sections.connection_history.total_bytes_7d) || 0)}</span></div>
-												<div class="inv-field"><span class="inv-field-label">First Seen</span><span class="inv-field-value mono">{inv.sections.connection_history.first_seen ?? '--'}</span></div>
-												<div class="inv-field"><span class="inv-field-label">Last Seen</span><span class="inv-field-value mono">{inv.sections.connection_history.last_seen ?? '--'}</span></div>
+												<div class="inv-field"><span class="inv-field-label">First Seen</span><span class="inv-field-value mono">{formatTimestamp(String(inv.sections.connection_history.first_seen ?? ''))}</span></div>
+												<div class="inv-field"><span class="inv-field-label">Last Seen</span><span class="inv-field-value mono">{formatTimestamp(String(inv.sections.connection_history.last_seen ?? ''))}</span></div>
 											</div>
 										</div>
 									{/if}
