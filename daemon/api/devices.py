@@ -172,32 +172,9 @@ async def handle_device_list(request: web.Request) -> web.Response:
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)
 
-    # Step 1: Get DHCP-leased device IPs (the source of truth for "real" devices)
-    dhcp_query = {
-        "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "dhcp"}},
-                ]
-            }
-        },
-        "aggs": {
-            "leased_ips": {
-                "terms": {"field": "zeek.dhcp.assigned_ip.keyword", "size": 500}
-            }
-        },
-    }
-
-    try:
-        dhcp_result = client.search(index=NETWORK_INDEX, body=dhcp_query)
-        dhcp_buckets = dhcp_result.get("aggregations", {}).get("leased_ips", {}).get("buckets", [])
-        leased_ips = [b["key"] for b in dhcp_buckets]
-    except OpenSearchException:
-        leased_ips = []
-        logger.warning("DHCP query failed, falling back to all source IPs")
+    # Minimum connection threshold — IPs with fewer connections are noise
+    # (ARP probes, broadcast replies, one-off scans)
+    _MIN_CONNECTIONS = 20
 
     # Map user-facing sort names to aggregation sort keys
     sort_map = {
@@ -224,9 +201,9 @@ async def handle_device_list(request: web.Request) -> web.Response:
     if excluded:
         bool_query["must_not"] = excluded
 
-    # Step 2: If we got DHCP-leased IPs, restrict conn aggregation to only those IPs
-    if leased_ips:
-        bool_query["filter"].append({"terms": {"source.ip.keyword": leased_ips}})
+    # No DHCP pre-filter — DHCP data may not be available (NetTap captures
+    # between modem and router, DHCP happens on the LAN side). Instead, use
+    # min_doc_count on the terms aggregation to filter noise IPs.
 
     query = {
         "size": 0,
@@ -236,6 +213,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                 "terms": {
                     "field": "source.ip.keyword",
                     "size": fetch_size,
+                    "min_doc_count": _MIN_CONNECTIONS,
                     "order": {agg_sort_key: sort_order},
                 },
                 "aggs": {
@@ -303,10 +281,15 @@ async def handle_device_list(request: web.Request) -> web.Response:
         except OpenSearchException as exc:
             logger.warning("Alert count query failed: %s", exc)
 
-    # Build device list with enrichment
+    # Build device list with enrichment — skip broadcast/gateway IPs
     devices = []
     for b in buckets:
         ip = b["key"]
+
+        # Skip broadcast, multicast, and gateway-pattern IPs
+        if ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224."):
+            continue
+
         total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
         connection_count = b.get("doc_count", 0)
         proto_buckets = b.get("protocols", {}).get("buckets", [])
