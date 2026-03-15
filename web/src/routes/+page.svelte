@@ -378,12 +378,12 @@
 		dns: 'var(--text-muted)',
 		email: 'var(--pink)',
 		web: 'var(--accent)',
-		security: 'var(--yellow)',
+		security: 'var(--green)',
 		shopping: 'var(--orange)',
 		news: 'var(--blue)',
 		ads: 'var(--text-muted)',
 		updates: 'var(--teal)',
-		suspicious: 'var(--danger)',
+		suspicious: 'var(--red)',
 		other: 'var(--text-muted)',
 	};
 
