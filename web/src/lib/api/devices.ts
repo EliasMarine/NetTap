@@ -26,6 +26,7 @@ export interface Device {
 	connection_count: number;
 	protocols: string[];
 	alert_count: number;
+	category?: string;
 }
 
 export interface DeviceListResponse {
@@ -49,12 +50,18 @@ export interface DeviceDNSQuery {
 export interface DeviceBandwidthPoint {
 	timestamp: string;
 	bytes: number;
+	download_bytes?: number;
+	upload_bytes?: number;
 }
 
 export interface DeviceDetail extends Device {
 	top_destinations: DeviceDestination[];
 	dns_queries: DeviceDNSQuery[];
 	bandwidth_series: DeviceBandwidthPoint[];
+	orig_bytes?: number;
+	resp_bytes?: number;
+	unique_destinations?: number;
+	top_services?: Array<{ name: string; bytes: number; connections: number }>;
 }
 
 export interface DeviceDetailResponse {
@@ -79,6 +86,72 @@ export interface DeviceConnectionsResponse {
 	total: number;
 	total_pages: number;
 	connections: DeviceConnection[];
+}
+
+export interface DeviceCategory {
+	name: string;
+	label: string;
+	total_bytes: number;
+	connection_count: number;
+}
+
+export interface DeviceCategoriesResponse {
+	ip: string;
+	from: string;
+	to: string;
+	categories: DeviceCategory[];
+}
+
+export interface DeviceAlert {
+	timestamp: string;
+	severity: number;
+	signature: string;
+	category: string;
+	signature_id: number;
+	source_ip: string;
+	destination_ip: string;
+	source_port?: number;
+	destination_port?: number;
+}
+
+export interface DeviceAlertsResponse {
+	ip: string;
+	from: string;
+	to: string;
+	total: number;
+	alerts: DeviceAlert[];
+}
+
+export interface DevicePort {
+	port: number;
+	service: string;
+	connections: number;
+	suspicious: boolean;
+}
+
+export interface DevicePortsResponse {
+	ip: string;
+	from: string;
+	to: string;
+	ports: DevicePort[];
+}
+
+export interface RiskFactor {
+	name: string;
+	score: number;
+	max: number;
+	description: string;
+}
+
+export interface RiskScoreResponse {
+	ip: string;
+	from: string;
+	to: string;
+	score: number;
+	level: string;
+	factors: RiskFactor[];
+	connection_count: number;
+	alert_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,5 +284,57 @@ export async function getDeviceConnections(
 		};
 	}
 
+	return res.json();
+}
+
+/**
+ * Get traffic categories for a specific device.
+ */
+export async function getDeviceCategories(
+	ip: string,
+	opts: TimeRangeParams = {}
+): Promise<DeviceCategoriesResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/categories${query}`);
+	if (!res.ok) return { ip, from: '', to: '', categories: [] };
+	return res.json();
+}
+
+/**
+ * Get alerts associated with a specific device.
+ */
+export async function getDeviceAlerts(
+	ip: string,
+	opts: TimeRangeParams & { limit?: number } = {}
+): Promise<DeviceAlertsResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
+	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/alerts${query}`);
+	if (!res.ok) return { ip, from: '', to: '', total: 0, alerts: [] };
+	return res.json();
+}
+
+/**
+ * Get port analysis for a specific device.
+ */
+export async function getDevicePorts(
+	ip: string,
+	opts: TimeRangeParams = {}
+): Promise<DevicePortsResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/ports${query}`);
+	if (!res.ok) return { ip, from: '', to: '', ports: [] };
+	return res.json();
+}
+
+/**
+ * Get the risk score for a specific device.
+ */
+export async function getDeviceRiskScore(
+	ip: string,
+	opts: TimeRangeParams = {}
+): Promise<RiskScoreResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/risk/scores/${encodeURIComponent(ip)}${query}`);
+	if (!res.ok) return { ip, from: '', to: '', score: 0, level: 'low', factors: [], connection_count: 0, alert_count: 0 };
 	return res.json();
 }

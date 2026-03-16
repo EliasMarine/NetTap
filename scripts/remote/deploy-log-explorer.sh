@@ -9,7 +9,7 @@ COMPOSE="docker/docker-compose.yml"
 NETTAP_DIR="/home/nettap/NetTap"
 
 echo "=== Step 1: Pull latest code ==="
-cd "$NETTAP_DIR"
+cd "$NETTAP_DIR" || exit 1
 git fetch origin "$BRANCH"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
 git pull origin "$BRANCH"

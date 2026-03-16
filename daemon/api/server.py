@@ -65,6 +65,7 @@ from api.suricata_rules import register_suricata_rules_routes
 from api.mac_correlation import register_mac_correlation_routes
 from api.pcap import register_pcap_routes
 from api.backup import register_backup_routes
+from api.threats import register_threat_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -650,6 +651,9 @@ def create_app(
     # Config backup/restore (export/import all settings)
     config_backup = ConfigBackup()
     register_backup_routes(app, config_backup)
+
+    # Threat Intelligence (unified report, beaconing, lateral movement, DNS anomalies, TI)
+    register_threat_routes(app, storage)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

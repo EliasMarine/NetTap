@@ -779,6 +779,86 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Smart Alert endpoints (alert intelligence layer)
+# ---------------------------------------------------------------------------
+
+
+async def handle_smart_alerts(request: web.Request) -> web.Response:
+    """GET /api/alerts/smart?from=&to=&device_ip=&include_info=false&limit=50"""
+    from_ts, to_ts = _parse_time_range(request)
+    device_ip = request.query.get("device_ip", "").strip() or None
+    include_info = request.query.get("include_info", "false").lower() == "true"
+    limit = _parse_int_param(request, "limit", 50)
+    client = _get_client(request)
+
+    from services.alert_intelligence import get_smart_alerts
+    try:
+        alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info, limit)
+    except Exception as exc:
+        logger.error("Smart alerts query failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+    return web.json_response({
+        "from": from_ts, "to": to_ts,
+        "device_ip": device_ip,
+        "alerts": alerts,
+        "total": len(alerts),
+    })
+
+
+async def handle_smart_alert_summary(request: web.Request) -> web.Response:
+    """GET /api/alerts/smart/summary?from=&to=&device_ip="""
+    from_ts, to_ts = _parse_time_range(request)
+    device_ip = request.query.get("device_ip", "").strip() or None
+    client = _get_client(request)
+
+    from services.alert_intelligence import get_smart_alert_summary
+    try:
+        summary = await get_smart_alert_summary(client, from_ts, to_ts, device_ip)
+    except Exception as exc:
+        logger.error("Smart alert summary failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+    return web.json_response({"from": from_ts, "to": to_ts, "device_ip": device_ip, **summary})
+
+
+async def handle_suppress_alert(request: web.Request) -> web.Response:
+    """POST /api/alerts/suppress — body: {signature_id, device_ip?, reason?}"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    sig_id = body.get("signature_id")
+    if not sig_id:
+        return web.json_response({"error": "signature_id is required"}, status=400)
+
+    from services.alert_intelligence import suppress_rule
+    suppress_rule(
+        signature_id=int(sig_id),
+        device_ip=body.get("device_ip"),
+        reason=body.get("reason", ""),
+    )
+    return web.json_response({"status": "suppressed", "signature_id": sig_id})
+
+
+async def handle_false_positive(request: web.Request) -> web.Response:
+    """POST /api/alerts/false-positive — body: {signature_id, reason?}"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    sig_id = body.get("signature_id")
+    if not sig_id:
+        return web.json_response({"error": "signature_id is required"}, status=400)
+
+    from services.alert_intelligence import mark_false_positive
+    mark_false_positive(signature_id=int(sig_id), reason=body.get("reason", ""))
+    return web.json_response({"status": "marked_false_positive", "signature_id": sig_id})
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -798,6 +878,12 @@ def register_alert_routes(
     app.router.add_get("/api/alerts/top-signatures", handle_alerts_top_signatures)
     app.router.add_get("/api/alerts/top-ips", handle_alerts_top_ips)
     app.router.add_get("/api/alerts/categories", handle_alerts_categories)
+    # Smart alert routes — /smart/summary BEFORE /smart (more specific first)
+    app.router.add_get("/api/alerts/smart/summary", handle_smart_alert_summary)
+    app.router.add_get("/api/alerts/smart", handle_smart_alerts)
+    app.router.add_post("/api/alerts/suppress", handle_suppress_alert)
+    app.router.add_post("/api/alerts/false-positive", handle_false_positive)
+    # Parameterized routes LAST (catch-all pattern)
     app.router.add_get("/api/alerts/{id}", handle_alert_detail)
     app.router.add_post("/api/alerts/{id}/acknowledge", handle_alert_acknowledge)
-    logger.info("Alert API routes registered (8 endpoints)")
+    logger.info("Alert API routes registered (12 endpoints)")

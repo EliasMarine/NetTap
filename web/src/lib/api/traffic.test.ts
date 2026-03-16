@@ -6,6 +6,7 @@ import {
 	getBandwidthTimeSeries,
 	getTrafficCategories,
 	getCategoryDetail,
+	getCategoryBandwidth,
 } from './traffic';
 
 // ---------------------------------------------------------------------------
@@ -311,6 +312,54 @@ describe('traffic API client', () => {
 				'/api/traffic/categories/file_transfer',
 				expect.objectContaining({ signal: expect.any(AbortSignal) })
 			);
+		});
+	});
+
+	// -- getCategoryBandwidth ------------------------------------------------
+
+	describe('getCategoryBandwidth', () => {
+		it('builds correct URL with category and time params', async () => {
+			const mockData = {
+				category: 'streaming',
+				from: '2026-03-01T00:00:00Z',
+				to: '2026-03-02T00:00:00Z',
+				interval: '15m',
+				series: [
+					{
+						timestamp: '2026-03-01T00:00:00Z',
+						download_bytes: 5000,
+						upload_bytes: 1000,
+						total_bytes: 6000,
+						connections: 20,
+					},
+				],
+			};
+			mockFetchSuccess(mockData);
+
+			const result = await getCategoryBandwidth('streaming', {
+				from: '2026-03-01T00:00:00Z',
+				to: '2026-03-02T00:00:00Z',
+				interval: '15m',
+			});
+
+			const calledUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(calledUrl).toContain('/api/traffic/categories/streaming/bandwidth');
+			expect(calledUrl).toContain('from=');
+			expect(calledUrl).toContain('to=');
+			expect(calledUrl).toContain('interval=15m');
+			expect(result.category).toBe('streaming');
+			expect(result.series).toHaveLength(1);
+			expect(result.series[0].download_bytes).toBe(5000);
+		});
+
+		it('returns empty series on fetch error', async () => {
+			mockFetchFailure(500);
+
+			const result = await getCategoryBandwidth('streaming');
+
+			expect(result.series).toEqual([]);
+			expect(result.category).toBe('streaming');
+			expect(result.interval).toBe('15m');
 		});
 	});
 });

@@ -28,6 +28,7 @@
 		{ href: '/logs', label: 'Log Explorer', icon: 'search' },
 		{ href: '/devices', label: 'Devices', icon: 'monitor' },
 		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
+		{ href: '/threats', label: 'Threats', icon: 'alert-triangle' },
 		{ href: '/connections', label: 'Connections', icon: 'link' },
 		{ href: '/live', label: 'Live Monitor', icon: 'activity' },
 		{ href: '/bandwidth', label: 'Bandwidth', icon: 'bar-chart-2' },
@@ -119,6 +120,8 @@
 								<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
 							{:else if item.icon === 'monitor'}
 								<rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+							{:else if item.icon === 'alert-triangle'}
+								<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
 							{:else if item.icon === 'bell'}
 								<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" />
 							{:else if item.icon === 'link'}

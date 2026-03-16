@@ -132,14 +132,6 @@ class IoTMonitor:
         """
         mac = device_mac.strip().upper()
         now = datetime.now(timezone.utc)
-        from_ts = (
-            datetime(
-                now.year, now.month, now.day, tzinfo=timezone.utc
-            ).__class__(
-                now.year, now.month, now.day, tzinfo=timezone.utc
-            )
-        )
-
         # Build from_ts as N days ago
         from datetime import timedelta
         from_iso = (now - timedelta(days=days)).isoformat()

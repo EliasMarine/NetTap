@@ -420,6 +420,81 @@ sudo docker logs nettap-storage-daemon --tail 50
 6. **Scripts must handle `sudo` correctly.** Run the script as the normal user (`bash /tmp/script.sh`), and only `sudo` individual docker commands inside. NEVER `sudo bash /tmp/script.sh` — this breaks `$HOME`, `git` ownership, etc.
 7. **NEVER use `npm`, `node`, or `python3` directly in device scripts** — these may not be installed. All builds happen via `docker compose build`. All Python/Node execution happens inside containers.
 
+### Deploy Script Template (MANDATORY FORMAT)
+
+**Every deploy script MUST follow this exact structure.** Use `set -u` (not `set -e`). Use numbered steps with `echo "→ Step N:"` progress markers. Include health-check polling and API verification at the end.
+
+```bash
+cat > /tmp/deploy-DESCRIPTION.sh << 'SCRIPT'
+#!/usr/bin/env bash
+set -u
+
+REPO_DIR="/home/nettap/NetTap"
+BRANCH="branch-name-here"
+
+echo "=== Deploy TITLE ==="
+echo ""
+
+echo "→ Step 1: Pull latest code..."
+cd "$REPO_DIR"
+git fetch origin
+git checkout "$BRANCH"
+git pull origin "$BRANCH"
+echo "   ✓ Code updated"
+echo ""
+
+echo "→ Step 2: Rebuild web container..."
+sudo docker compose -f docker/docker-compose.yml build nettap-web
+echo "   ✓ Web container rebuilt"
+echo ""
+
+echo "→ Step 3: Rebuild daemon container..."
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+echo "   ✓ Daemon container rebuilt"
+echo ""
+
+echo "→ Step 4: Restart containers..."
+sudo docker compose -f docker/docker-compose.yml up -d nettap-web nettap-storage-daemon --force-recreate
+echo "   ✓ Containers restarted"
+echo ""
+
+echo "→ Step 5: Wait for containers to become healthy..."
+for i in $(seq 1 30); do
+    WEB_STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' nettap-web 2>/dev/null || echo "unknown")
+    DAEMON_STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' nettap-storage-daemon 2>/dev/null || echo "unknown")
+    if [ "$WEB_STATUS" = "healthy" ] && [ "$DAEMON_STATUS" = "healthy" ]; then
+        echo "   ✓ Both containers healthy"
+        break
+    fi
+    echo "   waiting... web=$WEB_STATUS daemon=$DAEMON_STATUS ($i/30)"
+    sleep 5
+done
+echo ""
+
+echo "→ Step 6: Test relevant API endpoint..."
+# Use: sudo docker exec nettap-storage-daemon curl -s http://localhost:8880/api/...
+# Parse with python3 -c inside the curl pipeline
+echo ""
+
+echo "→ Step 7: Container status..."
+sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-web|nettap-storage-daemon"
+echo ""
+
+echo "=== Deploy Complete ==="
+echo "Open the dashboard to verify."
+SCRIPT
+
+echo "Script written. Now run:"
+echo "  bash /tmp/deploy-DESCRIPTION.sh"
+```
+
+**Key rules for deploy scripts:**
+- Only rebuild containers that have changes (skip web if only daemon changed, etc.)
+- Always include API-level verification steps that test the specific fix
+- Health-check loop polls up to 30 times (2.5 minutes) with 5s intervals
+- The `cat > /tmp/... << 'SCRIPT'` heredoc is pasted by the user into SSH — the user then runs `bash /tmp/...`
+- Name the script file descriptively: `/tmp/deploy-traffic-fix.sh`, `/tmp/deploy-auth-hotfix.sh`, etc.
+
 ---
 
 ## Key Design Constraints

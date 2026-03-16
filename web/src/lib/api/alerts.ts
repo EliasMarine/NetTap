@@ -346,3 +346,135 @@ export function severityBadgeClass(severity: number | undefined): string {
 			return 'badge severity-info';
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Smart Alert types & helpers (alert intelligence layer)
+// ---------------------------------------------------------------------------
+
+/** A grouped, deduplicated, severity-ranked smart alert. */
+export interface SmartAlert {
+	signature_id: number;
+	signature: string;
+	suricata_category: string;
+	severity: number;
+	severity_label: string;
+	category: string;
+	category_label: string;
+	source_ip: string;
+	destination_ip: string;
+	count: number;
+	first_seen: string;
+	last_seen: string;
+	trend: string;
+	assessment: string;
+	destination_port?: number;
+}
+
+export interface SmartAlertsResponse {
+	from: string;
+	to: string;
+	device_ip: string | null;
+	alerts: SmartAlert[];
+	total: number;
+}
+
+export interface SmartAlertSummary {
+	from: string;
+	to: string;
+	threat_score: number;
+	threat_level: string;
+	total_groups: number;
+	total_events: number;
+	categories: Record<string, { label: string; groups: number; events: number }>;
+	top_threats: SmartAlert[];
+}
+
+/**
+ * Get grouped smart alerts with optional device filter.
+ */
+export async function getSmartAlerts(
+	opts: {
+		from?: string;
+		to?: string;
+		device_ip?: string;
+		include_info?: boolean;
+		limit?: number;
+	} = {}
+): Promise<SmartAlertsResponse> {
+	const qs = new URLSearchParams();
+	if (opts.from) qs.set('from', opts.from);
+	if (opts.to) qs.set('to', opts.to);
+	if (opts.device_ip) qs.set('device_ip', opts.device_ip);
+	if (opts.include_info) qs.set('include_info', 'true');
+	if (opts.limit) qs.set('limit', String(opts.limit));
+	const query = qs.toString() ? `?${qs.toString()}` : '';
+	const res = await fetch(`/api/alerts/smart${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', device_ip: null, alerts: [], total: 0 };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get smart alert summary with threat score, categories, and top threats.
+ */
+export async function getSmartAlertSummary(
+	opts: {
+		from?: string;
+		to?: string;
+		device_ip?: string;
+	} = {}
+): Promise<SmartAlertSummary> {
+	const qs = new URLSearchParams();
+	if (opts.from) qs.set('from', opts.from);
+	if (opts.to) qs.set('to', opts.to);
+	if (opts.device_ip) qs.set('device_ip', opts.device_ip);
+	const query = qs.toString() ? `?${qs.toString()}` : '';
+	const res = await fetch(`/api/alerts/smart/summary${query}`);
+
+	if (!res.ok) {
+		return {
+			from: '',
+			to: '',
+			threat_score: 0,
+			threat_level: 'none',
+			total_groups: 0,
+			total_events: 0,
+			categories: {},
+			top_threats: [],
+		};
+	}
+
+	return res.json();
+}
+
+/**
+ * Suppress a specific alert signature (optionally scoped to a device IP).
+ */
+export async function suppressAlert(
+	signatureId: number,
+	deviceIp?: string,
+	reason?: string
+): Promise<void> {
+	await fetch('/api/alerts/suppress', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ signature_id: signatureId, device_ip: deviceIp, reason }),
+	});
+}
+
+/**
+ * Mark a signature as a false positive.
+ */
+export async function markFalsePositive(
+	signatureId: number,
+	reason?: string
+): Promise<void> {
+	await fetch('/api/alerts/false-positive', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ signature_id: signatureId, reason }),
+	});
+}

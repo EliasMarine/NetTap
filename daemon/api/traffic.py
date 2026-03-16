@@ -561,9 +561,11 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
+    fingerprint = request.app.get("device_fingerprint")
+
     try:
         devices, services = await asyncio.gather(
-            traffic_classifier.get_category_devices(client, category, from_ts, to_ts),
+            traffic_classifier.get_category_devices(client, category, from_ts, to_ts, fingerprint=fingerprint),
             traffic_classifier.get_category_services(client, category, from_ts, to_ts),
         )
     except Exception as exc:
@@ -584,6 +586,42 @@ async def handle_category_detail(request: web.Request) -> web.Response:
         "connection_count": sum(d["connections"] for d in devices),
         "devices": devices,
         "services": services,
+    })
+
+
+async def handle_category_bandwidth(request: web.Request) -> web.Response:
+    """GET /api/traffic/categories/{category}/bandwidth?from=&to=&interval="""
+    category = request.match_info["category"]
+
+    if category not in traffic_classifier.CATEGORIES:
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
+
+    from_ts, to_ts = _parse_time_range(request)
+    interval = request.query.get("interval", "15m")
+
+    # Validate interval
+    valid_intervals = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
+    if interval not in valid_intervals:
+        interval = "15m"
+
+    client = _get_client(request)
+
+    try:
+        series = await traffic_classifier.get_category_bandwidth(
+            client, category, from_ts, to_ts, interval
+        )
+    except Exception as exc:
+        logger.error("Error in category bandwidth for %s: %s", category, exc)
+        return web.json_response(
+            {"error": f"Category bandwidth query failed: {exc}"}, status=500
+        )
+
+    return web.json_response({
+        "category": category,
+        "from": from_ts,
+        "to": to_ts,
+        "interval": interval,
+        "series": series,
     })
 
 
@@ -608,4 +646,5 @@ def register_traffic_routes(
     app.router.add_get("/api/traffic/connections", handle_connections)
     app.router.add_get("/api/traffic/categories", handle_traffic_categories)
     app.router.add_get("/api/traffic/categories/{category}", handle_category_detail)
-    logger.info("Traffic API routes registered (8 endpoints)")
+    app.router.add_get("/api/traffic/categories/{category}/bandwidth", handle_category_bandwidth)
+    logger.info("Traffic API routes registered (9 endpoints)")

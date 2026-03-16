@@ -992,7 +992,6 @@ class SmartMonitor:
             # For NVMe, the sysfs path uses the controller (nvme0) not the namespace
             if dev_name.startswith("nvme"):
                 # nvme0n1 -> nvme0
-                ctrl = dev_name.split("n")[0] + "n" + dev_name.split("n")[1] if "n" in dev_name else dev_name
                 model_path = f"/sys/block/{dev_name}/device/model"
                 serial_path = f"/sys/block/{dev_name}/device/serial"
                 size_path = f"/sys/block/{dev_name}/size"
