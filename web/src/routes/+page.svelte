@@ -13,8 +13,10 @@
 	import DonutChart from '$components/charts/DonutChart.svelte';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTopTalkers, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TopTalker, TrafficCategory } from '$api/traffic';
-	import { getAlertCount, getAlerts } from '$api/alerts';
-	import type { AlertCountResponse, Alert } from '$api/alerts';
+	import { getAlertCount, getAlerts, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
+	import type { AlertCountResponse, Alert, SmartAlert, SmartAlertSummary } from '$api/alerts';
+	import { getDevices } from '$api/devices';
+	import type { Device } from '$api/devices';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
 	import { getDeviceCount } from '$api/devices';
@@ -58,6 +60,9 @@
 	let systemHealth = $state<SystemHealth | null>(null);
 	let categories = $state<TrafficCategory[]>([]);
 	let deviceCount = $state(0);
+	let smartAlerts = $state<SmartAlert[]>([]);
+	let smartAlertSummary = $state<SmartAlertSummary | null>(null);
+	let topDevices = $state<Device[]>([]);
 
 	// Previous-period data for trend indicators
 	let prevTrafficSummary = $state<TrafficSummary | null>(null);
@@ -171,6 +176,17 @@
 			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
 			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
+
+			// Fetch smart alerts + top devices in parallel (non-blocking)
+			Promise.allSettled([
+				getSmartAlerts({ ...timeParams, limit: 10 }),
+				getSmartAlertSummary(timeParams),
+				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
+			]).then(([smartRes, summaryRes, devicesRes]) => {
+				smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
+				smartAlertSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+				topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
+			});
 
 			lastUpdated = new Date().toLocaleTimeString();
 
@@ -791,135 +807,83 @@
 		{/if}
 	</div>
 
-	<!-- Row 3: Top Talkers + Alert Sparkline + Recent Alerts -->
+	<!-- Row 3: Top Devices + Alert Summary -->
 	<div class="grid grid-cols-2 tables-grid">
-		<!-- Top Talkers (horizontal bar chart) -->
+		<!-- Top Devices -->
 		<div class="card table-card">
 			<div class="card-header">
-				<span class="card-title">Top Talkers</span>
-				<span class="card-subtitle">Source IPs by bandwidth</span>
+				<span class="card-title">Top Devices</span>
+				<span class="card-subtitle">by bandwidth</span>
 			</div>
-			{#if loading && topTalkers.length === 0}
+			{#if loading && topDevices.length === 0}
 				<div class="skeleton-table">
-					{#each Array(5) as _}
-						<div class="skeleton skeleton-row"></div>
-					{/each}
+					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
-			{:else if topTalkers.length === 0}
-				<div class="table-empty">
-					<p class="text-muted">No traffic data available.</p>
-				</div>
+			{:else if topDevices.length === 0}
+				<div class="table-empty"><p class="text-muted">No device data available.</p></div>
 			{:else}
-				<HorizontalBarList
-					items={topTalkers.slice(0, 5).map((talker, i) => ({
-						key: talker.ip,
-						label: talker.ip,
-						isIp: true,
-						value: talker.total_bytes,
-						formattedValue: formatBytesShort(talker.total_bytes),
-						gradient: 'linear-gradient(90deg, var(--cyan), var(--blue))',
-						secondaryValue: talker.connection_count.toLocaleString() + ' conn',
-						href: '/devices/' + talker.ip,
-					}))}
-					showRank={true}
-					labelWidth={130}
-					barHeight={12}
-				/>
+				{#each topDevices.slice(0, 4) as device, i (`td-${device.ip}-${i}`)}
+					<a href="/devices/{encodeURIComponent(device.ip)}" class="td-item">
+						<div class="td-top">
+							<div class="td-identity">
+								<span class="td-status" class:online={device.last_seen && (Date.now() - new Date(device.last_seen).getTime()) < 300000}></span>
+								<span class="td-ip mono">{device.ip}</span>
+							</div>
+							<span class="td-bytes mono">{formatBytesShort(device.total_bytes)}</span>
+						</div>
+						{#if device.hostname || device.os_hint}
+							<div class="td-meta">{device.hostname ?? ''}{device.hostname && device.os_hint ? ' \u00b7 ' : ''}{device.os_hint ?? ''}</div>
+						{/if}
+						<div class="td-bar-row">
+							<div class="td-split-bar">
+								<div class="td-bar-dl" style="width: {device.total_bytes > 0 ? ((device.orig_bytes ?? device.total_bytes * 0.3) / device.total_bytes) * 100 : 50}%;"></div>
+								<div class="td-bar-ul" style="width: {device.total_bytes > 0 ? ((device.resp_bytes ?? device.total_bytes * 0.7) / device.total_bytes) * 100 : 50}%;"></div>
+							</div>
+						</div>
+					</a>
+				{/each}
+				<a href="/devices" class="card-link-bottom">View all {deviceCount || topDevices.length} devices &rarr;</a>
 			{/if}
 		</div>
 
-		<!-- Recent Alerts + Sparkline -->
+		<!-- Alert Summary (Smart Alerts) -->
 		<div class="card table-card">
 			<div class="card-header">
-				<span class="card-title">Recent Alerts</span>
-				<a href="/alerts" class="card-action">View all</a>
+				<span class="card-title">Alert Summary</span>
+				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.count ?? 0)} total</span>
 			</div>
-
-			<!-- Alert Trend Sparkline -->
-			{#if recentAlerts.length > 1}
-				<div class="alert-sparkline-container">
-					<div class="sparkline-legend">
-						<span class="sparkline-legend-item"><span class="sparkline-dot" style="background: var(--red);"></span> High</span>
-						<span class="sparkline-legend-item"><span class="sparkline-dot" style="background: var(--amber);"></span> Medium</span>
-						<span class="sparkline-legend-item"><span class="sparkline-dot" style="background: var(--blue);"></span> Low</span>
-					</div>
-					<svg class="alert-sparkline" viewBox="0 0 200 40" preserveAspectRatio="none">
-						{#if alertSparklinePoints.high}
-							<path d={alertSparklinePoints.high} fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-						{/if}
-						{#if alertSparklinePoints.medium}
-							<path d={alertSparklinePoints.medium} fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-						{/if}
-						{#if alertSparklinePoints.low}
-							<path d={alertSparklinePoints.low} fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-						{/if}
-					</svg>
-				</div>
-			{/if}
-			{#if loading && recentAlerts.length === 0}
-				<div class="skeleton-table">
-					{#each Array(5) as _}
-						<div class="skeleton skeleton-row"></div>
+			{#if smartAlerts.length > 0}
+				<!-- Severity summary bar -->
+				<div class="sev-summary-bar">
+					{#each Object.entries(smartAlertSummary?.categories ?? {}) as [key, cat], i (`sev-${key}-${i}`)}
+						<span class="sev-summary-item">
+							<span class="sev-summary-dot" style="background: {key === 'malware_c2' ? 'var(--red)' : key === 'reconnaissance' ? 'var(--amber)' : key === 'exploit' ? 'var(--purple)' : key === 'policy' ? 'var(--blue)' : 'var(--text-dim)'};"></span>
+							<span class="mono" style="font-size: 10px;">{cat.groups}</span>
+							<span style="font-size: 10px; color: var(--text-muted);">{cat.label}</span>
+						</span>
 					{/each}
 				</div>
-			{:else if recentAlerts.length === 0}
-				<div class="table-empty">
-					<p class="text-muted">No alerts detected. All clear.</p>
+				<!-- Smart alert groups -->
+				{#each smartAlerts.slice(0, 5) as sa, i (`sa-${sa.signature_id}-${i}`)}
+					<div class="ag-item">
+						<div class="ag-top-row">
+							<span class="ag-sev-dot" style="background: {sa.severity <= 2 ? 'var(--red)' : sa.severity === 3 ? 'var(--amber)' : 'var(--cyan)'};"></span>
+							<span class="ag-sig">{sa.signature}</span>
+							<span class="ag-count mono">&times;{formatNumber(sa.count)}</span>
+						</div>
+						<div class="ag-meta-row">
+							<span class="ag-cat">{sa.category_label}</span>
+						</div>
+					</div>
+				{/each}
+				<a href="/threats" class="card-link-bottom">View threat intelligence &rarr;</a>
+			{:else if loading}
+				<div class="skeleton-table">
+					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
 			{:else}
-				<div class="table-scroll">
-					<table class="data-table alerts-table">
-						<thead>
-							<tr>
-								<th class="sortable-th" onclick={() => toggleAlertSort('severity')}>
-									Severity {alertSortField === 'severity' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-								</th>
-								<th class="sortable-th" onclick={() => toggleAlertSort('signature')}>
-									Signature {alertSortField === 'signature' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-								</th>
-								<th class="sortable-th" onclick={() => toggleAlertSort('src_ip')}>
-									Source {alertSortField === 'src_ip' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-								</th>
-								<th class="sortable-th" onclick={() => toggleAlertSort('dest_ip')}>
-									Dest {alertSortField === 'dest_ip' ? (alertSortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-								</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each sortedAlerts as alertItem}
-								{@const sev = severityBadge(alertItem.alert?.severity)}
-								<tr
-									class="alert-row-clickable"
-									onclick={() => (selectedAlert = alertItem)}
-									role="button"
-									tabindex="0"
-									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedAlert = alertItem; } }}
-								>
-									<td>
-										<span class={sev.class}>{sev.label}</span>
-									</td>
-									<td class="signature-cell" title={alertItem.alert?.signature || 'Unknown'}>
-										{alertItem.alert?.signature || 'Unknown signature'}
-									</td>
-									<td class="ip-cell">
-										{#if alertItem.src_ip}
-											<IPAddress ip={alertItem.src_ip} />
-										{:else}
-											<span class="text-muted">--</span>
-										{/if}
-									</td>
-									<td class="ip-cell">
-										{#if alertItem.dest_ip}
-											<IPAddress ip={alertItem.dest_ip} />
-										{:else}
-											<span class="text-muted">--</span>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+				<div class="table-empty"><p class="text-muted">No actionable alerts detected.</p></div>
+				<a href="/alerts" class="card-link-bottom">View raw alerts &rarr;</a>
 			{/if}
 		</div>
 	</div>
@@ -1344,6 +1308,74 @@
 	.table-card {
 		min-height: 280px;
 	}
+
+	/* Top Devices card */
+	.td-item {
+		display: block;
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+		text-decoration: none;
+		color: inherit;
+		transition: background var(--transition-fast);
+	}
+
+	.td-item:hover { background: var(--bg-tertiary); }
+	.td-item:last-of-type { border-bottom: none; }
+
+	.td-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+	.td-identity { display: flex; align-items: center; gap: var(--space-sm); }
+	.td-status { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+	.td-status.online { background: var(--green); box-shadow: 0 0 6px rgba(0,230,118,0.4); }
+	.td-ip { font-size: var(--text-sm); font-weight: 600; color: var(--text-link); transition: color var(--transition-fast); }
+	.td-item:hover .td-ip { color: var(--cyan); }
+	.td-bytes { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
+	.td-meta { font-size: var(--text-xs); color: var(--text-muted); margin-left: 16px; margin-bottom: 4px; }
+	.td-bar-row { margin-left: 16px; }
+	.td-split-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; gap: 1px; }
+	.td-bar-dl { background: var(--cyan); border-radius: 2px 0 0 2px; }
+	.td-bar-ul { background: var(--purple); border-radius: 0 2px 2px 0; }
+
+	.card-link-bottom {
+		display: block;
+		padding: var(--space-sm) var(--space-lg);
+		border-top: 1px solid var(--border-dim);
+		font-size: var(--text-xs);
+		color: var(--text-link);
+		text-decoration: none;
+		text-align: center;
+		transition: background var(--transition-fast);
+	}
+
+	.card-link-bottom:hover { background: var(--bg-tertiary); }
+
+	/* Alert Summary card */
+	.sev-summary-bar {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+		flex-wrap: wrap;
+	}
+
+	.sev-summary-item { display: flex; align-items: center; gap: 4px; }
+	.sev-summary-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+	.ag-item {
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+		transition: background var(--transition-fast);
+	}
+
+	.ag-item:last-of-type { border-bottom: none; }
+	.ag-item:hover { background: var(--bg-tertiary); }
+
+	.ag-top-row { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: 2px; }
+	.ag-sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+	.ag-sig { font-size: var(--text-sm); font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.ag-count { font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+	.ag-meta-row { font-size: 10px; color: var(--text-dim); margin-left: 14px; }
+	.ag-cat { color: var(--text-muted); font-weight: 500; }
 
 	.table-scroll {
 		overflow-x: auto;
