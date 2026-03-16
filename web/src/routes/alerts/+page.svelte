@@ -8,17 +8,21 @@
 		getAlertTimeline,
 		getAlertTopSignatures,
 		getAlertTopIps,
-		getAlertCategories,
+		getEnhancedCategories,
+		getSmartAlertSummary,
 		formatNumber,
 		severityLabel,
 		severityBadgeClass,
+		suppressAlert,
+		markFalsePositive,
 	} from '$api/alerts';
 	import type {
 		Alert,
 		AlertTimelineBucket,
 		AlertSignature,
 		AlertIpEntry,
-		AlertCategoryEntry,
+		AlertCategory,
+		SmartAlertSummary,
 	} from '$api/alerts';
 	// OLD CODE START — AlertDetailPanel replaced by DetailDrawer
 	// import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
@@ -75,8 +79,11 @@
 	let topSignatures = $state<AlertSignature[]>([]);
 	let topDestIps = $state<AlertIpEntry[]>([]);
 	let topSrcIps = $state<AlertIpEntry[]>([]);
-	let categories = $state<AlertCategoryEntry[]>([]);
+	let enhancedCategories = $state<AlertCategory[]>([]);
 	let alerts = $state<Alert[]>([]);
+	let threatScore = $state(0);
+	let threatLevel = $state('none');
+	let smartSummary = $state<SmartAlertSummary | null>(null);
 
 	// Filters
 	let activeFilter = $state<SeverityFilter>('all');
@@ -109,7 +116,7 @@
 	let chartWidth = $state(800);
 
 	// Sort
-	type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip';
+	type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip' | 'category';
 	let sortKey = $state<SortKey>('timestamp');
 	let sortDir = $state<'asc' | 'desc'>('desc');
 
@@ -129,12 +136,15 @@
 
 	let maxSigCount = $derived(topSignatures.length > 0 ? topSignatures[0].count : 1);
 
-	let maxCategoryCount = $derived(
-		categories.length > 0 ? Math.max(1, ...categories.map((c) => c.count)) : 1
-	);
-
 	let maxDestIpCount = $derived(topDestIps.length > 0 ? topDestIps[0].count : 1);
 	let maxSrcIpCount = $derived(topSrcIps.length > 0 ? topSrcIps[0].count : 1);
+
+	/** Compute "critical" count as total minus high+medium+low (info-severity alerts). */
+	let criticalCount = $derived(
+		smartSummary
+			? (smartSummary.categories['malware-c2']?.events ?? 0)
+			: 0
+	);
 
 	let sortedAlerts = $derived.by(() => {
 		const list = [...alerts];
@@ -155,6 +165,9 @@
 					break;
 				case 'dest_ip':
 					cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
+					break;
+				case 'category':
+					cmp = (a.alert?.category || '').localeCompare(b.alert?.category || '');
 					break;
 			}
 			return sortDir === 'asc' ? cmp : -cmp;
@@ -252,6 +265,73 @@
 		navigator.clipboard.writeText(text);
 	}
 
+	/** Convert sparkline data array to SVG polyline points. */
+	function sparklinePoints(data: number[]): string {
+		if (!data.length) return '';
+		const max = Math.max(...data, 1);
+		return data.map((v, i) => {
+			const x = (i / Math.max(data.length - 1, 1)) * 56;
+			const y = 20 - (v / max) * 18;
+			return `${x},${y}`;
+		}).join(' ');
+	}
+
+	/** Map category color names to CSS variable references. */
+	function catColorVar(color: string): string {
+		if (color === 'muted') return 'var(--text-muted)';
+		return `var(--${color})`;
+	}
+
+	function catColorDimVar(color: string): string {
+		if (color === 'muted') return 'var(--bg-tertiary)';
+		return `var(--${color}-dim)`;
+	}
+
+	/** Compute percentage of a severity count within a category. */
+	function sevPct(cat: AlertCategory, level: 'critical' | 'high' | 'medium' | 'low' | 'info'): number {
+		const total = cat.severity_breakdown.critical + cat.severity_breakdown.high + cat.severity_breakdown.medium + cat.severity_breakdown.low + cat.severity_breakdown.info;
+		if (total === 0) return 0;
+		return (cat.severity_breakdown[level] / total) * 100;
+	}
+
+	/** Determine trend CSS class for category cards. */
+	function trendClass(dir: string): string {
+		if (dir === 'increasing') return 'up-bad';
+		if (dir === 'decreasing') return 'down-good';
+		return 'stable';
+	}
+
+	/** Get threat score color based on score value. */
+	function threatScoreColor(score: number): string {
+		if (score >= 75) return 'var(--red)';
+		if (score >= 50) return 'var(--orange)';
+		if (score >= 25) return 'var(--amber)';
+		return 'var(--green)';
+	}
+
+	/** Compute the arc path for the threat gauge based on score (0-100). */
+	function threatArcPath(score: number): string {
+		// Semi-circle from (4,24) to (44,24) with radius 20
+		// Score 0 = start, Score 100 = full arc
+		const fraction = Math.min(score, 100) / 100;
+		const angle = Math.PI * fraction; // 0 to PI
+		const endX = 24 - 20 * Math.cos(angle);
+		const endY = 24 - 20 * Math.sin(angle);
+		const largeArc = fraction > 0.5 ? 1 : 0;
+		return `M 4 24 A 20 20 0 ${largeArc} 1 ${endX.toFixed(1)} ${endY.toFixed(1)}`;
+	}
+
+	/** Get the threat level badge color. */
+	function threatLevelColor(level: string): { bg: string; text: string } {
+		switch (level) {
+			case 'critical': return { bg: 'var(--red-dim)', text: 'var(--red)' };
+			case 'high': return { bg: 'var(--orange-dim)', text: 'var(--orange)' };
+			case 'medium': return { bg: 'var(--amber-dim)', text: 'var(--amber)' };
+			case 'low': return { bg: 'var(--blue-dim)', text: 'var(--blue)' };
+			default: return { bg: 'var(--green-dim)', text: 'var(--green)' };
+		}
+	}
+
 	// ---------------------------------------------------------------------------
 	// Data fetching
 	// ---------------------------------------------------------------------------
@@ -267,7 +347,7 @@
 			getAlertTopSignatures({ from, to, limit: 20 }),
 			getAlertTopIps({ from, to, limit: 10, direction: 'dest' }),
 			getAlertTopIps({ from, to, limit: 10, direction: 'src' }),
-			getAlertCategories({ from, to }),
+			getEnhancedCategories({ from, to }),
 			getAlerts({
 				from,
 				to,
@@ -277,6 +357,7 @@
 				ip: ipFilter || undefined,
 				signature: signatureFilter || undefined,
 			}),
+			getSmartAlertSummary({ from, to }),
 		]);
 
 		if (results[0].status === 'fulfilled') alertCounts = results[0].value.counts;
@@ -284,13 +365,18 @@
 		if (results[2].status === 'fulfilled') topSignatures = results[2].value.signatures;
 		if (results[3].status === 'fulfilled') topDestIps = results[3].value.ips;
 		if (results[4].status === 'fulfilled') topSrcIps = results[4].value.ips;
-		if (results[5].status === 'fulfilled') categories = results[5].value.categories;
+		if (results[5].status === 'fulfilled') enhancedCategories = results[5].value.categories;
 		if (results[6].status === 'fulfilled') {
 			const r = results[6].value;
 			alerts = r.alerts;
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
 			currentPage = 1;
+		}
+		if (results[7].status === 'fulfilled') {
+			smartSummary = results[7].value;
+			threatScore = results[7].value.threat_score;
+			threatLevel = results[7].value.threat_level;
 		}
 		loading = false;
 	}
@@ -391,6 +477,23 @@
 		}
 	}
 
+	async function handleSuppressAlert(alert: Alert) {
+		const sigId = alert.alert?.signature_id;
+		if (sigId) {
+			await suppressAlert(sigId);
+			// Refresh alerts to reflect the change
+			fetchAlerts(currentPage);
+		}
+	}
+
+	async function handleFalsePositive(alert: Alert) {
+		const sigId = alert.alert?.signature_id;
+		if (sigId) {
+			await markFalsePositive(sigId);
+			fetchAlerts(currentPage);
+		}
+	}
+
 	// ---------------------------------------------------------------------------
 	// IP filter reactivity
 	// ---------------------------------------------------------------------------
@@ -427,8 +530,25 @@
 	<!-- ================================================================== -->
 	<header class="page-header">
 		<div class="header-left">
-			<h1>Alerts</h1>
-			<p class="subtitle">Suricata IDS alerts and threat detections</p>
+			<div class="title-row">
+				<h1>Alerts</h1>
+				{#if threatScore > 0}
+					<div class="threat-score-mini">
+						<svg class="threat-gauge-mini" viewBox="0 0 48 28" width="48" height="28">
+							<path d="M 4 24 A 20 20 0 0 1 44 24" fill="none" stroke="var(--bg-tertiary)" stroke-width="4" stroke-linecap="round" />
+							<path d={threatArcPath(threatScore)} fill="none" stroke={threatScoreColor(threatScore)} stroke-width="4" stroke-linecap="round" />
+							<text x="24" y="20" text-anchor="middle" class="tgm-score" fill={threatScoreColor(threatScore)}>{threatScore}</text>
+						</svg>
+						<span
+							class="threat-level-badge"
+							style="background: {threatLevelColor(threatLevel).bg}; color: {threatLevelColor(threatLevel).text};"
+						>
+							{threatLevel.toUpperCase()}
+						</span>
+					</div>
+				{/if}
+			</div>
+			<p class="subtitle">Mission control for network security events</p>
 		</div>
 		<div class="header-right">
 			<div class="pills">
@@ -456,35 +576,42 @@
 	</header>
 
 	<!-- ================================================================== -->
-	<!-- Hero stats                                                         -->
+	<!-- Hero stats — 5 cards                                               -->
 	<!-- ================================================================== -->
-	<div class="stats-grid">
+	<div class="stats-strip">
 		<button
-			class="stat-card clickable"
+			class="stat-card stat-total"
 			onclick={() => document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Total Alerts</span>
-			<span class="stat-value text-white">{formatNumber(alertCounts.total)}</span>
+			<span class="stat-value text-primary-val">{formatNumber(alertCounts.total)}</span>
 		</button>
 		<button
-			class="stat-card stat-card-high clickable"
+			class="stat-card stat-critical"
 			onclick={() => { activeFilter = 'high'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
-			<span class="stat-label">High Severity</span>
-			<span class="stat-value text-red">{formatNumber(alertCounts.high)}</span>
+			<span class="stat-label">Critical</span>
+			<span class="stat-value text-red">{formatNumber(criticalCount)}</span>
 		</button>
 		<button
-			class="stat-card stat-card-medium clickable"
+			class="stat-card stat-high"
+			onclick={() => { activeFilter = 'high'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
+		>
+			<span class="stat-label">High</span>
+			<span class="stat-value text-orange">{formatNumber(alertCounts.high)}</span>
+		</button>
+		<button
+			class="stat-card stat-medium"
 			onclick={() => { activeFilter = 'medium'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
-			<span class="stat-label">Medium Severity</span>
+			<span class="stat-label">Medium</span>
 			<span class="stat-value text-amber">{formatNumber(alertCounts.medium)}</span>
 		</button>
 		<button
-			class="stat-card stat-card-low clickable"
+			class="stat-card stat-low"
 			onclick={() => { activeFilter = 'low'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
-			<span class="stat-label">Low Severity</span>
+			<span class="stat-label">Low</span>
 			<span class="stat-value text-blue">{formatNumber(alertCounts.low)}</span>
 		</button>
 	</div>
@@ -586,6 +713,76 @@
 	</section>
 
 	<!-- ================================================================== -->
+	<!-- Category Grid (THE STAR FEATURE)                                   -->
+	<!-- ================================================================== -->
+	<section class="card category-section">
+		<div class="card-header">
+			<h2>Alert Categories</h2>
+			<span class="card-badge">{enhancedCategories.length} categories</span>
+		</div>
+		{#if enhancedCategories.length > 0}
+			<div class="category-grid">
+				{#each enhancedCategories as cat (cat.id)}
+					<a href="/alerts/{cat.id}" class="cat-card" data-color={cat.color}>
+						<div class="cat-glow" style="background: {catColorVar(cat.color)};"></div>
+						<div class="cat-card-top">
+							<div class="cat-card-identity">
+								<div class="cat-icon {cat.color}" style="background: {catColorDimVar(cat.color)};">
+									{cat.icon}
+								</div>
+								<span class="cat-name">{cat.label}</span>
+							</div>
+							<span class="cat-count mono">{formatNumber(cat.count)}</span>
+						</div>
+
+						<!-- Severity micro-bar -->
+						<div class="sev-bar">
+							{#if sevPct(cat, 'critical') > 0}
+								<div class="sev-seg crit" style="width: {sevPct(cat, 'critical')}%;"></div>
+							{/if}
+							{#if sevPct(cat, 'high') > 0}
+								<div class="sev-seg high" style="width: {sevPct(cat, 'high')}%;"></div>
+							{/if}
+							{#if sevPct(cat, 'medium') > 0}
+								<div class="sev-seg med" style="width: {sevPct(cat, 'medium')}%;"></div>
+							{/if}
+							{#if sevPct(cat, 'low') > 0}
+								<div class="sev-seg low" style="width: {sevPct(cat, 'low')}%;"></div>
+							{/if}
+						</div>
+
+						<!-- Sub-category pills -->
+						{#if cat.sub_categories.length > 0}
+							<div class="subcat-pills">
+								{#each cat.sub_categories.slice(0, 3) as sub}
+									<span class="subcat-pill">{sub.label}: {formatNumber(sub.count)}</span>
+								{/each}
+							</div>
+						{/if}
+
+						<!-- Trend + Sparkline row -->
+						<div class="cat-card-bottom">
+							<span class="cat-trend {trendClass(cat.trend.direction)}">
+								{cat.trend.direction === 'increasing' ? '\u2191' : cat.trend.direction === 'decreasing' ? '\u2193' : '\u2192'}
+								{cat.trend.percentage > 0 ? `${cat.trend.percentage}%` : 'stable'}
+							</span>
+							{#if cat.sparkline.length > 0}
+								<svg class="cat-sparkline" width="56" height="20" viewBox="0 0 56 20">
+									<polyline points={sparklinePoints(cat.sparkline)} fill="none" stroke={catColorVar(cat.color)} stroke-width="1.5" opacity="0.6" />
+								</svg>
+							{/if}
+						</div>
+					</a>
+				{/each}
+			</div>
+		{:else if !loading}
+			<div class="empty-state-inline">
+				<p class="text-muted">No category data available</p>
+			</div>
+		{/if}
+	</section>
+
+	<!-- ================================================================== -->
 	<!-- Filter Bar                                                         -->
 	<!-- ================================================================== -->
 	<div class="filter-bar">
@@ -622,7 +819,7 @@
 	</div>
 
 	<!-- ================================================================== -->
-	<!-- Two-col: Top Signatures + Category Breakdown                       -->
+	<!-- Two-col: Top Signatures + Top Affected Devices                     -->
 	<!-- ================================================================== -->
 	<div class="two-col">
 		<!-- Top Signatures -->
@@ -633,7 +830,7 @@
 			</div>
 			{#if filteredSignatures.length > 0}
 				<HorizontalBarList
-					items={filteredSignatures.map((sig, i) => ({
+					items={filteredSignatures.map((sig) => ({
 						key: sig.signature,
 						label: sig.signature,
 						value: sig.count,
@@ -653,44 +850,15 @@
 			{/if}
 		</section>
 
-		<!-- Category Breakdown -->
-		<section class="card" id="categories">
+		<!-- Top Affected Devices (dest IPs) -->
+		<section class="card" id="affected-devices">
 			<div class="card-header">
-				<h2>Categories</h2>
-				<span class="text-muted text-sm">{categories.length} types</span>
-			</div>
-			{#if categories.length > 0}
-				<HorizontalBarList
-					items={categories.map((cat, i) => ({
-						key: cat.category,
-						label: cat.category,
-						value: cat.count,
-						formattedValue: cat.count.toLocaleString(),
-						color: 'var(--green)',
-					}))}
-					showRank={true}
-					labelWidth={200}
-					barHeight={12}
-				/>
-			{:else if !loading}
-				<p class="text-muted" style="padding: 1rem;">No categories found</p>
-			{/if}
-		</section>
-	</div>
-
-	<!-- ================================================================== -->
-	<!-- Two-col: Top Attacked IPs + Top Source IPs                         -->
-	<!-- ================================================================== -->
-	<div class="two-col">
-		<!-- Top Attacked IPs (dest) -->
-		<section class="card" id="attacked-ips">
-			<div class="card-header">
-				<h2>Top Attacked IPs</h2>
+				<h2>Top Affected Devices</h2>
 				<span class="text-muted text-sm">destination</span>
 			</div>
 			{#if topDestIps.length > 0}
 				<HorizontalBarList
-					items={topDestIps.map((entry, i) => ({
+					items={topDestIps.map((entry) => ({
 						key: entry.ip,
 						label: entry.ip,
 						isIp: true,
@@ -708,7 +876,12 @@
 				<p class="text-muted" style="padding: 1rem;">No destination IPs found</p>
 			{/if}
 		</section>
+	</div>
 
+	<!-- ================================================================== -->
+	<!-- Two-col: Top Source IPs (kept for context)                          -->
+	<!-- ================================================================== -->
+	<div class="two-col">
 		<!-- Top Source IPs (src) -->
 		<section class="card" id="source-ips">
 			<div class="card-header">
@@ -717,7 +890,7 @@
 			</div>
 			{#if topSrcIps.length > 0}
 				<HorizontalBarList
-					items={topSrcIps.map((entry, i) => ({
+					items={topSrcIps.map((entry) => ({
 						key: entry.ip,
 						label: entry.ip,
 						isIp: true,
@@ -735,6 +908,9 @@
 				<p class="text-muted" style="padding: 1rem;">No source IPs found</p>
 			{/if}
 		</section>
+
+		<!-- Placeholder for future card or empty for layout balance -->
+		<div></div>
 	</div>
 
 	<!-- ================================================================== -->
@@ -774,7 +950,8 @@
 							<th><button class="sort-btn" class:active-sort={sortKey === 'src_ip'} onclick={() => toggleSort('src_ip')}>Source IP{sortIndicator('src_ip')}</button></th>
 							<th><button class="sort-btn" class:active-sort={sortKey === 'dest_ip'} onclick={() => toggleSort('dest_ip')}>Dest IP{sortIndicator('dest_ip')}</button></th>
 							<th>Protocol</th>
-							<th>Category</th>
+							<th><button class="sort-btn" class:active-sort={sortKey === 'category'} onclick={() => toggleSort('category')}>Category{sortIndicator('category')}</button></th>
+							<th>Actions</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -820,10 +997,26 @@
 								</td>
 								<td>
 									{#if alert.alert?.category}
-										<span class="category-text">{alert.alert.category}</span>
+										<span class="category-badge">{alert.alert.category}</span>
 									{:else}
 										<span class="text-muted">--</span>
 									{/if}
+								</td>
+								<td class="actions-cell">
+									<button
+										class="btn-action"
+										title="Suppress this signature"
+										onclick={(e) => { e.stopPropagation(); handleSuppressAlert(alert); }}
+									>
+										Suppress
+									</button>
+									<button
+										class="btn-action"
+										title="Mark as false positive"
+										onclick={(e) => { e.stopPropagation(); handleFalsePositive(alert); }}
+									>
+										FP
+									</button>
 								</td>
 							</tr>
 						{/each}
@@ -918,6 +1111,12 @@
 		margin-bottom: var(--space-xs);
 	}
 
+	.title-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+	}
+
 	.subtitle {
 		color: var(--text-muted);
 		font-size: var(--text-sm);
@@ -936,28 +1135,76 @@
 	}
 
 	/* ------------------------------------------------------------------ */
-	/* Stats grid                                                         */
+	/* Threat score mini gauge                                            */
 	/* ------------------------------------------------------------------ */
 
-	.stats-grid {
+	.threat-score-mini {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-md);
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+	}
+
+	.threat-gauge-mini {
+		flex-shrink: 0;
+	}
+
+	.tgm-score {
+		font-family: var(--font-mono);
+		font-size: 16px;
+		font-weight: 700;
+	}
+
+	.threat-level-badge {
+		font-size: 10px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
+	}
+
+	/* ------------------------------------------------------------------ */
+	/* Stats strip — 5 columns                                            */
+	/* ------------------------------------------------------------------ */
+
+	.stats-strip {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(5, 1fr);
 		gap: var(--space-md);
 	}
 
-	.stat-card.clickable {
+	.stats-strip .stat-card {
 		text-align: left;
 		width: 100%;
+		position: relative;
+		overflow: hidden;
 	}
 
-	.text-white { color: var(--text-primary); }
+	.stats-strip .stat-card::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 2px;
+	}
+
+	.stat-total::before { background: var(--cyan); }
+	.stat-critical::before { background: var(--red); }
+	.stat-high::before { background: var(--orange); }
+	.stat-medium::before { background: var(--amber); }
+	.stat-low::before { background: var(--blue); }
+
+	.text-primary-val { color: var(--text-primary); }
 	.text-red { color: var(--red); }
+	.text-orange { color: var(--orange); }
 	.text-amber { color: var(--amber); }
 	.text-blue { color: var(--blue); }
-
-	.stat-card-high { border-color: var(--red-dim) !important; }
-	.stat-card-medium { border-color: var(--amber-dim) !important; }
-	.stat-card-low { border-color: var(--blue-dim) !important; }
 
 	/* ------------------------------------------------------------------ */
 	/* Chart                                                              */
@@ -1019,6 +1266,188 @@
 	}
 
 	/* ------------------------------------------------------------------ */
+	/* Category Grid (THE STAR FEATURE)                                   */
+	/* ------------------------------------------------------------------ */
+
+	.category-section {
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.category-section .card-header {
+		padding: var(--space-md) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.card-badge {
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		background: var(--bg-tertiary);
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+	}
+
+	.category-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: var(--space-md);
+		padding: var(--space-lg);
+	}
+
+	.cat-card {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-dim);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		position: relative;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		text-decoration: none;
+		color: inherit;
+	}
+
+	.cat-card:hover {
+		border-color: var(--border-bright);
+		transform: translateY(-1px);
+	}
+
+	.cat-card:hover .cat-glow {
+		opacity: 1;
+	}
+
+	.cat-glow {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 2px;
+		opacity: 0;
+		transition: opacity var(--transition-fast);
+	}
+
+	/* Category color hover variants */
+	.cat-card[data-color="red"]:hover { border-color: rgba(255, 71, 87, 0.4); box-shadow: 0 4px 20px rgba(255, 71, 87, 0.08); }
+	.cat-card[data-color="blue"]:hover { border-color: rgba(68, 138, 255, 0.4); box-shadow: 0 4px 20px rgba(68, 138, 255, 0.08); }
+	.cat-card[data-color="amber"]:hover { border-color: rgba(255, 171, 0, 0.4); box-shadow: 0 4px 20px rgba(255, 171, 0, 0.08); }
+	.cat-card[data-color="cyan"]:hover { border-color: rgba(0, 212, 255, 0.4); box-shadow: 0 4px 20px rgba(0, 212, 255, 0.08); }
+	.cat-card[data-color="orange"]:hover { border-color: rgba(255, 109, 0, 0.4); box-shadow: 0 4px 20px rgba(255, 109, 0, 0.08); }
+	.cat-card[data-color="pink"]:hover { border-color: rgba(255, 64, 129, 0.4); box-shadow: 0 4px 20px rgba(255, 64, 129, 0.08); }
+	.cat-card[data-color="purple"]:hover { border-color: rgba(179, 136, 255, 0.4); box-shadow: 0 4px 20px rgba(179, 136, 255, 0.08); }
+	.cat-card[data-color="teal"]:hover { border-color: rgba(29, 233, 182, 0.4); box-shadow: 0 4px 20px rgba(29, 233, 182, 0.08); }
+	.cat-card[data-color="green"]:hover { border-color: rgba(0, 230, 118, 0.4); box-shadow: 0 4px 20px rgba(0, 230, 118, 0.08); }
+	.cat-card[data-color="muted"]:hover { border-color: rgba(85, 95, 115, 0.4); box-shadow: 0 4px 20px rgba(85, 95, 115, 0.08); }
+
+	.cat-card-top {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--space-sm);
+	}
+
+	.cat-card-identity {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		min-width: 0;
+	}
+
+	.cat-icon {
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 14px;
+		flex-shrink: 0;
+	}
+
+	.cat-name {
+		font-size: var(--text-sm);
+		font-weight: 600;
+		color: var(--text-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.cat-count {
+		font-family: var(--font-mono);
+		font-size: var(--text-2xl);
+		font-weight: 700;
+		color: var(--text-primary);
+		letter-spacing: -0.03em;
+		line-height: 1;
+		flex-shrink: 0;
+	}
+
+	/* Severity micro-bar */
+	.sev-bar {
+		display: flex;
+		height: 4px;
+		border-radius: 2px;
+		overflow: hidden;
+		gap: 1px;
+		width: 100%;
+		background: var(--bg-secondary);
+	}
+
+	.sev-seg { border-radius: 2px; height: 100%; }
+	.sev-seg.crit { background: var(--red); }
+	.sev-seg.high { background: var(--orange); }
+	.sev-seg.med { background: var(--amber); }
+	.sev-seg.low { background: var(--blue); }
+
+	/* Sub-category pills */
+	.subcat-pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.subcat-pill {
+		font-size: 10px;
+		font-family: var(--font-mono);
+		color: var(--text-secondary);
+		background: var(--bg-secondary);
+		padding: 2px 7px;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
+		border: 1px solid var(--border-dim);
+	}
+
+	/* Trend and sparkline row */
+	.cat-card-bottom {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: var(--space-sm);
+	}
+
+	.cat-trend {
+		font-size: var(--text-xs);
+		font-family: var(--font-mono);
+		font-weight: 500;
+	}
+
+	.cat-trend.up-bad { color: var(--red); }
+	.cat-trend.up-neutral { color: var(--amber); }
+	.cat-trend.down-good { color: var(--green); }
+	.cat-trend.stable { color: var(--text-muted); }
+
+	.cat-sparkline { flex-shrink: 0; }
+
+	.empty-state-inline {
+		padding: var(--space-xl);
+		text-align: center;
+	}
+
+	/* ------------------------------------------------------------------ */
 	/* Filter bar                                                         */
 	/* ------------------------------------------------------------------ */
 
@@ -1054,7 +1483,7 @@
 		background: none;
 		border: none;
 		color: inherit;
-		font-size: var(--text-md);
+		font-size: var(--text-lg);
 		cursor: pointer;
 		padding: 0 0 0 var(--space-xs);
 		line-height: 1;
@@ -1248,7 +1677,7 @@
 
 	.empty-state p {
 		max-width: 480px;
-		line-height: var(--leading-relaxed);
+		line-height: 1.75;
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -1300,8 +1729,37 @@
 		white-space: nowrap;
 	}
 
-	.category-text {
-		font-size: var(--text-xs);
+	.category-badge {
+		font-size: 10px;
+		font-weight: 600;
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	.actions-cell {
+		display: flex;
+		gap: 4px;
+		white-space: nowrap;
+	}
+
+	.btn-action {
+		padding: 2px 6px;
+		border: 1px solid var(--border-dim);
+		background: transparent;
+		border-radius: var(--radius-sm);
+		font-size: 10px;
+		font-weight: 500;
+		color: var(--text-muted);
+		cursor: pointer;
+		font-family: var(--font-sans);
+		transition: all var(--transition-fast);
+	}
+
+	.btn-action:hover {
+		border-color: var(--border-bright);
 		color: var(--text-secondary);
 	}
 
@@ -1354,14 +1812,14 @@
 	.expanded-desc {
 		font-size: var(--text-sm);
 		color: var(--text-secondary);
-		line-height: var(--leading-relaxed);
+		line-height: 1.75;
 		margin-bottom: var(--space-xs);
 	}
 
 	.expanded-risk {
 		font-size: var(--text-sm);
 		color: var(--amber);
-		line-height: var(--leading-normal);
+		line-height: 1.5;
 	}
 
 	.expanded-actions {
@@ -1404,8 +1862,18 @@
 	/* Responsive                                                         */
 	/* ------------------------------------------------------------------ */
 
+	@media (max-width: 1200px) {
+		.category-grid {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
 	@media (max-width: 1024px) {
-		.stats-grid {
+		.stats-strip {
+			grid-template-columns: repeat(3, 1fr);
+		}
+
+		.category-grid {
 			grid-template-columns: repeat(2, 1fr);
 		}
 
@@ -1415,6 +1883,16 @@
 
 		.bar-label {
 			max-width: 160px;
+		}
+	}
+
+	@media (max-width: 768px) {
+		.stats-strip {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
+		.category-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 
@@ -1429,7 +1907,7 @@
 			flex-wrap: wrap;
 		}
 
-		.stats-grid {
+		.stats-strip {
 			grid-template-columns: repeat(2, 1fr);
 		}
 
