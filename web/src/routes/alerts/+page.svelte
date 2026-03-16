@@ -332,14 +332,13 @@
 
 	/** Compute the arc path for the threat gauge based on score (0-100). */
 	function threatArcPath(score: number): string {
-		// Semi-circle from (4,24) to (44,24) with radius 20
-		// Score 0 = start, Score 100 = full arc
+		// Semi-circle from (6,28) to (54,28) with radius 24, center (30,28)
 		const fraction = Math.min(score, 100) / 100;
-		const angle = Math.PI * fraction; // 0 to PI
-		const endX = 24 - 20 * Math.cos(angle);
-		const endY = 24 - 20 * Math.sin(angle);
+		const angle = Math.PI * fraction;
+		const endX = 30 - 24 * Math.cos(angle);
+		const endY = 28 - 24 * Math.sin(angle);
 		const largeArc = fraction > 0.5 ? 1 : 0;
-		return `M 4 24 A 20 20 0 ${largeArc} 1 ${endX.toFixed(1)} ${endY.toFixed(1)}`;
+		return `M 6 28 A 24 24 0 ${largeArc} 1 ${endX.toFixed(1)} ${endY.toFixed(1)}`;
 	}
 
 	/** Get the threat level badge color. */
@@ -555,10 +554,10 @@
 				<h1>Alerts</h1>
 				{#if threatScore > 0}
 					<div class="threat-score-mini">
-						<svg class="threat-gauge-mini" viewBox="0 0 48 28" width="48" height="28">
-							<path d="M 4 24 A 20 20 0 0 1 44 24" fill="none" stroke="var(--bg-tertiary)" stroke-width="4" stroke-linecap="round" />
+						<svg class="threat-gauge-mini" viewBox="0 0 60 32" width="52" height="28">
+							<path d="M 6 28 A 24 24 0 0 1 54 28" fill="none" stroke="var(--bg-tertiary)" stroke-width="4" stroke-linecap="round" />
 							<path d={threatArcPath(threatScore)} fill="none" stroke={threatScoreColor(threatScore)} stroke-width="4" stroke-linecap="round" />
-							<text x="24" y="20" text-anchor="middle" class="tgm-score" fill={threatScoreColor(threatScore)}>{threatScore}</text>
+							<text x="30" y="24" text-anchor="middle" class="tgm-score" fill={threatScoreColor(threatScore)}>{threatScore}</text>
 						</svg>
 						<span
 							class="threat-level-badge"
@@ -1175,7 +1174,7 @@
 
 	.tgm-score {
 		font-family: var(--font-mono);
-		font-size: 16px;
+		font-size: 13px;
 		font-weight: 700;
 	}
 
