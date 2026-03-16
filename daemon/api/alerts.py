@@ -115,6 +115,26 @@ def _get_client(request: web.Request):
     return storage._client
 
 
+def _sparkline_interval(from_ts: str, to_ts: str) -> str:
+    """Choose a date_histogram interval for sparkline data based on the
+    time range span. Returns an OpenSearch fixed_interval string."""
+    try:
+        ft = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+        tt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+        span_hours = (tt - ft).total_seconds() / 3600
+    except (ValueError, TypeError):
+        span_hours = 24
+
+    if span_hours <= 6:
+        return "10m"
+    elif span_hours <= 24:
+        return "1h"
+    elif span_hours <= 168:  # 7 days
+        return "6h"
+    else:
+        return "1d"
+
+
 def _normalize_alert_source(source: dict) -> dict:
     """Normalize OpenSearch ECS/Malcolm field names into the structure the
     frontend expects.
@@ -734,10 +754,19 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
 async def handle_alerts_categories(request: web.Request) -> web.Response:
     """GET /api/alerts/categories?from=&to=
 
-    Returns alert counts grouped by rule category.
+    Returns enriched alert categories with counts, severity breakdown,
+    sparkline trend data, and sub-category grouping. Each alert is
+    classified into one of 13 NetTap threat categories via pattern
+    matching on the signature.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    interval = _sparkline_interval(from_ts, to_ts)
+
+    from services.alert_intelligence import (
+        THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
+        categorize_alert, categorize_sub_category, reclassify_severity,
+    )
 
     query = {
         "size": 0,
@@ -746,12 +775,25 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
-                ]
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
-            "by_category": {
-                "terms": {"field": "rule.category.keyword", "size": 20, "missing": "Uncategorized"}
+            "by_signature": {
+                "terms": {"field": "rule.name.keyword", "size": 500, "missing": "Unknown"},
+                "aggs": {
+                    "by_severity": {
+                        "terms": {"field": "suricata.alert.severity", "size": 5}
+                    },
+                    "over_time": {
+                        "date_histogram": {
+                            "field": "@timestamp",
+                            "fixed_interval": interval,
+                            "min_doc_count": 0,
+                        }
+                    },
+                },
             }
         },
     }
@@ -764,16 +806,109 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
+    # Accumulate per-category data in Python
+    cat_data: dict[str, dict] = {}
+    for cat_id, cat_info in THREAT_CATEGORIES.items():
+        cat_data[cat_id] = {
+            "id": cat_id,
+            "label": cat_info["label"],
+            "icon": cat_info["icon"],
+            "color": cat_info["color"],
+            "description": cat_info["description"],
+            "count": 0,
+            "severity_breakdown": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
+            "sparkline": {},      # timestamp -> count
+            "sub_categories": {},  # sub_id -> {label, count}
+        }
+
+    sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+
+    for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
+        sig_name = bucket.get("key", "Unknown")
+        doc_count = bucket.get("doc_count", 0)
+
+        category = categorize_alert(sig_name)
+        entry = cat_data.get(category)
+        if not entry:
+            entry = cat_data["informational"]
+
+        entry["count"] += doc_count
+
+        # Severity sub-agg (I6 fix: int() conversion on bucket key)
+        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+            raw_sev = sev_bucket.get("key", 4)
+            new_sev = reclassify_severity(sig_name, int(raw_sev))
+            sev_label = sev_name_map.get(new_sev, "info")
+            entry["severity_breakdown"][sev_label] += sev_bucket.get("doc_count", 0)
+
+        # Sparkline sub-agg
+        for time_bucket in bucket.get("over_time", {}).get("buckets", []):
+            ts_key = time_bucket.get("key_as_string", "")
+            ts_count = time_bucket.get("doc_count", 0)
+            if ts_key:
+                entry["sparkline"][ts_key] = entry["sparkline"].get(ts_key, 0) + ts_count
+
+        # Sub-category classification
+        sub_id = categorize_sub_category(sig_name, category)
+        if sub_id:
+            subs = entry["sub_categories"]
+            if sub_id not in subs:
+                # Find the sub-category label
+                sub_label = sub_id
+                for sub_def in SUB_CATEGORIES.get(category, []):
+                    if sub_def["id"] == sub_id:
+                        sub_label = sub_def["label"]
+                        break
+                subs[sub_id] = {"id": sub_id, "label": sub_label, "count": 0}
+            subs[sub_id]["count"] += doc_count
+
+    # Compute trend from sparkline data
+    def _compute_trend_from_sparkline(sparkline: dict) -> str:
+        vals = list(sparkline.values())
+        if len(vals) < 4:
+            return "stable"
+        mid = len(vals) // 2
+        first_half = sum(vals[:mid])
+        second_half = sum(vals[mid:])
+        if second_half > first_half * 1.5:
+            return "increasing"
+        elif first_half > second_half * 1.5:
+            return "decreasing"
+        return "stable"
+
+    # Build final response
     categories = []
-    for bucket in result.get("aggregations", {}).get("by_category", {}).get("buckets", []):
+    for cat_id, entry in cat_data.items():
+        if entry["count"] == 0:
+            continue
+        trend = _compute_trend_from_sparkline(entry["sparkline"])
         categories.append({
-            "category": bucket.get("key", "Uncategorized"),
-            "count": bucket.get("doc_count", 0),
+            "id": entry["id"],
+            "label": entry["label"],
+            "icon": entry["icon"],
+            "color": entry["color"],
+            "description": entry["description"],
+            "count": entry["count"],
+            "severity_breakdown": entry["severity_breakdown"],
+            "trend": trend,
+            "sparkline": [
+                {"timestamp": ts, "count": c}
+                for ts, c in sorted(entry["sparkline"].items())
+            ],
+            "sub_categories": sorted(
+                entry["sub_categories"].values(),
+                key=lambda s: s["count"],
+                reverse=True,
+            ),
+            "mitre_techniques": MITRE_TECHNIQUES.get(cat_id, []),
         })
+
+    categories.sort(key=lambda c: c["count"], reverse=True)
 
     return web.json_response({
         "from": from_ts,
         "to": to_ts,
+        "interval": interval,
         "categories": categories,
     })
 
