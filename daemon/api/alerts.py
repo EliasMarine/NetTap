@@ -913,6 +913,254 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
     })
 
 
+async def handle_alert_category_detail(request: web.Request) -> web.Response:
+    """GET /api/alerts/categories/{category}?from=&to=
+
+    Returns detailed stats for a single threat category: total count,
+    unique sources/targets/devices, severity breakdown, sub-categories,
+    affected devices, top signatures, and MITRE techniques.
+    """
+    category = request.match_info.get("category", "")
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    from services.alert_intelligence import (
+        THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
+        categorize_alert, categorize_sub_category, reclassify_severity,
+    )
+
+    if category not in THREAT_CATEGORIES:
+        return web.json_response(
+            {"error": f"Unknown category: {category}"}, status=404
+        )
+
+    cat_info = THREAT_CATEGORIES[category]
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
+            }
+        },
+        "aggs": {
+            "by_signature": {
+                "terms": {"field": "rule.name.keyword", "size": 500, "missing": "Unknown"},
+                "aggs": {
+                    "by_severity": {
+                        "terms": {"field": "suricata.alert.severity", "size": 5}
+                    },
+                    "by_src_ip": {
+                        "terms": {"field": "source.ip.keyword", "size": 50}
+                    },
+                    "by_dst_ip": {
+                        "terms": {"field": "destination.ip.keyword", "size": 50}
+                    },
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alert category detail: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+
+    total_count = 0
+    severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    sub_cat_counts: dict[str, int] = {}
+    all_sources: set[str] = set()
+    all_targets: set[str] = set()
+    all_devices: set[str] = set()  # union of sources + targets
+    top_signatures: list[dict] = []
+
+    for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
+        sig_name = bucket.get("key", "Unknown")
+        doc_count = bucket.get("doc_count", 0)
+
+        sig_category = categorize_alert(sig_name)
+        if sig_category != category:
+            continue
+
+        total_count += doc_count
+
+        # Severity
+        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+            raw_sev = sev_bucket.get("key", 4)
+            new_sev = reclassify_severity(sig_name, int(raw_sev))
+            sev_label = sev_name_map.get(new_sev, "info")
+            severity_breakdown[sev_label] += sev_bucket.get("doc_count", 0)
+
+        # Source IPs
+        for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
+            ip = src_b.get("key", "")
+            if ip:
+                all_sources.add(ip)
+                all_devices.add(ip)
+
+        # Destination IPs
+        for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
+            ip = dst_b.get("key", "")
+            if ip:
+                all_targets.add(ip)
+                all_devices.add(ip)
+
+        # Sub-category
+        sub_id = categorize_sub_category(sig_name, category)
+        if sub_id:
+            sub_cat_counts[sub_id] = sub_cat_counts.get(sub_id, 0) + doc_count
+
+        # Top signatures
+        primary_sev = 4
+        sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
+        if sev_buckets:
+            primary_sev = reclassify_severity(sig_name, int(sev_buckets[0].get("key", 4)))
+
+        top_signatures.append({
+            "signature": sig_name,
+            "count": doc_count,
+            "severity": primary_sev,
+            "severity_label": sev_name_map.get(primary_sev, "info"),
+        })
+
+    top_signatures.sort(key=lambda s: s["count"], reverse=True)
+
+    # Build sub-categories response
+    sub_categories = []
+    for sub_def in SUB_CATEGORIES.get(category, []):
+        sub_count = sub_cat_counts.get(sub_def["id"], 0)
+        if sub_count > 0:
+            sub_categories.append({
+                "id": sub_def["id"],
+                "label": sub_def["label"],
+                "count": sub_count,
+            })
+    sub_categories.sort(key=lambda s: s["count"], reverse=True)
+
+    # Build affected devices list (top 20 by appearance)
+    affected_devices = sorted(all_devices)[:20]
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "category": {
+            "id": category,
+            "label": cat_info["label"],
+            "icon": cat_info["icon"],
+            "color": cat_info["color"],
+            "description": cat_info["description"],
+        },
+        "stats": {
+            "total": total_count,
+            "unique_sources": len(all_sources),
+            "unique_targets": len(all_targets),
+            "affected_devices": len(all_devices),
+        },
+        "severity_breakdown": severity_breakdown,
+        "sub_categories": sub_categories,
+        "affected_devices": affected_devices,
+        "top_signatures": top_signatures[:20],
+        "mitre_techniques": MITRE_TECHNIQUES.get(category, []),
+    })
+
+
+async def handle_alert_category_timeline(request: web.Request) -> web.Response:
+    """GET /api/alerts/categories/{category}/timeline?from=&to=&interval=
+
+    Returns time-series data for a single category, bucketed by interval,
+    with per-signature breakdown within each time bucket.
+    """
+    category = request.match_info.get("category", "")
+    from_ts, to_ts = _parse_time_range(request)
+    interval = request.query.get("interval", "")
+    if interval not in _ALLOWED_INTERVALS:
+        interval = _sparkline_interval(from_ts, to_ts)
+    client = _get_client(request)
+
+    from services.alert_intelligence import THREAT_CATEGORIES, categorize_alert
+
+    if category not in THREAT_CATEGORIES:
+        return web.json_response(
+            {"error": f"Unknown category: {category}"}, status=404
+        )
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
+            }
+        },
+        "aggs": {
+            "over_time": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": interval,
+                    "min_doc_count": 0,
+                    "extended_bounds": {"min": from_ts, "max": to_ts},
+                },
+                "aggs": {
+                    "by_signature": {
+                        "terms": {"field": "rule.name.keyword", "size": 50}
+                    }
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in category timeline: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    buckets = []
+    for time_bucket in result.get("aggregations", {}).get("over_time", {}).get("buckets", []):
+        ts = time_bucket.get("key_as_string", "")
+        category_count = 0
+        sig_breakdown: dict[str, int] = {}
+
+        for sig_bucket in time_bucket.get("by_signature", {}).get("buckets", []):
+            sig_name = sig_bucket.get("key", "Unknown")
+            sig_count = sig_bucket.get("doc_count", 0)
+
+            if categorize_alert(sig_name) == category:
+                category_count += sig_count
+                sig_breakdown[sig_name] = sig_breakdown.get(sig_name, 0) + sig_count
+
+        buckets.append({
+            "timestamp": ts,
+            "count": category_count,
+            "signatures": [
+                {"signature": s, "count": c}
+                for s, c in sorted(sig_breakdown.items(), key=lambda x: x[1], reverse=True)
+            ][:10],
+        })
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "category": category,
+        "interval": interval,
+        "buckets": buckets,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Smart Alert endpoints (alert intelligence layer)
 # ---------------------------------------------------------------------------
@@ -1013,6 +1261,9 @@ def register_alert_routes(
     app.router.add_get("/api/alerts/top-signatures", handle_alerts_top_signatures)
     app.router.add_get("/api/alerts/top-ips", handle_alerts_top_ips)
     app.router.add_get("/api/alerts/categories", handle_alerts_categories)
+    # Category detail routes — BEFORE {id} catch-all (more specific path)
+    app.router.add_get("/api/alerts/categories/{category}/timeline", handle_alert_category_timeline)
+    app.router.add_get("/api/alerts/categories/{category}", handle_alert_category_detail)
     # Smart alert routes — /smart/summary BEFORE /smart (more specific first)
     app.router.add_get("/api/alerts/smart/summary", handle_smart_alert_summary)
     app.router.add_get("/api/alerts/smart", handle_smart_alerts)
@@ -1021,4 +1272,4 @@ def register_alert_routes(
     # Parameterized routes LAST (catch-all pattern)
     app.router.add_get("/api/alerts/{id}", handle_alert_detail)
     app.router.add_post("/api/alerts/{id}/acknowledge", handle_alert_acknowledge)
-    logger.info("Alert API routes registered (12 endpoints)")
+    logger.info("Alert API routes registered (14 endpoints)")
