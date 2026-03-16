@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol Distribution v2 | NetTap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300..700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-void: #06080d; --bg-primary: #0a0e17; --bg-secondary: #0f1319;
+  --bg-tertiary: #141920; --bg-elevated: #181d27;
+  --text-primary: #e8edf5; --text-secondary: #8892a4; --text-muted: #555f73; --text-dim: #3a4255;
+  --border-dim: #1a1f2e; --border-default: #222939;
+  --cyan: #00d4ff; --green: #00e676; --amber: #ffab00; --red: #ff4757;
+  --purple: #b388ff; --orange: #ff6d00; --blue: #448aff; --teal: #00bfa5;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --text-xs: 0.75rem; --text-sm: 0.8125rem; --text-base: 0.875rem; --text-lg: 1rem; --text-xl: 1.125rem;
+  --space-xs: 4px; --space-sm: 8px; --space-md: 16px; --space-lg: 24px; --space-xl: 32px;
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
+  --transition-fast: 150ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--space-xl); }
+.mono { font-family: var(--font-mono); }
+
+/* ================================================================
+   Card Container — Same as homepage card pattern
+   ================================================================ */
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  width: 100%;
+  max-width: 720px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.card-title { font-size: var(--text-sm); font-weight: 600; }
+.card-subtitle { font-size: var(--text-xs); color: var(--text-muted); }
+
+/* ================================================================
+   Dual Panel Layout
+   ================================================================ */
+.protocol-body {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 0;
+  min-height: 280px;
+}
+
+/* Left: Transport Layer Donut */
+.transport-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  border-right: 1px solid var(--border-dim);
+  gap: var(--space-md);
+}
+
+.transport-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+/* SVG Donut */
+.donut-svg { width: 140px; height: 140px; }
+
+.donut-segment {
+  fill: none;
+  stroke-width: 28;
+  stroke-linecap: butt;
+  transition: opacity var(--transition-fast);
+  cursor: pointer;
+}
+
+.donut-segment:hover { opacity: 0.8; filter: brightness(1.2); }
+
+.donut-center-value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  fill: var(--text-primary);
+}
+
+.donut-center-label {
+  font-size: 9px;
+  fill: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Transport legend */
+.transport-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--text-xs);
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-name { color: var(--text-secondary); flex: 1; text-transform: uppercase; font-weight: 500; }
+.legend-pct { font-family: var(--font-mono); color: var(--text-muted); font-size: 10px; }
+
+/* ================================================================
+   Right: Application Layer Services
+   ================================================================ */
+.services-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.services-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.service-list {
+  flex: 1;
+  padding: var(--space-xs) 0;
+}
+
+.service-row {
+  display: grid;
+  grid-template-columns: 70px 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 5px var(--space-lg);
+  transition: background var(--transition-fast);
+  cursor: default;
+}
+
+.service-row:hover { background: var(--bg-tertiary); }
+
+.service-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+
+.service-bar-track {
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.service-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: all 0.4s ease;
+}
+
+.service-row:hover .service-bar-fill { opacity: 1; }
+
+.service-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-align: right;
+  min-width: 50px;
+  white-space: nowrap;
+}
+
+/* ================================================================
+   Responsive
+   ================================================================ */
+@media (max-width: 640px) {
+  .protocol-body { grid-template-columns: 1fr; }
+  .transport-panel { border-right: none; border-bottom: 1px solid var(--border-dim); padding: var(--space-md); }
+  .transport-legend { flex-direction: row; gap: var(--space-md); }
+}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="card-header">
+    <div>
+      <span class="card-title">Network Protocols</span>
+      <span class="card-subtitle">Transport + Application layer breakdown</span>
+    </div>
+  </div>
+
+  <div class="protocol-body">
+    <!-- Left: Transport Layer -->
+    <div class="transport-panel">
+      <span class="transport-label">Transport Layer</span>
+
+      <svg class="donut-svg" viewBox="0 0 160 160">
+        <!-- TCP: 85% = 0.85 * 283 = 240.55 -->
+        <circle class="donut-segment" cx="80" cy="80" r="45"
+          stroke="var(--cyan)" stroke-dasharray="240.55 283" stroke-dashoffset="0"
+          transform="rotate(-90 80 80)" />
+        <!-- UDP: 14% = 0.14 * 283 = 39.62 -->
+        <circle class="donut-segment" cx="80" cy="80" r="45"
+          stroke="var(--green)" stroke-dasharray="39.62 283" stroke-dashoffset="-240.55"
+          transform="rotate(-90 80 80)" />
+        <!-- ICMP: 1% = 0.01 * 283 = 2.83 -->
+        <circle class="donut-segment" cx="80" cy="80" r="45"
+          stroke="var(--amber)" stroke-dasharray="2.83 283" stroke-dashoffset="-280.17"
+          transform="rotate(-90 80 80)" />
+        <!-- Center text -->
+        <text x="80" y="76" text-anchor="middle" class="donut-center-value">302K</text>
+        <text x="80" y="92" text-anchor="middle" class="donut-center-label">connections</text>
+      </svg>
+
+      <div class="transport-legend">
+        <div class="legend-row">
+          <span class="legend-dot" style="background: var(--cyan);"></span>
+          <span class="legend-name">TCP</span>
+          <span class="legend-pct mono">85%</span>
+        </div>
+        <div class="legend-row">
+          <span class="legend-dot" style="background: var(--green);"></span>
+          <span class="legend-name">UDP</span>
+          <span class="legend-pct mono">14%</span>
+        </div>
+        <div class="legend-row">
+          <span class="legend-dot" style="background: var(--amber);"></span>
+          <span class="legend-name">ICMP</span>
+          <span class="legend-pct mono">1%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Application Layer -->
+    <div class="services-panel">
+      <div class="services-label">Application Layer</div>
+      <div class="service-list">
+        <div class="service-row">
+          <span class="service-name">HTTPS</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 100%; background: var(--cyan);"></div></div>
+          <span class="service-value">207.7K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">DNS</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 17%; background: var(--green);"></div></div>
+          <span class="service-value">35.9K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">HTTP</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 2.5%; background: var(--blue);"></div></div>
+          <span class="service-value">5.1K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">SSL</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 2.1%; background: var(--purple);"></div></div>
+          <span class="service-value">4.4K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">IMAPS</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 2.1%; background: var(--teal);"></div></div>
+          <span class="service-value">4.4K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">NTP</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 0.9%; background: var(--amber);"></div></div>
+          <span class="service-value">1.9K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">XMPP</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 0.7%; background: var(--orange);"></div></div>
+          <span class="service-value">1.4K</span>
+        </div>
+        <div class="service-row">
+          <span class="service-name">SSH</span>
+          <div class="service-bar-track"><div class="service-bar-fill" style="width: 0.2%; background: var(--red);"></div></div>
+          <span class="service-value">412</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

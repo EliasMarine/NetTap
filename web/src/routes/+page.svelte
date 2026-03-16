@@ -51,6 +51,7 @@
 	let trafficSummary = $state<TrafficSummary | null>(null);
 	let bandwidthData = $state<BandwidthPoint[]>([]);
 	let protocols = $state<ProtocolEntry[]>([]);
+	let services = $state<ProtocolEntry[]>([]);
 	let topTalkers = $state<TopTalker[]>([]);
 	let alertCount = $state<AlertCountResponse | null>(null);
 	let recentAlerts = $state<Alert[]>([]);
@@ -161,6 +162,7 @@
 			trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
 			bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
 			protocols = protocolsRes.status === 'fulfilled' ? protocolsRes.value.protocols : [];
+			services = protocolsRes.status === 'fulfilled' ? protocolsRes.value.services : [];
 			topTalkers = talkersRes.status === 'fulfilled' ? talkersRes.value.top_talkers : [];
 			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
@@ -269,6 +271,13 @@
 			color: PROTOCOL_COLORS[i] || PROTOCOL_COLORS[PROTOCOL_COLORS.length - 1],
 		}))
 	);
+
+	// Protocol total for percentages
+	let protocolTotal = $derived(protocols.reduce((s, p) => s + p.count, 0));
+
+	// Service bar colors
+	const SERVICE_COLORS = ['var(--cyan)', 'var(--green)', 'var(--blue)', 'var(--purple)', 'var(--teal)', 'var(--amber)', 'var(--orange)', 'var(--red)'];
+	let maxServiceCount = $derived(services.length > 0 ? services[0].count : 1);
 
 	// Health status
 	let healthStatus = $derived.by(() => {
@@ -685,21 +694,44 @@
 			{/if}
 		</div>
 
-		<!-- Protocol Distribution -->
+		<!-- Network Protocols — Dual Panel -->
 		<div class="card chart-card">
 			<div class="card-header">
-				<span class="card-title">Protocol Distribution</span>
-				<span class="card-subtitle">By connection count</span>
+				<span class="card-title">Network Protocols</span>
+				<span class="card-subtitle">Transport + Application layer</span>
 			</div>
 			{#if loading && protocols.length === 0}
 				<div class="skeleton skeleton-chart"></div>
 			{:else}
-				<div class="donut-wrapper">
-					<DonutChart
-						segments={donutSegments}
-						size={200}
-						formatValue={formatNumber}
-					/>
+				<div class="protocol-dual-panel">
+					<!-- Left: Transport donut -->
+					<div class="transport-panel">
+						<span class="panel-label">Transport</span>
+						<DonutChart
+							segments={donutSegments}
+							size={150}
+							formatValue={formatNumber}
+						/>
+					</div>
+					<!-- Right: Application services -->
+					<div class="services-panel">
+						<div class="panel-label services-label-bar">Application Layer</div>
+						{#if services.length > 0}
+							<div class="service-bar-list">
+								{#each services.slice(0, 8) as svc, i (`${svc.name}-${i}`)}
+									<div class="svc-bar-row">
+										<span class="svc-bar-name">{(svc.name || 'unknown').toUpperCase()}</span>
+										<div class="svc-bar-track">
+											<div class="svc-bar-fill" style="width: {(svc.count / maxServiceCount) * 100}%; background: {SERVICE_COLORS[i] ?? SERVICE_COLORS[SERVICE_COLORS.length - 1]};"></div>
+										</div>
+										<span class="svc-bar-value mono">{formatNumber(svc.count)}</span>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<p class="text-muted" style="padding: var(--space-lg); text-align: center; font-size: var(--text-sm);">No service data available.</p>
+						{/if}
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -1210,10 +1242,98 @@
 		min-height: 340px;
 	}
 
-	.donut-wrapper {
+	/* OLD CODE START — donut-wrapper replaced by protocol-dual-panel */
+	/* .donut-wrapper {
 		display: flex;
 		justify-content: center;
 		padding: var(--space-md) 0;
+	} */
+	/* OLD CODE END */
+
+	/* Protocol Dual Panel */
+	.protocol-dual-panel {
+		display: grid;
+		grid-template-columns: 180px 1fr;
+		min-height: 280px;
+	}
+
+	.transport-panel {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: var(--space-md);
+		border-right: 1px solid var(--border-dim);
+		gap: var(--space-sm);
+	}
+
+	.panel-label {
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-dim);
+	}
+
+	.services-panel {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.services-label-bar {
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.service-bar-list {
+		flex: 1;
+		padding: var(--space-xs) 0;
+	}
+
+	.svc-bar-row {
+		display: grid;
+		grid-template-columns: 65px 1fr auto;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: 4px var(--space-lg);
+		transition: background var(--transition-fast);
+	}
+
+	.svc-bar-row:hover { background: var(--bg-tertiary); }
+
+	.svc-bar-name {
+		font-size: var(--text-xs);
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+
+	.svc-bar-track {
+		height: 8px;
+		background: var(--bg-tertiary);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+
+	.svc-bar-fill {
+		height: 100%;
+		border-radius: 4px;
+		opacity: 0.7;
+		transition: all 0.4s ease;
+	}
+
+	.svc-bar-row:hover .svc-bar-fill { opacity: 1; }
+
+	.svc-bar-value {
+		font-size: var(--text-xs);
+		color: var(--text-secondary);
+		text-align: right;
+		min-width: 45px;
+		white-space: nowrap;
+	}
+
+	@media (max-width: 768px) {
+		.protocol-dual-panel { grid-template-columns: 1fr; }
+		.transport-panel { border-right: none; border-bottom: 1px solid var(--border-dim); }
 	}
 
 	/* Tables */
