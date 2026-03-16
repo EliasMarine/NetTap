@@ -14,6 +14,7 @@
 		type Notification,
 	} from '$api/notifications';
 	import { createNotificationStream } from '$api/notification-stream';
+	import { goto } from '$app/navigation';
 
 	// State
 	let notifications = $state<Notification[]>([]);
@@ -35,9 +36,18 @@
 		}
 	}
 
+	// Trigger alert→notification conversion pipeline (best-effort)
+	async function triggerAlertNotifications() {
+		try {
+			await fetch('/api/notifications/from-alerts');
+		} catch {
+			// Best-effort — don't block notification display
+		}
+	}
+
 	// SSE real-time push with polling fallback
 	$effect(() => {
-		fetchNotifications();
+		triggerAlertNotifications().then(() => fetchNotifications());
 
 		// SSE real-time push
 		const stream = createNotificationStream((notification) => {
@@ -87,6 +97,10 @@
 		await markNotificationRead(id);
 		const n = notifications.find((n) => n.id === id);
 		if (n) {
+			if (n.type === 'alert') {
+				goto('/threats');
+				open = false;
+			}
 			n.read = true;
 			notifications = [...notifications]; // trigger reactivity
 			unreadCount = Math.max(0, unreadCount - 1);

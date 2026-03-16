@@ -33,6 +33,7 @@
 	import type { RegistryDevice } from '$api/devices-registry';
 	import DeviceGrid from '$components/DeviceGrid.svelte';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
+	import { goto } from '$app/navigation';
 	import CaptureHealthPanel from '$components/CaptureHealthPanel.svelte';
 
 	// ---------------------------------------------------------------------------
@@ -865,7 +866,7 @@
 				</div>
 				<!-- Smart alert groups -->
 				{#each smartAlerts.slice(0, 5) as sa, i (`sa-${sa.signature_id}-${i}`)}
-					<div class="ag-item">
+					<div class="ag-item" onclick={() => goto('/threats')} role="button" tabindex="0">
 						<div class="ag-top-row">
 							<span class="ag-sev-dot" style="background: {sa.severity <= 2 ? 'var(--red)' : sa.severity === 3 ? 'var(--amber)' : 'var(--cyan)'};"></span>
 							<span class="ag-sig">{sa.signature}</span>
@@ -1365,6 +1366,7 @@
 		padding: var(--space-sm) var(--space-lg);
 		border-bottom: 1px solid var(--border-dim);
 		transition: background var(--transition-fast);
+		cursor: pointer;
 	}
 
 	.ag-item:last-of-type { border-bottom: none; }
