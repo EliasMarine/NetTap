@@ -285,7 +285,7 @@ class BridgeManager:
             try:
                 import json
                 links = json.loads(stdout)
-                member_ifaces = [l.get("ifname", "") for l in links if l.get("ifname")]
+                member_ifaces = [link.get("ifname", "") for link in links if link.get("ifname")]
             except (ValueError, KeyError):
                 pass
 

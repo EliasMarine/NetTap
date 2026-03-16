@@ -51,7 +51,7 @@ blue()   { echo -e "\e[34m→ $*\e[0m"; }
 check() {
     local desc="$1"
     shift
-    if eval "$@" >/dev/null 2>&1; then
+    if "$@" >/dev/null 2>&1; then
         green "$desc"
         PASS=$((PASS + 1))
     else
@@ -142,7 +142,7 @@ check "docker-compose.yml exists" "[ -f '$COMPOSE_FILE' ]"
 header "1. DEPLOY LATEST CODE"
 
 blue "Pulling latest from phase-5/mirror-span-mode..."
-cd "$NETTAP_DIR"
+cd "$NETTAP_DIR" || exit 1
 git fetch origin || true
 git checkout phase-5/mirror-span-mode 2>/dev/null || true
 git pull origin phase-5/mirror-span-mode || true

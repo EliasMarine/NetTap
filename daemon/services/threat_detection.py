@@ -12,7 +12,6 @@ import math
 import os
 import statistics
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
 
 logger = logging.getLogger("nettap.services.threat_detection")
 
@@ -56,13 +55,19 @@ def _shannon_entropy(s: str) -> float:
 
 def _beacon_confidence(cv: float, count: int, interval: float) -> float:
     score = 0.0
-    if cv < 0.05: score += 50
-    elif cv < 0.10: score += 35
-    elif cv < 0.15: score += 20
+    if cv < 0.05:
+        score += 50
+    elif cv < 0.10:
+        score += 35
+    elif cv < 0.15:
+        score += 20
 
-    if count > 100: score += 30
-    elif count > 50: score += 20
-    elif count > 20: score += 10
+    if count > 100:
+        score += 30
+    elif count > 50:
+        score += 20
+    elif count > 20:
+        score += 10
 
     for ci in COMMON_BEACON_INTERVALS:
         if abs(interval - ci) < ci * 0.1:

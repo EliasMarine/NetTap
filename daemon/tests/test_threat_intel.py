@@ -1,8 +1,7 @@
 """Tests for ThreatIntelService."""
 
 import json
-import pytest
-from services.threat_intel import ThreatIntelService, _TI_CACHE_PATH
+from services.threat_intel import ThreatIntelService
 
 
 class TestThreatIntelLookup:

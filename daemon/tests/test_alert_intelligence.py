@@ -24,7 +24,6 @@ from services.alert_intelligence import (
     mark_false_positive,
     is_suppressed,
     load_suppress_list,
-    save_suppress_list,
 )
 import services.alert_intelligence as alert_intelligence_mod
 

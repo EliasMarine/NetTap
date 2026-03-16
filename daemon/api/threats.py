@@ -11,7 +11,6 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
-from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 

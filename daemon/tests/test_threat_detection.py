@@ -12,7 +12,6 @@ import os
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 
 from services.threat_detection import (
     _shannon_entropy,

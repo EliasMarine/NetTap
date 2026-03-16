@@ -5,9 +5,8 @@ Covers: configuration, test connection, poll devices, graceful degradation,
 caching, device alias lookup, status reporting.
 """
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -241,7 +240,7 @@ class TestPollDevices:
         unifi._cache_time = time.time() - _CACHE_TTL - 1
 
         # Second poll should hit the API again
-        devices = await unifi.poll_devices()
+        await unifi.poll_devices()
         assert mock_session._get_call_count == 2
 
     @pytest.mark.asyncio
