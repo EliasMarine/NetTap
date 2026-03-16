@@ -730,7 +730,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each sortedAlerts as alert (alert._id)}
+						{#each sortedAlerts as alert, alertIdx (alert._id ? `${alert._id}-${alertIdx}` : `alert-${alertIdx}`)}
 							<tr onclick={() => openDrawer(alert)} class="clickable-row">
 								<td class="timestamp-cell mono">{formatTimestamp(alert.timestamp)}</td>
 								<td>

@@ -277,6 +277,27 @@
 	}
 
 	/** Map category color names to CSS variable references. */
+	/** Map icon name from API to emoji for category cards */
+	const ICON_EMOJI: Record<string, string> = {
+		'shield-alert': '\u{1F6E1}',
+		'upload-cloud': '\u{2601}',
+		'search': '\u{1F50D}',
+		'bug': '\u{1F41B}',
+		'gavel': '\u{2696}',
+		'alert-triangle': '\u{26A0}',
+		'key': '\u{1F511}',
+		'globe': '\u{1F310}',
+		'lock': '\u{1F512}',
+		'cpu': '\u{1F4BB}',
+		'zap': '\u{26A1}',
+		'eye': '\u{1F441}',
+		'info': '\u{2139}',
+	};
+
+	function catIconEmoji(icon: string): string {
+		return ICON_EMOJI[icon] ?? '\u{2139}';
+	}
+
 	function catColorVar(color: string): string {
 		if (color === 'muted') return 'var(--text-muted)';
 		return `var(--${color})`;
@@ -728,7 +749,7 @@
 						<div class="cat-card-top">
 							<div class="cat-card-identity">
 								<div class="cat-icon {cat.color}" style="background: {catColorDimVar(cat.color)};">
-									{cat.icon}
+									{catIconEmoji(cat.icon)}
 								</div>
 								<span class="cat-name">{cat.label}</span>
 							</div>
@@ -955,7 +976,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each sortedAlerts as alert (alert._id)}
+						{#each sortedAlerts as alert, alertIdx (alert._id ? `${alert._id}-${alertIdx}` : `alert-${alertIdx}`)}
 							<tr
 								class="clickable-row"
 								class:row-expanded={drawerAlert?._id === alert._id}
