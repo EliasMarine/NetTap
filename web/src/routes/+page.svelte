@@ -709,7 +709,7 @@
 						<span class="panel-label">Transport</span>
 						<DonutChart
 							segments={donutSegments}
-							size={150}
+							size={180}
 							formatValue={formatNumber}
 						/>
 					</div>
@@ -1253,7 +1253,7 @@
 	/* Protocol Dual Panel */
 	.protocol-dual-panel {
 		display: grid;
-		grid-template-columns: 180px 1fr;
+		grid-template-columns: 220px 1fr;
 		min-height: 280px;
 	}
 
