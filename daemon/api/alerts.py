@@ -960,6 +960,9 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                     "by_dst_ip": {
                         "terms": {"field": "destination.ip.keyword", "size": 50}
                     },
+                    "latest": {
+                        "max": {"field": "@timestamp"}
+                    },
                 },
             }
         },
@@ -980,7 +983,8 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     sub_cat_counts: dict[str, int] = {}
     all_sources: set[str] = set()
     all_targets: set[str] = set()
-    all_devices: set[str] = set()  # union of sources + targets
+    device_counts: dict[str, int] = {}      # ip → total alert count
+    device_severity: dict[str, int] = {}    # ip → worst severity (lowest = worst)
     top_signatures: list[dict] = []
 
     for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
@@ -994,25 +998,32 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         total_count += doc_count
 
         # Severity
+        primary_sev = 4
         for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
             raw_sev = sev_bucket.get("key", 4)
             new_sev = reclassify_severity(sig_name, int(raw_sev))
             sev_label = sev_name_map.get(new_sev, "info")
             severity_breakdown[sev_label] += sev_bucket.get("doc_count", 0)
 
-        # Source IPs
+        sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
+        if sev_buckets:
+            primary_sev = reclassify_severity(sig_name, int(sev_buckets[0].get("key", 4)))
+
+        # Source IPs — track per-device counts
         for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
             ip = src_b.get("key", "")
             if ip:
                 all_sources.add(ip)
-                all_devices.add(ip)
+                device_counts[ip] = device_counts.get(ip, 0) + src_b.get("doc_count", 0)
+                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
 
-        # Destination IPs
+        # Destination IPs — track per-device counts
         for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
             ip = dst_b.get("key", "")
             if ip:
                 all_targets.add(ip)
-                all_devices.add(ip)
+                device_counts[ip] = device_counts.get(ip, 0) + dst_b.get("doc_count", 0)
+                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
 
         # Sub-category
         sub_id = categorize_sub_category(sig_name, category)
@@ -1020,16 +1031,13 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
             sub_cat_counts[sub_id] = sub_cat_counts.get(sub_id, 0) + doc_count
 
         # Top signatures
-        primary_sev = 4
-        sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
-        if sev_buckets:
-            primary_sev = reclassify_severity(sig_name, int(sev_buckets[0].get("key", 4)))
-
+        last_seen = bucket.get("latest", {}).get("value_as_string", "")
         top_signatures.append({
             "signature": sig_name,
             "count": doc_count,
             "severity": primary_sev,
             "severity_label": sev_name_map.get(primary_sev, "info"),
+            "last_seen": last_seen,
         })
 
     top_signatures.sort(key=lambda s: s["count"], reverse=True)
@@ -1046,8 +1054,15 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
             })
     sub_categories.sort(key=lambda s: s["count"], reverse=True)
 
-    # Build affected devices list (top 20 by appearance)
-    affected_devices = sorted(all_devices)[:20]
+    # Build affected devices list (top 20 by alert count, as objects)
+    affected_devices = []
+    for ip in sorted(device_counts, key=lambda x: device_counts[x], reverse=True)[:20]:
+        sev = device_severity.get(ip, 4)
+        affected_devices.append({
+            "ip": ip,
+            "count": device_counts[ip],
+            "severity": sev_name_map.get(sev, "info"),
+        })
 
     return web.json_response({
         "from": from_ts,
@@ -1063,7 +1078,7 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
             "total": total_count,
             "unique_sources": len(all_sources),
             "unique_targets": len(all_targets),
-            "affected_devices": len(all_devices),
+            "affected_devices": len(device_counts),
         },
         "severity_breakdown": severity_breakdown,
         "sub_categories": sub_categories,
@@ -1086,7 +1101,7 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
         interval = _sparkline_interval(from_ts, to_ts)
     client = _get_client(request)
 
-    from services.alert_intelligence import THREAT_CATEGORIES, categorize_alert
+    from services.alert_intelligence import THREAT_CATEGORIES, categorize_alert, categorize_sub_category
 
     if category not in THREAT_CATEGORIES:
         return web.json_response(
@@ -1129,11 +1144,11 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    buckets = []
+    series = []
     for time_bucket in result.get("aggregations", {}).get("over_time", {}).get("buckets", []):
         ts = time_bucket.get("key_as_string", "")
         category_count = 0
-        sig_breakdown: dict[str, int] = {}
+        sub_cat_breakdown: dict[str, int] = {}
 
         for sig_bucket in time_bucket.get("by_signature", {}).get("buckets", []):
             sig_name = sig_bucket.get("key", "Unknown")
@@ -1141,15 +1156,14 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
 
             if categorize_alert(sig_name) == category:
                 category_count += sig_count
-                sig_breakdown[sig_name] = sig_breakdown.get(sig_name, 0) + sig_count
+                sub_id = categorize_sub_category(sig_name, category)
+                if sub_id:
+                    sub_cat_breakdown[sub_id] = sub_cat_breakdown.get(sub_id, 0) + sig_count
 
-        buckets.append({
+        series.append({
             "timestamp": ts,
-            "count": category_count,
-            "signatures": [
-                {"signature": s, "count": c}
-                for s, c in sorted(sig_breakdown.items(), key=lambda x: x[1], reverse=True)
-            ][:10],
+            "total": category_count,
+            "sub_categories": sub_cat_breakdown,
         })
 
     return web.json_response({
@@ -1157,7 +1171,7 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
         "to": to_ts,
         "category": category,
         "interval": interval,
-        "buckets": buckets,
+        "series": series,
     })
 
 
