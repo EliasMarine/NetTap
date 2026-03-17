@@ -8,9 +8,7 @@ schedule management, custom rules, and commercial config.
 import asyncio
 import os
 import sys
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

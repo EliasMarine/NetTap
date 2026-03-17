@@ -5,11 +5,6 @@ Covers: BPF filter validation, file listing, preview extraction,
 search, and download.
 """
 
-import asyncio
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

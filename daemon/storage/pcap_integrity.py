@@ -14,7 +14,6 @@ Usage:
 
 import hashlib
 import logging
-import os
 from pathlib import Path
 
 logger = logging.getLogger("nettap.storage.pcap_integrity")

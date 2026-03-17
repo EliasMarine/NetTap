@@ -19,7 +19,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from services.excluded_ips import load_excluded_ips, save_excluded_ips
+from services.excluded_ips import save_excluded_ips
 
 logger = logging.getLogger("nettap.api.settings")
 

@@ -6,11 +6,11 @@ new device detection, search, get_device_traffic, IP list tracking,
 passive enrichment (DHCP, ARP, mDNS, SSDP), OUI enrichment, JA3 enrichment.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from services.device_registry import DeviceRegistry, DEVICES_INDEX, CATEGORY_UNKNOWN
+from services.device_registry import DeviceRegistry, DEVICES_INDEX
 
 
 # ---------------------------------------------------------------------------
