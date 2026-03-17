@@ -328,6 +328,32 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             }
         })
 
+    # Optional category filter — match signatures belonging to a threat category
+    category_filter = request.query.get("category", "")
+    if category_filter:
+        from daemon.services.alert_intelligence import THREAT_CATEGORIES
+        cat_info = THREAT_CATEGORIES.get(category_filter)
+        if cat_info:
+            # Build a bool/should with wildcard matches on rule.name for each
+            # pattern in the category.  Case-insensitive wildcard on .keyword.
+            should_clauses = []
+            for pattern in cat_info["patterns"]:
+                should_clauses.append({
+                    "wildcard": {
+                        "rule.name": {
+                            "value": f"*{pattern}*",
+                            "case_insensitive": True,
+                        }
+                    }
+                })
+            if should_clauses:
+                filter_clauses.append({
+                    "bool": {
+                        "should": should_clauses,
+                        "minimum_should_match": 1,
+                    }
+                })
+
     query = {
         "size": size,
         "from": offset,

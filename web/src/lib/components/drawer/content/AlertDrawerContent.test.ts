@@ -78,6 +78,21 @@ function getVisibleContent(activeTab: string): 'summary' | 'related' | 'raw' | '
 	return 'none';
 }
 
+/**
+ * Reproduces the query-building logic from fetchRelated() to test it in isolation.
+ * Returns null if no IPs are available.
+ */
+function buildRelatedQuery(alert: AlertData): { query: string; from: string; to: string } | null {
+	const ips = [alert.src_ip, alert.dest_ip].filter(Boolean);
+	if (ips.length === 0) return null;
+	const ipClauses = ips.map(ip => `(source.ip.keyword:"${ip}" OR destination.ip.keyword:"${ip}")`).join(' OR ');
+	const query = `(${ipClauses}) AND NOT _id:"${alert._id}"`;
+	const alertTime = new Date(alert.timestamp);
+	const from = new Date(alertTime.getTime() - 3600_000).toISOString();
+	const to = new Date(alertTime.getTime() + 3600_000).toISOString();
+	return { query, from, to };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -265,6 +280,70 @@ describe('AlertDrawerContent logic', () => {
 			const acked: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: true, acknowledged_at: '2026-03-01T13:00:00Z' };
 			expect(acked.acknowledged).toBe(true);
 			expect(acked.acknowledged_at).toBe('2026-03-01T13:00:00Z');
+		});
+	});
+
+	// -- Related events query building ----------------------------------------
+
+	describe('buildRelatedQuery', () => {
+		it('uses .keyword sub-fields for IP matching', () => {
+			const alert: AlertData = {
+				_id: 'abc123', _index: 'x', timestamp: '2026-03-01T12:00:00Z',
+				acknowledged: false, src_ip: '192.168.1.44', dest_ip: '10.0.0.1',
+			};
+			const result = buildRelatedQuery(alert);
+			expect(result).not.toBeNull();
+			expect(result!.query).toContain('source.ip.keyword:"192.168.1.44"');
+			expect(result!.query).toContain('destination.ip.keyword:"192.168.1.44"');
+			expect(result!.query).toContain('source.ip.keyword:"10.0.0.1"');
+			expect(result!.query).toContain('destination.ip.keyword:"10.0.0.1"');
+		});
+
+		it('excludes the alert itself from results', () => {
+			const alert: AlertData = {
+				_id: 'abc123', _index: 'x', timestamp: '2026-03-01T12:00:00Z',
+				acknowledged: false, src_ip: '192.168.1.44',
+			};
+			const result = buildRelatedQuery(alert);
+			expect(result!.query).toContain('AND NOT _id:"abc123"');
+		});
+
+		it('sets time range to ±1 hour from alert timestamp', () => {
+			const alert: AlertData = {
+				_id: '1', _index: 'x', timestamp: '2026-03-01T12:00:00.000Z',
+				acknowledged: false, src_ip: '192.168.1.44',
+			};
+			const result = buildRelatedQuery(alert);
+			expect(result!.from).toBe('2026-03-01T11:00:00.000Z');
+			expect(result!.to).toBe('2026-03-01T13:00:00.000Z');
+		});
+
+		it('returns null when no IPs are present', () => {
+			const alert: AlertData = {
+				_id: '1', _index: 'x', timestamp: '2026-03-01T12:00:00Z',
+				acknowledged: false,
+			};
+			expect(buildRelatedQuery(alert)).toBeNull();
+		});
+
+		it('works with only source IP', () => {
+			const alert: AlertData = {
+				_id: '1', _index: 'x', timestamp: '2026-03-01T12:00:00Z',
+				acknowledged: false, src_ip: '192.168.1.44',
+			};
+			const result = buildRelatedQuery(alert);
+			expect(result!.query).toContain('source.ip.keyword:"192.168.1.44"');
+			expect(result!.query).not.toContain('10.0.0.1');
+		});
+
+		it('works with only destination IP', () => {
+			const alert: AlertData = {
+				_id: '1', _index: 'x', timestamp: '2026-03-01T12:00:00Z',
+				acknowledged: false, dest_ip: '10.0.0.1',
+			};
+			const result = buildRelatedQuery(alert);
+			expect(result!.query).toContain('source.ip.keyword:"10.0.0.1"');
+			expect(result!.query).toContain('destination.ip.keyword:"10.0.0.1"');
 		});
 	});
 

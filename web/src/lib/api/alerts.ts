@@ -147,6 +147,7 @@ export async function getAlerts(
 		size?: number;
 		ip?: string;
 		signature?: string;
+		category?: string;
 	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
@@ -157,6 +158,7 @@ export async function getAlerts(
 		size: opts.size,
 		ip: opts.ip,
 		signature: opts.signature,
+		category: opts.category,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 
