@@ -300,11 +300,13 @@
 
 	function catColorVar(color: string): string {
 		if (color === 'muted') return 'var(--text-muted)';
+		if (color.startsWith('#') || color.startsWith('rgb')) return color;
 		return `var(--${color})`;
 	}
 
 	function catColorDimVar(color: string): string {
 		if (color === 'muted') return 'var(--bg-tertiary)';
+		if (color.startsWith('#') || color.startsWith('rgb')) return `${color}33`;
 		return `var(--${color}-dim)`;
 	}
 

@@ -121,14 +121,16 @@
 
 	let catColor = $derived(categoryData?.category?.color ?? 'blue');
 
-	/** Resolve a color token to a CSS var. */
+	/** Resolve a color token to a CSS var, or pass through raw hex/rgb values. */
 	function catColorVar(color: string): string {
 		if (color === 'muted') return 'var(--text-muted)';
+		if (color.startsWith('#') || color.startsWith('rgb')) return color;
 		return `var(--${color})`;
 	}
 
 	function catColorDimVar(color: string): string {
 		if (color === 'muted') return 'var(--bg-tertiary)';
+		if (color.startsWith('#') || color.startsWith('rgb')) return `${color}33`;
 		return `var(--${color}-dim)`;
 	}
 
