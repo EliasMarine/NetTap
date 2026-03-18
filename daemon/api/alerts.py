@@ -115,6 +115,26 @@ def _get_client(request: web.Request):
     return storage._client
 
 
+def _sparkline_interval(from_ts: str, to_ts: str) -> str:
+    """Choose a date_histogram interval for sparkline data based on the
+    time range span. Returns an OpenSearch fixed_interval string."""
+    try:
+        ft = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+        tt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+        span_hours = (tt - ft).total_seconds() / 3600
+    except (ValueError, TypeError):
+        span_hours = 24
+
+    if span_hours <= 6:
+        return "10m"
+    elif span_hours <= 24:
+        return "1h"
+    elif span_hours <= 168:  # 7 days
+        return "6h"
+    else:
+        return "1d"
+
+
 def _normalize_alert_source(source: dict) -> dict:
     """Normalize OpenSearch ECS/Malcolm field names into the structure the
     frontend expects.
@@ -307,6 +327,32 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 "minimum_should_match": 1,
             }
         })
+
+    # Optional category filter — match signatures belonging to a threat category
+    category_filter = request.query.get("category", "")
+    if category_filter:
+        from services.alert_intelligence import THREAT_CATEGORIES
+        cat_info = THREAT_CATEGORIES.get(category_filter)
+        if cat_info:
+            # Build a bool/should with wildcard matches on rule.name for each
+            # pattern in the category.  Case-insensitive wildcard on .keyword.
+            should_clauses = []
+            for pattern in cat_info["patterns"]:
+                should_clauses.append({
+                    "wildcard": {
+                        "rule.name": {
+                            "value": f"*{pattern}*",
+                            "case_insensitive": True,
+                        }
+                    }
+                })
+            if should_clauses:
+                filter_clauses.append({
+                    "bool": {
+                        "should": should_clauses,
+                        "minimum_should_match": 1,
+                    }
+                })
 
     query = {
         "size": size,
@@ -734,10 +780,19 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
 async def handle_alerts_categories(request: web.Request) -> web.Response:
     """GET /api/alerts/categories?from=&to=
 
-    Returns alert counts grouped by rule category.
+    Returns enriched alert categories with counts, severity breakdown,
+    sparkline trend data, and sub-category grouping. Each alert is
+    classified into one of 13 NetTap threat categories via pattern
+    matching on the signature.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    interval = _sparkline_interval(from_ts, to_ts)
+
+    from services.alert_intelligence import (
+        THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
+        categorize_alert, categorize_sub_category, reclassify_severity,
+    )
 
     query = {
         "size": 0,
@@ -746,12 +801,25 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
-                ]
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
-            "by_category": {
-                "terms": {"field": "rule.category.keyword", "size": 20, "missing": "Uncategorized"}
+            "by_signature": {
+                "terms": {"field": "rule.name.keyword", "size": 500, "missing": "Unknown"},
+                "aggs": {
+                    "by_severity": {
+                        "terms": {"field": "suricata.alert.severity", "size": 5}
+                    },
+                    "over_time": {
+                        "date_histogram": {
+                            "field": "@timestamp",
+                            "fixed_interval": interval,
+                            "min_doc_count": 0,
+                        }
+                    },
+                },
             }
         },
     }
@@ -764,17 +832,372 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
+    # Accumulate per-category data in Python
+    cat_data: dict[str, dict] = {}
+    for cat_id, cat_info in THREAT_CATEGORIES.items():
+        cat_data[cat_id] = {
+            "id": cat_id,
+            "label": cat_info["label"],
+            "icon": cat_info["icon"],
+            "color": cat_info["color"],
+            "description": cat_info["description"],
+            "count": 0,
+            "severity_breakdown": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
+            "sparkline": {},      # timestamp -> count
+            "sub_categories": {},  # sub_id -> {label, count}
+        }
+
+    sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+
+    for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
+        sig_name = bucket.get("key", "Unknown")
+        doc_count = bucket.get("doc_count", 0)
+
+        category = categorize_alert(sig_name)
+        entry = cat_data.get(category)
+        if not entry:
+            entry = cat_data["informational"]
+
+        entry["count"] += doc_count
+
+        # Severity sub-agg (I6 fix: int() conversion on bucket key)
+        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+            raw_sev = sev_bucket.get("key", 4)
+            new_sev = reclassify_severity(sig_name, int(raw_sev))
+            sev_label = sev_name_map.get(new_sev, "info")
+            entry["severity_breakdown"][sev_label] += sev_bucket.get("doc_count", 0)
+
+        # Sparkline sub-agg
+        for time_bucket in bucket.get("over_time", {}).get("buckets", []):
+            ts_key = time_bucket.get("key_as_string", "")
+            ts_count = time_bucket.get("doc_count", 0)
+            if ts_key:
+                entry["sparkline"][ts_key] = entry["sparkline"].get(ts_key, 0) + ts_count
+
+        # Sub-category classification
+        sub_id = categorize_sub_category(sig_name, category)
+        if sub_id:
+            subs = entry["sub_categories"]
+            if sub_id not in subs:
+                # Find the sub-category label
+                sub_label = sub_id
+                for sub_def in SUB_CATEGORIES.get(category, []):
+                    if sub_def["id"] == sub_id:
+                        sub_label = sub_def["label"]
+                        break
+                subs[sub_id] = {"id": sub_id, "label": sub_label, "count": 0}
+            subs[sub_id]["count"] += doc_count
+
+    # Compute trend from sparkline data
+    def _compute_trend_from_sparkline(sparkline: dict) -> str:
+        vals = list(sparkline.values())
+        if len(vals) < 4:
+            return "stable"
+        mid = len(vals) // 2
+        first_half = sum(vals[:mid])
+        second_half = sum(vals[mid:])
+        if second_half > first_half * 1.5:
+            return "increasing"
+        elif first_half > second_half * 1.5:
+            return "decreasing"
+        return "stable"
+
+    # Build final response
     categories = []
-    for bucket in result.get("aggregations", {}).get("by_category", {}).get("buckets", []):
+    for cat_id, entry in cat_data.items():
+        if entry["count"] == 0:
+            continue
+        trend = _compute_trend_from_sparkline(entry["sparkline"])
         categories.append({
-            "category": bucket.get("key", "Uncategorized"),
-            "count": bucket.get("doc_count", 0),
+            "id": entry["id"],
+            "label": entry["label"],
+            "icon": entry["icon"],
+            "color": entry["color"],
+            "description": entry["description"],
+            "count": entry["count"],
+            "severity_breakdown": entry["severity_breakdown"],
+            "trend": trend,
+            "sparkline": [
+                {"timestamp": ts, "count": c}
+                for ts, c in sorted(entry["sparkline"].items())
+            ],
+            "sub_categories": sorted(
+                entry["sub_categories"].values(),
+                key=lambda s: s["count"],
+                reverse=True,
+            ),
+            "mitre_techniques": MITRE_TECHNIQUES.get(cat_id, []),
+        })
+
+    categories.sort(key=lambda c: c["count"], reverse=True)
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "interval": interval,
+        "categories": categories,
+    })
+
+
+async def handle_alert_category_detail(request: web.Request) -> web.Response:
+    """GET /api/alerts/categories/{category}?from=&to=
+
+    Returns detailed stats for a single threat category: total count,
+    unique sources/targets/devices, severity breakdown, sub-categories,
+    affected devices, top signatures, and MITRE techniques.
+    """
+    category = request.match_info.get("category", "")
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    from services.alert_intelligence import (
+        THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
+        categorize_alert, categorize_sub_category, reclassify_severity,
+    )
+
+    if category not in THREAT_CATEGORIES:
+        return web.json_response(
+            {"error": f"Unknown category: {category}"}, status=404
+        )
+
+    cat_info = THREAT_CATEGORIES[category]
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
+            }
+        },
+        "aggs": {
+            "by_signature": {
+                "terms": {"field": "rule.name.keyword", "size": 500, "missing": "Unknown"},
+                "aggs": {
+                    "by_severity": {
+                        "terms": {"field": "suricata.alert.severity", "size": 5}
+                    },
+                    "by_src_ip": {
+                        "terms": {"field": "source.ip.keyword", "size": 50}
+                    },
+                    "by_dst_ip": {
+                        "terms": {"field": "destination.ip.keyword", "size": 50}
+                    },
+                    "latest": {
+                        "max": {"field": "@timestamp"}
+                    },
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alert category detail: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+
+    total_count = 0
+    severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    sub_cat_counts: dict[str, int] = {}
+    all_sources: set[str] = set()
+    all_targets: set[str] = set()
+    device_counts: dict[str, int] = {}      # ip → total alert count
+    device_severity: dict[str, int] = {}    # ip → worst severity (lowest = worst)
+    top_signatures: list[dict] = []
+
+    for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
+        sig_name = bucket.get("key", "Unknown")
+        doc_count = bucket.get("doc_count", 0)
+
+        sig_category = categorize_alert(sig_name)
+        if sig_category != category:
+            continue
+
+        total_count += doc_count
+
+        # Severity
+        primary_sev = 4
+        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+            raw_sev = sev_bucket.get("key", 4)
+            new_sev = reclassify_severity(sig_name, int(raw_sev))
+            sev_label = sev_name_map.get(new_sev, "info")
+            severity_breakdown[sev_label] += sev_bucket.get("doc_count", 0)
+
+        sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
+        if sev_buckets:
+            primary_sev = reclassify_severity(sig_name, int(sev_buckets[0].get("key", 4)))
+
+        # Source IPs — track per-device counts
+        for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
+            ip = src_b.get("key", "")
+            if ip:
+                all_sources.add(ip)
+                device_counts[ip] = device_counts.get(ip, 0) + src_b.get("doc_count", 0)
+                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+
+        # Destination IPs — track per-device counts
+        for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
+            ip = dst_b.get("key", "")
+            if ip:
+                all_targets.add(ip)
+                device_counts[ip] = device_counts.get(ip, 0) + dst_b.get("doc_count", 0)
+                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+
+        # Sub-category
+        sub_id = categorize_sub_category(sig_name, category)
+        if sub_id:
+            sub_cat_counts[sub_id] = sub_cat_counts.get(sub_id, 0) + doc_count
+
+        # Top signatures
+        last_seen = bucket.get("latest", {}).get("value_as_string", "")
+        top_signatures.append({
+            "signature": sig_name,
+            "count": doc_count,
+            "severity": primary_sev,
+            "severity_label": sev_name_map.get(primary_sev, "info"),
+            "last_seen": last_seen,
+        })
+
+    top_signatures.sort(key=lambda s: s["count"], reverse=True)
+
+    # Build sub-categories response
+    sub_categories = []
+    for sub_def in SUB_CATEGORIES.get(category, []):
+        sub_count = sub_cat_counts.get(sub_def["id"], 0)
+        if sub_count > 0:
+            sub_categories.append({
+                "id": sub_def["id"],
+                "label": sub_def["label"],
+                "count": sub_count,
+            })
+    sub_categories.sort(key=lambda s: s["count"], reverse=True)
+
+    # Build affected devices list (top 20 by alert count, as objects)
+    affected_devices = []
+    for ip in sorted(device_counts, key=lambda x: device_counts[x], reverse=True)[:20]:
+        sev = device_severity.get(ip, 4)
+        affected_devices.append({
+            "ip": ip,
+            "count": device_counts[ip],
+            "severity": sev_name_map.get(sev, "info"),
         })
 
     return web.json_response({
         "from": from_ts,
         "to": to_ts,
-        "categories": categories,
+        "category": {
+            "id": category,
+            "label": cat_info["label"],
+            "icon": cat_info["icon"],
+            "color": cat_info["color"],
+            "description": cat_info["description"],
+        },
+        "stats": {
+            "total": total_count,
+            "unique_sources": len(all_sources),
+            "unique_targets": len(all_targets),
+            "affected_devices": len(device_counts),
+        },
+        "severity_breakdown": severity_breakdown,
+        "sub_categories": sub_categories,
+        "affected_devices": affected_devices,
+        "top_signatures": top_signatures[:20],
+        "mitre_techniques": MITRE_TECHNIQUES.get(category, []),
+    })
+
+
+async def handle_alert_category_timeline(request: web.Request) -> web.Response:
+    """GET /api/alerts/categories/{category}/timeline?from=&to=&interval=
+
+    Returns time-series data for a single category, bucketed by interval,
+    with per-signature breakdown within each time bucket.
+    """
+    category = request.match_info.get("category", "")
+    from_ts, to_ts = _parse_time_range(request)
+    interval = request.query.get("interval", "")
+    if interval not in _ALLOWED_INTERVALS:
+        interval = _sparkline_interval(from_ts, to_ts)
+    client = _get_client(request)
+
+    from services.alert_intelligence import THREAT_CATEGORIES, categorize_alert, categorize_sub_category
+
+    if category not in THREAT_CATEGORIES:
+        return web.json_response(
+            {"error": f"Unknown category: {category}"}, status=404
+        )
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
+            }
+        },
+        "aggs": {
+            "over_time": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "fixed_interval": interval,
+                    "min_doc_count": 0,
+                    "extended_bounds": {"min": from_ts, "max": to_ts},
+                },
+                "aggs": {
+                    "by_signature": {
+                        "terms": {"field": "rule.name.keyword", "size": 50}
+                    }
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in category timeline: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    series = []
+    for time_bucket in result.get("aggregations", {}).get("over_time", {}).get("buckets", []):
+        ts = time_bucket.get("key_as_string", "")
+        category_count = 0
+        sub_cat_breakdown: dict[str, int] = {}
+
+        for sig_bucket in time_bucket.get("by_signature", {}).get("buckets", []):
+            sig_name = sig_bucket.get("key", "Unknown")
+            sig_count = sig_bucket.get("doc_count", 0)
+
+            if categorize_alert(sig_name) == category:
+                category_count += sig_count
+                sub_id = categorize_sub_category(sig_name, category)
+                if sub_id:
+                    sub_cat_breakdown[sub_id] = sub_cat_breakdown.get(sub_id, 0) + sig_count
+
+        series.append({
+            "timestamp": ts,
+            "total": category_count,
+            "sub_categories": sub_cat_breakdown,
+        })
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "category": category,
+        "interval": interval,
+        "series": series,
     })
 
 
@@ -878,6 +1301,9 @@ def register_alert_routes(
     app.router.add_get("/api/alerts/top-signatures", handle_alerts_top_signatures)
     app.router.add_get("/api/alerts/top-ips", handle_alerts_top_ips)
     app.router.add_get("/api/alerts/categories", handle_alerts_categories)
+    # Category detail routes — BEFORE {id} catch-all (more specific path)
+    app.router.add_get("/api/alerts/categories/{category}/timeline", handle_alert_category_timeline)
+    app.router.add_get("/api/alerts/categories/{category}", handle_alert_category_detail)
     # Smart alert routes — /smart/summary BEFORE /smart (more specific first)
     app.router.add_get("/api/alerts/smart/summary", handle_smart_alert_summary)
     app.router.add_get("/api/alerts/smart", handle_smart_alerts)
@@ -886,4 +1312,4 @@ def register_alert_routes(
     # Parameterized routes LAST (catch-all pattern)
     app.router.add_get("/api/alerts/{id}", handle_alert_detail)
     app.router.add_post("/api/alerts/{id}/acknowledge", handle_alert_acknowledge)
-    logger.info("Alert API routes registered (12 endpoints)")
+    logger.info("Alert API routes registered (14 endpoints)")

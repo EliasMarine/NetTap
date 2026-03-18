@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-12
-> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Switched NVMe SMART monitoring to nvme-cli as primary tool (direct ioctl, no SCSI translation). smartctl retained as SATA fallback. Added SYS_ADMIN capability, removed pySMART. 59 SMART tests passing. Lessons 87–91 added.
+> **Last updated:** 2026-03-16
+> **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -1635,6 +1635,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 94. **Svelte render crashes leave the DOM in the previous state** — if `{#each}` throws `each_key_duplicate` during rendering after `loading = false`, the DOM stays showing the loading spinner because the conditional branch that shows data never completed rendering. The error appears in console but the page looks "stuck". Always use index-suffixed keys (`${name}-${i}`) as a safety net.
 95. **Device hostname resolution via DNS answer records works well** — querying `zeek.dns.answers` (the IPs a domain resolves to) and aggregating by `zeek.dns.query.keyword` with `terms size=1` returns the most common hostname for any IP. This is already implemented in `DeviceFingerprint.get_hostname_for_ip()` and adds ~15 hostnames per 37 devices (depends on DNS traffic volume).
 96. **Risk scoring already returns full factor breakdown** — `GET /api/risk/scores/{ip}` returns not just the score/level but an array of `factors` with `{name, score, max, description}` for all 5 weighted factors. No new backend work needed to display the breakdown — just consume the existing API.
+
+### Daemon→Frontend Data Contracts (NEW — 2026-03-16)
+97. **Svelte 5 `{#each (device.ip)}` crashes with `each_key_duplicate` when keys are `undefined`** — if the daemon returns an array of strings (`["10.0.0.1"]`) but the component destructures objects (`device.ip`), every key evaluates to `undefined`, and ALL items share the same key. Svelte 5 throws `each_key_duplicate`, which crashes mid-render and leaves the DOM in a stale loading state (spinner never clears). The fix is always on the data source: return objects `{ip, count, severity}` not bare strings.
+98. **Timeline/chart data contract mismatches cause silent rendering failures, not crashes** — if the daemon returns `{buckets: [{count, signatures}]}` but the component expects `{series: [{total, sub_categories}]}`, the guard clause (`{#if timelineData?.series?.length}`) evaluates to falsy and the section simply never renders. No error in console. Always verify field names AND structure between daemon response and TypeScript types.
+99. **Always include `last_seen` (or equivalent timestamp) in aggregation responses** — OpenSearch `max` aggregation on `@timestamp` adds minimal query cost and prevents `formatRelativeTime(undefined)` rendering broken in the frontend. Add `"latest": {"max": {"field": "@timestamp"}}` as a sub-aggregation to any `terms` bucket that will be displayed with time context.
 
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.

@@ -9,7 +9,7 @@ indices in OpenSearch.
 import calendar
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException

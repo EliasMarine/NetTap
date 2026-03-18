@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
