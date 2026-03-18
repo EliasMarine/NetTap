@@ -331,5 +331,117 @@ class TestIsAvailable(unittest.TestCase):
         asyncio.run(run())
 
 
+class TestBuildCommandVerbose(unittest.TestCase):
+    """Tests for verbose mode in _build_tshark_command."""
+
+    def setUp(self):
+        self.svc = TSharkService()
+
+    def test_build_command_verbose_has_V_flag(self):
+        """Verify -V flag is present in verbose mode."""
+        req = TSharkRequest(
+            pcap_path="/pcap/test.pcap",
+            display_filter="ip.addr == 10.0.0.1",
+            max_packets=20,
+            verbose=True,
+        )
+        cmd = self.svc._build_tshark_command(req)
+        self.assertIn("-V", cmd)
+        # Verbose mode should NOT have -T json
+        self.assertNotIn("json", cmd)
+
+    def test_build_command_verbose_has_filter_and_c(self):
+        """Verify -Y and -c are still present in verbose mode."""
+        req = TSharkRequest(
+            pcap_path="/pcap/test.pcap",
+            display_filter="http.request",
+            max_packets=10,
+            verbose=True,
+        )
+        cmd = self.svc._build_tshark_command(req)
+        self.assertIn("-Y", cmd)
+        self.assertIn("-c", cmd)
+        self.assertIn("-V", cmd)
+
+
+class TestBuildCommandFollowStream(unittest.TestCase):
+    """Tests for follow stream mode in _build_tshark_command."""
+
+    def setUp(self):
+        self.svc = TSharkService()
+
+    def test_build_command_follow_stream_tcp(self):
+        """Verify -q -z follow,tcp,ascii,<filter> structure."""
+        req = TSharkRequest(
+            pcap_path="/pcap/test.pcap",
+            display_filter="ip.addr == 10.0.0.1 && tcp.port == 443",
+            follow_stream="tcp",
+        )
+        cmd = self.svc._build_tshark_command(req)
+        self.assertIn("-q", cmd)
+        self.assertIn("-z", cmd)
+        z_idx = cmd.index("-z")
+        z_arg = cmd[z_idx + 1]
+        self.assertTrue(z_arg.startswith("follow,tcp,ascii,"))
+        self.assertIn("ip.addr == 10.0.0.1", z_arg)
+
+    def test_follow_stream_no_Y_or_c_flags(self):
+        """Follow stream mode should NOT have -Y or -c flags."""
+        req = TSharkRequest(
+            pcap_path="/pcap/test.pcap",
+            display_filter="http.request",
+            max_packets=50,
+            follow_stream="udp",
+        )
+        cmd = self.svc._build_tshark_command(req)
+        self.assertNotIn("-Y", cmd)
+        self.assertNotIn("-c", cmd)
+        self.assertIn("-q", cmd)
+
+    def test_follow_stream_no_T_flag(self):
+        """Follow stream mode should NOT have -T flag."""
+        req = TSharkRequest(
+            pcap_path="/pcap/test.pcap",
+            follow_stream="tls",
+            output_format="json",
+        )
+        cmd = self.svc._build_tshark_command(req)
+        self.assertNotIn("-T", cmd)
+
+    def test_follow_stream_default_filter(self):
+        """When no display_filter given, follow should use '0' as stream index."""
+        req = TSharkRequest(
+            pcap_path="/pcap/test.pcap",
+            follow_stream="http",
+        )
+        cmd = self.svc._build_tshark_command(req)
+        z_idx = cmd.index("-z")
+        z_arg = cmd[z_idx + 1]
+        self.assertEqual(z_arg, "follow,http,ascii,0")
+
+
+class TestFollowStreamValidation(unittest.TestCase):
+    """Tests for follow_stream validation in validate_request."""
+
+    def setUp(self):
+        self.svc = TSharkService()
+
+    def test_valid_follow_protocols(self):
+        """Valid protocols should pass validation."""
+        from services.tshark_service import ALLOWED_FOLLOW_PROTOCOLS
+
+        for proto in ALLOWED_FOLLOW_PROTOCOLS:
+            req = TSharkRequest(pcap_path="test.pcap", follow_stream=proto)
+            validated = self.svc.validate_request(req)
+            self.assertEqual(validated.follow_stream, proto)
+
+    def test_invalid_follow_protocol(self):
+        """Invalid protocol should raise TSharkValidationError."""
+        req = TSharkRequest(pcap_path="test.pcap", follow_stream="ftp")
+        with self.assertRaises(TSharkValidationError) as ctx:
+            self.svc.validate_request(req)
+        self.assertIn("invalid follow protocol", str(ctx.exception).lower())
+
+
 if __name__ == "__main__":
     unittest.main()

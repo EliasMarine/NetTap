@@ -41,6 +41,9 @@ SHELL_METACHAR_PATTERN = re.compile(r"[;`$\"'\n\r\x00]")
 ALLOWED_OUTPUT_FORMATS = {"json", "text", "pdml"}
 
 
+ALLOWED_FOLLOW_PROTOCOLS = {"", "tcp", "udp", "tls", "http"}
+
+
 @dataclass
 class TSharkRequest:
     pcap_path: str
@@ -49,6 +52,8 @@ class TSharkRequest:
     output_format: str = "json"
     fields: list[str] = field(default_factory=list)
     include_hex: bool = False
+    verbose: bool = False
+    follow_stream: str = ""  # 'tcp'|'udp'|'tls'|'http'|''
 
 
 @dataclass
@@ -166,6 +171,10 @@ class TSharkService:
             raise TSharkValidationError(
                 f"Invalid output format: {request.output_format}"
             )
+        if request.follow_stream not in ALLOWED_FOLLOW_PROTOCOLS:
+            raise TSharkValidationError(
+                f"Invalid follow protocol: {request.follow_stream}"
+            )
         return request
 
     # --- TShark command execution ---
@@ -177,12 +186,29 @@ class TSharkService:
         # Input file
         cmd.extend(["-r", request.pcap_path])
 
+        # Follow stream mode: uses -q -z follow,<proto>,ascii,<filter>
+        # No -Y, no -c, no -T flags — follow processes the entire file
+        if request.follow_stream:
+            cmd.append("-q")
+            follow_filter = request.display_filter or "0"
+            cmd.extend([
+                "-z",
+                f"follow,{request.follow_stream},ascii,{follow_filter}",
+            ])
+            return cmd
+
         # Max packets
         cmd.extend(["-c", str(request.max_packets)])
 
         # Display filter
         if request.display_filter:
             cmd.extend(["-Y", request.display_filter])
+
+        # Verbose mode: adds -V flag, forces text output
+        if request.verbose:
+            cmd.append("-V")
+            # No -T flag — verbose text is the default
+            return cmd
 
         # Specific fields override output format
         if request.fields:
@@ -294,7 +320,10 @@ class TSharkService:
             )
 
         # Parse output
-        if request.output_format == "json":
+        if request.follow_stream or request.verbose:
+            # Follow stream and verbose modes return raw text
+            packets = self._parse_text_output(stdout)
+        elif request.output_format == "json":
             packets = self._parse_json_output(stdout)
         else:
             packets = self._parse_text_output(stdout)

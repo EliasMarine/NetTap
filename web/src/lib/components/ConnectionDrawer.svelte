@@ -7,8 +7,9 @@
 -->
 <script lang="ts">
 	import { getField, asString, buildTSharkFilter } from '$lib/utils/tshark-filter';
-	import { analyzePcap, getPcapFiles, getTSharkStatus } from '$api/tshark';
+	import { getPcapFiles, getTSharkStatus } from '$api/tshark';
 	import type { TSharkPacket, PcapFile } from '$api/tshark';
+	import { analyzeConnection } from '$lib/utils/tshark-analyze';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -127,9 +128,20 @@
 		return `${src} \u2192 ${dst}`;
 	});
 
+	// Timestamp
+	let timestamp = $derived(connection ? asString(getField(connection, '@timestamp')) : '');
+
 	// BPF filter
 	let bpfFilter = $derived(connection ? buildBpfFilter(connection) : '');
 	let displayFilter = $derived(connection ? buildTSharkFilter(connection) : '');
+
+	// TShark tool URL
+	let tsharkToolUrl = $derived.by(() => {
+		const params = new URLSearchParams({ auto: '1' });
+		if (displayFilter) params.set('filter', displayFilter);
+		if (timestamp) params.set('ts', timestamp);
+		return `/tools/tshark?${params}`;
+	});
 
 	// Connection state descriptions
 	const STATE_DESC: Record<string, string> = {
@@ -243,54 +255,27 @@
 	}
 
 	async function runAnalysis() {
-		if (pcapFiles.length === 0) {
-			tsharkError = 'No PCAP files available on the appliance.';
-			return;
-		}
-		if (!displayFilter) {
-			tsharkError = 'Could not build a display filter from this connection.';
-			return;
-		}
-
 		analyzing = true;
 		tsharkError = '';
 		tsharkTextOutput = '';
 		packets = [];
 
-		// Sort PCAPs by modification time (most recent first)
-		const sorted = [...pcapFiles].sort((a, b) => b.modified - a.modified);
-		const pcap = sorted[0];
-
-		const maxPackets = tsharkMode === 'follow' ? 500 : 50;
-		const outputFormat = tsharkMode === 'summary' ? 'json' : 'text';
-
 		try {
-			const result = await analyzePcap({
-				pcap_path: pcap.path,
-				display_filter: displayFilter,
-				max_packets: maxPackets,
-				output_format: outputFormat,
+			const result = await analyzeConnection({
+				pcapFiles,
+				displayFilter,
+				timestamp,
+				mode: tsharkMode,
+				proto: proto || 'tcp',
+				maxAttempts: 5,
 			});
 
 			if (result.error) {
 				tsharkError = result.error;
-			} else if (outputFormat === 'json') {
+			} else if (tsharkMode === 'summary') {
 				packets = result.packets;
-				if (packets.length === 0) {
-					tsharkError = 'No matching packets found in the most recent PCAP.';
-				}
 			} else {
-				// Text mode — packets array may contain text representations
-				if (result.packets && result.packets.length > 0) {
-					tsharkTextOutput = result.packets
-						.map((p) => {
-							if (typeof p === 'string') return p;
-							return p?.raw || p?.text || JSON.stringify(p, null, 2);
-						})
-						.join('\n');
-				} else {
-					tsharkError = 'No matching packets found in the most recent PCAP.';
-				}
+				tsharkTextOutput = result.textOutput;
 			}
 		} catch (err) {
 			tsharkError = `Analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -497,7 +482,7 @@
 							class:active={tsharkMode === 'follow'}
 							onclick={() => tsharkMode = 'follow'}
 						>Follow Stream</button>
-						<a href="/tshark" class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</a>
+						<a href={tsharkToolUrl} class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</a>
 					</div>
 
 					<!-- Status / output -->

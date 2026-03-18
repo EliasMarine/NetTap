@@ -12,8 +12,10 @@
 	import { getWhois } from '$api/lookup';
 	import type { WhoisResult } from '$api/lookup';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
-	import { analyzePcap, getTSharkStatus, getPcapFiles } from '$api/tshark';
+	import { getTSharkStatus, getPcapFiles } from '$api/tshark';
 	import type { TSharkPacket, PcapFile } from '$api/tshark';
+	import { analyzeConnection } from '$lib/utils/tshark-analyze';
+	import type { AnalysisMode } from '$lib/utils/tshark-analyze';
 	import { getRelatedConnections } from '$api/traffic';
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
@@ -52,6 +54,8 @@
 	let packets = $state<TSharkPacket[]>([]);
 	let analyzing = $state(false);
 	let tsharkError = $state('');
+	let tsharkMode = $state<AnalysisMode>('summary');
+	let tsharkTextOutput = $state('');
 	let selectedPacketIdx = $state<number | null>(null);
 	let hexContent = $state('');
 	let hexLoading = $state(false);
@@ -85,6 +89,14 @@
 	let communityId = $derived(asString(getField(connection, 'network.community_id') || getField(connection, 'zeek.conn.community_id')));
 	let timestamp = $derived(asString(getField(connection, '@timestamp')));
 	let displayFilter = $derived(buildTSharkFilter(connection));
+
+	// TShark tool URL
+	let tsharkToolUrl = $derived.by(() => {
+		const params = new URLSearchParams({ auto: '1' });
+		if (displayFilter) params.set('filter', displayFilter);
+		if (timestamp) params.set('ts', timestamp);
+		return `/tools/tshark?${params}`;
+	});
 
 	// GeoIP/ASN enrichment from connection source
 	let srcAsn = $derived(asString(getField(connection, 'source.as.full')));
@@ -212,7 +224,7 @@
 			try {
 				const result = await getPcapFiles();
 				pcapFiles = result.pcaps || [];
-				if (pcapFiles.length > 0) autoAnalyze();
+				if (pcapFiles.length > 0) runAnalysis('summary');
 			} catch {
 				tsharkError = 'Failed to load PCAP files';
 			} finally {
@@ -221,27 +233,37 @@
 		}
 	}
 
-	async function autoAnalyze() {
-		if (pcapFiles.length === 0 || !displayFilter) return;
-		const connTs = timestamp ? new Date(timestamp).getTime() : Date.now();
-		const sorted = [...pcapFiles].sort((a, b) =>
-			Math.abs((a.modified * 1000) - connTs) - Math.abs((b.modified * 1000) - connTs)
-		);
+	async function runAnalysis(mode?: AnalysisMode) {
+		const useMode = mode || tsharkMode;
 		analyzing = true;
 		tsharkError = '';
+		tsharkTextOutput = '';
 		packets = [];
-		for (const pcap of sorted.slice(0, 3)) {
-			try {
-				const result = await analyzePcap({
-					pcap_path: pcap.path, display_filter: displayFilter,
-					max_packets: 200, output_format: 'json',
-				});
-				if (result.error) continue;
-				if (result.packets.length > 0) { packets = result.packets; break; }
-			} catch { continue; }
+		selectedPacketIdx = null;
+		hexContent = '';
+
+		try {
+			const result = await analyzeConnection({
+				pcapFiles,
+				displayFilter,
+				timestamp,
+				mode: useMode,
+				proto: proto || 'tcp',
+				maxAttempts: 5,
+			});
+
+			if (result.error) {
+				tsharkError = result.error;
+			} else if (useMode === 'summary') {
+				packets = result.packets;
+			} else {
+				tsharkTextOutput = result.textOutput;
+			}
+		} catch (err) {
+			tsharkError = `Analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+		} finally {
+			analyzing = false;
 		}
-		if (packets.length === 0) tsharkError = 'No matching packets found in available PCAPs';
-		analyzing = false;
 	}
 
 	async function fetchHexForPacket(idx: number) {
@@ -451,6 +473,34 @@
 				<span class="filter-label">Display filter:</span>
 				<code class="filter-code">{displayFilter || '(none)'}</code>
 			</div>
+
+			<!-- Mode buttons + Analyze -->
+			<div class="tshark-controls">
+				<button
+					class="tshark-btn tshark-btn-primary"
+					onclick={() => runAnalysis()}
+					disabled={analyzing || tsharkAvailable === false}
+				>
+					{analyzing ? 'Analyzing...' : '\u25B6 Analyze'}
+				</button>
+				<button
+					class="tshark-btn tshark-btn-mode"
+					class:active={tsharkMode === 'summary'}
+					onclick={() => tsharkMode = 'summary'}
+				>Summary</button>
+				<button
+					class="tshark-btn tshark-btn-mode"
+					class:active={tsharkMode === 'verbose'}
+					onclick={() => tsharkMode = 'verbose'}
+				>Verbose (-V)</button>
+				<button
+					class="tshark-btn tshark-btn-mode"
+					class:active={tsharkMode === 'follow'}
+					onclick={() => tsharkMode = 'follow'}
+				>Follow Stream</button>
+				<a href={tsharkToolUrl} class="tshark-btn tshark-btn-mode">Open in TShark Tool &rarr;</a>
+			</div>
+
 			{#if analyzing}
 				<div class="loading-state">
 					<div class="loading-spinner"></div>
@@ -459,9 +509,9 @@
 			{:else if tsharkError}
 				<div class="error-state">
 					<p class="text-muted">{tsharkError}</p>
-					<button class="btn btn-secondary btn-sm" onclick={autoAnalyze}>Retry</button>
+					<button class="btn btn-secondary btn-sm" onclick={() => runAnalysis()}>Retry</button>
 				</div>
-			{:else if packets.length > 0}
+			{:else if tsharkMode === 'summary' && packets.length > 0}
 				<div class="packet-table-wrap">
 					<table class="packet-table">
 						<thead>
@@ -489,10 +539,17 @@
 						<pre class="raw-block hex-block">{hexContent}</pre>
 					{/if}
 				</div>
+			{:else if (tsharkMode === 'verbose' || tsharkMode === 'follow') && tsharkTextOutput}
+				<pre class="raw-block tshark-text-block">{tsharkTextOutput}</pre>
 			{:else if pcapLoading}
 				<div class="loading-state"><div class="loading-spinner"></div><p class="text-muted">Loading PCAP files...</p></div>
-			{:else}
+			{:else if pcapFiles.length === 0}
 				<div class="empty-state"><p class="text-muted">No PCAP files available</p></div>
+			{:else if !analyzing && packets.length === 0 && !tsharkTextOutput && !tsharkError}
+				<div class="empty-state">
+					<p class="text-muted">Click "Analyze" to inspect packets for this connection.</p>
+					<p class="text-dim">{pcapFiles.length} PCAP file{pcapFiles.length !== 1 ? 's' : ''} available.</p>
+				</div>
 			{/if}
 		{/if}
 	</div>
@@ -766,6 +823,61 @@
 	.no-threats {
 		font-size: var(--text-xs);
 		padding: var(--space-sm) 0;
+	}
+
+	/* TShark controls */
+	.tshark-controls {
+		display: flex;
+		gap: var(--space-xs);
+		margin-bottom: var(--space-md);
+		flex-wrap: wrap;
+	}
+
+	.tshark-btn {
+		padding: 5px 12px;
+		border-radius: var(--radius-sm);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		border: 1px solid;
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
+		white-space: nowrap;
+	}
+
+	.tshark-btn-primary {
+		background: var(--accent);
+		color: var(--bg-primary);
+		border-color: var(--accent);
+	}
+
+	.tshark-btn-primary:hover { box-shadow: 0 0 12px rgba(0, 212, 255, 0.3); }
+	.tshark-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+
+	.tshark-btn-mode {
+		background: transparent;
+		color: var(--text-secondary);
+		border-color: var(--border-default);
+	}
+
+	.tshark-btn-mode:hover {
+		border-color: var(--border-bright);
+		color: var(--text-primary);
+	}
+
+	.tshark-btn-mode.active {
+		border-color: var(--accent);
+		color: var(--accent);
+		background: var(--accent-muted);
+	}
+
+	.tshark-text-block {
+		font-size: 11px;
+		line-height: 1.6;
+		max-height: 500px;
 	}
 
 	/* TShark styles */
