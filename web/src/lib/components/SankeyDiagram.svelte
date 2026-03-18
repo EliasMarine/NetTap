@@ -275,7 +275,7 @@
 						height={node.h}
 						rx="4"
 						fill={node.color}
-						opacity={hoveredNode ? (isConnected ? 0.9 : 0.2) : 0.7}
+						opacity={hoveredNode ? (isConnected ? 1 : 0.2) : 0.85}
 						stroke={isHovered ? 'var(--text-primary)' : 'none'}
 						stroke-width="1.5"
 						style="transition: opacity 0.2s;"
@@ -286,10 +286,10 @@
 							x={node.x + node.w / 2}
 							y={node.y + node.h / 2 + 4}
 							text-anchor="middle"
-							fill="var(--text-primary)"
-							font-size="11"
-							font-weight="500"
-							opacity={hoveredNode ? (isConnected ? 1 : 0.3) : 0.9}
+							fill="#fff"
+							font-size="12"
+							font-weight="600"
+							opacity={hoveredNode ? (isConnected ? 1 : 0.3) : 1}
 							style="pointer-events: none;"
 						>
 							{truncateLabel(node.label, 14)}
