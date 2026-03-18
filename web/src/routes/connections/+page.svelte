@@ -1,18 +1,34 @@
 <script lang="ts">
-	import { getConnections } from '$api/traffic';
-	import type { Connection, ConnectionsResponse } from '$api/traffic';
-	import { getTSharkStatus } from '$api/tshark';
-	import type { TSharkStatus } from '$api/tshark';
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import {
+		getConnections,
+		getConnectionStats,
+		getConnectionSankey,
+		getConnectionTimeline,
+	} from '$api/traffic';
+	import type {
+		Connection,
+		ConnectionsResponse,
+		ConnectionStatsResponse,
+		SankeyResponse,
+		ConnectionTimelineResponse,
+		ConnectionTimelineBucket,
+	} from '$api/traffic';
+	import { getLiveConnections } from '$api/live';
 	import IPAddress from '$components/IPAddress.svelte';
-	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
+	import type { BarItem } from '$components/HorizontalBarList.svelte';
+	import SankeyDiagram from '$components/SankeyDiagram.svelte';
+	import SessionTimeline from '$components/SessionTimeline.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
+	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
 
 	// ---------------------------------------------------------------------------
-	// Types
+	// Types & Constants
 	// ---------------------------------------------------------------------------
 
 	type StateFilter = 'all' | 'established' | 'closed' | 'rejected' | 'timeout';
@@ -23,10 +39,6 @@
 		ms: number;
 	}
 
-	// ---------------------------------------------------------------------------
-	// Constants
-	// ---------------------------------------------------------------------------
-
 	const TIME_RANGES: TimeRange[] = [
 		{ label: '15m', value: '15m', ms: 15 * 60 * 1000 },
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000 },
@@ -34,6 +46,10 @@
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000 },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
 	];
+
+	const INTERVAL_MAP: Record<string, string> = {
+		'15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h',
+	};
 
 	const STATE_FILTERS: { value: StateFilter; label: string }[] = [
 		{ value: 'all', label: 'All' },
@@ -43,60 +59,72 @@
 		{ value: 'timeout', label: 'Timeout' },
 	];
 
-	const PROTOCOL_OPTIONS = ['All', 'TCP', 'UDP', 'ICMP'] as const;
+	const PROTOCOL_OPTIONS = ['All', 'TCP', 'UDP', 'ICMP', 'TLS'] as const;
 
-	const PAGE_SIZE = 50;
+	const PROTO_COLORS: Record<string, string> = {
+		tcp: 'var(--cyan)', udp: 'var(--green)', tls: 'var(--purple)',
+		dns: 'var(--amber)', icmp: 'var(--red)', http: 'var(--blue)',
+	};
 
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
 
-	let connections = $state<Connection[]>([]);
+	let initialized = $state(false);
 	let loading = $state(false);
-	let error = $state('');
+
+	// Time range
+	let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h
+	let autoRefresh = $state(false);
+	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
+
+	// Stats
+	let stats = $state<ConnectionStatsResponse | null>(null);
+	let activeNow = $state(0);
+
+	// Sankey
+	let sankey = $state<SankeyResponse | null>(null);
+
+	// Timeline
+	let timeline = $state<ConnectionTimelineBucket[]>([]);
+
+	// Connections table
+	let connections = $state<Connection[]>([]);
 	let totalConnections = $state(0);
 	let totalPages = $state(0);
 	let currentPage = $state(1);
+	let pageSize = $state(50);
 
 	// Filters
-	let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // default 1h
 	let protocolFilter = $state('All');
 	let serviceFilter = $state('');
 	let ipFilter = $state('');
+	let countryFilter = $state('');
 	let stateFilter = $state<StateFilter>('all');
+	let hasAlertsFilter = $state(false);
+	let sankeyFilter = $state<{ type: string; id: string } | null>(null);
 
-	// OLD CODE START — replaced by DetailDrawer
-	// let expandedId = $state<string | null>(null);
-	// let tsharkStatus = $state<TSharkStatus | null>(null);
-	// let tsharkChecked = $state(false);
-	// OLD CODE END
-
-	// Detail drawer state
+	// Drawer
 	let drawerConn = $state<Connection | null>(null);
-	let drawerTab = $state('details');
+	let drawerTab = $state('summary');
 	let isMirrorMode = $state(false);
 	const CONN_DRAWER_TABS = [
-		{ id: 'details', label: 'Details' },
-		{ id: 'tshark', label: 'TShark Analysis' },
-		{ id: 'raw', label: 'Raw JSON' },
+		{ id: 'summary', label: 'Summary' },
+		{ id: 'tshark', label: 'TShark' },
+		{ id: 'related', label: 'Related' },
+		{ id: 'flow', label: 'Flow' },
 	];
 
-	// Subscribe to capture mode store
 	captureMode.subscribe((mode) => { isMirrorMode = mode === 'mirror'; });
 
-	// Column sorting
+	// Sort
 	type SortKey = 'timestamp' | 'src' | 'dst' | 'protocol' | 'service' | 'duration' | 'bytesIn' | 'bytesOut' | 'state';
 	let sortKey = $state<SortKey | null>(null);
 	let sortDir = $state<'asc' | 'desc'>('desc');
 
-	function toggleSort(key: SortKey) {
-		if (sortKey === key) {
-			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-		} else {
-			sortKey = key;
-			sortDir = key === 'timestamp' ? 'desc' : 'asc';
-		}
-	}
+	// ---------------------------------------------------------------------------
+	// Derived
+	// ---------------------------------------------------------------------------
 
 	function sortValue(conn: Connection, key: SortKey): string | number {
 		switch (key) {
@@ -117,21 +145,52 @@
 		}
 	}
 
-	let sortedConnections = $derived(() => {
+	let sortedConnections = $derived.by(() => {
 		if (!sortKey) return connections;
 		const key = sortKey;
 		const dir = sortDir;
 		return [...connections].sort((a, b) => {
 			const va = sortValue(a, key);
 			const vb = sortValue(b, key);
-			if (typeof va === 'number' && typeof vb === 'number') {
-				return dir === 'asc' ? va - vb : vb - va;
-			}
-			const sa = String(va);
-			const sb = String(vb);
-			return dir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa);
+			if (typeof va === 'number' && typeof vb === 'number') return dir === 'asc' ? va - vb : vb - va;
+			return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
 		});
 	});
+
+	// Bar list items for analytics row
+	let sourceBarItems = $derived<BarItem[]>(
+		(stats?.top_sources || []).map((s, i) => ({
+			key: s.ip,
+			label: s.ip,
+			value: s.total_bytes,
+			formattedValue: formatBytes(s.total_bytes),
+			secondaryValue: `${s.connections} conn`,
+			color: 'var(--cyan)',
+			isIp: true,
+			mono: true,
+		}))
+	);
+
+	let protocolBarItems = $derived<BarItem[]>(
+		(stats?.protocols || []).map((p) => ({
+			key: p.name,
+			label: p.name.toUpperCase(),
+			value: p.count,
+			formattedValue: formatNumber(p.count),
+			color: PROTO_COLORS[p.name.toLowerCase()] || 'var(--accent)',
+		}))
+	);
+
+	let destBarItems = $derived<BarItem[]>(
+		(stats?.top_destinations || []).map((d) => ({
+			key: d.ip,
+			label: d.asn || d.ip,
+			value: d.total_bytes,
+			formattedValue: formatBytes(d.total_bytes),
+			secondaryValue: d.country || '',
+			color: 'var(--green)',
+		}))
+	);
 
 	// ---------------------------------------------------------------------------
 	// Display helpers
@@ -139,18 +198,21 @@
 
 	function formatTimestamp(ts: string | undefined): string {
 		if (!ts) return '--';
-		try {
-			return new Date(ts).toLocaleString();
-		} catch {
-			return ts;
-		}
+		try { return new Date(ts).toLocaleString(); } catch { return ts; }
 	}
 
 	function formatBytes(bytes: number | undefined): string {
 		if (bytes === undefined || bytes === null) return '--';
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
+		if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+		if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${bytes} B`;
+	}
+
+	function formatNumber(n: number): string {
+		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+		return String(n);
 	}
 
 	function formatDuration(conn: Connection): string {
@@ -198,108 +260,147 @@
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
+	function getTimeRange() {
+		const now = new Date();
+		const from = new Date(now.getTime() - selectedTimeRange.ms).toISOString();
+		const to = now.toISOString();
+		return { from, to };
+	}
+
 	function buildSearchQuery(): string {
 		const parts: string[] = [];
 		if (protocolFilter !== 'All') parts.push(protocolFilter.toLowerCase());
 		if (serviceFilter.trim()) parts.push(serviceFilter.trim());
 		if (ipFilter.trim()) parts.push(ipFilter.trim());
+		// Apply sankey filter
+		if (sankeyFilter) {
+			if (sankeyFilter.type === 'source') parts.push(`source.ip:${sankeyFilter.id}`);
+			else if (sankeyFilter.type === 'protocol') parts.push(sankeyFilter.id.toLowerCase());
+			else if (sankeyFilter.type === 'destination') parts.push(`destination.as.full:"${sankeyFilter.id}"`);
+		}
 		return parts.join(' ');
 	}
 
-	async function fetchConnections(page: number = 1) {
+	async function fetchAll() {
 		loading = true;
-		error = '';
+		const { from, to } = getTimeRange();
+		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
+
 		try {
-			const now = new Date();
-			const from = new Date(now.getTime() - selectedTimeRange.ms).toISOString();
-			const to = now.toISOString();
-			const q = buildSearchQuery();
+			const [statsRes, sankeyRes, timelineRes, liveRes] = await Promise.allSettled([
+				getConnectionStats({ from, to }),
+				getConnectionSankey({ from, to, limit: 10 }),
+				getConnectionTimeline({ from, to, interval }),
+				getLiveConnections({ limit: 1 }),
+			]);
 
+			if (statsRes.status === 'fulfilled') stats = statsRes.value;
+			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
+			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
+			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
+		} catch { /* handled per-request */ }
+
+		await fetchConnections(1);
+		loading = false;
+	}
+
+	async function fetchConnections(pg: number = 1) {
+		const { from, to } = getTimeRange();
+		const q = buildSearchQuery();
+		try {
 			const response: ConnectionsResponse = await getConnections({
-				from,
-				to,
-				page,
-				size: PAGE_SIZE,
-				q: q || undefined,
+				from, to, page: pg, size: pageSize, q: q || undefined,
 			});
-
 			let filtered = response.connections;
 			if (stateFilter !== 'all') {
 				filtered = filtered.filter((c) => connState(c) === stateFilter);
 			}
-
 			connections = filtered;
 			currentPage = response.page;
 			totalPages = response.total_pages;
 			totalConnections = response.total;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch connections';
+		} catch {
 			connections = [];
 			totalPages = 0;
 			totalConnections = 0;
-		} finally {
-			loading = false;
 		}
 	}
 
 	// ---------------------------------------------------------------------------
-	// TShark
+	// Interaction handlers
 	// ---------------------------------------------------------------------------
 
-	// OLD CODE START — TShark/expand replaced by DetailDrawer
-	// async function checkTShark() { ... }
-	// function toggleRow(id: string) { ... }
-	// function openInTShark(conn: Connection) { ... }
-	// OLD CODE END
+	function toggleSort(key: SortKey) {
+		if (sortKey === key) {
+			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortKey = key;
+			sortDir = key === 'timestamp' ? 'desc' : 'asc';
+		}
+	}
+
+	function handleTimeRangeChange(range: TimeRange) {
+		selectedTimeRange = range;
+		if (initialized) fetchAll();
+	}
+
+	function handleSankeyNodeClick(type: 'source' | 'protocol' | 'destination', id: string) {
+		if (sankeyFilter?.type === type && sankeyFilter?.id === id) {
+			sankeyFilter = null; // toggle off
+		} else {
+			sankeyFilter = { type, id };
+		}
+		if (initialized) fetchConnections(1);
+	}
+
+	function clearSankeyFilter() {
+		sankeyFilter = null;
+		if (initialized) fetchConnections(1);
+	}
+
+	function toggleAutoRefresh() {
+		autoRefresh = !autoRefresh;
+		if (autoRefresh) {
+			refreshInterval = setInterval(fetchAll, 15_000);
+		} else if (refreshInterval) {
+			clearInterval(refreshInterval);
+			refreshInterval = null;
+		}
+	}
 
 	function openDrawer(conn: Connection) {
 		drawerConn = conn;
-		drawerTab = 'details';
+		drawerTab = 'summary';
 	}
 
 	function closeDrawer() {
 		drawerConn = null;
-		drawerTab = 'details';
+		drawerTab = 'summary';
 	}
 
-	// ---------------------------------------------------------------------------
-	// Pagination
-	// ---------------------------------------------------------------------------
-
-	function goToPage(page: number) {
-		if (page < 1 || page > totalPages) return;
-		fetchConnections(page);
+	function goToPage(pg: number) {
+		if (pg < 1 || pg > totalPages) return;
+		fetchConnections(pg);
 	}
 
-	// ---------------------------------------------------------------------------
-	// Filter change triggers
-	// ---------------------------------------------------------------------------
-
-	let initialized = $state(false);
-
-	$effect(() => {
-		// Track filter dependencies
-		selectedTimeRange;
-		protocolFilter;
-		stateFilter;
-
-		if (initialized) {
-			fetchConnections(1);
-		}
-	});
-
-	// Initial fetch — also read IP and protocol filter from URL query params (e.g. from IPAddress context menu)
-	$effect(() => {
-		const urlIp = $page.url.searchParams.get('ip');
-		if (urlIp) {
-			ipFilter = urlIp;
-		}
-		const urlProtocol = $page.url.searchParams.get('protocol');
-		if (urlProtocol) {
-			protocolFilter = urlProtocol;
-		}
+	function handlePageSizeChange(event: Event) {
+		const target = event.target as HTMLSelectElement;
+		pageSize = parseInt(target.value) || 50;
 		fetchConnections(1);
-		initialized = true;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Init
+	// ---------------------------------------------------------------------------
+
+	onMount(() => {
+		const urlIp = $page.url.searchParams.get('ip');
+		if (urlIp) ipFilter = urlIp;
+		const urlProtocol = $page.url.searchParams.get('protocol');
+		if (urlProtocol) protocolFilter = urlProtocol;
+
+		fetchAll().then(() => { initialized = true; });
+		return () => { if (refreshInterval) clearInterval(refreshInterval); };
 	});
 </script>
 
@@ -307,47 +408,149 @@
 	<title>Connections | NetTap</title>
 </svelte:head>
 
-<div class="connections-page">
-	<!-- Header -->
-	<div class="page-header">
+<div class="page-container">
+	<!-- ================================================================== -->
+	<!-- Header                                                             -->
+	<!-- ================================================================== -->
+	<header class="page-header">
 		<div class="header-left">
-			<h2>Connections</h2>
-			<p class="text-muted">
-				Network connections captured by Zeek
-				{#if totalConnections > 0}
-					<span class="connection-count mono">{totalConnections.toLocaleString()} total</span>
-				{/if}
-			</p>
+			<h1>Connections</h1>
+			<p class="subtitle">Network session explorer</p>
 		</div>
-		<div class="header-actions">
-			<!-- Time range selector -->
+		<div class="header-right">
 			<div class="pills">
 				{#each TIME_RANGES as range}
 					<button
 						class="pill"
 						class:active={selectedTimeRange.value === range.value}
-						onclick={() => (selectedTimeRange = range)}
+						onclick={() => handleTimeRangeChange(range)}
 					>
 						{range.label}
 					</button>
 				{/each}
 			</div>
-			<button class="btn btn-primary btn-sm" onclick={() => fetchConnections(currentPage)} disabled={loading}>
+			<button
+				class="btn btn-secondary btn-sm"
+				class:auto-refresh-active={autoRefresh}
+				onclick={toggleAutoRefresh}
+			>
+				{autoRefresh ? 'Auto ON' : 'Auto'}
+			</button>
+			<button class="btn btn-primary btn-sm" onclick={() => fetchAll()} disabled={loading}>
 				{loading ? 'Loading...' : 'Refresh'}
 			</button>
 		</div>
+	</header>
+
+	<!-- ================================================================== -->
+	<!-- Stat Cards                                                         -->
+	<!-- ================================================================== -->
+	<div class="stat-cards">
+		<div class="stat-card">
+			<span class="stat-value mono">{formatNumber(stats?.total_sessions ?? 0)}</span>
+			<span class="stat-label">Total Sessions</span>
+		</div>
+		<div class="stat-card">
+			<span class="stat-value mono">
+				{activeNow}
+				{#if activeNow > 0}<span class="pulse-dot"></span>{/if}
+			</span>
+			<span class="stat-label">Active Now</span>
+		</div>
+		<div class="stat-card">
+			<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
+			<span class="stat-label">Bytes In</span>
+		</div>
+		<div class="stat-card">
+			<span class="stat-value mono">{formatBytes(stats?.bytes_out ?? 0)}</span>
+			<span class="stat-label">Bytes Out</span>
+		</div>
+		<div class="stat-card" class:has-alerts={stats && stats.alert_sessions > 0}>
+			<span class="stat-value mono">{formatNumber(stats?.alert_sessions ?? 0)}</span>
+			<span class="stat-label">w/ Alerts</span>
+		</div>
 	</div>
 
-	<!-- Filter bar -->
+	<!-- ================================================================== -->
+	<!-- Sankey Flow Diagram                                                 -->
+	<!-- ================================================================== -->
+	<section class="card">
+		<div class="card-header">
+			<h2>Network Flow</h2>
+			<span class="card-badge">Source IPs &rarr; Protocols &rarr; Destinations</span>
+		</div>
+		<div class="card-body">
+			{#if sankey}
+				<SankeyDiagram
+					sources={sankey.nodes.sources}
+					protocols={sankey.nodes.protocols}
+					destinations={sankey.nodes.destinations}
+					links={sankey.links}
+					onNodeClick={handleSankeyNodeClick}
+				/>
+			{:else if loading}
+				<div class="chart-placeholder">
+					<div class="spinner"></div>
+				</div>
+			{:else}
+				<div class="chart-placeholder">
+					<p class="text-muted">No flow data available</p>
+				</div>
+			{/if}
+		</div>
+	</section>
+
+	<!-- ================================================================== -->
+	<!-- Session Volume Timeline                                            -->
+	<!-- ================================================================== -->
+	<section class="card">
+		<SessionTimeline buckets={timeline} {loading} />
+	</section>
+
+	<!-- ================================================================== -->
+	<!-- Three-Column Analytics Row                                         -->
+	<!-- ================================================================== -->
+	<div class="analytics-row">
+		<div class="analytics-col card">
+			<div class="analytics-header">
+				<h3>Top Sources</h3>
+				<span class="card-badge">by bytes</span>
+			</div>
+			<HorizontalBarList items={sourceBarItems} showRank labelWidth={130} />
+		</div>
+		<div class="analytics-col card">
+			<div class="analytics-header">
+				<h3>Protocol Distribution</h3>
+			</div>
+			<HorizontalBarList items={protocolBarItems} showDot labelWidth={80} />
+		</div>
+		<div class="analytics-col card">
+			<div class="analytics-header">
+				<h3>Top Destinations</h3>
+				<span class="card-badge">by bytes</span>
+			</div>
+			<HorizontalBarList items={destBarItems} showRank labelWidth={160} />
+		</div>
+	</div>
+
+	<!-- ================================================================== -->
+	<!-- Filter Bar                                                         -->
+	<!-- ================================================================== -->
 	<div class="filter-bar card">
 		<div class="filter-row">
 			<div class="filter-group">
 				<label class="label" for="protocol-filter">Protocol</label>
-				<select id="protocol-filter" class="input select" bind:value={protocolFilter}>
+				<div class="pills pills-sm">
 					{#each PROTOCOL_OPTIONS as proto}
-						<option value={proto}>{proto}</option>
+						<button
+							class="pill"
+							class:active={protocolFilter === proto}
+							onclick={() => { protocolFilter = proto; if (initialized) fetchConnections(1); }}
+						>
+							{proto}
+						</button>
 					{/each}
-				</select>
+				</div>
 			</div>
 			<div class="filter-group">
 				<label class="label" for="service-filter">Service</label>
@@ -371,21 +574,14 @@
 					onkeydown={(e) => { if (e.key === 'Enter') fetchConnections(1); }}
 				/>
 			</div>
-			<div class="filter-group filter-group-apply">
-				<button class="btn btn-secondary btn-sm" onclick={() => fetchConnections(1)} disabled={loading}>
-					Apply
-				</button>
-			</div>
-		</div>
-		<div class="filter-row">
 			<div class="filter-group">
 				<label class="label">State</label>
-				<div class="pills">
+				<div class="pills pills-sm">
 					{#each STATE_FILTERS as sf}
 						<button
 							class="pill"
 							class:active={stateFilter === sf.value}
-							onclick={() => (stateFilter = sf.value)}
+							onclick={() => { stateFilter = sf.value; if (initialized) fetchConnections(1); }}
 						>
 							{sf.label}
 						</button>
@@ -393,17 +589,38 @@
 				</div>
 			</div>
 		</div>
+		<div class="filter-row filter-row-secondary">
+			<div class="filter-group">
+				<label class="toggle-label">
+					<input type="checkbox" bind:checked={hasAlertsFilter} onchange={() => fetchConnections(1)} />
+					<span>Has Alerts</span>
+				</label>
+			</div>
+			{#if sankeyFilter}
+				<div class="filter-badge">
+					<span class="badge badge-accent">
+						{sankeyFilter.type}: {sankeyFilter.id}
+						<button class="badge-dismiss" onclick={clearSankeyFilter}>&times;</button>
+					</span>
+				</div>
+			{/if}
+			<div class="filter-group filter-group-apply">
+				<button class="btn btn-secondary btn-sm" onclick={() => fetchConnections(1)} disabled={loading}>
+					Apply
+				</button>
+			</div>
+		</div>
 	</div>
 
-	<!-- Connection table -->
+	<!-- ================================================================== -->
+	<!-- Sessions Table                                                     -->
+	<!-- ================================================================== -->
 	{#if loading && connections.length === 0}
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Loading connections...</p>
 		</div>
-	{:else if error}
-		<div class="alert alert-danger">{error}</div>
-	{:else if connections.length === 0}
+	{:else if connections.length === 0 && !loading}
 		<div class="empty-state">
 			<div class="empty-icon">
 				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -413,7 +630,6 @@
 			<h3>No Connections</h3>
 			<p class="text-muted">
 				No connections found for the selected time range and filters.
-				Make sure traffic is flowing through the bridge and Zeek is capturing.
 			</p>
 		</div>
 	{:else}
@@ -422,37 +638,29 @@
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th class="sortable" onclick={() => toggleSort('timestamp')}>
-								Timestamp {sortKey === 'timestamp' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('src')}>
-								Source {sortKey === 'src' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('dst')}>
-								Destination {sortKey === 'dst' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('protocol')}>
-								Protocol {sortKey === 'protocol' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('service')}>
-								Service {sortKey === 'service' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('duration')}>
-								Duration {sortKey === 'duration' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('bytesIn')}>
-								Bytes In {sortKey === 'bytesIn' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('bytesOut')}>
-								Bytes Out {sortKey === 'bytesOut' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
-							<th class="sortable" onclick={() => toggleSort('state')}>
-								State {sortKey === 'state' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-							</th>
+							{#each [
+								{ key: 'timestamp', label: 'Timestamp' },
+								{ key: 'src', label: 'Source' },
+								{ key: 'dst', label: 'Destination' },
+								{ key: 'protocol', label: 'Protocol' },
+								{ key: 'service', label: 'Service' },
+								{ key: 'duration', label: 'Duration' },
+								{ key: 'bytesIn', label: 'Bytes In' },
+								{ key: 'bytesOut', label: 'Bytes Out' },
+								{ key: 'state', label: 'State' },
+							] as col}
+								<th class="sortable" onclick={() => toggleSort(col.key as SortKey)}>
+									{col.label}
+									{#if sortKey === col.key}
+										<span class="sort-arrow">{sortDir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+									{/if}
+								</th>
+							{/each}
 						</tr>
 					</thead>
 					<tbody>
-						{#each sortedConnections() as conn (conn._id)}
+						{#each sortedConnections as conn (conn._id)}
+							{@const srcAsn = asString(getField(conn, 'destination.as.full'))}
 							<tr
 								class="conn-row"
 								class:expanded={drawerConn?._id === conn._id}
@@ -471,11 +679,18 @@
 									{#if getField(conn, 'destination.ip')}
 										<IPAddress ip={String(getField(conn, 'destination.ip'))} /><!--
 										-->{#if getField(conn, 'destination.port')}:{getField(conn, 'destination.port')}{/if}
+										{#if srcAsn}
+											<span class="org-tag">{srcAsn.length > 20 ? srcAsn.slice(0, 19) + '\u2026' : srcAsn}</span>
+										{/if}
 									{:else}
 										--
 									{/if}
 								</td>
-								<td>{asString(getField(conn, 'network.transport')).toUpperCase() || '--'}</td>
+								<td>
+									<span class="proto-badge" style="background: {PROTO_COLORS[asString(getField(conn, 'network.transport')).toLowerCase()] || 'var(--text-muted)'};">
+										{asString(getField(conn, 'network.transport')).toUpperCase() || '--'}
+									</span>
+								</td>
 								<td>{asString(getField(conn, 'protocol')) || '--'}</td>
 								<td class="mono">{formatDuration(conn)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined)}</td>
@@ -493,7 +708,7 @@
 		</div>
 
 		<!-- Pagination -->
-		{#if totalPages > 1}
+		{#if totalPages > 0}
 			<div class="pagination">
 				<button
 					class="btn btn-secondary btn-sm"
@@ -513,6 +728,11 @@
 				>
 					Next
 				</button>
+				<select class="input select page-size-select" value={String(pageSize)} onchange={handlePageSizeChange}>
+					<option value="25">25</option>
+					<option value="50">50</option>
+					<option value="100">100</option>
+				</select>
 			</div>
 		{/if}
 	{/if}
@@ -521,8 +741,8 @@
 <!-- Detail Drawer -->
 <DetailDrawer
 	open={drawerConn !== null}
-	title={drawerConn ? `${asString(getField(drawerConn, 'source.ip'))} → ${asString(getField(drawerConn, 'destination.ip'))}` : ''}
-	subtitle={drawerConn ? `${asString(getField(drawerConn, 'network.transport')).toUpperCase()} · ${formatTimestamp(drawerConn['@timestamp'] as string | undefined)}` : ''}
+	title={drawerConn ? `${asString(getField(drawerConn, 'source.ip'))} \u2192 ${asString(getField(drawerConn, 'destination.ip'))}` : ''}
+	subtitle={drawerConn ? `${asString(getField(drawerConn, 'network.transport')).toUpperCase()} \u00B7 ${formatTimestamp(drawerConn['@timestamp'] as string | undefined)}` : ''}
 	tabs={CONN_DRAWER_TABS}
 	activeTab={drawerTab}
 	onclose={closeDrawer}
@@ -537,6 +757,7 @@
 		{#if drawerConn}
 			{@const srcIp = asString(getField(drawerConn, 'source.ip'))}
 			{@const dstIp = asString(getField(drawerConn, 'destination.ip'))}
+			{@const cid = asString(getField(drawerConn, 'network.community_id'))}
 			{#if srcIp}
 				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(srcIp)}`)}>
 					View Source Device
@@ -547,9 +768,9 @@
 					View Dest Device
 				</button>
 			{/if}
-			{#if isMirrorMode}
-				<button class="btn btn-secondary btn-sm" disabled title="Not available in mirror/SPAN mode">
-					Block IP (unavailable)
+			{#if cid}
+				<button class="btn btn-secondary btn-sm" onclick={() => { navigator.clipboard.writeText(cid); }}>
+					Copy Community ID
 				</button>
 			{/if}
 		{/if}
@@ -557,7 +778,10 @@
 </DetailDrawer>
 
 <style>
-	.connections-page {
+	/* ================================================================== */
+	/* Page container                                                      */
+	/* ================================================================== */
+	.page-container {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
@@ -572,25 +796,147 @@
 		flex-wrap: wrap;
 	}
 
-	.header-left h2 {
+	.header-left h1 {
 		font-size: var(--text-2xl);
 		font-weight: 700;
-		margin-bottom: var(--space-xs);
+		margin-bottom: 2px;
 	}
 
-	.header-actions {
+	.subtitle {
+		font-size: var(--text-sm);
+		color: var(--text-muted);
+	}
+
+	.header-right {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
 	}
 
-	.connection-count {
-		margin-left: var(--space-sm);
-		color: var(--accent);
-		font-size: var(--text-sm);
+	.auto-refresh-active {
+		color: var(--accent) !important;
+		border-color: var(--accent) !important;
 	}
 
-	/* Filter bar */
+	/* ================================================================== */
+	/* Stat Cards                                                          */
+	/* ================================================================== */
+	.stat-cards {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: var(--space-md);
+	}
+
+	.stat-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		padding: var(--space-md);
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-lg);
+		text-align: center;
+	}
+
+	.stat-card .stat-value {
+		font-size: var(--text-2xl);
+		font-weight: 700;
+		color: var(--text-primary);
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+	}
+
+	.stat-card .stat-label {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.stat-card.has-alerts .stat-value {
+		color: var(--red);
+	}
+
+	.pulse-dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--green);
+		animation: pulse 2s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; transform: scale(1); }
+		50% { opacity: 0.5; transform: scale(1.3); }
+	}
+
+	/* ================================================================== */
+	/* Cards                                                               */
+	/* ================================================================== */
+	.card-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-md);
+		gap: var(--space-sm);
+		flex-wrap: wrap;
+	}
+
+	.card-header h2 {
+		font-size: var(--text-base);
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.card-badge {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+	}
+
+	.card-body {
+		padding: 0 var(--space-md) var(--space-md);
+	}
+
+	.chart-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 200px;
+	}
+
+	/* ================================================================== */
+	/* Analytics Row                                                       */
+	/* ================================================================== */
+	.analytics-row {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: var(--space-md);
+	}
+
+	.analytics-col {
+		padding: var(--space-md);
+		overflow: hidden;
+	}
+
+	.analytics-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: var(--space-sm);
+	}
+
+	.analytics-header h3 {
+		font-size: var(--text-sm);
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	/* ================================================================== */
+	/* Filter Bar                                                          */
+	/* ================================================================== */
 	.filter-bar {
 		padding: var(--space-md);
 	}
@@ -606,27 +952,66 @@
 		margin-top: var(--space-md);
 	}
 
+	.filter-row-secondary {
+		align-items: center;
+	}
+
 	.filter-group {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-xs);
-		min-width: 140px;
 	}
 
 	.filter-group-apply {
-		min-width: auto;
-		justify-content: flex-end;
+		margin-left: auto;
 	}
 
 	.filter-group .input {
 		width: 180px;
 	}
 
-	.filter-group .select {
-		width: 120px;
+	.pills-sm {
+		gap: 2px;
 	}
 
-	/* Table */
+	.toggle-label {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.filter-badge {
+		display: flex;
+		align-items: center;
+	}
+
+	.badge-accent {
+		background: var(--accent-muted);
+		color: var(--accent);
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		padding: 2px 8px;
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+	}
+
+	.badge-dismiss {
+		background: none;
+		border: none;
+		color: var(--accent);
+		cursor: pointer;
+		font-size: var(--text-base);
+		line-height: 1;
+		padding: 0;
+	}
+
+	/* ================================================================== */
+	/* Table                                                               */
+	/* ================================================================== */
 	.table-wrapper {
 		padding: 0;
 		overflow: hidden;
@@ -648,9 +1033,18 @@
 		color: var(--accent);
 	}
 
+	.sort-arrow {
+		font-size: 10px;
+		margin-left: 2px;
+	}
+
 	.conn-row {
 		cursor: pointer;
 		transition: background-color var(--transition-fast);
+	}
+
+	.conn-row:hover td {
+		background-color: var(--bg-tertiary);
 	}
 
 	.conn-row.expanded td {
@@ -658,11 +1052,29 @@
 		border-bottom-color: transparent;
 	}
 
-	/* OLD CODE START — detail-row/panel/tshark styles replaced by DetailDrawer */
-	/* .detail-row, .detail-panel, .detail-grid, .tshark-section — moved to drawer */
-	/* OLD CODE END */
+	.org-tag {
+		display: inline-block;
+		margin-left: var(--space-xs);
+		padding: 1px 4px;
+		border-radius: var(--radius-sm);
+		font-size: 10px;
+		color: var(--text-muted);
+		background: var(--bg-tertiary);
+		font-family: var(--font-body, inherit);
+	}
 
-	/* Loading state */
+	.proto-badge {
+		display: inline-block;
+		padding: 1px 6px;
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		color: var(--bg-primary);
+	}
+
+	/* ================================================================== */
+	/* Loading / Empty / Pagination                                        */
+	/* ================================================================== */
 	.loading-state {
 		display: flex;
 		flex-direction: column;
@@ -685,7 +1097,6 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* Empty state */
 	.empty-state {
 		display: flex;
 		flex-direction: column;
@@ -710,12 +1121,6 @@
 		margin-bottom: var(--space-sm);
 	}
 
-	.empty-state p {
-		max-width: 480px;
-		line-height: var(--leading-relaxed);
-	}
-
-	/* Pagination */
 	.pagination {
 		display: flex;
 		align-items: center;
@@ -729,23 +1134,40 @@
 		color: var(--text-secondary);
 	}
 
+	.page-size-select {
+		width: 70px;
+		font-size: var(--text-sm);
+	}
+
+	/* ================================================================== */
+	/* Responsive                                                          */
+	/* ================================================================== */
+	@media (max-width: 1200px) {
+		.analytics-row {
+			grid-template-columns: 1fr;
+		}
+	}
+
 	@media (max-width: 768px) {
 		.page-header {
 			flex-direction: column;
 		}
 
-		.header-actions {
+		.header-right {
 			width: 100%;
 			flex-wrap: wrap;
 		}
 
-		.filter-group .input,
-		.filter-group .select {
-			width: 100%;
+		.stat-cards {
+			grid-template-columns: repeat(2, 1fr);
 		}
 
-		.filter-group {
-			min-width: 100%;
+		.stat-cards .stat-card:last-child {
+			grid-column: span 2;
+		}
+
+		.filter-group .input {
+			width: 100%;
 		}
 	}
 </style>
