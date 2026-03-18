@@ -262,7 +262,7 @@
 				<g
 					role="button"
 					tabindex="0"
-					style="cursor: pointer;"
+					style="cursor: {node.type === 'source' ? 'alias' : 'pointer'};"
 					onmouseenter={() => (hoveredNode = node.id)}
 					onmouseleave={() => (hoveredNode = null)}
 					onclick={() => onNodeClick?.(node.type, node.id)}

@@ -345,6 +345,12 @@
 	}
 
 	function handleSankeyNodeClick(type: 'source' | 'protocol' | 'destination', id: string) {
+		if (type === 'source') {
+			// Source IPs navigate to device intelligence page
+			goto(`/devices/${encodeURIComponent(id)}`);
+			return;
+		}
+		// Protocol + Destination: toggle table filter (existing behavior)
 		if (sankeyFilter?.type === type && sankeyFilter?.id === id) {
 			sankeyFilter = null; // toggle off
 		} else {
