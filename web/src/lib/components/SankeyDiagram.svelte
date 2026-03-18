@@ -88,10 +88,9 @@
 		source: string;
 		target: string;
 		value: number;
-		sy: number; // source y offset
-		ty: number; // target y offset
-		sw: number; // source width (thickness)
-		tw: number; // target width
+		sy: number;  // source y center
+		ty: number;  // target y center
+		thickness: number; // visual stroke width
 		highlighted: boolean;
 	}
 
@@ -157,25 +156,27 @@
 
 			const srcTotal = Math.max(1, srcNode.value);
 			const tgtTotal = Math.max(1, tgtNode.value);
-			const sw = Math.max(MIN_LINK_W, (link.value / srcTotal) * srcNode.h);
-			const tw = Math.max(MIN_LINK_W, (link.value / tgtTotal) * tgtNode.h);
+			// Use source-proportional thickness for consistent visual weight
+			const thickness = Math.max(MIN_LINK_W, (link.value / srcTotal) * srcNode.h);
 
 			const sOff = srcOffsets.get(link.source) || 0;
 			const tOff = tgtOffsets.get(link.target) || 0;
+
+			// Compute the target-proportional band height for stacking on target side
+			const tBand = Math.max(MIN_LINK_W, (link.value / tgtTotal) * tgtNode.h);
 
 			layoutLinks.push({
 				source: link.source,
 				target: link.target,
 				value: link.value,
-				sy: srcNode.y + sOff,
-				ty: tgtNode.y + tOff,
-				sw,
-				tw,
+				sy: srcNode.y + sOff + thickness / 2,    // center of source band
+				ty: tgtNode.y + tOff + tBand / 2,        // center of target band
+				thickness,
 				highlighted: false,
 			});
 
-			srcOffsets.set(link.source, sOff + sw);
-			tgtOffsets.set(link.target, tOff + tw);
+			srcOffsets.set(link.source, sOff + thickness);
+			tgtOffsets.set(link.target, tOff + tBand);
 		}
 
 		return { nodes: allNodes, links: layoutLinks, nodeMap };
@@ -191,16 +192,16 @@
 		if (!srcNode || !tgtNode) return '';
 
 		const x0 = srcNode.x + srcNode.w;
-		const y0 = link.sy + link.sw / 2;
+		const y0 = link.sy;  // already centered
 		const x1 = tgtNode.x;
-		const y1 = link.ty + link.tw / 2;
+		const y1 = link.ty;  // already centered
 		const cx = (x0 + x1) / 2;
 
 		return `M${x0},${y0} C${cx},${y0} ${cx},${y1} ${x1},${y1}`;
 	}
 
 	function linkWidth(link: LayoutLink): number {
-		return Math.max(MIN_LINK_W, (link.sw + link.tw) / 2);
+		return link.thickness;
 	}
 
 	function isLinkConnected(link: LayoutLink, nodeId: string): boolean {
