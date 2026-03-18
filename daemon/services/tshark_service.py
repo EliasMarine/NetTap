@@ -16,6 +16,7 @@ Security:
 import asyncio
 import json
 import logging
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -42,6 +43,11 @@ ALLOWED_OUTPUT_FORMATS = {"json", "text", "pdml"}
 
 
 ALLOWED_FOLLOW_PROTOCOLS = {"", "tcp", "udp", "tls", "http"}
+
+# Max concurrent TShark docker exec operations.  The nettap-tshark container
+# is capped at 0.5 CPU; more than 2 simultaneous analyses thrash that budget
+# and increase the chance of hitting the 30s timeout.
+MAX_CONCURRENT_ANALYSES = 2
 
 
 @dataclass
@@ -86,6 +92,7 @@ class TSharkService:
         self._tshark_version: str | None = None
         self._protocols_cache: list[dict] | None = None
         self._fields_cache: dict[str, list[dict]] = {}
+        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_ANALYSES)
 
     # --- Validation methods ---
 
@@ -127,6 +134,22 @@ class TSharkService:
         suffix = normalized.suffix.lower()
         if suffix not in (".pcap", ".pcapng", ".cap"):
             raise TSharkValidationError(f"Invalid PCAP file extension: {suffix}")
+
+        # Check file existence on the daemon side.  The daemon mounts the
+        # same pcap-data volume (at self.pcap_base_dir), so we can verify
+        # the file exists before spawning a docker exec that would fail
+        # with an opaque TShark error.
+        if pcap_path.startswith("/"):
+            daemon_path = str(normalized)
+        else:
+            daemon_path = os.path.join(self.pcap_base_dir, pcap_path)
+
+        if not os.path.exists(daemon_path):
+            # Extract just the filename for a clear error message
+            filename = PurePosixPath(pcap_path).name
+            raise TSharkValidationError(
+                f"PCAP file not found: {filename}"
+            )
 
         return container_path
 
@@ -187,15 +210,27 @@ class TSharkService:
         cmd.extend(["-r", request.pcap_path])
 
         # Follow stream mode: uses -q -z follow,<proto>,ascii,<filter>
-        # No -Y, no -c, no -T flags — follow processes the entire file
+        # No -Y, no -c, no -T flags — follow processes the entire file.
+        #
+        # The -z follow filter accepts either a stream index (e.g. "0") or a
+        # display filter (e.g. "ip.addr==10.0.0.1 && tcp.port==443").
+        # Defaulting to stream index "0" when no filter is provided is
+        # misleading — it silently follows an arbitrary stream that may be
+        # unrelated to the user's intent.  Instead, require a display_filter
+        # to be present; if none was given, skip follow mode entirely and
+        # fall through to normal packet listing so the caller gets useful
+        # output rather than a random stream.
         if request.follow_stream:
-            cmd.append("-q")
-            follow_filter = request.display_filter or "0"
-            cmd.extend([
-                "-z",
-                f"follow,{request.follow_stream},ascii,{follow_filter}",
-            ])
-            return cmd
+            if request.display_filter:
+                cmd.append("-q")
+                cmd.extend([
+                    "-z",
+                    f"follow,{request.follow_stream},ascii,{request.display_filter}",
+                ])
+                return cmd
+            # No display filter — cannot meaningfully follow a stream.
+            # Fall through to normal packet output so the caller still
+            # gets data instead of an error or a random stream 0.
 
         # Max packets
         cmd.extend(["-c", str(request.max_packets)])
@@ -299,16 +334,26 @@ class TSharkService:
         """Run TShark analysis on a PCAP file.
 
         Validates the request, runs TShark in the container,
-        and returns structured results.
+        and returns structured results.  A semaphore limits concurrent
+        docker exec operations to MAX_CONCURRENT_ANALYSES to avoid
+        thrashing the CPU-limited tshark container.
         """
-        # Validate
+        # Validate (before acquiring semaphore -- fast, no I/O)
         request = self.validate_request(request)
 
         # Build command
         cmd = self._build_tshark_command(request)
 
-        # Run
-        stdout, stderr, returncode = await self._exec_tshark(cmd)
+        # Acquire semaphore to limit concurrent docker exec processes.
+        # Queued requests still respect the overall EXECUTION_TIMEOUT
+        # because _exec_tshark applies asyncio.wait_for internally.
+        async with self._semaphore:
+            logger.debug(
+                "Semaphore acquired for analysis (%d/%d slots in use)",
+                MAX_CONCURRENT_ANALYSES - self._semaphore._value,
+                MAX_CONCURRENT_ANALYSES,
+            )
+            stdout, stderr, returncode = await self._exec_tshark(cmd)
 
         if returncode != 0 and not stdout:
             return TSharkResult(

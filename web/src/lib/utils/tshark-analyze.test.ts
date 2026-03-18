@@ -97,6 +97,7 @@ describe('analyzeConnection', () => {
 			proto: 'tcp',
 		});
 		expect(result.error).toContain('No PCAP files');
+		expect(result.errors).toEqual([]);
 	});
 
 	it('returns error when no display filter', async () => {
@@ -108,6 +109,7 @@ describe('analyzeConnection', () => {
 			proto: 'tcp',
 		});
 		expect(result.error).toContain('display filter');
+		expect(result.errors).toEqual([]);
 	});
 
 	it('tries multiple PCAPs on failure', async () => {
@@ -129,6 +131,7 @@ describe('analyzeConnection', () => {
 		});
 
 		expect(result.error).toBe('');
+		expect(result.errors).toEqual([]);
 		expect(result.packets.length).toBe(1);
 		expect(mockAnalyze).toHaveBeenCalledTimes(2);
 	});
@@ -262,6 +265,7 @@ describe('analyzeConnection', () => {
 		});
 
 		expect(result.error).toBe('');
+		expect(result.errors).toEqual([]);
 		expect(result.packets.length).toBe(1);
 	});
 
@@ -284,6 +288,87 @@ describe('analyzeConnection', () => {
 		});
 
 		expect(result.error).toBe('');
+		expect(result.errors).toEqual([]);
 		expect(result.packets.length).toBe(1);
+	});
+
+	it('collects API errors from each failed PCAP attempt', async () => {
+		mockAnalyze
+			.mockResolvedValueOnce({ packets: [], packet_count: 0, truncated: false, tshark_version: '', error: 'permission denied' })
+			.mockResolvedValueOnce({ packets: [], packet_count: 0, truncated: false, tshark_version: '', error: 'file corrupt' });
+
+		const result = await analyzeConnection({
+			pcapFiles: pcaps,
+			displayFilter: 'filter',
+			timestamp: '2024-01-01T00:00:00Z',
+			mode: 'summary',
+			proto: 'tcp',
+			maxAttempts: 2,
+		});
+
+		expect(result.error).toContain('No matching packets');
+		expect(result.error).toContain('permission denied');
+		expect(result.error).toContain('file corrupt');
+		expect(result.errors).toHaveLength(2);
+		expect(result.errors[0]).toContain('permission denied');
+		expect(result.errors[1]).toContain('file corrupt');
+	});
+
+	it('collects thrown exception messages from each failed PCAP attempt', async () => {
+		mockAnalyze
+			.mockRejectedValueOnce(new Error('timeout exceeded'))
+			.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+		const result = await analyzeConnection({
+			pcapFiles: pcaps,
+			displayFilter: 'filter',
+			timestamp: '2024-01-01T00:00:00Z',
+			mode: 'summary',
+			proto: 'tcp',
+			maxAttempts: 2,
+		});
+
+		expect(result.error).toContain('No matching packets');
+		expect(result.error).toContain('timeout exceeded');
+		expect(result.error).toContain('ECONNREFUSED');
+		expect(result.errors).toHaveLength(2);
+		expect(result.errors[0]).toContain('timeout exceeded');
+		expect(result.errors[1]).toContain('ECONNREFUSED');
+	});
+
+	it('includes PCAP filename in per-attempt error messages', async () => {
+		mockAnalyze.mockResolvedValue({
+			packets: [], packet_count: 0, truncated: false, tshark_version: '', error: 'some error',
+		});
+
+		const result = await analyzeConnection({
+			pcapFiles: pcaps,
+			displayFilter: 'filter',
+			timestamp: '2024-01-01T00:00:00Z',
+			mode: 'summary',
+			proto: 'tcp',
+			maxAttempts: 2,
+		});
+
+		// Each error string should include the pcap file name
+		for (const err of result.errors) {
+			expect(err).toMatch(/\.pcap:/);
+		}
+	});
+
+	it('returns empty errors array when PCAPs found no packets but had no errors', async () => {
+		mockAnalyze.mockResolvedValue({ packets: [], packet_count: 0, truncated: false, tshark_version: '' });
+
+		const result = await analyzeConnection({
+			pcapFiles: pcaps,
+			displayFilter: 'filter',
+			timestamp: '2024-01-01T00:00:00Z',
+			mode: 'summary',
+			proto: 'tcp',
+			maxAttempts: 2,
+		});
+
+		expect(result.error).toContain('No matching packets');
+		expect(result.errors).toEqual([]);
 	});
 });

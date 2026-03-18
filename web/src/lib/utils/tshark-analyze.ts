@@ -23,6 +23,8 @@ export interface AnalyzeConnectionResult {
 	packets: TSharkPacket[];
 	textOutput: string;
 	error: string;
+	/** Per-PCAP errors collected during the retry loop (empty on success). */
+	errors: string[];
 }
 
 /**
@@ -70,25 +72,29 @@ export async function analyzeConnection(opts: AnalyzeConnectionOpts): Promise<An
 	const { pcapFiles, displayFilter, timestamp, mode, proto, maxAttempts = 5 } = opts;
 
 	if (pcapFiles.length === 0) {
-		return { packets: [], textOutput: '', error: 'No PCAP files available on the appliance.' };
+		return { packets: [], textOutput: '', error: 'No PCAP files available on the appliance.', errors: [] };
 	}
 	if (!displayFilter) {
-		return { packets: [], textOutput: '', error: 'Could not build a display filter from this connection.' };
+		return { packets: [], textOutput: '', error: 'Could not build a display filter from this connection.', errors: [] };
 	}
 
 	const sorted = sortPcapsByTimestamp(pcapFiles, timestamp);
 	const attempts = sorted.slice(0, maxAttempts);
+	const errors: string[] = [];
 
 	for (const pcap of attempts) {
 		try {
 			const req = buildRequestForMode(pcap.path, displayFilter, mode, proto);
 			const result = await analyzePcap(req);
 
-			if (result.error) continue;
+			if (result.error) {
+				errors.push(`${pcap.name}: ${result.error}`);
+				continue;
+			}
 			if (!result.packets || result.packets.length === 0) continue;
 
 			if (mode === 'summary') {
-				return { packets: result.packets, textOutput: '', error: '' };
+				return { packets: result.packets, textOutput: '', error: '', errors: [] };
 			}
 
 			// verbose / follow: extract raw text from packets array
@@ -99,15 +105,23 @@ export async function analyzeConnection(opts: AnalyzeConnectionOpts): Promise<An
 				})
 				.join('\n');
 
-			return { packets: result.packets, textOutput: text, error: '' };
-		} catch {
+			return { packets: result.packets, textOutput: text, error: '', errors: [] };
+		} catch (e) {
+			errors.push(`${pcap.name}: ${e instanceof Error ? e.message : String(e)}`);
 			continue;
 		}
 	}
 
+	// Build a summary error that includes diagnostic details from individual attempts
+	const summary = `No matching packets found after searching ${attempts.length} PCAP file${attempts.length !== 1 ? 's' : ''}.`;
+	const detail = errors.length > 0
+		? `${summary} Errors: ${errors.join('; ')}`
+		: summary;
+
 	return {
 		packets: [],
 		textOutput: '',
-		error: `No matching packets found after searching ${attempts.length} PCAP file${attempts.length !== 1 ? 's' : ''}.`,
+		error: detail,
+		errors,
 	};
 }

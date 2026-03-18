@@ -12,10 +12,11 @@
 	import { getWhois } from '$api/lookup';
 	import type { WhoisResult } from '$api/lookup';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
-	import { getTSharkStatus, getPcapFiles } from '$api/tshark';
+	import { getTSharkStatus, getPcapFiles, analyzePcap } from '$api/tshark';
 	import type { TSharkPacket, PcapFile } from '$api/tshark';
 	import { analyzeConnection } from '$lib/utils/tshark-analyze';
 	import type { AnalysisMode } from '$lib/utils/tshark-analyze';
+	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
 	import { getRelatedConnections } from '$api/traffic';
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
@@ -112,22 +113,23 @@
 	let totalBytes = $derived(origBytesNum + respBytesNum);
 	let origPct = $derived(totalBytes > 0 ? Math.round((origBytesNum / totalBytes) * 100) : 50);
 
-	// Connection state descriptions
-	const STATE_DESC: Record<string, string> = {
-		S0: 'Connection attempt seen, no reply',
-		S1: 'Connection established, not terminated',
-		SF: 'Normal establishment and termination',
-		REJ: 'Connection attempt rejected',
-		S2: 'Connection established, close attempted by originator',
-		S3: 'Connection established, close attempted by responder',
-		RSTO: 'Connection established, originator aborted',
-		RSTR: 'Connection established, responder aborted',
-		RSTOS0: 'Originator sent a SYN then RST, responder never replied',
-		RSTRH: 'Responder sent a SYN ACK then RST, originator never replied',
-		SH: 'Originator sent SYN then FIN, responder never replied (half-open)',
-		SHR: 'Responder sent SYN ACK then FIN, originator never replied',
-		OTH: 'No SYN seen, midstream traffic',
-	};
+	// OLD CODE START — STATE_DESC moved to CONN_STATE_DESC in $lib/utils/tshark-helpers.ts
+	// const STATE_DESC: Record<string, string> = {
+	// 	S0: 'Connection attempt seen, no reply',
+	// 	S1: 'Connection established, not terminated',
+	// 	SF: 'Normal establishment and termination',
+	// 	REJ: 'Connection attempt rejected',
+	// 	S2: 'Connection established, close attempted by originator',
+	// 	S3: 'Connection established, close attempted by responder',
+	// 	RSTO: 'Connection established, originator aborted',
+	// 	RSTR: 'Connection established, responder aborted',
+	// 	RSTOS0: 'Originator sent a SYN then RST, responder never replied',
+	// 	RSTRH: 'Responder sent a SYN ACK then RST, originator never replied',
+	// 	SH: 'Originator sent SYN then FIN, responder never replied (half-open)',
+	// 	SHR: 'Responder sent SYN ACK then FIN, originator never replied',
+	// 	OTH: 'No SYN seen, midstream traffic',
+	// };
+	// OLD CODE END
 
 	// Protocol colors for flow diagram
 	const PROTO_COLORS: Record<string, string> = {
@@ -139,24 +141,26 @@
 		http: 'var(--blue)',
 	};
 
-	function formatDuration(val: unknown): string {
-		if (val == null) return '--';
-		const n = Number(val);
-		if (isNaN(n)) return String(val);
-		if (n < 1) return `${(n * 1000).toFixed(0)}ms`;
-		if (n < 60) return `${n.toFixed(1)}s`;
-		return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
-	}
-
-	function formatBytes(val: unknown): string {
-		if (val == null) return '--';
-		const n = Number(val);
-		if (isNaN(n)) return String(val);
-		if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-		if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-		if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
-		return `${n} B`;
-	}
+	// OLD CODE START — formatDuration/formatBytes moved to $lib/utils/tshark-helpers.ts
+	// function formatDuration(val: unknown): string {
+	// 	if (val == null) return '--';
+	// 	const n = Number(val);
+	// 	if (isNaN(n)) return String(val);
+	// 	if (n < 1) return `${(n * 1000).toFixed(0)}ms`;
+	// 	if (n < 60) return `${n.toFixed(1)}s`;
+	// 	return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
+	// }
+	//
+	// function formatBytes(val: unknown): string {
+	// 	if (val == null) return '--';
+	// 	const n = Number(val);
+	// 	if (isNaN(n)) return String(val);
+	// 	if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
+	// 	if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+	// 	if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
+	// 	return `${n} B`;
+	// }
+	// OLD CODE END
 
 	function formatTimestamp(ts: string): string {
 		if (!ts) return '--';
@@ -271,7 +275,7 @@
 		hexLoading = true;
 		hexContent = '';
 		const pkt = packets[idx];
-		const frameNum = pkt?.['_source']?.['layers']?.['frame']?.['frame.number'] || (idx + 1);
+		const frameNum = unwrap(pkt?.['_source']?.['layers']?.['frame']?.['frame.number']) || (idx + 1);
 		const connTs = timestamp ? new Date(timestamp).getTime() : Date.now();
 		const sorted = [...pcapFiles].sort((a, b) =>
 			Math.abs((a.modified * 1000) - connTs) - Math.abs((b.modified * 1000) - connTs)
@@ -295,19 +299,31 @@
 		hexLoading = false;
 	}
 
-	function getPacketInfo(pkt: TSharkPacket) {
-		const layers = pkt?.['_source']?.['layers'] || pkt;
-		const frame = layers?.['frame'] || {};
-		const ip = layers?.['ip'] || layers?.['ipv6'] || {};
-		return {
-			no: frame['frame.number'] || '?',
-			time: frame['frame.time_relative'] || frame['frame.time'] || '?',
-			src: ip['ip.src'] || ip['ipv6.src'] || '?',
-			dst: ip['ip.dst'] || ip['ipv6.dst'] || '?',
-			proto: frame['frame.protocols']?.split(':').pop() || '?',
-			len: frame['frame.len'] || '?',
-		};
-	}
+	// OLD CODE START — unwrap/getPacketInfo moved to unwrap/getPacketSummary in $lib/utils/tshark-helpers.ts
+	// getPacketInfo returned {no, time, src, dst, proto, len} — getPacketSummary
+	// is a superset that also includes `info`. Both drawers now share getPacketSummary.
+	// /** Unwrap TShark -T json array-wrapped values (e.g. ["1"] -> "1") */
+	// function unwrap(val: unknown): string {
+	// 	if (Array.isArray(val)) return String(val[0] ?? '');
+	// 	if (val == null) return '';
+	// 	return String(val);
+	// }
+	//
+	// function getPacketInfo(pkt: TSharkPacket) {
+	// 	const layers = pkt?.['_source']?.['layers'] || pkt;
+	// 	const frame = layers?.['frame'] || {};
+	// 	const ip = layers?.['ip'] || layers?.['ipv6'] || {};
+	// 	const protocols = unwrap(frame['frame.protocols']);
+	// 	return {
+	// 		no: unwrap(frame['frame.number']) || '?',
+	// 		time: unwrap(frame['frame.time_relative']) || unwrap(frame['frame.time']) || '?',
+	// 		src: unwrap(ip['ip.src']) || unwrap(ip['ipv6.src']) || '?',
+	// 		dst: unwrap(ip['ip.dst']) || unwrap(ip['ipv6.dst']) || '?',
+	// 		proto: protocols.split(':').pop() || '?',
+	// 		len: unwrap(frame['frame.len']) || '?',
+	// 	};
+	// }
+	// OLD CODE END
 
 	// Related connections
 	$effect(() => {
@@ -400,8 +416,8 @@
 
 		<DrawerSection title="State" defaultExpanded={false}>
 			<KVRow label="Conn State" value={connState} mono />
-			{#if connState && STATE_DESC[connState]}
-				<KVRow label="Description" value={STATE_DESC[connState]} />
+			{#if connState && CONN_STATE_DESC[connState]}
+				<KVRow label="Description" value={CONN_STATE_DESC[connState]} />
 			{/if}
 			<KVRow label="History" value={history} mono copyable />
 			<KVRow label="Index" value={connection._index} mono />
@@ -519,7 +535,7 @@
 						</thead>
 						<tbody>
 							{#each packets as pkt, i}
-								{@const info = getPacketInfo(pkt)}
+								{@const info = getPacketSummary(pkt)}
 								<tr class="packet-row" class:selected={selectedPacketIdx === i} onclick={() => fetchHexForPacket(i)}>
 									<td class="mono">{info.no}</td><td class="mono">{info.time}</td>
 									<td class="mono">{info.src}</td><td class="mono">{info.dst}</td>

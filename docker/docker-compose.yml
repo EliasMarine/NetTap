@@ -870,7 +870,7 @@ services:
       - /tmp:size=100M
     volumes:
       - pcap-data:/pcap:ro
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: 0.5
     security_opt:
       - no-new-privileges:true
@@ -878,6 +878,12 @@ services:
       - ALL
     networks:
       - default
+    healthcheck:
+      test: ["CMD", "tshark", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
 
   nettap-cyberchef:
     build:

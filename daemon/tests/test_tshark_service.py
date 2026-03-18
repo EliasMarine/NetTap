@@ -23,21 +23,35 @@ from services.tshark_service import (
 )
 
 
+def _mock_exists_true(*args, **kwargs):
+    """Helper: always return True for os.path.exists (PCAP file exists)."""
+    return True
+
+
 class TestValidatePcapPath(unittest.TestCase):
     """Tests for TSharkService.validate_pcap_path."""
 
     def setUp(self):
         self.svc = TSharkService(pcap_base_dir="/opt/nettap/pcap")
 
-    def test_validate_pcap_path_valid(self):
+    @patch("os.path.exists", return_value=True)
+    def test_validate_pcap_path_valid(self, _mock_exists):
         """Valid relative path like 'session123.pcap' should resolve to container path."""
         result = self.svc.validate_pcap_path("session123.pcap")
         self.assertEqual(result, "/pcap/session123.pcap")
 
-    def test_validate_pcap_path_absolute_under_base(self):
+    @patch("os.path.exists", return_value=True)
+    def test_validate_pcap_path_absolute_under_base(self, _mock_exists):
         """Absolute path under pcap_base_dir should resolve to container path."""
         result = self.svc.validate_pcap_path("/opt/nettap/pcap/capture.pcap")
         self.assertEqual(result, "/pcap/capture.pcap")
+
+    def test_validate_pcap_path_file_not_found(self):
+        """Non-existent file should raise TSharkValidationError with clear message."""
+        with self.assertRaises(TSharkValidationError) as ctx:
+            self.svc.validate_pcap_path("nonexistent.pcap")
+        self.assertIn("not found", str(ctx.exception).lower())
+        self.assertIn("nonexistent.pcap", str(ctx.exception))
 
     def test_validate_pcap_path_traversal_dotdot(self):
         """Reject relative path with '..' traversal."""
@@ -135,13 +149,15 @@ class TestValidateRequest(unittest.TestCase):
     def setUp(self):
         self.svc = TSharkService()
 
-    def test_max_packets_capped(self):
+    @patch("os.path.exists", return_value=True)
+    def test_max_packets_capped(self, _mock_exists):
         """Verify max_packets=2000 gets capped to MAX_PACKETS (1000)."""
         req = TSharkRequest(pcap_path="test.pcap", max_packets=2000)
         validated = self.svc.validate_request(req)
         self.assertEqual(validated.max_packets, MAX_PACKETS)
 
-    def test_max_packets_minimum(self):
+    @patch("os.path.exists", return_value=True)
+    def test_max_packets_minimum(self, _mock_exists):
         """Verify max_packets=0 gets set to 1."""
         req = TSharkRequest(pcap_path="test.pcap", max_packets=0)
         validated = self.svc.validate_request(req)
@@ -243,7 +259,8 @@ class TestAnalyze(unittest.TestCase):
     def setUp(self):
         self.svc = TSharkService()
 
-    def test_analyze_success(self):
+    @patch("os.path.exists", return_value=True)
+    def test_analyze_success(self, _mock_exists):
         """Mock subprocess execution and verify parse of JSON output."""
         json_output = json.dumps([{"_index": "packets", "layers": {"frame": {}}}])
 
@@ -265,7 +282,8 @@ class TestAnalyze(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_analyze_timeout(self):
+    @patch("os.path.exists", return_value=True)
+    def test_analyze_timeout(self, _mock_exists):
         """Mock timeout and verify TSharkValidationError is raised."""
 
         async def run():
@@ -386,7 +404,7 @@ class TestBuildCommandFollowStream(unittest.TestCase):
         self.assertIn("ip.addr == 10.0.0.1", z_arg)
 
     def test_follow_stream_no_Y_or_c_flags(self):
-        """Follow stream mode should NOT have -Y or -c flags."""
+        """Follow stream mode with display_filter should NOT have -Y or -c flags."""
         req = TSharkRequest(
             pcap_path="/pcap/test.pcap",
             display_filter="http.request",
@@ -399,25 +417,36 @@ class TestBuildCommandFollowStream(unittest.TestCase):
         self.assertIn("-q", cmd)
 
     def test_follow_stream_no_T_flag(self):
-        """Follow stream mode should NOT have -T flag."""
+        """Follow stream mode with display_filter should NOT have -T flag."""
         req = TSharkRequest(
             pcap_path="/pcap/test.pcap",
+            display_filter="ip.addr == 10.0.0.1",
             follow_stream="tls",
             output_format="json",
         )
         cmd = self.svc._build_tshark_command(req)
         self.assertNotIn("-T", cmd)
 
-    def test_follow_stream_default_filter(self):
-        """When no display_filter given, follow should use '0' as stream index."""
+    def test_follow_stream_without_filter_falls_through(self):
+        """When no display_filter given, follow mode is skipped.
+
+        Previously this would default to stream index "0", which silently
+        followed an arbitrary stream.  Now it falls through to normal
+        packet listing with -c and the requested output format.
+        """
         req = TSharkRequest(
             pcap_path="/pcap/test.pcap",
             follow_stream="http",
+            max_packets=50,
+            output_format="json",
         )
         cmd = self.svc._build_tshark_command(req)
-        z_idx = cmd.index("-z")
-        z_arg = cmd[z_idx + 1]
-        self.assertEqual(z_arg, "follow,http,ascii,0")
+        # Should NOT have -z follow (no filter to follow with)
+        self.assertNotIn("-z", cmd)
+        self.assertNotIn("-q", cmd)
+        # Should fall through to normal packet output
+        self.assertIn("-c", cmd)
+        self.assertIn("-T", cmd)
 
 
 class TestFollowStreamValidation(unittest.TestCase):
@@ -426,7 +455,8 @@ class TestFollowStreamValidation(unittest.TestCase):
     def setUp(self):
         self.svc = TSharkService()
 
-    def test_valid_follow_protocols(self):
+    @patch("os.path.exists", return_value=True)
+    def test_valid_follow_protocols(self, _mock_exists):
         """Valid protocols should pass validation."""
         from services.tshark_service import ALLOWED_FOLLOW_PROTOCOLS
 
@@ -435,7 +465,8 @@ class TestFollowStreamValidation(unittest.TestCase):
             validated = self.svc.validate_request(req)
             self.assertEqual(validated.follow_stream, proto)
 
-    def test_invalid_follow_protocol(self):
+    @patch("os.path.exists", return_value=True)
+    def test_invalid_follow_protocol(self, _mock_exists):
         """Invalid protocol should raise TSharkValidationError."""
         req = TSharkRequest(pcap_path="test.pcap", follow_stream="ftp")
         with self.assertRaises(TSharkValidationError) as ctx:
