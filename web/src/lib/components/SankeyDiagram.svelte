@@ -36,20 +36,6 @@
 	const MIN_LINK_W = 2;
 	const BASE_CHART_H = 400;
 
-	/** Compute the minimum height a column needs given its node count. */
-	function minColumnHeight(nodeCount: number): number {
-		if (nodeCount === 0) return BASE_CHART_H;
-		return nodeCount * MIN_NODE_H + (nodeCount - 1) * NODE_PAD + PADDING * 2;
-	}
-
-	/** Dynamic chart height — grows if any column has many nodes. */
-	let chartH = $derived(Math.max(
-		BASE_CHART_H,
-		minColumnHeight(sources.length),
-		minColumnHeight(protocols.length),
-		minColumnHeight(destinations.length),
-	));
-
 	const PROTO_COLORS: Record<string, string> = {
 		tcp: 'var(--cyan)',
 		udp: 'var(--green)',
@@ -94,10 +80,10 @@
 		highlighted: boolean;
 	}
 
-	function layoutNodes(nodes: SankeyNode[], colX: number, type: 'source' | 'protocol' | 'destination', height: number): LayoutNode[] {
+	function layoutNodes(nodes: SankeyNode[], colX: number, type: 'source' | 'protocol' | 'destination'): LayoutNode[] {
 		if (nodes.length === 0) return [];
 		const totalValue = Math.max(1, nodes.reduce((s, n) => s + n.value, 0));
-		const availH = height - (nodes.length - 1) * NODE_PAD - PADDING * 2;
+		const availH = BASE_CHART_H - (nodes.length - 1) * NODE_PAD - PADDING * 2;
 		let y = PADDING;
 
 		return nodes.map((n) => {
@@ -129,11 +115,17 @@
 		const col2 = w / 2 - COL_WIDTH / 2;
 		const col3 = w - COL_WIDTH - PADDING;
 
-		const srcNodes = layoutNodes(sources, col1, 'source', chartH);
-		const protoNodes = layoutNodes(protocols, col2, 'protocol', chartH);
-		const destNodes = layoutNodes(destinations, col3, 'destination', chartH);
+		const srcNodes = layoutNodes(sources, col1, 'source');
+		const protoNodes = layoutNodes(protocols, col2, 'protocol');
+		const destNodes = layoutNodes(destinations, col3, 'destination');
 
 		const allNodes = [...srcNodes, ...protoNodes, ...destNodes];
+
+		// Compute actual height from the bottom-most node + padding
+		const maxBottom = allNodes.length > 0
+			? Math.max(...allNodes.map((n) => n.y + n.h))
+			: BASE_CHART_H;
+		const computedH = Math.max(BASE_CHART_H, maxBottom + PADDING);
 		const nodeMap = new Map<string, LayoutNode>();
 		allNodes.forEach((n) => nodeMap.set(n.id, n));
 
@@ -179,7 +171,7 @@
 			tgtOffsets.set(link.target, tOff + tBand);
 		}
 
-		return { nodes: allNodes, links: layoutLinks, nodeMap };
+		return { nodes: allNodes, links: layoutLinks, nodeMap, height: computedH };
 	});
 
 	// ---------------------------------------------------------------------------
@@ -246,7 +238,7 @@
 			<span class="sankey-col-title" style="left: {chartWidth - COL_WIDTH - PADDING}px;">Destinations</span>
 		</div>
 
-		<svg viewBox="0 0 {chartWidth} {chartH}" width="100%" height={chartH}>
+		<svg viewBox="0 0 {chartWidth} {layout.height}" width="100%" height={layout.height}>
 			<!-- Links -->
 			{#each layout.links as link}
 				{@const connected = hoveredNode ? isLinkConnected(link, hoveredNode) : true}
