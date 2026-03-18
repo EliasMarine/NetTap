@@ -184,6 +184,10 @@ class TestConnectionSankey(AioHTTPTestCase):
         self.assertEqual(len(data["nodes"]["protocols"]), 2)
         self.assertTrue(len(data["nodes"]["destinations"]) >= 1)
         self.assertTrue(len(data["links"]) >= 3)
+        # Labels should have ASN prefix stripped
+        dest_labels = [d["label"] for d in data["nodes"]["destinations"]]
+        self.assertTrue(any("Google" in l for l in dest_labels))
+        self.assertTrue(all(not l.startswith("AS") for l in dest_labels if l != "Unknown"))
 
     @unittest_run_loop
     async def test_sankey_empty(self):

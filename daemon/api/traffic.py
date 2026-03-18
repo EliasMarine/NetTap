@@ -894,8 +894,13 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
         for name, total in sorted(proto_set.items(), key=lambda x: -x[1])
     ]
 
+    def _strip_asn_prefix(asn_full: str) -> str:
+        """Strip 'AS12345 ' prefix from ASN string, keeping only the org name."""
+        import re
+        return re.sub(r"^AS\d+\s*", "", asn_full) or asn_full
+
     destination_nodes = [
-        {"id": name, "label": name, "value": info["bytes"], "country": info["country"]}
+        {"id": name, "label": _strip_asn_prefix(name), "value": info["bytes"], "country": info["country"]}
         for name, info in sorted(dest_set.items(), key=lambda x: -x[1]["bytes"])
     ][:limit]
 
