@@ -129,13 +129,17 @@
 		const nodeMap = new Map<string, LayoutNode>();
 		allNodes.forEach((n) => nodeMap.set(n.id, n));
 
+		// Compute actual link-value totals per node (for proportional stacking)
+		const srcLinkTotals = new Map<string, number>();
+		const tgtLinkTotals = new Map<string, number>();
+		for (const link of links) {
+			srcLinkTotals.set(link.source, (srcLinkTotals.get(link.source) || 0) + link.value);
+			tgtLinkTotals.set(link.target, (tgtLinkTotals.get(link.target) || 0) + link.value);
+		}
+
 		// Track y offsets per node for stacking links
 		const srcOffsets = new Map<string, number>();
 		const tgtOffsets = new Map<string, number>();
-		allNodes.forEach((n) => {
-			srcOffsets.set(n.id, 0);
-			tgtOffsets.set(n.id, 0);
-		});
 
 		const layoutLinks: LayoutLink[] = [];
 		// Sort links by value descending for better visual stacking
@@ -146,29 +150,28 @@
 			const tgtNode = nodeMap.get(link.target);
 			if (!srcNode || !tgtNode) continue;
 
-			const srcTotal = Math.max(1, srcNode.value);
-			const tgtTotal = Math.max(1, tgtNode.value);
-			// Use source-proportional thickness for consistent visual weight
-			const thickness = Math.max(MIN_LINK_W, (link.value / srcTotal) * srcNode.h);
+			// Proportional thickness based on actual link totals through this node
+			const srcTotal = Math.max(1, srcLinkTotals.get(link.source) || 1);
+			const tgtTotal = Math.max(1, tgtLinkTotals.get(link.target) || 1);
+			const srcBand = (link.value / srcTotal) * srcNode.h;
+			const tgtBand = (link.value / tgtTotal) * tgtNode.h;
+			const thickness = Math.max(MIN_LINK_W, (srcBand + tgtBand) / 2);
 
 			const sOff = srcOffsets.get(link.source) || 0;
 			const tOff = tgtOffsets.get(link.target) || 0;
-
-			// Compute the target-proportional band height for stacking on target side
-			const tBand = Math.max(MIN_LINK_W, (link.value / tgtTotal) * tgtNode.h);
 
 			layoutLinks.push({
 				source: link.source,
 				target: link.target,
 				value: link.value,
-				sy: srcNode.y + sOff + thickness / 2,    // center of source band
-				ty: tgtNode.y + tOff + tBand / 2,        // center of target band
+				sy: srcNode.y + sOff + srcBand / 2,
+				ty: tgtNode.y + tOff + tgtBand / 2,
 				thickness,
 				highlighted: false,
 			});
 
-			srcOffsets.set(link.source, sOff + thickness);
-			tgtOffsets.set(link.target, tOff + tBand);
+			srcOffsets.set(link.source, sOff + srcBand);
+			tgtOffsets.set(link.target, tOff + tgtBand);
 		}
 
 		return { nodes: allNodes, links: layoutLinks, nodeMap, height: computedH };
