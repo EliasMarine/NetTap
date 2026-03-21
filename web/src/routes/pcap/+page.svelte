@@ -316,6 +316,7 @@
 			const result = await toggleCapture(!captureEnabled);
 			captureEnabled = result.enabled;
 			if (captureStatus) {
+				captureStatus.enabled = result.enabled;
 				captureStatus.containerRunning = result.containerRunning;
 				captureStatus.containerStatus = result.containerStatus;
 			}

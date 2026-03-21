@@ -77,7 +77,8 @@ const DEFAULT_STATUS: CaptureStatus = {
  */
 export async function getCaptureMode(): Promise<CaptureMode> {
 	try {
-		const res = await fetch('/api/capture/mode');		if (!res.ok) {
+		const res = await fetch('/api/capture/mode');
+		if (!res.ok) {
 			return { mode: 'bridge', interface: '' };
 		}
 		return res.json();
