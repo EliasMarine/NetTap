@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 
-	type TabId = 'notifications' | 'retention' | 'api-keys' | 'network' | 'display' | 'about';
+	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'display' | 'about';
 
 	let activeTab = $state<TabId>('notifications');
 
@@ -46,6 +47,17 @@
 	let apiKeysError = $state(false);
 	// Track modified fields only — don't send unchanged values
 	let apiKeyValues = $state<Record<string, string>>({});
+
+	// --- Capture state ---
+	let captureEnabled = $state(true);
+	let captureMaxFileSize = $state(100);
+	let captureContainerRunning = $state(false);
+	let captureContainerStatus = $state('unknown');
+	let captureLoading = $state(true);
+	let captureToggling = $state(false);
+	let captureSaving = $state(false);
+	let captureMessage = $state('');
+	let captureError = $state(false);
 
 	// --- Display state ---
 	let autoRefresh = $state('30');
@@ -260,6 +272,58 @@
 		excludedIps = excludedIps.filter((i) => i !== ip);
 	}
 
+	// --- Capture functions ---
+	async function loadCaptureSettings() {
+		captureLoading = true;
+		try {
+			const status = await getCaptureStatus();
+			captureEnabled = status.enabled;
+			captureMaxFileSize = status.maxFileSizeMB;
+			captureContainerRunning = status.containerRunning;
+			captureContainerStatus = status.containerStatus;
+		} catch {
+			// Will use defaults
+		} finally {
+			captureLoading = false;
+		}
+	}
+
+	async function handleCaptureToggle() {
+		captureToggling = true;
+		captureMessage = '';
+		captureError = false;
+		try {
+			const result = await toggleCapture(!captureEnabled);
+			captureEnabled = result.enabled;
+			captureContainerRunning = result.containerRunning;
+			captureContainerStatus = result.containerStatus;
+			captureMessage = captureEnabled ? 'PCAP capture enabled' : 'PCAP capture disabled';
+		} catch (err) {
+			captureError = true;
+			captureMessage = err instanceof Error ? err.message : 'Toggle failed';
+		} finally {
+			captureToggling = false;
+		}
+	}
+
+	async function saveCaptureSettings() {
+		captureSaving = true;
+		captureMessage = '';
+		captureError = false;
+		try {
+			const result = await updateCaptureSettings({ maxFileSizeMB: captureMaxFileSize });
+			captureMaxFileSize = result.maxFileSizeMB;
+			captureMessage = result.restarted
+				? `File size updated to ${result.maxFileSizeMB} MB. Container restarted.`
+				: `File size updated to ${result.maxFileSizeMB} MB.`;
+		} catch (err) {
+			captureError = true;
+			captureMessage = err instanceof Error ? err.message : 'Save failed';
+		} finally {
+			captureSaving = false;
+		}
+	}
+
 	onMount(() => {
 		loadNotificationConfig();
 		loadRetention();
@@ -268,6 +332,7 @@
 		loadApiKeys();
 		loadAbout();
 		loadDisplaySettings();
+		loadCaptureSettings();
 	});
 
 	async function saveNotifications() {
@@ -406,6 +471,13 @@
 			onclick={() => (activeTab = 'retention')}
 		>
 			Retention
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'capture'}
+			onclick={() => (activeTab = 'capture')}
+		>
+			Capture
 		</button>
 		<button
 			class="tab"
@@ -591,6 +663,73 @@
 				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
+			</div>
+		</div>
+
+	{:else if activeTab === 'capture'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">PCAP Capture</span>
+				</div>
+
+				{#if captureMessage}
+					<div class="alert {captureError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+						{captureMessage}
+					</div>
+				{/if}
+
+				{#if captureLoading}
+					<p class="text-muted">Loading capture settings...</p>
+				{:else}
+					<!-- Status card -->
+					<div class="capture-status-card" style="margin-bottom: var(--space-lg);">
+						<div class="capture-status-row">
+							<span class="label">Container Status</span>
+							<span class="capture-badge" class:status-running={captureContainerRunning} class:status-stopped={!captureContainerRunning}>
+								{captureContainerRunning ? 'Running' : captureContainerStatus}
+							</span>
+						</div>
+					</div>
+
+					<!-- Toggle -->
+					<div class="form-group" style="margin-bottom: var(--space-lg);">
+						<label class="label">PCAP Collection</label>
+						<div class="capture-toggle-row">
+							<button
+								class="capture-toggle-switch"
+								class:on={captureEnabled}
+								onclick={handleCaptureToggle}
+								disabled={captureToggling}
+							>
+								<span class="capture-toggle-knob" class:loading={captureToggling}></span>
+							</button>
+							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
+						</div>
+						<p class="field-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
+					</div>
+
+					<!-- File size -->
+					<div class="form-group" style="margin-bottom: var(--space-lg);">
+						<label class="label" for="max-file-size">Max File Size</label>
+						<div class="input-with-unit">
+							<input
+								class="input"
+								id="max-file-size"
+								type="number"
+								bind:value={captureMaxFileSize}
+								min={10}
+								max={10000}
+							/>
+							<span class="input-unit">MB</span>
+						</div>
+						<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
+					</div>
+
+					<button class="btn btn-primary" onclick={saveCaptureSettings} disabled={captureSaving}>
+						{captureSaving ? 'Saving...' : 'Save Capture Settings'}
+					</button>
+				{/if}
 			</div>
 		</div>
 
@@ -1288,5 +1427,90 @@
 		.smtp-grid {
 			grid-template-columns: 1fr;
 		}
+	}
+
+	/* Capture tab */
+	.capture-status-card {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md, 8px);
+		padding: var(--space-md);
+	}
+
+	.capture-status-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.capture-badge {
+		font-size: var(--text-sm);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-sm, 4px);
+		font-weight: 500;
+	}
+	.capture-badge.status-running {
+		background: var(--green-dim);
+		color: var(--green);
+	}
+	.capture-badge.status-stopped {
+		background: var(--red-dim);
+		color: var(--red);
+	}
+
+	.capture-toggle-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+	}
+
+	.capture-toggle-label {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+	}
+
+	.capture-toggle-switch {
+		position: relative;
+		width: 44px;
+		height: 24px;
+		border-radius: 12px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		cursor: pointer;
+		transition: background 0.2s, border-color 0.2s;
+		padding: 0;
+		flex-shrink: 0;
+		color: var(--text-primary);
+	}
+	.capture-toggle-switch.on {
+		background: var(--green-dim);
+		border-color: var(--green);
+	}
+	.capture-toggle-switch:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.capture-toggle-knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--text-secondary);
+		transition: transform 0.2s, background 0.2s;
+	}
+	.capture-toggle-switch.on .capture-toggle-knob {
+		transform: translateX(20px);
+		background: var(--green);
+	}
+	.capture-toggle-knob.loading {
+		animation: capture-pulse 0.8s ease-in-out infinite;
+	}
+
+	@keyframes capture-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
 	}
 </style>
