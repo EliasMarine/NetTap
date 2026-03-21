@@ -64,6 +64,7 @@ from api.lan_security import register_lan_security_routes
 from api.suricata_rules import register_suricata_rules_routes
 from api.mac_correlation import register_mac_correlation_routes
 from api.pcap import register_pcap_routes
+from api.capture_control import register_capture_control_routes
 from api.backup import register_backup_routes
 from api.threats import register_threat_routes
 from services.tshark_service import TSharkService
@@ -647,6 +648,9 @@ def create_app(
     pcap_search_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
     pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
     register_pcap_routes(app, pcap_search_service)
+
+    # Capture control (PCAP collection on/off + file size config)
+    register_capture_control_routes(app, env_file=env_file)
 
     # Config backup/restore (export/import all settings)
     config_backup = ConfigBackup()
