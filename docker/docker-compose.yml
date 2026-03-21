@@ -465,7 +465,7 @@ services:
       # Running as root inside this sandboxed container (cap_drop:ALL + cap_add) is safe.
       PUSER: "root"
       PCAP_ENABLE_NETSNIFF: "true"
-      PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-4096}"
+      PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-100}"
       PCAP_ROTATE_MINUTES: "${PCAP_ROTATE_MIN:-10}"
       PCAP_FILTER: ""
     volumes:
