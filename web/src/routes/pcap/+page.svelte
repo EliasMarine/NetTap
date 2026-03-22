@@ -16,6 +16,8 @@
 		PcapSearchResult,
 		PcapPacket,
 	} from '$lib/api/pcap';
+	import { getCaptureStatus, toggleCapture } from '$lib/api/capture';
+	import type { CaptureStatus } from '$lib/api/capture';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -63,6 +65,11 @@
 	type ResultSortKey = 'name' | 'matching_packets' | 'size_bytes' | 'modified';
 	let resultSortKey = $state<ResultSortKey>('matching_packets');
 	let resultSortDir = $state<'asc' | 'desc'>('desc');
+
+	// Capture control
+	let captureEnabled = $state(true);
+	let captureLoading = $state(false);
+	let captureStatus = $state<CaptureStatus | null>(null);
 
 	// Timeline
 	let hoveredBarIndex = $state<number | null>(null);
@@ -291,10 +298,41 @@
 	}
 
 	// ---------------------------------------------------------------------------
+	// Capture control
+	// ---------------------------------------------------------------------------
+
+	async function loadCaptureStatus() {
+		try {
+			captureStatus = await getCaptureStatus();
+			captureEnabled = captureStatus.enabled;
+		} catch {
+			// Default to enabled if API unreachable
+		}
+	}
+
+	async function handleCaptureToggle() {
+		captureLoading = true;
+		try {
+			const result = await toggleCapture(!captureEnabled);
+			captureEnabled = result.enabled;
+			if (captureStatus) {
+				captureStatus.enabled = result.enabled;
+				captureStatus.containerRunning = result.containerRunning;
+				captureStatus.containerStatus = result.containerStatus;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Toggle failed';
+		} finally {
+			captureLoading = false;
+		}
+	}
+
+	// ---------------------------------------------------------------------------
 	// Lifecycle
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
+		loadCaptureStatus();
 		loadFiles().then(() => { initialized = true; });
 	});
 </script>
@@ -311,6 +349,21 @@
 			<p class="subtitle">Search and analyze captured network traffic</p>
 		</div>
 		<div class="header-right">
+			<div class="capture-toggle">
+				<span class="capture-status-dot" class:active={captureEnabled}></span>
+				<span class="capture-status-label">
+					{captureEnabled ? 'Capture Active' : 'Capture Stopped'}
+				</span>
+				<button
+					class="toggle-switch"
+					class:on={captureEnabled}
+					onclick={handleCaptureToggle}
+					disabled={captureLoading}
+					aria-label={captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
+				>
+					<span class="toggle-knob" class:loading={captureLoading}></span>
+				</button>
+			</div>
 			<div class="pills">
 				{#each TIME_RANGES as range}
 					<button
@@ -746,6 +799,80 @@
 
 	/* Empty states */
 	.empty-state { color: var(--text-muted); font-size: var(--text-base); text-align: center; padding: var(--space-xl) var(--space-md); }
+
+	/* Capture toggle */
+	.capture-toggle {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-md);
+		background: var(--bg-elevated);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md, 8px);
+	}
+
+	.capture-status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--red);
+		flex-shrink: 0;
+	}
+	.capture-status-dot.active {
+		background: var(--green);
+		box-shadow: 0 0 6px var(--green);
+	}
+
+	.capture-status-label {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	.toggle-switch {
+		position: relative;
+		width: 36px;
+		height: 20px;
+		border-radius: 10px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		cursor: pointer;
+		transition: background 0.2s, border-color 0.2s;
+		padding: 0;
+		flex-shrink: 0;
+		color: var(--text-primary);
+	}
+	.toggle-switch.on {
+		background: var(--green-dim);
+		border-color: var(--green);
+	}
+	.toggle-switch:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.toggle-knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: var(--text-secondary);
+		transition: transform 0.2s, background 0.2s;
+	}
+	.toggle-switch.on .toggle-knob {
+		transform: translateX(16px);
+		background: var(--green);
+	}
+	.toggle-knob.loading {
+		animation: pulse-toggle 0.8s ease-in-out infinite;
+	}
+
+	@keyframes pulse-toggle {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
 
 	/* Responsive */
 	@media (max-width: 900px) {

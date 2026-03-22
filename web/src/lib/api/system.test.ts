@@ -126,12 +126,19 @@ describe('system API client', () => {
 		it('returns parsed SMART data on success', async () => {
 			const expected = {
 				device: '/dev/nvme0n1',
+				device_type: 'nvme',
 				model: 'Samsung 980 PRO',
+				serial: 'S6B1NJ0TB12345',
 				temperature_c: 38,
 				percentage_used: 2,
 				power_on_hours: 1200,
+				total_bytes_written: 22162086016000,
+				total_bytes_read: 44164000000000,
+				media_errors: 0,
+				reallocated_sectors: null,
 				healthy: true,
 				warnings: [],
+				timestamp: '2026-03-22T14:30:00Z',
 			};
 			mockFetchSuccess(expected);
 
@@ -139,6 +146,9 @@ describe('system API client', () => {
 
 			expect(fetch).toHaveBeenCalledWith('/api/smart/health');
 			expect(result).toEqual(expected);
+			expect(result.total_bytes_written).toBe(22162086016000);
+			expect(result.device_type).toBe('nvme');
+			expect(result.serial).toBe('S6B1NJ0TB12345');
 		});
 
 		it('returns unhealthy defaults on HTTP error', async () => {
@@ -147,12 +157,19 @@ describe('system API client', () => {
 			const result = await getSmartHealth();
 
 			expect(result.device).toBe('');
+			expect(result.device_type).toBe('');
 			expect(result.model).toBe('');
-			expect(result.temperature_c).toBe(0);
-			expect(result.percentage_used).toBe(0);
-			expect(result.power_on_hours).toBe(0);
+			expect(result.serial).toBe('');
+			expect(result.temperature_c).toBeNull();
+			expect(result.percentage_used).toBeNull();
+			expect(result.power_on_hours).toBeNull();
+			expect(result.total_bytes_written).toBeNull();
+			expect(result.total_bytes_read).toBeNull();
+			expect(result.media_errors).toBeNull();
+			expect(result.reallocated_sectors).toBeNull();
 			expect(result.healthy).toBe(false);
 			expect(result.warnings).toEqual([]);
+			expect(result.timestamp).toBeDefined();
 		});
 	});
 

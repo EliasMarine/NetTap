@@ -19,11 +19,15 @@ import pytest
 from services.alert_intelligence import (
     reclassify_severity,
     categorize_alert,
+    categorize_sub_category,
     generate_assessment,
     suppress_rule,
     mark_false_positive,
     is_suppressed,
     load_suppress_list,
+    THREAT_CATEGORIES,
+    SUB_CATEGORIES,
+    MITRE_TECHNIQUES,
 )
 import services.alert_intelligence as alert_intelligence_mod
 
@@ -128,8 +132,8 @@ class TestCategorizeAlert:
         assert result == "policy"
 
     def test_categorize_alert_protocol_anomaly(self):
-        """SURICATA TLS signature should categorize as protocol_anomaly."""
-        result = categorize_alert("SURICATA TLS invalid record/version")
+        """SURICATA STREAM signature should categorize as protocol_anomaly."""
+        result = categorize_alert("SURICATA STREAM ESTABLISHED packet out of window")
         assert result == "protocol_anomaly"
 
     def test_categorize_alert_none_signature(self):
@@ -229,11 +233,17 @@ class TestGenerateAssessment:
         """Each category should produce a distinct opening sentence."""
         categories = {
             "malware_c2": "malicious",
+            "credential_abuse": "credential abuse",
             "exfiltration": "data transfer",
             "reconnaissance": "scanning",
             "exploit": "exploitation",
             "policy": "policy violation",
             "protocol_anomaly": "protocol",
+            "geo_anomaly": "geographic",
+            "encrypted_threats": "encrypted traffic",
+            "iot_anomaly": "device behavior",
+            "dos": "denial of service",
+            "sensitive_data": "sensitive data",
             "informational": "informational",
         }
         for cat, keyword in categories.items():
@@ -511,3 +521,193 @@ class TestBaseline:
 
         assert result["deviation"] > 2.0
         assert result["is_anomalous"] is True
+
+
+# ---------------------------------------------------------------------------
+# New Categories (6 additions to original 7)
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeAlertNewCategories:
+    """Tests for the 6 new threat categories added in v3."""
+
+    def test_categorize_credential_abuse_ssh_brute(self):
+        """SSH Brute Force should categorize as credential_abuse."""
+        result = categorize_alert("ET SCAN SSH Brute Force Attempt")
+        assert result == "credential_abuse"
+
+    def test_categorize_credential_abuse_password_spray(self):
+        """Password Spray should categorize as credential_abuse."""
+        result = categorize_alert("ET SCAN Password Spray Detected")
+        assert result == "credential_abuse"
+
+    def test_categorize_sensitive_data_cleartext(self):
+        """Cleartext Password should categorize as sensitive_data."""
+        result = categorize_alert("ET POLICY Cleartext Password in HTTP")
+        assert result == "sensitive_data"
+
+    def test_categorize_dos_syn_flood(self):
+        """SYN Flood should categorize as dos."""
+        result = categorize_alert("ET DOS SYN Flood Detected")
+        assert result == "dos"
+
+    def test_categorize_encrypted_threats_tls_invalid(self):
+        """TLS Invalid record should categorize as encrypted_threats."""
+        result = categorize_alert("SURICATA TLS Invalid record/version")
+        assert result == "encrypted_threats"
+
+    def test_categorize_iot_anomaly(self):
+        """IoT/Smart Home alert should categorize as iot_anomaly."""
+        result = categorize_alert("ET IoT Smart Home Device Anomaly")
+        assert result == "iot_anomaly"
+
+    def test_categorize_geo_anomaly(self):
+        """GeoIP alert should categorize as geo_anomaly."""
+        result = categorize_alert("ET GeoIP Unusual Country Connection")
+        assert result == "geo_anomaly"
+
+    def test_ordering_credential_before_recon(self):
+        """Credential-abuse patterns must match before recon SCAN patterns."""
+        # "ET SCAN SSH Brute Force" has both SCAN and Brute Force
+        result = categorize_alert("ET SCAN SSH Brute Force")
+        assert result == "credential_abuse"
+
+    def test_ordering_sensitive_before_policy(self):
+        """Sensitive data must match before policy (POLICY keyword)."""
+        result = categorize_alert("ET POLICY Cleartext Password Transmission")
+        assert result == "sensitive_data"
+
+    def test_ordering_encrypted_before_protocol(self):
+        """Encrypted threats must match before protocol_anomaly (SURICATA TLS)."""
+        result = categorize_alert("SURICATA TLS Invalid handshake message")
+        assert result == "encrypted_threats"
+
+
+# ---------------------------------------------------------------------------
+# Sub-Category Classification
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeSubCategory:
+    """Tests for categorize_sub_category()."""
+
+    def test_ssh_brute_sub(self):
+        result = categorize_sub_category("ET SCAN SSH Brute Force", "credential_abuse")
+        assert result == "ssh_brute"
+
+    def test_rdp_brute_sub(self):
+        result = categorize_sub_category("ET SCAN RDP Brute Force", "credential_abuse")
+        assert result == "rdp_brute"
+
+    def test_trojan_sub(self):
+        result = categorize_sub_category("ET TROJAN Agent Tesla Callback", "malware_c2")
+        assert result == "trojan"
+
+    def test_botnet_sub(self):
+        result = categorize_sub_category("ET MALWARE Known CnC Beacon", "malware_c2")
+        assert result == "botnet"
+
+    def test_dns_tunnel_sub(self):
+        result = categorize_sub_category("ET DNS Tunnel Detected", "exfiltration")
+        assert result == "dns_tunnel"
+
+    def test_port_scan_sub(self):
+        result = categorize_sub_category("ET SCAN Nmap Stealth Scan", "reconnaissance")
+        assert result == "port_scan"
+
+    def test_web_exploit_sub(self):
+        result = categorize_sub_category("ET WEB_SERVER SQL Injection Attempt", "exploit")
+        assert result == "web_exploit"
+
+    def test_syn_flood_sub(self):
+        result = categorize_sub_category("ET DOS SYN Flood Detected", "dos")
+        assert result == "syn_flood"
+
+    def test_no_match_returns_none(self):
+        result = categorize_sub_category("SOME UNKNOWN RULE", "malware_c2")
+        assert result is None
+
+    def test_unknown_category_returns_none(self):
+        result = categorize_sub_category("ET MALWARE Something", "nonexistent_category")
+        assert result is None
+
+    def test_none_signature_returns_none(self):
+        result = categorize_sub_category(None, "malware_c2")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# MITRE ATT&CK Techniques Structure
+# ---------------------------------------------------------------------------
+
+
+class TestMitreTechniques:
+    """Tests for the MITRE_TECHNIQUES mapping structure."""
+
+    def test_mitre_has_major_categories(self):
+        """MITRE mapping should cover major threat categories."""
+        expected = [
+            "credential_abuse", "malware_c2", "exfiltration",
+            "reconnaissance", "exploit", "dos",
+        ]
+        for cat in expected:
+            assert cat in MITRE_TECHNIQUES, f"Missing MITRE mapping for {cat}"
+
+    def test_mitre_technique_structure(self):
+        """Each MITRE technique should have id, name, and description."""
+        for cat, techniques in MITRE_TECHNIQUES.items():
+            assert isinstance(techniques, list), f"{cat} techniques should be a list"
+            for tech in techniques:
+                assert "id" in tech, f"Technique in {cat} missing 'id'"
+                assert "name" in tech, f"Technique in {cat} missing 'name'"
+                assert "description" in tech, f"Technique in {cat} missing 'description'"
+                assert tech["id"].startswith("T"), f"MITRE ID should start with 'T': {tech['id']}"
+
+    def test_mitre_credential_abuse_has_brute_force(self):
+        """credential_abuse should include T1110 (Brute Force)."""
+        ids = [t["id"] for t in MITRE_TECHNIQUES["credential_abuse"]]
+        assert "T1110" in ids
+
+
+# ---------------------------------------------------------------------------
+# THREAT_CATEGORIES / SUB_CATEGORIES Structure Tests
+# ---------------------------------------------------------------------------
+
+
+class TestThreatCategoriesStructure:
+    """Tests for THREAT_CATEGORIES and SUB_CATEGORIES dict structure."""
+
+    def test_all_13_categories_present(self):
+        """THREAT_CATEGORIES should have exactly 13 entries."""
+        expected = {
+            "credential_abuse", "sensitive_data", "dos", "encrypted_threats",
+            "malware_c2", "exfiltration", "reconnaissance", "exploit",
+            "policy", "protocol_anomaly", "iot_anomaly", "geo_anomaly",
+            "informational",
+        }
+        assert set(THREAT_CATEGORIES.keys()) == expected
+
+    def test_category_required_fields(self):
+        """Each category must have label, icon, color, description, patterns."""
+        for cat_id, cat in THREAT_CATEGORIES.items():
+            assert "label" in cat, f"{cat_id} missing 'label'"
+            assert "icon" in cat, f"{cat_id} missing 'icon'"
+            assert "color" in cat, f"{cat_id} missing 'color'"
+            assert "description" in cat, f"{cat_id} missing 'description'"
+            assert "patterns" in cat, f"{cat_id} missing 'patterns'"
+            assert len(cat["patterns"]) > 0, f"{cat_id} has empty patterns"
+
+    def test_sub_categories_cover_all_parents(self):
+        """SUB_CATEGORIES should have entries for all 13 parent categories."""
+        for cat_id in THREAT_CATEGORIES:
+            assert cat_id in SUB_CATEGORIES, f"Missing SUB_CATEGORIES for {cat_id}"
+            assert len(SUB_CATEGORIES[cat_id]) > 0, f"Empty sub-categories for {cat_id}"
+
+    def test_sub_category_structure(self):
+        """Each sub-category must have id, label, and patterns."""
+        for parent_id, subs in SUB_CATEGORIES.items():
+            for sub in subs:
+                assert "id" in sub, f"Sub in {parent_id} missing 'id'"
+                assert "label" in sub, f"Sub in {parent_id} missing 'label'"
+                assert "patterns" in sub, f"Sub in {parent_id} missing 'patterns'"
+                assert len(sub["patterns"]) > 0, f"Sub {sub['id']} in {parent_id} has empty patterns"

@@ -23,7 +23,7 @@ defaulting to bridge mode for backwards compatibility.
 import configparser
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from services.capture_manager import CaptureMode
 

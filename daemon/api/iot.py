@@ -8,7 +8,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
-from opensearchpy import OpenSearchException
 
 from services.iot_monitor import IoTMonitor
 from storage.manager import StorageManager

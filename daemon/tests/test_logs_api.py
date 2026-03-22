@@ -2,7 +2,7 @@
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 from aiohttp.test_utils import AioHTTPTestCase
 from aiohttp import web
 from api.logs import register_log_routes

@@ -9,7 +9,6 @@ and nvme-cli as primary NVMe tool.
 """
 
 import json
-import subprocess
 from unittest.mock import patch, MagicMock
 
 

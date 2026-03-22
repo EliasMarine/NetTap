@@ -15,6 +15,8 @@ export interface TSharkAnalyzeRequest {
 	output_format?: 'json' | 'text';
 	fields?: string[];
 	include_hex?: boolean;
+	verbose?: boolean;
+	follow_stream?: '' | 'tcp' | 'udp' | 'tls' | 'http';
 }
 
 export interface TSharkPacket {

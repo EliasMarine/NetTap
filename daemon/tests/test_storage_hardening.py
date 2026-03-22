@@ -13,10 +13,8 @@ Covers:
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager
@@ -57,6 +55,9 @@ def _make_manager(
 
     mgr._usage_history = deque(maxlen=StorageManager._USAGE_HISTORY_MAX)
     mgr._prediction_alert_active = False
+
+    import threading
+    mgr._cleanup_lock = threading.Lock()
 
     if usage_history:
         for entry in usage_history:

@@ -13,10 +13,16 @@ export interface DaemonError {
  * Fetch a path from the NetTap daemon API.
  * Handles connection errors gracefully — returns an error Response
  * instead of throwing if the daemon is unreachable.
+ *
+ * @param path - API path (e.g. '/api/tshark/analyze')
+ * @param options - Standard RequestInit options
+ * @param timeout - Request timeout in milliseconds (default 10_000).
+ *                  Override for long-running operations like TShark analysis.
  */
 export async function daemonFetch(
 	path: string,
-	options?: RequestInit
+	options?: RequestInit,
+	timeout: number = 10_000
 ): Promise<Response> {
 	const url = `${DAEMON_URL}${path}`;
 
@@ -27,7 +33,7 @@ export async function daemonFetch(
 				'Content-Type': 'application/json',
 				...options?.headers,
 			},
-			signal: options?.signal ?? AbortSignal.timeout(10_000),
+			signal: options?.signal ?? AbortSignal.timeout(timeout),
 		});
 		return response;
 	} catch (err) {
@@ -51,9 +57,10 @@ export async function daemonFetch(
  */
 export async function daemonJSON<T = unknown>(
 	path: string,
-	options?: RequestInit
+	options?: RequestInit,
+	timeout?: number
 ): Promise<{ data?: T; error?: string; status: number }> {
-	const res = await daemonFetch(path, options);
+	const res = await daemonFetch(path, options, timeout);
 	try {
 		const data = await res.json();
 		if (!res.ok) {
