@@ -56,6 +56,9 @@ def _make_manager(
     mgr._usage_history = deque(maxlen=StorageManager._USAGE_HISTORY_MAX)
     mgr._prediction_alert_active = False
 
+    import threading
+    mgr._cleanup_lock = threading.Lock()
+
     if usage_history:
         for entry in usage_history:
             mgr._usage_history.append(entry)

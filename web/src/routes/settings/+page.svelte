@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
+	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'display' | 'about';
 
@@ -30,6 +31,15 @@
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
+
+	// --- Manual Cleanup state ---
+	let cleanupDays = $state(60);
+	let cleanupPreview = $state<CleanupPreview | null>(null);
+	let cleanupPreviewing = $state(false);
+	let cleanupExecuting = $state(false);
+	let showCleanupConfirm = $state(false);
+	let cleanupMessage = $state('');
+	let cleanupError = $state(false);
 
 	// --- Network state (excluded IPs) ---
 	let excludedIps = $state<string[]>([]);
@@ -421,6 +431,71 @@
 		}
 	}
 
+	function formatCleanupBytes(bytes: number): string {
+		if (bytes === 0) return '0 B';
+		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+	}
+
+	async function handleCleanupPreview() {
+		if (cleanupDays < 1) return;
+		cleanupPreviewing = true;
+		cleanupMessage = '';
+		cleanupError = false;
+		cleanupPreview = null;
+		showCleanupConfirm = false;
+
+		try {
+			cleanupPreview = await previewCleanup(cleanupDays);
+		} catch (err: unknown) {
+			cleanupMessage = err instanceof Error ? err.message : 'Failed to preview cleanup';
+			cleanupError = true;
+		} finally {
+			cleanupPreviewing = false;
+		}
+	}
+
+	async function handleCleanupExecute() {
+		cleanupExecuting = true;
+		cleanupMessage = '';
+		cleanupError = false;
+
+		try {
+			const result = await executeCleanup(cleanupDays);
+			const freedStr = formatCleanupBytes(result.freed_bytes_estimate);
+			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
+			if (result.errors.length > 0) {
+				cleanupMessage += ` (${result.errors.length} errors)`;
+			}
+			cleanupError = false;
+			cleanupPreview = null;
+			showCleanupConfirm = false;
+
+			// Refresh disk usage
+			try {
+				const res = await fetch('/api/storage/status');
+				if (res.ok) {
+					const data = await res.json();
+					diskUsage = data.disk_usage_percent ?? diskUsage;
+				}
+			} catch {
+				// Non-critical, disk usage will update on next load
+			}
+		} catch (err: unknown) {
+			cleanupMessage = err instanceof Error ? err.message : 'Cleanup failed';
+			cleanupError = true;
+		} finally {
+			cleanupExecuting = false;
+		}
+	}
+
+	function cancelCleanup() {
+		showCleanupConfirm = false;
+		cleanupPreview = null;
+		cleanupMessage = '';
+	}
+
 	function saveDisplay() {
 		displaySaving = true;
 		displayMessage = '';
@@ -664,7 +739,102 @@
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
 			</div>
+
+		<!-- Manual Data Cleanup -->
+		<div class="card" style="margin-top: var(--space-lg);">
+			<div class="card-header">
+				<span class="card-title">Manual Data Cleanup</span>
+			</div>
+
+			<p class="field-help" style="margin-bottom: var(--space-md);">
+				Permanently delete OpenSearch indices and PCAP files older than a specified number of days to free up disk space.
+			</p>
+
+			{#if cleanupMessage}
+				<div class="alert {cleanupError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+					{cleanupMessage}
+				</div>
+			{/if}
+
+			<div class="cleanup-input-row">
+				<span class="cleanup-label">Delete data older than</span>
+				<div class="input-with-unit" style="width: 120px;">
+					<input
+						class="input"
+						type="number"
+						bind:value={cleanupDays}
+						min={1}
+						max={3650}
+						disabled={cleanupExecuting}
+					/>
+					<span class="input-unit">days</span>
+				</div>
+				<button
+					class="btn btn-secondary"
+					onclick={handleCleanupPreview}
+					disabled={cleanupPreviewing || cleanupExecuting || cleanupDays < 1}
+				>
+					{cleanupPreviewing ? 'Scanning...' : 'Preview Cleanup'}
+				</button>
+			</div>
+
+			{#if cleanupPreview}
+				<div class="cleanup-preview">
+					<div class="cleanup-preview-header">
+						<span class="cleanup-preview-title">Cleanup Preview</span>
+						<span class="text-muted">Data before {new Date(cleanupPreview.cutoff_date).toLocaleDateString()}</span>
+					</div>
+
+					<div class="cleanup-stats">
+						<div class="cleanup-stat">
+							<span class="cleanup-stat-value">{cleanupPreview.total_indices}</span>
+							<span class="cleanup-stat-label">Indices</span>
+						</div>
+						<div class="cleanup-stat">
+							<span class="cleanup-stat-value">{cleanupPreview.total_pcap_files}</span>
+							<span class="cleanup-stat-label">PCAP Files</span>
+						</div>
+						<div class="cleanup-stat">
+							<span class="cleanup-stat-value">{formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}</span>
+							<span class="cleanup-stat-label">Space Freed</span>
+						</div>
+					</div>
+
+					{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
+						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupDays} days.</p>
+					{:else}
+						<div class="cleanup-confirm-section">
+							{#if !showCleanupConfirm}
+								<p class="text-danger" style="font-size: var(--text-sm); margin-bottom: var(--space-sm);">
+									This action is irreversible. Deleted data cannot be recovered.
+								</p>
+								<div class="cleanup-actions">
+									<button class="btn btn-secondary" onclick={cancelCleanup}>Cancel</button>
+									<button class="btn btn-danger" onclick={() => showCleanupConfirm = true}>
+										Delete Data
+									</button>
+								</div>
+							{:else}
+								<div class="cleanup-final-confirm">
+									<p class="text-danger" style="font-weight: 600; margin-bottom: var(--space-sm);">
+										Are you sure? This will permanently delete {cleanupPreview.total_indices} indices and {cleanupPreview.total_pcap_files} PCAP files ({formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}).
+									</p>
+									<div class="cleanup-actions">
+										<button class="btn btn-secondary" onclick={cancelCleanup} disabled={cleanupExecuting}>
+											Cancel
+										</button>
+										<button class="btn btn-danger" onclick={handleCleanupExecute} disabled={cleanupExecuting}>
+											{cleanupExecuting ? 'Deleting...' : 'Confirm Delete'}
+										</button>
+									</div>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			{/if}
 		</div>
+	</div>
 
 	{:else if activeTab === 'capture'}
 		<div class="settings-section">
@@ -1512,5 +1682,83 @@
 	@keyframes capture-pulse {
 		0%, 100% { opacity: 1; }
 		50% { opacity: 0.4; }
+	}
+
+	/* Manual Data Cleanup */
+	.cleanup-input-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-md);
+		flex-wrap: wrap;
+	}
+
+	.cleanup-label {
+		color: var(--text-secondary);
+		font-size: var(--text-sm);
+		white-space: nowrap;
+	}
+
+	.cleanup-preview {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-top: var(--space-sm);
+	}
+
+	.cleanup-preview-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: var(--space-md);
+	}
+
+	.cleanup-preview-title {
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.cleanup-stats {
+		display: flex;
+		gap: var(--space-lg);
+		margin-bottom: var(--space-md);
+	}
+
+	.cleanup-stat {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.cleanup-stat-value {
+		font-size: var(--text-xl);
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+
+	.cleanup-stat-label {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.cleanup-confirm-section {
+		border-top: 1px solid var(--border);
+		padding-top: var(--space-md);
+		margin-top: var(--space-sm);
+	}
+
+	.cleanup-actions {
+		display: flex;
+		gap: var(--space-sm);
+	}
+
+	.cleanup-final-confirm {
+		background: var(--bg-secondary);
+		border: 1px solid var(--red);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
 	}
 </style>
