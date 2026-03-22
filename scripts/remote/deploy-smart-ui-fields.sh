@@ -15,14 +15,19 @@ git pull origin "$BRANCH"
 echo "   ✓ Code updated"
 echo ""
 
-echo "→ Step 2: Rebuild web container..."
-sudo docker compose -f docker/docker-compose.yml build nettap-web
-echo "   ✓ Web container rebuilt"
+echo "→ Step 2: Rebuild web container (no cache to ensure fresh build)..."
+sudo docker compose -f docker/docker-compose.yml build --no-cache nettap-web
+echo "   ✓ Web container rebuilt (no cache)"
 echo ""
 
 echo "→ Step 3: Restart web container..."
 sudo docker compose -f docker/docker-compose.yml up -d nettap-web --force-recreate
 echo "   ✓ Web container restarted"
+echo ""
+
+echo "→ Step 3b: Restart nginx to clear connection pool..."
+sudo docker compose -f docker/docker-compose.yml restart nettap-nginx
+echo "   ✓ Nginx restarted"
 echo ""
 
 echo "→ Step 4: Wait for web container to become healthy..."
@@ -35,6 +40,13 @@ for i in $(seq 1 30); do
     echo "   waiting... web=$WEB_STATUS ($i/30)"
     sleep 5
 done
+echo ""
+
+echo "→ Step 4b: Verify compiled JS contains new fields..."
+FOUND=$(sudo docker exec nettap-web sh -c "grep -c 'Total Written' build/client/_app/immutable/nodes/*.js 2>/dev/null || echo 0")
+echo "   'Total Written' found in $FOUND compiled chunk(s)"
+CHUNK=$(sudo docker exec nettap-web sh -c "ls build/client/_app/immutable/nodes/32.*.js 2>/dev/null | head -1")
+echo "   System page chunk: $CHUNK"
 echo ""
 
 echo "→ Step 5: Verify SMART health API returns all fields..."
