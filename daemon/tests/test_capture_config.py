@@ -8,7 +8,6 @@ Uses tmp_path fixture for temp files — no real /etc/nettap access required.
 
 import os
 import sys
-import unittest
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

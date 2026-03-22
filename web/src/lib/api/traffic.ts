@@ -146,14 +146,94 @@ export interface Connection {
 	_index: string;
 	/** ECS fields from OpenSearch _source */
 	'@timestamp'?: string;
-	source?: { ip?: string; port?: number; bytes?: number; packets?: number };
-	destination?: { ip?: string; port?: number; bytes?: number; packets?: number };
+	source?: { ip?: string; port?: number; bytes?: number; packets?: number; as?: { full?: string }; geo?: { country_iso_code?: string; country_name?: string } };
+	destination?: { ip?: string; port?: number; bytes?: number; packets?: number; as?: { full?: string }; geo?: { country_iso_code?: string; country_name?: string } };
 	client?: { bytes?: number };
 	server?: { bytes?: number };
 	network?: { transport?: string; protocol?: string; community_id?: string };
 	event?: { duration?: number };
 	zeek?: { session_id?: string; conn?: { state?: string; history?: string } };
 	[key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Connections v3 types
+// ---------------------------------------------------------------------------
+
+export interface ConnectionStatsSource {
+	ip: string;
+	total_bytes: number;
+	connections: number;
+}
+
+export interface ConnectionStatsDestination {
+	ip: string;
+	total_bytes: number;
+	connections: number;
+	asn: string;
+	country: string;
+}
+
+export interface ConnectionStatsResponse {
+	from: string;
+	to: string;
+	total_sessions: number;
+	bytes_in: number;
+	bytes_out: number;
+	alert_sessions: number;
+	protocols: ProtocolEntry[];
+	top_sources: ConnectionStatsSource[];
+	top_destinations: ConnectionStatsDestination[];
+}
+
+export interface SankeyNode {
+	id: string;
+	label: string;
+	value: number;
+	country?: string;
+}
+
+export interface SankeyLink {
+	source: string;
+	target: string;
+	value: number;
+}
+
+export interface SankeyResponse {
+	from: string;
+	to: string;
+	nodes: {
+		sources: SankeyNode[];
+		protocols: SankeyNode[];
+		destinations: SankeyNode[];
+	};
+	links: SankeyLink[];
+}
+
+export interface ConnectionTimelineBucket {
+	timestamp: string;
+	total: number;
+	protocols: Record<string, number>;
+}
+
+export interface ConnectionTimelineResponse {
+	from: string;
+	to: string;
+	interval: string;
+	buckets: ConnectionTimelineBucket[];
+}
+
+export interface RelatedConnectionsResponse {
+	from: string;
+	to: string;
+	src_ip: string;
+	dst_ip: string;
+	total_connections: number;
+	total_bytes: number;
+	protocols: string[];
+	first_seen: string | null;
+	last_seen: string | null;
+	connections: Connection[];
 }
 
 export interface ConnectionsResponse {
@@ -371,4 +451,77 @@ export async function getCategoryBandwidth(
 			series: [],
 		};
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Connections v3 fetch functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Get aggregated connection statistics (stat cards + analytics data).
+ */
+export async function getConnectionStats(
+	opts: TimeRangeParams = {}
+): Promise<ConnectionStatsResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/traffic/connections/stats${query}`);
+	if (!res.ok) {
+		return {
+			from: '', to: '', total_sessions: 0, bytes_in: 0, bytes_out: 0,
+			alert_sessions: 0, protocols: [], top_sources: [], top_destinations: [],
+		};
+	}
+	return res.json();
+}
+
+/**
+ * Get Sankey diagram data (source IPs → protocols → destination orgs).
+ */
+export async function getConnectionSankey(
+	opts: TimeRangeParams & { limit?: number } = {}
+): Promise<SankeyResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
+	const res = await fetch(`/api/traffic/connections/sankey${query}`);
+	if (!res.ok) {
+		return {
+			from: '', to: '',
+			nodes: { sources: [], protocols: [], destinations: [] },
+			links: [],
+		};
+	}
+	return res.json();
+}
+
+/**
+ * Get connection timeline (session count by protocol over time).
+ */
+export async function getConnectionTimeline(
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<ConnectionTimelineResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
+	const res = await fetch(`/api/traffic/connections/timeline${query}`);
+	if (!res.ok) {
+		return { from: '', to: '', interval: opts.interval ?? '15m', buckets: [] };
+	}
+	return res.json();
+}
+
+/**
+ * Get all connections between a specific source-destination pair.
+ */
+export async function getRelatedConnections(
+	srcIp: string,
+	dstIp: string,
+	opts: TimeRangeParams = {}
+): Promise<RelatedConnectionsResponse> {
+	const query = buildQuery({ src_ip: srcIp, dst_ip: dstIp, from: opts.from, to: opts.to });
+	const res = await fetch(`/api/traffic/connections/related${query}`);
+	if (!res.ok) {
+		return {
+			from: '', to: '', src_ip: srcIp, dst_ip: dstIp,
+			total_connections: 0, total_bytes: 0, protocols: [],
+			first_seen: null, last_seen: null, connections: [],
+		};
+	}
+	return res.json();
 }

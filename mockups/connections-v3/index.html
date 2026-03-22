@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connections v3 — NetTap Mockup</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --border-default: #30363d;
+    --border-dim: #21262d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --accent: #58a6ff;
+    --accent-muted: rgba(88,166,255,0.15);
+    --cyan: #56d4dd;
+    --green: #3fb950;
+    --amber: #d29922;
+    --purple: #bc8cff;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --teal: #39d353;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-sm: 4px;
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 32px;
+    --font-mono: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: var(--space-lg);
+  }
+
+  .page { display: flex; flex-direction: column; gap: var(--space-lg); max-width: 1400px; margin: 0 auto; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: var(--space-md); }
+  .header h1 { font-size: 28px; font-weight: 700; }
+  .subtitle { color: var(--text-muted); font-size: 14px; }
+  .header-right { display: flex; align-items: center; gap: var(--space-sm); }
+  .pills { display: flex; gap: 2px; }
+  .pill { padding: 4px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; }
+  .pill.active { background: var(--accent-muted); color: var(--accent); border-color: var(--accent); }
+  .btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: transparent; color: var(--text-primary); cursor: pointer; font-size: 13px; }
+  .btn-primary { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); font-weight: 600; }
+
+  /* Stat Cards */
+  .stat-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-md); }
+  .stat-card {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: var(--space-md);
+    background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+  }
+  .stat-value { font-size: 28px; font-weight: 700; font-family: var(--font-mono); }
+  .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card.alert .stat-value { color: var(--red); }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; margin-left: 4px; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+
+  /* Card */
+  .card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-lg); overflow: hidden; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; padding: var(--space-md); }
+  .card-header h2 { font-size: 16px; font-weight: 600; }
+  .card-badge { font-size: 12px; color: var(--text-muted); }
+  .card-body { padding: 0 var(--space-md) var(--space-md); }
+
+  /* Sankey placeholder */
+  .sankey-demo { position: relative; height: 350px; }
+  .sankey-demo svg { width: 100%; height: 100%; }
+
+  /* Timeline */
+  .timeline-bars { display: flex; align-items: flex-end; gap: 2px; height: 160px; padding: 0 var(--space-md) var(--space-md); }
+  .timeline-bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border-radius: 2px 2px 0 0; overflow: hidden; }
+  .timeline-bar .tcp { background: var(--cyan); }
+  .timeline-bar .udp { background: var(--green); }
+  .timeline-bar .tls { background: var(--purple); }
+  .timeline-bar .dns { background: var(--amber); }
+  .legend { display: flex; gap: var(--space-md); font-size: 12px; color: var(--text-muted); }
+  .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+
+  /* Analytics row */
+  .analytics-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-md); }
+  .analytics-col { padding: var(--space-md); }
+  .analytics-col h3 { font-size: 13px; font-weight: 600; margin-bottom: var(--space-sm); }
+
+  /* Bar list */
+  .bar-row { display: flex; align-items: center; gap: var(--space-sm); padding: 3px 0; }
+  .bar-rank { font-size: 11px; color: var(--text-muted); min-width: 16px; text-align: right; }
+  .bar-label { font-size: 13px; min-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+  .bar-track { flex: 1; height: 10px; background: var(--bg-tertiary); border-radius: var(--radius-sm); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: var(--radius-sm); }
+  .bar-value { font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono); min-width: 50px; text-align: right; }
+
+  /* Filter bar */
+  .filter-bar { padding: var(--space-md); display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: flex-end; }
+  .filter-group { display: flex; flex-direction: column; gap: var(--space-xs); }
+  .filter-group label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .input { background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); padding: 6px 10px; font-size: 13px; width: 180px; }
+  .filter-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: var(--accent-muted); color: var(--accent); border-radius: var(--radius-sm); font-size: 12px; }
+
+  /* Table */
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-default); white-space: nowrap; cursor: pointer; }
+  th:hover { color: var(--accent); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border-dim); font-size: 13px; white-space: nowrap; }
+  tr:hover td { background: var(--bg-tertiary); }
+  .mono { font-family: var(--font-mono); font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; }
+  .badge-success { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-muted { background: var(--bg-tertiary); color: var(--text-muted); }
+  .badge-danger { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-warning { background: rgba(210,153,34,0.15); color: var(--amber); }
+  .proto-badge { display: inline-block; padding: 1px 6px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; color: var(--bg-primary); }
+  .org-tag { margin-left: 4px; font-size: 10px; color: var(--text-muted); background: var(--bg-tertiary); padding: 1px 4px; border-radius: var(--radius-sm); font-family: -apple-system, sans-serif; }
+
+  /* Pagination */
+  .pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-md); padding: var(--space-md) 0; }
+  .pagination-info { font-size: 13px; color: var(--text-secondary); }
+
+  /* Drawer preview */
+  .drawer-preview { position: fixed; right: 0; top: 0; width: 420px; height: 100vh; background: var(--bg-secondary); border-left: 1px solid var(--border-default); padding: var(--space-md); overflow-y: auto; display: none; }
+  .drawer-preview.open { display: block; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>Connections</h1>
+      <p class="subtitle">Network session explorer</p>
+    </div>
+    <div class="header-right">
+      <div class="pills">
+        <button class="pill">15m</button>
+        <button class="pill active">1h</button>
+        <button class="pill">4h</button>
+        <button class="pill">24h</button>
+        <button class="pill">7d</button>
+      </div>
+      <button class="btn">Auto</button>
+      <button class="btn btn-primary">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Stat Cards -->
+  <div class="stat-cards">
+    <div class="stat-card">
+      <span class="stat-value">45.2K</span>
+      <span class="stat-label">Total Sessions</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-value">12 <span class="pulse"></span></span>
+      <span class="stat-label">Active Now</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-value">1.2 GB</span>
+      <span class="stat-label">Bytes In</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-value">3.8 GB</span>
+      <span class="stat-label">Bytes Out</span>
+    </div>
+    <div class="stat-card alert">
+      <span class="stat-value">42</span>
+      <span class="stat-label">w/ Alerts</span>
+    </div>
+  </div>
+
+  <!-- Sankey Flow Diagram -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Network Flow</h2>
+      <span class="card-badge">Source IPs &rarr; Protocols &rarr; Destinations</span>
+    </div>
+    <div class="card-body">
+      <div class="sankey-demo">
+        <svg viewBox="0 0 900 350">
+          <!-- Column headers -->
+          <text x="20" y="20" fill="#6e7681" font-size="11" font-weight="600" text-transform="uppercase">SOURCES</text>
+          <text x="400" y="20" fill="#6e7681" font-size="11" font-weight="600">PROTOCOLS</text>
+          <text x="760" y="20" fill="#6e7681" font-size="11" font-weight="600">DESTINATIONS</text>
+
+          <!-- Source nodes -->
+          <rect x="20" y="40" width="120" height="100" rx="4" fill="#56d4dd" opacity="0.7"/>
+          <text x="80" y="95" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">192.168.1.100</text>
+          <rect x="20" y="150" width="120" height="70" rx="4" fill="#56d4dd" opacity="0.7"/>
+          <text x="80" y="190" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">192.168.1.42</text>
+          <rect x="20" y="230" width="120" height="50" rx="4" fill="#56d4dd" opacity="0.7"/>
+          <text x="80" y="258" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">192.168.1.15</text>
+          <rect x="20" y="290" width="120" height="30" rx="4" fill="#56d4dd" opacity="0.7"/>
+          <text x="80" y="308" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">192.168.1.8</text>
+
+          <!-- Protocol nodes -->
+          <rect x="380" y="40" width="120" height="120" rx="4" fill="#56d4dd" opacity="0.7"/>
+          <text x="440" y="104" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">TCP</text>
+          <rect x="380" y="170" width="120" height="60" rx="4" fill="#3fb950" opacity="0.7"/>
+          <text x="440" y="204" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">UDP</text>
+          <rect x="380" y="240" width="120" height="40" rx="4" fill="#bc8cff" opacity="0.7"/>
+          <text x="440" y="264" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">TLS</text>
+          <rect x="380" y="290" width="120" height="25" rx="4" fill="#d29922" opacity="0.7"/>
+          <text x="440" y="306" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">DNS</text>
+
+          <!-- Destination nodes -->
+          <rect x="740" y="40" width="140" height="90" rx="4" fill="#39d353" opacity="0.7"/>
+          <text x="810" y="85" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">AS15169 Google</text>
+          <text x="810" y="100" text-anchor="middle" fill="#8b949e" font-size="10">US</text>
+          <rect x="740" y="140" width="140" height="60" rx="4" fill="#39d353" opacity="0.7"/>
+          <text x="810" y="174" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">AS13335 Cloudflare</text>
+          <rect x="740" y="210" width="140" height="50" rx="4" fill="#39d353" opacity="0.7"/>
+          <text x="810" y="239" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">AS16509 Amazon</text>
+          <rect x="740" y="270" width="140" height="40" rx="4" fill="#39d353" opacity="0.7"/>
+          <text x="810" y="294" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="500">AS32934 Meta</text>
+
+          <!-- Links (cubic beziers) -->
+          <path d="M140,90 C260,90 260,80 380,80" fill="none" stroke="#56d4dd" stroke-width="18" opacity="0.25"/>
+          <path d="M140,90 C260,90 260,200 380,200" fill="none" stroke="#3fb950" stroke-width="8" opacity="0.25"/>
+          <path d="M140,185 C260,185 260,110 380,110" fill="none" stroke="#56d4dd" stroke-width="12" opacity="0.25"/>
+          <path d="M140,255 C260,255 260,255 380,255" fill="none" stroke="#bc8cff" stroke-width="8" opacity="0.25"/>
+          <path d="M140,305 C260,305 260,300 380,300" fill="none" stroke="#d29922" stroke-width="6" opacity="0.25"/>
+
+          <path d="M500,70 C620,70 620,75 740,75" fill="none" stroke="#56d4dd" stroke-width="16" opacity="0.25"/>
+          <path d="M500,110 C620,110 620,165 740,165" fill="none" stroke="#56d4dd" stroke-width="10" opacity="0.25"/>
+          <path d="M500,200 C620,200 620,230 740,230" fill="none" stroke="#3fb950" stroke-width="8" opacity="0.25"/>
+          <path d="M500,255 C620,255 620,285 740,285" fill="none" stroke="#bc8cff" stroke-width="6" opacity="0.25"/>
+          <path d="M500,300 C620,300 620,90 740,90" fill="none" stroke="#d29922" stroke-width="5" opacity="0.25"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session Volume Timeline -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Session Volume</h2>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#56d4dd"></span>TCP</span>
+        <span><span class="legend-dot" style="background:#3fb950"></span>UDP</span>
+        <span><span class="legend-dot" style="background:#bc8cff"></span>TLS</span>
+        <span><span class="legend-dot" style="background:#d29922"></span>DNS</span>
+      </div>
+    </div>
+    <div class="timeline-bars">
+      <div class="timeline-bar"><div class="tcp" style="height:60px"></div><div class="udp" style="height:20px"></div><div class="tls" style="height:10px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:80px"></div><div class="udp" style="height:15px"></div><div class="tls" style="height:15px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:45px"></div><div class="udp" style="height:25px"></div><div class="dns" style="height:10px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:100px"></div><div class="udp" style="height:20px"></div><div class="tls" style="height:20px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:70px"></div><div class="udp" style="height:30px"></div><div class="tls" style="height:8px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:55px"></div><div class="udp" style="height:18px"></div><div class="dns" style="height:12px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:90px"></div><div class="udp" style="height:22px"></div><div class="tls" style="height:18px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:65px"></div><div class="udp" style="height:28px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:85px"></div><div class="udp" style="height:16px"></div><div class="tls" style="height:12px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:50px"></div><div class="udp" style="height:20px"></div><div class="dns" style="height:8px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:110px"></div><div class="udp" style="height:25px"></div><div class="tls" style="height:15px"></div></div>
+      <div class="timeline-bar"><div class="tcp" style="height:75px"></div><div class="udp" style="height:20px"></div></div>
+    </div>
+  </div>
+
+  <!-- Three-Column Analytics Row -->
+  <div class="analytics-row">
+    <div class="card analytics-col">
+      <h3>Top Sources <span class="card-badge">by bytes</span></h3>
+      <div class="bar-row"><span class="bar-rank">1</span><span class="bar-label">192.168.1.100</span><div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--cyan)"></div></div><span class="bar-value">2.1 GB</span></div>
+      <div class="bar-row"><span class="bar-rank">2</span><span class="bar-label">192.168.1.42</span><div class="bar-track"><div class="bar-fill" style="width:65%;background:var(--cyan)"></div></div><span class="bar-value">1.4 GB</span></div>
+      <div class="bar-row"><span class="bar-rank">3</span><span class="bar-label">192.168.1.15</span><div class="bar-track"><div class="bar-fill" style="width:40%;background:var(--cyan)"></div></div><span class="bar-value">840 MB</span></div>
+      <div class="bar-row"><span class="bar-rank">4</span><span class="bar-label">192.168.1.8</span><div class="bar-track"><div class="bar-fill" style="width:25%;background:var(--cyan)"></div></div><span class="bar-value">520 MB</span></div>
+      <div class="bar-row"><span class="bar-rank">5</span><span class="bar-label">192.168.1.200</span><div class="bar-track"><div class="bar-fill" style="width:15%;background:var(--cyan)"></div></div><span class="bar-value">310 MB</span></div>
+    </div>
+    <div class="card analytics-col">
+      <h3>Protocol Distribution</h3>
+      <div class="bar-row"><span class="legend-dot" style="background:var(--cyan)"></span><span class="bar-label" style="min-width:60px">TCP</span><div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--cyan)"></div></div><span class="bar-value">28.4K</span></div>
+      <div class="bar-row"><span class="legend-dot" style="background:var(--green)"></span><span class="bar-label" style="min-width:60px">UDP</span><div class="bar-track"><div class="bar-fill" style="width:45%;background:var(--green)"></div></div><span class="bar-value">12.8K</span></div>
+      <div class="bar-row"><span class="legend-dot" style="background:var(--purple)"></span><span class="bar-label" style="min-width:60px">TLS</span><div class="bar-track"><div class="bar-fill" style="width:20%;background:var(--purple)"></div></div><span class="bar-value">5.7K</span></div>
+      <div class="bar-row"><span class="legend-dot" style="background:var(--amber)"></span><span class="bar-label" style="min-width:60px">DNS</span><div class="bar-track"><div class="bar-fill" style="width:12%;background:var(--amber)"></div></div><span class="bar-value">3.4K</span></div>
+      <div class="bar-row"><span class="legend-dot" style="background:var(--red)"></span><span class="bar-label" style="min-width:60px">ICMP</span><div class="bar-track"><div class="bar-fill" style="width:3%;background:var(--red)"></div></div><span class="bar-value">812</span></div>
+    </div>
+    <div class="card analytics-col">
+      <h3>Top Destinations <span class="card-badge">by bytes</span></h3>
+      <div class="bar-row"><span class="bar-rank">1</span><span class="bar-label" style="font-family:inherit">AS15169 Google LLC</span><div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--green)"></div></div><span class="bar-value">1.8 GB</span></div>
+      <div class="bar-row"><span class="bar-rank">2</span><span class="bar-label" style="font-family:inherit">AS13335 Cloudflare</span><div class="bar-track"><div class="bar-fill" style="width:55%;background:var(--green)"></div></div><span class="bar-value">990 MB</span></div>
+      <div class="bar-row"><span class="bar-rank">3</span><span class="bar-label" style="font-family:inherit">AS16509 Amazon</span><div class="bar-track"><div class="bar-fill" style="width:35%;background:var(--green)"></div></div><span class="bar-value">630 MB</span></div>
+      <div class="bar-row"><span class="bar-rank">4</span><span class="bar-label" style="font-family:inherit">AS32934 Meta</span><div class="bar-track"><div class="bar-fill" style="width:20%;background:var(--green)"></div></div><span class="bar-value">360 MB</span></div>
+      <div class="bar-row"><span class="bar-rank">5</span><span class="bar-label" style="font-family:inherit">AS8075 Microsoft</span><div class="bar-track"><div class="bar-fill" style="width:12%;background:var(--green)"></div></div><span class="bar-value">215 MB</span></div>
+    </div>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="card filter-bar">
+    <div class="filter-group">
+      <label>Protocol</label>
+      <div class="pills">
+        <button class="pill active">All</button>
+        <button class="pill">TCP</button>
+        <button class="pill">UDP</button>
+        <button class="pill">ICMP</button>
+        <button class="pill">TLS</button>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Service</label>
+      <input class="input" type="text" placeholder="dns, http, tls...">
+    </div>
+    <div class="filter-group">
+      <label>IP Address</label>
+      <input class="input" type="text" placeholder="192.168.1.100">
+    </div>
+    <div class="filter-group">
+      <label>State</label>
+      <div class="pills">
+        <button class="pill active">All</button>
+        <button class="pill">Established</button>
+        <button class="pill">Closed</button>
+        <button class="pill">Rejected</button>
+        <button class="pill">Timeout</button>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label style="display:flex;align-items:center;gap:4px"><input type="checkbox"> Has Alerts</label>
+    </div>
+    <div class="filter-badge">source: 192.168.1.100 <span style="cursor:pointer;margin-left:4px">&times;</span></div>
+    <div style="margin-left:auto"><button class="btn">Apply</button></div>
+  </div>
+
+  <!-- Sessions Table -->
+  <div class="card">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp &#9660;</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th>Protocol</th>
+            <th>Service</th>
+            <th>Duration</th>
+            <th>Bytes In</th>
+            <th>Bytes Out</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">3/17/2026, 2:14:32 PM</td>
+            <td class="mono">192.168.1.100:54321</td>
+            <td class="mono">142.250.80.46:443 <span class="org-tag">AS15169 Google</span></td>
+            <td><span class="proto-badge" style="background:var(--cyan)">TCP</span></td>
+            <td>tls</td>
+            <td class="mono">2.3s</td>
+            <td class="mono">1.2 KB</td>
+            <td class="mono">45.8 KB</td>
+            <td><span class="badge badge-success">ESTABLISHED (SF)</span></td>
+          </tr>
+          <tr>
+            <td class="mono">3/17/2026, 2:14:30 PM</td>
+            <td class="mono">192.168.1.42:61234</td>
+            <td class="mono">1.1.1.1:53 <span class="org-tag">AS13335 Cloudflare</span></td>
+            <td><span class="proto-badge" style="background:var(--green)">UDP</span></td>
+            <td>dns</td>
+            <td class="mono">12ms</td>
+            <td class="mono">64 B</td>
+            <td class="mono">128 B</td>
+            <td><span class="badge badge-muted">CLOSED (S2)</span></td>
+          </tr>
+          <tr>
+            <td class="mono">3/17/2026, 2:14:28 PM</td>
+            <td class="mono">192.168.1.100:45678</td>
+            <td class="mono">31.13.71.36:443 <span class="org-tag">AS32934 Meta</span></td>
+            <td><span class="proto-badge" style="background:var(--purple)">TLS</span></td>
+            <td>https</td>
+            <td class="mono">5.1s</td>
+            <td class="mono">3.4 KB</td>
+            <td class="mono">128.5 KB</td>
+            <td><span class="badge badge-success">ESTABLISHED (SF)</span></td>
+          </tr>
+          <tr>
+            <td class="mono">3/17/2026, 2:14:25 PM</td>
+            <td class="mono">192.168.1.15:38901</td>
+            <td class="mono">203.104.209.7:22</td>
+            <td><span class="proto-badge" style="background:var(--cyan)">TCP</span></td>
+            <td>ssh</td>
+            <td class="mono">1m 42s</td>
+            <td class="mono">15.2 KB</td>
+            <td class="mono">8.9 KB</td>
+            <td><span class="badge badge-danger">REJECTED (REJ)</span></td>
+          </tr>
+          <tr>
+            <td class="mono">3/17/2026, 2:14:20 PM</td>
+            <td class="mono">192.168.1.8:50123</td>
+            <td class="mono">8.8.8.8:53 <span class="org-tag">AS15169 Google</span></td>
+            <td><span class="proto-badge" style="background:var(--green)">UDP</span></td>
+            <td>dns</td>
+            <td class="mono">8ms</td>
+            <td class="mono">48 B</td>
+            <td class="mono">96 B</td>
+            <td><span class="badge badge-warning">TIMEOUT (S0)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Pagination -->
+  <div class="pagination">
+    <button class="btn" disabled>Previous</button>
+    <span class="pagination-info">Page 1 of 905 <span style="color:var(--text-muted)">(45,230 total)</span></span>
+    <button class="btn">Next</button>
+    <select class="input" style="width:70px"><option>25</option><option selected>50</option><option>100</option></select>
+  </div>
+
+</div>
+</body>
+</html>

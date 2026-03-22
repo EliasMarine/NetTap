@@ -406,7 +406,7 @@ sudo docker logs nettap-storage-daemon --tail 50
 
 1. **The device does NOT have `npm` installed.** All builds happen inside Docker containers via `docker compose build`. NEVER give commands that use `npm` directly on the device.
 2. **The device does NOT have the same directory structure as the dev machine.** The repo lives at `~/NetTap` (i.e., `/home/nettap/NetTap`). There is NO `/opt/nettap`, no `/root/NetTap`.
-3. **`scripts/remote/` does NOT exist on the device** unless manually created. Do NOT push deploy scripts to git and expect them to be pullable — the directory may have permission issues or not exist. Instead, provide scripts via `cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT` for the user to paste directly.
+3. **Deploy scripts live in `scripts/remote/` in the repo.** They are committed, pushed, and pulled onto the device via `git pull`. The device runs them with `bash scripts/remote/deploy-*.sh` after pulling.
 4. **`sudo` changes `$HOME` to `/root`.** If a script uses `$HOME/NetTap` and runs with `sudo`, it resolves to `/root/NetTap` which doesn't exist. Either: (a) don't use `sudo` for the whole script — only `sudo` individual commands that need it, or (b) hardcode `REPO_DIR="/home/nettap/NetTap"`, or (c) use `$(getent passwd nettap | cut -d: -f6)/NetTap`.
 5. **The device runs Ubuntu Server 22.04** with Docker and Docker Compose. That's it. No Node.js, no npm, no Python pip packages outside of containers.
 
@@ -414,7 +414,7 @@ sudo docker logs nettap-storage-daemon --tail 50
 
 1. **Never assume commands can run on the NetTap device from this machine.** All deployment, debugging, and diagnostic commands are copy-pasted by the user over SSH.
 2. **NEVER give multi-line commands with `\` continuations or `&&` chains for the remote device.** They ALWAYS break when copy-pasted into SSH terminals (trailing spaces after `\` become escaped spaces, `&&` chains fail silently). This has caused repeated frustration.
-3. **ALL remote commands MUST be provided as a self-contained script** the user can paste into a file on the device (via `cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT`). Do NOT push scripts to `scripts/remote/` in git — the device may not be able to pull them due to permission issues or missing directories.
+3. **ALL deploy scripts MUST be written to `scripts/remote/` in the repo**, committed, and pushed. The user pulls on the device and runs `bash scripts/remote/deploy-*.sh`. NEVER use `cat > /tmp/` heredocs — they are error-prone and not version-controlled.
 4. **Every remote script must include the full workflow.** Pull latest code, build containers, deploy, wait for startup, then run the actual task. The user runs ONE script and walks away. Never separate "deploy" and "test" into different steps.
 5. **Each remote script must be self-contained and idempotent** — include progress markers (`echo "→ Step..."`), error handling (no `set -e`, use per-command `|| true` or explicit error messages), and verify results at the end.
 6. **Scripts must handle `sudo` correctly.** Run the script as the normal user (`bash /tmp/script.sh`), and only `sudo` individual docker commands inside. NEVER `sudo bash /tmp/script.sh` — this breaks `$HOME`, `git` ownership, etc.
@@ -424,8 +424,14 @@ sudo docker logs nettap-storage-daemon --tail 50
 
 **Every deploy script MUST follow this exact structure.** Use `set -u` (not `set -e`). Use numbered steps with `echo "→ Step N:"` progress markers. Include health-check polling and API verification at the end.
 
+Write the script to `scripts/remote/deploy-DESCRIPTION.sh`, commit and push it, then tell the user:
 ```bash
-cat > /tmp/deploy-DESCRIPTION.sh << 'SCRIPT'
+# On the device (after git pull):
+bash scripts/remote/deploy-DESCRIPTION.sh
+```
+
+**Script template** (`scripts/remote/deploy-DESCRIPTION.sh`):
+```bash
 #!/usr/bin/env bash
 set -u
 
@@ -482,18 +488,14 @@ echo ""
 
 echo "=== Deploy Complete ==="
 echo "Open the dashboard to verify."
-SCRIPT
-
-echo "Script written. Now run:"
-echo "  bash /tmp/deploy-DESCRIPTION.sh"
 ```
 
 **Key rules for deploy scripts:**
+- Write to `scripts/remote/deploy-DESCRIPTION.sh`, commit, and push — NEVER use `/tmp/` heredocs
 - Only rebuild containers that have changes (skip web if only daemon changed, etc.)
 - Always include API-level verification steps that test the specific fix
 - Health-check loop polls up to 30 times (2.5 minutes) with 5s intervals
-- The `cat > /tmp/... << 'SCRIPT'` heredoc is pasted by the user into SSH — the user then runs `bash /tmp/...`
-- Name the script file descriptively: `/tmp/deploy-traffic-fix.sh`, `/tmp/deploy-auth-hotfix.sh`, etc.
+- Name the script file descriptively: `deploy-tshark-fix.sh`, `deploy-auth-hotfix.sh`, etc.
 
 ---
 

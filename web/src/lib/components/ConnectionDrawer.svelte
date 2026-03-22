@@ -7,8 +7,10 @@
 -->
 <script lang="ts">
 	import { getField, asString, buildTSharkFilter } from '$lib/utils/tshark-filter';
-	import { analyzePcap, getPcapFiles, getTSharkStatus } from '$api/tshark';
+	import { getPcapFiles, getTSharkStatus } from '$api/tshark';
 	import type { TSharkPacket, PcapFile } from '$api/tshark';
+	import { analyzeConnection } from '$lib/utils/tshark-analyze';
+	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -127,26 +129,38 @@
 		return `${src} \u2192 ${dst}`;
 	});
 
+	// Timestamp
+	let timestamp = $derived(connection ? asString(getField(connection, '@timestamp')) : '');
+
 	// BPF filter
 	let bpfFilter = $derived(connection ? buildBpfFilter(connection) : '');
 	let displayFilter = $derived(connection ? buildTSharkFilter(connection) : '');
 
-	// Connection state descriptions
-	const STATE_DESC: Record<string, string> = {
-		S0: 'Connection attempt seen, no reply',
-		S1: 'Connection established, not terminated',
-		SF: 'Normal establishment and termination',
-		REJ: 'Connection attempt rejected',
-		S2: 'Established, close attempted by originator',
-		S3: 'Established, close attempted by responder',
-		RSTO: 'Established, originator aborted',
-		RSTR: 'Established, responder aborted',
-		RSTOS0: 'Originator sent SYN then RST, no reply',
-		RSTRH: 'Responder sent SYN ACK then RST, no reply',
-		SH: 'Originator sent SYN then FIN, no reply (half-open)',
-		SHR: 'Responder sent SYN ACK then FIN, no reply',
-		OTH: 'No SYN seen, midstream traffic',
-	};
+	// TShark tool URL
+	let tsharkToolUrl = $derived.by(() => {
+		const params = new URLSearchParams({ auto: '1' });
+		if (displayFilter) params.set('filter', displayFilter);
+		if (timestamp) params.set('ts', timestamp);
+		return `/tools/tshark?${params}`;
+	});
+
+	// OLD CODE START — STATE_DESC moved to CONN_STATE_DESC in $lib/utils/tshark-helpers.ts
+	// const STATE_DESC: Record<string, string> = {
+	// 	S0: 'Connection attempt seen, no reply',
+	// 	S1: 'Connection established, not terminated',
+	// 	SF: 'Normal establishment and termination',
+	// 	REJ: 'Connection attempt rejected',
+	// 	S2: 'Established, close attempted by originator',
+	// 	S3: 'Established, close attempted by responder',
+	// 	RSTO: 'Established, originator aborted',
+	// 	RSTR: 'Established, responder aborted',
+	// 	RSTOS0: 'Originator sent SYN then RST, no reply',
+	// 	RSTRH: 'Responder sent SYN ACK then RST, no reply',
+	// 	SH: 'Originator sent SYN then FIN, no reply (half-open)',
+	// 	SHR: 'Responder sent SYN ACK then FIN, no reply',
+	// 	OTH: 'No SYN seen, midstream traffic',
+	// };
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -171,26 +185,28 @@
 		return parts.join(' and ');
 	}
 
-	function formatDuration(val: unknown): string {
-		if (val == null) return '--';
-		const n = Number(val);
-		if (isNaN(n)) return String(val);
-		if (n < 0.001) return `${(n * 1_000_000).toFixed(0)}\u00b5s`;
-		if (n < 1) return `${(n * 1000).toFixed(0)}ms`;
-		if (n < 60) return `${n.toFixed(1)}s`;
-		if (n < 3600) return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
-		return `${Math.floor(n / 3600)}h ${Math.floor((n % 3600) / 60)}m`;
-	}
-
-	function formatBytes(val: unknown): string {
-		if (val == null) return '--';
-		const n = Number(val);
-		if (isNaN(n)) return String(val);
-		if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-		if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-		if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
-		return `${n} B`;
-	}
+	// OLD CODE START — formatDuration/formatBytes moved to $lib/utils/tshark-helpers.ts
+	// function formatDuration(val: unknown): string {
+	// 	if (val == null) return '--';
+	// 	const n = Number(val);
+	// 	if (isNaN(n)) return String(val);
+	// 	if (n < 0.001) return `${(n * 1_000_000).toFixed(0)}\u00b5s`;
+	// 	if (n < 1) return `${(n * 1000).toFixed(0)}ms`;
+	// 	if (n < 60) return `${n.toFixed(1)}s`;
+	// 	if (n < 3600) return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
+	// 	return `${Math.floor(n / 3600)}h ${Math.floor((n % 3600) / 60)}m`;
+	// }
+	//
+	// function formatBytes(val: unknown): string {
+	// 	if (val == null) return '--';
+	// 	const n = Number(val);
+	// 	if (isNaN(n)) return String(val);
+	// 	if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
+	// 	if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+	// 	if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
+	// 	return `${n} B`;
+	// }
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Tab switching + TShark logic
@@ -228,12 +244,13 @@
 			}
 		}
 
-		// Load PCAP files
+		// Load PCAP files and auto-run analysis
 		if (tsharkAvailable) {
 			pcapLoading = true;
 			try {
 				const result = await getPcapFiles();
 				pcapFiles = result.pcaps || [];
+				if (pcapFiles.length > 0) runAnalysis();
 			} catch {
 				tsharkError = 'Failed to load PCAP files';
 			} finally {
@@ -243,54 +260,27 @@
 	}
 
 	async function runAnalysis() {
-		if (pcapFiles.length === 0) {
-			tsharkError = 'No PCAP files available on the appliance.';
-			return;
-		}
-		if (!displayFilter) {
-			tsharkError = 'Could not build a display filter from this connection.';
-			return;
-		}
-
 		analyzing = true;
 		tsharkError = '';
 		tsharkTextOutput = '';
 		packets = [];
 
-		// Sort PCAPs by modification time (most recent first)
-		const sorted = [...pcapFiles].sort((a, b) => b.modified - a.modified);
-		const pcap = sorted[0];
-
-		const maxPackets = tsharkMode === 'follow' ? 500 : 50;
-		const outputFormat = tsharkMode === 'summary' ? 'json' : 'text';
-
 		try {
-			const result = await analyzePcap({
-				pcap_path: pcap.path,
-				display_filter: displayFilter,
-				max_packets: maxPackets,
-				output_format: outputFormat,
+			const result = await analyzeConnection({
+				pcapFiles,
+				displayFilter,
+				timestamp,
+				mode: tsharkMode,
+				proto: proto || 'tcp',
+				maxAttempts: 5,
 			});
 
 			if (result.error) {
 				tsharkError = result.error;
-			} else if (outputFormat === 'json') {
+			} else if (tsharkMode === 'summary') {
 				packets = result.packets;
-				if (packets.length === 0) {
-					tsharkError = 'No matching packets found in the most recent PCAP.';
-				}
 			} else {
-				// Text mode — packets array may contain text representations
-				if (result.packets && result.packets.length > 0) {
-					tsharkTextOutput = result.packets
-						.map((p) => {
-							if (typeof p === 'string') return p;
-							return p?.raw || p?.text || JSON.stringify(p, null, 2);
-						})
-						.join('\n');
-				} else {
-					tsharkError = 'No matching packets found in the most recent PCAP.';
-				}
+				tsharkTextOutput = result.textOutput;
 			}
 		} catch (err) {
 			tsharkError = `Analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -299,20 +289,30 @@
 		}
 	}
 
-	function getPacketSummary(pkt: TSharkPacket): { no: string; time: string; src: string; dst: string; proto: string; len: string; info: string } {
-		const layers = pkt?.['_source']?.['layers'] || pkt;
-		const frame = layers?.['frame'] || {};
-		const ip = layers?.['ip'] || layers?.['ipv6'] || {};
-		return {
-			no: frame['frame.number'] || '?',
-			time: frame['frame.time_relative'] || frame['frame.time'] || '?',
-			src: ip['ip.src'] || ip['ipv6.src'] || '?',
-			dst: ip['ip.dst'] || ip['ipv6.dst'] || '?',
-			proto: frame['frame.protocols']?.split(':').pop() || '?',
-			len: frame['frame.len'] || '?',
-			info: pkt?.['_source']?.['layers']?.['_ws.col']?.['_ws.col.Info'] || '',
-		};
-	}
+	// OLD CODE START — unwrap/getPacketSummary moved to $lib/utils/tshark-helpers.ts
+	// /** Unwrap TShark -T json array-wrapped values (e.g. ["1"] -> "1") */
+	// function unwrap(val: unknown): string {
+	// 	if (Array.isArray(val)) return String(val[0] ?? '');
+	// 	if (val == null) return '';
+	// 	return String(val);
+	// }
+	//
+	// function getPacketSummary(pkt: TSharkPacket): { no: string; time: string; src: string; dst: string; proto: string; len: string; info: string } {
+	// 	const layers = pkt?.['_source']?.['layers'] || pkt;
+	// 	const frame = layers?.['frame'] || {};
+	// 	const ip = layers?.['ip'] || layers?.['ipv6'] || {};
+	// 	const protocols = unwrap(frame['frame.protocols']);
+	// 	return {
+	// 		no: unwrap(frame['frame.number']) || '?',
+	// 		time: unwrap(frame['frame.time_relative']) || unwrap(frame['frame.time']) || '?',
+	// 		src: unwrap(ip['ip.src']) || unwrap(ip['ipv6.src']) || '?',
+	// 		dst: unwrap(ip['ip.dst']) || unwrap(ip['ipv6.dst']) || '?',
+	// 		proto: protocols.split(':').pop() || '?',
+	// 		len: unwrap(frame['frame.len']) || '?',
+	// 		info: unwrap(pkt?.['_source']?.['layers']?.['_ws.col']?.['_ws.col.Info']) || '',
+	// 	};
+	// }
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Keyboard handler
@@ -402,7 +402,7 @@
 							<span class="detail-label">Conn State</span>
 							<span class="detail-value">
 								{#if connState}
-									{connState}{#if STATE_DESC[connState]} ({STATE_DESC[connState].split(',')[0]}){/if}
+									{connState}{#if CONN_STATE_DESC[connState]} ({CONN_STATE_DESC[connState].split(',')[0]}){/if}
 								{:else}
 									--
 								{/if}
@@ -497,7 +497,7 @@
 							class:active={tsharkMode === 'follow'}
 							onclick={() => tsharkMode = 'follow'}
 						>Follow Stream</button>
-						<a href="/tshark" class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</a>
+						<a href={tsharkToolUrl} class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</a>
 					</div>
 
 					<!-- Status / output -->

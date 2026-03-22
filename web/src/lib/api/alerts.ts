@@ -147,6 +147,7 @@ export async function getAlerts(
 		size?: number;
 		ip?: string;
 		signature?: string;
+		category?: string;
 	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
@@ -157,6 +158,7 @@ export async function getAlerts(
 		size: opts.size,
 		ip: opts.ip,
 		signature: opts.signature,
+		category: opts.category,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 
@@ -477,4 +479,170 @@ export async function markFalsePositive(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ signature_id: signatureId, reason }),
 	});
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced Category Types (v3 — severity, trends, MITRE, sub-categories)
+// ---------------------------------------------------------------------------
+
+export interface CategorySeverityBreakdown {
+	critical: number;
+	high: number;
+	medium: number;
+	low: number;
+	info: number;
+}
+
+export interface SubCategory {
+	id: string;
+	label: string;
+	count: number;
+}
+
+export interface CategoryTrend {
+	direction: 'increasing' | 'decreasing' | 'stable';
+	percentage: number;
+}
+
+export interface AlertCategory {
+	id: string;
+	label: string;
+	icon: string;
+	color: string;
+	description: string;
+	count: number;
+	severity_breakdown: CategorySeverityBreakdown;
+	trend: CategoryTrend;
+	sparkline: number[];
+	sub_categories: SubCategory[];
+}
+
+export interface EnhancedCategoriesResponse {
+	from: string;
+	to: string;
+	categories: AlertCategory[];
+}
+
+export interface MitreTechnique {
+	id: string;
+	name: string;
+	description: string;
+	count?: number;
+}
+
+export interface MitreTactic {
+	id: string;
+	name: string;
+}
+
+export interface CategoryDetailDevice {
+	ip: string;
+	count: number;
+	hostname?: string;
+	severity?: string;
+}
+
+export interface CategoryDetailSignature {
+	signature: string;
+	count: number;
+	last_seen: string;
+}
+
+export interface CategoryDetailResponse {
+	category: {
+		id: string;
+		label: string;
+		description: string;
+		color: string;
+		icon: string;
+		mitre_tactic: MitreTactic | null;
+	};
+	stats: {
+		total: number;
+		unique_sources: number;
+		unique_targets: number;
+		affected_devices: number;
+	};
+	severity_breakdown: CategorySeverityBreakdown;
+	sub_categories: SubCategory[];
+	affected_devices: CategoryDetailDevice[];
+	top_signatures: CategoryDetailSignature[];
+	mitre_techniques: MitreTechnique[];
+	from: string;
+	to: string;
+}
+
+export interface CategoryTimelinePoint {
+	timestamp: string;
+	total: number;
+	sub_categories: Record<string, number>;
+}
+
+export interface CategoryTimelineResponse {
+	category: string;
+	from: string;
+	to: string;
+	interval: string;
+	series: CategoryTimelinePoint[];
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced Category Fetch helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get enhanced alert categories with severity breakdowns, trends, and sparklines.
+ */
+export async function getEnhancedCategories(
+	opts: TimeRangeParams = {}
+): Promise<EnhancedCategoriesResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	try {
+		const res = await fetch(`/api/alerts/categories${q}`, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch {
+		return { from: '', to: '', categories: [] };
+	}
+}
+
+/**
+ * Get detailed information for a single alert category.
+ * Includes stats, affected devices, top signatures, and MITRE techniques.
+ */
+export async function getAlertCategoryDetail(
+	category: string,
+	opts: TimeRangeParams = {}
+): Promise<CategoryDetailResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	try {
+		const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}${q}`, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch {
+		return {
+			category: { id: category, label: category, description: '', color: 'muted', icon: 'info', mitre_tactic: null },
+			stats: { total: 0, unique_sources: 0, unique_targets: 0, affected_devices: 0 },
+			severity_breakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+			sub_categories: [], affected_devices: [], top_signatures: [], mitre_techniques: [],
+			from: '', to: '',
+		};
+	}
+}
+
+/**
+ * Get time-series data for a single alert category, broken down by sub-categories.
+ */
+export async function getAlertCategoryTimeline(
+	category: string,
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<CategoryTimelineResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	try {
+		const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}/timeline${q}`, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch {
+		return { category, from: '', to: '', interval: opts.interval ?? '1h', series: [] };
+	}
 }
