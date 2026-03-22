@@ -373,51 +373,6 @@
 				{/if}
 			</div>
 
-			<!-- Drive Details (extended SMART info) -->
-			{#if smartHealth && smartHealth.device}
-				<div class="card">
-					<div class="card-header">
-						<span class="card-title">Drive Details</span>
-					</div>
-					<div style="display: flex; flex-direction: column; gap: 8px;">
-						<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-muted);">
-							<span style="font-size: 0.8125rem; color: var(--text-secondary);">Total Written</span>
-							<span style="font-size: 0.8125rem; color: var(--text-primary); font-family: var(--font-mono);">{smartHealth.total_bytes_written != null ? formatBytes(smartHealth.total_bytes_written) : '--'}</span>
-						</div>
-						<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-muted);">
-							<span style="font-size: 0.8125rem; color: var(--text-secondary);">Total Read</span>
-							<span style="font-size: 0.8125rem; color: var(--text-primary); font-family: var(--font-mono);">{smartHealth.total_bytes_read != null ? formatBytes(smartHealth.total_bytes_read) : '--'}</span>
-						</div>
-						{#if smartHealth.device_type === 'nvme'}
-							<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-muted);">
-								<span style="font-size: 0.8125rem; color: var(--text-secondary);">Media Errors</span>
-								<span style="font-size: 0.8125rem; font-family: var(--font-mono); color: {smartHealth.media_errors != null && smartHealth.media_errors > 0 ? 'var(--danger)' : 'var(--success)'};">{smartHealth.media_errors != null ? smartHealth.media_errors.toLocaleString() : '--'}</span>
-							</div>
-						{/if}
-						{#if smartHealth.device_type === 'sata'}
-							<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-muted);">
-								<span style="font-size: 0.8125rem; color: var(--text-secondary);">Reallocated Sectors</span>
-								<span style="font-size: 0.8125rem; font-family: var(--font-mono); color: {smartHealth.reallocated_sectors != null && smartHealth.reallocated_sectors > 0 ? 'var(--danger)' : 'var(--success)'};">{smartHealth.reallocated_sectors != null ? smartHealth.reallocated_sectors.toLocaleString() : '--'}</span>
-							</div>
-						{/if}
-						<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-muted);">
-							<span style="font-size: 0.8125rem; color: var(--text-secondary);">Serial</span>
-							<span style="font-size: 0.8125rem; color: var(--text-primary); font-family: var(--font-mono);">{smartHealth.serial || '--'}</span>
-						</div>
-						<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-muted);">
-							<span style="font-size: 0.8125rem; color: var(--text-secondary);">Type</span>
-							<span style="font-size: 0.8125rem; color: var(--text-primary);">{smartHealth.device_type === 'nvme' ? 'NVMe' : smartHealth.device_type === 'sata' ? 'SATA' : '--'}</span>
-						</div>
-						{#if smartHealth.timestamp}
-							<div style="display: flex; justify-content: space-between; padding: 4px 0;">
-								<span style="font-size: 0.8125rem; color: var(--text-secondary);">Last Updated</span>
-								<span style="font-size: 0.8125rem; color: var(--text-muted);">{new Date(smartHealth.timestamp).toLocaleString()}</span>
-							</div>
-						{/if}
-					</div>
-				</div>
-			{/if}
-
 			<!-- Services -->
 			<div class="card">
 				<div class="card-header">
