@@ -15,7 +15,12 @@ git pull origin "$BRANCH"
 echo "   ✓ Code updated"
 echo ""
 
-echo "→ Step 2: Rebuild web container (no cache to ensure fresh build)..."
+echo "→ Step 1b: Remove old web image to force clean rebuild..."
+sudo docker rmi nettap/web:latest 2>/dev/null || true
+echo "   ✓ Old image removed"
+echo ""
+
+echo "→ Step 2: Rebuild web container (no cache + Dockerfile now clears .svelte-kit)..."
 sudo docker compose -f docker/docker-compose.yml build --no-cache nettap-web
 echo "   ✓ Web container rebuilt (no cache)"
 echo ""
@@ -47,6 +52,17 @@ FOUND=$(sudo docker exec nettap-web sh -c "grep -c 'Total Written' build/client/
 echo "   'Total Written' found in $FOUND compiled chunk(s)"
 CHUNK=$(sudo docker exec nettap-web sh -c "ls build/client/_app/immutable/nodes/32.*.js 2>/dev/null | head -1")
 echo "   System page chunk: $CHUNK"
+echo ""
+
+echo "→ Step 4c: Verify SERVER build contains new fields..."
+SERVER_FOUND=$(sudo docker exec nettap-web sh -c "grep -rl 'Total Written' build/server/ 2>/dev/null | wc -l")
+echo "   Server files with 'Total Written': $SERVER_FOUND"
+if [ "$SERVER_FOUND" = "0" ]; then
+    echo "   ⚠ WARNING: Server build is MISSING new fields! SSR will show old page."
+    echo "   Try: sudo docker compose -f docker/docker-compose.yml build --no-cache nettap-web"
+else
+    echo "   ✓ Server build has new fields"
+fi
 echo ""
 
 echo "→ Step 5: Verify SMART health API returns all fields..."
