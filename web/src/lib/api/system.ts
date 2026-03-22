@@ -35,12 +35,19 @@ export interface StorageStatus {
 
 export interface SmartHealth {
 	device: string;
+	device_type: string;
 	model: string;
+	serial: string;
 	temperature_c: number | null;
 	percentage_used: number | null;
 	power_on_hours: number | null;
+	total_bytes_written: number | null;
+	total_bytes_read: number | null;
+	media_errors: number | null;
+	reallocated_sectors: number | null;
 	healthy: boolean;
 	warnings: string[];
+	timestamp: string;
 }
 
 export interface SmartDiagnostics {
@@ -112,12 +119,19 @@ export async function getSmartHealth(): Promise<SmartHealth> {
 	if (!res.ok) {
 		return {
 			device: '',
+			device_type: '',
 			model: '',
-			temperature_c: 0,
-			percentage_used: 0,
-			power_on_hours: 0,
+			serial: '',
+			temperature_c: null,
+			percentage_used: null,
+			power_on_hours: null,
+			total_bytes_written: null,
+			total_bytes_read: null,
+			media_errors: null,
+			reallocated_sectors: null,
 			healthy: false,
 			warnings: [],
+			timestamp: new Date().toISOString(),
 		};
 	}
 
@@ -179,12 +193,19 @@ export async function runSmartTest(): Promise<SmartTestResult> {
 			},
 			health: {
 				device: '',
+				device_type: '',
 				model: '',
+				serial: '',
 				temperature_c: null,
 				percentage_used: null,
 				power_on_hours: null,
+				total_bytes_written: null,
+				total_bytes_read: null,
+				media_errors: null,
+				reallocated_sectors: null,
 				healthy: false,
 				warnings: [],
+				timestamp: new Date().toISOString(),
 			},
 		};
 	}
