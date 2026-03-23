@@ -35,6 +35,10 @@
 	let logstashPipelines = $state<LogstashPipeline[]>([]);
 	let showTemplates = $state(false);
 
+	// Zeek/Suricata throughput (computed from event counts over 5-min window)
+	let zeekEventsPerSec = $state<number | null>(null);
+	let suricataAlertsPerSec = $state<number | null>(null);
+
 	// ─── Helpers ────────────────────────────────────────────────
 	function formatBytes(bytes: number | null | undefined): string {
 		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
@@ -127,6 +131,28 @@
 		} catch { /* swallow */ }
 	}
 
+	async function fetchToolRates() {
+		const WINDOW_SECS = 300; // 5-minute window
+		try {
+			// Zeek events (connection count from traffic summary)
+			const zeekRes = await fetch('/api/traffic/summary?from=now-5m&to=now');
+			if (zeekRes.ok) {
+				const d = await zeekRes.json();
+				const count = d.connection_count ?? d.total_connections ?? 0;
+				zeekEventsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
+			}
+		} catch { /* swallow */ }
+		try {
+			// Suricata alerts (total count from alerts API)
+			const suriRes = await fetch('/api/alerts/count?from=now-5m&to=now');
+			if (suriRes.ok) {
+				const d = await suriRes.json();
+				const count = d.total ?? 0;
+				suricataAlertsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
+			}
+		} catch { /* swallow */ }
+	}
+
 	async function fetchAll() {
 		loading = true;
 		await Promise.all([
@@ -134,6 +160,7 @@
 			fetchLogstash(),
 			fetchOpenSearch(),
 			fetchStorage(),
+			fetchToolRates(),
 		]);
 		loading = false;
 	}
@@ -348,7 +375,7 @@
 		// Bridge + capture: every 10s
 		const bridgeInterval = setInterval(fetchBridgeAndCapture, 10_000);
 		// Logstash + OpenSearch: every 15s
-		const logstashInterval = setInterval(() => { fetchLogstash(); fetchOpenSearch(); }, 15_000);
+		const logstashInterval = setInterval(() => { fetchLogstash(); fetchOpenSearch(); fetchToolRates(); }, 15_000);
 		// Storage: every 60s
 		const storageInterval = setInterval(fetchStorage, 60_000);
 
@@ -470,7 +497,7 @@
 							<span class="health-dot green"></span>
 							Running
 						</div>
-						<div class="node-metric"><span class="value">--</span> evt/s</div>
+						<div class="node-metric"><span class="value">{zeekEventsPerSec != null ? formatNumber(zeekEventsPerSec) : '--'}</span> evt/s</div>
 					</div>
 				</div>
 
@@ -487,7 +514,7 @@
 							<span class="health-dot green"></span>
 							Running
 						</div>
-						<div class="node-metric"><span class="value">--</span> alerts/s</div>
+						<div class="node-metric"><span class="value">{suricataAlertsPerSec != null ? formatNumber(suricataAlertsPerSec) : '--'}</span> alerts/s</div>
 					</div>
 				</div>
 
