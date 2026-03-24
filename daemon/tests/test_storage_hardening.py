@@ -277,8 +277,7 @@ class TestIlmPolicyVerification:
         """When policies are missing, verify_ilm_policy should create them."""
         mgr = _make_manager()
 
-        with patch("storage.ilm.apply_ilm_policies") as mock_apply, \
-             patch("os.path.isfile", return_value=True):
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
             mock_apply.return_value = {
                 "nettap-hot-policy": "created",
                 "nettap-warm-policy": "created",
@@ -295,8 +294,7 @@ class TestIlmPolicyVerification:
         """When policies already exist, verify_ilm_policy reports unchanged."""
         mgr = _make_manager()
 
-        with patch("storage.ilm.apply_ilm_policies") as mock_apply, \
-             patch("os.path.isfile", return_value=True):
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
             mock_apply.return_value = {
                 "nettap-hot-policy": "unchanged",
                 "nettap-warm-policy": "unchanged",
@@ -308,11 +306,13 @@ class TestIlmPolicyVerification:
         assert mgr._ilm_verified is True
 
     def test_ilm_policy_verification_handles_missing_file(self):
-        """When policy file is not found, returns error."""
-        cfg = RetentionConfig(ilm_policy_path="/nonexistent/path.json")
-        mgr = _make_manager(config=cfg)
+        """When OpenSearch is unreachable, returns error dict."""
+        mgr = _make_manager()
 
-        with patch("os.path.isfile", return_value=False):
+        with patch(
+            "storage.ilm.apply_ilm_policies_from_config",
+            side_effect=ConnectionError("OpenSearch unreachable"),
+        ):
             result = mgr.verify_ilm_policy()
 
         assert "_error" in result

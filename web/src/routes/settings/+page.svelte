@@ -28,6 +28,8 @@
 		emergency_threshold: 90,
 	});
 	let diskUsage = $state<number | null>(null);
+	let lastPruneAt = $state<string | null>(null);
+	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
@@ -120,11 +122,40 @@
 			if (res.ok) {
 				const data = await res.json();
 				diskUsage = data.disk_usage_percent ?? data.usage_percent ?? null;
+				lastPruneAt = data.last_prune_at ?? null;
+				ilmStatus = data.ilm_status ?? null;
 			}
 		} catch {
 			// Will stay null
 		}
 	}
+
+	// --- Retention health helpers ---
+	function timeAgo(isoString: string): string {
+		const diff = Date.now() - new Date(isoString).getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return 'just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return `${Math.floor(hours / 24)}d ago`;
+	}
+
+	let retentionHealth = $derived.by(() => {
+		const ilmOk = ilmStatus?.synced ?? false;
+		const ilmPending = ilmStatus?.pending_retry ?? false;
+		const pruneOk = lastPruneAt ? (Date.now() - new Date(lastPruneAt).getTime()) < 600000 : false;
+		const pruneStale = lastPruneAt ? (Date.now() - new Date(lastPruneAt).getTime()) > 1800000 : true;
+		const diskPct = diskUsage ?? 0;
+		const diskHigh = diskPct >= (retentionConfig.disk_threshold ?? 80);
+		const diskCritical = diskPct >= (retentionConfig.emergency_threshold ?? 90);
+
+		let status: 'healthy' | 'attention' | 'problem' = 'healthy';
+		if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
+		else if (ilmPending || diskHigh || !pruneOk) status = 'attention';
+
+		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
+	});
 
 	async function loadAbout() {
 		try {
@@ -417,7 +448,12 @@
 				}),
 			});
 			if (res.ok) {
-				retentionMessage = 'Retention configuration saved successfully.';
+				const result = await res.json();
+				if (result.ilm_applied) {
+					retentionMessage = 'Retention settings saved and applied to OpenSearch.';
+				} else {
+					retentionMessage = 'Retention settings saved. OpenSearch policies will sync shortly.';
+				}
 			} else {
 				const data = await res.json();
 				retentionMessage = data.error || 'Failed to save configuration.';
@@ -660,6 +696,60 @@
 
 	{:else if activeTab === 'retention'}
 		<div class="settings-section">
+
+			<!-- Retention Health Status -->
+			<div class="card retention-health-card">
+				<div class="card-header">
+					<span class="card-title">Retention Health</span>
+					<span class="health-badge health-{retentionHealth.status}">
+						<span class="health-dot"></span>
+						{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
+					</span>
+				</div>
+
+				<div class="health-rows">
+					<div class="health-row">
+						<span class="health-label">ILM Policies</span>
+						<span class="health-value">
+							{#if ilmStatus === null}
+								<span class="text-muted">Loading...</span>
+							{:else if retentionHealth.ilmPending}
+								<span style="color: var(--amber);">&#x27f3; Syncing...</span>
+							{:else if retentionHealth.ilmOk}
+								<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
+							{:else}
+								<span style="color: var(--red);">&#x2717; Out of sync</span>
+							{/if}
+						</span>
+					</div>
+					<div class="health-row">
+						<span class="health-label">Disk Usage</span>
+						<span class="health-value">
+							{#if diskUsage !== null}
+								<span class="mono" style="color: {retentionHealth.diskCritical ? 'var(--red)' : retentionHealth.diskHigh ? 'var(--amber)' : 'var(--green)'}">
+									{diskUsage}%
+								</span>
+								<span class="text-muted">(threshold: {retentionConfig.disk_threshold}%)</span>
+							{:else}
+								<span class="text-muted">Unavailable</span>
+							{/if}
+						</span>
+					</div>
+					<div class="health-row">
+						<span class="health-label">Last Prune</span>
+						<span class="health-value">
+							{#if lastPruneAt}
+								<span class="mono" style="color: {retentionHealth.pruneStale ? 'var(--red)' : retentionHealth.pruneOk ? 'var(--green)' : 'var(--amber)'}">
+									{timeAgo(lastPruneAt)}
+								</span>
+							{:else}
+								<span class="text-muted">Never (daemon starting...)</span>
+							{/if}
+						</span>
+					</div>
+				</div>
+			</div>
+
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Data Retention Policy</span>
@@ -1760,5 +1850,82 @@
 		border: 1px solid var(--red);
 		border-radius: var(--radius-md);
 		padding: var(--space-md);
+	}
+
+	/* Retention Health Card */
+	.retention-health-card {
+		margin-bottom: var(--space-lg);
+	}
+
+	.health-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-sm);
+		font-weight: 600;
+		padding: 2px var(--space-sm);
+		border-radius: var(--radius-full);
+	}
+
+	.health-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+	}
+
+	.health-healthy {
+		color: var(--green);
+		background: var(--green-dim);
+	}
+	.health-healthy .health-dot {
+		background: var(--green);
+		box-shadow: 0 0 6px var(--green);
+	}
+
+	.health-attention {
+		color: var(--amber);
+		background: var(--amber-dim);
+	}
+	.health-attention .health-dot {
+		background: var(--amber);
+		box-shadow: 0 0 6px var(--amber);
+	}
+
+	.health-problem {
+		color: var(--red);
+		background: var(--red-dim);
+	}
+	.health-problem .health-dot {
+		background: var(--red);
+		box-shadow: 0 0 6px var(--red);
+	}
+
+	.health-rows {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.health-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-xs) 0;
+	}
+
+	.health-row + .health-row {
+		border-top: 1px solid var(--border-dim);
+	}
+
+	.health-label {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+	}
+
+	.health-value {
+		font-size: var(--text-sm);
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
 	}
 </style>

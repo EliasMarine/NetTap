@@ -146,6 +146,12 @@ class StorageManager:
         # C3: Track whether ILM policy has been verified this session
         self._ilm_verified: bool = False
 
+        # Track last prune cycle timestamp for health status reporting
+        self._last_prune_at: str | None = None
+
+        # Reference to RetentionConfigManager for ILM status (set externally)
+        self._retention_config_manager = None
+
         # Lock to prevent manual cleanup from racing with auto-prune cycles
         self._cleanup_lock = threading.Lock()
 
@@ -733,45 +739,74 @@ class StorageManager:
     def verify_ilm_policy(self) -> dict[str, str]:
         """Verify that ILM/ISM policies exist in OpenSearch, recreating if needed.
 
-        Checks for the three NetTap ISM policies (hot, warm, cold). If any
-        are missing or corrupted, recreates them from the bundled policy
-        template at ``config/opensearch/ilm-policy.json``.
+        Generates policies dynamically from the current ``RetentionConfig``
+        using ``ilm_generator.generate_ilm_policies()`` and applies them
+        via ``apply_ilm_policies_from_config()``. This ensures the policies
+        always reflect the current retention settings rather than a static
+        JSON file.
 
         Returns:
-            Dict mapping policy_name -> status ("exists", "created", "error: ...").
+            Dict mapping policy_name -> status ("created", "updated",
+            "unchanged", "error: ...").
         """
-        from storage.ilm import apply_ilm_policies
+        from storage.ilm_generator import generate_ilm_policies
+        from storage.ilm import apply_ilm_policies_from_config
 
-        # Determine policy file path
-        policy_path = self.config.ilm_policy_path
-        if not policy_path:
-            # Try common locations
-            candidates = [
-                os.environ.get("ILM_POLICY_PATH", ""),
-                "/opt/nettap/config/opensearch/ilm-policy.json",
-                os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                    "config",
-                    "opensearch",
-                    "ilm-policy.json",
-                ),
-            ]
-            for candidate in candidates:
-                if candidate and os.path.isfile(candidate):
-                    policy_path = candidate
-                    break
+        # OLD CODE START — file-based ILM policy verification.
+        # Replaced by config-driven generation so policies always match
+        # the current RetentionConfig values in retention.json.
+        #
+        # from storage.ilm import apply_ilm_policies
+        #
+        # # Determine policy file path
+        # policy_path = self.config.ilm_policy_path
+        # if not policy_path:
+        #     # Try common locations
+        #     candidates = [
+        #         os.environ.get("ILM_POLICY_PATH", ""),
+        #         "/opt/nettap/config/opensearch/ilm-policy.json",
+        #         os.path.join(
+        #             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        #             "config",
+        #             "opensearch",
+        #             "ilm-policy.json",
+        #         ),
+        #     ]
+        #     for candidate in candidates:
+        #         if candidate and os.path.isfile(candidate):
+        #             policy_path = candidate
+        #             break
+        #
+        # if not policy_path or not os.path.isfile(policy_path):
+        #     msg = f"ILM policy file not found (tried: {policy_path or 'no candidates'})"
+        #     logger.error(msg)
+        #     return {"_error": f"error: {msg}"}
+        #
+        # logger.info("Verifying ILM policies from %s", policy_path)
+        #
+        # try:
+        #     results = apply_ilm_policies(
+        #         self.opensearch_url,
+        #         policy_path=policy_path,
+        #         http_auth=self._http_auth,
+        #     )
+        #     ...
+        # OLD CODE END
 
-        if not policy_path or not os.path.isfile(policy_path):
-            msg = f"ILM policy file not found (tried: {policy_path or 'no candidates'})"
-            logger.error(msg)
-            return {"_error": f"error: {msg}"}
+        # Generate policies from current config
+        policies = generate_ilm_policies(self.config)
 
-        logger.info("Verifying ILM policies from %s", policy_path)
+        logger.info(
+            "Verifying ILM policies from config (hot=%dd, warm=%dd, cold=%dd)",
+            self.config.hot_days,
+            self.config.warm_days,
+            self.config.cold_days,
+        )
 
         try:
-            results = apply_ilm_policies(
+            results = apply_ilm_policies_from_config(
                 self.opensearch_url,
-                policy_path=policy_path,
+                policies,
                 http_auth=self._http_auth,
             )
             self._ilm_verified = True
@@ -1302,6 +1337,9 @@ class StorageManager:
         except Exception:
             logger.exception("Predictive exhaustion check failed")
 
+        # Record prune cycle completion for health status reporting
+        self._last_prune_at = datetime.now(timezone.utc).isoformat()
+
     # ------------------------------------------------------------------
     # Status reporting (for HTTP API)
     # ------------------------------------------------------------------
@@ -1387,4 +1425,35 @@ class StorageManager:
                 "warm_days": self.config.warm_days,
                 "cold_days": self.config.cold_days,
             },
+            # ILM sync status (populated when verify_ilm_policy() has run)
+            "ilm_synced": getattr(self, "_ilm_verified", False),
+            # Last prune cycle timestamp for health reporting
+            "last_prune_at": self._last_prune_at,
+            # ILM policy application status from RetentionConfigManager
+            "ilm_status": self._get_ilm_status(),
+        }
+
+    def _get_ilm_status(self) -> dict:
+        """Return ILM policy status for the health card.
+
+        Pulls from the RetentionConfigManager if available, otherwise
+        returns a basic status based on ``_ilm_verified``.
+        """
+        if self._retention_config_manager is not None:
+            raw = self._retention_config_manager.get_ilm_status()
+            policies = raw.get("policies", {})
+            has_errors = any(
+                str(v).startswith("error") for v in policies.values()
+            )
+            return {
+                "synced": bool(raw.get("last_success")) and not has_errors,
+                "last_applied": raw.get("last_success"),
+                "pending_retry": False,  # Updated by API handler if retry active
+                "policies": policies,
+            }
+        return {
+            "synced": self._ilm_verified,
+            "last_applied": None,
+            "pending_retry": False,
+            "policies": {},
         }

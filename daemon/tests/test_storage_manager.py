@@ -31,6 +31,10 @@ def _init_manager_attrs(mgr):
         mgr._ilm_verified = True  # Skip ILM check in existing tests
     if not hasattr(mgr, "_http_auth"):
         mgr._http_auth = None
+    if not hasattr(mgr, "_last_prune_at"):
+        mgr._last_prune_at = None
+    if not hasattr(mgr, "_retention_config_manager"):
+        mgr._retention_config_manager = None
     if not hasattr(mgr, "_cleanup_lock"):
         mgr._cleanup_lock = threading.Lock()
 
@@ -489,6 +493,7 @@ class TestGetStatus:
         mgr.config = retention_config
         mgr._client = mock_opensearch_client
         mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
 
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.65),

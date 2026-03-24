@@ -10,6 +10,7 @@ Endpoints:
     GET  /api/storage/status     Full storage status
     GET  /api/storage/retention  Retention config only
     POST /api/storage/prune      Trigger manual prune cycle
+    POST /api/storage/config     Save retention config + sync ILM
     GET  /api/smart/health       SMART drive health
     GET  /api/indices            OpenSearch index listing
     GET  /api/system/health      Combined system health
@@ -26,7 +27,9 @@ from aiohttp import web
 
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
-from storage.ilm import apply_ilm_policies
+from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
+from storage.ilm_generator import generate_ilm_policies
+from storage.retention_config import RetentionConfigManager
 from api.tshark import register_tshark_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
@@ -487,6 +490,162 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Background ILM retry (used when OpenSearch is down during config save)
+# ---------------------------------------------------------------------------
+
+async def _ilm_retry_background(
+    app: web.Application,
+    config_manager: RetentionConfigManager,
+    opensearch_url: str,
+    policies: dict[str, dict],
+    http_auth: tuple[str, str] | None,
+    max_retries: int = 20,
+    base_delay: float = 30.0,
+) -> None:
+    """Retry ILM policy application with exponential backoff.
+
+    Called as a background ``asyncio.Task`` when ``handle_storage_config``
+    fails to apply ILM policies because OpenSearch is temporarily
+    unavailable. Retries up to *max_retries* times with exponential
+    backoff capped at 10 minutes.
+
+    On success, calls ``config_manager.mark_ilm_applied()`` to persist
+    the result in ``retention.json``.
+    """
+    loop = asyncio.get_running_loop()
+
+    for attempt in range(1, max_retries + 1):
+        delay = min(base_delay * (2 ** (attempt - 1)), 600)  # cap at 10 min
+        await asyncio.sleep(delay)
+        try:
+            results = await loop.run_in_executor(
+                None,
+                lambda: apply_ilm_policies_from_config(
+                    opensearch_url, policies, http_auth=http_auth
+                ),
+            )
+            config_manager.mark_ilm_applied(results)
+            logger.info("ILM retry succeeded on attempt %d", attempt)
+            app["_ilm_retry_task"] = None
+            return
+        except Exception as exc:
+            logger.warning(
+                "ILM retry attempt %d/%d failed: %s", attempt, max_retries, exc
+            )
+
+    logger.error("ILM retry exhausted %d attempts", max_retries)
+    app["_ilm_retry_task"] = None
+
+
+# ---------------------------------------------------------------------------
+# Storage config handler (retention settings + ILM sync)
+# ---------------------------------------------------------------------------
+
+
+async def handle_storage_config(request: web.Request) -> web.Response:
+    """POST /api/storage/config -- Save retention config and sync ILM policies.
+
+    Expects a JSON body with retention and threshold values::
+
+        {
+            "hot_days": 90,
+            "warm_days": 180,
+            "cold_days": 30,
+            "disk_threshold_percent": 80,
+            "emergency_threshold_percent": 90
+        }
+
+    Validates, persists to ``retention.json``, syncs to ``.env``, generates
+    ILM policies from the new config, and applies them to OpenSearch. If
+    OpenSearch is unreachable, the config is still saved and a background
+    retry task is scheduled.
+    """
+    # --- Check that config manager is available ---
+    if "retention_config_manager" not in request.app:
+        return web.json_response(
+            {"error": "Retention config manager not initialised"}, status=503
+        )
+
+    # --- Parse JSON body ---
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "Invalid JSON body"}, status=400
+        )
+
+    # --- Validate and save config ---
+    config_manager: RetentionConfigManager = request.app["retention_config_manager"]
+    try:
+        new_config = config_manager.save(body)
+    except ValueError as exc:
+        return web.json_response(
+            {"error": str(exc)}, status=400
+        )
+
+    # --- Hot-reload StorageManager config ---
+    storage: StorageManager = request.app["storage"]
+    storage.config = new_config
+
+    # --- Generate and apply ILM policies ---
+    policies = generate_ilm_policies(new_config)
+    opensearch_url: str = request.app["opensearch_url"]
+    http_auth: tuple[str, str] | None = request.app.get("http_auth")
+
+    try:
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: apply_ilm_policies_from_config(
+                opensearch_url, policies, http_auth=http_auth
+            ),
+        )
+        config_manager.mark_ilm_applied(results)
+        return web.json_response({
+            "saved": True,
+            "ilm_applied": True,
+            "ilm_results": results,
+            "config": {
+                "hot_days": new_config.hot_days,
+                "warm_days": new_config.warm_days,
+                "cold_days": new_config.cold_days,
+                "disk_threshold_percent": round(new_config.disk_threshold * 100),
+                "emergency_threshold_percent": round(
+                    new_config.emergency_threshold * 100
+                ),
+            },
+        })
+    except Exception as exc:
+        # OpenSearch is down — config is saved, schedule background retry
+        logger.warning(
+            "ILM application failed after config save, scheduling retry: %s", exc
+        )
+        existing_task = request.app.get("_ilm_retry_task")
+        if existing_task is None or existing_task.done():
+            request.app["_ilm_retry_task"] = asyncio.create_task(
+                _ilm_retry_background(
+                    request.app, config_manager, opensearch_url, policies, http_auth
+                ),
+                name="ilm-retry",
+            )
+        return web.json_response({
+            "saved": True,
+            "ilm_applied": False,
+            "ilm_retry_scheduled": True,
+            "ilm_error": str(exc),
+            "config": {
+                "hot_days": new_config.hot_days,
+                "warm_days": new_config.warm_days,
+                "cold_days": new_config.cold_days,
+                "disk_threshold_percent": round(new_config.disk_threshold * 100),
+                "emergency_threshold_percent": round(
+                    new_config.emergency_threshold * 100
+                ),
+            },
+        })
+
+
+# ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
 
@@ -495,6 +654,8 @@ def create_app(
     storage: StorageManager,
     smart: SmartMonitor,
     opensearch_url: str,
+    retention_config_manager: RetentionConfigManager | None = None,
+    http_auth: tuple[str, str] | None = None,
 ) -> web.Application:
     """Create and configure the aiohttp web application.
 
@@ -505,6 +666,11 @@ def create_app(
         storage: The StorageManager instance for disk/index operations.
         smart: The SmartMonitor instance for drive health checks.
         opensearch_url: Base URL of the OpenSearch cluster.
+        retention_config_manager: Optional RetentionConfigManager for the
+            ``POST /api/storage/config`` endpoint. If None, the endpoint
+            will return 503 (not yet initialised).
+        http_auth: Optional (username, password) tuple for OpenSearch
+            authentication, passed through to ILM policy application.
 
     Returns:
         Configured aiohttp.web.Application ready to be served.
@@ -515,7 +681,10 @@ def create_app(
     app["storage"] = storage
     app["smart"] = smart
     app["opensearch_url"] = opensearch_url
+    app["http_auth"] = http_auth
     app["start_time"] = time.monotonic()
+    if retention_config_manager is not None:
+        app["retention_config_manager"] = retention_config_manager
 
     # Register routes
     app.router.add_get("/api/health", handle_health)
@@ -530,6 +699,7 @@ def create_app(
     app.router.add_get("/api/indices", handle_indices)
     app.router.add_get("/api/system/health", handle_system_health)
     app.router.add_post("/api/ilm/apply", handle_ilm_apply)
+    app.router.add_post("/api/storage/config", handle_storage_config)
 
     # TShark integration (containerized packet analysis)
     pcap_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
@@ -773,6 +943,8 @@ async def start_api(
     opensearch_url: str,
     port: int = 8880,
     shutdown_event: asyncio.Event | None = None,
+    retention_config_manager: RetentionConfigManager | None = None,
+    http_auth: tuple[str, str] | None = None,
 ) -> web.AppRunner:
     """Start the HTTP API server and return the runner for cleanup.
 
@@ -786,12 +958,19 @@ async def start_api(
         port: TCP port to listen on (default 8880).
         shutdown_event: Optional asyncio.Event for coordinated shutdown.
             Currently unused but accepted for future graceful drain support.
+        retention_config_manager: Optional RetentionConfigManager for the
+            ``POST /api/storage/config`` endpoint.
+        http_auth: Optional (username, password) tuple for OpenSearch auth.
 
     Returns:
         The aiohttp.web.AppRunner that must be cleaned up on shutdown
         via ``await runner.cleanup()``.
     """
-    app = create_app(storage, smart, opensearch_url)
+    app = create_app(
+        storage, smart, opensearch_url,
+        retention_config_manager=retention_config_manager,
+        http_auth=http_auth,
+    )
     runner = web.AppRunner(app)
     await runner.setup()
 

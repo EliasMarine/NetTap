@@ -15,6 +15,8 @@ from pathlib import Path
 
 from aiohttp import web
 
+from storage.retention_config import RetentionConfigManager
+
 logger = logging.getLogger("nettap.api.setup")
 
 # Default paths — overridable via env vars for testing
@@ -72,11 +74,11 @@ def _update_env_file(config: dict) -> str:
     storage = config.get("storage", {})
     if storage:
         if "hot_days" in storage:
-            env_vars["HOT_RETENTION_DAYS"] = str(storage["hot_days"])
+            env_vars["RETENTION_HOT"] = str(storage["hot_days"])
         if "warm_days" in storage:
-            env_vars["WARM_RETENTION_DAYS"] = str(storage["warm_days"])
+            env_vars["RETENTION_WARM"] = str(storage["warm_days"])
         if "cold_days" in storage:
-            env_vars["COLD_RETENTION_DAYS"] = str(storage["cold_days"])
+            env_vars["RETENTION_COLD"] = str(storage["cold_days"])
         if "disk_threshold_percent" in storage:
             env_vars["DISK_THRESHOLD_PERCENT"] = str(storage["disk_threshold_percent"])
         if "emergency_threshold_percent" in storage:
@@ -146,6 +148,16 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
     try:
         conf_path = _write_capture_mode_conf(body)
         env_path = _update_env_file(body)
+
+        # Also write retention.json so the daemon picks it up on first start
+        storage = body.get("storage")
+        if storage:
+            try:
+                config_manager = RetentionConfigManager()
+                config_manager.save(storage)
+                logger.info("Wrote retention.json from setup wizard storage config")
+            except (ValueError, OSError) as exc:
+                logger.warning("Failed to write retention.json from setup: %s", exc)
 
         logger.info(
             "Setup configuration saved: mode=%s, conf=%s, env=%s",

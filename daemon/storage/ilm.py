@@ -164,6 +164,11 @@ def _update_policy(
     return "updated"
 
 
+# OLD CODE START — apply_ilm_policies() loads policies from a JSON file.
+# Replaced by apply_ilm_policies_from_config() which accepts pre-generated
+# policy dicts from ilm_generator.generate_ilm_policies(). The file-based
+# version is kept for backward compatibility with verify_ilm_policy() and
+# the POST /api/ilm/apply endpoint.
 def apply_ilm_policies(
     opensearch_url: str,
     policy_path: str | None = None,
@@ -273,6 +278,127 @@ def apply_ilm_policies(
     errors = sum(1 for v in results.values() if v.startswith("error"))
     logger.info(
         "ILM policy application complete: %d created, %d updated, "
+        "%d unchanged, %d errors",
+        created,
+        updated,
+        unchanged,
+        errors,
+    )
+
+    return results
+# OLD CODE END
+
+
+def apply_ilm_policies_from_config(
+    opensearch_url: str,
+    policies: dict[str, dict],
+    *,
+    verify_certs: bool = False,
+    http_auth: tuple[str, str] | None = None,
+) -> dict[str, str]:
+    """Apply ILM policies from in-memory dict (not from file).
+
+    Same create/update/skip logic as ``apply_ilm_policies()`` but uses
+    pre-generated policy bodies from ``generate_ilm_policies()`` instead
+    of loading from the static JSON file.
+
+    Args:
+        opensearch_url: Base URL of the OpenSearch cluster
+            (e.g., "https://opensearch:9200").
+        policies: Dict mapping policy_name -> policy_body, as returned by
+            ``ilm_generator.generate_ilm_policies()``. Each value must
+            have the outer ``{"policy": {...}}`` wrapper.
+        verify_certs: Whether to verify TLS certificates (default False
+            for internal Docker network communication).
+        http_auth: Optional (username, password) tuple for authentication.
+
+    Returns:
+        Dict mapping policy_name -> status string.
+        Possible status values:
+            "created"  — Policy did not exist and was created.
+            "updated"  — Policy existed but differed; updated in place.
+            "unchanged" — Policy exists and matches local definition.
+            "error: <message>" — An error occurred for this policy.
+
+    Raises:
+        Exception: If the OpenSearch cluster is unreachable. Individual
+            policy errors are captured in the return dict, but a total
+            connection failure will propagate.
+
+    Example:
+        >>> from storage.ilm_generator import generate_ilm_policies
+        >>> from storage.manager import RetentionConfig
+        >>> config = RetentionConfig(hot_days=60)
+        >>> policies = generate_ilm_policies(config)
+        >>> results = apply_ilm_policies_from_config(
+        ...     "https://opensearch:9200", policies,
+        ...     http_auth=("admin", "secret"),
+        ... )
+    """
+    if not policies:
+        logger.warning("No policies provided to apply_ilm_policies_from_config()")
+        return {}
+
+    # Build OpenSearch client
+    client_kwargs: dict[str, Any] = {
+        "verify_certs": verify_certs,
+        "ssl_show_warn": False,
+    }
+    if http_auth:
+        client_kwargs["http_auth"] = http_auth
+
+    client = OpenSearch(
+        hosts=[opensearch_url],
+        **client_kwargs,
+    )
+
+    results: dict[str, str] = {}
+
+    for policy_name, policy_body in policies.items():
+        try:
+            logger.info("Processing ISM policy '%s'...", policy_name)
+
+            # Check if the policy already exists
+            existing, seq_no, primary_term = _get_existing_policy(client, policy_name)
+
+            if existing is None:
+                # Policy does not exist — create it
+                results[policy_name] = _create_policy(client, policy_name, policy_body)
+            else:
+                # Policy exists — compare with local definition
+                normalized_remote = _normalize_remote_policy(existing)
+                local_hash = _policy_hash(policy_body)
+                remote_hash = _policy_hash(normalized_remote)
+
+                if local_hash == remote_hash:
+                    logger.info("ISM policy '%s' is unchanged, skipping", policy_name)
+                    results[policy_name] = "unchanged"
+                else:
+                    logger.info(
+                        "ISM policy '%s' has changed, updating (local=%s, remote=%s)",
+                        policy_name,
+                        local_hash[:12],
+                        remote_hash[:12],
+                    )
+                    results[policy_name] = _update_policy(
+                        client,
+                        policy_name,
+                        policy_body,
+                        seq_no,
+                        primary_term,
+                    )
+        except Exception as exc:
+            error_msg = f"error: {exc}"
+            logger.error("Failed to apply ISM policy '%s': %s", policy_name, exc)
+            results[policy_name] = error_msg
+
+    # Summary log
+    created = sum(1 for v in results.values() if v == "created")
+    updated = sum(1 for v in results.values() if v == "updated")
+    unchanged = sum(1 for v in results.values() if v == "unchanged")
+    errors = sum(1 for v in results.values() if v.startswith("error"))
+    logger.info(
+        "ILM policy application (from config) complete: %d created, %d updated, "
         "%d unchanged, %d errors",
         created,
         updated,
