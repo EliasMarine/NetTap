@@ -103,13 +103,13 @@
 			const res = await fetch('/api/setup/storage');
 			if (res.ok) {
 				const data = await res.json();
-				if (data.retention) {
-					retentionConfig.hot_days = data.retention.hot_days ?? 90;
-					retentionConfig.warm_days = data.retention.warm_days ?? 180;
-					retentionConfig.cold_days = data.retention.cold_days ?? 30;
-					retentionConfig.disk_threshold = data.retention.disk_threshold_percent ?? 80;
-					retentionConfig.emergency_threshold = data.retention.emergency_threshold_percent ?? 90;
-				}
+				// GET /api/setup/storage returns a FLAT StorageStatus object
+				// (hot_days, warm_days, etc. are top-level, not nested under retention)
+				retentionConfig.hot_days = data.hot_days ?? 90;
+				retentionConfig.warm_days = data.warm_days ?? 180;
+				retentionConfig.cold_days = data.cold_days ?? 30;
+				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
 			}
 		} catch {
 			// Will use defaults
