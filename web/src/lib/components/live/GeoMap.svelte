@@ -175,7 +175,7 @@
 		const _alerts = hasAlertCountries;
 
 		for (const dest of destinations) {
-			if (!dest.lat || !dest.lon) continue;
+			if (dest.lat == null || dest.lon == null) continue;
 
 			const isAlert = _alerts.has(dest.country_code);
 			const isActive = _active === dest.country_code;
@@ -225,7 +225,7 @@
 
 		for (let i = 0; i < destinations.length; i++) {
 			const dest = destinations[i];
-			if (!dest.lat || !dest.lon) continue;
+			if (dest.lat == null || dest.lon == null) continue;
 
 			const destPixel = map.latLngToContainerPoint([dest.lat, dest.lon]);
 			const isAlert = hasAlertCountries.has(dest.country_code);

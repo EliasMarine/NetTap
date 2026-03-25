@@ -196,6 +196,7 @@ export async function getLiveDashboard(
 			protocols: {},
 			top_talkers: [],
 			geo_arcs: [],
+			_error: `Dashboard API returned ${res.status}`,
 		};
 	}
 
