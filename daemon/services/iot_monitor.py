@@ -11,6 +11,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from services.excluded_ips import build_excluded_ips_filter
+
 logger = logging.getLogger("nettap.services.iot_monitor")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -123,7 +125,8 @@ class IoTMonitor:
         return is_iot
 
     def build_baseline(
-        self, device_mac: str, days: int = 14
+        self, device_mac: str, days: int = 14,
+        excluded_ips: list[str] | None = None,
     ) -> dict[str, Any]:
         """Build a behavioral baseline for a device from historical data.
 
@@ -137,26 +140,31 @@ class IoTMonitor:
         from_iso = (now - timedelta(days=days)).isoformat()
         to_iso = now.isoformat()
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_iso, to_iso),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"source.mac.keyword": mac}},
+                            {"term": {"source.mac.keyword": mac.lower()}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         # Query for device traffic patterns
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_iso, to_iso),
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
-                        {
-                            "bool": {
-                                "should": [
-                                    {"term": {"source.mac.keyword": mac}},
-                                    {"term": {"source.mac.keyword": mac.lower()}},
-                                ],
-                                "minimum_should_match": 1,
-                            }
-                        },
-                    ]
-                }
+                "bool": bool_clause
             },
             "aggs": {
                 "destinations": {
@@ -257,7 +265,8 @@ class IoTMonitor:
         return baseline
 
     def check_anomalies(
-        self, device_mac: str
+        self, device_mac: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Compare current (last 1h) behavior against baseline.
 
@@ -274,25 +283,30 @@ class IoTMonitor:
         from_iso = (now - timedelta(hours=1)).isoformat()
         to_iso = now.isoformat()
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_iso, to_iso),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"source.mac.keyword": mac}},
+                            {"term": {"source.mac.keyword": mac.lower()}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_iso, to_iso),
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
-                        {
-                            "bool": {
-                                "should": [
-                                    {"term": {"source.mac.keyword": mac}},
-                                    {"term": {"source.mac.keyword": mac.lower()}},
-                                ],
-                                "minimum_should_match": 1,
-                            }
-                        },
-                    ]
-                }
+                "bool": bool_clause
             },
             "aggs": {
                 "destinations": {
@@ -425,11 +439,12 @@ class IoTMonitor:
         return self._baselines.get(mac.strip().upper())
 
     def get_anomalies(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Check all IoT devices for anomalies and return combined list."""
         all_anomalies: list[dict[str, Any]] = []
         for mac in self._iot_devices:
-            anomalies = self.check_anomalies(mac)
+            anomalies = self.check_anomalies(mac, excluded_ips=excluded_ips)
             all_anomalies.extend(anomalies)
         return all_anomalies

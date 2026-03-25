@@ -92,6 +92,9 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         limit = 100
 
+    # Exclude appliance IPs from live monitor queries
+    excluded_ips = request.app.get("excluded_ips", [])
+
     # Run the synchronous OpenSearch queries in a thread executor to avoid
     # blocking the event loop (matches server.py pattern).
     loop = asyncio.get_running_loop()
@@ -100,6 +103,7 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
             None,
             lambda: tracker.fetch_dashboard_data(
                 device=device, proto=proto, country=country, limit=limit,
+                excluded_ips=excluded_ips,
             ),
         )
     except Exception as exc:

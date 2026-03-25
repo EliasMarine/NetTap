@@ -166,22 +166,25 @@ def _generate_recommendation(alert: dict) -> str:
     return " ".join(parts)
 
 
-async def generate_threat_report(client, from_ts: str, to_ts: str) -> dict:
+async def generate_threat_report(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> dict:
     """Unified threat report — the single API call that powers the /threats page."""
     from services.alert_intelligence import get_smart_alerts, get_smart_alert_summary, detect_kill_chains
     from services.threat_detection import detect_beaconing, detect_lateral_movement, analyze_dns_anomalies
+    from services.excluded_ips import build_excluded_ips_filter
 
-    summary = await get_smart_alert_summary(client, from_ts, to_ts)
-    alerts = await get_smart_alerts(client, from_ts, to_ts, include_info=False, limit=200)
+    excluded = build_excluded_ips_filter(excluded_ips or [])
+
+    summary = await get_smart_alert_summary(client, from_ts, to_ts, excluded_ips=excluded)
+    alerts = await get_smart_alerts(client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded)
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": {"from": from_ts, "to": to_ts},
         "summary": summary,
         "kill_chains": detect_kill_chains(alerts),
-        "beaconing": detect_beaconing(client, from_ts, to_ts),
-        "dns_anomalies": analyze_dns_anomalies(client, from_ts, to_ts),
-        "lateral_movement": detect_lateral_movement(client, from_ts, to_ts),
+        "beaconing": detect_beaconing(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        "dns_anomalies": analyze_dns_anomalies(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        "lateral_movement": detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips),
         "investigations": [],
     }
 

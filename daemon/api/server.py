@@ -41,7 +41,12 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
-from services.excluded_ips import load_excluded_ips, detect_and_build_lan_filter
+from services.excluded_ips import (
+    load_excluded_ips,
+    detect_and_build_lan_filter,
+    detect_appliance_ip,
+    save_excluded_ips,
+)
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
@@ -768,6 +773,13 @@ def create_app(
     app["excluded_ips_file"] = excluded_ips_file
     app["excluded_ips"] = load_excluded_ips(excluded_ips_file)
     logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
+
+    # Auto-detect and exclude appliance management IP
+    appliance_ip = detect_appliance_ip()
+    if appliance_ip and appliance_ip not in app["excluded_ips"]:
+        app["excluded_ips"].append(appliance_ip)
+        save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+        logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
 
     # Auto-detect LAN subnets from OpenSearch traffic data
     # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback

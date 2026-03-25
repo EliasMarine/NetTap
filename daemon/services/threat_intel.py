@@ -113,28 +113,34 @@ class ThreatIntelService:
             for feed_id, ips in self._ip_sets.items()
         }
 
-    def populate_from_suricata(self, client, from_ts: str, to_ts: str) -> int:
+    def populate_from_suricata(self, client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> int:
         """Extract known-bad IPs from Suricata ET COMPROMISED/DROP alerts.
 
         This bootstraps the TI database from alerts that already fired,
         building a local blocklist from Suricata's own detections.
         """
         import os
+        from services.excluded_ips import build_excluded_ips_filter
         NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {"filter": [
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            {"term": {"event.provider": "suricata"}},
+            {"term": {"event.dataset": "alert"}},
+            {"bool": {"should": [
+                {"wildcard": {"rule.name.keyword": "*COMPROMISED*"}},
+                {"wildcard": {"rule.name.keyword": "*DROP*"}},
+                {"wildcard": {"rule.name.keyword": "*CINS*"}},
+                {"wildcard": {"rule.name.keyword": "*Dshield*"}},
+            ], "minimum_should_match": 1}},
+        ]}
+        if excluded:
+            bool_clause["must_not"] = excluded
 
         query = {
             "size": 0,
-            "query": {"bool": {"filter": [
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-                {"term": {"event.provider": "suricata"}},
-                {"term": {"event.dataset": "alert"}},
-                {"bool": {"should": [
-                    {"wildcard": {"rule.name.keyword": "*COMPROMISED*"}},
-                    {"wildcard": {"rule.name.keyword": "*DROP*"}},
-                    {"wildcard": {"rule.name.keyword": "*CINS*"}},
-                    {"wildcard": {"rule.name.keyword": "*Dshield*"}},
-                ], "minimum_should_match": 1}},
-            ]}},
+            "query": {"bool": bool_clause},
             "aggs": {
                 "bad_ips": {"terms": {"field": "destination.ip.keyword", "size": 500}},
             },

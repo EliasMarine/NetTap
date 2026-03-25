@@ -51,12 +51,13 @@ async def handle_device_baseline(request: web.Request) -> web.Response:
     """GET /api/iot/devices/{mac}/baseline"""
     mac = request.match_info["mac"]
     iot: IoTMonitor = request.app["iot_monitor"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     baseline = iot.get_device_baseline(mac)
     if baseline is None:
         # Try to build one
         try:
-            baseline = iot.build_baseline(mac)
+            baseline = iot.build_baseline(mac, excluded_ips=excluded_ips_list)
         except Exception as exc:
             logger.error("Failed to build baseline for %s: %s", mac, exc)
             return web.json_response(
@@ -70,9 +71,10 @@ async def handle_iot_anomalies(request: web.Request) -> web.Response:
     """GET /api/iot/anomalies?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     iot: IoTMonitor = request.app["iot_monitor"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        anomalies = iot.get_anomalies(from_ts, to_ts)
+        anomalies = iot.get_anomalies(from_ts, to_ts, excluded_ips=excluded_ips_list)
     except Exception as exc:
         logger.error("IoT anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)

@@ -809,6 +809,7 @@ async def get_smart_alerts(
     device_ip: str | None = None,
     include_info: bool = False,
     limit: int = 50,
+    excluded_ips: list[dict] | None = None,
 ) -> list[dict]:
     """Get deduplicated, reclassified, grouped alerts with full context."""
 
@@ -829,9 +830,13 @@ async def get_smart_alerts(
             }
         })
 
+    bool_clause: dict = {"filter": filters}
+    if excluded_ips:
+        bool_clause["must_not"] = excluded_ips
+
     query = {
         "size": 0,
-        "query": {"bool": {"filter": filters}},
+        "query": {"bool": bool_clause},
         "aggs": {
             "grouped": {
                 "composite": {
@@ -950,10 +955,11 @@ async def get_smart_alerts(
 
 
 async def get_smart_alert_summary(
-    client, from_ts: str, to_ts: str, device_ip: str | None = None
+    client, from_ts: str, to_ts: str, device_ip: str | None = None,
+    excluded_ips: list[dict] | None = None,
 ) -> dict:
     """Get high-level threat summary with kill chains and baseline deviation."""
-    alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info=False, limit=200)
+    alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info=False, limit=200, excluded_ips=excluded_ips)
 
     if not alerts:
         return {

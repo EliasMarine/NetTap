@@ -13,6 +13,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from services.excluded_ips import build_excluded_ips_filter
+
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -38,23 +40,29 @@ class LANAnomalyDetector:
         self._client = client
 
     def detect_arp_spoofing(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect ARP spoofing: multiple MAC addresses claiming the same IP.
 
         Queries Zeek ARP logs and looks for IPs associated with more than
         one MAC address in the time range.
         """
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "arp"}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_ts, to_ts),
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "arp"}},
-                    ]
-                }
+                "bool": bool_clause
             },
             "aggs": {
                 "by_ip": {
@@ -119,23 +127,29 @@ class LANAnomalyDetector:
         return alerts
 
     def detect_rogue_dhcp(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect rogue DHCP servers: DHCP offers from unexpected sources.
 
         Looks for multiple DHCP server IPs in the time range. In a typical
         home/small-office network, there should be exactly one DHCP server.
         """
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "dhcp"}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_ts, to_ts),
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dhcp"}},
-                    ]
-                }
+                "bool": bool_clause
             },
             "aggs": {
                 "dhcp_servers": {
@@ -207,24 +221,30 @@ class LANAnomalyDetector:
         return alerts
 
     def detect_ip_conflicts(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect IP conflicts from gratuitous ARP observations.
 
         Looks for gratuitous ARP (source IP == destination IP) entries
         where different MACs are announcing the same IP.
         """
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "arp"}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         # Query for gratuitous ARP (where source and dest IP match)
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_ts, to_ts),
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "arp"}},
-                    ]
-                }
+                "bool": bool_clause
             },
             "aggs": {
                 "by_dest_ip": {
@@ -291,13 +311,14 @@ class LANAnomalyDetector:
         return alerts
 
     def get_all_anomalies(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Run all detection methods and return combined anomaly list."""
         anomalies: list[dict[str, Any]] = []
-        anomalies.extend(self.detect_arp_spoofing(from_ts, to_ts))
-        anomalies.extend(self.detect_rogue_dhcp(from_ts, to_ts))
-        anomalies.extend(self.detect_ip_conflicts(from_ts, to_ts))
+        anomalies.extend(self.detect_arp_spoofing(from_ts, to_ts, excluded_ips=excluded_ips))
+        anomalies.extend(self.detect_rogue_dhcp(from_ts, to_ts, excluded_ips=excluded_ips))
+        anomalies.extend(self.detect_ip_conflicts(from_ts, to_ts, excluded_ips=excluded_ips))
 
         # Sort by severity (critical > high > medium > low)
         severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}

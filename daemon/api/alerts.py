@@ -17,6 +17,7 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from services.alert_enrichment import AlertEnrichment
+from services.excluded_ips import build_excluded_ips_filter
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.alerts")
@@ -354,13 +355,15 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                     }
                 })
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     query = {
         "size": size,
         "from": offset,
         "query": {
             "bool": {
                 "filter": filter_clauses,
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
             }
         },
         # OLD CODE START — Zeek-native sort field: "timestamp"
@@ -419,6 +422,7 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     query = {
         "size": 0,
@@ -429,7 +433,7 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
             }
         },
         "aggs": {
@@ -602,6 +606,7 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
     if interval not in _ALLOWED_INTERVALS:
         interval = "1h"
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     query = {
         "size": 0,
@@ -610,7 +615,8 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
-                ]
+                ],
+                "must_not": excluded,
             }
         },
         "aggs": {
@@ -669,6 +675,7 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     limit = min(_parse_int_param(request, "limit", 20), 100)
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     query = {
         "size": 0,
@@ -677,7 +684,8 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
-                ]
+                ],
+                "must_not": excluded,
             }
         },
         "aggs": {
@@ -735,6 +743,7 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
         direction = "dest"
     client = _get_client(request)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     field = "source.ip.keyword" if direction == "src" else "destination.ip.keyword"
 
     query = {
@@ -744,7 +753,8 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
-                ]
+                ],
+                "must_not": excluded,
             }
         },
         "aggs": {
@@ -788,6 +798,7 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
     interval = _sparkline_interval(from_ts, to_ts)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import (
         THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
@@ -802,7 +813,7 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
             }
         },
         "aggs": {
@@ -949,6 +960,7 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     category = request.match_info.get("category", "")
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import (
         THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
@@ -970,7 +982,7 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
             }
         },
         "aggs": {
@@ -1126,6 +1138,7 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
     if interval not in _ALLOWED_INTERVALS:
         interval = _sparkline_interval(from_ts, to_ts)
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import THREAT_CATEGORIES, categorize_alert, categorize_sub_category
 
@@ -1142,7 +1155,7 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
             }
         },
         "aggs": {
@@ -1213,10 +1226,11 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
     include_info = request.query.get("include_info", "false").lower() == "true"
     limit = _parse_int_param(request, "limit", 50)
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import get_smart_alerts
     try:
-        alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info, limit)
+        alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info, limit, excluded_ips=excluded)
     except Exception as exc:
         logger.error("Smart alerts query failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -1234,10 +1248,11 @@ async def handle_smart_alert_summary(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     device_ip = request.query.get("device_ip", "").strip() or None
     client = _get_client(request)
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import get_smart_alert_summary
     try:
-        summary = await get_smart_alert_summary(client, from_ts, to_ts, device_ip)
+        summary = await get_smart_alert_summary(client, from_ts, to_ts, device_ip, excluded_ips=excluded)
     except Exception as exc:
         logger.error("Smart alert summary failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)

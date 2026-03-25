@@ -325,6 +325,7 @@ class LiveConnectionTracker:
         proto: str | None = None,
         country: str | None = None,
         limit: int = 100,
+        excluded_ips: list[str] | None = None,
     ) -> dict[str, Any]:
         """Fetch complete live dashboard payload with connections + aggregations.
 
@@ -374,11 +375,20 @@ class LiveConnectionTracker:
                 {"term": {"destination.geo.country_iso_code.keyword": country.upper()}}
             )
 
+        # --- Build must_not clauses (excluded IPs) ---
+        must_not_clauses: list[dict] = []
+        if excluded_ips:
+            must_not_clauses.append({"terms": {"source.ip": excluded_ips}})
+
         # --- Query 1: Connections + Aggregations ---
+        bool_clause: dict[str, Any] = {"filter": conn_filters}
+        if must_not_clauses:
+            bool_clause["must_not"] = must_not_clauses
+
         conn_query = {
             "size": min(limit, 500),
             "track_total_hits": True,
-            "query": {"bool": {"filter": conn_filters}},
+            "query": {"bool": bool_clause},
             "sort": [{"@timestamp": {"order": "desc"}}],
             "aggs": {
                 "protocols": {

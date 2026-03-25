@@ -320,6 +320,44 @@ def detect_and_build_lan_filter(client) -> dict:
 RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
 
 
+def detect_appliance_ip() -> str | None:
+    """Auto-detect the appliance's management interface IPv4 address.
+
+    Priority: MGMT_IP env var > query MGMT_INTERFACE via ip command > None
+    """
+    mgmt_ip = os.environ.get("MGMT_IP", "").strip()
+    if mgmt_ip:
+        return mgmt_ip
+
+    mgmt_iface = os.environ.get("MGMT_INTERFACE", "").strip()
+    if mgmt_iface:
+        return _detect_interface_ip(mgmt_iface)
+
+    return None
+
+
+def _detect_interface_ip(iface: str) -> str | None:
+    """Get the first IPv4 address of a network interface using ip command."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show", iface],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            import json as _json
+
+            data = _json.loads(result.stdout)
+            if data and data[0].get("addr_info"):
+                return data[0]["addr_info"][0].get("local")
+    except Exception as exc:
+        logger.debug("Could not detect IP for %s: %s", iface, exc)
+    return None
+
+
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
     """Build OpenSearch must_not clauses to exclude IPs from source.ip aggregations.
 
