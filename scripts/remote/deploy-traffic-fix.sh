@@ -2,9 +2,9 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="phase-4/manual-data-cleanup"
+BRANCH="fix/traffic-category-duplicate-services"
 
-echo "=== Deploy Manual Data Cleanup Feature ==="
+echo "=== Deploy Traffic Category Fix ==="
 echo ""
 
 echo "→ Step 1: Pull latest code..."
@@ -25,7 +25,7 @@ sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
 echo "   ✓ Daemon container rebuilt"
 echo ""
 
-echo "→ Step 4: Restart containers..."
+echo "→ Step 4: Restart both containers..."
 sudo docker compose -f docker/docker-compose.yml up -d nettap-web nettap-storage-daemon --force-recreate
 echo "   ✓ Containers restarted"
 echo ""
@@ -43,32 +43,18 @@ for i in $(seq 1 30); do
 done
 echo ""
 
-echo "→ Step 6: Test cleanup preview API..."
-PREVIEW_RESULT=$(sudo docker exec nettap-storage-daemon curl -s -X POST http://localhost:8880/api/storage/cleanup/preview \
-    -H "Content-Type: application/json" \
-    -d '{"older_than_days": 365}')
-echo "   Preview response (data older than 365 days):"
-echo "   $PREVIEW_RESULT" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(f'   Indices: {d.get(\"total_indices\", \"?\")}, PCAPs: {d.get(\"total_pcap_files\", \"?\")}, Size: {d.get(\"estimated_freed_bytes\", 0) / 1024 / 1024:.1f} MB')
-except:
-    print(f'   Raw: {sys.stdin.read()[:200]}')
-" 2>/dev/null || echo "   $PREVIEW_RESULT"
+echo "→ Step 6: Test traffic categories API..."
+CATEGORIES=$(sudo docker exec nettap-storage-daemon curl -s http://localhost:8880/api/traffic/categories 2>/dev/null)
+CAT_COUNT=$(echo "$CATEGORIES" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('categories',[])))" 2>/dev/null || echo "0")
+echo "   Categories returned: $CAT_COUNT"
 echo ""
 
-echo "→ Step 7: Test storage status API..."
-sudo docker exec nettap-storage-daemon curl -s http://localhost:8880/api/storage/status | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(f'   Disk: {d.get(\"disk_usage_percent\", \"?\")}% used')
-    print(f'   Indices: {d.get(\"total_indices\", \"?\")} total')
-    print(f'   Retention: hot={d.get(\"hot_days\",\"?\")}d, warm={d.get(\"warm_days\",\"?\")}d, cold={d.get(\"cold_days\",\"?\")}d')
-except:
-    print('   Could not parse response')
-" 2>/dev/null
+echo "→ Step 7: Test category detail API (cloud — was broken)..."
+DETAIL=$(sudo docker exec nettap-storage-daemon curl -s "http://localhost:8880/api/traffic/categories/cloud" 2>/dev/null)
+DEVICE_COUNT=$(echo "$DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('device_count',0))" 2>/dev/null || echo "0")
+SVC_NAMES=$(echo "$DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); names=[s['name'] for s in d.get('services',[])]; dupes=[n for n in names if names.count(n)>1]; print(f'services={len(names)} dupes={len(set(dupes))}')" 2>/dev/null || echo "parse error")
+echo "   Cloud category devices: $DEVICE_COUNT"
+echo "   Service dedup check: $SVC_NAMES"
 echo ""
 
 echo "→ Step 8: Container status..."
@@ -76,4 +62,4 @@ sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-web|ne
 echo ""
 
 echo "=== Deploy Complete ==="
-echo "Open the dashboard → Settings → Retention tab to see the new Manual Data Cleanup section."
+echo "Open the dashboard and click Cloud (or any traffic category) to verify no more loading spinner."

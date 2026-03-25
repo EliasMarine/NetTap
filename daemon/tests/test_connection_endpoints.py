@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
-from api.traffic import register_traffic_routes, NETWORK_INDEX
+from api.traffic import register_traffic_routes
 from storage.manager import StorageManager, RetentionConfig
 
 
@@ -186,8 +186,8 @@ class TestConnectionSankey(AioHTTPTestCase):
         self.assertTrue(len(data["links"]) >= 3)
         # Labels should have ASN prefix stripped
         dest_labels = [d["label"] for d in data["nodes"]["destinations"]]
-        self.assertTrue(any("Google" in l for l in dest_labels))
-        self.assertTrue(all(not l.startswith("AS") for l in dest_labels if l != "Unknown"))
+        self.assertTrue(any("Google" in label for label in dest_labels))
+        self.assertTrue(all(not label.startswith("AS") for label in dest_labels if label != "Unknown"))
 
     @unittest_run_loop
     async def test_sankey_empty(self):
@@ -241,7 +241,7 @@ class TestConnectionSankey(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/traffic/connections/sankey")
         data = await resp.json()
         # tcp→Unknown should be aggregated into one link
-        tcp_to_unknown = [l for l in data["links"] if l["source"] == "tcp" and l["target"] == "Unknown"]
+        tcp_to_unknown = [link for link in data["links"] if link["source"] == "tcp" and link["target"] == "Unknown"]
         self.assertEqual(len(tcp_to_unknown), 1)
         self.assertEqual(tcp_to_unknown[0]["value"], 300)
 

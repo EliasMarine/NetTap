@@ -9,7 +9,7 @@ echo "Fixes: each_key_duplicate crash, broken timeline, missing last_seen"
 echo ""
 
 echo "→ Step 1: Pull latest code..."
-cd "$REPO_DIR"
+cd "$REPO_DIR" || { echo "ERROR: Cannot cd to $REPO_DIR"; exit 1; }
 git fetch origin
 git checkout "$BRANCH"
 git pull origin "$BRANCH"

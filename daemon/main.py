@@ -69,7 +69,7 @@ import logging
 import sys
 from typing import Any
 
-from storage.manager import StorageManager, RetentionConfig
+from storage.manager import StorageManager
 from storage.retention_config import RetentionConfigManager
 from smart.monitor import SmartMonitor, auto_detect_device
 from services.bridge_health import BridgeHealthMonitor

@@ -9,7 +9,6 @@ emergency pruning, and status reporting.
 """
 
 import json
-import os
 import re
 import logging
 import shutil

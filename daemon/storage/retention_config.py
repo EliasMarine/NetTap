@@ -22,8 +22,6 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
 from storage.manager import RetentionConfig
 
 logger = logging.getLogger("nettap.storage.retention_config")

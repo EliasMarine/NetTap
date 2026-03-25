@@ -8,9 +8,8 @@ OpenSearch — no real connections required.
 
 import os
 import sys
-import json
 import unittest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

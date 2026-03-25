@@ -14,13 +14,10 @@ import os
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
-
 from services.alert_intelligence import (
     THREAT_CATEGORIES,
     SUB_CATEGORIES,
     MITRE_TECHNIQUES,
-    categorize_alert,
     categorize_sub_category,
 )
 from api.alerts import _sparkline_interval

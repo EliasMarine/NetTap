@@ -2,9 +2,9 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="phase-4/connections-v3"
+BRANCH="phase-4/alerts-v3-category-hub"
 
-echo "=== Deploy TShark Analysis Fix ==="
+echo "=== Deploy Alerts Category Filter + Icon + Color Fixes ==="
 echo ""
 
 echo "→ Step 1: Pull latest code..."
@@ -15,14 +15,14 @@ git pull origin "$BRANCH"
 echo "   ✓ Code updated"
 echo ""
 
-echo "→ Step 2: Rebuild daemon container..."
-sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
-echo "   ✓ Daemon container rebuilt"
-echo ""
-
-echo "→ Step 3: Rebuild web container..."
+echo "→ Step 2: Rebuild web container..."
 sudo docker compose -f docker/docker-compose.yml build nettap-web
 echo "   ✓ Web container rebuilt"
+echo ""
+
+echo "→ Step 3: Rebuild daemon container..."
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+echo "   ✓ Daemon container rebuilt"
 echo ""
 
 echo "→ Step 4: Restart containers..."
@@ -43,13 +43,21 @@ for i in $(seq 1 30); do
 done
 echo ""
 
-echo "→ Step 6: Test TShark API..."
-sudo docker exec nettap-storage-daemon curl -s http://localhost:8880/api/tshark/status | python3 -c "
+echo "→ Step 6: Test category filter on alerts API..."
+sudo docker exec nettap-storage-daemon curl -s 'http://localhost:8880/api/alerts?category=malware_c2&size=3' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print(f\"   TShark available: {d.get('available')}\")
-print(f\"   Version: {d.get('version')}\")
-" || echo "   (API check failed — container may still be starting)"
+data = json.load(sys.stdin)
+total = data.get('total', 0)
+alerts = data.get('alerts', [])
+print(f'   Malware & C2 filtered alerts: {total} total')
+for a in alerts[:3]:
+    sig = a.get('signature', a.get('rule', {}).get('name', 'unknown'))
+    print(f'     - {sig}')
+if total > 0:
+    print('   ✓ Category filter working')
+else:
+    print('   ⚠ No alerts returned (may be expected if no malware alerts in default time range)')
+"
 echo ""
 
 echo "→ Step 7: Container status..."
@@ -57,10 +65,7 @@ sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-web|ne
 echo ""
 
 echo "=== Deploy Complete ==="
-echo "Test in browser:"
-echo "  1. Open a connection drawer on /devices/[ip] → TShark tab"
-echo "  2. Click Summary → Analyze (should find packets across multiple PCAPs)"
-echo "  3. Click Verbose → Analyze (should show full protocol tree)"
-echo "  4. Click Follow Stream → Analyze (should show reassembled stream)"
-echo "  5. Click 'Open in TShark Tool' (should navigate to /tools/tshark with filter)"
-echo "  6. Open a connection drawer on /connections → same buttons should appear"
+echo "Open https://192.168.1.208/alerts and drill into a category to verify:"
+echo "  1. Category icons show correct emoji (bug, search, shield, etc.)"
+echo "  2. Recent Alerts table shows only alerts for that category"
+echo "  3. Timeline bars render in the category color (not black)"

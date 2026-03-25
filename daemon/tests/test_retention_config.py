@@ -9,12 +9,10 @@ All tests use tmp_path / monkeypatch — no real filesystem side-effects.
 """
 
 import json
-import os
 
 import pytest
 
 from storage.retention_config import RetentionConfigManager, validate_config
-from storage.manager import RetentionConfig
 
 
 # =========================================================================
