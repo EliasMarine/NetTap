@@ -131,7 +131,7 @@
 	<DrawerSection title="Connection Info">
 		<KVRow label="Source IP" value={`${connection.source_ip}:${connection.source_port}`} mono copyable />
 		<KVRow label="Destination IP" value={`${connection.dest_ip}:${connection.dest_port}`} mono copyable />
-		<KVRow label="Protocol" value={(connection.service || connection.protocol || '').toUpperCase()} />
+		<KVRow label="Protocol" value={String(connection.service || connection.protocol || '').toUpperCase()} />
 		<KVRow label="Direction" value={directionLabel()} />
 		<KVRow label="Bytes" value={formatBytes(connection.bytes)} mono />
 		<KVRow label="Duration" value={formatDuration(connection.duration)} mono />

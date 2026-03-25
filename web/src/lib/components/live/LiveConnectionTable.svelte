@@ -220,7 +220,7 @@
 
 						<!-- Protocol -->
 						<td>
-							<span class="proto-label">{(conn.service || conn.protocol || '').toUpperCase()}</span>
+							<span class="proto-label">{String(conn.service || conn.protocol || '').toUpperCase()}</span>
 						</td>
 
 						<!-- Port -->

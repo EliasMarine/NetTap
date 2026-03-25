@@ -31,6 +31,13 @@ MAX_CONNECTIONS = 10_000
 RATE_WINDOW_SECONDS = 60
 
 
+def _flatten(value: Any) -> str:
+    """Flatten OpenSearch multi-valued fields (arrays) to a single string."""
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value if isinstance(value, str) else str(value) if value else ""
+
+
 class LiveConnectionTracker:
     """Tracks active connections from OpenSearch with in-memory caching."""
 
@@ -267,8 +274,8 @@ class LiveConnectionTracker:
             "source_port": src.get("port", 0),
             "dest_ip": dst.get("ip", ""),
             "dest_port": dst.get("port", 0),
-            "protocol": network.get("transport", ""),
-            "service": network.get("protocol", ""),
+            "protocol": _flatten(network.get("transport", "")),
+            "service": _flatten(network.get("protocol", "")),
             "bytes": total_bytes,
             "duration": round(duration, 3),
             "country": geo.get("country_iso_code", ""),
