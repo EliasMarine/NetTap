@@ -47,7 +47,6 @@
 	let destLayerGroup: L.LayerGroup | null = null;
 	let animFrameId: number | null = null;
 	let arcPhase = 0;
-	let debugLogged = false;
 
 	// Colors — pulled from the design system token values for canvas drawing.
 	// Canvas cannot read CSS vars at draw time, so we resolve the actual values.
@@ -222,17 +221,6 @@
 
 		const homePixel = map.latLngToContainerPoint([homeLocation.lat, homeLocation.lng]);
 
-		if (!debugLogged) {
-			debugLogged = true;
-			console.log('[GeoMap] arc-canvas rendering', {
-				canvasSize: `${canvasEl.width}x${canvasEl.height}`,
-				dpr,
-				homePixel: `${homePixel.x},${homePixel.y}`,
-				destinations: destinations.length,
-				paused,
-			});
-		}
-
 		arcPhase = (arcPhase + 0.005) % 1;
 
 		for (let i = 0; i < destinations.length; i++) {
@@ -327,8 +315,6 @@
 		inset: 0;
 		pointer-events: none;
 		z-index: 450;
-		/* DEBUG: remove after confirming canvas visibility */
-		background: rgba(0, 255, 100, 0.08);
 	}
 
 	/* ----- Leaflet control overrides ----- */
