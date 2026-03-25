@@ -98,8 +98,8 @@
 	}
 
 	/** Build a unique row ID for selection matching. */
-	function rowId(conn: LiveConnection): string {
-		return conn.timestamp + conn.source_ip + conn.dest_ip;
+	function rowId(conn: LiveConnection, index: number): string {
+		return `${conn.timestamp}:${conn.source_ip}:${conn.source_port}:${conn.dest_ip}:${conn.dest_port}:${index}`;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -184,9 +184,9 @@
 					<td colspan={columns.length} class="empty-row">No connections</td>
 				</tr>
 			{:else}
-				{#each sorted as conn (rowId(conn))}
+				{#each sorted as conn, i (rowId(conn, i))}
 					{@const dir = getDirection(conn)}
-					{@const isSelected = selectedId === rowId(conn)}
+					{@const isSelected = selectedId === rowId(conn, i)}
 					<tr
 						class="conn-row"
 						class:selected={isSelected}
