@@ -221,7 +221,7 @@
 
 		const homePixel = map.latLngToContainerPoint([homeLocation.lat, homeLocation.lng]);
 
-		arcPhase = (arcPhase + 0.003) % 1;
+		arcPhase = (arcPhase + 0.005) % 1;
 
 		for (let i = 0; i < destinations.length; i++) {
 			const dest = destinations[i];
@@ -240,13 +240,21 @@
 			const cpX = midX;
 			const cpY = minY - 40 - distance * 0.12;
 
-			// Draw dim static arc
+			// Draw static arc with glow
 			ctx.beginPath();
 			ctx.moveTo(homePixel.x, homePixel.y);
 			ctx.quadraticCurveTo(cpX, cpY, destPixel.x, destPixel.y);
 			ctx.strokeStyle = color;
-			ctx.globalAlpha = 0.12;
-			ctx.lineWidth = 1;
+			ctx.globalAlpha = 0.07;
+			ctx.lineWidth = 6;
+			ctx.stroke();
+
+			ctx.beginPath();
+			ctx.moveTo(homePixel.x, homePixel.y);
+			ctx.quadraticCurveTo(cpX, cpY, destPixel.x, destPixel.y);
+			ctx.strokeStyle = color;
+			ctx.globalAlpha = 0.3;
+			ctx.lineWidth = 1.5;
 			ctx.stroke();
 
 			// Animated pulse dots — more pulses for higher connection counts
@@ -261,16 +269,16 @@
 
 				// Outer glow
 				ctx.beginPath();
-				ctx.arc(px, py, 6, 0, Math.PI * 2);
+				ctx.arc(px, py, 8, 0, Math.PI * 2);
 				ctx.fillStyle = color;
-				ctx.globalAlpha = 0.2;
+				ctx.globalAlpha = 0.25;
 				ctx.fill();
 
 				// Solid dot
 				ctx.beginPath();
-				ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+				ctx.arc(px, py, 3.5, 0, Math.PI * 2);
 				ctx.fillStyle = color;
-				ctx.globalAlpha = 0.9;
+				ctx.globalAlpha = 0.95;
 				ctx.fill();
 			}
 		}
@@ -290,6 +298,8 @@
 		position: relative;
 		width: 100%;
 		height: 100%;
+		overflow: hidden;
+		isolation: isolate;
 	}
 
 	.geo-map {
