@@ -437,6 +437,41 @@ class LiveConnectionTracker:
                         },
                     },
                 },
+                "geo_countries": {
+                    "terms": {
+                        "field": "destination.geo.country_iso_code.keyword",
+                        "size": 30,
+                    },
+                    "aggs": {
+                        "country_name": {
+                            "terms": {
+                                "field": "destination.geo.country_name.keyword",
+                                "size": 1,
+                            }
+                        },
+                        "top_city": {
+                            "terms": {
+                                "field": "destination.geo.city_name.keyword",
+                                "size": 1,
+                            }
+                        },
+                        "total_bytes": {
+                            "sum": {
+                                "script": {
+                                    "source": self._PAINLESS_BYTE_SUM,
+                                    "lang": "painless",
+                                }
+                            }
+                        },
+                        "location": {
+                            "top_hits": {
+                                "size": 1,
+                                "_source": ["destination.geo.location"],
+                                "sort": [{"@timestamp": {"order": "desc"}}],
+                            }
+                        },
+                    },
+                },
                 "total_bytes_in": {
                     "sum": {"field": "source.bytes", "missing": 0}
                 },
@@ -634,6 +669,51 @@ class LiveConnectionTracker:
                     "lon": lon,
                     "count": count,
                     "bytes": total_b,
+                })
+
+        # Country-level fallbacks: add arcs for countries that have
+        # connections but no city-level entry in the top-20 city list.
+        seen_countries = {arc["country_code"] for arc in geo_arcs}
+        country_buckets = aggs.get("geo_countries", {}).get("buckets", [])
+        for bucket in country_buckets:
+            cc = bucket.get("key", "")
+            if cc in seen_countries or not cc:
+                continue
+
+            c_count = bucket.get("doc_count", 0)
+            c_bytes = bucket.get("total_bytes", {}).get("value", 0)
+
+            cn_b = bucket.get("country_name", {}).get("buckets", [])
+            c_country = cn_b[0]["key"] if cn_b else ""
+
+            city_b = bucket.get("top_city", {}).get("buckets", [])
+            c_city = city_b[0]["key"] if city_b else ""
+
+            c_loc_hits = (
+                bucket.get("location", {}).get("hits", {}).get("hits", [])
+            )
+            c_lat, c_lon = None, None
+            if c_loc_hits:
+                c_loc_src = c_loc_hits[0].get("_source", {})
+                c_loc_data = (
+                    c_loc_src
+                    .get("destination", {})
+                    .get("geo", {})
+                    .get("location", {})
+                )
+                if isinstance(c_loc_data, dict):
+                    c_lat = c_loc_data.get("lat")
+                    c_lon = c_loc_data.get("lon")
+
+            if c_lat is not None and c_lon is not None:
+                geo_arcs.append({
+                    "city": c_city or c_country,
+                    "country": c_country,
+                    "country_code": cc,
+                    "lat": c_lat,
+                    "lon": c_lon,
+                    "count": c_count,
+                    "bytes": c_bytes,
                 })
 
         return {
