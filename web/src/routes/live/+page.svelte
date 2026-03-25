@@ -4,6 +4,7 @@
   All widgets cross-filter: click map/chart/bar → filters table + other widgets.
 -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { getLiveDashboard, getLiveConnectionDetail } from '$lib/api/live';
 	import type {
 		LiveConnection,
@@ -28,10 +29,9 @@
 	const REFRESH_INTERVAL_MS = 3000;
 	const PAGE_SIZE = 200;
 
-	const DRAWER_TABS: DrawerTab[] = [
-		{ id: 'details', label: 'Details' },
-		{ id: 'alerts', label: 'Alerts' },
-	];
+	// Default home location (center of continental US).
+	// TODO: auto-detect from appliance WAN IP GeoIP or user settings.
+	const DEFAULT_HOME = { lat: 39.8, lng: -98.6 };
 
 	// ---------------------------------------------------------------------------
 	// State — raw data
@@ -207,7 +207,7 @@
 	// Auto-refresh lifecycle
 	// ---------------------------------------------------------------------------
 
-	$effect(() => {
+	onMount(() => {
 		fetchData();
 		const timer = setInterval(fetchData, REFRESH_INTERVAL_MS);
 		return () => clearInterval(timer);
@@ -268,7 +268,7 @@
 		<div class="map-wrapper">
 			<GeoMap
 				destinations={dashboard?.geo_arcs ?? []}
-				homeLocation={null}
+				homeLocation={DEFAULT_HOME}
 				activeCountry={countryFilter}
 				{paused}
 				hasAlertCountries={alertCountrySet}

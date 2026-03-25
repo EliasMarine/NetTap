@@ -80,10 +80,12 @@
 	/** Country code to flag emoji (regional indicator symbols). */
 	function countryFlag(code: string): string {
 		if (!code || code.length !== 2) return '';
-		const offset = 0x1F1E6 - 65; // 'A' = 65
-		const c1 = code.codePointAt(0)! + offset - 32; // uppercase
-		const c2 = code.codePointAt(1)! + offset - 32;
-		return String.fromCodePoint(c1, c2);
+		const base = 0x1F1E6; // Regional Indicator Symbol Letter A
+		const upper = code.toUpperCase();
+		return String.fromCodePoint(
+			upper.codePointAt(0)! - 65 + base,
+			upper.codePointAt(1)! - 65 + base
+		);
 	}
 
 	/**
