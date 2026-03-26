@@ -31,13 +31,13 @@ else
 fi
 echo ""
 
-echo "→ Step 3: Rebuild web container..."
-sudo docker compose -f docker/docker-compose.yml build nettap-web
+echo "→ Step 3: Rebuild web container (no cache)..."
+sudo docker compose -f docker/docker-compose.yml build --no-cache nettap-web
 echo "   ✓ Web container rebuilt"
 echo ""
 
-echo "→ Step 4: Rebuild daemon container..."
-sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+echo "→ Step 4: Rebuild daemon container (no cache)..."
+sudo docker compose -f docker/docker-compose.yml build --no-cache nettap-storage-daemon
 echo "   ✓ Daemon container rebuilt"
 echo ""
 
