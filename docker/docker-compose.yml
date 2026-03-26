@@ -718,6 +718,8 @@ services:
       OPENSEARCH_NETWORK_INDEX: "${OPENSEARCH_NETWORK_INDEX:-arkime_sessions3-*}"
       CAPTURE_MODE: "${CAPTURE_MODE:-bridge}"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
+      MGMT_IP: "${MGMT_IP:-}"
+      MGMT_INTERFACE: "${MGMT_INTERFACE:-}"
     # Daemon port is internal-only — only the web container needs it
     expose:
       - "8880"
