@@ -364,8 +364,10 @@
 
 	// ─── Helpers — UniFi ────────────────────────────────────────
 	function unifiDeviceType(device: UnifiDevice): string {
-		if (device.features?.accessPoint) return 'AP';
-		if (device.features?.switching) return 'Switch';
+		// features is an array of strings in the official API (e.g. ["switching"])
+		const feats = Array.isArray(device.features) ? device.features : [];
+		if (feats.includes('accessPoint')) return 'AP';
+		if (feats.includes('switching')) return 'Switch';
 		const m = (device.model || '').toLowerCase();
 		const n = (device.name || '').toLowerCase();
 		if (m.includes('udm') || m.includes('usg') || m.includes('uxg') || m.includes('gateway') || n.includes('udm')) return 'Gateway';
@@ -1324,11 +1326,6 @@
 										Firmware{unifiDeviceSortIndicator('firmwareVersion')}
 									</button>
 								</th>
-								<th>
-									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'adoptedAt'} onclick={() => toggleUnifiDeviceSort('adoptedAt')}>
-										Adopted{unifiDeviceSortIndicator('adoptedAt')}
-									</button>
-								</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -1383,7 +1380,6 @@
 											<span class="unifi-firmware-update badge badge-warning">Update</span>
 										{/if}
 									</td>
-									<td>{formatDate(device.adoptedAt)}</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -1419,18 +1415,24 @@
 								<tr>
 									<th>Name</th>
 									<th>VLAN ID</th>
-									<th>Subnet</th>
-									<th>Purpose</th>
+									<th>Type</th>
+									<th>Status</th>
 								</tr>
 							</thead>
 							<tbody>
 								{#each unifiNetworks as network (network.id)}
 									<tr>
 										<td>{network.name || '--'}</td>
-										<td class="mono">{network.vlanId ?? (network as any).vlan ?? '--'}</td>
-										<td class="mono">{network.subnet || (network as any).ipSubnet || (network as any).dhcpSubnet || (network as any).networkGroup || '--'}</td>
+										<td class="mono">{network.vlanId ?? '--'}</td>
 										<td>
-											<span class="badge badge-muted">{network.purpose || (network as any).networkPurpose || 'default'}</span>
+											<span class="badge badge-muted">{(network as any).management || '--'}</span>
+										</td>
+										<td>
+											{#if network.enabled !== false}
+												<span class="badge badge-success">Enabled</span>
+											{:else}
+												<span class="badge badge-danger">Disabled</span>
+											{/if}
 										</td>
 									</tr>
 								{/each}
@@ -1472,12 +1474,20 @@
 							<tbody>
 								{#each unifiWifi as ssid (ssid.id)}
 									<tr>
-										<td>{ssid.name || (ssid as any).ssid || '--'}</td>
-										<td class="mono">{ssid.band || (ssid as any).wlanBand || (ssid as any).radioType || '--'}</td>
+										<td>{ssid.name || '--'}</td>
+										<td class="mono">
+											{@const freqs = (ssid as any).broadcastingFrequenciesGHz}
+											{#if Array.isArray(freqs) && freqs.length > 0}
+												{freqs.sort((a: number, b: number) => a - b).join(' / ')} GHz
+											{:else}
+												{ssid.band || '--'}
+											{/if}
+										</td>
 										<td>
-											{@const sec = ssid.security || (ssid as any).wpaMode || (ssid as any).securityProtocol || ''}
-											<span class="badge {sec.toLowerCase().includes('wpa3') ? 'badge-success' : sec.toLowerCase().includes('wpa2') || sec.toLowerCase().includes('wpa') ? 'badge-info' : sec ? 'badge-warning' : 'badge-muted'}">
-												{sec || '--'}
+											{@const sec = (ssid as any).securityConfiguration?.type || ssid.security || ''}
+											{@const secLower = sec.toLowerCase()}
+											<span class="badge {secLower.includes('wpa3') ? 'badge-success' : secLower.includes('wpa2') ? 'badge-info' : sec ? 'badge-warning' : 'badge-muted'}">
+												{sec.replace(/_/g, ' ') || '--'}
 											</span>
 										</td>
 										<td>
@@ -1541,8 +1551,10 @@
 									<tr>
 										<td>{policy.name || policy.id}</td>
 										<td>
-											<span class="badge {policy.action?.toLowerCase() === 'drop' || policy.action?.toLowerCase() === 'reject' ? 'badge-danger' : policy.action?.toLowerCase() === 'accept' ? 'badge-success' : 'badge-muted'}">
-												{policy.action || '--'}
+											{@const actionType = (typeof policy.action === 'object' ? policy.action?.type : policy.action) || ''}
+											{@const actionLower = actionType.toLowerCase()}
+											<span class="badge {actionLower === 'drop' || actionLower === 'reject' ? 'badge-danger' : actionLower === 'allow' || actionLower === 'accept' ? 'badge-success' : 'badge-muted'}">
+												{actionType || '--'}
 											</span>
 										</td>
 										<td>
