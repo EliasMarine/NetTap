@@ -161,8 +161,7 @@
 	// ----- Device Enrichment (mirror mode only) -----
 	let useUnifi = $state(false);
 	let unifiUrl = $state('');
-	let unifiUsername = $state('');
-	let unifiPassword = $state('');
+	let unifiApiKey = $state('');
 	let unifiTesting = $state(false);
 	let unifiTestResult = $state<'success' | 'fail' | ''>('');
 	let unifiTestError = $state('');
@@ -434,9 +433,8 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					url: unifiUrl,
-					username: unifiUsername,
-					password: unifiPassword,
+					controller_url: unifiUrl,
+					api_key: unifiApiKey,
 				}),
 			});
 			if (!res.ok) {
@@ -468,8 +466,7 @@
 				if (useUnifi) {
 					payload.unifi = {
 						url: unifiUrl,
-						username: unifiUsername,
-						password: unifiPassword,
+						api_key: unifiApiKey,
 					};
 				}
 			} else {
@@ -1322,25 +1319,16 @@
 							</div>
 
 							<div class="form-group">
-								<label for="unifi-user" class="label">Username</label>
+								<label for="unifi-api-key" class="label">API Key</label>
 								<input
-									id="unifi-user"
-									type="text"
-									class="input"
-									placeholder="admin"
-									bind:value={unifiUsername}
-								/>
-							</div>
-
-							<div class="form-group">
-								<label for="unifi-pass" class="label">Password</label>
-								<input
-									id="unifi-pass"
+									id="unifi-api-key"
 									type="password"
 									class="input"
-									placeholder="Controller password"
-									bind:value={unifiPassword}
+									placeholder="Paste your UniFi API key"
+									bind:value={unifiApiKey}
+									autocomplete="off"
 								/>
+								<span class="input-hint text-muted">Create an API key in your UniFi controller under Settings &rarr; Integrations.</span>
 							</div>
 
 							{#if unifiTestResult === 'success'}
@@ -1356,7 +1344,7 @@
 							<button
 								class="btn btn-primary"
 								onclick={testUnifiConnection}
-								disabled={unifiTesting || !unifiUrl || !unifiUsername || !unifiPassword}
+								disabled={unifiTesting || !unifiUrl || !unifiApiKey}
 								type="button"
 							>
 								{#if unifiTesting}

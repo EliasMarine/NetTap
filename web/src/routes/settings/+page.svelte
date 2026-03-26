@@ -3,7 +3,7 @@
 	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 
-	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'display' | 'about';
+	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
 	let activeTab = $state<TabId>('notifications');
 
@@ -77,6 +77,22 @@
 	let defaultTimeRange = $state('1h');
 	let displaySaving = $state(false);
 	let displayMessage = $state('');
+
+	// --- UniFi Integration state ---
+	let unifiControllerUrl = $state('');
+	let unifiApiKey = $state('');
+	let unifiSiteId = $state('');
+	let unifiSites = $state<{ id: string; name?: string; desc?: string }[]>([]);
+	let unifiConfigured = $state(false);
+	let unifiConnected = $state(false);
+	let unifiCacheCounts = $state<{ clients: number; devices: number } | null>(null);
+	let unifiLastPoll = $state<string | null>(null);
+	let unifiLoading = $state(true);
+	let unifiSaving = $state(false);
+	let unifiTesting = $state(false);
+	let unifiMessage = $state('');
+	let unifiError = $state(false);
+	let unifiSitesLoading = $state(false);
 
 	// --- About state ---
 	let version = $state('...');
@@ -365,6 +381,140 @@
 		}
 	}
 
+	// --- UniFi functions ---
+	async function loadUnifiStatus() {
+		unifiLoading = true;
+		try {
+			const res = await fetch('/api/integrations/unifi/status');
+			if (res.ok) {
+				const data = await res.json();
+				unifiConfigured = data.configured ?? false;
+				unifiControllerUrl = data.controller_url ?? '';
+				unifiConnected = data.connected ?? false;
+				unifiCacheCounts = data.cache_counts ?? null;
+				unifiLastPoll = data.last_poll ?? null;
+				if (data.site_id) unifiSiteId = data.site_id;
+			}
+		} catch {
+			// Will use defaults
+		} finally {
+			unifiLoading = false;
+		}
+	}
+
+	async function loadUnifiSites() {
+		unifiSitesLoading = true;
+		try {
+			const res = await fetch('/api/integrations/unifi/sites');
+			if (res.ok) {
+				const data = await res.json();
+				unifiSites = data.sites ?? [];
+			}
+		} catch {
+			// Sites will remain empty
+		} finally {
+			unifiSitesLoading = false;
+		}
+	}
+
+	async function saveUnifiConfig() {
+		unifiSaving = true;
+		unifiMessage = '';
+		unifiError = false;
+
+		if (!unifiControllerUrl.trim()) {
+			unifiMessage = 'Controller URL is required.';
+			unifiError = true;
+			unifiSaving = false;
+			return;
+		}
+		if (!unifiApiKey.trim() && !unifiConfigured) {
+			unifiMessage = 'API Key is required.';
+			unifiError = true;
+			unifiSaving = false;
+			return;
+		}
+
+		try {
+			const payload: Record<string, string> = {
+				controller_url: unifiControllerUrl.trim(),
+			};
+			// Only send api_key if user entered one (leave blank to keep existing)
+			if (unifiApiKey.trim()) {
+				payload.api_key = unifiApiKey.trim();
+			}
+			if (unifiSiteId) {
+				payload.site_id = unifiSiteId;
+			}
+
+			const res = await fetch('/api/integrations/unifi/configure', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			const data = await res.json();
+			if (res.ok) {
+				unifiMessage = 'UniFi configuration saved successfully.';
+				unifiConfigured = true;
+				unifiApiKey = ''; // Clear after save
+				// Now test the connection
+				await testUnifiConnection();
+			} else {
+				unifiMessage = data.error || 'Failed to save UniFi configuration.';
+				unifiError = true;
+			}
+		} catch {
+			unifiMessage = 'Failed to connect to server.';
+			unifiError = true;
+		} finally {
+			unifiSaving = false;
+		}
+	}
+
+	async function testUnifiConnection() {
+		unifiTesting = true;
+		unifiMessage = '';
+		unifiError = false;
+
+		try {
+			const res = await fetch('/api/integrations/unifi/test', { method: 'POST' });
+			const data = await res.json();
+			if (res.ok && data.success) {
+				unifiConnected = true;
+				unifiMessage = 'Connection successful.';
+				if (data.status?.cache_counts) {
+					unifiCacheCounts = data.status.cache_counts;
+				}
+				if (data.status?.last_poll) {
+					unifiLastPoll = data.status.last_poll;
+				}
+				// Fetch available sites
+				await loadUnifiSites();
+			} else {
+				unifiConnected = false;
+				unifiMessage = data.error || data.message || 'Connection test failed.';
+				unifiError = true;
+			}
+		} catch {
+			unifiConnected = false;
+			unifiMessage = 'Failed to connect to server.';
+			unifiError = true;
+		} finally {
+			unifiTesting = false;
+		}
+	}
+
+	function formatUnifiPollTime(isoString: string): string {
+		const diff = Date.now() - new Date(isoString).getTime();
+		const secs = Math.floor(diff / 1000);
+		if (secs < 60) return `${secs}s ago`;
+		const mins = Math.floor(secs / 60);
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return `${Math.floor(hours / 24)}d ago`;
+	}
+
 	onMount(() => {
 		loadNotificationConfig();
 		loadRetention();
@@ -374,6 +524,7 @@
 		loadAbout();
 		loadDisplaySettings();
 		loadCaptureSettings();
+		loadUnifiStatus();
 	});
 
 	async function saveNotifications() {
@@ -603,6 +754,13 @@
 			onclick={() => (activeTab = 'network')}
 		>
 			Network
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'integrations'}
+			onclick={() => (activeTab = 'integrations')}
+		>
+			Integrations
 		</button>
 		<button
 			class="tab"
@@ -1232,6 +1390,134 @@
 					<button class="btn btn-primary" onclick={saveExcludedIps} disabled={networkSaving} style="margin-top: var(--space-md);">
 						{networkSaving ? 'Saving...' : 'Save Excluded IPs'}
 					</button>
+				{/if}
+			</div>
+		</div>
+
+	{:else if activeTab === 'integrations'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">UniFi Controller</span>
+					{#if unifiConfigured}
+						<span class="unifi-conn-badge" class:connected={unifiConnected} class:disconnected={!unifiConnected}>
+							<span class="unifi-conn-dot"></span>
+							{unifiConnected ? 'Connected' : 'Disconnected'}
+						</span>
+					{/if}
+				</div>
+
+				<p class="field-help" style="margin-bottom: var(--space-lg);">
+					Connect to your UniFi controller to enrich device data with friendly names, models, and network assignments. Uses API key authentication (UniFi OS 10.2.93+).
+				</p>
+
+				{#if unifiMessage}
+					<div class="alert {unifiError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+						{unifiMessage}
+					</div>
+				{/if}
+
+				{#if unifiLoading}
+					<p class="text-muted">Loading UniFi status...</p>
+				{:else}
+					<!-- Connection Status Card (only shown when configured) -->
+					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
+						<div class="unifi-status-card">
+							<div class="unifi-status-grid">
+								{#if unifiCacheCounts}
+									<div class="unifi-status-item">
+										<span class="unifi-status-value mono">{unifiCacheCounts.clients}</span>
+										<span class="unifi-status-label">Cached Clients</span>
+									</div>
+									<div class="unifi-status-item">
+										<span class="unifi-status-value mono">{unifiCacheCounts.devices}</span>
+										<span class="unifi-status-label">Cached Devices</span>
+									</div>
+								{/if}
+								{#if unifiLastPoll}
+									<div class="unifi-status-item">
+										<span class="unifi-status-value mono">{formatUnifiPollTime(unifiLastPoll)}</span>
+										<span class="unifi-status-label">Last Poll</span>
+									</div>
+								{/if}
+							</div>
+						</div>
+					{/if}
+
+					<!-- Controller URL -->
+					<div class="form-group">
+						<label class="label" for="unifi-url">Controller URL</label>
+						<input
+							class="input"
+							id="unifi-url"
+							type="url"
+							bind:value={unifiControllerUrl}
+							placeholder="https://192.168.1.1"
+						/>
+						<p class="field-help">Full URL to your UniFi controller (e.g. https://192.168.1.1 or https://unifi.local:8443).</p>
+					</div>
+
+					<!-- API Key -->
+					<div class="form-group">
+						<div class="label-with-badge">
+							<label class="label" for="unifi-api-key">API Key</label>
+							{#if unifiConfigured}
+								<span class="badge badge-configured">Configured</span>
+							{/if}
+						</div>
+						<input
+							class="input mono"
+							id="unifi-api-key"
+							type="password"
+							bind:value={unifiApiKey}
+							placeholder={unifiConfigured ? 'Leave blank to keep current key' : 'Paste your UniFi API key'}
+							autocomplete="off"
+							spellcheck="false"
+						/>
+						<p class="field-help">
+							Generate an API key in UniFi OS: Settings &rarr; System &rarr; Advanced &rarr; API Key.
+							{#if unifiConfigured}
+								Leave blank to keep the currently saved key.
+							{/if}
+						</p>
+					</div>
+
+					<!-- Site Selector -->
+					<div class="form-group">
+						<label class="label" for="unifi-site">Site</label>
+						{#if unifiSites.length > 0}
+							<select class="select" id="unifi-site" bind:value={unifiSiteId}>
+								<option value="">Select a site...</option>
+								{#each unifiSites as site}
+									<option value={site.id}>{site.desc || site.name || site.id}</option>
+								{/each}
+							</select>
+							<p class="field-help">Select which UniFi site to poll for device data.</p>
+						{:else if unifiSitesLoading}
+							<p class="text-muted" style="font-size: var(--text-sm);">Loading sites...</p>
+						{:else}
+							<input
+								class="input"
+								id="unifi-site"
+								type="text"
+								bind:value={unifiSiteId}
+								placeholder="default"
+							/>
+							<p class="field-help">Enter a site ID manually, or save and test the connection to auto-discover sites. Most setups use "default".</p>
+						{/if}
+					</div>
+
+					<!-- Action buttons -->
+					<div class="btn-row" style="margin-top: var(--space-md);">
+						<button class="btn btn-primary" onclick={saveUnifiConfig} disabled={unifiSaving || unifiTesting}>
+							{unifiSaving ? 'Saving...' : 'Save Configuration'}
+						</button>
+						{#if unifiConfigured}
+							<button class="btn btn-secondary" onclick={testUnifiConnection} disabled={unifiTesting || unifiSaving}>
+								{unifiTesting ? 'Testing...' : 'Test Connection'}
+							</button>
+						{/if}
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -1927,5 +2213,85 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
+	}
+
+	/* UniFi Integration */
+	.unifi-conn-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-sm);
+		font-weight: 600;
+		padding: 2px var(--space-sm);
+		border-radius: var(--radius-full);
+	}
+
+	.unifi-conn-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+	}
+
+	.unifi-conn-badge.connected {
+		color: var(--green);
+		background: var(--green-dim);
+	}
+	.unifi-conn-badge.connected .unifi-conn-dot {
+		background: var(--green);
+		box-shadow: 0 0 6px var(--green);
+	}
+
+	.unifi-conn-badge.disconnected {
+		color: var(--text-muted);
+		background: var(--bg-tertiary);
+	}
+	.unifi-conn-badge.disconnected .unifi-conn-dot {
+		background: var(--text-muted);
+	}
+
+	.unifi-status-card {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-bottom: var(--space-lg);
+	}
+
+	.unifi-status-grid {
+		display: flex;
+		gap: var(--space-xl);
+	}
+
+	.unifi-status-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.unifi-status-value {
+		font-size: var(--text-lg);
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+
+	.unifi-status-label {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	@media (max-width: 768px) {
+		.unifi-status-grid {
+			flex-direction: column;
+			gap: var(--space-md);
+			align-items: flex-start;
+		}
+
+		.unifi-status-item {
+			flex-direction: row;
+			gap: var(--space-sm);
+		}
 	}
 </style>

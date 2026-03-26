@@ -14,6 +14,26 @@
 	import type { BridgeHealth } from '$api/bridge.js';
 	import type { CaptureMode, CaptureStatsResponse } from '$api/capture';
 	import type { SystemHealth, StorageStatus } from '$api/system.js';
+	import {
+		getUnifiStatus,
+		getUnifiDevices,
+		getUnifiNetworks,
+		getUnifiWifi,
+		getUnifiFirewall,
+		getUnifiDnsPolicies,
+		getUnifiWans,
+		getUnifiVpn,
+	} from '$api/unifi';
+	import type {
+		UnifiStatus,
+		UnifiDevice,
+		UnifiNetwork,
+		UnifiWifi,
+		UnifiFirewall,
+		DnsPolicy,
+		UnifiWan,
+		UnifiVpnTunnel,
+	} from '$api/unifi';
 
 	// ─── Node type for topology ─────────────────────────────────
 	type NodeId = 'bridge' | 'capture' | 'zeek' | 'suricata' | 'filebeat' | 'logstash' | 'opensearch';
@@ -34,6 +54,17 @@
 	let logstashStats = $state<LogstashStats | null>(null);
 	let logstashPipelines = $state<LogstashPipeline[]>([]);
 	let showTemplates = $state(false);
+
+	// UniFi integration state
+	let unifiStatus = $state<UnifiStatus | null>(null);
+	let unifiDevices = $state<UnifiDevice[]>([]);
+	let unifiNetworks = $state<UnifiNetwork[]>([]);
+	let unifiWifi = $state<UnifiWifi[]>([]);
+	let unifiFirewall = $state<UnifiFirewall>({ policies: [], zones: [] });
+	let unifiDnsPolicies = $state<DnsPolicy[]>([]);
+	let unifiWans = $state<UnifiWan[]>([]);
+	let unifiVpn = $state<UnifiVpnTunnel[]>([]);
+	let unifiLoading = $state(false);
 
 	// Zeek/Suricata throughput (computed from event counts over 5-min window)
 	let zeekEventsPerSec = $state<number | null>(null);
@@ -153,6 +184,32 @@
 		} catch { /* swallow */ }
 	}
 
+	async function fetchUnifi() {
+		try {
+			const status = await getUnifiStatus();
+			unifiStatus = status;
+			if (!status.configured) return;
+			unifiLoading = true;
+			const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.all([
+				getUnifiDevices(),
+				getUnifiNetworks(),
+				getUnifiWifi(),
+				getUnifiFirewall(),
+				getUnifiDnsPolicies(),
+				getUnifiWans(),
+				getUnifiVpn(),
+			]);
+			unifiDevices = devices;
+			unifiNetworks = networks;
+			unifiWifi = wifi;
+			unifiFirewall = firewall;
+			unifiDnsPolicies = dnsPolicies;
+			unifiWans = wans;
+			unifiVpn = vpn;
+		} catch { /* swallow */ }
+		unifiLoading = false;
+	}
+
 	async function fetchAll() {
 		loading = true;
 		await Promise.all([
@@ -161,6 +218,7 @@
 			fetchOpenSearch(),
 			fetchStorage(),
 			fetchToolRates(),
+			fetchUnifi(),
 		]);
 		loading = false;
 	}
@@ -271,6 +329,55 @@
 		return list;
 	});
 
+	// ─── Sort state — UniFi Devices table ──────────────────────
+	type UnifiDeviceSortKey = 'name' | 'model' | 'ipAddress' | 'state' | 'firmwareVersion' | 'adoptedAt';
+	let unifiDeviceSortKey = $state<UnifiDeviceSortKey>('name');
+	let unifiDeviceSortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleUnifiDeviceSort(key: UnifiDeviceSortKey) {
+		if (unifiDeviceSortKey === key) { unifiDeviceSortDir = unifiDeviceSortDir === 'asc' ? 'desc' : 'asc'; }
+		else { unifiDeviceSortKey = key; unifiDeviceSortDir = 'asc'; }
+	}
+
+	function unifiDeviceSortIndicator(key: UnifiDeviceSortKey): string {
+		if (unifiDeviceSortKey !== key) return '';
+		return unifiDeviceSortDir === 'asc' ? ' \u2191' : ' \u2193';
+	}
+
+	let sortedUnifiDevices = $derived.by(() => {
+		if (unifiDevices.length === 0) return unifiDevices;
+		const list = [...unifiDevices];
+		list.sort((a, b) => {
+			let cmp = 0;
+			switch (unifiDeviceSortKey) {
+				case 'name': cmp = (a.name ?? '').localeCompare(b.name ?? ''); break;
+				case 'model': cmp = (a.model ?? '').localeCompare(b.model ?? ''); break;
+				case 'ipAddress': cmp = (a.ipAddress ?? '').localeCompare(b.ipAddress ?? ''); break;
+				case 'state': cmp = (a.state ?? '').localeCompare(b.state ?? ''); break;
+				case 'firmwareVersion': cmp = (a.firmwareVersion ?? '').localeCompare(b.firmwareVersion ?? ''); break;
+				case 'adoptedAt': cmp = (a.adoptedAt ?? '').localeCompare(b.adoptedAt ?? ''); break;
+			}
+			return unifiDeviceSortDir === 'asc' ? cmp : -cmp;
+		});
+		return list;
+	});
+
+	// ─── Helpers — UniFi ────────────────────────────────────────
+	function unifiDeviceType(device: UnifiDevice): string {
+		if (device.features?.accessPoint) return 'AP';
+		if (device.features?.switching) return 'Switch';
+		if (device.model?.toLowerCase().includes('gateway') || device.model?.toLowerCase().includes('udm') || device.model?.toLowerCase().includes('usg')) return 'Gateway';
+		return 'Device';
+	}
+
+	function unifiDeviceIcon(device: UnifiDevice): string {
+		const type = unifiDeviceType(device);
+		if (type === 'AP') return 'wifi';
+		if (type === 'Switch') return 'switch';
+		if (type === 'Gateway') return 'gateway';
+		return 'device';
+	}
+
 	// ─── Derived stats for quick stats bar ──────────────────────
 	let eventsPerSec = $derived.by(() => {
 		if (!logstashStats) return 0;
@@ -378,6 +485,8 @@
 		const logstashInterval = setInterval(() => { fetchLogstash(); fetchOpenSearch(); fetchToolRates(); }, 15_000);
 		// Storage: every 60s
 		const storageInterval = setInterval(fetchStorage, 60_000);
+		// UniFi: every 30s
+		const unifiInterval = setInterval(fetchUnifi, 30_000);
 
 		// Redraw connections on resize
 		const handleResize = () => drawConnections();
@@ -391,6 +500,7 @@
 			clearInterval(bridgeInterval);
 			clearInterval(logstashInterval);
 			clearInterval(storageInterval);
+			clearInterval(unifiInterval);
 			window.removeEventListener('resize', handleResize);
 			document.removeEventListener('keydown', handleKeydown);
 		};
@@ -1123,6 +1233,420 @@
 		</a>
 	</section>
 
+	<!-- ═══════════════════════════════════════════════════════════
+	     UNIFI INTEGRATION
+	     ═══════════════════════════════════════════════════════════ -->
+	{#if unifiStatus && !unifiStatus.configured}
+		<!-- UniFi not configured — show a subtle prompt -->
+		<section class="card unifi-not-configured">
+			<div class="card-header">
+				<h2 class="card-title">
+					<svg class="unifi-section-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+						<path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+						<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+						<line x1="12" y1="20" x2="12.01" y2="20"/>
+					</svg>
+					UniFi Network Integration
+				</h2>
+			</div>
+			<div class="unifi-unconfigured-body">
+				<p class="unifi-unconfigured-text">Connect your UniFi controller to view network devices, security policies, and infrastructure topology.</p>
+				<a href="/settings" class="btn btn-secondary">Configure UniFi</a>
+			</div>
+		</section>
+	{:else if unifiStatus?.configured}
+		<!-- UniFi is configured — show full data sections -->
+
+		{#if unifiStatus.last_error}
+			<div class="alert alert-warning unifi-error-banner">
+				<strong>UniFi Error:</strong> {unifiStatus.last_error}
+			</div>
+		{/if}
+
+		<!-- ─── UniFi Devices Card ─────────────────────────────── -->
+		<section class="card">
+			<div class="card-header">
+				<h2 class="card-title">
+					<svg class="unifi-section-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+						<path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+						<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+						<line x1="12" y1="20" x2="12.01" y2="20"/>
+					</svg>
+					UniFi Devices
+				</h2>
+				<span class="badge badge-info">{unifiDevices.length} device{unifiDevices.length !== 1 ? 's' : ''}</span>
+			</div>
+
+			{#if unifiLoading && unifiDevices.length === 0}
+				<div class="loading-state">
+					<div class="loading-spinner"></div>
+					<p class="unifi-loading-text">Loading UniFi devices...</p>
+				</div>
+			{:else if unifiDevices.length === 0}
+				<div class="empty-state">
+					<p class="empty-text">No UniFi devices found</p>
+					<p class="empty-hint">Check your UniFi controller connection</p>
+				</div>
+			{:else}
+				<div class="detail-table-wrapper">
+					<table class="detail-table">
+						<thead>
+							<tr>
+								<th>
+									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'name'} onclick={() => toggleUnifiDeviceSort('name')}>
+										Name{unifiDeviceSortIndicator('name')}
+									</button>
+								</th>
+								<th>Type</th>
+								<th>
+									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'model'} onclick={() => toggleUnifiDeviceSort('model')}>
+										Model{unifiDeviceSortIndicator('model')}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'ipAddress'} onclick={() => toggleUnifiDeviceSort('ipAddress')}>
+										IP{unifiDeviceSortIndicator('ipAddress')}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'state'} onclick={() => toggleUnifiDeviceSort('state')}>
+										Status{unifiDeviceSortIndicator('state')}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'firmwareVersion'} onclick={() => toggleUnifiDeviceSort('firmwareVersion')}>
+										Firmware{unifiDeviceSortIndicator('firmwareVersion')}
+									</button>
+								</th>
+								<th>
+									<button class="sort-btn" class:active-sort={unifiDeviceSortKey === 'adoptedAt'} onclick={() => toggleUnifiDeviceSort('adoptedAt')}>
+										Adopted{unifiDeviceSortIndicator('adoptedAt')}
+									</button>
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each sortedUnifiDevices as device (device.id)}
+								<tr>
+									<td>
+										<div class="unifi-device-name">
+											{#if unifiDeviceIcon(device) === 'wifi'}
+												<svg class="unifi-device-type-icon ap" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+													<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+													<line x1="12" y1="20" x2="12.01" y2="20"/>
+												</svg>
+											{:else if unifiDeviceIcon(device) === 'switch'}
+												<svg class="unifi-device-type-icon switch" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<rect x="2" y="6" width="20" height="12" rx="2"/>
+													<line x1="6" y1="10" x2="6" y2="14"/>
+													<line x1="10" y1="10" x2="10" y2="14"/>
+													<line x1="14" y1="10" x2="14" y2="14"/>
+													<line x1="18" y1="10" x2="18" y2="14"/>
+												</svg>
+											{:else if unifiDeviceIcon(device) === 'gateway'}
+												<svg class="unifi-device-type-icon gateway" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+												</svg>
+											{:else}
+												<svg class="unifi-device-type-icon device" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<rect x="4" y="4" width="16" height="16" rx="2"/>
+													<rect x="9" y="9" width="6" height="6"/>
+												</svg>
+											{/if}
+											<span>{device.name || 'Unnamed'}</span>
+										</div>
+									</td>
+									<td>
+										<span class="badge {unifiDeviceType(device) === 'Gateway' ? 'badge-info' : unifiDeviceType(device) === 'AP' ? 'badge-accent' : 'badge-muted'}">
+											{unifiDeviceType(device)}
+										</span>
+									</td>
+									<td class="mono">{device.model || '--'}</td>
+									<td class="mono">{device.ipAddress || '--'}</td>
+									<td>
+										{#if device.state === 'ONLINE'}
+											<span class="badge badge-success">Online</span>
+										{:else}
+											<span class="badge badge-danger">{device.state || 'Unknown'}</span>
+										{/if}
+									</td>
+									<td>
+										<span class="mono">{device.firmwareVersion || '--'}</span>
+										{#if device.firmwareUpdatable}
+											<span class="unifi-firmware-update badge badge-warning">Update</span>
+										{/if}
+									</td>
+									<td>{formatDate(device.adoptedAt)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+
+		<!-- ─── Networks & WiFi Card ──────────────────────────── -->
+		<section class="unifi-two-col">
+			<!-- Networks -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">
+						<svg class="unifi-section-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+							<rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+							<line x1="6" y1="6" x2="6.01" y2="6"/>
+							<line x1="6" y1="18" x2="6.01" y2="18"/>
+						</svg>
+						Networks
+					</h2>
+					<span class="badge badge-muted">{unifiNetworks.length}</span>
+				</div>
+				{#if unifiNetworks.length === 0}
+					<div class="empty-state">
+						<p class="empty-text">No networks found</p>
+					</div>
+				{:else}
+					<div class="detail-table-wrapper">
+						<table class="detail-table">
+							<thead>
+								<tr>
+									<th>Name</th>
+									<th>VLAN ID</th>
+									<th>Subnet</th>
+									<th>Purpose</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each unifiNetworks as network (network.id)}
+									<tr>
+										<td>{network.name || '--'}</td>
+										<td class="mono">{network.vlanId ?? '--'}</td>
+										<td class="mono">{network.subnet || '--'}</td>
+										<td>
+											<span class="badge badge-muted">{network.purpose || 'default'}</span>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</div>
+
+			<!-- WiFi -->
+			<div class="card">
+				<div class="card-header">
+					<h2 class="card-title">
+						<svg class="unifi-section-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+							<path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+							<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+							<line x1="12" y1="20" x2="12.01" y2="20"/>
+						</svg>
+						WiFi Networks
+					</h2>
+					<span class="badge badge-muted">{unifiWifi.length}</span>
+				</div>
+				{#if unifiWifi.length === 0}
+					<div class="empty-state">
+						<p class="empty-text">No WiFi networks found</p>
+					</div>
+				{:else}
+					<div class="detail-table-wrapper">
+						<table class="detail-table">
+							<thead>
+								<tr>
+									<th>SSID</th>
+									<th>Band</th>
+									<th>Security</th>
+									<th>Enabled</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each unifiWifi as ssid (ssid.id)}
+									<tr>
+										<td>{ssid.name || '--'}</td>
+										<td class="mono">{ssid.band || '--'}</td>
+										<td>
+											<span class="badge {ssid.security?.toLowerCase().includes('wpa3') ? 'badge-success' : ssid.security?.toLowerCase().includes('wpa2') ? 'badge-info' : 'badge-warning'}">
+												{ssid.security || '--'}
+											</span>
+										</td>
+										<td>
+											{#if ssid.enabled}
+												<span class="health-dot green"></span>
+											{:else}
+												<span class="health-dot red"></span>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		<!-- ─── Security Posture Card ─────────────────────────── -->
+		<section class="card">
+			<div class="card-header">
+				<h2 class="card-title">
+					<svg class="unifi-section-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+					</svg>
+					Security Posture
+				</h2>
+			</div>
+			<div class="unifi-security-grid">
+				<div class="detail-stat">
+					<div class="detail-stat-label">Firewall Policies</div>
+					<div class="detail-stat-value cyan">{unifiFirewall.policies.length}</div>
+				</div>
+				<div class="detail-stat">
+					<div class="detail-stat-label">Firewall Zones</div>
+					<div class="detail-stat-value">{unifiFirewall.zones.length}</div>
+				</div>
+				<div class="detail-stat">
+					<div class="detail-stat-label">DNS Policies</div>
+					<div class="detail-stat-value">{unifiDnsPolicies.length}</div>
+				</div>
+				<div class="detail-stat">
+					<div class="detail-stat-label">VPN Tunnels</div>
+					<div class="detail-stat-value">{unifiVpn.length}</div>
+				</div>
+			</div>
+			{#if unifiFirewall.policies.length > 0}
+				<div class="unifi-policy-summary">
+					<h3 class="unifi-subsection-title">Firewall Policies</h3>
+					<div class="detail-table-wrapper">
+						<table class="detail-table">
+							<thead>
+								<tr>
+									<th>Policy</th>
+									<th>Action</th>
+									<th>Enabled</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each unifiFirewall.policies as policy (policy.id)}
+									<tr>
+										<td>{policy.name || policy.id}</td>
+										<td>
+											<span class="badge {policy.action?.toLowerCase() === 'drop' || policy.action?.toLowerCase() === 'reject' ? 'badge-danger' : policy.action?.toLowerCase() === 'accept' ? 'badge-success' : 'badge-muted'}">
+												{policy.action || '--'}
+											</span>
+										</td>
+										<td>
+											{#if policy.enabled}
+												<span class="badge badge-success">Active</span>
+											{:else}
+												<span class="badge badge-muted">Disabled</span>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			{/if}
+		</section>
+
+		<!-- ─── WAN & VPN Card ────────────────────────────────── -->
+		{#if unifiWans.length > 0 || unifiVpn.length > 0}
+			<section class="unifi-two-col">
+				<!-- WAN Interfaces -->
+				{#if unifiWans.length > 0}
+					<div class="card">
+						<div class="card-header">
+							<h2 class="card-title">
+								<svg class="unifi-section-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<circle cx="12" cy="12" r="10"/>
+									<line x1="2" y1="12" x2="22" y2="12"/>
+									<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+								</svg>
+								WAN Interfaces
+							</h2>
+							<span class="badge badge-muted">{unifiWans.length}</span>
+						</div>
+						<div class="detail-table-wrapper">
+							<table class="detail-table">
+								<thead>
+									<tr>
+										<th>Name</th>
+										<th>Type</th>
+										<th>Status</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each unifiWans as wan (wan.id)}
+										<tr>
+											<td>{wan.name || '--'}</td>
+											<td class="mono">{wan.type || '--'}</td>
+											<td>
+												{#if wan.status?.toLowerCase() === 'connected' || wan.status?.toLowerCase() === 'online'}
+													<span class="badge badge-success">{wan.status}</span>
+												{:else}
+													<span class="badge badge-danger">{wan.status || 'Unknown'}</span>
+												{/if}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				{/if}
+
+				<!-- VPN Tunnels -->
+				{#if unifiVpn.length > 0}
+					<div class="card">
+						<div class="card-header">
+							<h2 class="card-title">
+								<svg class="unifi-section-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+									<path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+								</svg>
+								VPN Tunnels
+							</h2>
+							<span class="badge badge-muted">{unifiVpn.length}</span>
+						</div>
+						<div class="detail-table-wrapper">
+							<table class="detail-table">
+								<thead>
+									<tr>
+										<th>Name</th>
+										<th>Type</th>
+										<th>Status</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each unifiVpn as tunnel (tunnel.id)}
+										<tr>
+											<td>{tunnel.name || '--'}</td>
+											<td class="mono">{tunnel.type || '--'}</td>
+											<td>
+												{#if tunnel.status?.toLowerCase() === 'connected' || tunnel.status?.toLowerCase() === 'established'}
+													<span class="badge badge-success">{tunnel.status}</span>
+												{:else}
+													<span class="badge badge-warning">{tunnel.status || 'Unknown'}</span>
+												{/if}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				{/if}
+			</section>
+		{/if}
+	{/if}
+
 </div>
 
 <style>
@@ -1802,6 +2326,85 @@
 	}
 
 	/* ═══════════════════════════════════════════════════════════
+	   UNIFI INTEGRATION
+	   ═══════════════════════════════════════════════════════════ */
+	.unifi-section-icon {
+		vertical-align: -3px;
+		margin-right: var(--space-xs);
+	}
+
+	.unifi-not-configured {
+		border-style: dashed;
+	}
+
+	.unifi-unconfigured-body {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		flex-wrap: wrap;
+	}
+
+	.unifi-unconfigured-text {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+	}
+
+	.unifi-error-banner {
+		margin-bottom: 0;
+	}
+
+	.unifi-loading-text {
+		color: var(--text-muted);
+		font-size: var(--text-sm);
+		margin-top: var(--space-sm);
+	}
+
+	.unifi-device-name {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.unifi-device-type-icon {
+		flex-shrink: 0;
+	}
+
+	.unifi-device-type-icon.ap { color: var(--cyan); }
+	.unifi-device-type-icon.switch { color: var(--blue); }
+	.unifi-device-type-icon.gateway { color: var(--green); }
+	.unifi-device-type-icon.device { color: var(--text-muted); }
+
+	.unifi-firmware-update {
+		margin-left: var(--space-sm);
+		font-size: 0.625rem;
+	}
+
+	.unifi-two-col {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-md);
+	}
+
+	.unifi-security-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: var(--space-md);
+		margin-bottom: var(--space-lg);
+	}
+
+	.unifi-policy-summary {
+		margin-top: var(--space-md);
+	}
+
+	.unifi-subsection-title {
+		font-size: var(--text-base);
+		font-weight: 600;
+		color: var(--text-primary);
+		margin-bottom: var(--space-md);
+	}
+
+	/* ═══════════════════════════════════════════════════════════
 	   RESPONSIVE
 	   ═══════════════════════════════════════════════════════════ */
 	@media (max-width: 1100px) {
@@ -1819,6 +2422,8 @@
 		.topology-svg-overlay { display: none; }
 		.stats-bar { grid-template-columns: repeat(3, 1fr); }
 		.services-row { grid-template-columns: 1fr; }
+		.unifi-two-col { grid-template-columns: 1fr; }
+		.unifi-security-grid { grid-template-columns: repeat(2, 1fr); }
 	}
 
 	@media (max-width: 700px) {
@@ -1828,6 +2433,7 @@
 		}
 		.stats-bar { grid-template-columns: repeat(2, 1fr); }
 		.detail-grid { grid-template-columns: 1fr 1fr; }
+		.unifi-security-grid { grid-template-columns: 1fr; }
 		.pipeline-grid {
 			grid-template-columns: repeat(2, 1fr);
 		}
