@@ -872,6 +872,8 @@ def create_app(
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
     device_registry = DeviceRegistry(client=storage._client)
     unifi_integration = UnifiIntegration()
+    if unifi_integration.load_config():
+        logger.info("UniFi integration restored from saved config")
     register_devices_v2_routes(app, device_registry, unifi_integration)
 
     # Live connection tracking (real-time connection monitor)

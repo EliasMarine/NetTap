@@ -29,9 +29,13 @@ invalid, we log a warning and continue with Tier 1 (passive) enrichment only.
 #     3. Official API v10.2.93 provides stable, versioned endpoints with API-key auth
 # OLD CODE END
 
+import json
 import logging
+import os
 import time
 from typing import Any
+
+DEFAULT_UNIFI_CONFIG_FILE = "/opt/nettap/data/unifi_config.json"
 
 logger = logging.getLogger("nettap.services.unifi_integration")
 
@@ -155,7 +159,40 @@ class UnifiIntegration:
         self._site_id = site_id
         self._configured = True
         self._last_error = None
+        self._save_config()
         logger.info("UniFi integration configured for %s", self._base_url)
+
+    def _save_config(self) -> None:
+        """Persist UniFi config to disk so it survives container restarts."""
+        path = os.environ.get("UNIFI_CONFIG_FILE", DEFAULT_UNIFI_CONFIG_FILE)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump({
+                    "controller_url": self._base_url,
+                    "api_key": self._api_key,
+                    "site_id": self._site_id,
+                }, f, indent=2)
+            logger.info("Saved UniFi config to %s", path)
+        except OSError as exc:
+            logger.warning("Failed to save UniFi config: %s", exc)
+
+    def load_config(self) -> bool:
+        """Load persisted UniFi config from disk. Returns True if loaded."""
+        path = os.environ.get("UNIFI_CONFIG_FILE", DEFAULT_UNIFI_CONFIG_FILE)
+        try:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    data = json.load(f)
+                url = data.get("controller_url")
+                key = data.get("api_key")
+                if url and key:
+                    self.configure(url, key, site_id=data.get("site_id"))
+                    logger.info("Loaded UniFi config from %s", path)
+                    return True
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load UniFi config from %s: %s", path, exc)
+        return False
 
     # ------------------------------------------------------------------
     # HTTP transport
