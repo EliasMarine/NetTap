@@ -363,13 +363,15 @@
 
 	// ─── Helpers — UniFi ────────────────────────────────────────
 	function unifiDeviceType(device: UnifiDevice): string {
-		// features is an array of strings in the official API (e.g. ["switching"])
+		const m = (device.model || '').toLowerCase();
+		const n = (device.name || '').toLowerCase();
+		// Check gateway by model name FIRST — UDM/USG/UXG are gateways even
+		// though their features array may include "switching"
+		if (m.includes('udm') || m.includes('usg') || m.includes('uxg') || m.includes('gateway') || n.includes('udm')) return 'Gateway';
+		// Then check features array (official API returns string[])
 		const feats = Array.isArray(device.features) ? device.features : [];
 		if (feats.includes('accessPoint')) return 'AP';
 		if (feats.includes('switching')) return 'Switch';
-		const m = (device.model || '').toLowerCase();
-		const n = (device.name || '').toLowerCase();
-		if (m.includes('udm') || m.includes('usg') || m.includes('uxg') || m.includes('gateway') || n.includes('udm')) return 'Gateway';
 		if (m.includes('u6') || m.includes('u7') || m.includes('uap') || m.includes('u5') || m.startsWith('ua')) return 'AP';
 		if (m.includes('usw') || m.includes('us-') || m.includes('switch')) return 'Switch';
 		return 'Device';
@@ -1479,7 +1481,7 @@
 										<td>{ssid.name || '--'}</td>
 										<td class="mono">
 											{#if Array.isArray(freqs) && freqs.length > 0}
-												{freqs.sort((a: number, b: number) => a - b).join(' / ')} GHz
+												{[...freqs].sort((a: number, b: number) => a - b).join(' / ')} GHz
 											{:else}
 												{ssid.band || '--'}
 											{/if}
