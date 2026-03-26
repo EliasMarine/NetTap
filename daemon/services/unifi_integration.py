@@ -192,17 +192,27 @@ class UnifiIntegration:
         Raises:
             UnifiAuthError: If the API returns 401 (invalid/expired key).
             aiohttp.ClientResponseError: On other non-2xx responses.
+            Exception: On connection errors (timeout, refused, SSL) — stored
+                in ``self._last_error`` before re-raising so callers can
+                surface the message without catching.
         """
         session = await self._get_session()
         url = f"{self._base_url}/proxy/network/integration{path}"
         headers = {"X-API-Key": self._api_key}
-        async with session.request(
-            method, url, headers=headers, params=params, ssl=False,
-        ) as resp:
-            if resp.status == 401:
-                raise UnifiAuthError("Invalid API key")
-            resp.raise_for_status()
-            return await resp.json()
+        try:
+            async with session.request(
+                method, url, headers=headers, params=params, ssl=False,
+            ) as resp:
+                if resp.status == 401:
+                    self._last_error = "Invalid API key"
+                    raise UnifiAuthError("Invalid API key")
+                resp.raise_for_status()
+                return await resp.json()
+        except UnifiAuthError:
+            raise
+        except Exception as exc:
+            self._last_error = f"Request error ({method} {path}): {exc}"
+            raise
 
     async def _paginate(
         self,
