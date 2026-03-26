@@ -366,7 +366,11 @@
 	function unifiDeviceType(device: UnifiDevice): string {
 		if (device.features?.accessPoint) return 'AP';
 		if (device.features?.switching) return 'Switch';
-		if (device.model?.toLowerCase().includes('gateway') || device.model?.toLowerCase().includes('udm') || device.model?.toLowerCase().includes('usg')) return 'Gateway';
+		const m = (device.model || '').toLowerCase();
+		const n = (device.name || '').toLowerCase();
+		if (m.includes('udm') || m.includes('usg') || m.includes('uxg') || m.includes('gateway') || n.includes('udm')) return 'Gateway';
+		if (m.includes('u6') || m.includes('u7') || m.includes('uap') || m.includes('u5') || m.startsWith('ua')) return 'AP';
+		if (m.includes('usw') || m.includes('us-') || m.includes('switch')) return 'Switch';
 		return 'Device';
 	}
 
@@ -1423,10 +1427,10 @@
 								{#each unifiNetworks as network (network.id)}
 									<tr>
 										<td>{network.name || '--'}</td>
-										<td class="mono">{network.vlanId ?? '--'}</td>
-										<td class="mono">{network.subnet || '--'}</td>
+										<td class="mono">{network.vlanId ?? (network as any).vlan ?? '--'}</td>
+										<td class="mono">{network.subnet || (network as any).ipSubnet || (network as any).dhcpSubnet || (network as any).networkGroup || '--'}</td>
 										<td>
-											<span class="badge badge-muted">{network.purpose || 'default'}</span>
+											<span class="badge badge-muted">{network.purpose || (network as any).networkPurpose || 'default'}</span>
 										</td>
 									</tr>
 								{/each}
@@ -1468,15 +1472,16 @@
 							<tbody>
 								{#each unifiWifi as ssid (ssid.id)}
 									<tr>
-										<td>{ssid.name || '--'}</td>
-										<td class="mono">{ssid.band || '--'}</td>
+										<td>{ssid.name || (ssid as any).ssid || '--'}</td>
+										<td class="mono">{ssid.band || (ssid as any).wlanBand || (ssid as any).radioType || '--'}</td>
 										<td>
-											<span class="badge {ssid.security?.toLowerCase().includes('wpa3') ? 'badge-success' : ssid.security?.toLowerCase().includes('wpa2') ? 'badge-info' : 'badge-warning'}">
-												{ssid.security || '--'}
+											{@const sec = ssid.security || (ssid as any).wpaMode || (ssid as any).securityProtocol || ''}
+											<span class="badge {sec.toLowerCase().includes('wpa3') ? 'badge-success' : sec.toLowerCase().includes('wpa2') || sec.toLowerCase().includes('wpa') ? 'badge-info' : sec ? 'badge-warning' : 'badge-muted'}">
+												{sec || '--'}
 											</span>
 										</td>
 										<td>
-											{#if ssid.enabled}
+											{#if ssid.enabled !== false}
 												<span class="health-dot green"></span>
 											{:else}
 												<span class="health-dot red"></span>
