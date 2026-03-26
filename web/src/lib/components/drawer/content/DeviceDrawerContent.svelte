@@ -147,6 +147,9 @@
 {#if activeTab === 'overview'}
 	<div class="overview-content">
 		<DrawerSection title="Identity" defaultExpanded>
+			{#if device.unifi_name}
+				<KVRow label="UniFi Name" value={device.unifi_name} />
+			{/if}
 			<KVRow label="IP Address" value={device.ip} mono copyable />
 			<KVRow label="MAC Address" value={device.mac} mono copyable />
 			<KVRow label="Hostname" value={device.hostname} />

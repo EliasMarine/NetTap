@@ -312,7 +312,7 @@
 </script>
 
 <svelte:head>
-	<title>{deviceIp} | Device Intelligence | NetTap</title>
+	<title>{device?.unifi_name ?? deviceIp} | Device Intelligence | NetTap</title>
 </svelte:head>
 
 <div class="device-page">
@@ -353,9 +353,14 @@
 					<span class="status-label" class:online={isOnline}>{statusLabel}</span>
 				</div>
 				<div class="device-info">
-					<h1 class="mono">{device.ip}</h1>
-					{#if device.hostname}
-						<div class="device-hostname">{device.hostname}</div>
+					{#if device.unifi_name}
+						<h1>{device.unifi_name} <span class="badge badge-muted" style="font-size: 10px; vertical-align: middle;">UniFi</span></h1>
+						<div class="device-hostname mono">{device.ip}{#if device.hostname} &middot; {device.hostname}{/if}</div>
+					{:else}
+						<h1 class="mono">{device.ip}</h1>
+						{#if device.hostname}
+							<div class="device-hostname">{device.hostname}</div>
+						{/if}
 					{/if}
 					<div class="device-meta">
 						{#if device.mac}<span class="meta-item"><span class="meta-label">MAC</span> <span class="meta-value mono">{device.mac}</span></span>{/if}
