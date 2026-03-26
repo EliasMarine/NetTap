@@ -145,8 +145,12 @@ class UnifiIntegration:
             site_id: Optional site UUID. If None, call list_sites() to
                 discover it.
         """
-        # Strip trailing slash
-        self._base_url = controller_url.rstrip("/")
+        # Strip trailing slash and auto-upgrade to HTTPS
+        url = controller_url.rstrip("/")
+        if url.startswith("http://"):
+            url = "https://" + url[7:]
+            logger.info("Auto-upgraded UniFi URL to HTTPS: %s", url)
+        self._base_url = url
         self._api_key = api_key
         self._site_id = site_id
         self._configured = True

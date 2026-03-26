@@ -242,6 +242,16 @@ async def handle_unifi_test(request: web.Request) -> web.Response:
         )
 
     success = await unifi.test_connection()
+
+    # If test succeeded, eagerly poll clients + devices so the UI
+    # immediately shows cached counts instead of staying at 0.
+    if success and unifi._site_id:
+        try:
+            await unifi.poll_clients()
+            await unifi.poll_devices()
+        except Exception as exc:
+            logger.warning("Post-test poll failed: %s", exc)
+
     return web.json_response({
         "success": success,
         "status": unifi.get_status(),
