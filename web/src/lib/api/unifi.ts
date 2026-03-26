@@ -27,11 +27,9 @@ export interface UnifiDevice {
 	state: string; // ONLINE, OFFLINE, etc.
 	firmwareVersion: string;
 	firmwareUpdatable: boolean;
-	adoptedAt: string;
-	features: {
-		switching: unknown | null;
-		accessPoint: unknown | null;
-	};
+	features: string[]; // e.g. ["switching"], ["accessPoint"]
+	interfaces: string[]; // e.g. ["ports"], ["radios"]
+	[key: string]: unknown;
 }
 
 export interface UnifiClient {
@@ -65,7 +63,7 @@ export interface FirewallPolicy {
 	id: string;
 	name: string;
 	enabled: boolean;
-	action: string;
+	action: { type: string; [key: string]: unknown } | string;
 	[key: string]: unknown;
 }
 

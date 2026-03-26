@@ -330,7 +330,7 @@
 	});
 
 	// ─── Sort state — UniFi Devices table ──────────────────────
-	type UnifiDeviceSortKey = 'name' | 'model' | 'ipAddress' | 'state' | 'firmwareVersion' | 'adoptedAt';
+	type UnifiDeviceSortKey = 'name' | 'model' | 'ipAddress' | 'state' | 'firmwareVersion';
 	let unifiDeviceSortKey = $state<UnifiDeviceSortKey>('name');
 	let unifiDeviceSortDir = $state<'asc' | 'desc'>('asc');
 
@@ -355,7 +355,6 @@
 				case 'ipAddress': cmp = (a.ipAddress ?? '').localeCompare(b.ipAddress ?? ''); break;
 				case 'state': cmp = (a.state ?? '').localeCompare(b.state ?? ''); break;
 				case 'firmwareVersion': cmp = (a.firmwareVersion ?? '').localeCompare(b.firmwareVersion ?? ''); break;
-				case 'adoptedAt': cmp = (a.adoptedAt ?? '').localeCompare(b.adoptedAt ?? ''); break;
 			}
 			return unifiDeviceSortDir === 'asc' ? cmp : -cmp;
 		});
@@ -1473,10 +1472,12 @@
 							</thead>
 							<tbody>
 								{#each unifiWifi as ssid (ssid.id)}
+									{@const freqs = (ssid as any).broadcastingFrequenciesGHz}
+									{@const sec = (ssid as any).securityConfiguration?.type || ssid.security || ''}
+									{@const secLower = sec.toLowerCase()}
 									<tr>
 										<td>{ssid.name || '--'}</td>
 										<td class="mono">
-											{@const freqs = (ssid as any).broadcastingFrequenciesGHz}
 											{#if Array.isArray(freqs) && freqs.length > 0}
 												{freqs.sort((a: number, b: number) => a - b).join(' / ')} GHz
 											{:else}
@@ -1484,8 +1485,6 @@
 											{/if}
 										</td>
 										<td>
-											{@const sec = (ssid as any).securityConfiguration?.type || ssid.security || ''}
-											{@const secLower = sec.toLowerCase()}
 											<span class="badge {secLower.includes('wpa3') ? 'badge-success' : secLower.includes('wpa2') ? 'badge-info' : sec ? 'badge-warning' : 'badge-muted'}">
 												{sec.replace(/_/g, ' ') || '--'}
 											</span>
@@ -1548,11 +1547,11 @@
 							</thead>
 							<tbody>
 								{#each unifiFirewall.policies as policy (policy.id)}
+									{@const actionType = (typeof policy.action === 'object' ? policy.action?.type : policy.action) || ''}
+									{@const actionLower = actionType.toLowerCase()}
 									<tr>
 										<td>{policy.name || policy.id}</td>
 										<td>
-											{@const actionType = (typeof policy.action === 'object' ? policy.action?.type : policy.action) || ''}
-											{@const actionLower = actionType.toLowerCase()}
 											<span class="badge {actionLower === 'drop' || actionLower === 'reject' ? 'badge-danger' : actionLower === 'allow' || actionLower === 'accept' ? 'badge-success' : 'badge-muted'}">
 												{actionType || '--'}
 											</span>
