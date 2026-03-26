@@ -205,13 +205,20 @@ async def handle_unifi_configure(request: web.Request) -> web.Response:
     api_key = body.get("api_key")
     site_id = body.get("site_id")
 
-    if not controller_url or not api_key:
+    if not controller_url:
         return web.json_response(
-            {"error": "controller_url and api_key are required"},
+            {"error": "controller_url is required"}, status=400,
+        )
+    # api_key can be omitted when reconfiguring (e.g. changing site)
+    # — keep the existing key if already configured
+    if not api_key and not unifi.is_configured:
+        return web.json_response(
+            {"error": "api_key is required for initial configuration"},
             status=400,
         )
 
-    unifi.configure(controller_url, api_key, site_id=site_id)
+    effective_key = api_key or (unifi._api_key if unifi.is_configured else "")
+    unifi.configure(controller_url, effective_key, site_id=site_id)
     return web.json_response({
         "status": "configured",
         "controller_url": controller_url,
