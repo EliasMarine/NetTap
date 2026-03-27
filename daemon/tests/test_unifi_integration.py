@@ -443,7 +443,7 @@ class TestPollClients:
         ]
 
         _run(unifi.poll_clients())
-        assert len(unifi._device_cache) == 1
+        assert len(unifi._cache_clients) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +533,7 @@ class TestGetDeviceStats:
 class TestGetDeviceAlias:
     def test_get_alias_found(self, unifi):
         """Should return the alias for a known device."""
-        unifi._device_cache = [
+        unifi._cache_clients = [
             {"mac": "AA:BB:CC:DD:EE:FF", "alias": "Living Room TV"},
         ]
 
@@ -541,7 +541,7 @@ class TestGetDeviceAlias:
 
     def test_get_alias_found_via_macAddress(self, unifi):
         """Should work with official API 'macAddress' field."""
-        unifi._device_cache = [
+        unifi._cache_clients = [
             {"macAddress": "AA:BB:CC:DD:EE:FF", "name": "Living Room TV"},
         ]
 
@@ -549,12 +549,12 @@ class TestGetDeviceAlias:
 
     def test_get_alias_not_found(self, unifi):
         """Should return None for unknown MAC."""
-        unifi._device_cache = []
+        unifi._cache_clients = []
         assert unifi.get_device_alias("FF:FF:FF:FF:FF:FF") is None
 
     def test_get_alias_no_alias_set(self, unifi):
         """Should return None when device has no name/alias."""
-        unifi._device_cache = [
+        unifi._cache_clients = [
             {"mac": "AA:BB:CC:DD:EE:FF", "alias": None},
         ]
 
@@ -562,7 +562,7 @@ class TestGetDeviceAlias:
 
     def test_get_alias_normalizes_mac(self, unifi):
         """Should normalize MAC format before lookup."""
-        unifi._device_cache = [
+        unifi._cache_clients = [
             {"mac": "AA:BB:CC:DD:EE:FF", "alias": "Test"},
         ]
 
@@ -570,7 +570,7 @@ class TestGetDeviceAlias:
 
     def test_get_alias_normalizes_bare_mac(self, unifi):
         """Should handle bare MAC addresses (no separators)."""
-        unifi._device_cache = [
+        unifi._cache_clients = [
             {"mac": "AA:BB:CC:DD:EE:FF", "alias": "Test"},
         ]
 

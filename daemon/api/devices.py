@@ -326,8 +326,12 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
         # UniFi alias enrichment — merge user-assigned names from controller
         unifi = request.app.get("unifi_integration")
-        if unifi and unifi.is_configured and mac:
-            alias = unifi.get_device_alias(mac)
+        if unifi and unifi.is_configured:
+            alias = None
+            if mac:
+                alias = unifi.get_device_alias(mac)
+            if not alias:
+                alias = unifi.get_client_name_by_ip(ip)
             if alias:
                 device["unifi_name"] = alias
 
@@ -608,8 +612,12 @@ async def handle_device_detail(request: web.Request) -> web.Response:
 
     # UniFi alias enrichment — merge user-assigned name from controller
     unifi = request.app.get("unifi_integration")
-    if unifi and unifi.is_configured and mac:
-        alias = unifi.get_device_alias(mac)
+    if unifi and unifi.is_configured:
+        alias = None
+        if mac:
+            alias = unifi.get_device_alias(mac)
+        if not alias:
+            alias = unifi.get_client_name_by_ip(ip)
         if alias:
             device["unifi_name"] = alias
 

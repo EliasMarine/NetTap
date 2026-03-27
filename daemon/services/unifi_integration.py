@@ -476,7 +476,9 @@ class UnifiIntegration:
         if len(mac) == 12 and ":" not in mac:
             mac = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
 
-        for device in self._device_cache:
+        # Use _cache_clients directly — _device_cache is a stale init-time
+        # reference that breaks when _cached_poll replaces the list via setattr
+        for device in self._cache_clients:
             device_mac = device.get("macAddress", device.get("mac", ""))
             # Normalize the stored MAC for comparison
             normalized = device_mac.strip().upper().replace("-", ":").replace(".", ":")
@@ -487,6 +489,25 @@ class UnifiIntegration:
             if normalized == mac:
                 return device.get("name", device.get("alias"))
 
+        return None
+
+    def get_client_name_by_ip(self, ip: str) -> str | None:
+        """Get the user-assigned name for a client by its current IP address.
+
+        Fallback for devices where MAC is unknown. Less reliable than MAC
+        lookup since IPs can change, but better than showing a bare IP.
+
+        Args:
+            ip: IPv4 address string.
+
+        Returns:
+            Client name/alias string, or None if not found.
+        """
+        if not ip:
+            return None
+        for client in self._cache_clients:
+            if client.get("ipAddress") == ip or client.get("ip") == ip:
+                return client.get("name") or client.get("alias")
         return None
 
     # OLD CODE START — legacy poll_devices() that fetched from /api/s/{site}/stat/sta
