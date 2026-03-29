@@ -76,7 +76,7 @@ jobs:
         run: python3 -m pytest daemon/tests/ -v --tb=short -m "integration or not unit"
 
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
