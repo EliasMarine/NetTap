@@ -1,11 +1,11 @@
 """
-NetTap Device Fingerprint Service -- Passive device identification from Zeek logs.
+NetTap Device Fingerprint Service -- Passive device identification from Arkime sessions.
 
-Uses OUI (MAC prefix) lookups, DHCP/DNS correlation, and User-Agent / JA3
+Uses OUI (MAC prefix) lookups, DHCP/DNS correlation, and User-Agent
 fingerprint analysis to identify devices on the network without active probing.
 
-All OpenSearch queries use the caller-provided client -- this service never
-creates its own connections.
+All OpenSearch queries target arkime_sessions3-* and use the caller-provided
+client -- this service never creates its own connections.
 """
 
 import logging
@@ -42,7 +42,7 @@ _OS_PATTERNS = [
 
 
 class DeviceFingerprint:
-    """Passive device fingerprinting from Zeek logs."""
+    """Passive device fingerprinting from Arkime session data."""
 
     def __init__(self, oui_path: str | None = None):
         self._oui_db: dict[str, str] = {}  # MAC prefix (AA:BB:CC) -> manufacturer
@@ -125,13 +125,12 @@ class DeviceFingerprint:
                                 }
                             }
                         },
-                        {"term": {"zeek.dns.answers": ip}},
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dns"}},
+                        {"term": {"dns.ip": ip}},
+                        {"term": {"network.protocol": "dns"}},
                     ]
                 }
             },
-            "aggs": {"top_hostname": {"terms": {"field": "zeek.dns.query.keyword", "size": 1}}},
+            "aggs": {"top_hostname": {"terms": {"field": "dns.host.keyword", "size": 1}}},
         }
 
         try:
@@ -170,8 +169,7 @@ class DeviceFingerprint:
                             }
                         },
                         {"term": {"source.ip": ip}},
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dhcp"}},
+                        {"exists": {"field": "dhcp.id"}},
                     ]
                 }
             },
@@ -206,8 +204,6 @@ class DeviceFingerprint:
                         },
                         {"term": {"source.ip": ip}},
                         {"exists": {"field": "source.mac"}},
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
                     ]
                 }
             },
@@ -230,9 +226,9 @@ class DeviceFingerprint:
     def get_os_hint(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
         """Infer the device's OS from HTTP User-Agent strings.
 
-        Queries unified index for User-Agent values from this IP, then
-        matches against known OS patterns.  Falls back to JA3 fingerprint
-        analysis from ssl events if HTTP data is unavailable.
+        Queries arkime_sessions3-* for User-Agent values from this IP, then
+        matches against known OS patterns.  JA3 fingerprint analysis is not
+        currently available in Arkime native sessions.
         """
         # Strategy 1: HTTP User-Agent
         ua_query = {
@@ -250,13 +246,12 @@ class DeviceFingerprint:
                             }
                         },
                         {"term": {"source.ip": ip}},
-                        {"exists": {"field": "zeek.http.user_agent"}},
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "http"}},
+                        {"exists": {"field": "http.useragent"}},
+                        {"term": {"network.protocol": "http"}},
                     ]
                 }
             },
-            "aggs": {"top_ua": {"terms": {"field": "zeek.http.user_agent.keyword", "size": 5}}},
+            "aggs": {"top_ua": {"terms": {"field": "http.useragent.keyword", "size": 5}}},
         }
 
         try:
@@ -273,40 +268,8 @@ class DeviceFingerprint:
             logger.debug("User-Agent lookup failed for %s: %s", ip, exc)
 
         # Strategy 2: JA3 fingerprint from TLS handshakes
-        ja3_query = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        },
-                        {"term": {"source.ip": ip}},
-                        {"exists": {"field": "zeek.ssl.ja3"}},
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "ssl"}},
-                    ]
-                }
-            },
-            "aggs": {"top_ja3": {"terms": {"field": "zeek.ssl.ja3.keyword", "size": 1}}},
-        }
-
-        try:
-            result = client.search(index=NETWORK_INDEX, body=ja3_query)
-            buckets = (
-                result.get("aggregations", {}).get("top_ja3", {}).get("buckets", [])
-            )
-            if buckets:
-                # JA3 hash present but we don't have a lookup table yet.
-                # Return a generic hint so the caller knows TLS was seen.
-                return None  # Future: map JA3 hashes to known OS fingerprints
-        except Exception as exc:
-            logger.debug("JA3 lookup failed for %s: %s", ip, exc)
+        # NOTE: JA3 fields (zeek.ssl.ja3) are not available in Arkime native
+        # sessions. Skipping JA3 lookup until Arkime field mapping is confirmed.
+        # Future: check for tls.ja3.hash or ja3.string if available.
 
         return None

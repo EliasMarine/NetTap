@@ -527,10 +527,8 @@ class TestDHCPEnrichment:
                 "hits": [
                     {
                         "_source": {
-                            "source.mac": "AA:BB:CC:DD:EE:FF",
-                            "source.ip": "192.168.1.100",
-                            "zeek.dhcp.hostname": "my-laptop",
-                            "zeek.dhcp.vendor_class": "MSFT 5.0",
+                            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
+                            "dhcp": {"host": ["my-laptop"], "ip": ["192.168.1.100"], "id": "abc123"},
                         }
                     },
                 ]
@@ -555,8 +553,8 @@ class TestDHCPEnrichment:
         mock_client.search.return_value = {
             "hits": {
                 "hits": [
-                    {"_source": {"source.mac": "AA:BB:CC:DD:EE:FF", "source.ip": "192.168.1.100"}},
-                    {"_source": {"source.mac": "AA:BB:CC:DD:EE:FF", "source.ip": "192.168.1.101"}},
+                    {"_source": {"source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"}, "dhcp": {"id": "a1"}}},
+                    {"_source": {"source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.101"}, "dhcp": {"id": "a2"}}},
                 ]
             }
         }
@@ -623,9 +621,8 @@ class TestMDNSEnrichment:
                 "hits": [
                     {
                         "_source": {
-                            "source.mac": "AA:BB:CC:DD:EE:FF",
-                            "source.ip": "192.168.1.100",
-                            "zeek.dns.query": "MacBook-Pro._tcp.local",
+                            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
+                            "dns": {"host": ["MacBook-Pro._tcp.local"]},
                         }
                     },
                 ]
@@ -659,9 +656,8 @@ class TestSSDPEnrichment:
                 "hits": [
                     {
                         "_source": {
-                            "source.mac": "AA:BB:CC:DD:EE:FF",
-                            "source.ip": "192.168.1.100",
-                            "zeek.http.user_agent": "Google-Home/1.0",
+                            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
+                            "http": {"useragent": "Google-Home/1.0"},
                         }
                     },
                 ]
