@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.iot_monitor import (
     IoTMonitor,
+    IOT_OUI_ALWAYS,
+    IOT_OUI_NEVER,
     ANOMALY_NEW_DESTINATION,
     ANOMALY_NEW_COUNTRY,
     ANOMALY_NEW_PORT,
@@ -365,6 +367,9 @@ class TestFleetSummary:
 
     def test_empty_fleet(self, iot, mock_client):
         """Fleet summary with no IoT devices returns healthy defaults."""
+        mock_client.search.return_value = {
+            "aggregations": {"by_mac": {"buckets": []}},
+        }
         result = iot.get_fleet_summary(
             "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
         )
@@ -426,9 +431,11 @@ class TestFleetSummary:
             },
         }
 
-        # First call: conn stats, second: alert counts, third: DNS stats
-        # Then anomaly check calls (for check_anomalies per device)
+        # First call: OUI discovery, then conn stats, alert counts, DNS stats,
+        # then anomaly check calls (for check_anomalies per device)
         mock_client.search.side_effect = [
+            # OUI discovery (devices already registered, so no new additions)
+            {"aggregations": {"by_mac": {"buckets": []}}},
             # Conn stats batch
             {
                 "hits": {"total": {"value": 50}},
@@ -599,14 +606,19 @@ class TestPrivacyReport:
             },
         }
 
-    def test_empty_devices(self, iot):
+    def test_empty_devices(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {"by_mac": {"buckets": []}},
+        }
         result = iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert result == {"devices": []}
 
     def test_returns_device_privacy_data(self, iot, mock_client):
         self._setup_devices(iot)
-        # conn stats batch, alert counts, DNS detail batch
+        # OUI discovery, conn stats batch, alert counts, DNS detail batch
         mock_client.search.side_effect = [
+            # OUI discovery (devices already registered)
+            {"aggregations": {"by_mac": {"buckets": []}}},
             # Conn stats
             {
                 "aggregations": {
@@ -841,13 +853,18 @@ class TestProtocolAudit:
             },
         }
 
-    def test_empty_devices(self, iot):
+    def test_empty_devices(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {"by_mac": {"buckets": []}},
+        }
         result = iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert result == {"devices": []}
 
     def test_detects_unexpected_port(self, iot, mock_client):
         self._setup_devices(iot)
         mock_client.search.side_effect = [
+            # OUI discovery (devices already registered)
+            {"aggregations": {"by_mac": {"buckets": []}}},
             # Conn stats batch
             {
                 "aggregations": {
@@ -906,6 +923,8 @@ class TestProtocolAudit:
     def test_compliant_device(self, iot, mock_client):
         self._setup_devices(iot)
         mock_client.search.side_effect = [
+            # OUI discovery (devices already registered)
+            {"aggregations": {"by_mac": {"buckets": []}}},
             # Conn stats batch - all traffic on expected ports, all encrypted
             {
                 "aggregations": {
@@ -973,7 +992,10 @@ class TestNetworkIsolation:
             },
         }
 
-    def test_empty_devices(self, iot):
+    def test_empty_devices(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {"by_mac": {"buckets": []}},
+        }
         result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert result["segmentation_score"] == 100
         assert result["segmentation_grade"] == "A"
@@ -1060,7 +1082,10 @@ class TestManufacturerProfiles:
             },
         }
 
-    def test_empty_devices(self, iot):
+    def test_empty_devices(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {"by_mac": {"buckets": []}},
+        }
         result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert result == {"manufacturers": []}
 
@@ -1124,3 +1149,285 @@ class TestCategorizeDevice:
 
     def test_hostname_matching(self, iot):
         assert iot._categorize_device({"manufacturer": "", "hostname": "kasa-plug"}) == "smart_plug"
+
+
+# ---------------------------------------------------------------------------
+# Arkime OUI-based IoT discovery
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverIotDevicesFromArkime:
+    """Tests for _discover_iot_devices_from_arkime and _is_iot_oui."""
+
+    def test_discovers_tuya_from_oui(self, iot, mock_client):
+        """Tuya Smart Inc. OUI should be classified as IoT."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "aa:bb:cc:dd:ee:ff",
+                            "doc_count": 100,
+                            "oui": {"buckets": [{"key": "Tuya Smart Inc."}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        devices = iot.get_iot_devices()
+        assert len(devices) == 1
+        assert devices[0]["manufacturer"] == "Tuya Smart Inc."
+        assert devices[0]["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert devices[0]["ip"] == "192.168.1.50"
+        assert devices[0]["is_iot"] is True
+
+    def test_excludes_ubiquiti(self, iot, mock_client):
+        """Ubiquiti Inc OUI should NOT be classified as IoT."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "aa:bb:cc:dd:ee:ff",
+                            "doc_count": 100,
+                            "oui": {"buckets": [{"key": "Tuya Smart Inc."}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                        {
+                            "key": "11:22:33:44:55:66",
+                            "doc_count": 500,
+                            "oui": {"buckets": [{"key": "Ubiquiti Inc"}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.1"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        devices = iot.get_iot_devices()
+        # Tuya should be IoT, Ubiquiti should NOT
+        assert len(devices) == 1
+        assert devices[0]["manufacturer"] == "Tuya Smart Inc."
+
+    def test_always_iot_oui(self, iot, mock_client):
+        """IOT_OUI_ALWAYS entries are classified as IoT even without keyword match."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "aa:bb:cc:11:22:33",
+                            "doc_count": 50,
+                            "oui": {"buckets": [{"key": "Philips Lighting BV"}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.60"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                        {
+                            "key": "dd:ee:ff:11:22:33",
+                            "doc_count": 30,
+                            "oui": {"buckets": [{"key": "Sichuan AI-Link Technology Co., Ltd."}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.61"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        devices = iot.get_iot_devices()
+        mfg_names = {d["manufacturer"] for d in devices}
+        assert "Philips Lighting BV" in mfg_names
+        assert "Sichuan AI-Link Technology Co., Ltd." in mfg_names
+
+    def test_never_iot_oui(self, iot, mock_client):
+        """IOT_OUI_NEVER entries are never classified as IoT."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "aa:bb:cc:dd:ee:ff",
+                            "doc_count": 200,
+                            "oui": {"buckets": [{"key": "Proxmox Server Solutions GmbH"}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.5"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                        {
+                            "key": "11:22:33:44:55:66",
+                            "doc_count": 300,
+                            "oui": {"buckets": [{"key": "Western Digital Technologies, Inc."}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.10"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        devices = iot.get_iot_devices()
+        assert len(devices) == 0
+
+    def test_skips_already_registered(self, iot, mock_client):
+        """Devices already in the registry are not re-classified."""
+        iot._iot_devices["AA:BB:CC:DD:EE:FF"] = {
+            "mac": "AA:BB:CC:DD:EE:FF",
+            "manufacturer": "Ring",
+            "hostname": "ring-doorbell",
+            "ip": "192.168.1.50",
+            "classified_at": "2026-04-04T00:00:00Z",
+            "is_iot": True,
+        }
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "AA:BB:CC:DD:EE:FF",
+                            "doc_count": 100,
+                            "oui": {"buckets": [{"key": "Ring LLC"}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        # Should still be 1 device, unchanged
+        devices = iot.get_iot_devices()
+        assert len(devices) == 1
+        assert devices[0]["manufacturer"] == "Ring"  # Original, not "Ring LLC"
+
+    def test_espressif_matches(self, iot, mock_client):
+        """Espressif Inc. matches via IOT_OUI_ALWAYS."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "cc:dd:ee:11:22:33",
+                            "doc_count": 80,
+                            "oui": {"buckets": [{"key": "Espressif Inc."}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.70"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        devices = iot.get_iot_devices()
+        assert len(devices) == 1
+        assert devices[0]["manufacturer"] == "Espressif Inc."
+
+    def test_no_oui_bucket_skipped(self, iot, mock_client):
+        """MACs with no OUI bucket are skipped."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "aa:bb:cc:dd:ee:ff",
+                            "doc_count": 100,
+                            "oui": {"buckets": []},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        assert len(iot.get_iot_devices()) == 0
+
+    def test_opensearch_error_handled(self, iot, mock_client):
+        """OpenSearch errors do not crash discovery."""
+        mock_client.search.side_effect = Exception("Connection refused")
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        assert len(iot.get_iot_devices()) == 0
+
+    def test_raspberry_pi_matches_keyword(self, iot, mock_client):
+        """Raspberry Pi (Trading) Ltd matches 'raspberry pi' keyword."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_mac": {
+                    "buckets": [
+                        {
+                            "key": "ff:ee:dd:cc:bb:aa",
+                            "doc_count": 40,
+                            "oui": {"buckets": [{"key": "Raspberry Pi (Trading) Ltd"}]},
+                            "latest_ip": {"buckets": [{"key": "192.168.1.80"}]},
+                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
+                        },
+                    ]
+                }
+            }
+        }
+
+        iot._discover_iot_devices_from_arkime(
+            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+        )
+        devices = iot.get_iot_devices()
+        assert len(devices) == 1
+        assert devices[0]["manufacturer"] == "Raspberry Pi (Trading) Ltd"
+
+
+class TestIsIotOui:
+    """Direct unit tests for the _is_iot_oui static method."""
+
+    def test_always_set_matches(self):
+        assert IoTMonitor._is_iot_oui("Tuya Smart Inc.") is True
+        assert IoTMonitor._is_iot_oui("Espressif Inc.") is True
+        assert IoTMonitor._is_iot_oui("Philips Lighting BV") is True
+        assert IoTMonitor._is_iot_oui("Sichuan AI-Link Technology Co., Ltd.") is True
+        assert IoTMonitor._is_iot_oui("Shenzhen Bilian Electronic Co.") is True
+
+    def test_never_set_blocks(self):
+        assert IoTMonitor._is_iot_oui("Ubiquiti Inc") is False
+        assert IoTMonitor._is_iot_oui("Proxmox Server Solutions GmbH") is False
+        assert IoTMonitor._is_iot_oui("Western Digital Technologies, Inc.") is False
+
+    def test_keyword_substring_match(self):
+        assert IoTMonitor._is_iot_oui("Ring LLC") is True
+        assert IoTMonitor._is_iot_oui("TP-Link Technologies Co., Ltd.") is True
+        assert IoTMonitor._is_iot_oui("Sonos, Inc.") is True
+        assert IoTMonitor._is_iot_oui("Roku, Inc.") is True
+
+    def test_non_iot_oui(self):
+        assert IoTMonitor._is_iot_oui("Intel Corporation") is False
+        assert IoTMonitor._is_iot_oui("Dell Inc.") is False
+        assert IoTMonitor._is_iot_oui("Apple, Inc.") is False
+
+    def test_case_insensitive(self):
+        assert IoTMonitor._is_iot_oui("TUYA SMART INC.") is True
+        assert IoTMonitor._is_iot_oui("espressif inc.") is True
+        assert IoTMonitor._is_iot_oui("UBIQUITI INC") is False

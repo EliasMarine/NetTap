@@ -74,6 +74,25 @@ IOT_MANUFACTURERS = {
     "raspberry pi",
     "arduino",
     "particle",
+    "ai-link",
+    "sichuan ai-link",
+}
+
+# OUI names that are ALWAYS IoT, regardless of keyword matching
+IOT_OUI_ALWAYS = {
+    "philips lighting bv",
+    "philips hue",
+    "tuya smart inc.",
+    "espressif inc.",
+    "sichuan ai-link technology co., ltd.",
+    "shenzhen bilian electronic co.",  # Makes IoT modules
+}
+
+# OUI names that are NEVER IoT, even if they match a keyword
+IOT_OUI_NEVER = {
+    "ubiquiti inc",  # Network infrastructure
+    "proxmox server solutions gmbh",  # Hypervisor
+    "western digital technologies, inc.",  # NAS
 }
 
 # Anomaly type constants
@@ -173,6 +192,124 @@ class IoTMonitor:
         return set(default.get("expected_ports", [80, 443, 53, 123, 5353, 1900]))
 
     # -----------------------------------------------------------------
+    # Arkime OUI-based IoT device discovery
+    # -----------------------------------------------------------------
+
+    def _discover_iot_devices_from_arkime(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> None:
+        """Discover IoT devices by querying Arkime sessions for unique
+        source MACs with OUI manufacturer data, then classifying them
+        as IoT based on manufacturer keyword matching.
+
+        Populates ``self._iot_devices`` with discovered devices.
+
+        Args:
+            from_ts: ISO timestamp for the start of the query window.
+            to_ts:   ISO timestamp for the end of the query window.
+            excluded_ips: IPs to exclude from the query results.
+        """
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+
+        bool_clause: dict = {
+            "filter": [
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                {"exists": {"field": "source.mac"}},
+                {"exists": {"field": "source.oui"}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_mac": {
+                    "terms": {"field": "source.mac.keyword", "size": 500},
+                    "aggs": {
+                        "oui": {"terms": {"field": "source.oui.keyword", "size": 1}},
+                        "latest_ip": {"terms": {"field": "source.ip.keyword", "size": 1}},
+                        "last_seen": {"max": {"field": "@timestamp"}},
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("IoT Arkime OUI discovery query failed: %s", exc)
+            return
+
+        buckets = (
+            result.get("aggregations", {})
+            .get("by_mac", {})
+            .get("buckets", [])
+        )
+
+        for bucket in buckets:
+            mac = bucket["key"].upper()
+
+            # Already registered — skip re-classification
+            if mac in self._iot_devices:
+                continue
+
+            oui_buckets = bucket.get("oui", {}).get("buckets", [])
+            if not oui_buckets:
+                continue
+            oui_name = oui_buckets[0]["key"]
+
+            ip_buckets = bucket.get("latest_ip", {}).get("buckets", [])
+            latest_ip = ip_buckets[0]["key"] if ip_buckets else None
+
+            if self._is_iot_oui(oui_name):
+                self._iot_devices[mac] = {
+                    "mac": mac,
+                    "manufacturer": oui_name,
+                    "hostname": None,
+                    "ip": latest_ip,
+                    "classified_at": datetime.now(timezone.utc).isoformat(),
+                    "is_iot": True,
+                }
+
+        logger.info(
+            "Arkime OUI discovery found %d IoT devices total",
+            len(self._iot_devices),
+        )
+
+    @staticmethod
+    def _is_iot_oui(oui_name: str) -> bool:
+        """Determine if an OUI manufacturer name indicates an IoT device.
+
+        Uses three layers:
+        1. IOT_OUI_NEVER — always reject (infrastructure, NAS, etc.)
+        2. IOT_OUI_ALWAYS — always accept (known IoT chip/product makers)
+        3. IOT_MANUFACTURERS keyword substring match (case-insensitive)
+
+        Args:
+            oui_name: The OUI manufacturer string from Arkime.
+
+        Returns:
+            True if the OUI indicates an IoT device.
+        """
+        oui_lower = oui_name.lower()
+
+        # Layer 1: explicit exclusions take priority
+        if oui_lower in IOT_OUI_NEVER:
+            return False
+
+        # Layer 2: explicit inclusions
+        if oui_lower in IOT_OUI_ALWAYS:
+            return True
+
+        # Layer 3: substring matching against IoT manufacturer keywords
+        return any(keyword in oui_lower for keyword in IOT_MANUFACTURERS)
+
+    # -----------------------------------------------------------------
     # Fleet Summary
     # -----------------------------------------------------------------
 
@@ -196,6 +333,9 @@ class IoTMonitor:
         Returns:
             Dict with health_score, sub-scores, stat cards, and per-device details.
         """
+        # Auto-discover IoT devices from Arkime OUI data
+        self._discover_iot_devices_from_arkime(from_ts, to_ts, excluded_ips)
+
         devices = self._iot_devices
         if not devices:
             return self._empty_fleet_summary()
@@ -1036,6 +1176,9 @@ class IoTMonitor:
 
         Returns dict with 'devices' list.
         """
+        # Auto-discover IoT devices from Arkime OUI data
+        self._discover_iot_devices_from_arkime(from_ts, to_ts, excluded_ips)
+
         devices = self._iot_devices
         if not devices:
             return {"devices": []}
@@ -1534,6 +1677,9 @@ class IoTMonitor:
 
         Returns dict with 'devices' list.
         """
+        # Auto-discover IoT devices from Arkime OUI data
+        self._discover_iot_devices_from_arkime(from_ts, to_ts, excluded_ips)
+
         devices = self._iot_devices
         if not devices:
             return {"devices": []}
@@ -1783,6 +1929,9 @@ class IoTMonitor:
         Returns dict with 'segmentation_score', 'segmentation_grade',
         'pairs', and 'recommendation'.
         """
+        # Auto-discover IoT devices from Arkime OUI data
+        self._discover_iot_devices_from_arkime(from_ts, to_ts, excluded_ips)
+
         devices = self._iot_devices
         if not devices:
             return {
@@ -2010,6 +2159,9 @@ class IoTMonitor:
 
         Returns dict with 'manufacturers' list sorted by worst hygiene first.
         """
+        # Auto-discover IoT devices from Arkime OUI data
+        self._discover_iot_devices_from_arkime(from_ts, to_ts, excluded_ips)
+
         devices = self._iot_devices
         if not devices:
             return {"manufacturers": []}
