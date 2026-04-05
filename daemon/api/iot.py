@@ -87,6 +87,21 @@ async def handle_iot_anomalies(request: web.Request) -> web.Response:
     })
 
 
+async def handle_fleet_summary(request: web.Request) -> web.Response:
+    """GET /api/iot/fleet-summary"""
+    iot: IoTMonitor = request.app["iot_monitor"]
+    from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
+
+    try:
+        result = iot.get_fleet_summary(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    except Exception as exc:
+        logger.error("Fleet summary failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+    return web.json_response(result)
+
+
 async def handle_classify_device(request: web.Request) -> web.Response:
     """POST /api/iot/devices/{mac}/classify"""
     mac = request.match_info["mac"]
@@ -114,5 +129,6 @@ def register_iot_routes(app: web.Application, storage: StorageManager) -> None:
     app.router.add_get("/api/iot/devices", handle_iot_devices)
     app.router.add_get("/api/iot/devices/{mac}/baseline", handle_device_baseline)
     app.router.add_get("/api/iot/anomalies", handle_iot_anomalies)
+    app.router.add_get("/api/iot/fleet-summary", handle_fleet_summary)
     app.router.add_post("/api/iot/devices/{mac}/classify", handle_classify_device)
-    logger.info("IoT monitoring API routes registered (4 endpoints)")
+    logger.info("IoT monitoring API routes registered (5 endpoints)")
