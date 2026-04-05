@@ -382,8 +382,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
             ]
         }
@@ -398,7 +396,7 @@ class IoTMonitor:
                     "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
                     "aggs": {
                         "total_bytes": {
-                            "sum": {"field": "client.bytes", "missing": 0}
+                            "sum": {"field": "source.bytes", "missing": 0}
                         },
                         "dest_ports": {
                             "terms": {"field": "destination.port", "size": 100}
@@ -478,8 +476,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "suricata"}},
-                {"term": {"event.dataset": "alert"}},
+                {"exists": {"field": "suricata.alert.severity"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
             ]
         }
@@ -533,8 +530,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "dns"}},
+                {"term": {"network.protocol": "dns"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
             ]
         }
@@ -550,7 +546,7 @@ class IoTMonitor:
                     "aggs": {
                         "queried_domains": {
                             "terms": {
-                                "field": "dns.question.name.keyword",
+                                "field": "dns.host.keyword",
                                 "size": 500,
                             }
                         },
@@ -724,8 +720,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 {
                     "bool": {
                         "should": [
@@ -754,7 +748,7 @@ class IoTMonitor:
                     "terms": {"field": "destination.port", "size": 50}
                 },
                 "protocols": {
-                    "terms": {"field": "network.transport.keyword", "size": 10}
+                    "terms": {"field": "network.protocol.keyword", "size": 10}
                 },
                 "hourly_activity": {
                     "date_histogram": {
@@ -763,7 +757,7 @@ class IoTMonitor:
                     }
                 },
                 "total_bytes": {
-                    "sum": {"field": "client.bytes", "missing": 0}
+                    "sum": {"field": "source.bytes", "missing": 0}
                 },
                 "countries": {
                     "terms": {
@@ -867,8 +861,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 {
                     "bool": {
                         "should": [
@@ -896,10 +888,10 @@ class IoTMonitor:
                     "terms": {"field": "destination.port", "size": 50}
                 },
                 "protocols": {
-                    "terms": {"field": "network.transport.keyword", "size": 10}
+                    "terms": {"field": "network.protocol.keyword", "size": 10}
                 },
                 "total_bytes": {
-                    "sum": {"field": "client.bytes", "missing": 0}
+                    "sum": {"field": "source.bytes", "missing": 0}
                 },
                 "countries": {
                     "terms": {
@@ -1157,8 +1149,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "dns"}},
+                {"term": {"network.protocol": "dns"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
             ]
         }
@@ -1174,7 +1165,7 @@ class IoTMonitor:
                     "aggs": {
                         "queried_domains": {
                             "terms": {
-                                "field": "dns.question.name.keyword",
+                                "field": "dns.host.keyword",
                                 "size": 500,
                             }
                         },
@@ -1247,8 +1238,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 mac_filter,
             ]
         }
@@ -1266,10 +1255,10 @@ class IoTMonitor:
                             "terms": {"field": "destination.port", "size": 50}
                         },
                         "bytes_sent": {
-                            "sum": {"field": "client.bytes", "missing": 0}
+                            "sum": {"field": "source.bytes", "missing": 0}
                         },
                         "bytes_received": {
-                            "sum": {"field": "server.bytes", "missing": 0}
+                            "sum": {"field": "destination.bytes", "missing": 0}
                         },
                         "country": {
                             "terms": {
@@ -1357,9 +1346,8 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "dns"}},
-                {"terms": {"dns.resolved_ip": ips}},
+                {"term": {"network.protocol": "dns"}},
+                {"terms": {"dns.ip": ips}},
             ]
         }
         if excluded:
@@ -1370,11 +1358,11 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_answer_ip": {
-                    "terms": {"field": "dns.resolved_ip.keyword", "size": len(ips)},
+                    "terms": {"field": "dns.ip.keyword", "size": len(ips)},
                     "aggs": {
                         "domain": {
                             "terms": {
-                                "field": "dns.question.name.keyword",
+                                "field": "dns.host.keyword",
                                 "size": 1,
                             }
                         },
@@ -1435,8 +1423,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 mac_filter,
             ]
         }
@@ -1454,7 +1440,7 @@ class IoTMonitor:
                     },
                     "aggs": {
                         "bytes": {
-                            "sum": {"field": "client.bytes", "missing": 0}
+                            "sum": {"field": "source.bytes", "missing": 0}
                         },
                         "destinations": {
                             "cardinality": {"field": "destination.ip.keyword"}
@@ -1659,8 +1645,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
             ]
         }
@@ -1734,8 +1718,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
                 {"term": {"destination.port": 53}},
                 {"terms": {"destination.ip.keyword": well_known_dns}},
@@ -1829,8 +1811,6 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
                 {"terms": {"source.mac.keyword": mac_terms}},
                 # Destination is RFC1918 (internal) — use script filter
                 {
