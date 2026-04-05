@@ -6,13 +6,26 @@ integration. These endpoints operate on the MAC-keyed ``nettap-devices``
 index, separate from the original IP-based device inventory in devices.py.
 
 Endpoints:
-    GET  /api/devices/registry              — list all discovered devices
-    GET  /api/devices/registry/{mac}        — single device detail
-    GET  /api/devices/registry/{mac}/traffic — traffic for one device
-    GET  /api/devices/registry/search       — search devices
-    POST /api/integrations/unifi/configure  — set UniFi credentials
-    GET  /api/integrations/unifi/status     — connection status
-    POST /api/integrations/unifi/test       — test connectivity
+    GET  /api/devices/registry                      — list all discovered devices
+    GET  /api/devices/registry/{mac}                — single device detail
+    GET  /api/devices/registry/{mac}/traffic         — traffic for one device
+    GET  /api/devices/registry/search               — search devices
+    POST /api/integrations/unifi/configure           — set UniFi API key
+    GET  /api/integrations/unifi/status              — connection status
+    POST /api/integrations/unifi/test                — test connectivity
+    GET  /api/integrations/unifi/sites               — list sites
+    GET  /api/integrations/unifi/clients             — list connected clients
+    GET  /api/integrations/unifi/devices             — list infrastructure devices
+    GET  /api/integrations/unifi/devices/{id}/stats  — device statistics
+    GET  /api/integrations/unifi/networks            — list networks
+    GET  /api/integrations/unifi/wifi                — list WiFi broadcasts
+    GET  /api/integrations/unifi/firewall            — firewall policies + zones
+    GET  /api/integrations/unifi/acl                 — ACL rules
+    GET  /api/integrations/unifi/dns-policies        — DNS policies
+    GET  /api/integrations/unifi/wans                — WAN interfaces
+    GET  /api/integrations/unifi/vpn                 — VPN tunnels
+    GET  /api/integrations/unifi/dpi/categories      — DPI categories
+    GET  /api/integrations/unifi/dpi/apps            — DPI applications
 """
 
 import logging
@@ -172,8 +185,13 @@ async def handle_registry_search(request: web.Request) -> web.Response:
 async def handle_unifi_configure(request: web.Request) -> web.Response:
     """POST /api/integrations/unifi/configure
 
-    Body: {"controller_url": "...", "username": "...", "password": "...", "site": "default"}
+    Body: {"controller_url": "...", "api_key": "...", "site_id": "..."}
     """
+    # OLD CODE START — previous body format used username/password session auth
+    # Body: {"controller_url": "...", "username": "...", "password": "...", "site": "default"}
+    # unifi.configure(controller_url, username, password, site)
+    # OLD CODE END
+
     unifi = _get_unifi(request)
 
     try:
@@ -184,17 +202,23 @@ async def handle_unifi_configure(request: web.Request) -> web.Response:
         )
 
     controller_url = body.get("controller_url")
-    username = body.get("username")
-    password = body.get("password")
-    site = body.get("site", "default")
+    api_key = body.get("api_key")
+    site_id = body.get("site_id")
 
-    if not controller_url or not username or not password:
+    if not controller_url:
         return web.json_response(
-            {"error": "controller_url, username, and password are required"},
+            {"error": "controller_url is required"}, status=400,
+        )
+    # api_key can be omitted when reconfiguring (e.g. changing site)
+    # — keep the existing key if already configured
+    if not api_key and not unifi.is_configured:
+        return web.json_response(
+            {"error": "api_key is required for initial configuration"},
             status=400,
         )
 
-    unifi.configure(controller_url, username, password, site)
+    effective_key = api_key or (unifi._api_key if unifi.is_configured else "")
+    unifi.configure(controller_url, effective_key, site_id=site_id)
     return web.json_response({
         "status": "configured",
         "controller_url": controller_url,
@@ -218,10 +242,211 @@ async def handle_unifi_test(request: web.Request) -> web.Response:
         )
 
     success = await unifi.test_connection()
+
+    # If test succeeded, eagerly poll clients + devices so the UI
+    # immediately shows cached counts instead of staying at 0.
+    if success and unifi._site_id:
+        try:
+            await unifi.poll_clients()
+            await unifi.poll_devices()
+        except Exception as exc:
+            logger.warning("Post-test poll failed: %s", exc)
+
     return web.json_response({
         "success": success,
         "status": unifi.get_status(),
     })
+
+
+# ---------------------------------------------------------------------------
+# UniFi data endpoints
+# ---------------------------------------------------------------------------
+
+
+async def handle_unifi_sites(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/sites"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    sites = await unifi.list_sites()
+    return web.json_response({"sites": sites})
+
+
+async def handle_unifi_clients(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/clients"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        clients = await unifi.poll_clients()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"clients": clients})
+
+
+async def handle_unifi_devices(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/devices"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        devices = await unifi.poll_devices()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"devices": devices})
+
+
+async def handle_unifi_device_stats(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/devices/{id}/stats"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    device_id = request.match_info["id"]
+    try:
+        stats = await unifi.get_device_stats(device_id)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.warning("Failed to fetch device stats for %s: %s", device_id, exc)
+        return web.json_response(
+            {"error": f"Failed to fetch stats: {exc}"}, status=502
+        )
+    return web.json_response({"device_id": device_id, "stats": stats})
+
+
+async def handle_unifi_networks(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/networks"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        networks = await unifi.poll_networks()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"networks": networks})
+
+
+async def handle_unifi_wifi(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/wifi"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        wifi = await unifi.poll_wifi()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"wifi": wifi})
+
+
+async def handle_unifi_firewall(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/firewall
+
+    Returns both firewall policies and zones in a single response.
+    """
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        policies = await unifi.poll_firewall_policies()
+        zones = await unifi.poll_firewall_zones()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({
+        "policies": policies,
+        "zones": zones,
+    })
+
+
+async def handle_unifi_acl(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/acl"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        rules = await unifi.poll_acl_rules()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"rules": rules})
+
+
+async def handle_unifi_dns_policies(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/dns-policies"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        policies = await unifi.poll_dns_policies()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"policies": policies})
+
+
+async def handle_unifi_wans(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/wans"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        wans = await unifi.poll_wans()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"wans": wans})
+
+
+async def handle_unifi_vpn(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/vpn"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    try:
+        tunnels = await unifi.poll_vpn_tunnels()
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"tunnels": tunnels})
+
+
+async def handle_unifi_dpi_categories(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/dpi/categories"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    categories = await unifi.get_dpi_categories()
+    return web.json_response({"categories": categories})
+
+
+async def handle_unifi_dpi_apps(request: web.Request) -> web.Response:
+    """GET /api/integrations/unifi/dpi/apps"""
+    unifi = _get_unifi(request)
+    if not unifi.is_configured:
+        return web.json_response(
+            {"error": "UniFi not configured"}, status=400
+        )
+    apps = await unifi.get_dpi_applications()
+    return web.json_response({"applications": apps})
 
 
 # ---------------------------------------------------------------------------
@@ -247,11 +472,45 @@ def register_devices_v2_routes(
         "/api/devices/registry/{mac}/traffic", handle_registry_traffic
     )
 
-    # UniFi integration endpoints
+    # UniFi integration — configuration & status
     app.router.add_post(
         "/api/integrations/unifi/configure", handle_unifi_configure
     )
     app.router.add_get("/api/integrations/unifi/status", handle_unifi_status)
     app.router.add_post("/api/integrations/unifi/test", handle_unifi_test)
 
-    logger.info("Device Registry v2 + UniFi routes registered (7 endpoints)")
+    # UniFi integration — data endpoints
+    app.router.add_get("/api/integrations/unifi/sites", handle_unifi_sites)
+    app.router.add_get(
+        "/api/integrations/unifi/clients", handle_unifi_clients
+    )
+    app.router.add_get(
+        "/api/integrations/unifi/devices", handle_unifi_devices
+    )
+    app.router.add_get(
+        "/api/integrations/unifi/devices/{id}/stats",
+        handle_unifi_device_stats,
+    )
+    app.router.add_get(
+        "/api/integrations/unifi/networks", handle_unifi_networks
+    )
+    app.router.add_get("/api/integrations/unifi/wifi", handle_unifi_wifi)
+    app.router.add_get(
+        "/api/integrations/unifi/firewall", handle_unifi_firewall
+    )
+    app.router.add_get("/api/integrations/unifi/acl", handle_unifi_acl)
+    app.router.add_get(
+        "/api/integrations/unifi/dns-policies", handle_unifi_dns_policies
+    )
+    app.router.add_get("/api/integrations/unifi/wans", handle_unifi_wans)
+    app.router.add_get("/api/integrations/unifi/vpn", handle_unifi_vpn)
+    app.router.add_get(
+        "/api/integrations/unifi/dpi/categories", handle_unifi_dpi_categories
+    )
+    app.router.add_get(
+        "/api/integrations/unifi/dpi/apps", handle_unifi_dpi_apps
+    )
+
+    logger.info(
+        "Device Registry v2 + UniFi routes registered (20 endpoints)"
+    )

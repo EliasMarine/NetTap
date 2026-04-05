@@ -7,6 +7,7 @@ tiered pruning, emergency pruning, run_cycle behaviour, and status
 reporting.
 """
 
+import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -30,6 +31,12 @@ def _init_manager_attrs(mgr):
         mgr._ilm_verified = True  # Skip ILM check in existing tests
     if not hasattr(mgr, "_http_auth"):
         mgr._http_auth = None
+    if not hasattr(mgr, "_last_prune_at"):
+        mgr._last_prune_at = None
+    if not hasattr(mgr, "_retention_config_manager"):
+        mgr._retention_config_manager = None
+    if not hasattr(mgr, "_cleanup_lock"):
+        mgr._cleanup_lock = threading.Lock()
 
 
 # =========================================================================
@@ -211,6 +218,7 @@ class TestPruneOldestIndices:
         mgr.config = retention_config
         mgr._client = mock_client
         mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
         return mgr
 
     def test_prune_oldest_indices_deletes_expired(
@@ -395,6 +403,7 @@ class TestPruneEmergency:
         mgr.config = retention_config
         mgr._client = mock_opensearch_client
         mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
 
         # Disk stays above threshold so all indices get deleted
         with patch.object(mgr, "check_disk_usage", return_value=0.92):
@@ -484,6 +493,7 @@ class TestGetStatus:
         mgr.config = retention_config
         mgr._client = mock_opensearch_client
         mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
 
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.65),

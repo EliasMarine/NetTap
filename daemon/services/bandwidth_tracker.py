@@ -9,10 +9,12 @@ indices in OpenSearch.
 import calendar
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
+
+from services.excluded_ips import build_excluded_ips_filter
 
 logger = logging.getLogger("nettap.services.bandwidth_tracker")
 
@@ -78,12 +80,13 @@ class BandwidthTracker:
             "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
         }
 
-    def get_monthly_usage(self, year: int, month: int) -> dict[str, Any]:
+    def get_monthly_usage(self, year: int, month: int, excluded_ips: list[str] | None = None) -> dict[str, Any]:
         """Get total bytes in/out for a given month.
 
         Args:
             year: The year (e.g. 2026).
             month: The month (1-12).
+            excluded_ips: Optional list of IPs to exclude from results.
 
         Returns:
             Dict with total_bytes, orig_bytes, resp_bytes, year, month.
@@ -95,12 +98,17 @@ class BandwidthTracker:
         from_ts = f"{year:04d}-{month:02d}-01T00:00:00Z"
         to_ts = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59Z"
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {"filter": [
+            *self._base_filters(),
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        ]}
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
-            "query": {"bool": {"filter": [
-                *self._base_filters(),
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            ]}},
+            "query": {"bool": bool_clause},
             "aggs": self._bytes_aggs(),
         }
 
@@ -122,12 +130,13 @@ class BandwidthTracker:
             "resp_bytes": resp,
         }
 
-    def get_daily_usage(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:
+    def get_daily_usage(self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[dict[str, Any]]:
         """Get daily byte totals for a date range.
 
         Args:
             from_ts: ISO timestamp start.
             to_ts: ISO timestamp end.
+            excluded_ips: Optional list of IPs to exclude from results.
 
         Returns:
             List of dicts with date, total_bytes, orig_bytes, resp_bytes.
@@ -135,12 +144,17 @@ class BandwidthTracker:
         if not self._client:
             return []
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {"filter": [
+            *self._base_filters(),
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        ]}
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
-            "query": {"bool": {"filter": [
-                *self._base_filters(),
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            ]}},
+            "query": {"bool": bool_clause},
             "aggs": {
                 "daily": {
                     "date_histogram": {
@@ -173,13 +187,14 @@ class BandwidthTracker:
             for b in buckets
         ]
 
-    def get_per_device_usage(self, from_ts: str, to_ts: str, limit: int = 50) -> list[dict[str, Any]]:
+    def get_per_device_usage(self, from_ts: str, to_ts: str, limit: int = 50, excluded_ips: list[str] | None = None) -> list[dict[str, Any]]:
         """Get bandwidth usage per source IP device.
 
         Args:
             from_ts: ISO timestamp start.
             to_ts: ISO timestamp end.
             limit: Max devices to return.
+            excluded_ips: Optional list of IPs to exclude from results.
 
         Returns:
             List of dicts with ip, total_bytes, orig_bytes, resp_bytes.
@@ -187,12 +202,17 @@ class BandwidthTracker:
         if not self._client:
             return []
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {"filter": [
+            *self._base_filters(),
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        ]}
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
-            "query": {"bool": {"filter": [
-                *self._base_filters(),
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            ]}},
+            "query": {"bool": bool_clause},
             "aggs": {
                 "by_device": {
                     "terms": {"field": "source.ip.keyword", "size": limit},
@@ -238,7 +258,7 @@ class BandwidthTracker:
             for b in buckets
         ]
 
-    def get_projected_monthly(self, year: int, month: int) -> dict[str, Any]:
+    def get_projected_monthly(self, year: int, month: int, excluded_ips: list[str] | None = None) -> dict[str, Any]:
         """Get projected monthly usage based on current rate.
 
         Uses linear extrapolation: (usage_so_far / days_elapsed) * days_in_month.
@@ -246,12 +266,13 @@ class BandwidthTracker:
         Args:
             year: The year.
             month: The month (1-12).
+            excluded_ips: Optional list of IPs to exclude from results.
 
         Returns:
             Dict with current_bytes, projected_bytes, days_elapsed, days_in_month,
             cap info, and whether projection exceeds cap.
         """
-        usage = self.get_monthly_usage(year, month)
+        usage = self.get_monthly_usage(year, month, excluded_ips=excluded_ips)
         current_bytes = usage["total_bytes"]
 
         _, days_in_month = calendar.monthrange(year, month)
@@ -296,7 +317,7 @@ class BandwidthTracker:
 
         return result
 
-    def get_hourly_heatmap(self, from_ts: str, to_ts: str) -> list[list[int]]:
+    def get_hourly_heatmap(self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[list[int]]:
         """Get a 7x24 hour-of-day x day-of-week bandwidth matrix.
 
         Returns a 7-element list (Mon=0..Sun=6), each with 24 hourly byte totals.
@@ -304,6 +325,7 @@ class BandwidthTracker:
         Args:
             from_ts: ISO timestamp start.
             to_ts: ISO timestamp end.
+            excluded_ips: Optional list of IPs to exclude from results.
 
         Returns:
             7x24 matrix of byte totals.
@@ -311,12 +333,17 @@ class BandwidthTracker:
         if not self._client:
             return [[0] * 24 for _ in range(7)]
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {"filter": [
+            *self._base_filters(),
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        ]}
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": 0,
-            "query": {"bool": {"filter": [
-                *self._base_filters(),
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            ]}},
+            "query": {"bool": bool_clause},
             "aggs": {
                 "by_day_of_week": {
                     "terms": {

@@ -309,22 +309,33 @@ async def handle_device_list(request: web.Request) -> web.Response:
             if any(x in hostname for x in ['._tcp.', '._udp.', '.in-addr.arpa', '.ip6.arpa', '_asquic']):
                 hostname = None
 
-        devices.append(
-            {
-                "ip": ip,
-                "mac": mac,
-                "hostname": hostname,
-                "manufacturer": manufacturer,
-                "os_hint": os_hint,
-                "category": _device_category(os_hint, hostname),
-                "first_seen": first_seen,
-                "last_seen": last_seen,
-                "total_bytes": total_bytes,
-                "connection_count": connection_count,
-                "protocols": protocols,
-                "alert_count": alert_count,
-            }
-        )
+        device = {
+            "ip": ip,
+            "mac": mac,
+            "hostname": hostname,
+            "manufacturer": manufacturer,
+            "os_hint": os_hint,
+            "category": _device_category(os_hint, hostname),
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "total_bytes": total_bytes,
+            "connection_count": connection_count,
+            "protocols": protocols,
+            "alert_count": alert_count,
+        }
+
+        # UniFi alias enrichment — merge user-assigned names from controller
+        unifi = request.app.get("unifi_integration")
+        if unifi and unifi.is_configured:
+            alias = None
+            if mac:
+                alias = unifi.get_device_alias(mac)
+            if not alias:
+                alias = unifi.get_client_name_by_ip(ip)
+            if alias:
+                device["unifi_name"] = alias
+
+        devices.append(device)
 
     # Post-query sort by alerts if requested
     if sort_field == "alerts":
@@ -578,30 +589,39 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     manufacturer = fingerprint.get_manufacturer(mac) if mac else None
     os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
-    return web.json_response(
-        {
-            "device": {
-                "ip": ip,
-                "mac": mac,
-                "hostname": hostname,
-                "manufacturer": manufacturer,
-                "os_hint": os_hint,
-                "first_seen": first_seen,
-                "last_seen": last_seen,
-                "total_bytes": total_bytes,
-                "orig_bytes": orig_bytes,
-                "resp_bytes": resp_bytes,
-                "unique_destinations": unique_dest_count,
-                "top_services": top_services_list,
-                "connection_count": connection_count,
-                "protocols": protocols,
-                "alert_count": alert_count,
-                "top_destinations": top_destinations,
-                "dns_queries": dns_queries,
-                "bandwidth_series": bandwidth_series,
-            }
-        }
-    )
+    device = {
+        "ip": ip,
+        "mac": mac,
+        "hostname": hostname,
+        "manufacturer": manufacturer,
+        "os_hint": os_hint,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "total_bytes": total_bytes,
+        "orig_bytes": orig_bytes,
+        "resp_bytes": resp_bytes,
+        "unique_destinations": unique_dest_count,
+        "top_services": top_services_list,
+        "connection_count": connection_count,
+        "protocols": protocols,
+        "alert_count": alert_count,
+        "top_destinations": top_destinations,
+        "dns_queries": dns_queries,
+        "bandwidth_series": bandwidth_series,
+    }
+
+    # UniFi alias enrichment — merge user-assigned name from controller
+    unifi = request.app.get("unifi_integration")
+    if unifi and unifi.is_configured:
+        alias = None
+        if mac:
+            alias = unifi.get_device_alias(mac)
+        if not alias:
+            alias = unifi.get_client_name_by_ip(ip)
+        if alias:
+            device["unifi_name"] = alias
+
+    return web.json_response({"device": device})
 
 
 async def handle_device_connections(request: web.Request) -> web.Response:

@@ -10,6 +10,7 @@ Endpoints:
     GET  /api/storage/status     Full storage status
     GET  /api/storage/retention  Retention config only
     POST /api/storage/prune      Trigger manual prune cycle
+    POST /api/storage/config     Save retention config + sync ILM
     GET  /api/smart/health       SMART drive health
     GET  /api/indices            OpenSearch index listing
     GET  /api/system/health      Combined system health
@@ -26,7 +27,9 @@ from aiohttp import web
 
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
-from storage.ilm import apply_ilm_policies
+from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
+from storage.ilm_generator import generate_ilm_policies
+from storage.retention_config import RetentionConfigManager
 from api.tshark import register_tshark_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
@@ -38,7 +41,12 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
-from services.excluded_ips import load_excluded_ips, detect_and_build_lan_filter
+from services.excluded_ips import (
+    load_excluded_ips,
+    detect_and_build_lan_filter,
+    detect_appliance_ip,
+    save_excluded_ips,
+)
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
@@ -64,6 +72,7 @@ from api.lan_security import register_lan_security_routes
 from api.suricata_rules import register_suricata_rules_routes
 from api.mac_correlation import register_mac_correlation_routes
 from api.pcap import register_pcap_routes
+from api.capture_control import register_capture_control_routes
 from api.backup import register_backup_routes
 from api.threats import register_threat_routes
 from services.tshark_service import TSharkService
@@ -235,6 +244,101 @@ async def handle_storage_prune(request: web.Request) -> web.Response:
         )
 
 
+async def handle_cleanup_preview(request: web.Request) -> web.Response:
+    """POST /api/storage/cleanup/preview -- Preview what would be deleted."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "Invalid JSON body"}, status=400
+        )
+
+    older_than_days = body.get("older_than_days")
+    if not isinstance(older_than_days, int) or older_than_days < 1 or older_than_days > 3650:
+        return web.json_response(
+            {"error": "older_than_days must be an integer between 1 and 3650"},
+            status=400,
+        )
+
+    try:
+        storage: StorageManager = request.app["storage"]
+        loop = asyncio.get_running_loop()
+        preview = await loop.run_in_executor(
+            None, storage.preview_cleanup, older_than_days
+        )
+        return web.json_response(preview)
+    except Exception as exc:
+        logger.exception("Error previewing cleanup")
+        return web.json_response(
+            {"error": f"Failed to preview cleanup: {exc}"},
+            status=500,
+        )
+
+
+async def handle_cleanup_execute(request: web.Request) -> web.Response:
+    """POST /api/storage/cleanup/execute -- Execute manual data cleanup."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "Invalid JSON body"}, status=400
+        )
+
+    older_than_days = body.get("older_than_days")
+    if not isinstance(older_than_days, int) or older_than_days < 1 or older_than_days > 3650:
+        return web.json_response(
+            {"error": "older_than_days must be an integer between 1 and 3650"},
+            status=400,
+        )
+
+    try:
+        storage: StorageManager = request.app["storage"]
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, storage.execute_cleanup, older_than_days
+        )
+
+        # Log to changelog if available
+        try:
+            changelog: ChangelogService = request.app.get("changelog_service")
+            if changelog is None:
+                # Find it from the registered services
+                for key, val in request.app.items():
+                    if isinstance(val, ChangelogService):
+                        changelog = val
+                        break
+            if changelog:
+                await loop.run_in_executor(
+                    None,
+                    changelog.log_event,
+                    "storage_pruned",
+                    f"Manual cleanup: deleted data older than {older_than_days} days",
+                    {
+                        "older_than_days": older_than_days,
+                        "deleted_indices": result["deleted_indices"],
+                        "deleted_pcap_files": result["deleted_pcap_files"],
+                        "freed_bytes": result["freed_bytes_estimate"],
+                        "cutoff_date": result["cutoff_date"],
+                        "trigger": "manual",
+                    },
+                )
+        except Exception:
+            logger.warning("Failed to log cleanup to changelog", exc_info=True)
+
+        return web.json_response(result)
+    except RuntimeError as exc:
+        # Lock contention — auto-prune is running
+        return web.json_response(
+            {"error": str(exc)}, status=409
+        )
+    except Exception as exc:
+        logger.exception("Error executing cleanup")
+        return web.json_response(
+            {"error": f"Cleanup failed: {exc}"},
+            status=500,
+        )
+
+
 async def handle_smart_health(request: web.Request) -> web.Response:
     """GET /api/smart/health -- SMART drive health status."""
     try:
@@ -391,6 +495,162 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Background ILM retry (used when OpenSearch is down during config save)
+# ---------------------------------------------------------------------------
+
+async def _ilm_retry_background(
+    app: web.Application,
+    config_manager: RetentionConfigManager,
+    opensearch_url: str,
+    policies: dict[str, dict],
+    http_auth: tuple[str, str] | None,
+    max_retries: int = 20,
+    base_delay: float = 30.0,
+) -> None:
+    """Retry ILM policy application with exponential backoff.
+
+    Called as a background ``asyncio.Task`` when ``handle_storage_config``
+    fails to apply ILM policies because OpenSearch is temporarily
+    unavailable. Retries up to *max_retries* times with exponential
+    backoff capped at 10 minutes.
+
+    On success, calls ``config_manager.mark_ilm_applied()`` to persist
+    the result in ``retention.json``.
+    """
+    loop = asyncio.get_running_loop()
+
+    for attempt in range(1, max_retries + 1):
+        delay = min(base_delay * (2 ** (attempt - 1)), 600)  # cap at 10 min
+        await asyncio.sleep(delay)
+        try:
+            results = await loop.run_in_executor(
+                None,
+                lambda: apply_ilm_policies_from_config(
+                    opensearch_url, policies, http_auth=http_auth
+                ),
+            )
+            config_manager.mark_ilm_applied(results)
+            logger.info("ILM retry succeeded on attempt %d", attempt)
+            app["_ilm_retry_task"] = None
+            return
+        except Exception as exc:
+            logger.warning(
+                "ILM retry attempt %d/%d failed: %s", attempt, max_retries, exc
+            )
+
+    logger.error("ILM retry exhausted %d attempts", max_retries)
+    app["_ilm_retry_task"] = None
+
+
+# ---------------------------------------------------------------------------
+# Storage config handler (retention settings + ILM sync)
+# ---------------------------------------------------------------------------
+
+
+async def handle_storage_config(request: web.Request) -> web.Response:
+    """POST /api/storage/config -- Save retention config and sync ILM policies.
+
+    Expects a JSON body with retention and threshold values::
+
+        {
+            "hot_days": 90,
+            "warm_days": 180,
+            "cold_days": 30,
+            "disk_threshold_percent": 80,
+            "emergency_threshold_percent": 90
+        }
+
+    Validates, persists to ``retention.json``, syncs to ``.env``, generates
+    ILM policies from the new config, and applies them to OpenSearch. If
+    OpenSearch is unreachable, the config is still saved and a background
+    retry task is scheduled.
+    """
+    # --- Check that config manager is available ---
+    if "retention_config_manager" not in request.app:
+        return web.json_response(
+            {"error": "Retention config manager not initialised"}, status=503
+        )
+
+    # --- Parse JSON body ---
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "Invalid JSON body"}, status=400
+        )
+
+    # --- Validate and save config ---
+    config_manager: RetentionConfigManager = request.app["retention_config_manager"]
+    try:
+        new_config = config_manager.save(body)
+    except ValueError as exc:
+        return web.json_response(
+            {"error": str(exc)}, status=400
+        )
+
+    # --- Hot-reload StorageManager config ---
+    storage: StorageManager = request.app["storage"]
+    storage.config = new_config
+
+    # --- Generate and apply ILM policies ---
+    policies = generate_ilm_policies(new_config)
+    opensearch_url: str = request.app["opensearch_url"]
+    http_auth: tuple[str, str] | None = request.app.get("http_auth")
+
+    try:
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: apply_ilm_policies_from_config(
+                opensearch_url, policies, http_auth=http_auth
+            ),
+        )
+        config_manager.mark_ilm_applied(results)
+        return web.json_response({
+            "saved": True,
+            "ilm_applied": True,
+            "ilm_results": results,
+            "config": {
+                "hot_days": new_config.hot_days,
+                "warm_days": new_config.warm_days,
+                "cold_days": new_config.cold_days,
+                "disk_threshold_percent": round(new_config.disk_threshold * 100),
+                "emergency_threshold_percent": round(
+                    new_config.emergency_threshold * 100
+                ),
+            },
+        })
+    except Exception as exc:
+        # OpenSearch is down — config is saved, schedule background retry
+        logger.warning(
+            "ILM application failed after config save, scheduling retry: %s", exc
+        )
+        existing_task = request.app.get("_ilm_retry_task")
+        if existing_task is None or existing_task.done():
+            request.app["_ilm_retry_task"] = asyncio.create_task(
+                _ilm_retry_background(
+                    request.app, config_manager, opensearch_url, policies, http_auth
+                ),
+                name="ilm-retry",
+            )
+        return web.json_response({
+            "saved": True,
+            "ilm_applied": False,
+            "ilm_retry_scheduled": True,
+            "ilm_error": str(exc),
+            "config": {
+                "hot_days": new_config.hot_days,
+                "warm_days": new_config.warm_days,
+                "cold_days": new_config.cold_days,
+                "disk_threshold_percent": round(new_config.disk_threshold * 100),
+                "emergency_threshold_percent": round(
+                    new_config.emergency_threshold * 100
+                ),
+            },
+        })
+
+
+# ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
 
@@ -399,6 +659,8 @@ def create_app(
     storage: StorageManager,
     smart: SmartMonitor,
     opensearch_url: str,
+    retention_config_manager: RetentionConfigManager | None = None,
+    http_auth: tuple[str, str] | None = None,
 ) -> web.Application:
     """Create and configure the aiohttp web application.
 
@@ -409,6 +671,11 @@ def create_app(
         storage: The StorageManager instance for disk/index operations.
         smart: The SmartMonitor instance for drive health checks.
         opensearch_url: Base URL of the OpenSearch cluster.
+        retention_config_manager: Optional RetentionConfigManager for the
+            ``POST /api/storage/config`` endpoint. If None, the endpoint
+            will return 503 (not yet initialised).
+        http_auth: Optional (username, password) tuple for OpenSearch
+            authentication, passed through to ILM policy application.
 
     Returns:
         Configured aiohttp.web.Application ready to be served.
@@ -419,19 +686,25 @@ def create_app(
     app["storage"] = storage
     app["smart"] = smart
     app["opensearch_url"] = opensearch_url
+    app["http_auth"] = http_auth
     app["start_time"] = time.monotonic()
+    if retention_config_manager is not None:
+        app["retention_config_manager"] = retention_config_manager
 
     # Register routes
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/storage/status", handle_storage_status)
     app.router.add_get("/api/storage/retention", handle_storage_retention)
     app.router.add_post("/api/storage/prune", handle_storage_prune)
+    app.router.add_post("/api/storage/cleanup/preview", handle_cleanup_preview)
+    app.router.add_post("/api/storage/cleanup/execute", handle_cleanup_execute)
     app.router.add_get("/api/smart/health", handle_smart_health)
     app.router.add_get("/api/smart/diagnostics", handle_smart_diagnostics)
     app.router.add_post("/api/smart/test", handle_smart_test)
     app.router.add_get("/api/indices", handle_indices)
     app.router.add_get("/api/system/health", handle_system_health)
     app.router.add_post("/api/ilm/apply", handle_ilm_apply)
+    app.router.add_post("/api/storage/config", handle_storage_config)
 
     # TShark integration (containerized packet analysis)
     pcap_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
@@ -500,6 +773,13 @@ def create_app(
     app["excluded_ips_file"] = excluded_ips_file
     app["excluded_ips"] = load_excluded_ips(excluded_ips_file)
     logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
+
+    # Auto-detect and exclude appliance management IP
+    appliance_ip = detect_appliance_ip()
+    if appliance_ip and appliance_ip not in app["excluded_ips"]:
+        app["excluded_ips"].append(appliance_ip)
+        save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+        logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
 
     # Auto-detect LAN subnets from OpenSearch traffic data
     # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback
@@ -592,6 +872,8 @@ def create_app(
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
     device_registry = DeviceRegistry(client=storage._client)
     unifi_integration = UnifiIntegration()
+    if unifi_integration.load_config():
+        logger.info("UniFi integration restored from saved config")
     register_devices_v2_routes(app, device_registry, unifi_integration)
 
     # Live connection tracking (real-time connection monitor)
@@ -611,6 +893,7 @@ def create_app(
 
     # Changelog (network event audit log)
     changelog_service = ChangelogService(client=storage._client)
+    app["changelog_service"] = changelog_service
     register_changelog_routes(app, changelog_service)
 
     # Certificate monitor (TLS certificate tracking from Zeek SSL logs)
@@ -648,6 +931,9 @@ def create_app(
     pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
     register_pcap_routes(app, pcap_search_service)
 
+    # Capture control (PCAP collection on/off + file size config)
+    register_capture_control_routes(app, env_file=env_file)
+
     # Config backup/restore (export/import all settings)
     config_backup = ConfigBackup()
     register_backup_routes(app, config_backup)
@@ -671,6 +957,8 @@ async def start_api(
     opensearch_url: str,
     port: int = 8880,
     shutdown_event: asyncio.Event | None = None,
+    retention_config_manager: RetentionConfigManager | None = None,
+    http_auth: tuple[str, str] | None = None,
 ) -> web.AppRunner:
     """Start the HTTP API server and return the runner for cleanup.
 
@@ -684,12 +972,19 @@ async def start_api(
         port: TCP port to listen on (default 8880).
         shutdown_event: Optional asyncio.Event for coordinated shutdown.
             Currently unused but accepted for future graceful drain support.
+        retention_config_manager: Optional RetentionConfigManager for the
+            ``POST /api/storage/config`` endpoint.
+        http_auth: Optional (username, password) tuple for OpenSearch auth.
 
     Returns:
         The aiohttp.web.AppRunner that must be cleaned up on shutdown
         via ``await runner.cleanup()``.
     """
-    app = create_app(storage, smart, opensearch_url)
+    app = create_app(
+        storage, smart, opensearch_url,
+        retention_config_manager=retention_config_manager,
+        http_auth=http_auth,
+    )
     runner = web.AppRunner(app)
     await runner.setup()
 

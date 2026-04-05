@@ -11,10 +11,10 @@
 	let loading = $state(true);
 
 	// Tier configuration with colors
-	const TIERS = [
-		{ key: 'hot', label: 'Hot (Zeek Metadata)', color: 'var(--red)', days: '90d' },
-		{ key: 'warm', label: 'Warm (Suricata Alerts)', color: 'var(--amber)', days: '180d' },
-		{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--blue)', days: '30d' },
+	const TIER_DEFS = [
+		{ key: 'hot', label: 'Hot (Zeek Metadata)', color: 'var(--red)', defaultDays: 90, daysField: 'hot_days' as const },
+		{ key: 'warm', label: 'Warm (Suricata Alerts)', color: 'var(--amber)', defaultDays: 180, daysField: 'warm_days' as const },
+		{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--blue)', defaultDays: 30, daysField: 'cold_days' as const },
 	] as const;
 
 	async function fetchData() {
@@ -46,15 +46,19 @@
 		return 'var(--success)';
 	}
 
-	// Derive tier data from index_counts
+	// Derive tier data from index_counts + actual retention days from API
 	let tierData = $derived.by(() => {
 		if (!storage?.index_counts) return [];
 
 		const counts = storage.index_counts;
-		return TIERS.map((tier) => {
+		return TIER_DEFS.map((tier) => {
 			const indexCount = counts[tier.key] ?? 0;
+			const actualDays = (storage as unknown as Record<string, unknown>)?.[tier.daysField] as number | undefined;
 			return {
-				...tier,
+				key: tier.key,
+				label: tier.label,
+				color: tier.color,
+				days: `${actualDays ?? tier.defaultDays}d`,
 				indexCount,
 			};
 		});

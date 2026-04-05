@@ -13,6 +13,8 @@ import os
 import statistics
 from collections import Counter, defaultdict
 
+from services.excluded_ips import build_excluded_ips_filter
+
 logger = logging.getLogger("nettap.services.threat_detection")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -82,15 +84,20 @@ def _beacon_confidence(cv: float, count: int, interval: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def detect_beaconing(client, from_ts: str, to_ts: str) -> list[dict]:
+def detect_beaconing(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[dict]:
     """Detect periodic callback patterns indicative of C2 beaconing."""
+    excluded = build_excluded_ips_filter(excluded_ips or [])
+    bool_clause: dict = {"filter": [
+        {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "conn"}},
+    ]}
+    if excluded:
+        bool_clause["must_not"] = excluded
+
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-        ]}},
+        "query": {"bool": bool_clause},
         "aggs": {
             "by_pair": {
                 "composite": {
@@ -170,18 +177,23 @@ def detect_beaconing(client, from_ts: str, to_ts: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def detect_lateral_movement(client, from_ts: str, to_ts: str) -> list[dict]:
+def detect_lateral_movement(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[dict]:
     """Find internal hosts connecting to other internal hosts on admin ports."""
     port_filters = [{"term": {"destination.port": p}} for p in LATERAL_MOVEMENT_PORTS]
+    excluded = build_excluded_ips_filter(excluded_ips or [])
+
+    bool_clause: dict = {"filter": [
+        {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "conn"}},
+        {"bool": {"should": port_filters, "minimum_should_match": 1}},
+    ]}
+    if excluded:
+        bool_clause["must_not"] = excluded
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-            {"bool": {"should": port_filters, "minimum_should_match": 1}},
-        ]}},
+        "query": {"bool": bool_clause},
         "aggs": {
             "by_pair": {
                 "composite": {
@@ -257,15 +269,20 @@ def detect_lateral_movement(client, from_ts: str, to_ts: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def analyze_dns_anomalies(client, from_ts: str, to_ts: str) -> dict:
+def analyze_dns_anomalies(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> dict:
     """Detect DNS-based threats: DGA, tunneling, NXDOMAIN spikes."""
+    excluded = build_excluded_ips_filter(excluded_ips or [])
+    bool_clause: dict = {"filter": [
+        {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "dns"}},
+    ]}
+    if excluded:
+        bool_clause["must_not"] = excluded
+
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "dns"}},
-        ]}},
+        "query": {"bool": bool_clause},
         "aggs": {
             "domains": {
                 "terms": {"field": "zeek.dns.query.keyword", "size": 500},

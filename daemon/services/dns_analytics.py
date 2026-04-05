@@ -12,6 +12,8 @@ import os
 from collections import Counter
 from typing import Any
 
+from services.excluded_ips import build_excluded_ips_filter
+
 logger = logging.getLogger("nettap.services.dns_analytics")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -47,13 +49,25 @@ class DNSAnalytics:
     def __init__(self, client: Any):
         self._client = client
 
+    def _bool_clause(self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None, extra_filters: list[dict] | None = None) -> dict:
+        """Build a bool clause with base filters, optional extras, and excluded IPs."""
+        filters = _base_bool_filter(from_ts, to_ts)
+        if extra_filters:
+            filters = filters + extra_filters
+        clause: dict = {"filter": filters}
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        if excluded:
+            clause["must_not"] = excluded
+        return clause
+
     def get_top_domains(
-        self, from_ts: str, to_ts: str, limit: int = 50
+        self, from_ts: str, to_ts: str, limit: int = 50,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return most-queried domains in the time range."""
         query = {
             "size": 0,
-            "query": {"bool": {"filter": _base_bool_filter(from_ts, to_ts)}},
+            "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
                 "top_domains": {
                     "terms": {
@@ -85,18 +99,16 @@ class DNSAnalytics:
         ]
 
     def get_device_dns(
-        self, device_ip: str, from_ts: str, to_ts: str
+        self, device_ip: str, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return all DNS queries for a specific device IP."""
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        *_base_bool_filter(from_ts, to_ts),
-                        {"term": {"source.ip.keyword": device_ip}},
-                    ]
-                }
+                "bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters=[
+                    {"term": {"source.ip.keyword": device_ip}},
+                ])
             },
             "aggs": {
                 "domains": {
@@ -135,18 +147,16 @@ class DNSAnalytics:
         ]
 
     def get_nxdomain_errors(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return domains with NXDOMAIN (rcode=3) responses."""
         query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        *_base_bool_filter(from_ts, to_ts),
-                        {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}},
-                    ]
-                }
+                "bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters=[
+                    {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}},
+                ])
             },
             "aggs": {
                 "nxdomains": {
@@ -184,12 +194,13 @@ class DNSAnalytics:
         ]
 
     def get_query_type_distribution(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return counts by DNS query type (A, AAAA, CNAME, MX, TXT, etc.)."""
         query = {
             "size": 0,
-            "query": {"bool": {"filter": _base_bool_filter(from_ts, to_ts)}},
+            "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
                 "query_types": {
                     "terms": {
@@ -210,7 +221,8 @@ class DNSAnalytics:
         ]
 
     def get_dns_timeline(
-        self, from_ts: str, to_ts: str, interval: str = "1m"
+        self, from_ts: str, to_ts: str, interval: str = "1m",
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return DNS query volume over time."""
         valid_intervals = {
@@ -221,7 +233,7 @@ class DNSAnalytics:
 
         query = {
             "size": 0,
-            "query": {"bool": {"filter": _base_bool_filter(from_ts, to_ts)}},
+            "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
                 "timeline": {
                     "date_histogram": {
@@ -251,13 +263,14 @@ class DNSAnalytics:
         ]
 
     def get_suspicious_dns(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect suspicious DNS patterns: long names, high frequency, TXT abuse."""
         suspicious: list[dict[str, Any]] = []
 
         # 1. Long domain names (potential DGA/tunneling)
-        top = self.get_top_domains(from_ts, to_ts, limit=200)
+        top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
         for entry in top:
             domain = entry["domain"]
             if len(domain) > 50:
@@ -286,12 +299,9 @@ class DNSAnalytics:
         txt_query = {
             "size": 0,
             "query": {
-                "bool": {
-                    "filter": [
-                        *_base_bool_filter(from_ts, to_ts),
-                        {"term": {"zeek.dns.qtype_name.keyword": "TXT"}},
-                    ]
-                }
+                "bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters=[
+                    {"term": {"zeek.dns.qtype_name.keyword": "TXT"}},
+                ])
             },
             "aggs": {
                 "txt_domains": {
@@ -322,7 +332,8 @@ class DNSAnalytics:
         return suspicious
 
     def detect_dns_tunneling(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect potential DNS tunneling via entropy analysis on query names.
 
@@ -331,7 +342,7 @@ class DNSAnalytics:
         """
         detections: list[dict[str, Any]] = []
 
-        top = self.get_top_domains(from_ts, to_ts, limit=200)
+        top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
 
         for entry in top:
             domain = entry["domain"]
@@ -363,12 +374,13 @@ class DNSAnalytics:
         return detections
 
     def get_stats(
-        self, from_ts: str, to_ts: str
+        self, from_ts: str, to_ts: str,
+        excluded_ips: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return hero card stats: total queries, unique domains, NXDOMAIN count."""
         query = {
             "size": 0,
-            "query": {"bool": {"filter": _base_bool_filter(from_ts, to_ts)}},
+            "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
                 "unique_domains": {
                     "cardinality": {"field": "zeek.dns.query.keyword"}

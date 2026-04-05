@@ -22,14 +22,14 @@
 	let selectedMode = $state<CaptureMode>('');
 
 	// Dynamic step labels based on mode
-	// Mirror: Welcome -> Capture Mode -> Interfaces (mirror) -> Storage -> Device Enrichment -> Account
-	// Bridge: Welcome -> Capture Mode -> Interfaces (bridge) -> Bridge Config -> Storage -> Account
+	// Mirror: Welcome -> Capture Mode -> Interfaces (mirror) -> Storage -> Enrichment -> Account -> Verification
+	// Bridge: Welcome -> Capture Mode -> Interfaces (bridge) -> Bridge Config -> Storage -> Enrichment -> Account -> Verification
 	// Before mode selected: Welcome -> Capture Mode (only 2 steps available)
 	let stepLabels = $derived.by(() => {
 		if (selectedMode === 'mirror') {
-			return ['Welcome', 'Capture Mode', 'Interfaces', 'Storage', 'Enrichment', 'Account'];
+			return ['Welcome', 'Capture Mode', 'Interfaces', 'Storage', 'Enrichment', 'Account', 'Verification'];
 		} else if (selectedMode === 'bridge') {
-			return ['Welcome', 'Capture Mode', 'Interfaces', 'Bridge', 'Storage', 'Account'];
+			return ['Welcome', 'Capture Mode', 'Interfaces', 'Bridge', 'Storage', 'Enrichment', 'Account', 'Verification'];
 		}
 		return ['Welcome', 'Capture Mode'];
 	});
@@ -158,11 +158,10 @@
 		return 'var(--success)';
 	});
 
-	// ----- Device Enrichment (mirror mode only) -----
+	// ----- Device Enrichment (both modes) -----
 	let useUnifi = $state(false);
 	let unifiUrl = $state('');
-	let unifiUsername = $state('');
-	let unifiPassword = $state('');
+	let unifiApiKey = $state('');
 	let unifiTesting = $state(false);
 	let unifiTestResult = $state<'success' | 'fail' | ''>('');
 	let unifiTestError = $state('');
@@ -187,6 +186,16 @@
 	let adminFormValid = $derived(
 		adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
 	);
+
+	// ----- Self-Traffic Exclusion -----
+	let applianceIp = $state('');
+	let applianceIpLoading = $state(false);
+	let applianceIpSaved = $state(false);
+
+	// ----- Post-Setup Health Verification -----
+	let healthChecks = $state<Array<{label: string; status: 'pending' | 'checking' | 'pass' | 'fail' | 'warn'; detail: string}>>([]);
+	let verificationRunning = $state(false);
+	let verificationDone = $state(false);
 
 	// ----- Saving config on completion -----
 	let configSaving = $state(false);
@@ -215,6 +224,8 @@
 				return true; // Enrichment is optional
 			case 'Account':
 				return false; // Step uses form submission, not Next
+			case 'Verification':
+				return false; // Uses custom navigation buttons
 			default:
 				return false;
 		}
@@ -246,8 +257,11 @@
 		if (stepName === 'Interfaces' && interfaces.length === 0) {
 			fetchNics();
 		}
-		if (stepName === 'Storage' && !storageStatus) {
-			fetchStorage();
+		if (stepName === 'Storage') {
+			if (!storageStatus) {
+				fetchStorage();
+			}
+			fetchApplianceIp();
 		}
 	}
 
@@ -424,19 +438,47 @@
 		storageSaving = false;
 	}
 
+	// ----- Self-Traffic Exclusion: fetch current excluded IPs -----
+	async function fetchApplianceIp(): Promise<void> {
+		applianceIpLoading = true;
+		try {
+			const res = await fetch('/api/settings/excluded-ips');
+			if (res.ok) {
+				const data = await res.json();
+				const ips = data.excluded_ips || [];
+				if (ips.length > 0) applianceIp = ips[0];
+			}
+		} catch { /* ignore */ }
+		applianceIpLoading = false;
+	}
+
 	// ----- Device Enrichment: test UniFi connection -----
 	async function testUnifiConnection(): Promise<void> {
 		unifiTesting = true;
 		unifiTestResult = '';
 		unifiTestError = '';
 		try {
+			// Step 1: Configure the UniFi integration (sets URL + API key on the daemon)
+			const configRes = await fetch(`${API_BASE}/api/integrations/unifi/configure`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					controller_url: unifiUrl,
+					api_key: unifiApiKey,
+				}),
+			});
+			if (!configRes.ok) {
+				const configData = await configRes.json();
+				throw new Error(configData.error || `Configure failed: HTTP ${configRes.status}`);
+			}
+
+			// Step 2: Test the connection (now that the daemon has the credentials)
 			const res = await fetch(`${API_BASE}/api/integrations/unifi/test`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					url: unifiUrl,
-					username: unifiUsername,
-					password: unifiPassword,
+					controller_url: unifiUrl,
+					api_key: unifiApiKey,
 				}),
 			});
 			if (!res.ok) {
@@ -449,6 +491,80 @@
 			unifiTestError = err instanceof Error ? err.message : 'Connection test failed';
 		}
 		unifiTesting = false;
+	}
+
+	// ----- Post-Setup Health Verification -----
+	async function runVerification(): Promise<void> {
+		verificationRunning = true;
+		verificationDone = false;
+		healthChecks = [
+			{ label: 'NetTap Daemon', status: 'checking', detail: 'Checking...' },
+			{ label: 'OpenSearch', status: 'checking', detail: 'Checking...' },
+			{ label: 'Self-Traffic Exclusion', status: 'checking', detail: 'Checking...' },
+		];
+		if (selectedMode === 'bridge') {
+			healthChecks.push({ label: 'Bridge Health', status: 'checking', detail: 'Checking...' });
+		}
+		if (useUnifi) {
+			healthChecks.push({ label: 'UniFi Controller', status: 'checking', detail: 'Checking...' });
+		}
+
+		// Check NetTap Daemon
+		try {
+			const healthRes = await fetch('/api/health');
+			healthChecks[0] = healthRes.ok
+				? { label: 'NetTap Daemon', status: 'pass', detail: 'Running' }
+				: { label: 'NetTap Daemon', status: 'fail', detail: 'Not responding' };
+		} catch { healthChecks[0] = { label: 'NetTap Daemon', status: 'fail', detail: 'Unreachable' }; }
+
+		// Check OpenSearch
+		try {
+			const osRes = await fetch('/api/opensearch/cluster');
+			if (osRes.ok) {
+				const osData = await osRes.json();
+				const status = osData.status || 'unknown';
+				healthChecks[1] = { label: 'OpenSearch', status: status === 'red' ? 'fail' : 'pass', detail: `Cluster: ${status}` };
+			} else {
+				healthChecks[1] = { label: 'OpenSearch', status: 'fail', detail: 'Not responding' };
+			}
+		} catch { healthChecks[1] = { label: 'OpenSearch', status: 'fail', detail: 'Unreachable' }; }
+
+		// Check Self-Traffic Exclusion
+		try {
+			const exRes = await fetch('/api/settings/excluded-ips');
+			if (exRes.ok) {
+				const exData = await exRes.json();
+				const count = (exData.excluded_ips || []).length;
+				healthChecks[2] = { label: 'Self-Traffic Exclusion', status: count > 0 ? 'pass' : 'warn', detail: count > 0 ? `${count} IP(s) excluded` : 'No IPs configured' };
+			}
+		} catch { healthChecks[2] = { label: 'Self-Traffic Exclusion', status: 'warn', detail: 'Could not check' }; }
+
+		// Bridge check (if applicable)
+		let idx = 3;
+		if (selectedMode === 'bridge') {
+			try {
+				const brRes = await fetch('/api/bridge/health');
+				if (brRes.ok) {
+					const brData = await brRes.json();
+					healthChecks[idx] = { label: 'Bridge Health', status: brData.healthy ? 'pass' : 'warn', detail: brData.healthy ? 'Bridge active' : 'Bridge not fully healthy' };
+				}
+			} catch { healthChecks[idx] = { label: 'Bridge Health', status: 'warn', detail: 'Could not check' }; }
+			idx++;
+		}
+
+		// UniFi check (if configured)
+		if (useUnifi) {
+			try {
+				const uRes = await fetch('/api/integrations/unifi/status');
+				if (uRes.ok) {
+					const uData = await uRes.json();
+					healthChecks[idx] = { label: 'UniFi Controller', status: uData.configured ? 'pass' : 'warn', detail: uData.configured ? `Connected (${uData.cache_counts?.clients || 0} clients)` : 'Not configured' };
+				}
+			} catch { healthChecks[idx] = { label: 'UniFi Controller', status: 'warn', detail: 'Could not check' }; }
+		}
+
+		verificationRunning = false;
+		verificationDone = true;
 	}
 
 	// ----- Save setup configuration -----
@@ -465,16 +581,17 @@
 				if (selectedManagementNic) {
 					payload.management_interface = selectedManagementNic;
 				}
-				if (useUnifi) {
-					payload.unifi = {
-						url: unifiUrl,
-						username: unifiUsername,
-						password: unifiPassword,
-					};
-				}
 			} else {
 				payload.wan_interface = selectedWan;
 				payload.lan_interface = selectedLan;
+			}
+
+			// UniFi enrichment applies to both modes
+			if (useUnifi) {
+				payload.unifi = {
+					url: unifiUrl,
+					api_key: unifiApiKey,
+				};
 			}
 
 			payload.storage = {
@@ -503,11 +620,10 @@
 	// ----- Handle form result for Account step -----
 	$effect(() => {
 		if (form?.success) {
-			// Account created — save config then redirect
+			// Account created — save config then advance to Verification step
 			saveSetupConfig().then(() => {
-				setTimeout(() => {
-					goto('/go-live');
-				}, 1500);
+				currentStep = totalSteps; // Verification is the last step
+				runVerification();
 			});
 		}
 		if (form?.error) {
@@ -1279,10 +1395,32 @@
 								<span class="badge badge-success">Saved</span>
 							{/if}
 						</div>
+
+						<!-- Self-Traffic Exclusion -->
+						<div class="form-group" style="margin-top: var(--space-xl); border-top: 1px solid var(--border-dim); padding-top: var(--space-lg);">
+							<label class="label">Self-Traffic Exclusion</label>
+							<p class="text-muted" style="margin-bottom: var(--space-sm);">
+								Your appliance's IP is automatically excluded from all dashboards to prevent self-traffic noise.
+							</p>
+							<div style="display: flex; gap: var(--space-sm); align-items: center;">
+								<input
+									type="text"
+									class="input"
+									bind:value={applianceIp}
+									placeholder="Auto-detected on startup..."
+									style="flex: 1;"
+								/>
+								{#if applianceIp}
+									<span class="badge badge-success">Auto-detected</span>
+								{:else}
+									<span class="badge badge-muted">Set via MGMT_IP env var</span>
+								{/if}
+							</div>
+						</div>
 					{/if}
 				</div>
 
-			<!-- ===== STEP: Device Enrichment (mirror mode only) ===== -->
+			<!-- ===== STEP: Device Enrichment (both modes) ===== -->
 			{:else if getStepName(currentStep) === 'Enrichment'}
 				<div class="step-panel">
 					<h2>Device Enrichment</h2>
@@ -1322,25 +1460,16 @@
 							</div>
 
 							<div class="form-group">
-								<label for="unifi-user" class="label">Username</label>
+								<label for="unifi-api-key" class="label">API Key</label>
 								<input
-									id="unifi-user"
-									type="text"
-									class="input"
-									placeholder="admin"
-									bind:value={unifiUsername}
-								/>
-							</div>
-
-							<div class="form-group">
-								<label for="unifi-pass" class="label">Password</label>
-								<input
-									id="unifi-pass"
+									id="unifi-api-key"
 									type="password"
 									class="input"
-									placeholder="Controller password"
-									bind:value={unifiPassword}
+									placeholder="Paste your UniFi API key"
+									bind:value={unifiApiKey}
+									autocomplete="off"
 								/>
+								<span class="input-hint text-muted">Create an API key in your UniFi controller under Settings &rarr; Integrations.</span>
 							</div>
 
 							{#if unifiTestResult === 'success'}
@@ -1356,7 +1485,7 @@
 							<button
 								class="btn btn-primary"
 								onclick={testUnifiConnection}
-								disabled={unifiTesting || !unifiUrl || !unifiUsername || !unifiPassword}
+								disabled={unifiTesting || !unifiUrl || !unifiApiKey}
 								type="button"
 							>
 								{#if unifiTesting}
@@ -1400,7 +1529,7 @@
 
 					{#if form?.success}
 						<div class="alert alert-success" style="margin-bottom: var(--space-md);">
-							Admin account created successfully! Redirecting to login...
+							Admin account created successfully! Running system verification...
 						</div>
 					{:else}
 						<form
@@ -1521,11 +1650,47 @@
 						</form>
 					{/if}
 				</div>
+
+			<!-- ===== STEP: Verification ===== -->
+			{:else if getStepName(currentStep) === 'Verification'}
+				<div class="step-panel">
+					<h2>System Verification</h2>
+					<p class="text-muted step-desc">
+						Checking that all services are running correctly...
+					</p>
+
+					<div class="verification-list" style="margin-top: var(--space-lg);">
+						{#each healthChecks as check}
+							<div class="verification-item" style="display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-dim);">
+								{#if check.status === 'checking'}
+									<span class="health-dot" style="background: var(--amber); animation: pulse 1s infinite;"></span>
+								{:else if check.status === 'pass'}
+									<span class="health-dot green"></span>
+								{:else if check.status === 'warn'}
+									<span class="health-dot" style="background: var(--amber);"></span>
+								{:else if check.status === 'fail'}
+									<span class="health-dot red"></span>
+								{:else}
+									<span class="health-dot" style="background: var(--text-dim);"></span>
+								{/if}
+								<span style="flex: 1; color: var(--text-primary);">{check.label}</span>
+								<span class="text-muted" style="font-size: var(--text-sm);">{check.detail}</span>
+							</div>
+						{/each}
+					</div>
+
+					{#if verificationDone}
+						<div style="margin-top: var(--space-xl); display: flex; gap: var(--space-sm);">
+							<a href="/" class="btn btn-primary">Go to Dashboard</a>
+							<a href="/go-live" class="btn btn-secondary">Go Live Setup</a>
+						</div>
+					{/if}
+				</div>
 			{/if}
 		</div>
 
 		<!-- Navigation buttons -->
-		{#if getStepName(currentStep) !== 'Account' || form?.success}
+		{#if (getStepName(currentStep) !== 'Account' && getStepName(currentStep) !== 'Verification') || form?.success}
 			<div class="wizard-nav">
 				{#if currentStep > 1 && !form?.success}
 					<button class="btn btn-secondary" onclick={prevStep} type="button">
@@ -1538,7 +1703,7 @@
 					<div></div>
 				{/if}
 
-				{#if getStepName(currentStep) !== 'Account'}
+				{#if getStepName(currentStep) !== 'Account' && getStepName(currentStep) !== 'Verification'}
 					<div class="nav-right">
 						{#if getStepName(currentStep) === 'Bridge' || getStepName(currentStep) === 'Storage' || getStepName(currentStep) === 'Enrichment'}
 							<button class="btn btn-secondary" onclick={nextStep} type="button">
@@ -2408,5 +2573,41 @@
 	input[type="number"].input::-webkit-inner-spin-button {
 		-webkit-appearance: none;
 		margin: 0;
+	}
+
+	/* ===== Verification Step ===== */
+	.verification-list {
+		margin-bottom: var(--space-md);
+	}
+
+	.verification-item:last-child {
+		border-bottom: none !important;
+	}
+
+	.health-dot {
+		width: 10px;
+		height: 10px;
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+	}
+
+	.health-dot.green {
+		background: var(--success);
+	}
+
+	.health-dot.red {
+		background: var(--danger);
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+
+	/* ===== Badge Variants ===== */
+	.badge-muted {
+		background-color: var(--bg-tertiary);
+		color: var(--text-muted);
+		border: 1px solid var(--border-default);
 	}
 </style>

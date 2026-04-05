@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.logs")
@@ -183,11 +184,13 @@ async def handle_log_search(request: web.Request) -> web.Response:
     if query_str:
         must.append({"query_string": {"query": query_str, "default_operator": "AND"}})
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "query": {"bool": {
             "must": must if must else [{"match_all": {}}],
             "filter": filters,
-            "must_not": _EXCLUDE_DNS_NOISE,
+            "must_not": _EXCLUDE_DNS_NOISE + excluded,
         }},
         "size": size,
         "sort": [],
@@ -273,13 +276,15 @@ async def handle_log_stats(request: web.Request) -> web.Response:
     storage: StorageManager = request.app["storage"]
     from_ts, to_ts = _parse_time_range(request)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "size": 0,
         "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
             }
         },
         "aggs": {
@@ -325,12 +330,14 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
     if interval not in _ALLOWED_INTERVALS:
         interval = "1h"
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
             }
         },
         "aggs": {
@@ -382,12 +389,14 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
 
     limit = min(int(request.query.get("limit", "10")), 50)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
             }
         },
         "aggs": {
@@ -419,12 +428,14 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
     storage: StorageManager = request.app["storage"]
     from_ts, to_ts = _parse_time_range(request)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
             }
         },
         "aggs": {
@@ -465,12 +476,14 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
 
     limit = min(int(request.query.get("limit", "10")), 50)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
             }
         },
         "aggs": {
@@ -504,6 +517,8 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
 
     limit = min(int(request.query.get("limit", "10")), 50)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+
     body: dict = {
         "size": 0,
         "query": {
@@ -513,7 +528,7 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "dns"}},
                 ],
-                "must_not": _EXCLUDE_DNS_NOISE,
+                "must_not": _EXCLUDE_DNS_NOISE + excluded,
             }
         },
         "aggs": {

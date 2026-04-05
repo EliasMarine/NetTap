@@ -65,6 +65,7 @@ async def handle_monthly(request: web.Request) -> web.Response:
     Returns monthly usage totals and projection.
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     now = datetime.now(timezone.utc)
     year_str = request.query.get("year", str(now.year))
@@ -77,8 +78,8 @@ async def handle_monthly(request: web.Request) -> web.Response:
         year = now.year
         month = now.month
 
-    usage = tracker.get_monthly_usage(year, month)
-    projection = tracker.get_projected_monthly(year, month)
+    usage = tracker.get_monthly_usage(year, month, excluded_ips=excluded_ips_list)
+    projection = tracker.get_projected_monthly(year, month, excluded_ips=excluded_ips_list)
 
     return web.json_response({
         **usage,
@@ -93,8 +94,9 @@ async def handle_daily(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
-    daily = tracker.get_daily_usage(from_ts, to_ts)
+    daily = tracker.get_daily_usage(from_ts, to_ts, excluded_ips=excluded_ips_list)
 
     return web.json_response({
         "from": from_ts,
@@ -110,6 +112,7 @@ async def handle_devices(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     limit_str = request.query.get("limit", "50")
     try:
@@ -117,7 +120,7 @@ async def handle_devices(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         limit = 50
 
-    devices = tracker.get_per_device_usage(from_ts, to_ts, limit=limit)
+    devices = tracker.get_per_device_usage(from_ts, to_ts, limit=limit, excluded_ips=excluded_ips_list)
 
     return web.json_response({
         "from": from_ts,
@@ -133,8 +136,9 @@ async def handle_heatmap(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
-    matrix = tracker.get_hourly_heatmap(from_ts, to_ts)
+    matrix = tracker.get_hourly_heatmap(from_ts, to_ts, excluded_ips=excluded_ips_list)
 
     return web.json_response({
         "from": from_ts,
@@ -152,10 +156,11 @@ async def handle_cap(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     cap = tracker.get_cap()
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     # Get current month usage for percentage
     now = datetime.now(timezone.utc)
-    usage = tracker.get_monthly_usage(now.year, now.month)
+    usage = tracker.get_monthly_usage(now.year, now.month, excluded_ips=excluded_ips_list)
 
     cap["current_usage_bytes"] = usage["total_bytes"]
     if cap["monthly_cap_bytes"] > 0:

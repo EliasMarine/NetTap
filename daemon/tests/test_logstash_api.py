@@ -1,7 +1,7 @@
 """Tests for daemon/api/logstash.py — Logstash pipeline monitoring."""
 
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 from aiohttp.test_utils import AioHTTPTestCase
 from aiohttp import web
 from api.logstash import register_logstash_routes

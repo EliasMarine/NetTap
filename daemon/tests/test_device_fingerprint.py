@@ -343,13 +343,12 @@ class TestGetOSHint(unittest.TestCase):
         self.assertEqual(result, "iOS")
 
     def test_os_hint_no_results(self):
-        """Returns None when no User-Agent or JA3 data is available."""
+        """Returns None when no User-Agent data is available."""
         mock_client = MagicMock()
-        # HTTP query returns empty, JA3 query returns empty
-        mock_client.search.side_effect = [
-            {"aggregations": {"top_ua": {"buckets": []}}},
-            {"aggregations": {"top_ja3": {"buckets": []}}},
-        ]
+        # HTTP query returns empty (JA3 query skipped — not available in Arkime)
+        mock_client.search.return_value = {
+            "aggregations": {"top_ua": {"buckets": []}}
+        }
 
         result = self.fp.get_os_hint(
             mock_client, "10.0.0.1", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"

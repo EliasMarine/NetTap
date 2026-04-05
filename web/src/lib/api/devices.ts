@@ -27,6 +27,7 @@ export interface Device {
 	protocols: string[];
 	alert_count: number;
 	category?: string;
+	unifi_name?: string;
 }
 
 export interface DeviceListResponse {

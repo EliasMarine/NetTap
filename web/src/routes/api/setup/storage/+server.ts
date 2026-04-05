@@ -2,6 +2,13 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
 import { daemonJSON } from '$lib/server/daemon.js';
 
+export interface IlmPolicyStatus {
+	synced: boolean;
+	last_applied: string | null;
+	pending_retry: boolean;
+	policies: Record<string, string>;
+}
+
 export interface StorageStatus {
 	disk_total_gb: number;
 	disk_used_gb: number;
@@ -14,6 +21,8 @@ export interface StorageStatus {
 	emergency_threshold_percent: number;
 	estimated_daily_gb: number;
 	source: 'daemon' | 'mock';
+	last_prune_at: string | null;
+	ilm_status: IlmPolicyStatus | null;
 }
 
 export interface StorageConfigRequest {
@@ -77,6 +86,8 @@ function normalizeStorageStatus(raw: Record<string, unknown>): StorageStatus {
 		emergency_threshold_percent: emergencyPct || 90,
 		estimated_daily_gb: (raw.estimated_daily_gb as number) ?? 1.2,
 		source: 'daemon',
+		last_prune_at: (raw.last_prune_at as string) ?? null,
+		ilm_status: (raw.ilm_status as IlmPolicyStatus) ?? null,
 	};
 }
 
@@ -103,6 +114,8 @@ export const GET: RequestHandler = async () => {
 		emergency_threshold_percent: 90,
 		estimated_daily_gb: 1.2,
 		source: 'mock',
+		last_prune_at: null,
+		ilm_status: null,
 	};
 
 	return json(mock);
@@ -151,8 +164,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		);
 	}
 
-	// Try the daemon
-	const { data, error } = await daemonJSON<{ saved: boolean }>('/api/storage/config', {
+	// Try the daemon — it returns { saved, ilm_applied, ilm_results/ilm_error, config }
+	const { data, error } = await daemonJSON<Record<string, unknown>>('/api/storage/config', {
 		method: 'POST',
 		body: JSON.stringify(body),
 	});
@@ -164,6 +177,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	// Daemon unavailable — accept the config anyway (will be applied on restart)
 	return json({
 		saved: true,
+		ilm_applied: false,
 		message: 'Configuration saved. It will be applied when services start.',
 		config: body,
 		source: 'mock',

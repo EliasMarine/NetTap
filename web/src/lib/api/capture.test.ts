@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getCaptureMode, getCaptureHealth, getCaptureStats } from './capture';
+import {
+	getCaptureMode,
+	getCaptureHealth,
+	getCaptureStats,
+	getCaptureStatus,
+	toggleCapture,
+	updateCaptureSettings,
+} from './capture';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -158,6 +165,105 @@ describe('capture API client', () => {
 
 			expect(result.rx_bytes).toBe(0);
 			expect(result.capture_interface).toBe('');
+		});
+	});
+
+	// -- getCaptureStatus -----------------------------------------------------
+
+	describe('getCaptureStatus', () => {
+		it('returns status on success', async () => {
+			const expected = {
+				enabled: true,
+				maxFileSizeMB: 100,
+				containerRunning: true,
+				containerStatus: 'running',
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getCaptureStatus();
+
+			expect(result.enabled).toBe(true);
+			expect(result.maxFileSizeMB).toBe(100);
+			expect(result.containerRunning).toBe(true);
+			expect(result.containerStatus).toBe('running');
+		});
+
+		it('returns defaults on failure', async () => {
+			mockFetchReject();
+
+			const result = await getCaptureStatus();
+
+			expect(result.enabled).toBe(true);
+			expect(result.maxFileSizeMB).toBe(100);
+			expect(result.containerRunning).toBe(false);
+			expect(result.containerStatus).toBe('unknown');
+		});
+	});
+
+	// -- toggleCapture --------------------------------------------------------
+
+	describe('toggleCapture', () => {
+		it('sends PUT with {enabled: false}', async () => {
+			mockFetchSuccess({
+				enabled: false,
+				containerRunning: false,
+				containerStatus: 'exited',
+			});
+
+			const result = await toggleCapture(false);
+
+			expect(result.enabled).toBe(false);
+			expect(result.containerRunning).toBe(false);
+			expect(result.containerStatus).toBe('exited');
+
+			const callArgs = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+			expect(callArgs[0]).toBe('/api/capture/toggle');
+			expect(callArgs[1].method).toBe('PUT');
+			const body = JSON.parse(callArgs[1].body);
+			expect(body.enabled).toBe(false);
+		});
+
+		it('throws on server error', async () => {
+			mockFetchFailure(500);
+
+			await expect(toggleCapture(true)).rejects.toThrow();
+		});
+	});
+
+	// -- updateCaptureSettings ------------------------------------------------
+
+	describe('updateCaptureSettings', () => {
+		it('sends PUT with {maxFileSizeMB: 200}', async () => {
+			mockFetchSuccess({ maxFileSizeMB: 200, restarted: true });
+
+			const result = await updateCaptureSettings({ maxFileSizeMB: 200 });
+
+			expect(result.maxFileSizeMB).toBe(200);
+			expect(result.restarted).toBe(true);
+
+			const callArgs = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+			expect(callArgs[0]).toBe('/api/capture/settings');
+			expect(callArgs[1].method).toBe('PUT');
+			const body = JSON.parse(callArgs[1].body);
+			expect(body.maxFileSizeMB).toBe(200);
+		});
+
+		it('throws on validation error', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 400,
+					json: () =>
+						Promise.resolve({
+							error: "'maxFileSizeMB' must be between 10 and 10000",
+						}),
+				}),
+			);
+
+			await expect(updateCaptureSettings({ maxFileSizeMB: 5 })).rejects.toThrow(
+				"'maxFileSizeMB' must be between 10 and 10000",
+			);
 		});
 	});
 });

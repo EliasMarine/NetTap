@@ -186,9 +186,9 @@ class TestGetNxdomainErrors:
         dns.get_nxdomain_errors("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
         call_body = mock_client.search.call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        nxd = [f for f in filters if "term" in f and "dns.response_code.keyword" in f.get("term", {})]
+        nxd = [f for f in filters if "term" in f and "zeek.dns.rcode_name.keyword" in f.get("term", {})]
         assert len(nxd) == 1
-        assert nxd[0]["term"]["dns.response_code.keyword"] == "NXDOMAIN"
+        assert nxd[0]["term"]["zeek.dns.rcode_name.keyword"] == "NXDOMAIN"
 
 
 # ---------------------------------------------------------------------------

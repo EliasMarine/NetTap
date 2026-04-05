@@ -8,11 +8,10 @@ and sysfs-based statistics.
 """
 
 import asyncio
-import json
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

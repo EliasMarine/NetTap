@@ -69,7 +69,8 @@ import logging
 import sys
 from typing import Any
 
-from storage.manager import StorageManager, RetentionConfig
+from storage.manager import StorageManager
+from storage.retention_config import RetentionConfigManager
 from smart.monitor import SmartMonitor, auto_detect_device
 from services.bridge_health import BridgeHealthMonitor
 from services.capture_config import load_capture_config
@@ -78,6 +79,7 @@ from services.bridge_capture_adapter import BridgeCaptureAdapter
 from services.bridge_manager import BridgeManager
 from services.mirror_manager import MirrorManager
 from api.server import start_api
+from api.capture_control import enforce_capture_state
 
 logger = logging.getLogger("nettap")
 
@@ -364,30 +366,59 @@ async def async_main() -> None:
     cfg = load_config()
     configure_logging(cfg["log_level"])
 
+    # --- Parse OpenSearch credentials from curlrc ---
+    creds_file = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE", "")
+    http_auth = _parse_curlrc_credentials(creds_file)
+
+    # --- Build retention config manager ---
+    # Uses the priority chain: retention.json > env vars > RetentionConfig defaults.
+    # This replaces the manual RetentionConfig construction from env vars.
+    config_path = os.environ.get(
+        "RETENTION_CONFIG_PATH", "/opt/nettap/data/retention.json"
+    )
+    env_file_cfg = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
+    config_manager = RetentionConfigManager(
+        config_path=config_path, env_file=env_file_cfg
+    )
+
+    # OLD CODE START — manual RetentionConfig construction from env vars.
+    # Replaced by RetentionConfigManager.load() which uses the priority chain:
+    # retention.json > env vars > RetentionConfig defaults.
+    # retention_config = RetentionConfig(
+    #     hot_days=cfg["retention_hot"],
+    #     warm_days=cfg["retention_warm"],
+    #     cold_days=cfg["retention_cold"],
+    #     disk_threshold=cfg["disk_threshold"],
+    #     emergency_threshold=cfg["emergency_threshold"],
+    # )
+    # OLD CODE END
+
+    retention_config = config_manager.load()
+
     # --- Log startup config summary ---
     logger.info("=" * 60)
     logger.info("NetTap daemon starting")
     logger.info("=" * 60)
     logger.info("  OpenSearch URL:         %s", cfg["opensearch_url"])
+    logger.info("  Retention config path:  %s", config_path)
     logger.info(
         "  Retention (hot/warm/cold): %d / %d / %d days",
-        cfg["retention_hot"],
-        cfg["retention_warm"],
-        cfg["retention_cold"],
+        retention_config.hot_days,
+        retention_config.warm_days,
+        retention_config.cold_days,
     )
-    logger.info("  Disk threshold:         %.0f%%", cfg["disk_threshold"] * 100)
-    logger.info("  Emergency threshold:    %.0f%%", cfg["emergency_threshold"] * 100)
+    logger.info(
+        "  Disk threshold:         %.0f%%", retention_config.disk_threshold * 100
+    )
+    logger.info(
+        "  Emergency threshold:    %.0f%%", retention_config.emergency_threshold * 100
+    )
     logger.info("  Storage check interval: %ds", cfg["storage_check_interval"])
     logger.info("  SMART check interval:   %ds", cfg["smart_check_interval"])
     logger.info("  Bridge check interval:  %ds", cfg["bridge_check_interval"])
     logger.info("  SMART device:           %s", cfg["smart_device"])
     logger.info("  API port:               %d", cfg["api_port"])
     logger.info("  Log level:              %s", cfg["log_level"])
-    logger.info("=" * 60)
-
-    # --- Parse OpenSearch credentials from curlrc ---
-    creds_file = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE", "")
-    http_auth = _parse_curlrc_credentials(creds_file)
     if http_auth:
         logger.info(
             "  OpenSearch auth:        loaded from %s (user=%s)",
@@ -399,17 +430,11 @@ async def async_main() -> None:
             "  OpenSearch auth:        NO CREDENTIALS — queries may fail with 403. "
             "Set OPENSEARCH_CREDS_CONFIG_FILE or mount curlrc in the container."
         )
+    logger.info("=" * 60)
 
     # --- Build subsystems ---
-    retention_config = RetentionConfig(
-        hot_days=cfg["retention_hot"],
-        warm_days=cfg["retention_warm"],
-        cold_days=cfg["retention_cold"],
-        disk_threshold=cfg["disk_threshold"],
-        emergency_threshold=cfg["emergency_threshold"],
-    )
-
     storage = StorageManager(retention_config, cfg["opensearch_url"], http_auth=http_auth)
+    storage._retention_config_manager = config_manager
     smart = SmartMonitor(device=cfg["smart_device"])
 
     # --- Shutdown coordination ---
@@ -431,7 +456,13 @@ async def async_main() -> None:
         cfg["opensearch_url"],
         port=cfg["api_port"],
         shutdown_event=shutdown_event,
+        retention_config_manager=config_manager,
+        http_auth=http_auth,
     )
+
+    # --- Enforce persisted PCAP capture state ---
+    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
+    await enforce_capture_state(env_file)
 
     # --- Load capture mode configuration ---
     capture_cfg = load_capture_config()

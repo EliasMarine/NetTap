@@ -100,8 +100,15 @@
 				relatedLoading = false;
 				return;
 			}
-			const query = ips.map(ip => `(source.ip:"${ip}" OR destination.ip:"${ip}")`).join(' OR ');
-			const params = new URLSearchParams({ query, size: '20' });
+			// Use .keyword sub-fields for reliable IP matching on ip-typed fields
+			const ipClauses = ips.map(ip => `(source.ip.keyword:"${ip}" OR destination.ip.keyword:"${ip}")`).join(' OR ');
+			// Exclude this alert from results
+			const query = `(${ipClauses}) AND NOT _id:"${alert._id}"`;
+			// Time window: ±1 hour around the alert timestamp
+			const alertTime = new Date(alert.timestamp);
+			const from = new Date(alertTime.getTime() - 3600_000).toISOString();
+			const to = new Date(alertTime.getTime() + 3600_000).toISOString();
+			const params = new URLSearchParams({ query, size: '20', from, to });
 			const res = await fetch(`/api/logs/search?${params.toString()}`);
 			if (res.ok) {
 				const data = await res.json();

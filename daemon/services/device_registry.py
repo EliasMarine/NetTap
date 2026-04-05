@@ -260,8 +260,6 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
                     ],
                     "should": should_clauses,
                     "minimum_should_match": 1,
@@ -272,8 +270,8 @@ class DeviceRegistry:
                     "sum": {
                         "script": {
                             "source": (
-                                "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
-                                " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
+                                "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
                             ),
                             "lang": "painless",
                         }
@@ -417,8 +415,7 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dhcp"}},
+                        {"exists": {"field": "dhcp.id"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
@@ -426,9 +423,8 @@ class DeviceRegistry:
             "_source": [
                 "source.mac",
                 "source.ip",
-                "zeek.dhcp.hostname",
-                "zeek.dhcp.vendor_class",
-                "zeek.dhcp.assigned_addr",
+                "dhcp.host",
+                "dhcp.ip",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -444,20 +440,23 @@ class DeviceRegistry:
                     continue
                 seen_macs.add(mac)
 
+                # Arkime stores DHCP fields under nested "dhcp" object
+                dhcp_obj = src.get("dhcp", {})
+                dhcp_ip_val = dhcp_obj.get("ip")
+                # dhcp.ip may be a list in Arkime
+                if isinstance(dhcp_ip_val, list):
+                    dhcp_ip_val = dhcp_ip_val[0] if dhcp_ip_val else None
                 ip = (
-                    src.get("zeek.dhcp.assigned_addr")
-                    or src.get("zeek", {}).get("dhcp", {}).get("assigned_addr")
+                    dhcp_ip_val
                     or src.get("source.ip")
                     or src.get("source", {}).get("ip")
                 )
-                hostname = (
-                    src.get("zeek.dhcp.hostname")
-                    or src.get("zeek", {}).get("dhcp", {}).get("hostname")
-                )
-                vendor_class = (
-                    src.get("zeek.dhcp.vendor_class")
-                    or src.get("zeek", {}).get("dhcp", {}).get("vendor_class")
-                )
+                dhcp_host_val = dhcp_obj.get("host")
+                if isinstance(dhcp_host_val, list):
+                    dhcp_host_val = dhcp_host_val[0] if dhcp_host_val else None
+                hostname = dhcp_host_val
+                # vendor_class not reliably available in Arkime DHCP data
+                vendor_class = None
 
                 metadata: dict[str, Any] = {}
                 if hostname:
@@ -494,8 +493,6 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
@@ -547,9 +544,8 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dns"}},
-                        {"wildcard": {"zeek.dns.query.keyword": "*.local"}},
+                        {"term": {"network.protocol": "dns"}},
+                        {"wildcard": {"dns.host.keyword": "*.local"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
@@ -557,7 +553,7 @@ class DeviceRegistry:
             "_source": [
                 "source.mac",
                 "source.ip",
-                "zeek.dns.query",
+                "dns.host",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -574,10 +570,15 @@ class DeviceRegistry:
                 seen_macs.add(mac)
 
                 ip = src.get("source.ip") or src.get("source", {}).get("ip")
-                dns_query = (
-                    src.get("zeek.dns.query")
-                    or src.get("zeek", {}).get("dns", {}).get("query")
-                )
+                # Arkime stores dns.host as a list
+                dns_host_val = src.get("dns.host") or src.get("dns", {}).get("host")
+                if isinstance(dns_host_val, list):
+                    # Find the .local entry in the list
+                    dns_query = next(
+                        (h for h in dns_host_val if h.endswith(".local")), None
+                    )
+                else:
+                    dns_query = dns_host_val
 
                 if dns_query and dns_query.endswith(".local"):
                     # Extract friendly name from mDNS (e.g. "iPhone._tcp.local" -> "iPhone")
@@ -617,13 +618,12 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "http"}},
+                        {"term": {"network.protocol": "http"}},
                         {"exists": {"field": "source.mac"}},
                     ],
                     "should": [
-                        {"match": {"zeek.http.uri": "ssdp"}},
-                        {"match": {"zeek.http.user_agent": "UPnP"}},
+                        {"match": {"http.uri": "ssdp"}},
+                        {"match": {"http.useragent": "UPnP"}},
                         {"term": {"destination.port": 1900}},
                     ],
                     "minimum_should_match": 1,
@@ -632,8 +632,8 @@ class DeviceRegistry:
             "_source": [
                 "source.mac",
                 "source.ip",
-                "zeek.http.user_agent",
-                "zeek.http.uri",
+                "http.useragent",
+                "http.uri",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -651,8 +651,8 @@ class DeviceRegistry:
 
                 ip = src.get("source.ip") or src.get("source", {}).get("ip")
                 user_agent = (
-                    src.get("zeek.http.user_agent")
-                    or src.get("zeek", {}).get("http", {}).get("user_agent")
+                    src.get("http.useragent")
+                    or src.get("http", {}).get("useragent")
                 )
 
                 metadata: dict[str, Any] = {}
