@@ -1028,3 +1028,1089 @@ class IoTMonitor:
             anomalies = self.check_anomalies(mac, excluded_ips=excluded_ips)
             all_anomalies.extend(anomalies)
         return all_anomalies
+
+    # -----------------------------------------------------------------
+    # Privacy Report
+    # -----------------------------------------------------------------
+
+    def get_privacy_report(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Compute per-device privacy report with tracker domains,
+        encryption ratio, and phone-home frequency.
+
+        Returns dict with 'devices' list.
+        """
+        devices = self._iot_devices
+        if not devices:
+            return {"devices": []}
+
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        macs = list(devices.keys())
+
+        # Batch query: connection stats (encryption ratio, bytes, etc.)
+        conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+
+        # Batch query: DNS tracker stats with per-domain detail
+        dns_detail = self._query_dns_tracker_detail_batch(macs, from_ts, to_ts, excluded)
+
+        # Compute time window in hours for phone-home rate
+        try:
+            from_dt = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+            to_dt = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+            window_hours = max(1.0, (to_dt - from_dt).total_seconds() / 3600)
+        except (ValueError, TypeError):
+            window_hours = 24.0
+
+        device_results: list[dict[str, Any]] = []
+        for mac, dev_info in devices.items():
+            cs = conn_stats.get(mac, {})
+            dd = dns_detail.get(mac, {})
+
+            total_conns = cs.get("total_connections", 0)
+            encrypted_conns = cs.get("encrypted_connections", 0)
+            total_bytes = cs.get("total_bytes", 0)
+            third_party_orgs = cs.get("third_party_orgs", 0)
+
+            encryption_ratio = (
+                encrypted_conns / total_conns if total_conns > 0 else 1.0
+            )
+
+            tracker_domains_list = dd.get("tracker_domains", [])
+            tracker_count = len(tracker_domains_list)
+
+            # Estimate telemetry bytes as a fraction of total bytes
+            # proportional to tracker queries vs total queries
+            total_queries = dd.get("total_dns_queries", 0)
+            tracker_query_sum = sum(t["query_count"] for t in tracker_domains_list)
+            if total_queries > 0 and total_bytes > 0:
+                telemetry_bytes = int(total_bytes * tracker_query_sum / total_queries)
+            else:
+                telemetry_bytes = 0
+
+            phone_home_per_hour = round(total_conns / window_hours, 2) if window_hours > 0 else 0
+
+            # Compute privacy score (0-100) based on metrics
+            privacy_score = self._compute_privacy_score(
+                tracker_count, encryption_ratio, third_party_orgs, telemetry_bytes,
+            )
+            privacy_grade = self._scorer.score_to_grade(privacy_score)
+
+            device_results.append({
+                "mac": mac,
+                "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"),
+                "privacy_grade": privacy_grade,
+                "privacy_score": privacy_score,
+                "tracker_domains": tracker_domains_list,
+                "tracker_count": tracker_count,
+                "telemetry_bytes": telemetry_bytes,
+                "third_party_orgs": third_party_orgs,
+                "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
+                "phone_home_per_hour": phone_home_per_hour,
+            })
+
+        # Sort worst privacy first
+        device_results.sort(key=lambda d: d["privacy_score"])
+        return {"devices": device_results}
+
+    @staticmethod
+    def _compute_privacy_score(
+        tracker_count: int,
+        encryption_ratio: float,
+        third_party_orgs: int,
+        telemetry_bytes: int,
+    ) -> int:
+        """Compute a 0-100 privacy score from privacy metrics."""
+        # Tracker penalty: -5 per tracker domain (max -50)
+        tracker_penalty = min(50, tracker_count * 5)
+        # Encryption bonus: up to 30 points for full encryption
+        encryption_bonus = int(encryption_ratio * 30)
+        # Third-party penalty: -3 per org above 1 (max -20)
+        org_penalty = min(20, max(0, third_party_orgs - 1) * 3)
+        # Base score
+        score = 100 - tracker_penalty + encryption_bonus - 30 - org_penalty
+        return max(0, min(100, score))
+
+    def _query_dns_tracker_detail_batch(
+        self,
+        macs: list[str],
+        from_ts: str,
+        to_ts: str,
+        excluded: list[dict],
+    ) -> dict[str, dict[str, Any]]:
+        """Query DNS logs and return per-device tracker domain details.
+
+        Returns dict keyed by MAC with:
+            tracker_domains: list of {domain, query_count}
+            total_dns_queries: int
+        """
+        if not macs:
+            return {}
+
+        mac_terms = []
+        for mac in macs:
+            mac_terms.extend([mac, mac.lower()])
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "dns"}},
+                {"terms": {"source.mac.keyword": mac_terms}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_mac": {
+                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "aggs": {
+                        "queried_domains": {
+                            "terms": {
+                                "field": "dns.question.name.keyword",
+                                "size": 500,
+                            }
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("DNS tracker detail query failed: %s", exc)
+            return {}
+
+        out: dict[str, dict[str, Any]] = {}
+        for bucket in (
+            result.get("aggregations", {})
+            .get("by_mac", {})
+            .get("buckets", [])
+        ):
+            raw_mac = bucket["key"].upper()
+            domains = bucket.get("queried_domains", {}).get("buckets", [])
+            tracker_list: list[dict[str, Any]] = []
+            for d_bucket in domains:
+                domain = d_bucket.get("key", "")
+                if self._is_tracker_domain(domain):
+                    tracker_list.append({
+                        "domain": domain,
+                        "query_count": d_bucket.get("doc_count", 0),
+                    })
+
+            out[raw_mac] = {
+                "tracker_domains": tracker_list,
+                "total_dns_queries": bucket.get("doc_count", 0),
+            }
+
+        return out
+
+    # -----------------------------------------------------------------
+    # Communication Map
+    # -----------------------------------------------------------------
+
+    def get_communication_map(
+        self,
+        mac: str,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Get all communication destinations for a single device.
+
+        Returns dict with 'mac' and 'destinations' list.
+        """
+        mac = mac.strip().upper()
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        baseline = self._baselines.get(mac)
+        baseline_dests = set(baseline.get("known_destinations", [])) if baseline else set()
+
+        # Query conn logs for this device, aggregate by destination IP
+        mac_filter = {
+            "bool": {
+                "should": [
+                    {"term": {"source.mac.keyword": mac}},
+                    {"term": {"source.mac.keyword": mac.lower()}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                mac_filter,
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_dest": {
+                    "terms": {"field": "destination.ip.keyword", "size": 200},
+                    "aggs": {
+                        "ports": {
+                            "terms": {"field": "destination.port", "size": 50}
+                        },
+                        "bytes_sent": {
+                            "sum": {"field": "client.bytes", "missing": 0}
+                        },
+                        "bytes_received": {
+                            "sum": {"field": "server.bytes", "missing": 0}
+                        },
+                        "country": {
+                            "terms": {
+                                "field": "destination.geo.country_iso_code.keyword",
+                                "size": 1,
+                            }
+                        },
+                        "first_seen": {
+                            "min": {"field": "@timestamp"}
+                        },
+                        "last_seen": {
+                            "max": {"field": "@timestamp"}
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("Communication map query failed for %s: %s", mac, exc)
+            return {"mac": mac, "destinations": []}
+
+        # Resolve hostnames via DNS logs
+        dest_ips = []
+        dest_buckets = (
+            result.get("aggregations", {})
+            .get("by_dest", {})
+            .get("buckets", [])
+        )
+        for b in dest_buckets:
+            dest_ips.append(b["key"])
+
+        hostname_map = self._resolve_hostnames(dest_ips, from_ts, to_ts, excluded)
+
+        destinations: list[dict[str, Any]] = []
+        for b in dest_buckets:
+            ip = b["key"]
+            ports = [pb["key"] for pb in b.get("ports", {}).get("buckets", [])]
+            country_buckets = b.get("country", {}).get("buckets", [])
+            country = country_buckets[0]["key"] if country_buckets else None
+
+            first_seen_ms = b.get("first_seen", {}).get("value")
+            last_seen_ms = b.get("last_seen", {}).get("value")
+            first_seen = (
+                b.get("first_seen", {}).get("value_as_string")
+                if first_seen_ms is not None else None
+            )
+            last_seen = (
+                b.get("last_seen", {}).get("value_as_string")
+                if last_seen_ms is not None else None
+            )
+
+            destinations.append({
+                "ip": ip,
+                "hostname": hostname_map.get(ip),
+                "country": country,
+                "ports": ports,
+                "bytes_sent": int(b.get("bytes_sent", {}).get("value", 0) or 0),
+                "bytes_received": int(b.get("bytes_received", {}).get("value", 0) or 0),
+                "connection_count": b.get("doc_count", 0),
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "in_baseline": ip in baseline_dests,
+            })
+
+        return {"mac": mac, "destinations": destinations}
+
+    def _resolve_hostnames(
+        self,
+        ips: list[str],
+        from_ts: str,
+        to_ts: str,
+        excluded: list[dict],
+    ) -> dict[str, str]:
+        """Resolve IPs to hostnames by querying DNS answer records.
+
+        Looks for DNS logs where zeek.dns.answers contains any of the IPs.
+        Returns a dict mapping IP -> hostname (domain queried).
+        """
+        if not ips:
+            return {}
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "dns"}},
+                {"terms": {"dns.resolved_ip": ips}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_answer_ip": {
+                    "terms": {"field": "dns.resolved_ip.keyword", "size": len(ips)},
+                    "aggs": {
+                        "domain": {
+                            "terms": {
+                                "field": "dns.question.name.keyword",
+                                "size": 1,
+                            }
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("Hostname resolution query failed: %s", exc)
+            return {}
+
+        out: dict[str, str] = {}
+        for bucket in (
+            result.get("aggregations", {})
+            .get("by_answer_ip", {})
+            .get("buckets", [])
+        ):
+            ip = bucket["key"]
+            domain_buckets = bucket.get("domain", {}).get("buckets", [])
+            if domain_buckets:
+                out[ip] = domain_buckets[0]["key"]
+
+        return out
+
+    # -----------------------------------------------------------------
+    # Activity Timeline
+    # -----------------------------------------------------------------
+
+    def get_activity_timeline(
+        self,
+        mac: str,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Get hourly activity timeline for a single device.
+
+        Returns dict with 'mac', 'interval', 'buckets', 'baseline_hours',
+        and 'baseline_avg_hourly_bytes'.
+        """
+        mac = mac.strip().upper()
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        baseline = self._baselines.get(mac)
+
+        mac_filter = {
+            "bool": {
+                "should": [
+                    {"term": {"source.mac.keyword": mac}},
+                    {"term": {"source.mac.keyword": mac.lower()}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                mac_filter,
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "hourly": {
+                    "date_histogram": {
+                        "field": "@timestamp",
+                        "fixed_interval": "1h",
+                    },
+                    "aggs": {
+                        "bytes": {
+                            "sum": {"field": "client.bytes", "missing": 0}
+                        },
+                        "destinations": {
+                            "cardinality": {"field": "destination.ip.keyword"}
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("Activity timeline query failed for %s: %s", mac, exc)
+            return {
+                "mac": mac,
+                "interval": "1h",
+                "buckets": [],
+                "baseline_hours": [],
+                "baseline_avg_hourly_bytes": 0,
+            }
+
+        hourly_buckets = (
+            result.get("aggregations", {})
+            .get("hourly", {})
+            .get("buckets", [])
+        )
+
+        buckets: list[dict[str, Any]] = []
+        for hb in hourly_buckets:
+            buckets.append({
+                "time": hb.get("key_as_string", ""),
+                "connections": hb.get("doc_count", 0),
+                "bytes": int(hb.get("bytes", {}).get("value", 0) or 0),
+                "destinations": int(hb.get("destinations", {}).get("value", 0) or 0),
+            })
+
+        # Baseline overlay
+        baseline_hours: list[int] = []
+        baseline_avg_hourly_bytes: int = 0
+        if baseline:
+            baseline_hours = baseline.get("active_hours", [])
+            daily_avg = baseline.get("daily_avg_bytes", 0)
+            baseline_avg_hourly_bytes = int(daily_avg / 24) if daily_avg > 0 else 0
+
+        return {
+            "mac": mac,
+            "interval": "1h",
+            "buckets": buckets,
+            "baseline_hours": baseline_hours,
+            "baseline_avg_hourly_bytes": baseline_avg_hourly_bytes,
+        }
+
+    # -----------------------------------------------------------------
+    # Protocol Audit
+    # -----------------------------------------------------------------
+
+    # Category mapping heuristics: manufacturer/hostname keyword -> category
+    _CATEGORY_KEYWORDS: list[tuple[list[str], str]] = [
+        (["ring", "arlo", "blink", "wyze cam"], "doorbell"),
+        (["nest", "ecobee", "honeywell"], "thermostat"),
+        (["roku", "fire tv", "chromecast", "apple tv"], "smart_tv"),
+        (["echo", "alexa", "google home", "sonos"], "smart_speaker"),
+        (["hue", "lifx", "wiz"], "light"),
+        (["smartthings", "hubitat", "wink"], "hub"),
+        (["kasa", "wemo", "smart plug", "shelly"], "smart_plug"),
+    ]
+
+    def _categorize_device(self, dev_info: dict[str, Any]) -> str:
+        """Categorize a device based on manufacturer/hostname keywords."""
+        manufacturer = (dev_info.get("manufacturer") or "").lower()
+        hostname = (dev_info.get("hostname") or "").lower()
+        combined = manufacturer + " " + hostname
+
+        for keywords, category in self._CATEGORY_KEYWORDS:
+            for kw in keywords:
+                if kw in combined:
+                    return category
+        return "default"
+
+    def get_protocol_audit(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Audit IoT devices for protocol compliance violations.
+
+        Checks each device's traffic against expected protocol profiles
+        based on device category. Flags unexpected ports, unencrypted
+        external connections, and hardcoded DNS.
+
+        Returns dict with 'devices' list.
+        """
+        devices = self._iot_devices
+        if not devices:
+            return {"devices": []}
+
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        macs = list(devices.keys())
+
+        # Batch query connection stats (includes dest_ports)
+        conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+
+        # Query per-device port usage with connection counts
+        port_detail = self._query_port_detail_batch(macs, from_ts, to_ts, excluded)
+
+        # Query for hardcoded DNS (destination port 53 to non-standard DNS servers)
+        hardcoded_dns = self._query_hardcoded_dns_batch(macs, from_ts, to_ts, excluded)
+
+        device_results: list[dict[str, Any]] = []
+        for mac, dev_info in devices.items():
+            category = self._categorize_device(dev_info)
+            profile = self._protocol_profiles.get(category, self._protocol_profiles.get("default", {}))
+            expected_ports = set(profile.get("expected_ports", [80, 443, 53, 123, 5353, 1900]))
+            category_label = profile.get("label", "Unknown")
+
+            cs = conn_stats.get(mac, {})
+            pd = port_detail.get(mac, {})
+            hd = hardcoded_dns.get(mac, [])
+
+            findings: list[dict[str, Any]] = []
+
+            # Check for unexpected ports
+            actual_ports = pd.keys() if pd else set()
+            for port in actual_ports:
+                if port not in expected_ports:
+                    count = pd[port]
+                    severity = "high" if port in (22, 23, 445, 139, 3389, 5900) else "medium"
+                    findings.append({
+                        "type": "unexpected_port",
+                        "severity": severity,
+                        "port": port,
+                        "connection_count": count,
+                        "description": (
+                            f"Uses port {port} which is not expected for "
+                            f"a {category_label.lower()}"
+                        ),
+                    })
+
+            # Check for unencrypted external connections
+            total_conns = cs.get("total_connections", 0)
+            encrypted_conns = cs.get("encrypted_connections", 0)
+            unencrypted = total_conns - encrypted_conns
+            if total_conns > 0 and unencrypted > 0:
+                ratio = encrypted_conns / total_conns
+                if ratio < 0.9:
+                    findings.append({
+                        "type": "unencrypted_traffic",
+                        "severity": "high" if ratio < 0.5 else "medium",
+                        "port": 0,
+                        "connection_count": unencrypted,
+                        "description": (
+                            f"{int((1 - ratio) * 100)}% of connections are unencrypted "
+                            f"({unencrypted} of {total_conns})"
+                        ),
+                    })
+
+            # Check for hardcoded DNS
+            for dns_entry in hd:
+                findings.append({
+                    "type": "hardcoded_dns",
+                    "severity": "medium",
+                    "port": 53,
+                    "connection_count": dns_entry.get("count", 0),
+                    "description": (
+                        f"Sends DNS queries directly to {dns_entry['ip']} "
+                        f"instead of using network DNS"
+                    ),
+                })
+
+            device_results.append({
+                "mac": mac,
+                "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"),
+                "category": category,
+                "findings": findings,
+                "violation_count": len(findings),
+                "compliant": len(findings) == 0,
+            })
+
+        # Sort by violation count descending (worst first)
+        device_results.sort(key=lambda d: d["violation_count"], reverse=True)
+        return {"devices": device_results}
+
+    def _query_port_detail_batch(
+        self,
+        macs: list[str],
+        from_ts: str,
+        to_ts: str,
+        excluded: list[dict],
+    ) -> dict[str, dict[int, int]]:
+        """Query destination port usage per device with connection counts.
+
+        Returns dict keyed by MAC, value is dict of port -> connection_count.
+        """
+        if not macs:
+            return {}
+
+        mac_terms = []
+        for mac in macs:
+            mac_terms.extend([mac, mac.lower()])
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {"terms": {"source.mac.keyword": mac_terms}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_mac": {
+                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "aggs": {
+                        "ports": {
+                            "terms": {"field": "destination.port", "size": 200}
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("Port detail query failed: %s", exc)
+            return {}
+
+        out: dict[str, dict[int, int]] = {}
+        for bucket in (
+            result.get("aggregations", {})
+            .get("by_mac", {})
+            .get("buckets", [])
+        ):
+            raw_mac = bucket["key"].upper()
+            port_map: dict[int, int] = {}
+            for pb in bucket.get("ports", {}).get("buckets", []):
+                port_map[pb["key"]] = pb.get("doc_count", 0)
+            out[raw_mac] = port_map
+
+        return out
+
+    def _query_hardcoded_dns_batch(
+        self,
+        macs: list[str],
+        from_ts: str,
+        to_ts: str,
+        excluded: list[dict],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Detect hardcoded DNS: IoT devices sending DNS to non-standard servers.
+
+        Looks for connections on port 53 to non-local DNS servers
+        (e.g., 8.8.8.8, 1.1.1.1 — known public DNS resolvers).
+
+        Returns dict keyed by MAC with list of {ip, count}.
+        """
+        if not macs:
+            return {}
+
+        # Common hardcoded DNS servers that IoT devices phone home to
+        well_known_dns = [
+            "8.8.8.8", "8.8.4.4",  # Google DNS
+            "1.1.1.1", "1.0.0.1",  # Cloudflare DNS
+            "208.67.222.222", "208.67.220.220",  # OpenDNS
+            "9.9.9.9",  # Quad9
+        ]
+
+        mac_terms = []
+        for mac in macs:
+            mac_terms.extend([mac, mac.lower()])
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {"terms": {"source.mac.keyword": mac_terms}},
+                {"term": {"destination.port": 53}},
+                {"terms": {"destination.ip.keyword": well_known_dns}},
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_mac": {
+                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "aggs": {
+                        "dns_servers": {
+                            "terms": {"field": "destination.ip.keyword", "size": 10}
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("Hardcoded DNS query failed: %s", exc)
+            return {}
+
+        out: dict[str, list[dict[str, Any]]] = {}
+        for bucket in (
+            result.get("aggregations", {})
+            .get("by_mac", {})
+            .get("buckets", [])
+        ):
+            raw_mac = bucket["key"].upper()
+            dns_list: list[dict[str, Any]] = []
+            for db in bucket.get("dns_servers", {}).get("buckets", []):
+                dns_list.append({
+                    "ip": db["key"],
+                    "count": db.get("doc_count", 0),
+                })
+            if dns_list:
+                out[raw_mac] = dns_list
+
+        return out
+
+    # -----------------------------------------------------------------
+    # Network Isolation
+    # -----------------------------------------------------------------
+
+    def get_network_isolation(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Analyze IoT-to-internal network segmentation.
+
+        Finds IoT devices communicating with internal (RFC1918) non-IoT
+        hosts. Computes a segmentation score.
+
+        Returns dict with 'segmentation_score', 'segmentation_grade',
+        'pairs', and 'recommendation'.
+        """
+        devices = self._iot_devices
+        if not devices:
+            return {
+                "segmentation_score": 100,
+                "segmentation_grade": "A",
+                "pairs": [],
+                "recommendation": "No IoT devices detected yet.",
+            }
+
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        macs = list(devices.keys())
+
+        # Build MAC->device info lookup
+        iot_macs = set(macs)
+        iot_ips = set()
+        for dev in devices.values():
+            ip = dev.get("ip")
+            if ip:
+                iot_ips.add(ip)
+
+        # Query conn logs where source is IoT device and destination is RFC1918
+        mac_terms = []
+        for mac in macs:
+            mac_terms.extend([mac, mac.lower()])
+
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {"terms": {"source.mac.keyword": mac_terms}},
+                # Destination is RFC1918 (internal) — use script filter
+                {
+                    "script": {
+                        "script": {
+                            "source": """
+                                def ip = doc['destination.ip.keyword'].size() > 0 ? doc['destination.ip.keyword'].value : '';
+                                if (ip.length() == 0) return false;
+                                def parts = ip.splitOnToken('.');
+                                if (parts.length != 4) return false;
+                                int a = Integer.parseInt(parts[0]);
+                                int b = Integer.parseInt(parts[1]);
+                                if (a == 10) return true;
+                                if (a == 172 && b >= 16 && b <= 31) return true;
+                                if (a == 192 && b == 168) return true;
+                                return false;
+                            """,
+                            "lang": "painless",
+                        }
+                    }
+                },
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
+            "aggs": {
+                "by_source_mac": {
+                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "aggs": {
+                        "by_dest_ip": {
+                            "terms": {"field": "destination.ip.keyword", "size": 50},
+                            "aggs": {
+                                "ports": {
+                                    "terms": {"field": "destination.port", "size": 20}
+                                },
+                                "source_ip": {
+                                    "terms": {"field": "source.ip.keyword", "size": 1}
+                                },
+                            },
+                        },
+                    },
+                }
+            },
+        }
+
+        try:
+            result = self._client.search(index=NETWORK_INDEX, body=query)
+        except Exception as exc:
+            logger.error("Network isolation query failed: %s", exc)
+            return {
+                "segmentation_score": 100,
+                "segmentation_grade": "A",
+                "pairs": [],
+                "recommendation": "Could not analyze network isolation.",
+            }
+
+        pairs: list[dict[str, Any]] = []
+        for mac_bucket in (
+            result.get("aggregations", {})
+            .get("by_source_mac", {})
+            .get("buckets", [])
+        ):
+            raw_mac = mac_bucket["key"].upper()
+            dev_info = devices.get(raw_mac, {})
+            dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+
+            for dest_bucket in mac_bucket.get("by_dest_ip", {}).get("buckets", []):
+                dest_ip = dest_bucket["key"]
+
+                # Skip if destination is also an IoT device
+                if dest_ip in iot_ips:
+                    continue
+
+                ports = [pb["key"] for pb in dest_bucket.get("ports", {}).get("buckets", [])]
+                conn_count = dest_bucket.get("doc_count", 0)
+
+                # Get source IP
+                src_ip_buckets = dest_bucket.get("source_ip", {}).get("buckets", [])
+                src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
+
+                # Classify risk based on ports
+                risk = self._classify_isolation_risk(ports)
+
+                # Build description
+                port_names = self._port_names(ports)
+                desc = f"{dev_name} can reach {dest_ip} via {port_names}"
+
+                pairs.append({
+                    "iot_device": {
+                        "mac": raw_mac,
+                        "name": dev_name,
+                        "ip": src_ip,
+                    },
+                    "internal_target": {
+                        "ip": dest_ip,
+                        "hostname": None,  # Would need reverse DNS
+                    },
+                    "risk": risk,
+                    "connection_count": conn_count,
+                    "ports": ports,
+                    "description": desc,
+                })
+
+        # Compute segmentation score
+        score = 100
+        critical_count = 0
+        high_count = 0
+        medium_count = 0
+        for pair in pairs:
+            r = pair["risk"]
+            if r == "critical":
+                score -= 25
+                critical_count += 1
+            elif r == "high":
+                score -= 15
+                high_count += 1
+            elif r == "medium":
+                score -= 5
+                medium_count += 1
+
+        score = max(0, min(100, score))
+        grade = self._scorer.score_to_grade(score)
+
+        # Build recommendation
+        iot_reaching_workstations = len(set(
+            p["iot_device"]["mac"] for p in pairs if p["risk"] in ("high", "critical")
+        ))
+        if not pairs:
+            recommendation = "Your IoT devices are well-isolated from internal hosts."
+        elif iot_reaching_workstations > 0:
+            recommendation = (
+                f"Consider creating a separate VLAN for your IoT devices -- "
+                f"{iot_reaching_workstations} IoT device{'s' if iot_reaching_workstations != 1 else ''} "
+                f"can currently reach your workstations."
+            )
+        else:
+            recommendation = (
+                f"{len(pairs)} IoT-to-internal connection pair{'s' if len(pairs) != 1 else ''} "
+                f"detected. Review for unnecessary access."
+            )
+
+        # Sort pairs by risk severity
+        risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        pairs.sort(key=lambda p: risk_order.get(p["risk"], 99))
+
+        return {
+            "segmentation_score": score,
+            "segmentation_grade": grade,
+            "pairs": pairs,
+            "recommendation": recommendation,
+        }
+
+    @staticmethod
+    def _classify_isolation_risk(ports: list[int]) -> str:
+        """Classify the risk level of IoT-to-internal communication."""
+        critical_ports = {445, 139, 3389, 5900, 22, 23}  # SMB, RDP, VNC, SSH, Telnet
+        high_ports = {80, 8080, 8443, 5000, 9090}  # Web services, management
+        if any(p in critical_ports for p in ports):
+            return "critical"
+        if any(p in high_ports for p in ports):
+            return "high"
+        if ports:
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _port_names(ports: list[int]) -> str:
+        """Convert a port list to human-readable names."""
+        names = {
+            22: "SSH", 23: "Telnet", 53: "DNS", 80: "HTTP", 139: "NetBIOS",
+            443: "HTTPS", 445: "SMB", 3389: "RDP", 5900: "VNC",
+            8080: "HTTP-Alt", 8443: "HTTPS-Alt",
+        }
+        parts = []
+        for p in ports[:5]:  # Show first 5
+            name = names.get(p, str(p))
+            parts.append(name)
+        if len(ports) > 5:
+            parts.append(f"+{len(ports) - 5} more")
+        return ", ".join(parts) if parts else "unknown"
+
+    # -----------------------------------------------------------------
+    # Manufacturer Profiles
+    # -----------------------------------------------------------------
+
+    def get_manufacturer_profiles(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Group IoT devices by manufacturer and compute aggregate metrics.
+
+        Returns dict with 'manufacturers' list sorted by worst hygiene first.
+        """
+        devices = self._iot_devices
+        if not devices:
+            return {"manufacturers": []}
+
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        macs = list(devices.keys())
+
+        # Batch queries for data
+        conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+        dns_stats = self._query_dns_tracker_batch(macs, from_ts, to_ts, excluded)
+        port_detail = self._query_port_detail_batch(macs, from_ts, to_ts, excluded)
+
+        expected_ports = self._get_expected_ports()
+
+        # Group devices by manufacturer
+        mfg_groups: dict[str, list[str]] = {}
+        for mac, dev_info in devices.items():
+            mfg = dev_info.get("manufacturer", "Unknown")
+            mfg_groups.setdefault(mfg, []).append(mac)
+
+        manufacturers: list[dict[str, Any]] = []
+        for mfg_name, mfg_macs in mfg_groups.items():
+            device_count = len(mfg_macs)
+            trust_scores: list[int] = []
+            privacy_scores: list[int] = []
+            total_encrypted = 0
+            total_conns = 0
+            total_tracker_domains = 0
+            total_violations = 0
+
+            for mac in mfg_macs:
+                cs = conn_stats.get(mac, {})
+                ds = dns_stats.get(mac, {})
+                baseline = self._baselines.get(mac)
+
+                # Build stats for trust scoring
+                stats = self._build_device_stats(
+                    mac, cs, ds, baseline, expected_ports,
+                )
+                score_result = self._scorer.score_device(stats)
+                trust_scores.append(score_result["score"])
+                privacy_scores.append(score_result["privacy_score"])
+
+                # Encryption stats
+                mc = cs.get("total_connections", 0)
+                me = cs.get("encrypted_connections", 0)
+                total_conns += mc
+                total_encrypted += me
+
+                # Tracker domains
+                total_tracker_domains += ds.get("tracker_domain_count", 0)
+
+                # Protocol violations
+                pd = port_detail.get(mac, {})
+                dev_info = devices.get(mac, {})
+                category = self._categorize_device(dev_info)
+                profile = self._protocol_profiles.get(
+                    category, self._protocol_profiles.get("default", {})
+                )
+                cat_expected = set(profile.get("expected_ports", [80, 443, 53, 123, 5353, 1900]))
+                for port in pd:
+                    if port not in cat_expected:
+                        total_violations += 1
+
+            avg_trust = int(round(sum(trust_scores) / len(trust_scores))) if trust_scores else 0
+            avg_trust_grade = self._scorer.score_to_grade(avg_trust)
+            avg_privacy = int(round(sum(privacy_scores) / len(privacy_scores))) if privacy_scores else 0
+            avg_privacy_grade = self._scorer.score_to_grade(avg_privacy)
+            encryption_pct = int(round(total_encrypted / total_conns * 100)) if total_conns > 0 else 100
+
+            manufacturers.append({
+                "name": mfg_name,
+                "device_count": device_count,
+                "avg_trust_score": avg_trust,
+                "avg_trust_grade": avg_trust_grade,
+                "avg_privacy_grade": avg_privacy_grade,
+                "encryption_pct": encryption_pct,
+                "total_tracker_domains": total_tracker_domains,
+                "total_violations": total_violations,
+            })
+
+        # Sort by worst trust score first
+        manufacturers.sort(key=lambda m: m["avg_trust_score"])
+        return {"manufacturers": manufacturers}

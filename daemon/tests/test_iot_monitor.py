@@ -580,3 +580,547 @@ class TestFleetSummary:
         assert result["device_count"] == 1
         assert "health_score" in result
         assert "devices" in result
+
+
+# ---------------------------------------------------------------------------
+# Privacy Report
+# ---------------------------------------------------------------------------
+
+
+class TestPrivacyReport:
+    def _setup_devices(self, iot):
+        iot._iot_devices = {
+            "AA:BB:CC:DD:EE:FF": {
+                "mac": "AA:BB:CC:DD:EE:FF",
+                "manufacturer": "Ring",
+                "ip": "192.168.1.50",
+                "hostname": "ring-doorbell",
+                "classified_at": "2026-04-04T00:00:00Z",
+            },
+        }
+
+    def test_empty_devices(self, iot):
+        result = iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result == {"devices": []}
+
+    def test_returns_device_privacy_data(self, iot, mock_client):
+        self._setup_devices(iot)
+        # conn stats batch, alert counts, DNS detail batch
+        mock_client.search.side_effect = [
+            # Conn stats
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "doc_count": 100,
+                                "total_bytes": {"value": 50000},
+                                "dest_ports": {"buckets": [{"key": 443, "doc_count": 90}]},
+                                "encrypted": {"doc_count": 90},
+                                "third_party_orgs": {"value": 3},
+                            }
+                        ]
+                    }
+                },
+            },
+            # Alert counts
+            {"aggregations": {"by_mac": {"buckets": []}}},
+            # DNS tracker detail
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "doc_count": 50,
+                                "queried_domains": {
+                                    "buckets": [
+                                        {"key": "ring.com", "doc_count": 30},
+                                        {"key": "google-analytics.com", "doc_count": 15},
+                                        {"key": "crashlytics.com", "doc_count": 5},
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                },
+            },
+        ]
+
+        result = iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert "devices" in result
+        assert len(result["devices"]) == 1
+        dev = result["devices"][0]
+        assert dev["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert "privacy_grade" in dev
+        assert "privacy_score" in dev
+        assert "tracker_domains" in dev
+        assert isinstance(dev["tracker_domains"], list)
+        assert "encryption_ratio" in dev
+        assert dev["encryption_ratio"] == 0.9
+        assert "phone_home_per_hour" in dev
+        assert dev["tracker_count"] >= 1  # at least google-analytics.com
+
+    def test_opensearch_error(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.side_effect = Exception("Connection refused")
+
+        result = iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        # Should still return valid structure with default data
+        assert "devices" in result
+        assert len(result["devices"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Communication Map
+# ---------------------------------------------------------------------------
+
+
+class TestCommunicationMap:
+    def test_empty_result(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {"by_dest": {"buckets": []}},
+        }
+
+        result = iot.get_communication_map(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert result["destinations"] == []
+
+    def test_returns_destinations(self, iot, mock_client):
+        mock_client.search.side_effect = [
+            # Main conn query
+            {
+                "aggregations": {
+                    "by_dest": {
+                        "buckets": [
+                            {
+                                "key": "54.239.28.85",
+                                "doc_count": 234,
+                                "ports": {"buckets": [{"key": 443, "doc_count": 234}]},
+                                "bytes_sent": {"value": 12500},
+                                "bytes_received": {"value": 45000},
+                                "country": {"buckets": [{"key": "US", "doc_count": 234}]},
+                                "first_seen": {"value": 1709251200000, "value_as_string": "2026-03-01T00:00:00Z"},
+                                "last_seen": {"value": 1712188800000, "value_as_string": "2026-04-04T00:00:00Z"},
+                            },
+                        ]
+                    }
+                },
+            },
+            # Hostname resolution query
+            {
+                "aggregations": {
+                    "by_answer_ip": {
+                        "buckets": [
+                            {
+                                "key": "54.239.28.85",
+                                "domain": {"buckets": [{"key": "ring.com", "doc_count": 50}]},
+                            }
+                        ]
+                    }
+                },
+            },
+        ]
+
+        result = iot.get_communication_map(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert len(result["destinations"]) == 1
+        dest = result["destinations"][0]
+        assert dest["ip"] == "54.239.28.85"
+        assert dest["hostname"] == "ring.com"
+        assert dest["country"] == "US"
+        assert 443 in dest["ports"]
+        assert dest["bytes_sent"] == 12500
+        assert dest["bytes_received"] == 45000
+        assert dest["connection_count"] == 234
+        assert "in_baseline" in dest
+
+    def test_opensearch_error(self, iot, mock_client):
+        mock_client.search.side_effect = Exception("timeout")
+        result = iot.get_communication_map(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert result["destinations"] == []
+
+
+# ---------------------------------------------------------------------------
+# Activity Timeline
+# ---------------------------------------------------------------------------
+
+
+class TestActivityTimeline:
+    def test_empty_result(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {"hourly": {"buckets": []}},
+        }
+
+        result = iot.get_activity_timeline(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert result["interval"] == "1h"
+        assert result["buckets"] == []
+        assert result["baseline_hours"] == []
+
+    def test_returns_hourly_buckets(self, iot, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {
+                "hourly": {
+                    "buckets": [
+                        {
+                            "key_as_string": "2026-04-04T00:00:00Z",
+                            "key": 1712188800000,
+                            "doc_count": 12,
+                            "bytes": {"value": 45000},
+                            "destinations": {"value": 3},
+                        },
+                        {
+                            "key_as_string": "2026-04-04T01:00:00Z",
+                            "key": 1712192400000,
+                            "doc_count": 8,
+                            "bytes": {"value": 30000},
+                            "destinations": {"value": 2},
+                        },
+                    ]
+                }
+            },
+        }
+
+        result = iot.get_activity_timeline(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert len(result["buckets"]) == 2
+        assert result["buckets"][0]["connections"] == 12
+        assert result["buckets"][0]["bytes"] == 45000
+        assert result["buckets"][0]["destinations"] == 3
+
+    def test_includes_baseline_overlay(self, iot, mock_client):
+        iot._baselines["AA:BB:CC:DD:EE:FF"] = {
+            "active_hours": [8, 9, 10, 11, 12],
+            "daily_avg_bytes": 48000,
+        }
+        mock_client.search.return_value = {
+            "aggregations": {"hourly": {"buckets": []}},
+        }
+
+        result = iot.get_activity_timeline(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert result["baseline_hours"] == [8, 9, 10, 11, 12]
+        assert result["baseline_avg_hourly_bytes"] == 2000  # 48000 / 24
+
+    def test_opensearch_error(self, iot, mock_client):
+        mock_client.search.side_effect = Exception("timeout")
+        result = iot.get_activity_timeline(
+            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
+        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert result["buckets"] == []
+
+
+# ---------------------------------------------------------------------------
+# Protocol Audit
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolAudit:
+    def _setup_devices(self, iot):
+        iot._iot_devices = {
+            "AA:BB:CC:DD:EE:FF": {
+                "mac": "AA:BB:CC:DD:EE:FF",
+                "manufacturer": "Ring",
+                "ip": "192.168.1.50",
+                "hostname": "ring-doorbell",
+                "classified_at": "2026-04-04T00:00:00Z",
+            },
+        }
+
+    def test_empty_devices(self, iot):
+        result = iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result == {"devices": []}
+
+    def test_detects_unexpected_port(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.side_effect = [
+            # Conn stats batch
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "doc_count": 100,
+                                "total_bytes": {"value": 50000},
+                                "dest_ports": {"buckets": [
+                                    {"key": 443, "doc_count": 90},
+                                    {"key": 8888, "doc_count": 10},
+                                ]},
+                                "encrypted": {"doc_count": 90},
+                                "third_party_orgs": {"value": 1},
+                            }
+                        ]
+                    }
+                },
+            },
+            # Alert counts
+            {"aggregations": {"by_mac": {"buckets": []}}},
+            # Port detail batch
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "ports": {
+                                    "buckets": [
+                                        {"key": 443, "doc_count": 90},
+                                        {"key": 8888, "doc_count": 5},
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                },
+            },
+            # Hardcoded DNS batch
+            {"aggregations": {"by_mac": {"buckets": []}}},
+        ]
+
+        result = iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert len(result["devices"]) == 1
+        dev = result["devices"][0]
+        assert dev["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert dev["category"] == "doorbell"
+        # Port 8888 is not in doorbell expected ports
+        unexpected = [f for f in dev["findings"] if f["type"] == "unexpected_port"]
+        assert len(unexpected) >= 1
+        assert unexpected[0]["port"] == 8888
+        assert dev["compliant"] is False
+
+    def test_compliant_device(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.side_effect = [
+            # Conn stats batch - all traffic on expected ports, all encrypted
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "doc_count": 100,
+                                "total_bytes": {"value": 50000},
+                                "dest_ports": {"buckets": [{"key": 443, "doc_count": 100}]},
+                                "encrypted": {"doc_count": 100},
+                                "third_party_orgs": {"value": 1},
+                            }
+                        ]
+                    }
+                },
+            },
+            # Alert counts
+            {"aggregations": {"by_mac": {"buckets": []}}},
+            # Port detail batch - only port 443
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "ports": {"buckets": [{"key": 443, "doc_count": 100}]},
+                            }
+                        ]
+                    }
+                },
+            },
+            # Hardcoded DNS batch
+            {"aggregations": {"by_mac": {"buckets": []}}},
+        ]
+
+        result = iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        dev = result["devices"][0]
+        assert dev["compliant"] is True
+        assert dev["violation_count"] == 0
+
+    def test_opensearch_error(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.side_effect = Exception("Connection refused")
+
+        result = iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert "devices" in result
+        assert len(result["devices"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Network Isolation
+# ---------------------------------------------------------------------------
+
+
+class TestNetworkIsolation:
+    def _setup_devices(self, iot):
+        iot._iot_devices = {
+            "AA:BB:CC:DD:EE:FF": {
+                "mac": "AA:BB:CC:DD:EE:FF",
+                "manufacturer": "Ring",
+                "ip": "192.168.1.50",
+                "hostname": "smart-camera",
+                "classified_at": "2026-04-04T00:00:00Z",
+            },
+        }
+
+    def test_empty_devices(self, iot):
+        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result["segmentation_score"] == 100
+        assert result["segmentation_grade"] == "A"
+        assert result["pairs"] == []
+
+    def test_detects_iot_to_internal_pairs(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.return_value = {
+            "aggregations": {
+                "by_source_mac": {
+                    "buckets": [
+                        {
+                            "key": "AA:BB:CC:DD:EE:FF",
+                            "by_dest_ip": {
+                                "buckets": [
+                                    {
+                                        "key": "192.168.1.10",
+                                        "doc_count": 45,
+                                        "ports": {"buckets": [
+                                            {"key": 445, "doc_count": 30},
+                                            {"key": 139, "doc_count": 15},
+                                        ]},
+                                        "source_ip": {"buckets": [{"key": "192.168.1.50", "doc_count": 45}]},
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                }
+            },
+        }
+
+        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result["segmentation_score"] < 100
+        assert len(result["pairs"]) == 1
+        pair = result["pairs"][0]
+        assert pair["iot_device"]["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert pair["internal_target"]["ip"] == "192.168.1.10"
+        assert pair["risk"] == "critical"  # ports 445, 139
+        assert 445 in pair["ports"]
+        assert "recommendation" in result
+
+    def test_perfect_segmentation(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.return_value = {
+            "aggregations": {"by_source_mac": {"buckets": []}},
+        }
+
+        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result["segmentation_score"] == 100
+        assert result["segmentation_grade"] == "A"
+        assert result["pairs"] == []
+
+    def test_opensearch_error(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.side_effect = Exception("Connection refused")
+
+        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result["segmentation_score"] == 100
+        assert result["pairs"] == []
+
+
+# ---------------------------------------------------------------------------
+# Manufacturer Profiles
+# ---------------------------------------------------------------------------
+
+
+class TestManufacturerProfiles:
+    def _setup_devices(self, iot):
+        iot._iot_devices = {
+            "AA:BB:CC:DD:EE:FF": {
+                "mac": "AA:BB:CC:DD:EE:FF",
+                "manufacturer": "Ring",
+                "ip": "192.168.1.50",
+                "hostname": "ring-doorbell",
+                "classified_at": "2026-04-04T00:00:00Z",
+            },
+            "11:22:33:44:55:66": {
+                "mac": "11:22:33:44:55:66",
+                "manufacturer": "Roku",
+                "ip": "192.168.1.51",
+                "hostname": "roku-tv",
+                "classified_at": "2026-04-04T01:00:00Z",
+            },
+        }
+
+    def test_empty_devices(self, iot):
+        result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert result == {"manufacturers": []}
+
+    def test_groups_by_manufacturer(self, iot, mock_client):
+        self._setup_devices(iot)
+        # Return empty aggregations for all queries
+        mock_client.search.return_value = {
+            "aggregations": {"by_mac": {"buckets": []}},
+        }
+
+        result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert "manufacturers" in result
+        assert len(result["manufacturers"]) == 2
+
+        names = [m["name"] for m in result["manufacturers"]]
+        assert "Ring" in names
+        assert "Roku" in names
+
+        for m in result["manufacturers"]:
+            assert "device_count" in m
+            assert "avg_trust_score" in m
+            assert "avg_trust_grade" in m
+            assert "avg_privacy_grade" in m
+            assert "encryption_pct" in m
+            assert "total_tracker_domains" in m
+            assert "total_violations" in m
+            assert m["device_count"] == 1
+
+    def test_opensearch_error(self, iot, mock_client):
+        self._setup_devices(iot)
+        mock_client.search.side_effect = Exception("Connection refused")
+
+        result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        assert "manufacturers" in result
+        assert len(result["manufacturers"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Category classification helper
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeDevice:
+    def test_ring_is_doorbell(self, iot):
+        assert iot._categorize_device({"manufacturer": "Ring", "hostname": ""}) == "doorbell"
+
+    def test_roku_is_smart_tv(self, iot):
+        assert iot._categorize_device({"manufacturer": "Roku", "hostname": ""}) == "smart_tv"
+
+    def test_ecobee_is_thermostat(self, iot):
+        assert iot._categorize_device({"manufacturer": "Ecobee", "hostname": ""}) == "thermostat"
+
+    def test_echo_is_smart_speaker(self, iot):
+        assert iot._categorize_device({"manufacturer": "Echo", "hostname": ""}) == "smart_speaker"
+
+    def test_hue_is_light(self, iot):
+        assert iot._categorize_device({"manufacturer": "Philips Hue", "hostname": ""}) == "light"
+
+    def test_unknown_is_default(self, iot):
+        assert iot._categorize_device({"manufacturer": "Unknown", "hostname": "generic"}) == "default"
+
+    def test_hostname_matching(self, iot):
+        assert iot._categorize_device({"manufacturer": "", "hostname": "kasa-plug"}) == "smart_plug"
