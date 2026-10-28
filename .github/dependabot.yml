@@ -2,7 +2,7 @@
 # NetTap Dependabot Configuration
 # ==========================================================================
 # Automated dependency updates for all package ecosystems used in the project.
-# All PRs target the develop branch per the project's git strategy.
+# All PRs target main (trunk-based; see .claude/rules/git-workflow.md).
 
 version: 2
 
@@ -15,7 +15,7 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
-    target-branch: develop
+    target-branch: main
     labels:
       - dependencies
       - python
@@ -31,7 +31,7 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
-    target-branch: develop
+    target-branch: main
     labels:
       - dependencies
       - javascript
@@ -47,7 +47,7 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
-    target-branch: develop
+    target-branch: main
     labels:
       - dependencies
       - ci
@@ -63,7 +63,7 @@ updates:
       day: monday
       time: "08:00"
       timezone: America/Los_Angeles
-    target-branch: develop
+    target-branch: main
     labels:
       - dependencies
       - docker
