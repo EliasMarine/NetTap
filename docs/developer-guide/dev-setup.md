@@ -26,9 +26,9 @@ cd NetTap
 # Set up upstream tracking
 git remote add upstream https://github.com/EliasMarine/NetTap.git
 
-# Switch to develop branch
-git checkout develop
-git pull upstream develop
+# Work from main (the trunk)
+git checkout main
+git pull upstream main
 ```
 
 ---
