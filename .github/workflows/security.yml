@@ -1,7 +1,7 @@
 # ==========================================================================
 # NetTap Security Scanning Pipeline
 # ==========================================================================
-# Runs weekly on a cron schedule and on PRs to develop/main.
+# Runs weekly on a cron schedule and on PRs to main.
 # Audits Python and npm dependencies, scans Docker images with Trivy,
 # and runs GitHub CodeQL analysis for Python and JavaScript.
 
@@ -12,7 +12,8 @@ on:
     # Run every Monday at 06:00 UTC
     - cron: "0 6 * * 1"
   pull_request:
-    branches: [develop, main]
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: security-${{ github.ref }}

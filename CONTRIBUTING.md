@@ -31,11 +31,11 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
    ```bash
    git remote add upstream https://github.com/EliasMarine/NetTap.git
    ```
-4. **Create a feature branch** from `develop`:
+4. **Create a feature branch** from `main`:
    ```bash
-   git checkout develop
-   git pull upstream develop
-   git checkout -b phase-N/your-feature
+   git checkout main
+   git pull upstream main
+   git checkout -b feature/your-feature
    ```
 
 ## Development Environment
@@ -87,17 +87,18 @@ You can develop and test many components without the full dual-NIC hardware setu
 
 ## Branch Naming Convention
 
-All work happens on feature branches. Never commit directly to `main` or `develop`.
+NetTap is trunk-based: all work happens on short-lived branches that merge into `main` via PR. Never commit directly to `main`.
 
-**Format:** `phase-N/short-description`
+**Format:** `<type>/short-description`
 
 ```
-phase-1/bridge-hardening
-phase-2/ilm-policies
-phase-3/setup-wizard
-phase-4/dashboard-home
-phase-5/ci-pipeline
+feature/bridge-hardening
+fix/pcap-capture-timeout
+chore/ci-pipeline
+docs/install-guide
 ```
+
+The full rules are in [`.claude/rules/git-workflow.md`](.claude/rules/git-workflow.md).
 
 For cross-cutting work: `infra/description` or `chore/description`.
 
@@ -147,15 +148,15 @@ chore(docker): pin Malcolm images to v26.02.0
 
 ## Pull Request Process
 
-1. **Target `develop`** -- never `main`. The `main` branch only receives merges at major release milestones.
+1. **Target `main`.** Feature branches are squash-merged.
 2. **Ensure your branch is up to date:**
    ```bash
    git fetch upstream
-   git rebase upstream/develop
+   git rebase upstream/main
    ```
 3. **Push your branch** and create a PR on GitHub:
    ```bash
-   git push -u origin phase-N/your-feature
+   git push -u origin feature/your-feature
    ```
 4. **Fill out the PR template** completely (summary, type of change, testing checklist).
 5. **All CI checks must pass** before a PR will be reviewed.

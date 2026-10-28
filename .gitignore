@@ -47,3 +47,8 @@ Thumbs.db
 
 # GeoIP databases (downloaded at runtime)
 config/malcolm/GeoLite2-*.mmdb
+
+# Tool artifacts (Claude Code worktrees, Playwright MCP, Playwright test output)
+.claude/worktrees/
+.playwright-mcp/
+web/test-results/

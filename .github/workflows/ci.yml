@@ -1,15 +1,17 @@
 # ==========================================================================
 # NetTap CI Pipeline — Lint, Test, Build
 # ==========================================================================
-# Runs on every push to develop and on all pull requests.
+# Runs on every push to main and on all pull requests.
 # Validates shell scripts, Python daemon, SvelteKit web app, and Docker builds.
 
 name: CI
 
 on:
   push:
-    branches: [develop]
+    # develop stays listed deliberately so CI covers it if the branch ever returns
+    branches: [main, develop]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: ci-${{ github.ref }}

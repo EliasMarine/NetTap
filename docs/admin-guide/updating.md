@@ -44,7 +44,7 @@ curl http://localhost:8880/api/updates/available
 ```bash
 # Pull latest repository changes
 cd /opt/nettap
-git pull origin develop
+git pull origin main
 
 # Pull updated Docker images
 docker compose -f docker/docker-compose.yml pull
@@ -71,7 +71,7 @@ sudo systemctl restart nettap
 cd /opt/nettap
 
 # Pull latest code
-git pull origin develop
+git pull origin main
 
 # Pull updated container images
 docker compose -f docker/docker-compose.yml pull

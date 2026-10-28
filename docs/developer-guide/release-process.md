@@ -10,10 +10,10 @@ NetTap uses **phase-based semantic versioning**. Development versions increment 
 
 | Milestone | Version | Tag Location |
 |---|---|---|
-| Phase 1 complete (Core Infrastructure) | `v0.1.0` | `develop` |
-| Phase 2 complete (Storage Management) | `v0.2.0` | `develop` |
-| Phase 3 complete (Onboarding UX) | `v0.3.0` | `develop` |
-| Phase 4 complete (Dashboard Polish) | `v0.4.0` | `develop` |
+| Phase 1 complete (Core Infrastructure) | `v0.1.0` | `main` |
+| Phase 2 complete (Storage Management) | `v0.2.0` | `main` |
+| Phase 3 complete (Onboarding UX) | `v0.3.0` | `main` |
+| Phase 4 complete (Dashboard Polish) | `v0.4.0` | `main` |
 | Phase 5 complete (Community Release) | `v1.0.0` | `main` |
 
 ### Patch Versions
@@ -33,19 +33,15 @@ Testing releases use pre-release suffixes:
 ## Branch Strategy
 
 ```
-main ─────────────────────────────────────────────── v1.0.0 (final merge)
-  │
-  └── develop ──┬── phase-1/feature-a ──────> merge ──> tag v0.1.0
-                ├── phase-2/feature-b ──────> merge ──> tag v0.2.0
-                ├── phase-3/feature-c ──────> merge ──> tag v0.3.0
-                ├── phase-4/feature-d ──────> merge ──> tag v0.4.0
-                └── phase-5/feature-e ──────> merge ──> tag v1.0.0 on main
+main ──●────●────●────●──── tag v0.4.0 ────●────●──── tag v1.0.0
+        \  /      \  /                      \  /
+   feature/a    fix/b                    feature/c
 ```
 
-- All development happens on feature branches
-- Feature branches merge to `develop` via PR
-- Phase tags are applied on `develop` when all tasks for that phase are complete
-- Only the final `v1.0.0` tag is applied on `main` after the develop-to-main merge
+- NetTap is trunk-based: `main` is the only long-lived branch (no `develop` since 2026-10-27)
+- All development happens on short-lived `feature/`, `fix/`, `chore/`, `docs/` branches that squash-merge into `main` via PR
+- Phase tags are applied on `main` when all tasks for that phase are merged
+- Full rules: `.claude/rules/git-workflow.md`
 
 ---
 
@@ -53,11 +49,11 @@ main ─────────────────────────
 
 ### Tagging a Phase Milestone
 
-When all tasks for a phase are complete and merged to `develop`:
+When all tasks for a phase are complete and merged to `main`:
 
 ```bash
-git checkout develop
-git pull origin develop
+git checkout main
+git pull origin main
 
 # Create annotated tag
 git tag -a v0.X.0 -m "Phase X: Description of milestone"

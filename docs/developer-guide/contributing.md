@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to NetTap. This page provides a summary of the contribution workflow. For full details, see the [CONTRIBUTING.md](https://github.com/EliasMarine/NetTap/blob/develop/CONTRIBUTING.md) file in the repository.
+Thank you for your interest in contributing to NetTap. This page provides a summary of the contribution workflow. For full details, see the [CONTRIBUTING.md](https://github.com/EliasMarine/NetTap/blob/main/CONTRIBUTING.md) file in the repository.
 
 ---
 
