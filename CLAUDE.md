@@ -12,100 +12,20 @@ The project wraps CISA's Malcolm stack (Zeek, Suricata, Arkime, OpenSearch) with
 
 ## Git Strategy
 
-### Branch Model
+**Full rules: `.claude/rules/git-workflow.md`** (trunk-based since 2026-10-27; the retired `develop` model is preserved there as DORMANT).
 
-- **`main`** — Protected. NEVER push directly. Only receives merges at project completion (v1.0.0).
-- **`develop`** — Integration branch. All feature branches merge here via PR.
-- **Feature branches** — All work happens here. Branch from `develop`, merge back to `develop`.
-
-**Branch naming convention:** `phase-N/short-description`
-```
-phase-1/bridge-hardening
-phase-1/malcolm-integration
-phase-2/ilm-policies
-phase-2/smart-alerting
-phase-3/sveltekit-init
-phase-3/setup-wizard
-phase-4/dashboard-home
-phase-5/ci-pipeline
-```
-
-For cross-cutting work that spans phases: `infra/description` or `chore/description`.
-
-### Workflow
-
-```
-1. git checkout develop
-2. git pull origin develop
-3. git checkout -b phase-N/description
-4. ... work, commit ...
-5. git push -u origin phase-N/description
-6. Create PR: phase-N/description → develop
-7. After merge, delete feature branch
-```
-
-**NEVER push to `main`.** All PRs target `develop`. At project completion, `develop` merges to `main` with the `v1.0.0` tag.
-
-### Commit Convention: Conventional Commits
-
-Every commit message MUST follow this format:
-
-```
-type(scope): short description
-
-Optional body explaining the "why" (not the "what").
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
-```
-
-**Types (required):**
-| Type | When to use |
-|------|-------------|
-| `feat` | New feature or capability |
-| `fix` | Bug fix |
-| `docs` | Documentation only |
-| `refactor` | Code restructuring, no behavior change |
-| `test` | Adding or updating tests |
-| `chore` | Maintenance, dependencies, config |
-| `ci` | CI/CD pipeline changes |
-| `perf` | Performance improvement |
-| `style` | Formatting, whitespace, no logic change |
-
-**Scope (optional but encouraged):** The component affected.
-```
-feat(bridge): add netplan persistence for br0
-fix(daemon): handle OpenSearch connection timeout in prune cycle
-test(storage): add pytest coverage for disk threshold logic
-docs(readme): update architecture diagram
-chore(docker): pin Malcolm images to v26.02.0
-ci(github): add shellcheck workflow
-```
-
-### Versioning: Phase-Based SemVer
-
-Development versions increment with each phase milestone. Tags are applied on `develop` at phase completion.
-
-| Milestone | Version | Tag on |
-|-----------|---------|--------|
-| Phase 1 complete (Core Infrastructure) | `v0.1.0` | `develop` |
-| Phase 2 complete (Storage Management) | `v0.2.0` | `develop` |
-| Phase 3 complete (Onboarding UX) | `v0.3.0` | `develop` |
-| Phase 4 complete (Dashboard Polish) | `v0.4.0` | `develop` |
-| Phase 5 complete (Community Release) | `v1.0.0` | `main` (after final merge) |
-
-**Patch versions** for hotfixes within a phase: `v0.1.1`, `v0.1.2`, etc.
-**Pre-release versions** for testing: `v1.0.0-alpha.1`, `v1.0.0-beta.1`, `v1.0.0-rc.1`.
+- **`main` is the trunk.** Never commit or push to it directly — every change lands via PR (ruleset `26011127`). There is no `develop`.
+- **Branch names:** `feature/`, `fix/`, `chore/`, `docs/`, `sync/<what>-YYYY-MM-DD`, `backup/pre-<op>-YYYY-MM-DD`. In-flight `phase-N/*` branches keep their names until merged.
+- **Commits:** Conventional Commits, `type(scope): summary`, one logical change per commit, ending with the `Co-Authored-By:` trailer.
+- **PRs:** target `main`; body has what/why/how-to-test + Linear ID ("Closes NET-7"). `gh pr checks <n>` before every merge. Squash feature/fix/chore/docs; true-merge (`--merge`) `sync/*`.
+- **Gates:** `/codex-review` on the plan, `/deep-review` + `/ponytail-review` before commit, two-angle review before merging high-stakes PRs — triggers and exemptions in the rules file.
+- **Tags:** phase milestones (`v0.4.0`, `v1.0.0`) are tagged on `main`.
 
 ### Rules for Claude Code
 
-1. **Always create a new branch** before making code changes. Never commit directly to `develop` or `main`.
-2. **Always use conventional commit format.** No exceptions.
-3. **Push to the feature branch only.** Never push to `develop` or `main`.
-4. **One logical change per commit.** Don't bundle unrelated changes.
-5. **Create PRs targeting `develop`** — never targeting `main`.
-6. **Include the Linear issue ID** in the PR description (e.g., "Closes NET-7").
-7. **Tag phase milestones** only when all tasks for that phase are complete and merged to `develop`.
-8. **Always use agent teams** for multi-file tasks. When a task involves 3+ independent file changes (e.g., code + tests + docs), use `TeamCreate` to spawn parallel agents. Delegate independent subtasks (test updates, doc updates, Linear issues) to teammates while the lead handles core code changes.
+1. **Always create a new branch from `main`** before making code changes.
+2. **Push to the feature branch only.** Never push to `main`.
+3. **Always use agent teams** for multi-file tasks. When a task involves 3+ independent file changes (e.g., code + tests + docs), use `TeamCreate` to spawn parallel agents. Delegate independent subtasks (test updates, doc updates, Linear issues) to teammates while the lead handles core code changes.
 
 ---
 
@@ -359,7 +279,7 @@ sudo docker compose -f docker/docker-compose.yml down -v
 
 # Pull latest code and reinstall
 cd /opt/nettap
-sudo git pull origin develop
+sudo git pull origin main
 sudo scripts/install/install.sh
 
 # Verify services are healthy
