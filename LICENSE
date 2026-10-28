@@ -1,21 +1,109 @@
-MIT License
+NetTap Personal Use License
+Version 1.0, February 2026
 
-Copyright (c) 2026 Cybthor
+Copyright (c) 2026 Cybthor. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. DEFINITIONS
+
+"Software" means the NetTap source code, documentation, configuration files,
+scripts, Docker images, and all associated materials in this repository.
+
+"Personal Use" means use by an individual or household for private,
+non-commercial purposes including home network monitoring, personal education,
+and security research on networks you own or have explicit authorization to
+monitor.
+
+"Commercial Use" means any use of the Software that is primarily intended for
+or directed toward commercial advantage or monetary compensation. This includes,
+but is not limited to: selling the Software or derivative works, offering the
+Software as a managed service, incorporating the Software into a product or
+service offered to third parties, or using the Software in a business
+environment to generate revenue.
+
+"Modification" means any alteration, adaptation, translation, or creation of
+derivative works based on the Software.
+
+"Distribution" means making the Software available to any third party by any
+means, including but not limited to hosting, sharing, publishing, or
+transferring copies.
+
+
+2. GRANT OF RIGHTS
+
+Subject to the terms of this License, the copyright holder grants you a
+limited, non-exclusive, non-transferable, revocable license to:
+
+  a) Download, install, and use the Software for Personal Use only.
+  b) View and study the source code for educational purposes.
+  c) Submit bug reports and feature requests via the project's issue tracker.
+
+
+3. RESTRICTIONS
+
+You may NOT, without prior written permission from the copyright holder:
+
+  a) Use the Software for any Commercial Use.
+  b) Modify, adapt, or create derivative works based on the Software.
+  c) Distribute, sublicense, sell, lease, or otherwise transfer the Software
+     or any portion thereof to any third party.
+  d) Remove or alter any copyright notices, license text, or attribution
+     contained in the Software.
+  e) Use the Software to provide services to third parties, whether paid or
+     unpaid, including managed security services, network monitoring as a
+     service, or consulting services built around the Software.
+  f) Incorporate any portion of the Software into another product or project,
+     whether open-source or proprietary.
+
+
+4. CONTRIBUTIONS
+
+By submitting a pull request, patch, or other contribution to this project,
+you grant the copyright holder a perpetual, worldwide, non-exclusive,
+royalty-free, irrevocable license to use, reproduce, modify, distribute,
+sublicense, and otherwise exploit your contribution in any manner and for
+any purpose, including commercial purposes.
+
+
+5. COMMERCIAL LICENSING
+
+If you wish to use the Software for Commercial Use, Modification, or
+Distribution, you must obtain a separate commercial license from the
+copyright holder. Contact: nettap@cybthor.com
+
+Commercial licensing terms, including fees and permitted uses, will be
+negotiated on a case-by-case basis.
+
+
+6. THIRD-PARTY COMPONENTS
+
+The Software integrates third-party open-source components (Zeek, Suricata,
+Arkime, OpenSearch, etc.) that are licensed under their own respective
+licenses. Those components remain governed by their original licenses.
+This License applies only to the NetTap-original source code, configuration,
+documentation, and tooling. See THIRD-PARTY-LICENSES.md for details.
+
+
+7. NO WARRANTY
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
+OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+8. TERMINATION
+
+This License is effective until terminated. Your rights under this License
+will terminate automatically without notice if you fail to comply with any
+of its terms. Upon termination, you must destroy all copies of the Software
+in your possession.
+
+
+9. GOVERNING LAW
+
+This License shall be governed by and construed in accordance with the laws
+of the United States, without regard to its conflict of law provisions.
