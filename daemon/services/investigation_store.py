@@ -49,8 +49,7 @@ class Investigation:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["notes"] = [
-            n.to_dict() if isinstance(n, InvestigationNote) else n
-            for n in self.notes
+            n.to_dict() if isinstance(n, InvestigationNote) else n for n in self.notes
         ]
         return d
 
@@ -78,9 +77,7 @@ class InvestigationStore:
                 with open(self._store_file, "r") as f:
                     raw = json.load(f)
                 for inv_data in raw:
-                    notes = [
-                        InvestigationNote(**n) for n in inv_data.get("notes", [])
-                    ]
+                    notes = [InvestigationNote(**n) for n in inv_data.get("notes", [])]
                     inv = Investigation(
                         id=inv_data["id"],
                         title=inv_data["title"],
@@ -114,7 +111,9 @@ class InvestigationStore:
             with open(self._store_file, "w") as f:
                 json.dump(data, f, indent=2)
         except OSError as exc:
-            logger.error("Failed to save investigations to %s: %s", self._store_file, exc)
+            logger.error(
+                "Failed to save investigations to %s: %s", self._store_file, exc
+            )
             raise
 
     def create(

@@ -105,6 +105,7 @@ Development versions increment with each phase milestone. Tags are applied on `d
 5. **Create PRs targeting `develop`** — never targeting `main`.
 6. **Include the Linear issue ID** in the PR description (e.g., "Closes NET-7").
 7. **Tag phase milestones** only when all tasks for that phase are complete and merged to `develop`.
+8. **Always use agent teams** for multi-file tasks. When a task involves 3+ independent file changes (e.g., code + tests + docs), use `TeamCreate` to spawn parallel agents. Delegate independent subtasks (test updates, doc updates, Linear issues) to teammates while the lead handles core code changes.
 
 ---
 
@@ -130,6 +131,39 @@ Development versions increment with each phase milestone. Tags are applied on `d
 
 **Workflow**: Implement → **Create/update Linear issue** → Update tracking doc → Verify.
 
+### Debugging Log (source of truth for deployment issues)
+
+**CRITICAL: Before starting ANY deployment fix, read `Debugging/DEPLOYMENT-ISSUES.md` first.** This document tracks every deployment bug, its causal chain, what was tried, what worked, and what didn't. After completing a fix, update this document with the new issue, root cause, fix, files changed, and lessons learned. This prevents re-introducing previously fixed bugs or repeating failed approaches.
+
+- **Location:** `Debugging/DEPLOYMENT-ISSUES.md`
+- **Before each fix:** Check the "Key Files Modified" table and "Lessons Learned" section
+- **After each fix:** Add a new entry, update "Current Stack Health", and add to "Known Risks" if applicable
+
+### Reliability Tracker (source of truth for production-grade quality)
+
+**CRITICAL: Before any reliability or health-check work, read `Debugging/RELIABILITY-TRACKER.md` first.** This document tracks every subsystem's production readiness, known issues, and fixes. After completing a reliability fix, update this document with the new status, fix details, and verification results. This prevents re-introducing previously fixed issues.
+
+- **Location:** `Debugging/RELIABILITY-TRACKER.md`
+- **Before each fix:** Check the Subsystem Reliability Status table and Lessons Learned
+- **After each fix:** Update the Issues Found & Fixed table, update subsystem status, add verification results
+
+### Bridge Architecture (source of truth for bridge/ingestion/bypass work)
+
+**CRITICAL: Before any bridge, ingestion pipeline, capture, or bypass-related work, read `Debugging/BRIDGE-ARCHITECTURE.md` first.** This document is the definitive reference for how data flows from ISP modem through NetTap's Linux bridge to the router, how capture containers tap traffic, how health monitoring works from inside Docker, and how bypass mode operates. It covers physical topology, setup flow, capture pipeline, hardening, known issues, and troubleshooting.
+
+- **Location:** `Debugging/BRIDGE-ARCHITECTURE.md`
+- **Before any bridge/capture work:** Read the full architecture, especially Section 4 (Health Monitoring) and Section 7 (Known Issues)
+- **After changes:** Update relevant sections and the Known Issues table
+
+### Release Verification (source of truth for release readiness)
+
+**CRITICAL: Before any release-related work, read `Debugging/RELEASE-VERIFICATION.md` first.** This document tracks every verification test run, its environment, results, and what's still outstanding. After running any verification tests, update this document with the results. This ensures we always know exactly where we stand in the release process.
+
+- **Location:** `Debugging/RELEASE-VERIFICATION.md`
+- **Before each test run:** Check what's already been verified and what's still missing
+- **After each test run:** Add results to the Test Execution Log, update check statuses
+- **Before tagging a release:** Verify ALL Pre-Release Gate items are checked off
+
 ### Tracking Docs (secondary)
 
 Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature**:
@@ -142,6 +176,10 @@ Also update relevant `/tracking-fixes/*.md` **immediately after each fix/feature
 ## Project Structure
 
 ```
+Debugging/         Deployment issue tracking & release verification (source of truth)
+  BRIDGE-ARCHITECTURE.md   Bridge topology, capture pipeline, bypass, health monitoring
+  DEPLOYMENT-ISSUES.md   All deployment bugs, causal chains, fixes, lessons
+  RELEASE-VERIFICATION.md  Release readiness verification test runs & gate status
 scripts/           Shell scripts for system setup
   bridge/          Linux bridge configuration (setup-bridge.sh)
   install/         Installation automation (install.sh)
@@ -179,6 +217,26 @@ docker compose -f docker/docker-compose.yml up -d
 
 # Run daemon locally (development)
 cd daemon && python3 main.py
+```
+
+### OpenSearch Security Bootstrap (run after every `docker compose down` + `up`)
+
+> **THIS IS CRUCIAL TO THE FULL STACK.** Without this bootstrap, OpenSearch returns "Unauthorized" for every request, which means: no data ingestion (logstash/filebeat rejected), no API responses (daemon gets 403), no dashboard data (all pages show empty), and no alerts. The entire NetTap stack is non-functional without a working OpenSearch auth layer. **Always run bootstrap after ANY container recreation.**
+
+**CRITICAL: Every time the OpenSearch container is recreated** (`docker compose down` + `up`, `--force-recreate`, or any operation that resets the container filesystem), the `roles_mapping.yml` reverts to empty. This breaks ALL service authentication (logstash, filebeat, etc. get 403). You MUST re-run these commands. See Chain 11 in `Debugging/DEPLOYMENT-ISSUES.md` for full details.
+
+```bash
+# Step 1: Write roles_mapping.yml (admin → all_access)
+sudo docker exec nettap-opensearch python3 -c "open('/usr/share/opensearch/config/opensearch-security/roles_mapping.yml','w').write('---\n_meta:\n  type: \"rolesmapping\"\n  config_version: 2\n\nall_access:\n  reserved: false\n  backend_roles:\n  - \"admin\"\n  description: \"Maps admin backend role to all_access\"\n')"
+
+# Step 2: Push security config to .opendistro_security index
+sudo docker exec nettap-opensearch bash -c 'JAVA_HOME=/usr/share/opensearch/jdk /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/ -cacert /usr/share/opensearch/config/certs/ca.crt -cert /usr/share/opensearch/config/certs/admin.crt -key /usr/share/opensearch/config/certs/admin.key -icl -nhnv'
+
+# Step 3: Restart logstash + filebeat (they were stuck waiting)
+sudo docker compose -f docker/docker-compose.yml restart logstash filebeat
+
+# Step 4: Verify auth works
+sudo docker exec nettap-opensearch curl --config /var/local/curlrc/.opensearch.primary.curlrc --cacert /usr/share/opensearch/config/certs/ca.crt --insecure -s 'https://localhost:9200/_cluster/health' | python3 -m json.tool
 ```
 
 ## Technology Stack
@@ -228,6 +286,26 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 
 **CRITICAL: After completing any task from `plans/comprehensive-build-plan.md`, you MUST update the task's status in that file.** Mark completed tasks with a `[x]` checkbox prefix and add a completion note. This applies to all phases going forward. When starting a new phase, review the plan to see what's already done.
 
+## Design System (MANDATORY)
+
+**CRITICAL: Before ANY frontend/UI work, read `web/DESIGN-SYSTEM.md` first.** This document is the canonical design reference for all NetTap pages. It codifies the colors, spacing, typography, component patterns, and layout rules that every page MUST follow.
+
+- **Location:** `web/DESIGN-SYSTEM.md`
+- **Reference implementation:** `web/src/routes/logs/+page.svelte` (Log Explorer page)
+- **Global CSS tokens:** `web/src/lib/styles/global.css`
+- **Before any UI change:** Check the design system for the correct pattern, variable, or component
+- **After any UI change:** Verify the page still follows the design system rules (no hardcoded colors, spacing, or font sizes)
+
+### Key Rules
+1. **NEVER hardcode hex colors** — use CSS variables (`var(--red)`, not `#ff4757`)
+2. **NEVER hardcode spacing** — use spacing vars (`var(--space-md)`, not `16px`)
+3. **NEVER hardcode font sizes** — use text vars (`var(--text-sm)`, not `0.8125rem`)
+4. **NEVER set max-width on page containers** — pages are always full-width
+5. **ALL tables MUST be sortable** — ascending/descending on every column
+6. **NEVER use hardcoded text colors** (`#fff`, `#000`, `black`, `white`) — always use theme-aware CSS variables (`var(--text-primary)`, `var(--text-secondary)`, `var(--text-muted)`). The UI is dark-mode now but light mode is planned; hardcoded colors will break when themes change. Pay special attention to `<button>` elements whose user-agent default `color: ButtonText` (black) overrides inherited text colors — always set an explicit color class.
+
+---
+
 ## SIEM Feature Integration Policy
 
 **Reference:** `plans/siem-features-gameplan.md` contains the full implementation plan for 20 SIEM-inspired features (10 Must-Have + 10 Should-Have).
@@ -265,6 +343,159 @@ The script reads `tool_input.file_path` from stdin JSON using `python3` (not `jq
 
 ### Stop: Test Coverage Gatekeeper
 An agent hook that fires when Claude tries to stop. It reads the session transcript to find all `.ts` files modified via Edit/Write, then uses Glob to verify each has a matching `.test.ts` or `.spec.ts` file. If tests are missing, it returns `{"ok": false, "reason": "..."}` to block the stop and instruct Claude to create them. Checks `stop_hook_active` to avoid infinite loops.
+
+## Communication Rules
+
+**ALWAYS provide exact, copy-paste-ready commands.** Never say "run install.sh" or "do a docker compose down". Always give the full command with sudo, flags, paths, and working directory. The user should be able to copy and paste directly into their terminal without guessing.
+
+Example — **BAD:**
+> Run `install.sh` on the target host, then check the services.
+
+Example — **GOOD:**
+```bash
+# Clean up previous deployment
+cd /opt/nettap
+sudo docker compose -f docker/docker-compose.yml down -v
+
+# Pull latest code and reinstall
+cd /opt/nettap
+sudo git pull origin develop
+sudo scripts/install/install.sh
+
+# Verify services are healthy
+sudo docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Test NIC discovery endpoint
+curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
+```
+
+This applies to all deployment, testing, debugging, and diagnostic instructions.
+
+**When there are multiple sequential commands for the remote device, ALWAYS write them as a script file in `scripts/remote/`.** Multi-line commands with `\` and `&&` chains BREAK when copy-pasted into SSH terminals. This has caused repeated problems and wasted time.
+
+Example — **BAD (inline commands — NEVER DO THIS):**
+```bash
+cd ~/NetTap && \
+git pull origin phase-4/webui-v2 && \
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon && \
+sudo docker compose -f docker/docker-compose.yml up -d nettap-storage-daemon --force-recreate
+```
+
+Example — **GOOD (write a script, tell user to run it):**
+Write the commands into `scripts/remote/deploy-daemon.sh`, push to git, then tell user:
+```bash
+sudo bash scripts/remote/deploy-daemon.sh
+```
+
+**Every remote script must include the FULL workflow.** Pull code → build → deploy → wait → verify. The user runs ONE command and walks away.
+
+**The only exception** is single, short commands (one line, no chaining):
+```bash
+sudo docker logs nettap-storage-daemon --tail 50
+```
+
+---
+
+## Remote Device Workflow
+
+> **HIGHEST PRIORITY — READ THIS FIRST BEFORE ANY DEPLOYMENT WORK**
+
+**The NetTap device is a COMPLETELY SEPARATE physical machine on the local network.** It is NOT the development machine. Claude Code runs on the dev machine. The user SSHes into the NetTap device and copy-pastes commands/scripts manually. These are two entirely different computers with different filesystems, different installed software, and different directory structures.
+
+### Critical Facts About the NetTap Device
+
+1. **The device does NOT have `npm` installed.** All builds happen inside Docker containers via `docker compose build`. NEVER give commands that use `npm` directly on the device.
+2. **The device does NOT have the same directory structure as the dev machine.** The repo lives at `~/NetTap` (i.e., `/home/nettap/NetTap`). There is NO `/opt/nettap`, no `/root/NetTap`.
+3. **`scripts/remote/` does NOT exist on the device** unless manually created. Do NOT push deploy scripts to git and expect them to be pullable — the directory may have permission issues or not exist. Instead, provide scripts via `cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT` for the user to paste directly.
+4. **`sudo` changes `$HOME` to `/root`.** If a script uses `$HOME/NetTap` and runs with `sudo`, it resolves to `/root/NetTap` which doesn't exist. Either: (a) don't use `sudo` for the whole script — only `sudo` individual commands that need it, or (b) hardcode `REPO_DIR="/home/nettap/NetTap"`, or (c) use `$(getent passwd nettap | cut -d: -f6)/NetTap`.
+5. **The device runs Ubuntu Server 22.04** with Docker and Docker Compose. That's it. No Node.js, no npm, no Python pip packages outside of containers.
+
+### Rules for Claude Code
+
+1. **Never assume commands can run on the NetTap device from this machine.** All deployment, debugging, and diagnostic commands are copy-pasted by the user over SSH.
+2. **NEVER give multi-line commands with `\` continuations or `&&` chains for the remote device.** They ALWAYS break when copy-pasted into SSH terminals (trailing spaces after `\` become escaped spaces, `&&` chains fail silently). This has caused repeated frustration.
+3. **ALL remote commands MUST be provided as a self-contained script** the user can paste into a file on the device (via `cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT`). Do NOT push scripts to `scripts/remote/` in git — the device may not be able to pull them due to permission issues or missing directories.
+4. **Every remote script must include the full workflow.** Pull latest code, build containers, deploy, wait for startup, then run the actual task. The user runs ONE script and walks away. Never separate "deploy" and "test" into different steps.
+5. **Each remote script must be self-contained and idempotent** — include progress markers (`echo "→ Step..."`), error handling (no `set -e`, use per-command `|| true` or explicit error messages), and verify results at the end.
+6. **Scripts must handle `sudo` correctly.** Run the script as the normal user (`bash /tmp/script.sh`), and only `sudo` individual docker commands inside. NEVER `sudo bash /tmp/script.sh` — this breaks `$HOME`, `git` ownership, etc.
+7. **NEVER use `npm`, `node`, or `python3` directly in device scripts** — these may not be installed. All builds happen via `docker compose build`. All Python/Node execution happens inside containers.
+
+### Deploy Script Template (MANDATORY FORMAT)
+
+**Every deploy script MUST follow this exact structure.** Use `set -u` (not `set -e`). Use numbered steps with `echo "→ Step N:"` progress markers. Include health-check polling and API verification at the end.
+
+```bash
+cat > /tmp/deploy-DESCRIPTION.sh << 'SCRIPT'
+#!/usr/bin/env bash
+set -u
+
+REPO_DIR="/home/nettap/NetTap"
+BRANCH="branch-name-here"
+
+echo "=== Deploy TITLE ==="
+echo ""
+
+echo "→ Step 1: Pull latest code..."
+cd "$REPO_DIR"
+git fetch origin
+git checkout "$BRANCH"
+git pull origin "$BRANCH"
+echo "   ✓ Code updated"
+echo ""
+
+echo "→ Step 2: Rebuild web container..."
+sudo docker compose -f docker/docker-compose.yml build nettap-web
+echo "   ✓ Web container rebuilt"
+echo ""
+
+echo "→ Step 3: Rebuild daemon container..."
+sudo docker compose -f docker/docker-compose.yml build nettap-storage-daemon
+echo "   ✓ Daemon container rebuilt"
+echo ""
+
+echo "→ Step 4: Restart containers..."
+sudo docker compose -f docker/docker-compose.yml up -d nettap-web nettap-storage-daemon --force-recreate
+echo "   ✓ Containers restarted"
+echo ""
+
+echo "→ Step 5: Wait for containers to become healthy..."
+for i in $(seq 1 30); do
+    WEB_STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' nettap-web 2>/dev/null || echo "unknown")
+    DAEMON_STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' nettap-storage-daemon 2>/dev/null || echo "unknown")
+    if [ "$WEB_STATUS" = "healthy" ] && [ "$DAEMON_STATUS" = "healthy" ]; then
+        echo "   ✓ Both containers healthy"
+        break
+    fi
+    echo "   waiting... web=$WEB_STATUS daemon=$DAEMON_STATUS ($i/30)"
+    sleep 5
+done
+echo ""
+
+echo "→ Step 6: Test relevant API endpoint..."
+# Use: sudo docker exec nettap-storage-daemon curl -s http://localhost:8880/api/...
+# Parse with python3 -c inside the curl pipeline
+echo ""
+
+echo "→ Step 7: Container status..."
+sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-web|nettap-storage-daemon"
+echo ""
+
+echo "=== Deploy Complete ==="
+echo "Open the dashboard to verify."
+SCRIPT
+
+echo "Script written. Now run:"
+echo "  bash /tmp/deploy-DESCRIPTION.sh"
+```
+
+**Key rules for deploy scripts:**
+- Only rebuild containers that have changes (skip web if only daemon changed, etc.)
+- Always include API-level verification steps that test the specific fix
+- Health-check loop polls up to 30 times (2.5 minutes) with 5s intervals
+- The `cat > /tmp/... << 'SCRIPT'` heredoc is pasted by the user into SSH — the user then runs `bash /tmp/...`
+- Name the script file descriptively: `/tmp/deploy-traffic-fix.sh`, `/tmp/deploy-auth-hotfix.sh`, etc.
+
+---
 
 ## Key Design Constraints
 

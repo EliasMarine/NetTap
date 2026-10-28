@@ -19,6 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
 # ---------------------------------------------------------------------------
@@ -57,8 +58,8 @@ while [[ $# -gt 0 ]]; do
         --stdout)       MODE_STDOUT="true"; shift ;;
         --env-file)     ENV_FILE="$2"; shift 2 ;;
         --force)        MODE_FORCE="true"; shift ;;
-        --dry-run)      NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)   NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)      NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)   NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)      usage ;;
         *)              echo "Unknown option: $1"; usage ;;
     esac

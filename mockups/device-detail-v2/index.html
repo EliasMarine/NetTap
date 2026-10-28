@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>192.168.1.113 | Device Intelligence | NetTap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ================================================================
+   NetTap Design Tokens
+   ================================================================ */
+:root {
+  --bg-void: #06080d; --bg-primary: #0a0e17; --bg-secondary: #0f1319;
+  --bg-tertiary: #141920; --bg-elevated: #181d27; --bg-input: #0d1118;
+  --text-primary: #e8edf5; --text-secondary: #8892a4; --text-muted: #555f73; --text-dim: #3a4255; --text-link: #00d4ff;
+  --border-dim: #1a1f2e; --border-default: #222939; --border-bright: #2d3548;
+  --cyan: #00d4ff; --green: #00e676; --amber: #ffab00; --red: #ff4757;
+  --purple: #b388ff; --orange: #ff6d00; --blue: #448aff; --pink: #ff4081; --teal: #00bfa5;
+  --cyan-dim: rgba(0,212,255,0.12); --green-dim: rgba(0,230,118,0.12);
+  --amber-dim: rgba(255,171,0,0.12); --red-dim: rgba(255,71,87,0.12);
+  --purple-dim: rgba(179,136,255,0.12);
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --text-xs: 0.75rem; --text-sm: 0.8125rem; --text-base: 0.875rem;
+  --text-lg: 1rem; --text-xl: 1.125rem; --text-2xl: 1.375rem; --text-3xl: 1.75rem; --text-4xl: 2.25rem;
+  --space-xs: 4px; --space-sm: 8px; --space-md: 16px; --space-lg: 24px; --space-xl: 32px; --space-2xl: 48px;
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4); --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+  --transition-fast: 150ms ease; --transition-normal: 250ms ease; --transition-slow: 400ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary);
+  font-size: var(--text-base); line-height: 1.5; -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--font-mono); }
+
+/* ================================================================
+   Page Layout
+   ================================================================ */
+.page { padding: var(--space-lg) var(--space-xl); max-width: 100%; }
+
+.breadcrumb {
+  display: flex; align-items: center; gap: var(--space-sm);
+  font-size: var(--text-sm); color: var(--text-muted); margin-bottom: var(--space-md);
+}
+.breadcrumb a { color: var(--text-secondary); text-decoration: none; transition: color var(--transition-fast); }
+.breadcrumb a:hover { color: var(--accent, var(--cyan)); }
+.breadcrumb .sep { color: var(--text-dim); font-size: var(--text-xs); }
+.breadcrumb .current { color: var(--text-primary); font-weight: 500; }
+
+/* ================================================================
+   Section 1: Device Identity Header
+   ================================================================ */
+.device-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.device-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-md);
+}
+
+.device-header-main {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+/* Subtle gradient accent along top */
+.device-header::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple), var(--cyan));
+  opacity: 0.7;
+}
+
+.device-icon-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.device-icon-box {
+  width: 72px; height: 72px;
+  border-radius: var(--radius-lg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2rem;
+  background: var(--cyan-dim);
+  border: 1px solid rgba(0,212,255,0.2);
+  position: relative;
+}
+
+/* Online pulse */
+.status-dot {
+  position: absolute;
+  bottom: -2px; right: -2px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--green);
+  border: 3px solid var(--bg-secondary);
+  box-shadow: 0 0 8px rgba(0,230,118,0.5);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse { 0%,100% { box-shadow: 0 0 4px rgba(0,230,118,0.3); } 50% { box-shadow: 0 0 12px rgba(0,230,118,0.6); } }
+
+.status-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--green);
+}
+
+.device-info { display: flex; flex-direction: column; gap: var(--space-sm); }
+
+.device-info h1 {
+  font-size: var(--text-2xl); font-weight: 700; letter-spacing: -0.02em;
+  font-family: var(--font-mono); color: var(--text-primary);
+}
+
+.device-hostname {
+  font-size: var(--text-lg); color: var(--text-secondary); margin-top: -4px;
+}
+
+.device-meta {
+  display: flex; flex-wrap: wrap; gap: var(--space-sm) var(--space-lg);
+  margin-top: var(--space-xs);
+}
+
+.meta-item {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--text-xs); color: var(--text-muted);
+}
+
+.meta-label { font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+.meta-value { color: var(--text-secondary); font-family: var(--font-mono); }
+
+.device-badges {
+  display: flex; gap: var(--space-sm); margin-top: var(--space-sm);
+}
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: var(--radius-sm);
+  font-size: var(--text-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+.badge-os { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(179,136,255,0.2); }
+.badge-category { background: var(--cyan-dim); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
+.badge-new { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
+
+.protocol-list {
+  display: flex; gap: 4px; margin-top: var(--space-xs);
+}
+
+.proto-tag {
+  padding: 2px 8px; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+  background: var(--bg-tertiary); color: var(--text-muted);
+  border: 1px solid var(--border-dim);
+  text-transform: uppercase;
+}
+
+/* Risk Gauge */
+.risk-area {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-sm);
+}
+
+.risk-gauge {
+  width: 120px; height: 70px;
+  position: relative;
+}
+
+.risk-gauge svg { width: 100%; height: 100%; }
+
+.risk-score-text {
+  font-family: var(--font-mono); font-size: var(--text-2xl); font-weight: 700;
+  fill: var(--red);
+}
+
+.risk-label-text {
+  font-size: var(--text-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  fill: var(--text-muted);
+}
+
+.risk-level {
+  font-size: var(--text-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 3px 12px; border-radius: var(--radius-sm);
+  background: var(--red-dim); color: var(--red);
+}
+
+/* Header controls */
+.header-actions {
+  display: flex; align-items: center; gap: var(--space-md);
+}
+
+.pills {
+  display: flex; gap: 2px;
+  background: var(--bg-tertiary); border-radius: var(--radius-md);
+  padding: 2px; border: 1px solid var(--border-dim);
+}
+
+.pill {
+  padding: 5px 12px; border: none; background: transparent;
+  color: var(--text-secondary); font-family: var(--font-mono);
+  font-size: var(--text-xs); font-weight: 500;
+  border-radius: 5px; cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.pill:hover { color: var(--text-primary); background: var(--bg-elevated); }
+.pill.active { background: var(--cyan); color: var(--bg-void); font-weight: 600; }
+
+.auto-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; background: var(--bg-tertiary);
+  border: 1px solid var(--border-dim); border-radius: var(--radius-md);
+  color: var(--text-muted); font-size: var(--text-xs);
+  font-family: var(--font-sans); cursor: pointer;
+}
+
+.auto-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(0,212,255,0.06); }
+
+.auto-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim);
+}
+
+.auto-btn.active .auto-dot { background: var(--cyan); box-shadow: 0 0 6px rgba(0,212,255,0.5); animation: pulse 2s infinite; }
+
+/* ================================================================
+   Section 2: Stat Cards
+   ================================================================ */
+.stats-grid {
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-md); margin-bottom: var(--space-lg);
+}
+
+.stat-card {
+  background: var(--bg-secondary); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md); padding: var(--space-md);
+  position: relative; overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.stat-card:hover { border-color: var(--border-default); }
+
+.stat-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 2px; background: var(--border-dim);
+}
+
+.stat-card:first-child::before { background: var(--cyan); box-shadow: 0 0 10px rgba(0,212,255,0.3); }
+
+.stat-card-label {
+  font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.06em; font-weight: 500; margin-bottom: 6px;
+}
+
+.stat-card-value {
+  font-family: var(--font-mono); font-size: var(--text-xl); font-weight: 600;
+  color: var(--text-primary); letter-spacing: -0.02em; line-height: 1;
+}
+
+.stat-card-value.accent { color: var(--cyan); }
+.stat-card-value.warning { color: var(--amber); }
+.stat-card-value.danger { color: var(--red); }
+
+.stat-card-sub {
+  font-size: 10px; color: var(--text-muted); margin-top: 6px;
+  font-family: var(--font-mono);
+}
+
+.stat-trend {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-family: var(--font-mono); font-size: 10px; margin-top: 6px;
+  padding: 2px 6px; border-radius: var(--radius-sm);
+}
+
+.trend-up { color: var(--green); background: var(--green-dim); }
+.trend-down { color: var(--red); background: var(--red-dim); }
+.trend-neutral { color: var(--text-muted); background: var(--bg-tertiary); }
+
+/* Split bar for DL/UL */
+.split-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; gap: 1px; margin-top: 8px; }
+.split-dl { background: var(--cyan); border-radius: 2px 0 0 2px; }
+.split-ul { background: var(--purple); border-radius: 0 2px 2px 0; }
+
+.split-legend {
+  display: flex; gap: var(--space-sm); margin-top: 4px; font-size: 10px;
+}
+
+.split-legend-item { display: flex; align-items: center; gap: 4px; color: var(--text-dim); }
+.split-legend-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+/* Upload ratio gauge */
+.upload-ratio-bar {
+  height: 6px; border-radius: 3px; background: var(--bg-tertiary);
+  margin-top: 8px; overflow: hidden; position: relative;
+}
+
+.upload-ratio-fill {
+  height: 100%; border-radius: 3px;
+  transition: width var(--transition-slow);
+}
+
+/* ================================================================
+   Section 3: Chart
+   ================================================================ */
+.chart-section {
+  background: var(--bg-secondary); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md); margin-bottom: var(--space-lg); overflow: hidden;
+}
+
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.section-title { font-size: var(--text-sm); font-weight: 600; }
+.section-sub { font-size: var(--text-xs); color: var(--text-muted); margin-left: var(--space-sm); }
+
+.chart-legend { display: flex; gap: var(--space-md); font-size: var(--text-xs); color: var(--text-secondary); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+.chart-body { padding: var(--space-md) var(--space-lg) var(--space-sm); height: 220px; }
+
+.chart-svg { width: 100%; height: 100%; }
+.grid-line { stroke: var(--border-dim); stroke-dasharray: 4 4; }
+.axis-label { fill: var(--text-dim); font-family: var(--font-mono); font-size: 10px; }
+
+/* ================================================================
+   Section 4: Traffic Intelligence (2 columns)
+   ================================================================ */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-lg); }
+
+.card {
+  background: var(--bg-secondary); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md); overflow: hidden;
+}
+
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.card-title { font-size: var(--text-sm); font-weight: 600; }
+
+.card-badge {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  color: var(--text-muted); background: var(--bg-tertiary);
+  padding: 2px 8px; border-radius: var(--radius-sm);
+}
+
+/* Category bar list */
+.bar-list { padding: var(--space-xs) 0; }
+
+.bar-row {
+  display: grid; grid-template-columns: 140px 1fr auto;
+  align-items: center; gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-lg);
+  transition: background var(--transition-fast);
+  cursor: pointer; text-decoration: none; color: inherit;
+}
+
+.bar-row:hover { background: var(--bg-tertiary); }
+
+.bar-label-area {
+  display: flex; align-items: center; gap: var(--space-sm);
+  min-width: 0; overflow: hidden;
+}
+
+.bar-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.bar-label {
+  font-size: var(--text-sm); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+
+.bar-track {
+  height: 8px; background: var(--bg-tertiary);
+  border-radius: 4px; overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%; border-radius: 4px; opacity: 0.7;
+  transition: width var(--transition-slow);
+}
+
+.bar-row:hover .bar-fill { opacity: 1; }
+
+.bar-value {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  color: var(--text-secondary); white-space: nowrap; text-align: right;
+  min-width: 60px;
+}
+
+/* Service row */
+.svc-row {
+  display: grid; grid-template-columns: 1fr auto auto;
+  align-items: center; gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+  transition: background var(--transition-fast);
+}
+
+.svc-row:last-child { border-bottom: none; }
+.svc-row:hover { background: var(--bg-tertiary); }
+
+.svc-name { font-size: var(--text-sm); }
+.svc-bytes { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); }
+.svc-conns { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+
+/* ================================================================
+   Section 5: Security Posture
+   ================================================================ */
+/* Risk factors */
+.risk-factor-list { padding: var(--space-md) var(--space-lg); }
+
+.risk-factor {
+  display: grid; grid-template-columns: 160px 1fr auto;
+  align-items: center; gap: var(--space-md);
+  padding: var(--space-sm) 0;
+}
+
+.risk-factor + .risk-factor { border-top: 1px solid var(--border-dim); }
+
+.rf-name { font-size: var(--text-sm); color: var(--text-secondary); }
+
+.rf-bar {
+  height: 8px; background: var(--bg-tertiary);
+  border-radius: 4px; overflow: hidden; position: relative;
+}
+
+.rf-fill {
+  height: 100%; border-radius: 4px;
+  transition: width var(--transition-slow);
+}
+
+.rf-score {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  font-weight: 600; min-width: 50px; text-align: right;
+}
+
+/* Alert list */
+.alert-row {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+  transition: background var(--transition-fast);
+}
+
+.alert-row:last-child { border-bottom: none; }
+.alert-row:hover { background: var(--bg-tertiary); }
+
+.alert-severity {
+  padding: 2px 8px; border-radius: var(--radius-sm);
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; white-space: nowrap;
+}
+
+.sev-high { background: var(--red-dim); color: var(--red); }
+.sev-med { background: var(--amber-dim); color: var(--amber); }
+.sev-low { background: rgba(0,212,255,0.08); color: var(--cyan); }
+
+.alert-text { font-size: var(--text-sm); color: var(--text-primary); }
+.alert-category { font-size: var(--text-xs); color: var(--text-muted); }
+.alert-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+/* ================================================================
+   Section 6: Network Detail (3 columns)
+   ================================================================ */
+.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-lg); }
+
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+
+.data-table th {
+  padding: var(--space-sm) var(--space-md); text-align: left;
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  background: var(--bg-tertiary); border-bottom: 1px solid var(--border-dim);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-dim);
+  vertical-align: middle;
+}
+
+.data-table tbody tr { transition: background var(--transition-fast); }
+.data-table tbody tr:hover { background: var(--bg-tertiary); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+
+.geo-flag { font-size: 14px; margin-right: 4px; }
+.port-suspicious { color: var(--red); font-weight: 600; }
+
+.dns-nxdomain-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 6px; border-radius: var(--radius-sm);
+  background: var(--red-dim); color: var(--red);
+  font-size: 10px; font-weight: 600;
+}
+
+/* ================================================================
+   Section 7: Recent Connections
+   ================================================================ */
+.conn-toolbar {
+  display: flex; align-items: center; gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.proto-pills { display: flex; gap: 2px; }
+
+.proto-pill {
+  padding: 4px 10px; border: 1px solid var(--border-dim);
+  background: transparent; color: var(--text-muted);
+  font-size: 10px; font-family: var(--font-mono); font-weight: 500;
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: all var(--transition-fast); text-transform: uppercase;
+}
+
+.proto-pill:hover { color: var(--text-secondary); border-color: var(--border-default); }
+.proto-pill.active { background: var(--cyan); color: var(--bg-void); border-color: var(--cyan); }
+
+.conn-row { cursor: pointer; }
+.conn-row:hover { background: var(--bg-elevated) !important; }
+
+.conn-row.selected { background: var(--cyan-dim) !important; border-left: 3px solid var(--cyan); }
+
+.conn-dl { color: var(--cyan); }
+.conn-ul { color: var(--purple); }
+
+.pagination {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--space-md); padding: var(--space-md);
+  border-top: 1px solid var(--border-dim);
+}
+
+.page-btn {
+  padding: 4px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  font-size: var(--text-xs); cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.page-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
+.page-info { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+
+.quick-links {
+  display: flex; gap: var(--space-md); padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border-dim);
+}
+
+.quick-link {
+  font-size: var(--text-xs); color: var(--text-link);
+  text-decoration: none; transition: opacity var(--transition-fast);
+}
+
+.quick-link:hover { opacity: 0.8; text-decoration: underline; }
+
+/* ================================================================
+   Drill-Down Drawer (slides from right)
+   ================================================================ */
+.drawer-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  z-index: 100; backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease;
+}
+
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 560px; background: var(--bg-primary);
+  border-left: 1px solid var(--border-dim);
+  z-index: 101; display: flex; flex-direction: column;
+  box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+  animation: slideIn 0.25s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+.drawer-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+  background: var(--bg-secondary);
+}
+
+.drawer-title-area { display: flex; flex-direction: column; gap: 2px; }
+.drawer-title { font-size: var(--text-lg); font-weight: 600; }
+.drawer-subtitle { font-size: var(--text-xs); color: var(--text-muted); font-family: var(--font-mono); }
+
+.drawer-close {
+  width: 32px; height: 32px; border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); background: var(--bg-tertiary);
+  color: var(--text-muted); font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.drawer-close:hover { border-color: var(--border-bright); color: var(--text-primary); }
+
+/* Drawer tabs */
+.drawer-tabs {
+  display: flex; background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.drawer-tab {
+  padding: var(--space-sm) var(--space-lg);
+  font-size: var(--text-sm); font-weight: 500;
+  color: var(--text-muted); border: none; background: none;
+  cursor: pointer; position: relative;
+  transition: color var(--transition-fast);
+}
+
+.drawer-tab:hover { color: var(--text-secondary); }
+
+.drawer-tab.active {
+  color: var(--cyan);
+}
+
+.drawer-tab.active::after {
+  content: ''; position: absolute;
+  bottom: 0; left: var(--space-lg); right: var(--space-lg);
+  height: 2px; background: var(--cyan);
+  border-radius: 1px;
+}
+
+/* Drawer body */
+.drawer-body {
+  flex: 1; overflow-y: auto; padding: var(--space-lg);
+}
+
+.drawer-body::-webkit-scrollbar { width: 6px; }
+.drawer-body::-webkit-scrollbar-track { background: transparent; }
+.drawer-body::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
+/* Connection detail grid */
+.detail-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm) var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.detail-item { display: flex; flex-direction: column; gap: 2px; }
+
+.detail-label {
+  font-size: 10px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500;
+}
+
+.detail-value { font-size: var(--text-sm); color: var(--text-primary); font-family: var(--font-mono); }
+
+.detail-section-title {
+  font-size: var(--text-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-muted); margin-bottom: var(--space-sm);
+  margin-top: var(--space-lg); padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+/* TShark Terminal */
+.tshark-controls {
+  display: flex; gap: var(--space-sm); margin-bottom: var(--space-md);
+}
+
+.tshark-btn {
+  padding: 6px 14px; border-radius: var(--radius-sm);
+  font-size: var(--text-xs); font-weight: 600; cursor: pointer;
+  transition: all var(--transition-fast); border: 1px solid;
+}
+
+.tshark-btn-primary {
+  background: var(--cyan); color: var(--bg-void);
+  border-color: var(--cyan);
+}
+
+.tshark-btn-primary:hover { box-shadow: 0 0 12px rgba(0,212,255,0.3); }
+
+.tshark-btn-secondary {
+  background: transparent; color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
+.tshark-btn-secondary:hover { border-color: var(--border-bright); color: var(--text-primary); }
+.tshark-btn-secondary.active { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+
+.tshark-filter {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-tertiary); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); color: var(--cyan);
+  margin-bottom: var(--space-md); word-break: break-all;
+}
+
+.tshark-filter-label {
+  font-size: 10px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.06em; margin-bottom: 4px; font-weight: 500;
+}
+
+.tshark-terminal {
+  background: var(--bg-void); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md); padding: var(--space-md);
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.7;
+  color: var(--text-secondary); max-height: 400px; overflow: auto;
+  white-space: pre; tab-size: 4;
+}
+
+.tshark-terminal::-webkit-scrollbar { width: 6px; height: 6px; }
+.tshark-terminal::-webkit-scrollbar-track { background: transparent; }
+.tshark-terminal::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+
+.tshark-line-no { color: var(--text-dim); user-select: none; }
+.tshark-timestamp { color: var(--text-muted); }
+.tshark-src { color: var(--cyan); }
+.tshark-dst { color: var(--purple); }
+.tshark-proto { color: var(--amber); font-weight: 600; }
+.tshark-info { color: var(--text-secondary); }
+.tshark-arrow { color: var(--text-dim); }
+
+/* Related activity */
+.related-item {
+  display: flex; align-items: center; gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border-dim);
+  font-size: var(--text-sm);
+}
+
+.related-item:last-child { border-bottom: none; }
+
+.related-type {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  min-width: 40px; text-align: center;
+}
+
+.rt-conn { background: var(--cyan-dim); color: var(--cyan); }
+.rt-dns { background: var(--purple-dim); color: var(--purple); }
+.rt-alert { background: var(--red-dim); color: var(--red); }
+
+.related-text { flex: 1; color: var(--text-secondary); }
+.related-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+
+/* ================================================================
+   Animations — staggered reveal
+   ================================================================ */
+.device-header { animation: fadeUp 0.4s ease 0.05s both; }
+.stats-grid { animation: fadeUp 0.4s ease 0.1s both; }
+.chart-section { animation: fadeUp 0.4s ease 0.15s both; }
+.two-col { animation: fadeUp 0.4s ease 0.2s both; }
+.two-col + .two-col { animation-delay: 0.25s; }
+.three-col { animation: fadeUp 0.4s ease 0.3s both; }
+.conn-section { animation: fadeUp 0.4s ease 0.35s both; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- Breadcrumb -->
+<nav class="breadcrumb">
+  <a href="#">Home</a><span class="sep">/</span>
+  <a href="#">Devices</a><span class="sep">/</span>
+  <span class="current">192.168.1.113</span>
+</nav>
+
+<!-- ============================================================
+     Section 1: Device Identity Header
+     ============================================================ -->
+<div class="device-header">
+  <div class="device-header-top">
+    <div class="header-actions">
+      <div class="pills">
+        <button class="pill">1h</button>
+        <button class="pill">6h</button>
+        <button class="pill active">24h</button>
+        <button class="pill">7d</button>
+        <button class="pill">30d</button>
+      </div>
+      <button class="auto-btn active"><span class="auto-dot"></span> Auto</button>
+    </div>
+  </div>
+
+  <div class="device-header-main">
+  <div class="device-icon-area">
+    <div class="device-icon-box">
+      &#x1F4F1;
+      <span class="status-dot"></span>
+    </div>
+    <span class="status-label">Online</span>
+  </div>
+
+  <div class="device-info">
+    <h1>192.168.1.113</h1>
+    <div class="device-hostname">saras-iphone-2.local</div>
+    <div class="device-meta">
+      <span class="meta-item"><span class="meta-label">MAC</span> <span class="meta-value">A4:83:E7:2B:9C:01</span></span>
+      <span class="meta-item"><span class="meta-label">Vendor</span> <span class="meta-value">Apple, Inc.</span></span>
+      <span class="meta-item"><span class="meta-label">Last Seen</span> <span class="meta-value">2s ago</span></span>
+    </div>
+    <div class="device-badges">
+      <span class="badge badge-os">iOS</span>
+      <span class="badge badge-category">Phone</span>
+      <span class="badge badge-new">NEW</span>
+    </div>
+    <div class="protocol-list">
+      <span class="proto-tag">tcp</span>
+      <span class="proto-tag">udp</span>
+      <span class="proto-tag">icmp</span>
+      <span class="proto-tag">http</span>
+      <span class="proto-tag">tls</span>
+      <span class="proto-tag">dns</span>
+    </div>
+  </div>
+
+  <div class="risk-area">
+    <div class="risk-gauge">
+      <svg viewBox="0 0 120 70">
+        <!-- Background arc -->
+        <path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="var(--bg-tertiary)" stroke-width="10" stroke-linecap="round" />
+        <!-- Filled arc (65/100 = ~117deg of 180deg) -->
+        <path d="M 10 65 A 50 50 0 0 1 93 22" fill="none" stroke="url(#riskGrad)" stroke-width="10" stroke-linecap="round" />
+        <defs>
+          <linearGradient id="riskGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="var(--amber)" />
+            <stop offset="100%" stop-color="var(--red)" />
+          </linearGradient>
+        </defs>
+        <text x="60" y="52" text-anchor="middle" class="risk-score-text">65</text>
+        <text x="60" y="66" text-anchor="middle" class="risk-label-text">RISK</text>
+      </svg>
+    </div>
+    <span class="risk-level">HIGH</span>
+  </div>
+  </div><!-- /device-header-main -->
+</div>
+
+<!-- ============================================================
+     Section 2: Stat Cards
+     ============================================================ -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-card-label">Total Bandwidth</div>
+    <div class="stat-card-value accent">2.0 GB</div>
+    <div class="split-bar">
+      <div class="split-dl" style="width: 66%;"></div>
+      <div class="split-ul" style="width: 34%;"></div>
+    </div>
+    <div class="split-legend">
+      <span class="split-legend-item"><span class="split-legend-dot" style="background:var(--cyan);"></span>1.3 GB</span>
+      <span class="split-legend-item"><span class="split-legend-dot" style="background:var(--purple);"></span>680 MB</span>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-label">Upload Ratio</div>
+    <div class="stat-card-value warning">34%</div>
+    <div class="upload-ratio-bar">
+      <div class="upload-ratio-fill" style="width: 34%; background: linear-gradient(90deg, var(--green), var(--amber));"></div>
+    </div>
+    <div class="stat-card-sub">Normal range</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-label">Connections</div>
+    <div class="stat-card-value">9.0K</div>
+    <span class="stat-trend trend-up">&uarr; 12.3%</span>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-label">Alerts</div>
+    <div class="stat-card-value danger">3,322</div>
+    <span class="stat-trend trend-up" style="color:var(--red);background:var(--red-dim);">&uarr; 847 new</span>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-label">Unique Destinations</div>
+    <div class="stat-card-value">142</div>
+    <span class="stat-trend trend-neutral">&ndash; stable</span>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-card-label">First Seen</div>
+    <div class="stat-card-value" style="font-size: var(--text-lg);">Mar 12</div>
+    <div class="stat-card-sub">Last: 2s ago</div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 3: Bandwidth Chart
+     ============================================================ -->
+<div class="chart-section">
+  <div class="section-header">
+    <div style="display:flex;align-items:center;">
+      <span class="section-title">Bandwidth Over Time</span>
+      <span class="section-sub">Last 24 hours</span>
+    </div>
+    <div class="chart-legend">
+      <span class="legend-item"><span class="legend-dot" style="background:var(--cyan);"></span>Download</span>
+      <span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span>Upload</span>
+    </div>
+  </div>
+  <div class="chart-body">
+    <svg class="chart-svg" viewBox="0 0 1000 180" preserveAspectRatio="none">
+      <line x1="40" y1="10" x2="1000" y2="10" class="grid-line" />
+      <line x1="40" y1="52" x2="1000" y2="52" class="grid-line" />
+      <line x1="40" y1="94" x2="1000" y2="94" class="grid-line" />
+      <line x1="40" y1="136" x2="1000" y2="136" class="grid-line" />
+      <line x1="40" y1="170" x2="1000" y2="170" stroke="var(--border-dim)" />
+
+      <text x="35" y="14" class="axis-label" text-anchor="end">300MB</text>
+      <text x="35" y="56" class="axis-label" text-anchor="end">225MB</text>
+      <text x="35" y="98" class="axis-label" text-anchor="end">150MB</text>
+      <text x="35" y="140" class="axis-label" text-anchor="end">75MB</text>
+      <text x="35" y="174" class="axis-label" text-anchor="end">0</text>
+
+      <text x="120" y="180" class="axis-label" text-anchor="middle" style="font-size:9px">02:00</text>
+      <text x="300" y="180" class="axis-label" text-anchor="middle" style="font-size:9px">06:00</text>
+      <text x="480" y="180" class="axis-label" text-anchor="middle" style="font-size:9px">10:00</text>
+      <text x="660" y="180" class="axis-label" text-anchor="middle" style="font-size:9px">14:00</text>
+      <text x="840" y="180" class="axis-label" text-anchor="middle" style="font-size:9px">18:00</text>
+      <text x="960" y="180" class="axis-label" text-anchor="middle" style="font-size:9px">22:00</text>
+
+      <defs>
+        <linearGradient id="dlG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--cyan)" stop-opacity="0.3"/><stop offset="100%" stop-color="var(--cyan)" stop-opacity="0.02"/></linearGradient>
+        <linearGradient id="ulG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--purple)" stop-opacity="0.2"/><stop offset="100%" stop-color="var(--purple)" stop-opacity="0.02"/></linearGradient>
+      </defs>
+
+      <path fill="url(#ulG)" d="M80,170 L80,90 L140,85 L200,95 L260,100 L320,130 L380,135 L440,120 L500,70 L560,45 L620,55 L680,80 L740,60 L800,75 L860,95 L920,110 L960,120 L960,170Z"/>
+      <path stroke="var(--purple)" stroke-width="2" fill="none" stroke-opacity="0.8" d="M80,90 L140,85 L200,95 L260,100 L320,130 L380,135 L440,120 L500,70 L560,45 L620,55 L680,80 L740,60 L800,75 L860,95 L920,110 L960,120"/>
+
+      <path fill="url(#dlG)" d="M80,170 L80,140 L140,135 L200,138 L260,145 L320,152 L380,148 L440,135 L500,115 L560,100 L620,108 L680,125 L740,110 L800,118 L860,132 L920,140 L960,145 L960,170Z"/>
+      <path stroke="var(--cyan)" stroke-width="2" fill="none" d="M80,140 L140,135 L200,138 L260,145 L320,152 L380,148 L440,135 L500,115 L560,100 L620,108 L680,125 L740,110 L800,118 L860,132 L920,140 L960,145"/>
+    </svg>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 4: Traffic Intelligence
+     ============================================================ -->
+<div class="two-col">
+  <!-- Traffic Categories -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Traffic Categories</span>
+      <span class="card-badge">6 categories</span>
+    </div>
+    <div class="bar-list">
+      <a class="bar-row" href="#">
+        <div class="bar-label-area"><span class="bar-dot" style="background:var(--red);"></span><span class="bar-label">Streaming</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--red);"></div></div>
+        <span class="bar-value">912 MB</span>
+      </a>
+      <a class="bar-row" href="#">
+        <div class="bar-label-area"><span class="bar-dot" style="background:var(--cyan);"></span><span class="bar-label">Cloud Services</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:65%;background:var(--cyan);"></div></div>
+        <span class="bar-value">594 MB</span>
+      </a>
+      <a class="bar-row" href="#">
+        <div class="bar-label-area"><span class="bar-dot" style="background:var(--blue);"></span><span class="bar-label">Social Media</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:30%;background:var(--blue);"></div></div>
+        <span class="bar-value">274 MB</span>
+      </a>
+      <a class="bar-row" href="#">
+        <div class="bar-label-area"><span class="bar-dot" style="background:var(--amber);"></span><span class="bar-label">Communication</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:15%;background:var(--amber);"></div></div>
+        <span class="bar-value">137 MB</span>
+      </a>
+      <a class="bar-row" href="#">
+        <div class="bar-label-area"><span class="bar-dot" style="background:var(--green);"></span><span class="bar-label">Work</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:8%;background:var(--green);"></div></div>
+        <span class="bar-value">73 MB</span>
+      </a>
+      <a class="bar-row" href="#">
+        <div class="bar-label-area"><span class="bar-dot" style="background:var(--text-muted);"></span><span class="bar-label">Other</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:2%;background:var(--text-muted);"></div></div>
+        <span class="bar-value">10 MB</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Top Services -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Top Services</span>
+      <span class="card-badge">by bytes</span>
+    </div>
+    <div>
+      <div class="svc-row"><span class="svc-name">Apple Inc.</span><span class="svc-bytes mono">445 MB</span><span class="svc-conns">1.2K conn</span></div>
+      <div class="svc-row"><span class="svc-name">Google LLC</span><span class="svc-bytes mono">312 MB</span><span class="svc-conns">2.8K conn</span></div>
+      <div class="svc-row"><span class="svc-name">Akamai Technologies</span><span class="svc-bytes mono">289 MB</span><span class="svc-conns">842 conn</span></div>
+      <div class="svc-row"><span class="svc-name">Amazon.com, Inc.</span><span class="svc-bytes mono">201 MB</span><span class="svc-conns">634 conn</span></div>
+      <div class="svc-row"><span class="svc-name">Meta Platforms</span><span class="svc-bytes mono">186 MB</span><span class="svc-conns">418 conn</span></div>
+      <div class="svc-row"><span class="svc-name">Cloudflare, Inc.</span><span class="svc-bytes mono">142 MB</span><span class="svc-conns">1.1K conn</span></div>
+      <div class="svc-row"><span class="svc-name">Fastly, Inc.</span><span class="svc-bytes mono">98 MB</span><span class="svc-conns">295 conn</span></div>
+      <div class="svc-row"><span class="svc-name">WhatsApp LLC</span><span class="svc-bytes mono">67 MB</span><span class="svc-conns">384 conn</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 5: Security Posture
+     ============================================================ -->
+<div class="two-col">
+  <!-- Risk Factor Breakdown -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Risk Factor Breakdown</span>
+      <span class="card-badge">65 / 100</span>
+    </div>
+    <div class="risk-factor-list">
+      <div class="risk-factor">
+        <span class="rf-name">Alert Volume</span>
+        <div class="rf-bar"><div class="rf-fill" style="width:80%;background:linear-gradient(90deg,var(--amber),var(--red));"></div></div>
+        <span class="rf-score" style="color:var(--red);">28 / 35</span>
+      </div>
+      <div class="risk-factor">
+        <span class="rf-name">Connection Anomaly</span>
+        <div class="rf-bar"><div class="rf-fill" style="width:60%;background:linear-gradient(90deg,var(--green),var(--amber));"></div></div>
+        <span class="rf-score" style="color:var(--amber);">12 / 20</span>
+      </div>
+      <div class="risk-factor">
+        <span class="rf-name">External Ratio</span>
+        <div class="rf-bar"><div class="rf-fill" style="width:67%;background:linear-gradient(90deg,var(--green),var(--amber));"></div></div>
+        <span class="rf-score" style="color:var(--amber);">10 / 15</span>
+      </div>
+      <div class="risk-factor">
+        <span class="rf-name">Suspicious Ports</span>
+        <div class="rf-bar"><div class="rf-fill" style="width:53%;background:linear-gradient(90deg,var(--green),var(--amber));"></div></div>
+        <span class="rf-score" style="color:var(--amber);">8 / 15</span>
+      </div>
+      <div class="risk-factor">
+        <span class="rf-name">Data Exfiltration</span>
+        <div class="rf-bar"><div class="rf-fill" style="width:47%;background:linear-gradient(90deg,var(--green),var(--amber));"></div></div>
+        <span class="rf-score" style="color:var(--amber);">7 / 15</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Alerts -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Recent Alerts</span>
+      <span class="card-badge">3,322 total</span>
+    </div>
+    <div>
+      <div class="alert-row">
+        <span class="alert-severity sev-high">HIGH</span>
+        <div><div class="alert-text">ET POLICY DNS Query to .bit TLD</div><div class="alert-category">Potentially Bad Traffic</div></div>
+        <span class="alert-time">2:08 PM</span>
+      </div>
+      <div class="alert-row">
+        <span class="alert-severity sev-high">HIGH</span>
+        <div><div class="alert-text">ET MALWARE Suspicious UA (iPhone/CFNetwork)</div><div class="alert-category">A Network Trojan was Detected</div></div>
+        <span class="alert-time">2:04 PM</span>
+      </div>
+      <div class="alert-row">
+        <span class="alert-severity sev-med">MED</span>
+        <div><div class="alert-text">SURICATA TLS invalid handshake message</div><div class="alert-category">Protocol Anomaly</div></div>
+        <span class="alert-time">1:58 PM</span>
+      </div>
+      <div class="alert-row">
+        <span class="alert-severity sev-med">MED</span>
+        <div><div class="alert-text">ET INFO Observed DNS Query for .cloud TLD</div><div class="alert-category">Misc Activity</div></div>
+        <span class="alert-time">1:45 PM</span>
+      </div>
+      <div class="alert-row">
+        <span class="alert-severity sev-low">LOW</span>
+        <div><div class="alert-text">ET INFO External IP Lookup via api.ipify.org</div><div class="alert-category">Information Leak</div></div>
+        <span class="alert-time">1:32 PM</span>
+      </div>
+      <div class="alert-row">
+        <span class="alert-severity sev-low">LOW</span>
+        <div><div class="alert-text">ET POLICY curl User-Agent Outbound</div><div class="alert-category">Misc Activity</div></div>
+        <span class="alert-time">1:18 PM</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 6: Network Detail (3 columns)
+     ============================================================ -->
+<div class="three-col">
+  <!-- Top Destinations -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Top Destinations</span></div>
+    <table class="data-table">
+      <thead><tr><th>Destination</th><th>Bytes</th><th>Conn</th></tr></thead>
+      <tbody>
+        <tr><td><span class="geo-flag">&#x1F1FA;&#x1F1F8;</span><span class="mono" style="font-size:var(--text-xs);">17.57.144.20</span><br><span style="font-size:10px;color:var(--text-dim);">icloud.apple.com</span></td><td class="mono" style="font-size:var(--text-xs);">59.6 MB</td><td class="mono" style="font-size:var(--text-xs);">82</td></tr>
+        <tr><td><span class="geo-flag">&#x1F1FA;&#x1F1F8;</span><span class="mono" style="font-size:var(--text-xs);">142.250.80.14</span><br><span style="font-size:10px;color:var(--text-dim);">www.google.com</span></td><td class="mono" style="font-size:var(--text-xs);">26.9 MB</td><td class="mono" style="font-size:var(--text-xs);">138</td></tr>
+        <tr><td><span class="geo-flag">&#x1F1FA;&#x1F1F8;</span><span class="mono" style="font-size:var(--text-xs);">31.13.72.53</span><br><span style="font-size:10px;color:var(--text-dim);">www.facebook.com</span></td><td class="mono" style="font-size:var(--text-xs);">8.5 MB</td><td class="mono" style="font-size:var(--text-xs);">362</td></tr>
+        <tr><td><span class="geo-flag">&#x1F1F3;&#x1F1F1;</span><span class="mono" style="font-size:var(--text-xs);">34.149.100.209</span><br><span style="font-size:10px;color:var(--text-dim);">g.whatsapp.net</span></td><td class="mono" style="font-size:var(--text-xs);">6.9 MB</td><td class="mono" style="font-size:var(--text-xs);">92</td></tr>
+        <tr><td><span class="geo-flag">&#x1F1FA;&#x1F1F8;</span><span class="mono" style="font-size:var(--text-xs);">23.215.0.136</span><br><span style="font-size:10px;color:var(--text-dim);">cdn.apple.com</span></td><td class="mono" style="font-size:var(--text-xs);">6.5 MB</td><td class="mono" style="font-size:var(--text-xs);">165</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- DNS Activity -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">DNS Activity</span>
+      <span class="dns-nxdomain-badge">14 NXDOMAIN</span>
+    </div>
+    <table class="data-table">
+      <thead><tr><th>Domain</th><th>Count</th></tr></thead>
+      <tbody>
+        <tr><td style="font-size:var(--text-xs);">www.google.com</td><td class="mono" style="font-size:var(--text-xs);">2.0K</td></tr>
+        <tr><td style="font-size:var(--text-xs);">g.whatsapp.net</td><td class="mono" style="font-size:var(--text-xs);">462</td></tr>
+        <tr><td style="font-size:var(--text-xs);">inbox.google.com</td><td class="mono" style="font-size:var(--text-xs);">208</td></tr>
+        <tr><td style="font-size:var(--text-xs);">app-analytics-services.com</td><td class="mono" style="font-size:var(--text-xs);">124</td></tr>
+        <tr><td style="font-size:var(--text-xs);">appsgenaiserver-pa.googleapis.com</td><td class="mono" style="font-size:var(--text-xs);">98</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Top Ports -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Top Ports Used</span></div>
+    <table class="data-table">
+      <thead><tr><th>Port</th><th>Service</th><th>Conn</th></tr></thead>
+      <tbody>
+        <tr><td class="mono" style="font-size:var(--text-xs);">443</td><td style="font-size:var(--text-xs);">HTTPS</td><td class="mono" style="font-size:var(--text-xs);">6,284</td></tr>
+        <tr><td class="mono" style="font-size:var(--text-xs);">80</td><td style="font-size:var(--text-xs);">HTTP</td><td class="mono" style="font-size:var(--text-xs);">1,142</td></tr>
+        <tr><td class="mono" style="font-size:var(--text-xs);">53</td><td style="font-size:var(--text-xs);">DNS</td><td class="mono" style="font-size:var(--text-xs);">824</td></tr>
+        <tr><td class="mono" style="font-size:var(--text-xs);">5353</td><td style="font-size:var(--text-xs);">mDNS</td><td class="mono" style="font-size:var(--text-xs);">412</td></tr>
+        <tr><td class="mono port-suspicious" style="font-size:var(--text-xs);">8888</td><td style="font-size:var(--text-xs);color:var(--red);">Unknown &#x26A0;</td><td class="mono" style="font-size:var(--text-xs);">23</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 7: Recent Connections (with clickable rows)
+     ============================================================ -->
+<div class="card conn-section">
+  <div class="card-header">
+    <span class="card-title">Recent Connections</span>
+    <span class="card-badge">9,000 total</span>
+  </div>
+  <div class="conn-toolbar">
+    <div class="proto-pills">
+      <button class="proto-pill active">All</button>
+      <button class="proto-pill">TCP</button>
+      <button class="proto-pill">UDP</button>
+      <button class="proto-pill">ICMP</button>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Time</th><th>Destination</th><th>Proto</th><th>Service</th><th>Duration</th><th>Download</th><th>Upload</th></tr></thead>
+    <tbody>
+      <tr class="conn-row selected" onclick="document.getElementById('drawer').style.display='flex'; document.getElementById('backdrop').style.display='block';">
+        <td class="mono" style="font-size:var(--text-xs);">14:12:17</td>
+        <td class="mono" style="font-size:var(--text-xs);">17.57.144.20:443</td>
+        <td><span class="proto-tag">tcp</span></td>
+        <td style="font-size:var(--text-xs);">HTTPS</td>
+        <td class="mono" style="font-size:var(--text-xs);">2.4s</td>
+        <td class="mono conn-dl" style="font-size:var(--text-xs);">3.2 KB</td>
+        <td class="mono conn-ul" style="font-size:var(--text-xs);">712 B</td>
+      </tr>
+      <tr class="conn-row">
+        <td class="mono" style="font-size:var(--text-xs);">14:12:17</td>
+        <td class="mono" style="font-size:var(--text-xs);">142.250.80.14:443</td>
+        <td><span class="proto-tag">tcp</span></td>
+        <td style="font-size:var(--text-xs);">HTTPS</td>
+        <td class="mono" style="font-size:var(--text-xs);">1.8s</td>
+        <td class="mono conn-dl" style="font-size:var(--text-xs);">3.1 KB</td>
+        <td class="mono conn-ul" style="font-size:var(--text-xs);">648 B</td>
+      </tr>
+      <tr class="conn-row">
+        <td class="mono" style="font-size:var(--text-xs);">14:10:17</td>
+        <td class="mono" style="font-size:var(--text-xs);">31.13.72.53:443</td>
+        <td><span class="proto-tag">tcp</span></td>
+        <td style="font-size:var(--text-xs);">HTTPS</td>
+        <td class="mono" style="font-size:var(--text-xs);">0.8s</td>
+        <td class="mono conn-dl" style="font-size:var(--text-xs);">2.8 KB</td>
+        <td class="mono conn-ul" style="font-size:var(--text-xs);">401 B</td>
+      </tr>
+      <tr class="conn-row">
+        <td class="mono" style="font-size:var(--text-xs);">14:09:44</td>
+        <td class="mono" style="font-size:var(--text-xs);">192.168.1.1:53</td>
+        <td><span class="proto-tag">udp</span></td>
+        <td style="font-size:var(--text-xs);">DNS</td>
+        <td class="mono" style="font-size:var(--text-xs);">12ms</td>
+        <td class="mono conn-dl" style="font-size:var(--text-xs);">245 B</td>
+        <td class="mono conn-ul" style="font-size:var(--text-xs);">78 B</td>
+      </tr>
+      <tr class="conn-row">
+        <td class="mono" style="font-size:var(--text-xs);">14:09:11</td>
+        <td class="mono" style="font-size:var(--text-xs);">34.149.100.209:5222</td>
+        <td><span class="proto-tag">tcp</span></td>
+        <td style="font-size:var(--text-xs);">WhatsApp</td>
+        <td class="mono" style="font-size:var(--text-xs);">45.2s</td>
+        <td class="mono conn-dl" style="font-size:var(--text-xs);">1.8 KB</td>
+        <td class="mono conn-ul" style="font-size:var(--text-xs);">224 B</td>
+      </tr>
+      <tr class="conn-row">
+        <td class="mono" style="font-size:var(--text-xs);">14:08:31</td>
+        <td class="mono" style="font-size:var(--text-xs);">224.0.0.251:5353</td>
+        <td><span class="proto-tag">udp</span></td>
+        <td style="font-size:var(--text-xs);">mDNS</td>
+        <td class="mono" style="font-size:var(--text-xs);">&mdash;</td>
+        <td class="mono conn-dl" style="font-size:var(--text-xs);">0 B</td>
+        <td class="mono conn-ul" style="font-size:var(--text-xs);">616 B</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="pagination">
+    <button class="page-btn">Previous</button>
+    <span class="page-info">Page 1 of 360</span>
+    <button class="page-btn">Next</button>
+  </div>
+  <div class="quick-links">
+    <a href="#" class="quick-link">View in Log Explorer &rarr;</a>
+    <a href="#" class="quick-link">Filter Connections &rarr;</a>
+    <a href="#" class="quick-link">Export CSV &rarr;</a>
+  </div>
+</div>
+
+</div><!-- /page -->
+
+<!-- ============================================================
+     Connection Drill-Down Drawer
+     ============================================================ -->
+<div id="backdrop" class="drawer-backdrop" style="display:flex;" onclick="this.style.display='none'; document.getElementById('drawer').style.display='none';"></div>
+
+<div id="drawer" class="drawer" style="display:flex;">
+  <div class="drawer-header">
+    <div class="drawer-title-area">
+      <span class="drawer-title">Connection Detail</span>
+      <span class="drawer-subtitle">192.168.1.113:49821 &rarr; 17.57.144.20:443</span>
+    </div>
+    <button class="drawer-close" onclick="document.getElementById('drawer').style.display='none'; document.getElementById('backdrop').style.display='none';">&times;</button>
+  </div>
+
+  <div class="drawer-tabs">
+    <button class="drawer-tab active">Detail</button>
+    <button class="drawer-tab" onclick="this.parentElement.querySelectorAll('.drawer-tab').forEach(t=>t.classList.remove('active')); this.classList.add('active');">TShark Analysis</button>
+    <button class="drawer-tab" onclick="this.parentElement.querySelectorAll('.drawer-tab').forEach(t=>t.classList.remove('active')); this.classList.add('active');">Related Activity</button>
+  </div>
+
+  <div class="drawer-body">
+    <!-- Tab 1: Connection Detail -->
+    <div class="detail-grid">
+      <div class="detail-item"><span class="detail-label">Source</span><span class="detail-value">192.168.1.113:49821</span></div>
+      <div class="detail-item"><span class="detail-label">Destination</span><span class="detail-value">17.57.144.20:443</span></div>
+      <div class="detail-item"><span class="detail-label">Protocol</span><span class="detail-value">TCP / HTTPS</span></div>
+      <div class="detail-item"><span class="detail-label">Duration</span><span class="detail-value">2.4s</span></div>
+      <div class="detail-item"><span class="detail-label">Download</span><span class="detail-value" style="color:var(--cyan);">3.2 KB</span></div>
+      <div class="detail-item"><span class="detail-label">Upload</span><span class="detail-value" style="color:var(--purple);">712 B</span></div>
+      <div class="detail-item"><span class="detail-label">Session ID</span><span class="detail-value">CyH8f44K2a9bD1e0g3</span></div>
+      <div class="detail-item"><span class="detail-label">Community ID</span><span class="detail-value">1:abcd1234ef56</span></div>
+      <div class="detail-item"><span class="detail-label">Conn State</span><span class="detail-value">SF (Normal)</span></div>
+      <div class="detail-item"><span class="detail-label">History</span><span class="detail-value">ShADadFf</span></div>
+    </div>
+
+    <div class="detail-section-title">Destination Enrichment</div>
+    <div class="detail-grid">
+      <div class="detail-item"><span class="detail-label">Hostname</span><span class="detail-value">icloud-content.apple.com</span></div>
+      <div class="detail-item"><span class="detail-label">ASN</span><span class="detail-value">AS714 Apple Inc.</span></div>
+      <div class="detail-item"><span class="detail-label">Country</span><span class="detail-value">&#x1F1FA;&#x1F1F8; United States</span></div>
+      <div class="detail-item"><span class="detail-label">City</span><span class="detail-value">Cupertino, CA</span></div>
+    </div>
+
+    <div class="detail-section-title">TLS Details</div>
+    <div class="detail-grid">
+      <div class="detail-item"><span class="detail-label">TLS Version</span><span class="detail-value">TLSv1.3</span></div>
+      <div class="detail-item"><span class="detail-label">SNI</span><span class="detail-value">icloud-content.apple.com</span></div>
+      <div class="detail-item"><span class="detail-label">JA3</span><span class="detail-value" style="font-size:10px;">e7d7...4a2f</span></div>
+      <div class="detail-item"><span class="detail-label">Cert Subject</span><span class="detail-value" style="font-size:10px;">CN=*.icloud.com</span></div>
+    </div>
+
+    <!-- Tab 2: TShark Analysis (shown below detail for mockup) -->
+    <div class="detail-section-title" style="margin-top:var(--space-2xl);">TShark Packet Analysis</div>
+
+    <div class="tshark-filter-label">Auto-Generated BPF Filter</div>
+    <div class="tshark-filter">host 192.168.1.113 and host 17.57.144.20 and port 443 and tcp</div>
+
+    <div class="tshark-controls">
+      <button class="tshark-btn tshark-btn-primary">&#x25B6; Analyze</button>
+      <button class="tshark-btn tshark-btn-secondary active">Summary</button>
+      <button class="tshark-btn tshark-btn-secondary">Verbose (-V)</button>
+      <button class="tshark-btn tshark-btn-secondary">Follow Stream</button>
+      <button class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</button>
+    </div>
+
+    <div class="tshark-terminal"><span class="tshark-line-no">  1 </span><span class="tshark-timestamp">14:12:17.342</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-arrow">&rarr;</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-proto">TCP</span>  <span class="tshark-info">49821 &rarr; 443 [SYN] Seq=0 Win=65535 Len=0 MSS=1460</span>
+<span class="tshark-line-no">  2 </span><span class="tshark-timestamp">14:12:17.358</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-arrow">&rarr;</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-proto">TCP</span>  <span class="tshark-info">443 &rarr; 49821 [SYN,ACK] Seq=0 Ack=1 Win=65535</span>
+<span class="tshark-line-no">  3 </span><span class="tshark-timestamp">14:12:17.359</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-arrow">&rarr;</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-proto">TCP</span>  <span class="tshark-info">49821 &rarr; 443 [ACK] Seq=1 Ack=1 Win=65535</span>
+<span class="tshark-line-no">  4 </span><span class="tshark-timestamp">14:12:17.361</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-arrow">&rarr;</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-proto">TLSv1.3</span>  <span class="tshark-info">Client Hello, SNI=icloud-content.apple.com</span>
+<span class="tshark-line-no">  5 </span><span class="tshark-timestamp">14:12:17.389</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-arrow">&rarr;</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-proto">TLSv1.3</span>  <span class="tshark-info">Server Hello, Change Cipher Spec</span>
+<span class="tshark-line-no">  6 </span><span class="tshark-timestamp">14:12:17.390</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-arrow">&rarr;</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-proto">TLSv1.3</span>  <span class="tshark-info">Application Data [Len=1245]</span>
+<span class="tshark-line-no">  7 </span><span class="tshark-timestamp">14:12:17.391</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-arrow">&rarr;</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-proto">TLSv1.3</span>  <span class="tshark-info">Application Data [Len=712]</span>
+<span class="tshark-line-no">  8 </span><span class="tshark-timestamp">14:12:19.742</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-arrow">&rarr;</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-proto">TCP</span>  <span class="tshark-info">49821 &rarr; 443 [FIN,ACK] Seq=713 Ack=1246</span>
+<span class="tshark-line-no">  9 </span><span class="tshark-timestamp">14:12:19.758</span> <span class="tshark-dst">17.57.144.20</span>  <span class="tshark-arrow">&rarr;</span> <span class="tshark-src">192.168.1.113</span> <span class="tshark-proto">TCP</span>  <span class="tshark-info">443 &rarr; 49821 [FIN,ACK] Seq=1246 Ack=714</span></div>
+
+    <!-- Tab 3: Related Activity -->
+    <div class="detail-section-title" style="margin-top:var(--space-2xl);">Related Activity</div>
+
+    <div>
+      <div class="related-item">
+        <span class="related-type rt-dns">DNS</span>
+        <span class="related-text mono" style="font-size:var(--text-xs);">icloud-content.apple.com &rarr; 17.57.144.20</span>
+        <span class="related-time">14:12:16</span>
+      </div>
+      <div class="related-item">
+        <span class="related-type rt-conn">CONN</span>
+        <span class="related-text mono" style="font-size:var(--text-xs);">192.168.1.113:49820 &rarr; 17.57.144.20:443 (1.9s)</span>
+        <span class="related-time">14:11:45</span>
+      </div>
+      <div class="related-item">
+        <span class="related-type rt-conn">CONN</span>
+        <span class="related-text mono" style="font-size:var(--text-xs);">192.168.1.113:49818 &rarr; 17.57.144.20:443 (3.1s)</span>
+        <span class="related-time">14:10:22</span>
+      </div>
+      <div class="related-item">
+        <span class="related-type rt-alert">ALERT</span>
+        <span class="related-text" style="font-size:var(--text-xs);color:var(--red);">ET POLICY DNS Query to .bit TLD</span>
+        <span class="related-time">14:08:31</span>
+      </div>
+      <div class="related-item">
+        <span class="related-type rt-dns">DNS</span>
+        <span class="related-text mono" style="font-size:var(--text-xs);">icloud-content.apple.com &rarr; 17.57.144.20</span>
+        <span class="related-time">14:06:12</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

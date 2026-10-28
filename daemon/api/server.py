@@ -14,7 +14,6 @@ Endpoints:
     GET  /api/indices            OpenSearch index listing
     GET  /api/system/health      Combined system health
     POST /api/ilm/apply          Apply ILM policies
-    POST /api/setup/nics/identify Blink NIC LEDs for physical identification
 """
 
 import asyncio
@@ -39,12 +38,34 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
+from services.excluded_ips import load_excluded_ips, detect_and_build_lan_filter
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
 from api.reports import register_report_routes
 from api.bridge import register_bridge_routes
 from api.updates import register_update_routes
-from api.nic_identify import register_nic_identify_routes
+from api.nic_discovery import register_nic_discovery_routes
+from api.setup import register_setup_routes
+from api.logs import register_log_routes
+from api.opensearch_cluster import register_opensearch_cluster_routes
+from api.logstash import register_logstash_routes
+from api.lookup import register_lookup_routes
+from api.tools import register_tools_routes
+from api.capture import register_capture_routes
+from api.devices_v2 import register_devices_v2_routes
+from api.live import register_live_routes
+from api.bandwidth import register_bandwidth_routes
+from api.notifications_hub import register_notification_hub_routes
+from api.changelog import register_changelog_routes
+from api.certificates import register_certificate_routes
+from api.dns import register_dns_routes
+from api.iot import register_iot_routes
+from api.lan_security import register_lan_security_routes
+from api.suricata_rules import register_suricata_rules_routes
+from api.mac_correlation import register_mac_correlation_routes
+from api.pcap import register_pcap_routes
+from api.backup import register_backup_routes
+from api.threats import register_threat_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -56,9 +77,26 @@ from services.nl_search import NLSearchParser
 from services.detection_packs import DetectionPackManager
 from services.report_generator import ReportGenerator
 from services.bridge_health import BridgeHealthMonitor
+from services.bridge_manager import BridgeManager
+from services.dns_recon_service import DnsReconService
+from services.mac_lookup_service import MacLookupService
+from services.network_diag_service import NetworkDiagService
+from services.ssl_cert_service import SslCertService
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
 from services.update_executor import UpdateExecutor
+from services.device_registry import DeviceRegistry
+from services.unifi_integration import UnifiIntegration
+from services.live_connections import LiveConnectionTracker
+from services.bandwidth_tracker import BandwidthTracker
+from services.notification_hub import NotificationHub
+from services.changelog import ChangelogService
+from services.cert_monitor import CertificateMonitor
+from services.suricata_rules import SuricataRuleManager
+from services.mac_correlator import MACCorrelator
+from services.pcap_search import PcapSearchService
+from services.config_backup import ConfigBackup
+from services.capture_mode_stub import CaptureManagerStub
 
 logger = logging.getLogger("nettap.api")
 
@@ -66,6 +104,7 @@ logger = logging.getLogger("nettap.api")
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+
 
 @web.middleware
 async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
@@ -131,14 +170,17 @@ async def logging_middleware(request: web.Request, handler) -> web.StreamRespons
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_health(request: web.Request) -> web.Response:
     """GET /api/health -- Simple liveness check."""
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
-    return web.json_response({
-        "status": "ok",
-        "uptime": round(uptime, 2),
-    })
+    return web.json_response(
+        {
+            "status": "ok",
+            "uptime": round(uptime, 2),
+        }
+    )
 
 
 async def handle_storage_status(request: web.Request) -> web.Response:
@@ -179,10 +221,12 @@ async def handle_storage_prune(request: web.Request) -> web.Response:
         await loop.run_in_executor(None, storage.run_cycle)
         # Return current status after the prune cycle completes
         status = storage.get_status()
-        return web.json_response({
-            "result": "prune_cycle_complete",
-            "storage_status": status,
-        })
+        return web.json_response(
+            {
+                "result": "prune_cycle_complete",
+                "storage_status": status,
+            }
+        )
     except Exception as exc:
         logger.exception("Error during manual prune cycle")
         return web.json_response(
@@ -203,6 +247,42 @@ async def handle_smart_health(request: web.Request) -> web.Response:
         logger.exception("Error fetching SMART health")
         return web.json_response(
             {"error": f"Failed to fetch SMART health: {exc}"},
+            status=500,
+        )
+
+
+async def handle_smart_diagnostics(request: web.Request) -> web.Response:
+    """GET /api/smart/diagnostics -- SMART self-test diagnostics."""
+    try:
+        smart: SmartMonitor = request.app["smart"]
+        loop = asyncio.get_running_loop()
+        diagnostics = await loop.run_in_executor(None, smart.get_diagnostics)
+        return web.json_response(diagnostics)
+    except Exception as exc:
+        logger.exception("Error fetching SMART diagnostics")
+        return web.json_response(
+            {"error": f"Failed to fetch SMART diagnostics: {exc}"},
+            status=500,
+        )
+
+
+async def handle_smart_test(request: web.Request) -> web.Response:
+    """POST /api/smart/test -- Trigger on-demand SMART check with fresh results."""
+    try:
+        smart: SmartMonitor = request.app["smart"]
+        loop = asyncio.get_running_loop()
+        # Run self-test for diagnostics
+        diagnostics = await loop.run_in_executor(None, smart.run_self_test)
+        # Also get fresh metrics
+        status = await loop.run_in_executor(None, smart.get_status)
+        return web.json_response({
+            "diagnostics": diagnostics,
+            "health": status,
+        })
+    except Exception as exc:
+        logger.exception("Error running SMART test")
+        return web.json_response(
+            {"error": f"SMART test failed: {exc}"},
             status=500,
         )
 
@@ -240,7 +320,9 @@ async def handle_system_health(request: web.Request) -> web.Response:
     """
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
-    request.app["opensearch_url"]
+    # OLD CODE START — opensearch_url was fetched but never used (F841)
+    # opensearch_url: str = request.app["opensearch_url"]
+    # OLD CODE END
 
     result: dict = {
         "uptime": round(uptime, 2),
@@ -293,13 +375,13 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
     try:
         opensearch_url: str = request.app["opensearch_url"]
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None, apply_ilm_policies, opensearch_url
+        results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
+        return web.json_response(
+            {
+                "result": "ilm_policies_applied",
+                "policies": results,
+            }
         )
-        return web.json_response({
-            "result": "ilm_policies_applied",
-            "policies": results,
-        })
     except Exception as exc:
         logger.exception("Error applying ILM policies")
         return web.json_response(
@@ -311,6 +393,7 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
+
 
 def create_app(
     storage: StorageManager,
@@ -344,6 +427,8 @@ def create_app(
     app.router.add_get("/api/storage/retention", handle_storage_retention)
     app.router.add_post("/api/storage/prune", handle_storage_prune)
     app.router.add_get("/api/smart/health", handle_smart_health)
+    app.router.add_get("/api/smart/diagnostics", handle_smart_diagnostics)
+    app.router.add_post("/api/smart/test", handle_smart_test)
     app.router.add_get("/api/indices", handle_indices)
     app.router.add_get("/api/system/health", handle_system_health)
     app.router.add_post("/api/ilm/apply", handle_ilm_apply)
@@ -367,10 +452,20 @@ def create_app(
     # Device inventory (OpenSearch zeek-*/suricata-* queries + fingerprinting)
     register_device_routes(app, storage)
 
-    # GeoIP lookup (MaxMind GeoLite2 + fallback)
+    # GeoIP lookup (MaxMind GeoLite2 + OpenSearch enrichment + fallback)
     geoip_db = os.environ.get("GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb")
-    geoip_service = GeoIPService(db_path=geoip_db)
+    geoip_service = GeoIPService(db_path=geoip_db, opensearch_client=storage._client)
     register_geoip_routes(app, geoip_service)
+
+    # IP lookup tools (WHOIS + DNS)
+    register_lookup_routes(app)
+
+    # Network tools (DNS Recon, MAC Lookup, Ping, Traceroute, SSL Cert)
+    dns_recon = DnsReconService()
+    mac_lookup = MacLookupService()
+    network_diag = NetworkDiagService()
+    ssl_cert = SslCertService()
+    register_tools_routes(app, dns_recon, mac_lookup, network_diag, ssl_cert)
 
     # Risk scoring (per-device 0-100 risk scores from telemetry)
     risk_scorer = RiskScorer()
@@ -394,8 +489,22 @@ def create_app(
     investigation_store = InvestigationStore(store_file=investigations_file)
     register_investigation_routes(app, investigation_store)
 
-    # Settings (API keys, env file management)
-    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/.env")
+    # Settings (API keys, env file management, excluded IPs)
+    # OLD CODE START — was /opt/nettap/.env which is in the read-only container layer (2026-03-05)
+    # env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/.env")
+    # OLD CODE END
+    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
+    excluded_ips_file = os.environ.get(
+        "EXCLUDED_IPS_FILE", "/opt/nettap/data/excluded_ips.json"
+    )
+    app["excluded_ips_file"] = excluded_ips_file
+    app["excluded_ips"] = load_excluded_ips(excluded_ips_file)
+    logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
+
+    # Auto-detect LAN subnets from OpenSearch traffic data
+    # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback
+    app["lan_filter"] = detect_and_build_lan_filter(storage._client)
+    logger.info("LAN filter initialized")
     register_settings_routes(app, env_file=env_file)
 
     # Natural language search (query parser + OpenSearch execution)
@@ -426,7 +535,15 @@ def create_app(
     bridge_health = BridgeHealthMonitor(
         bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
     )
-    register_bridge_routes(app, bridge_health)
+
+    # Bridge manager (create/teardown/readiness — writes to mounted host dirs)
+    bridge_manager = BridgeManager(
+        bridge_name=bridge_name,
+        netplan_dir=os.environ.get("HOST_NETPLAN_DIR", ""),
+        systemd_dir=os.environ.get("HOST_SYSTEMD_DIR", ""),
+        sysctl_dir=os.environ.get("HOST_SYSCTL_DIR", ""),
+    )
+    register_bridge_routes(app, bridge_health, bridge_manager)
 
     # Software update system (version inventory + update checker + executor)
     compose_file = os.environ.get(
@@ -437,9 +554,7 @@ def create_app(
 
     version_manager = VersionManager(compose_file=compose_file)
     update_checker = UpdateChecker(github_repo=github_repo)
-    update_executor = UpdateExecutor(
-        compose_file=compose_file, backup_dir=backup_dir
-    )
+    update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
 
     # Wire up cross-service references
     update_checker.set_version_manager(version_manager)
@@ -448,8 +563,97 @@ def create_app(
 
     register_update_routes(app, version_manager, update_checker, update_executor)
 
-    # NIC LED identification (setup wizard physical port blink)
-    register_nic_identify_routes(app)
+    # NIC discovery (setup wizard interface detection from host sysfs)
+    register_nic_discovery_routes(app)
+
+    # Setup wizard configuration (capture mode + .env writer)
+    register_setup_routes(app)
+
+    # Log search API (generic Zeek/Suricata log browser)
+    register_log_routes(app, storage)
+
+    # OpenSearch cluster visibility (health, indices, shards, templates)
+    register_opensearch_cluster_routes(app, storage)
+
+    # Logstash monitoring (pipeline stats, JVM, throughput)
+    register_logstash_routes(app)
+
+    # Capture mode API (mode-agnostic bridge/mirror endpoints)
+    # OLD CODE START — capture_manager was never set, causing 503 on /api/capture/* (2026-03-11)
+    # register_capture_routes(app)   # registered without a capture_manager in the app dict
+    # OLD CODE END
+    # Provide a stub CaptureManager so endpoints work immediately. The daemon's
+    # run() coroutine will replace this with the real BridgeCaptureAdapter or
+    # MirrorManager once it finishes initialising the capture pipeline.
+    if "capture_manager" not in app:
+        app["capture_manager"] = CaptureManagerStub()
+    register_capture_routes(app)
+
+    # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
+    device_registry = DeviceRegistry(client=storage._client)
+    unifi_integration = UnifiIntegration()
+    register_devices_v2_routes(app, device_registry, unifi_integration)
+
+    # Live connection tracking (real-time connection monitor)
+    live_tracker = LiveConnectionTracker(client=storage._client)
+    register_live_routes(app, live_tracker)
+
+    # Bandwidth tracking (monthly/daily usage, data cap, heatmap)
+    bandwidth_tracker = BandwidthTracker(client=storage._client)
+    register_bandwidth_routes(app, bandwidth_tracker)
+
+    # Notification hub (multi-channel notifications + routing rules)
+    notification_config = os.environ.get(
+        "NOTIFICATION_CONFIG", "/opt/nettap/data/notifications.json"
+    )
+    notification_hub = NotificationHub(config_path=notification_config)
+    register_notification_hub_routes(app, notification_hub)
+
+    # Changelog (network event audit log)
+    changelog_service = ChangelogService(client=storage._client)
+    register_changelog_routes(app, changelog_service)
+
+    # Certificate monitor (TLS certificate tracking from Zeek SSL logs)
+    cert_monitor = CertificateMonitor(client=storage._client)
+    register_certificate_routes(app, cert_monitor)
+
+    # DNS analytics (domain stats, NXDOMAIN, tunneling detection)
+    register_dns_routes(app, storage)
+
+    # IoT device monitoring (classification, baselines, anomaly detection)
+    register_iot_routes(app, storage)
+
+    # LAN security (ARP spoofing, rogue DHCP, IP conflicts)
+    register_lan_security_routes(app, storage)
+
+    # Suricata rule source management (update-sources.yaml + docker exec)
+    suricata_sources_config = os.environ.get(
+        "SURICATA_SOURCES_CONFIG",
+        os.path.join(os.path.dirname(__file__), "../config/suricata/update-sources.yaml"),
+    )
+    suricata_rule_manager = SuricataRuleManager(sources_config=suricata_sources_config)
+    register_suricata_rules_routes(app, suricata_rule_manager)
+
+    # MAC correlation (randomized MAC detection + device merging)
+    mac_merge_file = os.environ.get(
+        "MAC_MERGE_FILE", "/opt/nettap/data/mac_merges.json"
+    )
+    mac_correlator = MACCorrelator(
+        client=storage._client, merge_file=mac_merge_file
+    )
+    register_mac_correlation_routes(app, mac_correlator)
+
+    # PCAP search (file listing, BPF filter search, preview, download)
+    pcap_search_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
+    pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
+    register_pcap_routes(app, pcap_search_service)
+
+    # Config backup/restore (export/import all settings)
+    config_backup = ConfigBackup()
+    register_backup_routes(app, config_backup)
+
+    # Threat Intelligence (unified report, beaconing, lateral movement, DNS anomalies, TI)
+    register_threat_routes(app, storage)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
@@ -459,6 +663,7 @@ def create_app(
 # ---------------------------------------------------------------------------
 # Server lifecycle
 # ---------------------------------------------------------------------------
+
 
 async def start_api(
     storage: StorageManager,

@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -41,10 +42,20 @@ class TestBridgeHealthCheckDataclass(unittest.TestCase):
         )
         d = check.to_dict()
         expected_keys = {
-            "bridge_state", "wan_link", "lan_link", "bypass_active",
-            "watchdog_active", "latency_us", "rx_bytes_delta", "tx_bytes_delta",
-            "rx_packets_delta", "tx_packets_delta", "uptime_seconds",
-            "health_status", "issues", "last_check",
+            "bridge_state",
+            "wan_link",
+            "lan_link",
+            "bypass_active",
+            "watchdog_active",
+            "latency_us",
+            "rx_bytes_delta",
+            "tx_bytes_delta",
+            "rx_packets_delta",
+            "tx_packets_delta",
+            "uptime_seconds",
+            "health_status",
+            "issues",
+            "last_check",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -85,6 +96,7 @@ class TestInitialization(unittest.TestCase):
         self.assertEqual(monitor._wan_iface, "eth0")
         self.assertEqual(monitor._lan_iface, "eth1")
         self.assertEqual(monitor._max_history, 2880)
+        self.assertFalse(monitor._interfaces_discovered)
 
     def test_custom_parameters(self):
         """Custom parameters should be stored."""
@@ -156,6 +168,16 @@ class TestDetermineHealthStatus(unittest.TestCase):
         status = self.monitor._determine_health_status("up", True, False, False)
         self.assertEqual(status, "degraded")
 
+    def test_not_configured_status(self):
+        """Bridge not_configured should return 'not_configured'."""
+        status = self.monitor._determine_health_status("not_configured", False, False, False)
+        self.assertEqual(status, "not_configured")
+
+    def test_not_configured_overrides_bypass(self):
+        """not_configured should take priority over bypass."""
+        status = self.monitor._determine_health_status("not_configured", False, False, True)
+        self.assertEqual(status, "not_configured")
+
 
 class TestEstimateLatency(unittest.TestCase):
     """Tests for BridgeHealthMonitor._estimate_latency()."""
@@ -185,7 +207,9 @@ class TestCalculateDeltas(unittest.TestCase):
     def test_first_check_returns_zeros(self):
         """First check with no previous counters should return zeros."""
         monitor = BridgeHealthMonitor()
-        result = monitor._calculate_deltas({"rx_bytes": 100, "tx_bytes": 200, "rx_packets": 10, "tx_packets": 20})
+        result = monitor._calculate_deltas(
+            {"rx_bytes": 100, "tx_bytes": 200, "rx_packets": 10, "tx_packets": 20}
+        )
         self.assertEqual(result, (0, 0, 0, 0))
 
     def test_delta_calculation(self):
@@ -223,7 +247,9 @@ class TestCalculateDeltas(unittest.TestCase):
 class TestCheckHealth(unittest.TestCase):
     """Tests for check_health() with mocked sysfs/system calls."""
 
-    def _make_monitor_with_mocks(self, bridge_state="up", wan_carrier=True, lan_carrier=True):
+    def _make_monitor_with_mocks(
+        self, bridge_state="up", wan_carrier=True, lan_carrier=True
+    ):
         """Create a monitor with mocked internal methods."""
         monitor = BridgeHealthMonitor()
 
@@ -236,7 +262,12 @@ class TestCheckHealth(unittest.TestCase):
             return lan_carrier
 
         async def mock_stats(iface):
-            return {"rx_bytes": 1000, "tx_bytes": 2000, "rx_packets": 10, "tx_packets": 20}
+            return {
+                "rx_bytes": 1000,
+                "tx_bytes": 2000,
+                "rx_packets": 10,
+                "tx_packets": 20,
+            }
 
         async def mock_watchdog():
             return False
@@ -256,10 +287,20 @@ class TestCheckHealth(unittest.TestCase):
         result = asyncio.run(monitor.check_health())
 
         expected_keys = {
-            "bridge_state", "wan_link", "lan_link", "bypass_active",
-            "watchdog_active", "latency_us", "rx_bytes_delta", "tx_bytes_delta",
-            "rx_packets_delta", "tx_packets_delta", "uptime_seconds",
-            "health_status", "issues", "last_check",
+            "bridge_state",
+            "wan_link",
+            "lan_link",
+            "bypass_active",
+            "watchdog_active",
+            "latency_us",
+            "rx_bytes_delta",
+            "tx_bytes_delta",
+            "rx_packets_delta",
+            "tx_packets_delta",
+            "uptime_seconds",
+            "health_status",
+            "issues",
+            "last_check",
         }
         self.assertEqual(set(result.keys()), expected_keys)
 
@@ -313,10 +354,10 @@ class TestGracefulDegradation(unittest.TestCase):
     """Tests for graceful degradation when sysfs files do not exist."""
 
     def test_check_bridge_state_missing_sysfs(self):
-        """Missing sysfs file should return 'unknown'."""
+        """Missing bridge interface directory should return 'not_configured'."""
         monitor = BridgeHealthMonitor(bridge_name="nonexistent_br99")
         result = asyncio.run(monitor._check_bridge_state())
-        self.assertEqual(result, "unknown")
+        self.assertEqual(result, "not_configured")
 
     def test_check_carrier_missing_sysfs(self):
         """Missing carrier file should return False."""
@@ -541,8 +582,15 @@ class TestBypassMode(unittest.TestCase):
     def test_trigger_bypass(self):
         """trigger_bypass() should activate bypass and return confirmation."""
         monitor = BridgeHealthMonitor()
-        # Mock file write to avoid filesystem side effects
+        # Mock file write and nsenter to avoid filesystem/system side effects
         monitor._write_bypass_file = lambda active: None
+        nsenter_calls: list[tuple] = []
+
+        async def mock_nsenter(*args):
+            nsenter_calls.append(args)
+            return (0, "", "")
+
+        monitor._run_nsenter = mock_nsenter
 
         result = asyncio.run(monitor.trigger_bypass())
         self.assertTrue(result["bypass_active"])
@@ -550,17 +598,34 @@ class TestBypassMode(unittest.TestCase):
         self.assertIn("message", result)
         self.assertTrue(monitor._bypass_active)
 
+        # Should have called nsenter to disable promisc on both NICs
+        nsenter_cmds = [" ".join(a) for a in nsenter_calls]
+        self.assertTrue(any("promisc off" in c and "eth0" in c for c in nsenter_cmds))
+        self.assertTrue(any("promisc off" in c and "eth1" in c for c in nsenter_cmds))
+
     def test_disable_bypass(self):
         """disable_bypass() should deactivate bypass and return confirmation."""
         monitor = BridgeHealthMonitor()
         monitor._bypass_active = True
         monitor._write_bypass_file = lambda active: None
+        nsenter_calls: list[tuple] = []
+
+        async def mock_nsenter(*args):
+            nsenter_calls.append(args)
+            return (0, "", "")
+
+        monitor._run_nsenter = mock_nsenter
 
         result = asyncio.run(monitor.disable_bypass())
         self.assertFalse(result["bypass_active"])
         self.assertIn("deactivated_at", result)
         self.assertIn("message", result)
         self.assertFalse(monitor._bypass_active)
+
+        # Should have called nsenter to enable promisc on both NICs
+        nsenter_cmds = [" ".join(a) for a in nsenter_calls]
+        self.assertTrue(any("promisc on" in c and "eth0" in c for c in nsenter_cmds))
+        self.assertTrue(any("promisc on" in c and "eth1" in c for c in nsenter_cmds))
 
     def test_bypass_affects_health_status(self):
         """Health check during bypass should report 'bypass' status."""
@@ -588,6 +653,97 @@ class TestBypassMode(unittest.TestCase):
         result = asyncio.run(monitor.check_health())
         self.assertEqual(result["health_status"], "bypass")
         self.assertTrue(result["bypass_active"])
+
+
+class TestBypassStateFilePath(unittest.TestCase):
+    """Tests for bypass state file location."""
+
+    def test_bypass_file_uses_tmp(self):
+        """Bypass state file should be at /tmp, not /var/run."""
+        from services.bridge_health import _BYPASS_STATE_FILE
+        self.assertTrue(_BYPASS_STATE_FILE.startswith("/tmp/"))
+        self.assertNotIn("/var/run/", _BYPASS_STATE_FILE)
+
+
+class TestDiscoverInterfaces(unittest.TestCase):
+    """Tests for BridgeHealthMonitor._discover_interfaces()."""
+
+    def test_discover_from_brif(self):
+        """Should override defaults when brif directory has 2+ members."""
+        monitor = BridgeHealthMonitor()
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertEqual(monitor._lan_iface, "eth1")
+
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.listdir", return_value=["enp2s0", "enp3s0"]):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "enp2s0")
+        self.assertEqual(monitor._lan_iface, "enp3s0")
+        self.assertTrue(monitor._interfaces_discovered)
+
+    def test_discover_no_bridge(self):
+        """Should keep defaults when bridge brif directory doesn't exist."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", return_value=False):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertEqual(monitor._lan_iface, "eth1")
+        self.assertFalse(monitor._interfaces_discovered)
+
+    def test_discover_single_member(self):
+        """Should keep defaults when bridge has fewer than 2 members."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.listdir", return_value=["enp2s0"]):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertEqual(monitor._lan_iface, "eth1")
+        self.assertFalse(monitor._interfaces_discovered)
+
+    def test_discover_oserror_handled(self):
+        """Should handle OSError gracefully."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", side_effect=OSError("permission denied")):
+            monitor._discover_interfaces()
+
+        self.assertEqual(monitor._wan_iface, "eth0")
+        self.assertFalse(monitor._interfaces_discovered)
+
+    def test_discover_sorted_alphabetically(self):
+        """Members should be sorted so assignment is deterministic."""
+        monitor = BridgeHealthMonitor()
+
+        with patch("os.path.isdir", return_value=True), \
+             patch("os.listdir", return_value=["enp3s0", "enp2s0"]):
+            monitor._discover_interfaces()
+
+        # Sorted: enp2s0, enp3s0
+        self.assertEqual(monitor._wan_iface, "enp2s0")
+        self.assertEqual(monitor._lan_iface, "enp3s0")
+
+
+class TestRunNsenter(unittest.TestCase):
+    """Tests for _run_nsenter() helper on BridgeHealthMonitor."""
+
+    def test_nsenter_method_exists(self):
+        """BridgeHealthMonitor should have _run_nsenter method."""
+        monitor = BridgeHealthMonitor()
+        self.assertTrue(hasattr(monitor, "_run_nsenter"))
+        self.assertTrue(asyncio.iscoroutinefunction(monitor._run_nsenter))
+
+    def test_nsenter_returns_tuple(self):
+        """_run_nsenter should return (rc, stdout, stderr) tuple."""
+        monitor = BridgeHealthMonitor()
+        rc, stdout, stderr = asyncio.run(monitor._run_nsenter("echo", "test"))
+        self.assertIsInstance(rc, int)
+        self.assertIsInstance(stdout, str)
+        self.assertIsInstance(stderr, str)
 
 
 class TestCheckWatchdog(unittest.TestCase):

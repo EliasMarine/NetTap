@@ -22,18 +22,41 @@ export interface StorageStatus {
 	disk_total_bytes: number;
 	disk_used_bytes: number;
 	disk_free_bytes: number;
+	// GB fields returned by daemon alongside bytes
+	disk_total_gb?: number;
+	disk_used_gb?: number;
+	disk_free_gb?: number;
 	retention: any;
-	index_summary: any;
+	index_summary?: any;
+	// Daemon returns index_counts (object) + total_indices (number) instead
+	index_counts?: Record<string, number>;
+	total_indices?: number;
 }
 
 export interface SmartHealth {
 	device: string;
 	model: string;
-	temperature_c: number;
-	percentage_used: number;
-	power_on_hours: number;
+	temperature_c: number | null;
+	percentage_used: number | null;
+	power_on_hours: number | null;
 	healthy: boolean;
 	warnings: string[];
+}
+
+export interface SmartDiagnostics {
+	device: string;
+	device_type: string;
+	model: string;
+	serial: string;
+	raw_output_available: boolean;
+	missing_fields: string[];
+	guidance: string[];
+	timestamp: string;
+}
+
+export interface SmartTestResult {
+	diagnostics: SmartDiagnostics;
+	health: SmartHealth;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +132,61 @@ export async function getIndices(): Promise<{ indices: any[]; count: number }> {
 
 	if (!res.ok) {
 		return { indices: [], count: 0 };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get SMART self-test diagnostics (missing fields, guidance messages).
+ */
+export async function getSmartDiagnostics(): Promise<SmartDiagnostics> {
+	const res = await fetch('/api/smart/diagnostics');
+
+	if (!res.ok) {
+		return {
+			device: '',
+			device_type: '',
+			model: '',
+			serial: '',
+			raw_output_available: false,
+			missing_fields: [],
+			guidance: [],
+			timestamp: new Date().toISOString(),
+		};
+	}
+
+	return res.json();
+}
+
+/**
+ * Trigger an on-demand SMART check and return fresh diagnostics + health.
+ */
+export async function runSmartTest(): Promise<SmartTestResult> {
+	const res = await fetch('/api/smart/test', { method: 'POST' });
+
+	if (!res.ok) {
+		return {
+			diagnostics: {
+				device: '',
+				device_type: '',
+				model: '',
+				serial: '',
+				raw_output_available: false,
+				missing_fields: [],
+				guidance: [],
+				timestamp: new Date().toISOString(),
+			},
+			health: {
+				device: '',
+				model: '',
+				temperature_c: null,
+				percentage_used: null,
+				power_on_hours: null,
+				healthy: false,
+				warnings: [],
+			},
+		};
 	}
 
 	return res.json();

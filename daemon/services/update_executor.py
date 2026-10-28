@@ -54,7 +54,7 @@ class UpdateExecutor:
         self._update_history: list[dict] = []
         self._max_history = 50
         self._version_manager = None  # Set externally after init
-        self._update_checker = None   # Set externally after init
+        self._update_checker = None  # Set externally after init
 
         logger.info(
             "UpdateExecutor initialized: compose_file=%s backup_dir=%s",
@@ -128,9 +128,17 @@ class UpdateExecutor:
 
             for comp in components:
                 if comp in (
-                    "zeek", "suricata", "arkime", "opensearch",
-                    "dashboards", "logstash", "file-monitor",
-                    "pcap-capture", "freq", "htadmin", "nginx-proxy",
+                    "zeek",
+                    "suricata",
+                    "arkime",
+                    "opensearch",
+                    "dashboards",
+                    "logstash",
+                    "file-monitor",
+                    "pcap-capture",
+                    "freq",
+                    "htadmin",
+                    "nginx-proxy",
                 ):
                     docker_components.append(comp)
                 elif comp == "suricata-rules":
@@ -142,9 +150,7 @@ class UpdateExecutor:
 
             # Apply updates by category
             if docker_components:
-                docker_results = await self._update_docker_images(
-                    docker_components
-                )
+                docker_results = await self._update_docker_images(docker_components)
                 results.extend(docker_results)
 
             if rule_components:
@@ -157,16 +163,18 @@ class UpdateExecutor:
 
             # Handle unsupported components
             for comp in other_components:
-                results.append(UpdateResult(
-                    component=comp,
-                    success=False,
-                    old_version="unknown",
-                    new_version="unknown",
-                    started_at=now,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    error=f"Unsupported component for update: {comp}",
-                    rollback_available=False,
-                ))
+                results.append(
+                    UpdateResult(
+                        component=comp,
+                        success=False,
+                        old_version="unknown",
+                        new_version="unknown",
+                        started_at=now,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        error=f"Unsupported component for update: {comp}",
+                        rollback_available=False,
+                    )
+                )
 
             # Build summary
             succeeded = sum(1 for r in results if r.success)
@@ -190,9 +198,7 @@ class UpdateExecutor:
 
             # Trim history if needed
             if len(self._update_history) > self._max_history:
-                self._update_history = self._update_history[
-                    -self._max_history:
-                ]
+                self._update_history = self._update_history[-self._max_history :]
 
             logger.info(
                 "Update batch complete: %d succeeded, %d failed",
@@ -261,24 +267,25 @@ class UpdateExecutor:
         try:
             # Rollback strategy depends on component type
             if component in (
-                "zeek", "suricata", "arkime", "opensearch",
-                "dashboards", "logstash", "file-monitor",
+                "zeek",
+                "suricata",
+                "arkime",
+                "opensearch",
+                "dashboards",
+                "logstash",
+                "file-monitor",
                 "pcap-capture",
             ):
                 result = await self._rollback_docker(component, backup_path)
             elif component == "suricata-rules":
                 result = await self._rollback_files(
-                    component, backup_path,
-                    "/var/lib/suricata/rules/suricata.rules"
+                    component, backup_path, "/var/lib/suricata/rules/suricata.rules"
                 )
             elif component == "geoip-db":
                 geoip_path = os.environ.get(
-                    "GEOIP_DB_PATH",
-                    "/opt/nettap/data/GeoLite2-City.mmdb"
+                    "GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb"
                 )
-                result = await self._rollback_files(
-                    component, backup_path, geoip_path
-                )
+                result = await self._rollback_files(component, backup_path, geoip_path)
             else:
                 return {
                     "success": False,
@@ -300,9 +307,7 @@ class UpdateExecutor:
     # Internal update methods
     # -------------------------------------------------------------------
 
-    async def _update_docker_images(
-        self, components: list[str]
-    ) -> list[UpdateResult]:
+    async def _update_docker_images(self, components: list[str]) -> list[UpdateResult]:
         """Update Docker images for specified components.
 
         For each component, pulls the latest image tag and restarts
@@ -324,92 +329,104 @@ class UpdateExecutor:
             try:
                 # Get current version
                 if self._version_manager:
-                    comp_info = await self._version_manager.get_component(
-                        component
-                    )
+                    comp_info = await self._version_manager.get_component(component)
                     if comp_info:
-                        old_version = comp_info.get(
-                            "current_version", "unknown"
-                        )
+                        old_version = comp_info.get("current_version", "unknown")
 
                 # Create backup (save current image ID)
                 await self._create_backup(component)
 
                 # Pull latest image via docker compose
-                output, returncode = await self._run_command([
-                    "docker", "compose",
-                    "-f", self._compose_file,
-                    "pull", component,
-                ])
+                output, returncode = await self._run_command(
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        self._compose_file,
+                        "pull",
+                        component,
+                    ]
+                )
 
                 if returncode != 0:
-                    results.append(UpdateResult(
-                        component=component,
-                        success=False,
-                        old_version=old_version,
-                        new_version=old_version,
-                        started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        error=f"Docker pull failed: {output}",
-                        rollback_available=True,
-                    ))
+                    results.append(
+                        UpdateResult(
+                            component=component,
+                            success=False,
+                            old_version=old_version,
+                            new_version=old_version,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            error=f"Docker pull failed: {output}",
+                            rollback_available=True,
+                        )
+                    )
                     continue
 
                 # Restart the container with the new image
-                output, returncode = await self._run_command([
-                    "docker", "compose",
-                    "-f", self._compose_file,
-                    "up", "-d", "--no-deps", component,
-                ])
+                output, returncode = await self._run_command(
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        self._compose_file,
+                        "up",
+                        "-d",
+                        "--no-deps",
+                        component,
+                    ]
+                )
 
                 if returncode != 0:
-                    results.append(UpdateResult(
-                        component=component,
-                        success=False,
-                        old_version=old_version,
-                        new_version=old_version,
-                        started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        error=f"Container restart failed: {output}",
-                        rollback_available=True,
-                    ))
+                    results.append(
+                        UpdateResult(
+                            component=component,
+                            success=False,
+                            old_version=old_version,
+                            new_version=old_version,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            error=f"Container restart failed: {output}",
+                            rollback_available=True,
+                        )
+                    )
                     continue
 
                 # Get new version after update
                 if self._version_manager:
                     # Force rescan for this component
                     await self._version_manager.scan_versions()
-                    comp_info = await self._version_manager.get_component(
-                        component
-                    )
+                    comp_info = await self._version_manager.get_component(component)
                     if comp_info:
-                        new_version = comp_info.get(
-                            "current_version", "unknown"
-                        )
+                        new_version = comp_info.get("current_version", "unknown")
 
-                results.append(UpdateResult(
-                    component=component,
-                    success=True,
-                    old_version=old_version,
-                    new_version=new_version,
-                    started_at=started,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    error=None,
-                    rollback_available=True,
-                ))
+                results.append(
+                    UpdateResult(
+                        component=component,
+                        success=True,
+                        old_version=old_version,
+                        new_version=new_version,
+                        started_at=started,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        error=None,
+                        rollback_available=True,
+                    )
+                )
 
             except Exception as exc:
                 logger.exception("Failed to update Docker image: %s", component)
-                results.append(UpdateResult(
-                    component=component,
-                    success=False,
-                    old_version=old_version,
-                    new_version=old_version,
-                    started_at=started,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    error=str(exc),
-                    rollback_available=False,
-                ))
+                results.append(
+                    UpdateResult(
+                        component=component,
+                        success=False,
+                        old_version=old_version,
+                        new_version=old_version,
+                        started_at=started,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                        error=str(exc),
+                        rollback_available=False,
+                    )
+                )
 
         return results
 
@@ -443,9 +460,12 @@ class UpdateExecutor:
             await self._create_backup("suricata-rules")
 
             # Run suricata-update
-            output, returncode = await self._run_command([
-                "suricata-update", "update",
-            ])
+            output, returncode = await self._run_command(
+                [
+                    "suricata-update",
+                    "update",
+                ]
+            )
 
             if returncode != 0:
                 return UpdateResult(
@@ -462,9 +482,13 @@ class UpdateExecutor:
             new_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
             # Reload Suricata rules (best effort)
-            await self._run_command([
-                "suricatasc", "-c", "reload-rules",
-            ])
+            await self._run_command(
+                [
+                    "suricatasc",
+                    "-c",
+                    "reload-rules",
+                ]
+            )
 
             return UpdateResult(
                 component="suricata-rules",
@@ -510,17 +534,20 @@ class UpdateExecutor:
             # Get current database date
             if os.path.exists(geoip_path):
                 mtime = os.path.getmtime(geoip_path)
-                old_version = datetime.fromtimestamp(
-                    mtime, tz=timezone.utc
-                ).strftime("%Y-%m-%d")
+                old_version = datetime.fromtimestamp(mtime, tz=timezone.utc).strftime(
+                    "%Y-%m-%d"
+                )
 
             # Create backup
             await self._create_backup("geoip-db")
 
             # Run geoipupdate tool
-            output, returncode = await self._run_command([
-                "geoipupdate", "-v",
-            ])
+            output, returncode = await self._run_command(
+                [
+                    "geoipupdate",
+                    "-v",
+                ]
+            )
 
             if returncode != 0:
                 return UpdateResult(
@@ -573,9 +600,7 @@ class UpdateExecutor:
             Path to the backup directory.
         """
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        backup_path = os.path.join(
-            self._backup_dir, component, timestamp
-        )
+        backup_path = os.path.join(self._backup_dir, component, timestamp)
 
         try:
             os.makedirs(backup_path, exist_ok=True)
@@ -599,33 +624,37 @@ class UpdateExecutor:
                 ]
                 for rule_path in rule_paths:
                     if os.path.exists(rule_path):
-                        dest = os.path.join(
-                            backup_path, os.path.basename(rule_path)
-                        )
+                        dest = os.path.join(backup_path, os.path.basename(rule_path))
                         shutil.copy2(rule_path, dest)
                         break
 
             elif component == "geoip-db":
                 geoip_path = os.environ.get(
-                    "GEOIP_DB_PATH",
-                    "/opt/nettap/data/GeoLite2-City.mmdb"
+                    "GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb"
                 )
                 if os.path.exists(geoip_path):
-                    dest = os.path.join(
-                        backup_path, os.path.basename(geoip_path)
-                    )
+                    dest = os.path.join(backup_path, os.path.basename(geoip_path))
                     shutil.copy2(geoip_path, dest)
 
             elif component in (
-                "zeek", "suricata", "arkime", "opensearch",
-                "dashboards", "logstash",
+                "zeek",
+                "suricata",
+                "arkime",
+                "opensearch",
+                "dashboards",
+                "logstash",
             ):
                 # For Docker components, save the current image ID
                 # Uses create_subprocess_exec for safe argument passing
-                output, _ = await self._run_command([
-                    "docker", "inspect", "--format",
-                    "{{.Image}}", component,
-                ])
+                output, _ = await self._run_command(
+                    [
+                        "docker",
+                        "inspect",
+                        "--format",
+                        "{{.Image}}",
+                        component,
+                    ]
+                )
                 if output:
                     image_file = os.path.join(backup_path, "image_id.txt")
                     with open(image_file, "w") as f:
@@ -635,14 +664,10 @@ class UpdateExecutor:
             return backup_path
 
         except OSError as exc:
-            logger.warning(
-                "Could not create backup for %s: %s", component, exc
-            )
+            logger.warning("Could not create backup for %s: %s", component, exc)
             return backup_path
 
-    async def _run_command(
-        self, cmd: list[str]
-    ) -> tuple[str, int]:
+    async def _run_command(self, cmd: list[str]) -> tuple[str, int]:
         """Run a subprocess command and return (output, returncode).
 
         Uses asyncio.create_subprocess_exec for safe argument passing
@@ -662,7 +687,8 @@ class UpdateExecutor:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=300.0  # 5 minute timeout for updates
+                proc.communicate(),
+                timeout=300.0,  # 5 minute timeout for updates
             )
             output = stdout.decode("utf-8", errors="replace")
             if stderr:
@@ -682,9 +708,7 @@ class UpdateExecutor:
     # Rollback helpers
     # -------------------------------------------------------------------
 
-    async def _rollback_docker(
-        self, component: str, backup_path: str
-    ) -> dict:
+    async def _rollback_docker(self, component: str, backup_path: str) -> dict:
         """Rollback a Docker component to its backed-up image.
 
         Args:
@@ -701,9 +725,7 @@ class UpdateExecutor:
             if os.path.isdir(backup_path):
                 timestamps = sorted(os.listdir(backup_path), reverse=True)
                 for ts_dir in timestamps:
-                    image_file = os.path.join(
-                        backup_path, ts_dir, "image_id.txt"
-                    )
+                    image_file = os.path.join(backup_path, ts_dir, "image_id.txt")
                     if os.path.exists(image_file):
                         with open(image_file, "r") as f:
                             image_id = f.read().strip()
@@ -719,11 +741,18 @@ class UpdateExecutor:
             }
 
         # Restart the container with the backed-up image
-        output, returncode = await self._run_command([
-            "docker", "compose",
-            "-f", self._compose_file,
-            "up", "-d", "--no-deps", component,
-        ])
+        output, returncode = await self._run_command(
+            [
+                "docker",
+                "compose",
+                "-f",
+                self._compose_file,
+                "up",
+                "-d",
+                "--no-deps",
+                component,
+            ]
+        )
 
         return {
             "success": returncode == 0,
@@ -764,10 +793,7 @@ class UpdateExecutor:
                         return {
                             "success": True,
                             "component": component,
-                            "message": (
-                                f"Restored {target_path} from backup "
-                                f"{ts_dir}"
-                            ),
+                            "message": (f"Restored {target_path} from backup {ts_dir}"),
                         }
 
             return {

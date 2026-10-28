@@ -8,6 +8,7 @@ hostname, manufacturer, OS hint).
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
@@ -15,16 +16,21 @@ from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
+from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
+from services.traffic_classifier import classify_asn, CATEGORIES
+from api.alerts import _normalize_alert_source
 
 logger = logging.getLogger("nettap.api.devices")
 
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
 
-# Index patterns
-ZEEK_CONN_INDEX = "zeek-conn-*"
-ZEEK_DNS_INDEX = "zeek-dns-*"
-SURICATA_INDEX = "suricata-*"
+# OLD CODE START — separate per-log-type indices replaced by unified Malcolm index
+# ZEEK_CONN_INDEX = "zeek-conn-*"
+# ZEEK_DNS_INDEX = "zeek-dns-*"
+# SURICATA_INDEX = "suricata-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Maximum devices per request
 _MAX_DEVICE_LIMIT = 500
@@ -36,6 +42,7 @@ _ALLOWED_SORT_FIELDS = {"bytes", "connections", "alerts", "last_seen", "first_se
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps.
@@ -78,10 +85,13 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
-    """Build an OpenSearch range filter on the 'ts' field (Zeek timestamp)."""
+    """Build an OpenSearch range filter on the '@timestamp' field (ECS timestamp)."""
     return {
         "range": {
-            "ts": {
+            # OLD CODE START — was "ts" (Zeek-native), now "@timestamp" (ECS)
+            # "ts": {
+            # OLD CODE END
+            "@timestamp": {
                 "gte": from_ts,
                 "lte": to_ts,
                 "format": "strict_date_optional_time",
@@ -102,8 +112,46 @@ def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
 
 
 # ---------------------------------------------------------------------------
+# Helpers — device classification
+# ---------------------------------------------------------------------------
+
+
+def _device_category(os_hint: str | None, hostname: str | None) -> str:
+    """Classify a device into a broad category based on OS hint and hostname."""
+    if not os_hint:
+        # Fall back to hostname-based heuristics
+        if hostname:
+            hn = hostname.lower()
+            if any(x in hn for x in ["ring", "nest", "hue", "smart", "cam", "thermostat", "switch", "plug", "sensor"]):
+                return "iot"
+            if any(x in hn for x in ["printer", "brother", "hp-", "epson", "canon"]):
+                return "infrastructure"
+            if any(x in hn for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]):
+                return "infrastructure"
+        return "unknown"
+    os_lower = os_hint.lower()
+    if os_lower in ("ios", "android"):
+        return "phone"
+    if os_lower in ("windows", "macos", "linux", "chromeos"):
+        return "computer"
+    if os_lower in ("smart tv", "roku", "fire tv"):
+        return "media"
+    # Check hostname for IoT indicators
+    if hostname:
+        hn = hostname.lower()
+        if any(x in hn for x in ["ring", "nest", "hue", "smart", "cam", "thermostat", "switch", "plug", "sensor"]):
+            return "iot"
+        if any(x in hn for x in ["printer", "brother", "hp-", "epson", "canon"]):
+            return "infrastructure"
+        if any(x in hn for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]):
+            return "infrastructure"
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
+
 
 async def handle_device_list(request: web.Request) -> web.Response:
     """GET /api/devices?from=&to=&sort=bytes&order=desc&limit=100
@@ -124,6 +172,10 @@ async def handle_device_list(request: web.Request) -> web.Response:
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)
 
+    # Minimum connection threshold — IPs with fewer connections are noise
+    # (ARP probes, broadcast replies, one-off scans)
+    _MIN_CONNECTIONS = 20
+
     # Map user-facing sort names to aggregation sort keys
     sort_map = {
         "bytes": "total_bytes",
@@ -137,41 +189,52 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # Fetch more than needed if sorting by alerts (post-query sort)
     fetch_size = limit * 2 if sort_field == "alerts" else limit
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    bool_query: dict = {
+        "filter": [
+            _time_range_filter(from_ts, to_ts),
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+        ],
+    }
+    if excluded:
+        bool_query["must_not"] = excluded
+
+    # No DHCP pre-filter — DHCP data may not be available (NetTap captures
+    # between modem and router, DHCP happens on the LAN side). Instead, use
+    # min_doc_count on the terms aggregation to filter noise IPs.
+
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": bool_query},
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "id.orig_h",
+                    "field": "source.ip.keyword",
                     "size": fetch_size,
+                    "min_doc_count": _MIN_CONNECTIONS,
                     "order": {agg_sort_key: sort_order},
                 },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
                     },
-                    "protocols": {
-                        "terms": {"field": "proto", "size": 10}
-                    },
-                    "first_seen": {"min": {"field": "ts"}},
-                    "last_seen": {"max": {"field": "ts"}},
+                    "protocols": {"terms": {"field": "network.transport.keyword", "size": 10}},
+                    "first_seen": {"min": {"field": "@timestamp"}},
+                    "last_seen": {"max": {"field": "@timestamp"}},
                 },
             }
         },
     }
 
     try:
-        result = client.search(index=ZEEK_CONN_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices list: %s", exc)
         return web.json_response(
@@ -191,29 +254,42 @@ async def handle_device_list(request: web.Request) -> web.Response:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                        {"terms": {"src_ip": device_ips}},
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
+                        {"terms": {"source.ip": device_ips}},
+                        {"term": {"event.provider": "suricata"}},
+                        {"term": {"event.dataset": "alert"}},
                     ]
                 }
             },
-            "aggs": {
-                "by_ip": {
-                    "terms": {"field": "src_ip", "size": len(device_ips)}
-                }
-            },
+            "aggs": {"by_ip": {"terms": {"field": "source.ip.keyword", "size": len(device_ips)}}},
         }
 
         try:
-            alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
-            for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+            alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+            for ab in (
+                alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+            ):
                 alert_counts[ab["key"]] = ab["doc_count"]
         except OpenSearchException as exc:
             logger.warning("Alert count query failed: %s", exc)
 
-    # Build device list with enrichment
+    # Build device list with enrichment — skip broadcast/gateway IPs
     devices = []
     for b in buckets:
         ip = b["key"]
+
+        # Skip broadcast, multicast, and gateway-pattern IPs
+        if ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224."):
+            continue
+
         total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
         connection_count = b.get("doc_count", 0)
         proto_buckets = b.get("protocols", {}).get("buckets", [])
@@ -228,19 +304,27 @@ async def handle_device_list(request: web.Request) -> web.Response:
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
         os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
-        devices.append({
-            "ip": ip,
-            "mac": mac,
-            "hostname": hostname,
-            "manufacturer": manufacturer,
-            "os_hint": os_hint,
-            "first_seen": first_seen,
-            "last_seen": last_seen,
-            "total_bytes": total_bytes,
-            "connection_count": connection_count,
-            "protocols": protocols,
-            "alert_count": alert_count,
-        })
+        # Clean up mDNS service names and reverse DNS that aren't real hostnames
+        if hostname:
+            if any(x in hostname for x in ['._tcp.', '._udp.', '.in-addr.arpa', '.ip6.arpa', '_asquic']):
+                hostname = None
+
+        devices.append(
+            {
+                "ip": ip,
+                "mac": mac,
+                "hostname": hostname,
+                "manufacturer": manufacturer,
+                "os_hint": os_hint,
+                "category": _device_category(os_hint, hostname),
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "total_bytes": total_bytes,
+                "connection_count": connection_count,
+                "protocols": protocols,
+                "alert_count": alert_count,
+            }
+        )
 
     # Post-query sort by alerts if requested
     if sort_field == "alerts":
@@ -252,12 +336,14 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # Apply limit after post-sort
     devices = devices[:limit]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "limit": limit,
-        "devices": devices,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "limit": limit,
+            "devices": devices,
+        }
+    )
 
 
 async def handle_device_detail(request: web.Request) -> web.Response:
@@ -278,7 +364,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
-                    {"term": {"id.orig_h": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
@@ -286,23 +374,43 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "total_bytes": {
                 "sum": {
                     "script": {
-                        "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                        "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                         "lang": "painless",
                     }
                 }
             },
-            "protocols": {
-                "terms": {"field": "proto", "size": 10}
+            "total_orig_bytes": {
+                "sum": {"field": "source.bytes"}
             },
-            "first_seen": {"min": {"field": "ts"}},
-            "last_seen": {"max": {"field": "ts"}},
-            "top_destinations": {
-                "terms": {"field": "id.resp_h", "size": 20},
+            "total_resp_bytes": {
+                "sum": {"field": "destination.bytes"}
+            },
+            "unique_destinations": {
+                "cardinality": {"field": "destination.ip.keyword"}
+            },
+            "top_services": {
+                "terms": {"field": "destination.as.full.keyword", "size": 10},
                 "aggs": {
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                },
+            },
+            "protocols": {"terms": {"field": "network.transport.keyword", "size": 10}},
+            "first_seen": {"min": {"field": "@timestamp"}},
+            "last_seen": {"max": {"field": "@timestamp"}},
+            "top_destinations": {
+                "terms": {"field": "destination.ip.keyword", "size": 20},
+                "aggs": {
+                    "bytes": {
+                        "sum": {
+                            "script": {
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -311,7 +419,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             },
             "bandwidth_series": {
                 "date_histogram": {
-                    "field": "ts",
+                    "field": "@timestamp",
                     "fixed_interval": "5m",
                     "min_doc_count": 0,
                     "extended_bounds": {
@@ -323,10 +431,16 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     "bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
+                    },
+                    "download_bytes": {
+                        "sum": {"field": "destination.bytes"}
+                    },
+                    "upload_bytes": {
+                        "sum": {"field": "source.bytes"}
                     },
                 },
             },
@@ -334,7 +448,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=ZEEK_CONN_INDEX, body=device_query)
+        result = client.search(index=NETWORK_INDEX, body=device_query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device detail: %s", exc)
         return web.json_response(
@@ -343,9 +457,30 @@ async def handle_device_detail(request: web.Request) -> web.Response:
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
-    connection_count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    connection_count = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     total_bytes = aggs.get("total_bytes", {}).get("value", 0) or 0
+    orig_bytes = int(aggs.get("total_orig_bytes", {}).get("value", 0) or 0)
+    resp_bytes = int(aggs.get("total_resp_bytes", {}).get("value", 0) or 0)
+    unique_dest_count = int(aggs.get("unique_destinations", {}).get("value", 0) or 0)
+
+    # Top services: strip ASN prefix and merge duplicates
+    svc_merged: dict[str, dict] = {}
+    for sb in aggs.get("top_services", {}).get("buckets", []):
+        asn_full = sb["key"]
+        service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+        if service_name not in svc_merged:
+            svc_merged[service_name] = {"bytes": 0, "connections": 0}
+        svc_merged[service_name]["bytes"] += int(sb.get("bytes", {}).get("value", 0) or 0)
+        svc_merged[service_name]["connections"] += sb.get("doc_count", 0)
+    top_services_list = [
+        {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
+        for name, m in svc_merged.items()
+    ]
+    top_services_list.sort(key=lambda s: s["bytes"], reverse=True)
+
     first_seen = aggs.get("first_seen", {}).get("value_as_string", "")
     last_seen = aggs.get("last_seen", {}).get("value_as_string", "")
     proto_buckets = aggs.get("protocols", {}).get("buckets", [])
@@ -368,47 +503,58 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         {
             "timestamp": bwb.get("key_as_string", bwb.get("key")),
             "bytes": bwb.get("bytes", {}).get("value", 0) or 0,
+            "download_bytes": int(bwb.get("download_bytes", {}).get("value", 0) or 0),
+            "upload_bytes": int(bwb.get("upload_bytes", {}).get("value", 0) or 0),
         }
         for bwb in bw_buckets
     ]
 
-    # DNS queries from zeek-dns-*
+    # DNS queries from unified index (zeek dns events)
     dns_query = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
-                    {"term": {"id.orig_h": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "dns"}},
                 ]
             }
         },
-        "aggs": {
-            "dns_queries": {
-                "terms": {"field": "query", "size": 50}
-            }
-        },
+        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": 50}}},
     }
 
     dns_queries = []
     try:
-        dns_result = client.search(index=ZEEK_DNS_INDEX, body=dns_query)
-        dns_buckets = dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
+        dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
+        dns_buckets = (
+            dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
+        )
         dns_queries = [
-            {"domain": db["key"], "count": db["doc_count"]}
-            for db in dns_buckets
+            {"domain": db["key"], "count": db["doc_count"]} for db in dns_buckets
         ]
     except OpenSearchException as exc:
         logger.warning("DNS query lookup failed for %s: %s", ip, exc)
 
-    # Alert count from suricata-*
+    # Alert count from unified index (suricata alert events)
     alert_query = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [
-                    {"range": {"timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                    {"term": {"src_ip": ip}},
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": from_ts,
+                                "lte": to_ts,
+                                "format": "strict_date_optional_time",
+                            }
+                        }
+                    },
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "suricata"}},
+                    {"term": {"event.dataset": "alert"}},
                 ]
             }
         },
@@ -416,9 +562,13 @@ async def handle_device_detail(request: web.Request) -> web.Response:
 
     alert_count = 0
     try:
-        alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+        alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
         alert_total = alert_result.get("hits", {}).get("total", {})
-        alert_count = alert_total.get("value", 0) if isinstance(alert_total, dict) else alert_total
+        alert_count = (
+            alert_total.get("value", 0)
+            if isinstance(alert_total, dict)
+            else alert_total
+        )
     except OpenSearchException as exc:
         logger.warning("Alert count lookup failed for %s: %s", ip, exc)
 
@@ -428,24 +578,30 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     manufacturer = fingerprint.get_manufacturer(mac) if mac else None
     os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
-    return web.json_response({
-        "device": {
-            "ip": ip,
-            "mac": mac,
-            "hostname": hostname,
-            "manufacturer": manufacturer,
-            "os_hint": os_hint,
-            "first_seen": first_seen,
-            "last_seen": last_seen,
-            "total_bytes": total_bytes,
-            "connection_count": connection_count,
-            "protocols": protocols,
-            "alert_count": alert_count,
-            "top_destinations": top_destinations,
-            "dns_queries": dns_queries,
-            "bandwidth_series": bandwidth_series,
+    return web.json_response(
+        {
+            "device": {
+                "ip": ip,
+                "mac": mac,
+                "hostname": hostname,
+                "manufacturer": manufacturer,
+                "os_hint": os_hint,
+                "first_seen": first_seen,
+                "last_seen": last_seen,
+                "total_bytes": total_bytes,
+                "orig_bytes": orig_bytes,
+                "resp_bytes": resp_bytes,
+                "unique_destinations": unique_dest_count,
+                "top_services": top_services_list,
+                "connection_count": connection_count,
+                "protocols": protocols,
+                "alert_count": alert_count,
+                "top_destinations": top_destinations,
+                "dns_queries": dns_queries,
+                "bandwidth_series": bandwidth_series,
+            }
         }
-    })
+    )
 
 
 async def handle_device_connections(request: web.Request) -> web.Response:
@@ -472,20 +628,22 @@ async def handle_device_connections(request: web.Request) -> web.Response:
                     {
                         "bool": {
                             "should": [
-                                {"term": {"id.orig_h": ip}},
-                                {"term": {"id.resp_h": ip}},
+                                {"term": {"source.ip": ip}},
+                                {"term": {"destination.ip": ip}},
                             ],
                             "minimum_should_match": 1,
                         }
                     },
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
-        "sort": [{"ts": {"order": "desc"}}],
+        "sort": [{"@timestamp": {"order": "desc"}}],
     }
 
     try:
-        result = client.search(index=ZEEK_CONN_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device connections: %s", exc)
         return web.json_response(
@@ -503,23 +661,271 @@ async def handle_device_connections(request: web.Request) -> web.Response:
         source["_index"] = hit.get("_index", "")
         connections.append(source)
 
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "ip": ip,
+            "page": page,
+            "size": size,
+            "total": total,
+            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            "connections": connections,
+        }
+    )
+
+
+async def handle_device_categories(request: web.Request) -> web.Response:
+    """GET /api/devices/{ip}/categories?from=&to=
+
+    Returns traffic category breakdown for this device (what percentage
+    is streaming, cloud, social, etc.) based on destination ASN mapping.
+    """
+    ip = request.match_info["ip"]
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    # Query destination ASN breakdown for this device
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                ]
+            }
+        },
+        "aggs": {
+            "asn_breakdown": {
+                "terms": {"field": "destination.as.full.keyword", "size": 200},
+                "aggs": {
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                },
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device categories: %s", exc)
+        return web.json_response({"error": str(exc)}, status=502)
+
+    cat_data: dict[str, dict] = {}
+    for bucket in result.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", []):
+        asn_full = bucket["key"]
+        cat_key = classify_asn(asn_full)
+        total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
+
+        if cat_key not in cat_data:
+            cat_data[cat_key] = {
+                "name": cat_key,
+                "label": CATEGORIES.get(cat_key, cat_key.title()),
+                "total_bytes": 0,
+                "connection_count": 0,
+            }
+
+        cat_data[cat_key]["total_bytes"] += total_bytes
+        cat_data[cat_key]["connection_count"] += bucket.get("doc_count", 0)
+
+    categories = sorted(cat_data.values(), key=lambda c: c["total_bytes"], reverse=True)
+
+    return web.json_response({"ip": ip, "from": from_ts, "to": to_ts, "categories": categories})
+
+
+async def handle_device_alerts(request: web.Request) -> web.Response:
+    """GET /api/devices/{ip}/alerts?from=&to=&limit=20
+
+    Returns recent Suricata alerts with details for a specific device,
+    where the device appears as either source or destination.
+    """
+    ip = request.match_info["ip"]
+    from_ts, to_ts = _parse_time_range(request)
+    limit = _parse_int_param(request, "limit", 20)
+    client = _get_client(request)
+
+    query = {
+        "size": limit,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    {
+                        "bool": {
+                            "should": [
+                                {"term": {"source.ip": ip}},
+                                {"term": {"destination.ip": ip}},
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                    {"term": {"event.provider": "suricata"}},
+                    {"term": {"event.dataset": "alert"}},
+                ]
+            }
+        },
+        "sort": [{"@timestamp": {"order": "desc"}}],
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device alerts: %s", exc)
+        return web.json_response({"error": str(exc)}, status=502)
+
+    hits = result.get("hits", {})
+    total_raw = hits.get("total", {})
+    total = total_raw.get("value", 0) if isinstance(total_raw, dict) else total_raw
+
+    alerts = []
+    for hit in hits.get("hits", []):
+        src = hit.get("_source", {})
+        # OLD CODE START — extracted from wrong path (suricata.eve.alert)
+        # alert_info = src.get("suricata", {}).get("eve", {}).get("alert", {}) or src.get("alert", {})
+        # OLD CODE END
+        _normalize_alert_source(src)  # Normalizes all ECS/Malcolm field paths into src["alert"]
+        alert = src.get("alert", {})
+        alerts.append({
+            "timestamp": src.get("@timestamp", ""),
+            "severity": alert.get("severity", 3),
+            "signature": alert.get("signature", "Unknown alert"),
+            "category": alert.get("category", "Unknown"),
+            "signature_id": alert.get("signature_id", 0),
+            "source_ip": src.get("src_ip") or (src.get("source", {}) or {}).get("ip", ""),
+            "destination_ip": src.get("dest_ip") or (src.get("destination", {}) or {}).get("ip", ""),
+            "source_port": src.get("src_port") or (src.get("source", {}) or {}).get("port"),
+            "destination_port": src.get("dest_port") or (src.get("destination", {}) or {}).get("port"),
+        })
+
     return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "ip": ip,
-        "page": page,
-        "size": size,
-        "total": total,
-        "total_pages": (total + size - 1) // size if size > 0 else 0,
-        "connections": connections,
+        "ip": ip, "from": from_ts, "to": to_ts,
+        "total": total, "alerts": alerts,
     })
+
+
+async def handle_device_ports(request: web.Request) -> web.Response:
+    """GET /api/devices/{ip}/ports?from=&to=
+
+    Returns top destination ports used by this device with service
+    name mapping and suspicious port flagging.
+    """
+    ip = request.match_info["ip"]
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                ]
+            }
+        },
+        "aggs": {
+            "top_ports": {
+                "terms": {"field": "destination.port", "size": 20},
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device ports: %s", exc)
+        return web.json_response({"error": str(exc)}, status=502)
+
+    PORT_NAMES = {
+        20: "FTP Data", 21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP",
+        53: "DNS", 67: "DHCP", 68: "DHCP", 80: "HTTP", 110: "POP3",
+        123: "NTP", 143: "IMAP", 443: "HTTPS", 465: "SMTPS", 587: "SMTP",
+        993: "IMAPS", 995: "POP3S", 3389: "RDP", 5060: "SIP", 5222: "XMPP",
+        5353: "mDNS", 5900: "VNC", 8080: "HTTP-Alt", 8443: "HTTPS-Alt",
+        8888: "Unknown", 9999: "Unknown",
+    }
+
+    SUSPICIOUS_PORTS = {4444, 5555, 6666, 8888, 9999, 31337, 12345, 65535}
+
+    ports = []
+    for bucket in result.get("aggregations", {}).get("top_ports", {}).get("buckets", []):
+        port_num = bucket["key"]
+        ports.append({
+            "port": port_num,
+            "service": PORT_NAMES.get(port_num, "Unknown"),
+            "connections": bucket["doc_count"],
+            "suspicious": port_num in SUSPICIOUS_PORTS,
+        })
+
+    return web.json_response({"ip": ip, "from": from_ts, "to": to_ts, "ports": ports})
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
-def register_device_routes(app: web.Application, storage_manager: StorageManager) -> None:
+
+async def handle_device_count(request: web.Request) -> web.Response:
+    """GET /api/devices/count?from=&to=
+
+    Returns the count of unique DHCP-leased devices (unique client IPs
+    seen in Zeek DHCP logs). This is more accurate than counting all
+    unique source IPs from conn logs, which includes stale/unleased IPs.
+    """
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    query = {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "dhcp"}},
+                ]
+            }
+        },
+        "aggs": {
+            "unique_devices": {
+                "cardinality": {"field": "zeek.dhcp.assigned_ip"}
+            }
+        },
+    }
+
+    try:
+        result = client.search(index=NETWORK_INDEX, body=query)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in devices/count: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    aggs = result.get("aggregations", {})
+    count = aggs.get("unique_devices", {}).get("value", 0)
+
+    return web.json_response({
+        "from": from_ts,
+        "to": to_ts,
+        "count": count,
+    })
+
+
+def register_device_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     """Register all device inventory API routes on the given aiohttp application.
 
     Creates and stores a DeviceFingerprint instance on the app for use
@@ -528,7 +934,11 @@ def register_device_routes(app: web.Application, storage_manager: StorageManager
     # Create fingerprint service and store on app
     app["device_fingerprint"] = DeviceFingerprint()
 
+    app.router.add_get("/api/devices/count", handle_device_count)
     app.router.add_get("/api/devices", handle_device_list)
     app.router.add_get("/api/devices/{ip}", handle_device_detail)
     app.router.add_get("/api/devices/{ip}/connections", handle_device_connections)
-    logger.info("Device API routes registered (3 endpoints)")
+    app.router.add_get("/api/devices/{ip}/categories", handle_device_categories)
+    app.router.add_get("/api/devices/{ip}/alerts", handle_device_alerts)
+    app.router.add_get("/api/devices/{ip}/ports", handle_device_ports)
+    logger.info("Device API routes registered (7 endpoints)")

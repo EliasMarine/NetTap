@@ -9,18 +9,23 @@
 #   sudo ./scripts/install/install.sh [OPTIONS]
 #
 # Options:
-#   --skip-bridge      Skip bridge configuration (if already done)
-#   --skip-pull        Skip Docker image pull (use cached images)
-#   --skip-malcolm     Skip Malcolm deployment (bridge + deps only)
-#   --persist-bridge   Write netplan/systemd for bridge persistence
-#   --dry-run          Log all actions without executing
-#   -v, --verbose      Enable debug output
-#   -h, --help         Show help
+#   --skip-bridge        Skip bridge configuration (if already done)
+#   --skip-pull          Skip Docker image pull (use cached images)
+#   --skip-malcolm       Skip Malcolm deployment (bridge + deps only)
+#   --persist-bridge     Write netplan/systemd for bridge persistence
+#   --defer-bridge       Defer bridge activation until after cable rewiring
+#   --immediate-bridge   (No-op, kept for backwards compatibility)
+#   --non-interactive    Skip interactive prompts (auto-assign NICs)
+#   --reconfigure-nics   Force NIC re-discovery even if .env has values
+#   --dry-run            Log all actions without executing
+#   -v, --verbose        Enable debug output
+#   -h, --help           Show help
 # ==========================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
 
 # ---------------------------------------------------------------------------
@@ -30,6 +35,9 @@ SKIP_BRIDGE="false"
 SKIP_PULL="false"
 SKIP_MALCOLM="false"
 PERSIST_BRIDGE="true"
+DEFER_BRIDGE="false"
+NON_INTERACTIVE="false"
+RECONFIGURE_NICS="false"
 INSTALL_START_TIME=$(date +%s)
 
 # ---------------------------------------------------------------------------
@@ -46,6 +54,10 @@ Options:
   --skip-pull          Skip Docker image pull (use cached)
   --skip-malcolm       Skip Malcolm deployment entirely
   --no-persist-bridge  Don't write persistent bridge config
+  --defer-bridge       Defer bridge activation until after cable rewiring
+  --immediate-bridge   (No-op, kept for backwards compatibility)
+  --non-interactive    Auto-assign NICs without prompts
+  --reconfigure-nics   Force NIC re-discovery even if .env has values
   --dry-run            Log without executing
   -v, --verbose        Debug output
   -h, --help           Show this help
@@ -59,12 +71,61 @@ while [[ $# -gt 0 ]]; do
         --skip-pull)         SKIP_PULL="true"; shift ;;
         --skip-malcolm)      SKIP_MALCOLM="true"; shift ;;
         --no-persist-bridge) PERSIST_BRIDGE="false"; shift ;;
-        --dry-run)           NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)        NETTAP_VERBOSE="true"; shift ;;
+        --defer-bridge)      DEFER_BRIDGE="true"; shift ;;
+        --immediate-bridge)  shift ;;  # No-op, bridge activates by default now
+        --non-interactive)   NON_INTERACTIVE="true"; shift ;;
+        --reconfigure-nics)  RECONFIGURE_NICS="true"; shift ;;
+        --dry-run)           NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)        NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)           usage ;;
         *)                   echo "Unknown option: $1"; usage ;;
     esac
 done
+
+# ===========================================================================
+# NIC PREFLIGHT: Discover and assign NICs before main install
+# ===========================================================================
+step_nic_preflight() {
+    # Check if .env already has NIC assignments
+    local env_file="${PROJECT_ROOT}/.env"
+    local needs_nics="false"
+
+    if [[ ! -f "$env_file" ]]; then
+        needs_nics="true"
+    elif ! grep -q "^WAN_INTERFACE=" "$env_file" 2>/dev/null || \
+         ! grep -q "^LAN_INTERFACE=" "$env_file" 2>/dev/null; then
+        needs_nics="true"
+    fi
+
+    if [[ "$RECONFIGURE_NICS" == "true" ]]; then
+        needs_nics="true"
+    fi
+
+    if [[ "$needs_nics" == "true" ]]; then
+        local preflight_args=()
+        preflight_args+=(--env-file "$env_file")
+
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            preflight_args+=(--non-interactive)
+        fi
+
+        if [[ "$RECONFIGURE_NICS" == "true" ]]; then
+            preflight_args+=(--reconfigure-nics)
+        fi
+
+        if [[ "$NETTAP_DRY_RUN" == "true" ]]; then
+            preflight_args+=(--dry-run)
+        fi
+
+        if [[ "$NETTAP_VERBOSE" == "true" ]]; then
+            preflight_args+=(-v)
+        fi
+
+        "${SCRIPT_DIR}/preflight.sh" "${preflight_args[@]}"
+    else
+        debug "NIC assignments found in .env, skipping NIC preflight"
+    fi
+}
 
 # ===========================================================================
 # STEP 0: Pre-flight checks
@@ -87,6 +148,7 @@ step_preflight() {
     check_arch
 
     # Hardware validation (source for the function, don't run standalone)
+    # shellcheck source=validate-hardware.sh
     source "${SCRIPT_DIR}/validate-hardware.sh"
     # Run validation but don't abort on warnings (rc=1)
     validate_hardware || {
@@ -107,10 +169,19 @@ step_dependencies() {
 
     run apt-get update -qq
 
-    # Core packages
+    # Docker — detect if docker-ce (official repo) is already installed.
+    # docker-ce and docker.io conflict; install whichever isn't present.
+    if dpkg -l docker-ce 2>/dev/null | grep -q "^ii"; then
+        log "Docker CE (official) already installed, skipping docker.io"
+    elif dpkg -l docker.io 2>/dev/null | grep -q "^ii"; then
+        log "docker.io already installed"
+    else
+        # Neither installed — prefer docker.io (Ubuntu native)
+        run apt-get install -y -qq docker.io
+    fi
+
+    # Non-Docker core packages
     run apt-get install -y -qq \
-        docker.io \
-        docker-compose-plugin \
         bridge-utils \
         net-tools \
         ethtool \
@@ -125,11 +196,35 @@ step_dependencies() {
         ca-certificates \
         gnupg
 
+    # Docker Compose plugin — package name varies by source:
+    #   docker-compose-plugin  (Docker official repo / docker-ce)
+    #   docker-compose-v2      (Ubuntu 24.04+ universe / docker.io)
+    # Skip if already available (docker-ce bundles it).
+    if docker compose version &>/dev/null; then
+        debug "Docker Compose already available, skipping plugin install"
+    elif apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+        true  # installed from Docker official repo
+    else
+        log "docker-compose-plugin not found, trying docker-compose-v2..."
+        run apt-get install -y -qq docker-compose-v2
+    fi
+
     # Enable Docker
     run systemctl enable --now docker
     log "Docker enabled and running"
 
-    # Configure Docker daemon (log rotation, overlay2)
+    # Verify docker compose is available
+    if ! docker compose version &>/dev/null; then
+        error "Docker Compose plugin not available. Install docker-compose-plugin or docker-compose-v2."
+    fi
+    debug "Docker Compose $(docker compose version --short 2>/dev/null) available"
+
+    # Configure Docker daemon (log rotation, overlay2, DNS)
+    # Ubuntu 24.04 uses systemd-resolved with a stub at 127.0.0.53.
+    # Docker build containers can't reach the stub (different network
+    # namespace), causing DNS timeouts during image builds. We always
+    # ensure daemon.json has explicit DNS servers.
+    local docker_needs_restart="false"
     if [[ ! -f /etc/docker/daemon.json ]]; then
         log "Configuring Docker daemon..."
         cat > /etc/docker/daemon.json <<'DAEMONJSON'
@@ -139,13 +234,25 @@ step_dependencies() {
         "max-size": "10m",
         "max-file": "3"
     },
-    "storage-driver": "overlay2"
+    "storage-driver": "overlay2",
+    "dns": ["9.9.9.9", "149.112.112.112"]
 }
 DAEMONJSON
-        run systemctl restart docker
-        log "Docker daemon configured with log rotation"
+        docker_needs_restart="true"
+        log "Docker daemon configured with log rotation and DNS"
+    elif ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
+        log "Adding DNS servers to existing Docker daemon config..."
+        # Use jq to add dns key without clobbering existing config
+        local tmp_json
+        tmp_json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' /etc/docker/daemon.json)
+        echo "$tmp_json" > /etc/docker/daemon.json
+        docker_needs_restart="true"
+        log "DNS servers added to daemon.json"
     else
-        debug "Docker daemon.json already exists, skipping"
+        debug "Docker daemon.json already has DNS configured"
+    fi
+    if [[ "$docker_needs_restart" == "true" ]]; then
+        run systemctl restart docker
     fi
 
     log "System dependencies installed"
@@ -194,6 +301,12 @@ step_bridge() {
         return 0
     fi
 
+    if [[ "$DEFER_BRIDGE" == "true" ]]; then
+        log "[Step 3/8] Bridge activation DEFERRED (--defer-bridge)"
+        log "  Run 'sudo scripts/install/activate-bridge.sh' after rewiring cables."
+        return 0
+    fi
+
     log "[Step 3/8] Configuring network bridge..."
 
     local bridge_args=()
@@ -234,6 +347,11 @@ step_malcolm() {
 
     if [[ "$SKIP_PULL" == "true" ]]; then
         deploy_args+=(--skip-pull)
+    fi
+
+    if [[ "$DEFER_BRIDGE" == "true" ]]; then
+        deploy_args+=(--no-start)
+        log "  Services will not start until bridge is activated."
     fi
 
     if [[ "$NETTAP_VERBOSE" == "true" ]]; then
@@ -366,6 +484,96 @@ step_verify() {
     log "[Step 8/8] Running post-install verification..."
     echo ""
 
+    # --- Deferred bridge mode: skip bridge/container checks, print rewiring guide ---
+    if [[ "$DEFER_BRIDGE" == "true" ]]; then
+        local checks_passed=0
+        local checks_warned=0
+
+        # Docker check
+        if docker info &>/dev/null; then
+            echo "${_CLR_GRN}[ OK ]${_CLR_RST} Docker is running"
+            (( ++checks_passed ))
+        else
+            echo "${_CLR_YLW}[WARN]${_CLR_RST} Docker is not running"
+            (( ++checks_warned ))
+        fi
+
+        # Systemd check
+        if systemctl is-enabled nettap.service &>/dev/null; then
+            echo "${_CLR_GRN}[ OK ]${_CLR_RST} nettap.service enabled"
+            (( ++checks_passed ))
+        else
+            echo "${_CLR_YLW}[WARN]${_CLR_RST} nettap.service not enabled"
+            (( ++checks_warned ))
+        fi
+
+        # mDNS check
+        if systemctl is-active avahi-daemon &>/dev/null; then
+            echo "${_CLR_GRN}[ OK ]${_CLR_RST} Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
+            (( ++checks_passed ))
+        else
+            echo "${_CLR_YLW}[WARN]${_CLR_RST} Avahi mDNS not running"
+            (( ++checks_warned ))
+        fi
+
+        # Kernel tuning check
+        local map_count
+        map_count=$(sysctl -n vm.max_map_count 2>/dev/null) || map_count=0
+        if (( map_count >= 262144 )); then
+            echo "${_CLR_GRN}[ OK ]${_CLR_RST} vm.max_map_count = ${map_count}"
+            (( ++checks_passed ))
+        else
+            echo "${_CLR_YLW}[WARN]${_CLR_RST} vm.max_map_count = ${map_count} (should be >= 262144)"
+            (( ++checks_warned ))
+        fi
+
+        local elapsed=$(( $(date +%s) - INSTALL_START_TIME ))
+        local minutes=$(( elapsed / 60 ))
+        local seconds=$(( elapsed % 60 ))
+
+        echo ""
+        echo "=========================================="
+        echo "  Installation Summary (bridge deferred)"
+        echo "=========================================="
+        echo "  Passed:   ${checks_passed}"
+        echo "  Warnings: ${checks_warned}"
+        echo "  Time:     ${minutes}m ${seconds}s"
+        echo ""
+
+        # Print rewiring instructions using .env values
+        load_env "${PROJECT_ROOT}/.env"
+        local wan="${WAN_INTERFACE:-eth0}"
+        local lan="${LAN_INTERFACE:-eth1}"
+        local mgmt="${MGMT_INTERFACE:-}"
+
+        echo "  =========================================="
+        echo "    NEXT STEPS — Physical Rewiring"
+        echo "  =========================================="
+        echo ""
+        echo "  1. Plug ISP modem  --> ${wan} (WAN)"
+        echo "  2. Plug ${lan} (LAN) --> Router WAN port"
+        if [[ -n "$mgmt" ]]; then
+            echo "  3. Keep ${mgmt} (MGMT) connected for dashboard"
+        else
+            echo "  3. Keep Wi-Fi connected — it's your dashboard access"
+        fi
+        echo ""
+        echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
+        echo "                              NetTap"
+        if [[ -n "$mgmt" ]]; then
+            echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+        else
+            echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+        fi
+        echo ""
+        echo "  Then run:  sudo scripts/install/activate-bridge.sh"
+        echo ""
+        echo "=========================================="
+        echo ""
+        return 0
+    fi
+
+    # --- Normal (immediate) mode verification ---
     local checks_passed=0
     local checks_failed=0
     local checks_warned=0
@@ -373,23 +581,23 @@ step_verify() {
     # Bridge check
     if ip link show br0 &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge br0 exists"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         if [[ "$SKIP_BRIDGE" == "true" ]]; then
             echo "${_CLR_YLW}[SKIP]${_CLR_RST} Bridge check skipped"
         else
             echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge br0 not found"
-            (( checks_failed++ ))
+            (( ++checks_failed ))
         fi
     fi
 
     # Docker check
     if docker info &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Docker is running"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_RED}[FAIL]${_CLR_RST} Docker is not running"
-        (( checks_failed++ ))
+        (( ++checks_failed ))
     fi
 
     # Container check
@@ -398,10 +606,10 @@ step_verify() {
         running=$(docker compose -f "${PROJECT_ROOT}/docker/docker-compose.yml" ps -q 2>/dev/null | wc -l) || running=0
         if (( running > 0 )); then
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${running} container(s) running"
-            (( checks_passed++ ))
+            (( ++checks_passed ))
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} No containers detected (may still be starting)"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
 
         # OpenSearch check
@@ -410,33 +618,33 @@ step_verify() {
             health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
             if [[ "$health" == "green" || "$health" == "yellow" ]]; then
                 echo "${_CLR_GRN}[ OK ]${_CLR_RST} OpenSearch cluster health: ${health}"
-                (( checks_passed++ ))
+                (( ++checks_passed ))
             else
                 echo "${_CLR_YLW}[WARN]${_CLR_RST} OpenSearch cluster health: ${health}"
-                (( checks_warned++ ))
+                (( ++checks_warned ))
             fi
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} OpenSearch not responding yet (may need a few minutes)"
-            (( checks_warned++ ))
+            (( ++checks_warned ))
         fi
     fi
 
     # Systemd check
     if systemctl is-enabled nettap.service &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} nettap.service enabled"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} nettap.service not enabled"
-        (( checks_warned++ ))
+        (( ++checks_warned ))
     fi
 
     # mDNS check
     if systemctl is-active avahi-daemon &>/dev/null; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Avahi mDNS not running"
-        (( checks_warned++ ))
+        (( ++checks_warned ))
     fi
 
     # Kernel tuning check
@@ -444,10 +652,10 @@ step_verify() {
     map_count=$(sysctl -n vm.max_map_count 2>/dev/null) || map_count=0
     if (( map_count >= 262144 )); then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} vm.max_map_count = ${map_count}"
-        (( checks_passed++ ))
+        (( ++checks_passed ))
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} vm.max_map_count = ${map_count} (should be >= 262144)"
-        (( checks_warned++ ))
+        (( ++checks_warned ))
     fi
 
     # Summary
@@ -480,12 +688,47 @@ step_verify() {
     echo "  Container status:    docker compose -f docker/docker-compose.yml ps"
     echo "=========================================="
     echo ""
+
+    # Print rewiring instructions (bridge is active, just needs cables)
+    load_env "${PROJECT_ROOT}/.env"
+    local wan="${WAN_INTERFACE:-eth0}"
+    local lan="${LAN_INTERFACE:-eth1}"
+    local mgmt="${MGMT_INTERFACE:-}"
+
+    echo "  =========================================="
+    echo "    INSTALL COMPLETE — Now Rewire Cables"
+    echo "  =========================================="
+    echo ""
+    echo "  The bridge is active and services are running."
+    echo "  Plug in your cables — traffic will flow immediately."
+    echo ""
+    echo "  1. Plug ISP modem  --> ${wan} (WAN)"
+    echo "  2. Plug ${lan} (LAN) --> Router WAN port"
+    if [[ -n "$mgmt" ]]; then
+        echo "  3. Keep ${mgmt} (MGMT) connected for dashboard access"
+    else
+        echo "  3. Keep Wi-Fi connected for dashboard access"
+    fi
+    echo ""
+    echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
+    echo "                              NetTap"
+    if [[ -n "$mgmt" ]]; then
+        echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    else
+        echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    fi
+    echo ""
+    echo "  Dashboard: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
+    echo ""
+    echo "=========================================="
+    echo ""
 }
 
 # ===========================================================================
 # MAIN
 # ===========================================================================
 main() {
+    step_nic_preflight
     step_preflight
     step_dependencies
     step_kernel_tuning

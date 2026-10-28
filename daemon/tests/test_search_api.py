@@ -69,7 +69,7 @@ class TestSearchEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_search_with_query(self):
         """GET /api/search?q=connections from 192.168.1.1 returns results."""
-        hits = [{"id.orig_h": "192.168.1.1", "proto": "tcp"}]
+        hits = [{"source.ip": "192.168.1.1", "network.transport": "tcp"}]
         self.mock_storage._client.search.return_value = _make_search_result(
             hits=hits, total=1
         )
@@ -92,6 +92,7 @@ class TestSearchEndpoint(AioHTTPTestCase):
     async def test_search_opensearch_error(self):
         """OpenSearch failure returns 502."""
         from opensearchpy import OpenSearchException
+
         self.mock_storage._client.search.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/search?q=test")
         self.assertEqual(resp.status, 502)

@@ -28,13 +28,13 @@ _CACHE_TTL_SECONDS = 600
 class ComponentVersion:
     """Version information for a single NetTap component."""
 
-    name: str               # e.g. "zeek", "suricata", "opensearch"
-    category: str           # "core", "docker", "system", "database", "os"
-    current_version: str    # e.g. "6.0.4", "7.0.3"
-    install_type: str       # "docker", "apt", "pip", "npm", "builtin"
-    last_checked: str       # ISO timestamp
-    status: str             # "ok", "unknown", "error"
-    details: dict           # extra info (image ID, package source, etc.)
+    name: str  # e.g. "zeek", "suricata", "opensearch"
+    category: str  # "core", "docker", "system", "database", "os"
+    current_version: str  # e.g. "6.0.4", "7.0.3"
+    install_type: str  # "docker", "apt", "pip", "npm", "builtin"
+    last_checked: str  # ISO timestamp
+    status: str  # "ok", "unknown", "error"
+    details: dict  # extra info (image ID, package source, etc.)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -102,9 +102,7 @@ class VersionManager:
             self._versions = {cv.name: cv for cv in results}
             self._last_scan = now
 
-            logger.info(
-                "Version scan complete: %d components detected", len(results)
-            )
+            logger.info("Version scan complete: %d components detected", len(results))
 
             return {
                 "versions": [cv.to_dict() for cv in results],
@@ -162,15 +160,17 @@ class VersionManager:
         results: list[ComponentVersion] = []
 
         # Daemon version (from module constant)
-        results.append(ComponentVersion(
-            name="nettap-daemon",
-            category="core",
-            current_version=NETTAP_VERSION,
-            install_type="pip",
-            last_checked=now,
-            status="ok",
-            details={"source": "module_constant"},
-        ))
+        results.append(
+            ComponentVersion(
+                name="nettap-daemon",
+                category="core",
+                current_version=NETTAP_VERSION,
+                install_type="pip",
+                last_checked=now,
+                status="ok",
+                details={"source": "module_constant"},
+            )
+        )
 
         # Web UI version (from package.json)
         web_version = "unknown"
@@ -180,7 +180,9 @@ class VersionManager:
         # Try multiple possible locations for package.json
         package_paths = [
             "/opt/nettap/web/package.json",
-            os.path.join(os.path.dirname(self._compose_file), "..", "web", "package.json"),
+            os.path.join(
+                os.path.dirname(self._compose_file), "..", "web", "package.json"
+            ),
         ]
 
         for pkg_path in package_paths:
@@ -194,15 +196,17 @@ class VersionManager:
             except (FileNotFoundError, json.JSONDecodeError, PermissionError):
                 continue
 
-        results.append(ComponentVersion(
-            name="nettap-web",
-            category="core",
-            current_version=web_version,
-            install_type="npm",
-            last_checked=now,
-            status=web_status,
-            details=web_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="nettap-web",
+                category="core",
+                current_version=web_version,
+                install_type="npm",
+                last_checked=now,
+                status=web_status,
+                details=web_details,
+            )
+        )
 
         # Config version (based on compose file existence)
         config_version = "unknown"
@@ -219,15 +223,17 @@ class VersionManager:
         except OSError as exc:
             config_details = {"error": str(exc)}
 
-        results.append(ComponentVersion(
-            name="nettap-config",
-            category="core",
-            current_version=config_version,
-            install_type="builtin",
-            last_checked=now,
-            status=config_status,
-            details=config_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="nettap-config",
+                category="core",
+                current_version=config_version,
+                install_type="builtin",
+                last_checked=now,
+                status=config_status,
+                details=config_details,
+            )
+        )
 
         return results
 
@@ -257,9 +263,9 @@ class VersionManager:
 
         # Try to get running container versions via docker
         try:
-            output = await self._run_command([
-                "docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.ID}}"
-            ])
+            output = await self._run_command(
+                ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.ID}}"]
+            )
 
             if output:
                 for line in output.strip().split("\n"):
@@ -290,31 +296,35 @@ class VersionManager:
                         # Use container name as-is for non-Malcolm containers
                         component_name = container_name
 
-                    results.append(ComponentVersion(
-                        name=component_name,
-                        category="docker",
-                        current_version=tag,
-                        install_type="docker",
-                        last_checked=now,
-                        status="ok",
-                        details={
-                            "image": image,
-                            "container_name": container_name,
-                            "container_id": container_id,
-                        },
-                    ))
+                    results.append(
+                        ComponentVersion(
+                            name=component_name,
+                            category="docker",
+                            current_version=tag,
+                            install_type="docker",
+                            last_checked=now,
+                            status="ok",
+                            details={
+                                "image": image,
+                                "container_name": container_name,
+                                "container_id": container_id,
+                            },
+                        )
+                    )
         except Exception as exc:
             logger.debug("Docker scan failed: %s", exc)
             # Return a single entry indicating Docker is unavailable
-            results.append(ComponentVersion(
-                name="docker",
-                category="docker",
-                current_version="unknown",
-                install_type="docker",
-                last_checked=now,
-                status="error",
-                details={"error": str(exc)},
-            ))
+            results.append(
+                ComponentVersion(
+                    name="docker",
+                    category="docker",
+                    current_version="unknown",
+                    install_type="docker",
+                    last_checked=now,
+                    status="error",
+                    details={"error": str(exc)},
+                )
+            )
 
         return results
 
@@ -330,12 +340,20 @@ class VersionManager:
         # Package -> (command, version_regex)
         packages: list[tuple[str, list[str], str]] = [
             ("zeek", ["zeek", "--version"], r"(\d+\.\d+(?:\.\d+)?)"),
-            ("suricata", ["suricata", "--build-info"], r"Suricata\s+(\d+\.\d+(?:\.\d+)?)"),
+            (
+                "suricata",
+                ["suricata", "--build-info"],
+                r"Suricata\s+(\d+\.\d+(?:\.\d+)?)",
+            ),
             ("tshark", ["tshark", "--version"], r"TShark.*?(\d+\.\d+(?:\.\d+)?)"),
             ("python3", ["python3", "--version"], r"Python\s+(\d+\.\d+(?:\.\d+)?)"),
             ("node", ["node", "--version"], r"v?(\d+\.\d+(?:\.\d+)?)"),
             ("docker", ["docker", "--version"], r"(\d+\.\d+(?:\.\d+)?)"),
-            ("docker-compose", ["docker", "compose", "version"], r"(\d+\.\d+(?:\.\d+)?)"),
+            (
+                "docker-compose",
+                ["docker", "compose", "version"],
+                r"(\d+\.\d+(?:\.\d+)?)",
+            ),
         ]
 
         for pkg_name, cmd, version_re in packages:
@@ -357,15 +375,17 @@ class VersionManager:
                 status = "error"
                 details = {"error": str(exc)}
 
-            results.append(ComponentVersion(
-                name=pkg_name,
-                category="system",
-                current_version=version,
-                install_type="apt",
-                last_checked=now,
-                status=status,
-                details=details,
-            ))
+            results.append(
+                ComponentVersion(
+                    name=pkg_name,
+                    category="system",
+                    current_version=version,
+                    install_type="apt",
+                    last_checked=now,
+                    status=status,
+                    details=details,
+                )
+            )
 
         return results
 
@@ -386,9 +406,9 @@ class VersionManager:
         rules_details: dict[str, Any] = {}
 
         try:
-            output = await self._run_command([
-                "suricata-update", "list-sources", "--free"
-            ])
+            output = await self._run_command(
+                ["suricata-update", "list-sources", "--free"]
+            )
             if output:
                 rules_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 rules_status = "ok"
@@ -414,15 +434,17 @@ class VersionManager:
             except OSError:
                 continue
 
-        results.append(ComponentVersion(
-            name="suricata-rules",
-            category="database",
-            current_version=rules_version,
-            install_type="builtin",
-            last_checked=now,
-            status=rules_status,
-            details=rules_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="suricata-rules",
+                category="database",
+                current_version=rules_version,
+                install_type="builtin",
+                last_checked=now,
+                status=rules_status,
+                details=rules_details,
+            )
+        )
 
         # GeoIP database date
         geoip_version = "unknown"
@@ -448,29 +470,34 @@ class VersionManager:
             except OSError:
                 continue
 
-        results.append(ComponentVersion(
-            name="geoip-db",
-            category="database",
-            current_version=geoip_version,
-            install_type="builtin",
-            last_checked=now,
-            status=geoip_status,
-            details=geoip_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="geoip-db",
+                category="database",
+                current_version=geoip_version,
+                install_type="builtin",
+                last_checked=now,
+                status=geoip_status,
+                details=geoip_details,
+            )
+        )
 
         # OpenSearch version (via API)
         os_version = "unknown"
         os_status = "unknown"
         os_details: dict[str, Any] = {}
 
-        opensearch_url = os.environ.get(
-            "OPENSEARCH_URL", "https://localhost:9200"
-        )
+        opensearch_url = os.environ.get("OPENSEARCH_URL", "https://localhost:9200")
         try:
-            output = await self._run_command([
-                "curl", "-sk", opensearch_url,
-                "--connect-timeout", "5",
-            ])
+            output = await self._run_command(
+                [
+                    "curl",
+                    "-sk",
+                    opensearch_url,
+                    "--connect-timeout",
+                    "5",
+                ]
+            )
             if output:
                 data = json.loads(output)
                 os_version = data.get("version", {}).get("number", "unknown")
@@ -484,15 +511,17 @@ class VersionManager:
         except (json.JSONDecodeError, Exception) as exc:
             os_details = {"error": str(exc)}
 
-        results.append(ComponentVersion(
-            name="opensearch",
-            category="database",
-            current_version=os_version,
-            install_type="docker",
-            last_checked=now,
-            status=os_status,
-            details=os_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="opensearch",
+                category="database",
+                current_version=os_version,
+                install_type="docker",
+                last_checked=now,
+                status=os_status,
+                details=os_details,
+            )
+        )
 
         return results
 
@@ -525,15 +554,17 @@ class VersionManager:
         except (OSError, PermissionError) as exc:
             os_details = {"error": str(exc)}
 
-        results.append(ComponentVersion(
-            name="os",
-            category="os",
-            current_version=os_version,
-            install_type="builtin",
-            last_checked=now,
-            status=os_status,
-            details=os_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="os",
+                category="os",
+                current_version=os_version,
+                install_type="builtin",
+                last_checked=now,
+                status=os_status,
+                details=os_details,
+            )
+        )
 
         # Kernel version
         kernel_version = "unknown"
@@ -548,15 +579,17 @@ class VersionManager:
         except Exception as exc:
             kernel_details = {"error": str(exc)}
 
-        results.append(ComponentVersion(
-            name="kernel",
-            category="os",
-            current_version=kernel_version,
-            install_type="builtin",
-            last_checked=now,
-            status=kernel_status,
-            details=kernel_details,
-        ))
+        results.append(
+            ComponentVersion(
+                name="kernel",
+                category="os",
+                current_version=kernel_version,
+                install_type="builtin",
+                last_checked=now,
+                status=kernel_status,
+                details=kernel_details,
+            )
+        )
 
         return results
 
@@ -583,9 +616,7 @@ class VersionManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=15.0
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
             return stdout.decode("utf-8", errors="replace")
         except FileNotFoundError:
             logger.debug("Command not found: %s", cmd[0])

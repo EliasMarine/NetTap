@@ -68,6 +68,55 @@ export interface AlertAcknowledgeResponse {
 	acknowledged_by: string;
 }
 
+export interface AlertTimelineBucket {
+	timestamp: string;
+	high: number;
+	medium: number;
+	low: number;
+}
+
+export interface AlertTimelineResponse {
+	from: string;
+	to: string;
+	interval: string;
+	buckets: AlertTimelineBucket[];
+}
+
+export interface AlertSignature {
+	signature: string;
+	count: number;
+	severity: number;
+}
+
+export interface AlertTopSignaturesResponse {
+	from: string;
+	to: string;
+	signatures: AlertSignature[];
+}
+
+export interface AlertIpEntry {
+	ip: string;
+	count: number;
+}
+
+export interface AlertTopIpsResponse {
+	from: string;
+	to: string;
+	direction: string;
+	ips: AlertIpEntry[];
+}
+
+export interface AlertCategoryEntry {
+	category: string;
+	count: number;
+}
+
+export interface AlertCategoriesResponse {
+	from: string;
+	to: string;
+	categories: AlertCategoryEntry[];
+}
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -92,7 +141,13 @@ function buildQuery(params: Record<string, string | number | undefined>): string
  * Severity: 1=high, 2=medium, 3=low.
  */
 export async function getAlerts(
-	opts: TimeRangeParams & { severity?: number; page?: number; size?: number } = {}
+	opts: TimeRangeParams & {
+		severity?: number;
+		page?: number;
+		size?: number;
+		ip?: string;
+		signature?: string;
+	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
 		from: opts.from,
@@ -100,6 +155,8 @@ export async function getAlerts(
 		severity: opts.severity,
 		page: opts.page,
 		size: opts.size,
+		ip: opts.ip,
+		signature: opts.signature,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 
@@ -174,4 +231,250 @@ export async function acknowledgeAlert(
 	}
 
 	return res.json();
+}
+
+/**
+ * Get alert timeline (date_histogram bucketed by severity).
+ */
+export async function getAlertTimeline(
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<AlertTimelineResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
+	const res = await fetch(`/api/alerts/timeline${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', interval: opts.interval || '1h', buckets: [] };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get top triggered alert signatures.
+ */
+export async function getAlertTopSignatures(
+	opts: TimeRangeParams & { limit?: number } = {}
+): Promise<AlertTopSignaturesResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
+	const res = await fetch(`/api/alerts/top-signatures${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', signatures: [] };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get top IPs seen in alerts (source or destination).
+ */
+export async function getAlertTopIps(
+	opts: TimeRangeParams & { limit?: number; direction?: string } = {}
+): Promise<AlertTopIpsResponse> {
+	const query = buildQuery({
+		from: opts.from,
+		to: opts.to,
+		limit: opts.limit,
+		direction: opts.direction,
+	});
+	const res = await fetch(`/api/alerts/top-ips${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', direction: opts.direction || 'dest', ips: [] };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get alert counts grouped by rule category.
+ */
+export async function getAlertCategories(
+	opts: TimeRangeParams = {}
+): Promise<AlertCategoriesResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/alerts/categories${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', categories: [] };
+	}
+
+	return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a number with compact notation (e.g. 1.2K, 3.4M).
+ */
+export function formatNumber(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	return String(n);
+}
+
+/**
+ * Severity number to human label.
+ */
+export function severityLabel(severity: number | undefined): string {
+	switch (severity) {
+		case 1:
+			return 'HIGH';
+		case 2:
+			return 'MEDIUM';
+		case 3:
+			return 'LOW';
+		default:
+			return 'INFO';
+	}
+}
+
+/**
+ * Severity number to CSS badge class.
+ */
+export function severityBadgeClass(severity: number | undefined): string {
+	switch (severity) {
+		case 1:
+			return 'badge severity-high';
+		case 2:
+			return 'badge severity-medium';
+		case 3:
+			return 'badge severity-low';
+		default:
+			return 'badge severity-info';
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Smart Alert types & helpers (alert intelligence layer)
+// ---------------------------------------------------------------------------
+
+/** A grouped, deduplicated, severity-ranked smart alert. */
+export interface SmartAlert {
+	signature_id: number;
+	signature: string;
+	suricata_category: string;
+	severity: number;
+	severity_label: string;
+	category: string;
+	category_label: string;
+	source_ip: string;
+	destination_ip: string;
+	count: number;
+	first_seen: string;
+	last_seen: string;
+	trend: string;
+	assessment: string;
+	destination_port?: number;
+}
+
+export interface SmartAlertsResponse {
+	from: string;
+	to: string;
+	device_ip: string | null;
+	alerts: SmartAlert[];
+	total: number;
+}
+
+export interface SmartAlertSummary {
+	from: string;
+	to: string;
+	threat_score: number;
+	threat_level: string;
+	total_groups: number;
+	total_events: number;
+	categories: Record<string, { label: string; groups: number; events: number }>;
+	top_threats: SmartAlert[];
+}
+
+/**
+ * Get grouped smart alerts with optional device filter.
+ */
+export async function getSmartAlerts(
+	opts: {
+		from?: string;
+		to?: string;
+		device_ip?: string;
+		include_info?: boolean;
+		limit?: number;
+	} = {}
+): Promise<SmartAlertsResponse> {
+	const qs = new URLSearchParams();
+	if (opts.from) qs.set('from', opts.from);
+	if (opts.to) qs.set('to', opts.to);
+	if (opts.device_ip) qs.set('device_ip', opts.device_ip);
+	if (opts.include_info) qs.set('include_info', 'true');
+	if (opts.limit) qs.set('limit', String(opts.limit));
+	const query = qs.toString() ? `?${qs.toString()}` : '';
+	const res = await fetch(`/api/alerts/smart${query}`);
+
+	if (!res.ok) {
+		return { from: '', to: '', device_ip: null, alerts: [], total: 0 };
+	}
+
+	return res.json();
+}
+
+/**
+ * Get smart alert summary with threat score, categories, and top threats.
+ */
+export async function getSmartAlertSummary(
+	opts: {
+		from?: string;
+		to?: string;
+		device_ip?: string;
+	} = {}
+): Promise<SmartAlertSummary> {
+	const qs = new URLSearchParams();
+	if (opts.from) qs.set('from', opts.from);
+	if (opts.to) qs.set('to', opts.to);
+	if (opts.device_ip) qs.set('device_ip', opts.device_ip);
+	const query = qs.toString() ? `?${qs.toString()}` : '';
+	const res = await fetch(`/api/alerts/smart/summary${query}`);
+
+	if (!res.ok) {
+		return {
+			from: '',
+			to: '',
+			threat_score: 0,
+			threat_level: 'none',
+			total_groups: 0,
+			total_events: 0,
+			categories: {},
+			top_threats: [],
+		};
+	}
+
+	return res.json();
+}
+
+/**
+ * Suppress a specific alert signature (optionally scoped to a device IP).
+ */
+export async function suppressAlert(
+	signatureId: number,
+	deviceIp?: string,
+	reason?: string
+): Promise<void> {
+	await fetch('/api/alerts/suppress', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ signature_id: signatureId, device_ip: deviceIp, reason }),
+	});
+}
+
+/**
+ * Mark a signature as a false positive.
+ */
+export async function markFalsePositive(
+	signatureId: number,
+	reason?: string
+): Promise<void> {
+	await fetch('/api/alerts/false-positive', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ signature_id: signatureId, reason }),
+	});
 }

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
 
 # ---------------------------------------------------------------------------
@@ -60,8 +61,8 @@ while [[ $# -gt 0 ]]; do
         --validate-only)  MODE_VALIDATE_ONLY="true"; shift ;;
         --teardown)       MODE_TEARDOWN="true"; shift ;;
         --detect)         MODE_DETECT="true"; shift ;;
-        --dry-run)        NETTAP_DRY_RUN="true"; shift ;;
-        -v|--verbose)     NETTAP_VERBOSE="true"; shift ;;
+        --dry-run)        NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+        -v|--verbose)     NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
         -h|--help)        usage ;;
         *)                echo "Unknown option: $1"; usage ;;
     esac
@@ -107,14 +108,37 @@ if [[ "$MODE_TEARDOWN" == "true" ]]; then
         run rm -f /etc/netplan/10-nettap-bridge.yaml
         log "Removed netplan config"
     fi
+    # Remove bridge service (current name)
+    if [[ -f /etc/systemd/system/nettap-bridge.service ]]; then
+        run systemctl disable nettap-bridge.service 2>/dev/null || true
+        run rm -f /etc/systemd/system/nettap-bridge.service
+        log "Removed bridge systemd unit"
+    fi
+    # Remove legacy promisc-only service (old name)
     if [[ -f /etc/systemd/system/nettap-bridge-promisc.service ]]; then
         run systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
         run rm -f /etc/systemd/system/nettap-bridge-promisc.service
-        log "Removed promisc systemd unit"
+        log "Removed legacy promisc systemd unit"
     fi
     if [[ -f /etc/sysctl.d/99-nettap-bridge.conf ]]; then
         run rm -f /etc/sysctl.d/99-nettap-bridge.conf
         log "Removed sysctl config"
+    fi
+    if [[ -f /etc/NetworkManager/conf.d/99-nettap-unmanaged.conf ]]; then
+        run rm -f /etc/NetworkManager/conf.d/99-nettap-unmanaged.conf
+        run systemctl reload NetworkManager 2>/dev/null || true
+        log "Removed NetworkManager unmanaged config"
+    fi
+    # OLD CODE START — standalone override was shadowed by netplan's file
+    if [[ -f /etc/systemd/network/10-nettap-bridge.network ]]; then
+        run rm -f /etc/systemd/network/10-nettap-bridge.network
+        log "Removed legacy networkd bridge override"
+    fi
+    # OLD CODE END
+    # Remove drop-in override directory for netplan-generated bridge config
+    if [[ -d /etc/systemd/network/10-netplan-br0.network.d ]]; then
+        run rm -rf /etc/systemd/network/10-netplan-br0.network.d
+        log "Removed networkd drop-in override for bridge"
     fi
 
     log "Teardown complete. Interfaces restored to default state."
@@ -203,12 +227,32 @@ validate_bridge() {
     fi
     echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge ${BRIDGE_NAME} exists"
 
-    # Check bridge is up
-    if ip link show "$BRIDGE_NAME" | grep -q "state UP"; then
+    # Check bridge is up (or at least not administratively DOWN)
+    # With no cables attached, bridge state is UNKNOWN — that's expected and fine.
+    local link_state
+    link_state=$(ip -br link show "$BRIDGE_NAME" 2>/dev/null | awk '{print $2}') || link_state="UNKNOWN"
+    if [[ "$link_state" == "UP" ]]; then
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is UP"
+    elif [[ "$link_state" == "UNKNOWN" ]]; then
+        echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is UP (no carrier — waiting for cables)"
+    elif [[ "$link_state" == "DOWN" ]]; then
+        # Check if any member NIC has carrier — if not, DOWN is expected
+        local any_carrier=false
+        for member in "$WAN_INTERFACE" "$LAN_INTERFACE"; do
+            if [[ "$(cat "/sys/class/net/${member}/carrier" 2>/dev/null)" == "1" ]]; then
+                any_carrier=true
+                break
+            fi
+        done
+        if [[ "$any_carrier" == "true" ]]; then
+            echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is DOWN but member NICs have carrier"
+            (( ++issues ))
+        else
+            echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge is DOWN (no carrier — will activate when cables are connected)"
+        fi
     else
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge is not UP"
-        (( issues++ ))
+        echo "${_CLR_YLW}[WARN]${_CLR_RST} Bridge state: ${link_state}"
+        (( ++issues ))
     fi
 
     # Check STP is disabled
@@ -218,7 +262,7 @@ validate_bridge() {
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} STP disabled"
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} STP state: ${stp_state} (should be 0 for inline tap)"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     # Check each interface is enslaved
@@ -231,11 +275,11 @@ validate_bridge() {
                 echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${iface} attached to ${BRIDGE_NAME}"
             else
                 echo "${_CLR_RED}[FAIL]${_CLR_RST} ${iface} attached to ${actual_bridge} instead of ${BRIDGE_NAME}"
-                (( issues++ ))
+                (( ++issues ))
             fi
         else
             echo "${_CLR_RED}[FAIL]${_CLR_RST} ${iface} not attached to any bridge"
-            (( issues++ ))
+            (( ++issues ))
         fi
 
         # Check promiscuous mode
@@ -243,7 +287,7 @@ validate_bridge() {
             echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${iface} promiscuous mode on"
         else
             echo "${_CLR_YLW}[WARN]${_CLR_RST} ${iface} promiscuous mode not confirmed"
-            (( issues++ ))
+            (( ++issues ))
         fi
     done
 
@@ -254,7 +298,7 @@ validate_bridge() {
         echo "${_CLR_GRN}[ OK ]${_CLR_RST} Forward delay: 0 (optimal)"
     else
         echo "${_CLR_YLW}[WARN]${_CLR_RST} Forward delay: ${fwd_delay} (should be 0 for inline tap)"
-        (( issues++ ))
+        (( ++issues ))
     fi
 
     echo ""
@@ -395,50 +439,132 @@ net.ipv6.conf.${BRIDGE_NAME}.disable_ipv6 = 1
 SYSCTL_EOF
     log "Sysctl config written to /etc/sysctl.d/99-nettap-bridge.conf"
 
-    # ---- Systemd unit for promiscuous mode (netplan can't set this) ----
-    cat > /etc/systemd/system/nettap-bridge-promisc.service <<SYSD_EOF
+    # ---- Systemd unit for bridge UP + promiscuous mode ----
+    # netplan/networkd have a known issue (systemd #425, #25067, LP#1874022)
+    # where bridges without carrier end up admin DOWN despite
+    # ActivationPolicy=always-up. This oneshot service is the proven
+    # workaround: force the bridge UP after networkd settles on boot.
+    cat > /etc/systemd/system/nettap-bridge.service <<SYSD_EOF
 [Unit]
-Description=NetTap bridge promiscuous mode
-After=network-online.target sys-subsystem-net-devices-${BRIDGE_NAME}.device
+Description=NetTap bridge UP and promiscuous mode
+After=systemd-networkd.service network-online.target
+After=sys-subsystem-net-devices-${BRIDGE_NAME}.device
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Force bridge UP (workaround for networkd not honoring always-up without carrier)
+ExecStart=/usr/sbin/ip link set ${BRIDGE_NAME} up
+# Enable promiscuous mode for packet capture (netplan can't set this)
 ExecStart=/usr/sbin/ip link set ${WAN_INTERFACE} promisc on
 ExecStart=/usr/sbin/ip link set ${LAN_INTERFACE} promisc on
 
 [Install]
 WantedBy=multi-user.target
 SYSD_EOF
-    run systemctl daemon-reload
-    run systemctl enable nettap-bridge-promisc.service
-    log "Systemd promisc unit installed and enabled"
 
-    # ---- Management interface (if specified) ----
+    # Clean up legacy service name if it exists
+    if systemctl is-enabled nettap-bridge-promisc.service >/dev/null 2>&1; then
+        systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
+        rm -f /etc/systemd/system/nettap-bridge-promisc.service
+        debug "Migrated legacy nettap-bridge-promisc.service → nettap-bridge.service"
+    fi
+
+    run systemctl daemon-reload
+    run systemctl enable nettap-bridge.service
+    log "Systemd bridge service installed and enabled"
+
+    # ---- Management interface ----
+    # The management interface (especially Wi-Fi) stays under NetworkManager.
+    # We do NOT add it to the networkd netplan config — NM is already managing
+    # it and networkd cannot handle Wi-Fi. Only wired mgmt interfaces with a
+    # static IP get added to netplan (under ethernets:, not bridges:).
     if [[ -n "$MGMT_INTERFACE" ]]; then
-        local mgmt_ip="${MGMT_IP:-}"
-        local mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
-        if [[ -n "$mgmt_ip" ]]; then
-            # Append management NIC to netplan with static IP
-            cat >> "$local_netplan" <<MGMT_EOF
+        mgmt_ip="${MGMT_IP:-}"
+        # Only add wired mgmt interfaces with explicit static IPs to netplan
+        if [[ -n "$mgmt_ip" ]] && [[ ! "$MGMT_INTERFACE" =~ ^wl ]]; then
+            mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
+            # Re-write netplan to include mgmt under ethernets (not bridges)
+            cat > "$local_netplan" <<NETPLAN_MGMT_EOF
+# NetTap bridge configuration — managed by setup-bridge.sh
+# Do not edit manually; re-run setup-bridge.sh --persist to regenerate.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${WAN_INTERFACE}:
+      dhcp4: false
+      dhcp6: false
+      optional: true
+    ${LAN_INTERFACE}:
+      dhcp4: false
+      dhcp6: false
+      optional: true
     ${MGMT_INTERFACE}:
       dhcp4: false
       addresses:
         - ${mgmt_ip}/$(mask_to_cidr "$mgmt_netmask" 2>/dev/null || echo "24")
-MGMT_EOF
+  bridges:
+    ${BRIDGE_NAME}:
+      interfaces:
+        - ${WAN_INTERFACE}
+        - ${LAN_INTERFACE}
+      dhcp4: false
+      dhcp6: false
+      parameters:
+        stp: false
+        forward-delay: 0
+NETPLAN_MGMT_EOF
+            chmod 600 "$local_netplan"
+            log "Management interface ${MGMT_INTERFACE} (static IP) added to netplan"
         else
-            # DHCP on management interface
-            cat >> "$local_netplan" <<MGMT_EOF
-    ${MGMT_INTERFACE}:
-      dhcp4: true
-MGMT_EOF
+            debug "Management interface ${MGMT_INTERFACE} left under NetworkManager (Wi-Fi or DHCP)"
         fi
-        log "Management interface ${MGMT_INTERFACE} added to netplan"
     fi
 
-    # Apply netplan (non-destructive — only applies our file)
-    run netplan apply 2>/dev/null || warn "netplan apply returned non-zero (bridge may already be active)"
+    # ---- Tell NetworkManager to leave bridge interfaces alone ----
+    if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+        nm_conf="/etc/NetworkManager/conf.d/99-nettap-unmanaged.conf"
+        cat > "$nm_conf" <<NM_EOF
+# NetTap: prevent NetworkManager from managing bridge interfaces
+[keyfile]
+unmanaged-devices=interface-name:${BRIDGE_NAME};interface-name:${WAN_INTERFACE};interface-name:${LAN_INTERFACE}
+NM_EOF
+        run systemctl reload NetworkManager 2>/dev/null || \
+            run systemctl restart NetworkManager 2>/dev/null || true
+        log "NetworkManager configured to ignore bridge interfaces"
+        # Give NM a moment to release the interfaces
+        sleep 1
+    fi
+
+    # ---- Remove legacy standalone networkd override (it was shadowed) ----
+    # Previous versions wrote /etc/systemd/network/10-nettap-bridge.network
+    # but netplan generates /run/systemd/network/10-netplan-br0.network
+    # which wins alphabetically. The standalone file was never read.
+    if [[ -f /etc/systemd/network/10-nettap-bridge.network ]]; then
+        rm -f /etc/systemd/network/10-nettap-bridge.network
+        debug "Removed legacy standalone networkd override (was shadowed by netplan)"
+    fi
+
+    # OLD CODE START — drop-in override was proven ineffective across 3 attempts.
+    # networkd reads it and reports ActivationPolicy=always-up, but still
+    # brings the bridge DOWN after netplan apply. Removed in favor of the
+    # nettap-bridge.service workaround.
+    # OLD CODE END
+
+    # ---- Do NOT run `netplan apply` here ----
+    # The netplan YAML written above is for boot persistence — netplan reads
+    # it automatically on next boot. Running `netplan apply` during install
+    # triggers an async networkd reconfiguration that brings the bridge DOWN
+    # (systemd #425, #25067, LP#1874022, LP#2078955). The bridge is already
+    # UP from the ip link commands above. Don't fight networkd.
+
+    # ---- Activate bridge service (promisc mode during install) ----
+    log "Enabling promisc mode via nettap-bridge.service..."
+    run systemctl start nettap-bridge.service 2>/dev/null || \
+        ip link set "$BRIDGE_NAME" up 2>/dev/null || true
+
     log "Persistence configuration complete — bridge will survive reboot"
 fi
 

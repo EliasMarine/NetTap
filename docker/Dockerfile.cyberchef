@@ -6,7 +6,7 @@ ARG CYBERCHEF_VERSION=10.19.4
 WORKDIR /app
 
 # Download and extract CyberChef release
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip && \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && \
     curl -fsSL "https://github.com/gchq/CyberChef/releases/download/v${CYBERCHEF_VERSION}/CyberChef_v${CYBERCHEF_VERSION}.zip" \
       -o /tmp/cyberchef.zip && \
     unzip /tmp/cyberchef.zip -d /app/cyberchef && \
@@ -57,4 +57,4 @@ NGINXCONF
 EXPOSE 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://localhost:8443/health || exit 1
+    CMD wget -q --spider http://127.0.0.1:8443/health || exit 1

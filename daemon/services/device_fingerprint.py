@@ -14,6 +14,8 @@ import re
 
 logger = logging.getLogger("nettap.services.fingerprint")
 
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
 # Regex for a basic MAC address (colon, dash, or dot separated)
 _MAC_RE = re.compile(
     r"^([0-9A-Fa-f]{2})[:\-.]([0-9A-Fa-f]{2})[:\-.]([0-9A-Fa-f]{2})"
@@ -44,9 +46,7 @@ class DeviceFingerprint:
 
     def __init__(self, oui_path: str | None = None):
         self._oui_db: dict[str, str] = {}  # MAC prefix (AA:BB:CC) -> manufacturer
-        default_path = os.path.join(
-            os.path.dirname(__file__), "..", "data", "oui.txt"
-        )
+        default_path = os.path.join(os.path.dirname(__file__), "..", "data", "oui.txt")
         self._load_oui(oui_path or default_path)
 
     def _load_oui(self, path: str) -> None:
@@ -68,7 +68,10 @@ class DeviceFingerprint:
                             self._oui_db[prefix] = manufacturer
             logger.info("Loaded %d OUI entries from %s", len(self._oui_db), path)
         except FileNotFoundError:
-            logger.warning("OUI file not found: %s — manufacturer lookups will return 'Unknown'", path)
+            logger.warning(
+                "OUI file not found: %s — manufacturer lookups will return 'Unknown'",
+                path,
+            )
         except Exception as exc:
             logger.error("Error loading OUI file %s: %s", path, exc)
 
@@ -100,8 +103,10 @@ class DeviceFingerprint:
 
         return self._oui_db.get(prefix.upper(), "Unknown")
 
-    def get_hostname_for_ip(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
-        """Query zeek-dns-* for the most common hostname resolving to this IP.
+    def get_hostname_for_ip(
+        self, client, ip: str, from_ts: str, to_ts: str
+    ) -> str | None:
+        """Query unified index for the most common hostname resolving to this IP.
 
         Looks at DNS answer records where the resolved IP matches the target.
         Returns the most frequently seen domain name, or None.
@@ -111,21 +116,31 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                        {"term": {"answers": ip}},
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
+                        {"term": {"zeek.dns.answers": ip}},
+                        {"term": {"event.provider": "zeek"}},
+                        {"term": {"event.dataset": "dns"}},
                     ]
                 }
             },
-            "aggs": {
-                "top_hostname": {
-                    "terms": {"field": "query", "size": 1}
-                }
-            },
+            "aggs": {"top_hostname": {"terms": {"field": "zeek.dns.query.keyword", "size": 1}}},
         }
 
         try:
-            result = client.search(index="zeek-dns-*", body=query)
-            buckets = result.get("aggregations", {}).get("top_hostname", {}).get("buckets", [])
+            result = client.search(index=NETWORK_INDEX, body=query)
+            buckets = (
+                result.get("aggregations", {})
+                .get("top_hostname", {})
+                .get("buckets", [])
+            )
             if buckets:
                 return buckets[0]["key"]
         except Exception as exc:
@@ -134,57 +149,77 @@ class DeviceFingerprint:
         return None
 
     def get_mac_for_ip(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
-        """Query zeek-dhcp-* (then zeek-conn-*) for a MAC address associated with this IP.
+        """Query unified index for a MAC address associated with this IP.
 
         Checks DHCP logs first (most reliable), then falls back to the
-        orig_l2_addr field in connection logs.
+        source.mac field in connection logs.
         """
-        # Strategy 1: DHCP logs — client_addr == ip, grab mac field
+        # Strategy 1: DHCP logs — source.ip == ip, grab source.mac field
         dhcp_query = {
             "size": 1,
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                        {"term": {"client_addr": ip}},
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
+                        {"term": {"source.ip": ip}},
+                        {"term": {"event.provider": "zeek"}},
+                        {"term": {"event.dataset": "dhcp"}},
                     ]
                 }
             },
-            "sort": [{"ts": {"order": "desc"}}],
-            "_source": ["mac"],
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "_source": ["source.mac"],
         }
 
         try:
-            result = client.search(index="zeek-dhcp-*", body=dhcp_query)
+            result = client.search(index=NETWORK_INDEX, body=dhcp_query)
             hits = result.get("hits", {}).get("hits", [])
             if hits:
-                mac = hits[0].get("_source", {}).get("mac")
+                mac = hits[0].get("_source", {}).get("source.mac")
                 if mac:
                     return mac
         except Exception as exc:
             logger.debug("DHCP MAC lookup failed for %s: %s", ip, exc)
 
-        # Strategy 2: Connection logs — orig_l2_addr where id.orig_h == ip
+        # Strategy 2: Connection logs — source.mac where source.ip == ip
         conn_query = {
             "size": 1,
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                        {"term": {"id.orig_h": ip}},
-                        {"exists": {"field": "orig_l2_addr"}},
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
+                        {"term": {"source.ip": ip}},
+                        {"exists": {"field": "source.mac"}},
+                        {"term": {"event.provider": "zeek"}},
+                        {"term": {"event.dataset": "conn"}},
                     ]
                 }
             },
-            "sort": [{"ts": {"order": "desc"}}],
-            "_source": ["orig_l2_addr"],
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "_source": ["source.mac"],
         }
 
         try:
-            result = client.search(index="zeek-conn-*", body=conn_query)
+            result = client.search(index=NETWORK_INDEX, body=conn_query)
             hits = result.get("hits", {}).get("hits", [])
             if hits:
-                mac = hits[0].get("_source", {}).get("orig_l2_addr")
+                mac = hits[0].get("_source", {}).get("source.mac")
                 if mac:
                     return mac
         except Exception as exc:
@@ -195,9 +230,9 @@ class DeviceFingerprint:
     def get_os_hint(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
         """Infer the device's OS from HTTP User-Agent strings.
 
-        Queries zeek-http-* for User-Agent values from this IP, then
+        Queries unified index for User-Agent values from this IP, then
         matches against known OS patterns.  Falls back to JA3 fingerprint
-        analysis from zeek-ssl-* if HTTP data is unavailable.
+        analysis from ssl events if HTTP data is unavailable.
         """
         # Strategy 1: HTTP User-Agent
         ua_query = {
@@ -205,22 +240,30 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                        {"term": {"id.orig_h": ip}},
-                        {"exists": {"field": "user_agent"}},
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
+                        {"term": {"source.ip": ip}},
+                        {"exists": {"field": "zeek.http.user_agent"}},
+                        {"term": {"event.provider": "zeek"}},
+                        {"term": {"event.dataset": "http"}},
                     ]
                 }
             },
-            "aggs": {
-                "top_ua": {
-                    "terms": {"field": "user_agent", "size": 5}
-                }
-            },
+            "aggs": {"top_ua": {"terms": {"field": "zeek.http.user_agent.keyword", "size": 5}}},
         }
 
         try:
-            result = client.search(index="zeek-http-*", body=ua_query)
-            buckets = result.get("aggregations", {}).get("top_ua", {}).get("buckets", [])
+            result = client.search(index=NETWORK_INDEX, body=ua_query)
+            buckets = (
+                result.get("aggregations", {}).get("top_ua", {}).get("buckets", [])
+            )
             for bucket in buckets:
                 ua_string = bucket.get("key", "")
                 for pattern, os_name in _OS_PATTERNS:
@@ -235,22 +278,30 @@ class DeviceFingerprint:
             "query": {
                 "bool": {
                     "filter": [
-                        {"range": {"ts": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}},
-                        {"term": {"id.orig_h": ip}},
-                        {"exists": {"field": "ja3"}},
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": from_ts,
+                                    "lte": to_ts,
+                                    "format": "strict_date_optional_time",
+                                }
+                            }
+                        },
+                        {"term": {"source.ip": ip}},
+                        {"exists": {"field": "zeek.ssl.ja3"}},
+                        {"term": {"event.provider": "zeek"}},
+                        {"term": {"event.dataset": "ssl"}},
                     ]
                 }
             },
-            "aggs": {
-                "top_ja3": {
-                    "terms": {"field": "ja3", "size": 1}
-                }
-            },
+            "aggs": {"top_ja3": {"terms": {"field": "zeek.ssl.ja3.keyword", "size": 1}}},
         }
 
         try:
-            result = client.search(index="zeek-ssl-*", body=ja3_query)
-            buckets = result.get("aggregations", {}).get("top_ja3", {}).get("buckets", [])
+            result = client.search(index=NETWORK_INDEX, body=ja3_query)
+            buckets = (
+                result.get("aggregations", {}).get("top_ja3", {}).get("buckets", [])
+            )
             if buckets:
                 # JA3 hash present but we don't have a lookup table yet.
                 # Return a generic hint so the caller knows TLS was seen.

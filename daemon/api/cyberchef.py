@@ -57,7 +57,9 @@ async def handle_cyberchef_url(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
-def register_cyberchef_routes(app: web.Application, cyberchef: CyberChefService) -> None:
+def register_cyberchef_routes(
+    app: web.Application, cyberchef: CyberChefService
+) -> None:
     """Register CyberChef API routes on the aiohttp application."""
     app["cyberchef"] = cyberchef
     app.router.add_get("/api/cyberchef/status", handle_cyberchef_status)

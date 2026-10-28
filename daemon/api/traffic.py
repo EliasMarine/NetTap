@@ -2,17 +2,21 @@
 NetTap Traffic API Routes
 
 Registers traffic analysis endpoints with the aiohttp application.
-These endpoints query OpenSearch zeek-* indices to provide network traffic
-summaries, top talkers, protocol distributions, bandwidth time-series,
-and paginated connection listings.
+These endpoints query OpenSearch arkime_sessions3-* indices to provide
+network traffic summaries, top talkers, protocol distributions,
+bandwidth time-series, and paginated connection listings.
 """
 
+import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter
+from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
 
@@ -21,13 +25,23 @@ logger = logging.getLogger("nettap.api.traffic")
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
 
-# Zeek connection indices
-ZEEK_INDEX = "zeek-*"
+# OLD CODE START — replaced Zeek-native index with Malcolm unified index
+# ZEEK_INDEX = "zeek-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# Zeek conn event filters — Malcolm routes all data into arkime_sessions3-*;
+# these term filters select only Zeek connection logs from the unified index.
+_ZEEK_CONN_FILTERS = [
+    {"term": {"event.provider": "zeek"}},
+    {"term": {"event.dataset": "conn"}},
+]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps.
@@ -70,10 +84,10 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
-    """Build an OpenSearch range filter on the 'ts' field (Zeek timestamp)."""
+    """Build an OpenSearch range filter on the '@timestamp' field (ECS)."""
     return {
         "range": {
-            "ts": {
+            "@timestamp": {
                 "gte": from_ts,
                 "lte": to_ts,
                 "format": "strict_date_optional_time",
@@ -92,35 +106,39 @@ def _get_client(request: web.Request):
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_traffic_summary(request: web.Request) -> web.Response:
     """GET /api/traffic/summary?from=&to=
 
     Returns total bytes, packet count, connection count, and top protocol
-    for the given time range from zeek-* indices.
+    for the given time range from arkime_sessions3-* indices.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "track_total_hits": True,
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
-            "total_orig_bytes": {"sum": {"field": "orig_bytes", "missing": 0}},
-            "total_resp_bytes": {"sum": {"field": "resp_bytes", "missing": 0}},
-            "total_orig_pkts": {"sum": {"field": "orig_pkts", "missing": 0}},
-            "total_resp_pkts": {"sum": {"field": "resp_pkts", "missing": 0}},
-            "top_protocol": {
-                "terms": {"field": "proto", "size": 1}
-            },
+            # OLD CODE START — Arkime session fields (client.bytes/server.bytes) include
+            # protocol overhead and inflate values ~25x vs actual network bytes.
+            # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+            # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            # OLD CODE END
+            "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+            "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
+            "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
+            "top_protocol": {"terms": {"field": "network.transport.keyword", "size": 1}},
         },
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/summary: %s", exc)
         return web.json_response(
@@ -129,7 +147,9 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
-    connection_count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    connection_count = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
     resp_bytes = aggs.get("total_resp_bytes", {}).get("value", 0) or 0
@@ -139,50 +159,56 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     top_protocol_buckets = aggs.get("top_protocol", {}).get("buckets", [])
     top_protocol = top_protocol_buckets[0]["key"] if top_protocol_buckets else "unknown"
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "total_bytes": orig_bytes + resp_bytes,
-        "orig_bytes": orig_bytes,
-        "resp_bytes": resp_bytes,
-        "packet_count": orig_pkts + resp_pkts,
-        "connection_count": connection_count,
-        "top_protocol": top_protocol,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "total_bytes": orig_bytes + resp_bytes,
+            "orig_bytes": orig_bytes,
+            "resp_bytes": resp_bytes,
+            "packet_count": orig_pkts + resp_pkts,
+            "connection_count": connection_count,
+            "top_protocol": top_protocol,
+        }
+    )
 
 
 async def handle_top_talkers(request: web.Request) -> web.Response:
     """GET /api/traffic/top-talkers?from=&to=&limit=20
 
-    Returns top source IPs by total bytes (orig_bytes + resp_bytes).
+    Returns top source IPs by total bytes (client.bytes + server.bytes).
     """
     from_ts, to_ts = _parse_time_range(request)
     limit = _parse_int_param(request, "limit", 20)
     client = _get_client(request)
 
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    bool_query: dict = {
+        "filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ],
+    }
+    if excluded:
+        bool_query["must_not"] = excluded
+
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": bool_query},
         "aggs": {
             "top_sources": {
-                "terms": {"field": "id.orig_h", "size": limit},
+                "terms": {"field": "source.ip.keyword", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
                     },
                     "bucket_sort": {
-                        "bucket_sort": {
-                            "sort": [{"total_bytes": {"order": "desc"}}]
-                        }
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
                     },
                 },
             }
@@ -190,7 +216,7 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/top-talkers: %s", exc)
         return web.json_response(
@@ -207,12 +233,14 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
         for b in buckets
     ]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "limit": limit,
-        "top_talkers": talkers,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "limit": limit,
+            "top_talkers": talkers,
+        }
+    )
 
 
 async def handle_top_destinations(request: web.Request) -> web.Response:
@@ -224,29 +252,38 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     limit = _parse_int_param(request, "limit", 20)
     client = _get_client(request)
 
+    excluded_ips = request.app.get("excluded_ips", [])
+    must_not: list[dict] = []
+    if excluded_ips:
+        # Exclude from both source and destination for top-destinations
+        must_not.append({"terms": {"destination.ip": excluded_ips}})
+
+    bool_query: dict = {
+        "filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ],
+    }
+    if must_not:
+        bool_query["must_not"] = must_not
+
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": bool_query},
         "aggs": {
             "top_destinations": {
-                "terms": {"field": "id.resp_h", "size": limit},
+                "terms": {"field": "destination.ip.keyword", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0) + (doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0)",
+                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
                     },
                     "bucket_sort": {
-                        "bucket_sort": {
-                            "sort": [{"total_bytes": {"order": "desc"}}]
-                        }
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
                     },
                 },
             }
@@ -254,14 +291,16 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/top-destinations: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    buckets = result.get("aggregations", {}).get("top_destinations", {}).get("buckets", [])
+    buckets = (
+        result.get("aggregations", {}).get("top_destinations", {}).get("buckets", [])
+    )
     destinations = [
         {
             "ip": b["key"],
@@ -271,42 +310,42 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
         for b in buckets
     ]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "limit": limit,
-        "top_destinations": destinations,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "limit": limit,
+            "top_destinations": destinations,
+        }
+    )
 
 
 async def handle_protocols(request: web.Request) -> web.Response:
     """GET /api/traffic/protocols?from=&to=
 
-    Returns protocol distribution via terms aggregation on the 'proto'
-    and 'service' fields from zeek connection logs.
+    Returns protocol distribution via terms aggregation on the
+    'network.transport' and 'network.protocol' fields from Zeek
+    connection logs in arkime_sessions3-*.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
-            "by_proto": {
-                "terms": {"field": "proto", "size": 50}
-            },
+            "by_proto": {"terms": {"field": "network.transport.keyword", "size": 50}},
             "by_service": {
-                "terms": {"field": "service", "size": 50, "missing": "unknown"}
+                "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"}
             },
         },
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/protocols: %s", exc)
         return web.json_response(
@@ -318,28 +357,24 @@ async def handle_protocols(request: web.Request) -> web.Response:
     proto_buckets = aggs.get("by_proto", {}).get("buckets", [])
     service_buckets = aggs.get("by_service", {}).get("buckets", [])
 
-    protocols = [
-        {"name": b["key"], "count": b["doc_count"]}
-        for b in proto_buckets
-    ]
-    services = [
-        {"name": b["key"], "count": b["doc_count"]}
-        for b in service_buckets
-    ]
+    protocols = [{"name": b["key"], "count": b["doc_count"]} for b in proto_buckets]
+    services = [{"name": b["key"], "count": b["doc_count"]} for b in service_buckets]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "protocols": protocols,
-        "services": services,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "protocols": protocols,
+            "services": services,
+        }
+    )
 
 
 async def handle_bandwidth(request: web.Request) -> web.Response:
     """GET /api/traffic/bandwidth?from=&to=&interval=5m
 
-    Returns time-series bandwidth data using a date_histogram on 'ts'
-    with sum of orig_bytes + resp_bytes per bucket.
+    Returns time-series bandwidth data using a date_histogram on '@timestamp'
+    with sum of client.bytes + server.bytes per bucket.
     """
     from_ts, to_ts = _parse_time_range(request)
     interval = request.query.get("interval", "5m")
@@ -352,15 +387,14 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [_time_range_filter(from_ts, to_ts)]
-            }
-        },
+        "query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            *_ZEEK_CONN_FILTERS,
+        ]}},
         "aggs": {
             "bandwidth_over_time": {
                 "date_histogram": {
-                    "field": "ts",
+                    "field": "@timestamp",
                     "fixed_interval": interval,
                     "min_doc_count": 0,
                     "extended_bounds": {
@@ -369,15 +403,15 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
                     },
                 },
                 "aggs": {
-                    "orig_bytes": {"sum": {"field": "orig_bytes", "missing": 0}},
-                    "resp_bytes": {"sum": {"field": "resp_bytes", "missing": 0}},
+                    "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                    "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
                 },
             }
         },
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/bandwidth: %s", exc)
         return web.json_response(
@@ -385,9 +419,7 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
         )
 
     buckets = (
-        result.get("aggregations", {})
-        .get("bandwidth_over_time", {})
-        .get("buckets", [])
+        result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
     )
 
     series = [
@@ -402,12 +434,14 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
         for b in buckets
     ]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "interval": interval,
-        "series": series,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "series": series,
+        }
+    )
 
 
 async def handle_connections(request: web.Request) -> web.Response:
@@ -426,16 +460,21 @@ async def handle_connections(request: web.Request) -> web.Response:
 
     # Build query
     must_clauses: list[dict] = []
-    filter_clauses: list[dict] = [_time_range_filter(from_ts, to_ts)]
+    filter_clauses: list[dict] = [
+        _time_range_filter(from_ts, to_ts),
+        *_ZEEK_CONN_FILTERS,
+    ]
 
     if search_query:
-        must_clauses.append({
-            "query_string": {
-                "query": search_query,
-                "default_operator": "AND",
-                "analyze_wildcard": True,
+        must_clauses.append(
+            {
+                "query_string": {
+                    "query": search_query,
+                    "default_operator": "AND",
+                    "analyze_wildcard": True,
+                }
             }
-        })
+        )
 
     query = {
         "size": size,
@@ -446,11 +485,11 @@ async def handle_connections(request: web.Request) -> web.Response:
                 "filter": filter_clauses,
             }
         },
-        "sort": [{"ts": {"order": "desc"}}],
+        "sort": [{"@timestamp": {"order": "desc"}}],
     }
 
     try:
-        result = client.search(index=ZEEK_INDEX, body=query)
+        result = client.search(index=NETWORK_INDEX, body=query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/connections: %s", exc)
         return web.json_response(
@@ -468,15 +507,17 @@ async def handle_connections(request: web.Request) -> web.Response:
         source["_index"] = hit.get("_index", "")
         connections.append(source)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "page": page,
-        "size": size,
-        "total": total,
-        "total_pages": (total + size - 1) // size if size > 0 else 0,
-        "connections": connections,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "page": page,
+            "size": size,
+            "total": total,
+            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            "connections": connections,
+        }
+    )
 
 
 async def handle_traffic_categories(request: web.Request) -> web.Response:
@@ -501,10 +542,86 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
             {"error": f"Category classification failed: {exc}"}, status=500
         )
 
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "categories": categories,
+        }
+    )
+
+
+async def handle_category_detail(request: web.Request) -> web.Response:
+    """GET /api/traffic/categories/{category} -- per-device breakdown."""
+    category = request.match_info["category"]
+
+    if category not in traffic_classifier.CATEGORIES:
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
+
+    from_ts, to_ts = _parse_time_range(request)
+    client = _get_client(request)
+
+    fingerprint = request.app.get("device_fingerprint")
+
+    try:
+        devices, services = await asyncio.gather(
+            traffic_classifier.get_category_devices(client, category, from_ts, to_ts, fingerprint=fingerprint),
+            traffic_classifier.get_category_services(client, category, from_ts, to_ts),
+        )
+    except Exception as exc:
+        logger.error("Error in category detail for %s: %s", category, exc)
+        return web.json_response(
+            {"error": f"Category detail query failed: {exc}"}, status=500
+        )
+
+    grand_total = sum(d["total_bytes"] for d in devices)
+    for d in devices:
+        d["percent"] = round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+
     return web.json_response({
+        "category": category,
+        "label": traffic_classifier.CATEGORIES[category],
+        "device_count": len(devices),
+        "total_bytes": grand_total,
+        "connection_count": sum(d["connections"] for d in devices),
+        "devices": devices,
+        "services": services,
+    })
+
+
+async def handle_category_bandwidth(request: web.Request) -> web.Response:
+    """GET /api/traffic/categories/{category}/bandwidth?from=&to=&interval="""
+    category = request.match_info["category"]
+
+    if category not in traffic_classifier.CATEGORIES:
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
+
+    from_ts, to_ts = _parse_time_range(request)
+    interval = request.query.get("interval", "15m")
+
+    # Validate interval
+    valid_intervals = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
+    if interval not in valid_intervals:
+        interval = "15m"
+
+    client = _get_client(request)
+
+    try:
+        series = await traffic_classifier.get_category_bandwidth(
+            client, category, from_ts, to_ts, interval
+        )
+    except Exception as exc:
+        logger.error("Error in category bandwidth for %s: %s", category, exc)
+        return web.json_response(
+            {"error": f"Category bandwidth query failed: {exc}"}, status=500
+        )
+
+    return web.json_response({
+        "category": category,
         "from": from_ts,
         "to": to_ts,
-        "categories": categories,
+        "interval": interval,
+        "series": series,
     })
 
 
@@ -512,7 +629,10 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
 # Route registration
 # ---------------------------------------------------------------------------
 
-def register_traffic_routes(app: web.Application, storage_manager: StorageManager) -> None:
+
+def register_traffic_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     """Register all traffic API routes on the given aiohttp application.
 
     The StorageManager is expected to already be stored in app['storage']
@@ -525,4 +645,6 @@ def register_traffic_routes(app: web.Application, storage_manager: StorageManage
     app.router.add_get("/api/traffic/bandwidth", handle_bandwidth)
     app.router.add_get("/api/traffic/connections", handle_connections)
     app.router.add_get("/api/traffic/categories", handle_traffic_categories)
-    logger.info("Traffic API routes registered (7 endpoints)")
+    app.router.add_get("/api/traffic/categories/{category}", handle_category_detail)
+    app.router.add_get("/api/traffic/categories/{category}/bandwidth", handle_category_bandwidth)
+    logger.info("Traffic API routes registered (9 endpoints)")

@@ -73,8 +73,13 @@ class TestInvestigationDataclass(unittest.TestCase):
         """to_dict() should serialize notes correctly."""
         note = InvestigationNote("n1", "content", "ts1", "ts1")
         inv = Investigation(
-            id="inv-1", title="T", description="", status="open",
-            severity="low", created_at="ts", updated_at="ts",
+            id="inv-1",
+            title="T",
+            description="",
+            status="open",
+            severity="low",
+            created_at="ts",
+            updated_at="ts",
             notes=[note],
         )
         d = inv.to_dict()
@@ -249,6 +254,7 @@ class TestInvestigationStoreUpdate(unittest.TestCase):
         """update() should update the updated_at timestamp."""
         old_ts = self.inv.updated_at
         import time
+
         time.sleep(0.01)  # Ensure time difference
         updated = self.store.update(self.inv.id, title="Changed")
         self.assertNotEqual(updated.updated_at, old_ts)
@@ -475,9 +481,7 @@ class TestPersistence(unittest.TestCase):
 
     def test_save_creates_parent_dirs(self):
         """_save() should create parent directories if needed."""
-        nested_path = os.path.join(
-            tempfile.mkdtemp(), "subdir", "investigations.json"
-        )
+        nested_path = os.path.join(tempfile.mkdtemp(), "subdir", "investigations.json")
         store = InvestigationStore(store_file=nested_path)
         store.create(title="Nested")
         self.assertTrue(os.path.exists(nested_path))

@@ -19,6 +19,7 @@ logger = logging.getLogger("nettap.api.baseline")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_get_baseline(request: web.Request) -> web.Response:
     """GET /api/devices/baseline
 
@@ -27,10 +28,12 @@ async def handle_get_baseline(request: web.Request) -> web.Response:
     baseline: DeviceBaseline = request.app["device_baseline"]
     devices = baseline.get_baseline()
 
-    return web.json_response({
-        "count": baseline.get_baseline_count(),
-        "devices": devices,
-    })
+    return web.json_response(
+        {
+            "count": baseline.get_baseline_count(),
+            "devices": devices,
+        }
+    )
 
 
 async def handle_check_baseline(request: web.Request) -> web.Response:
@@ -50,11 +53,13 @@ async def handle_check_baseline(request: web.Request) -> web.Response:
 
     alerts = baseline.check_devices(current_devices)
 
-    return web.json_response({
-        "baseline_count": baseline.get_baseline_count(),
-        "new_device_count": len(alerts),
-        "alerts": alerts,
-    })
+    return web.json_response(
+        {
+            "baseline_count": baseline.get_baseline_count(),
+            "new_device_count": len(alerts),
+            "alerts": alerts,
+        }
+    )
 
 
 async def handle_check_baseline_post(request: web.Request) -> web.Response:
@@ -68,23 +73,21 @@ async def handle_check_baseline_post(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     current_devices = body.get("devices", [])
     if not isinstance(current_devices, list):
-        return web.json_response(
-            {"error": "'devices' must be a list"}, status=400
-        )
+        return web.json_response({"error": "'devices' must be a list"}, status=400)
 
     alerts = baseline.check_devices(current_devices)
 
-    return web.json_response({
-        "baseline_count": baseline.get_baseline_count(),
-        "new_device_count": len(alerts),
-        "alerts": alerts,
-    })
+    return web.json_response(
+        {
+            "baseline_count": baseline.get_baseline_count(),
+            "new_device_count": len(alerts),
+            "alerts": alerts,
+        }
+    )
 
 
 async def handle_add_to_baseline(request: web.Request) -> web.Response:
@@ -98,9 +101,7 @@ async def handle_add_to_baseline(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     mac = body.get("mac", "")
     if not mac or not isinstance(mac, str):
@@ -108,17 +109,17 @@ async def handle_add_to_baseline(request: web.Request) -> web.Response:
             {"error": "Missing or invalid 'mac' field"}, status=400
         )
 
-    device_info = {
-        k: v for k, v in body.items() if k != "mac"
-    }
+    device_info = {k: v for k, v in body.items() if k != "mac"}
 
     baseline.add_to_baseline(mac, device_info)
 
-    return web.json_response({
-        "result": "added",
-        "mac": mac.strip().upper(),
-        "baseline_count": baseline.get_baseline_count(),
-    })
+    return web.json_response(
+        {
+            "result": "added",
+            "mac": mac.strip().upper(),
+            "baseline_count": baseline.get_baseline_count(),
+        }
+    )
 
 
 async def handle_remove_from_baseline(request: web.Request) -> web.Response:
@@ -130,11 +131,13 @@ async def handle_remove_from_baseline(request: web.Request) -> web.Response:
     baseline: DeviceBaseline = request.app["device_baseline"]
 
     if baseline.remove_from_baseline(mac):
-        return web.json_response({
-            "result": "removed",
-            "mac": mac.strip().upper(),
-            "baseline_count": baseline.get_baseline_count(),
-        })
+        return web.json_response(
+            {
+                "result": "removed",
+                "mac": mac.strip().upper(),
+                "baseline_count": baseline.get_baseline_count(),
+            }
+        )
     else:
         return web.json_response(
             {"error": f"Device {mac} not found in baseline"}, status=404
@@ -144,6 +147,7 @@ async def handle_remove_from_baseline(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_baseline_routes(
     app: web.Application,

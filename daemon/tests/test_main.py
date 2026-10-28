@@ -7,8 +7,8 @@ isolation and avoid leaking state between tests.
 """
 
 import logging
-
-
+import sys
+import pathlib
 
 # We import the module-level functions directly. Note: main.py uses
 # relative imports like ``from storage.manager import ...`` which are
@@ -16,9 +16,6 @@ import logging
 # dependency chain, we add the daemon/ directory to sys.path in the
 # tests (conftest or pytest configuration) or run pytest from daemon/.
 # The conftest.py already sets up the path correctly.
-
-import sys
-import pathlib
 
 # Ensure daemon/ is on sys.path so main.py's imports resolve
 _daemon_dir = str(pathlib.Path(__file__).resolve().parent.parent)
@@ -32,8 +29,8 @@ from main import _env_int, _env_float, _env_str, load_config, configure_logging 
 # _env_int
 # =========================================================================
 
-class TestEnvInt:
 
+class TestEnvInt:
     def test_env_int_valid(self, monkeypatch):
         """Verify _env_int parses a valid integer from the environment."""
         monkeypatch.setenv("TEST_INT_VAR", "42")
@@ -54,8 +51,8 @@ class TestEnvInt:
 # _env_float
 # =========================================================================
 
-class TestEnvFloat:
 
+class TestEnvFloat:
     def test_env_float_valid(self, monkeypatch):
         """Verify _env_float parses a valid float from the environment."""
         monkeypatch.setenv("TEST_FLOAT_VAR", "3.14")
@@ -77,8 +74,8 @@ class TestEnvFloat:
 # _env_str
 # =========================================================================
 
-class TestEnvStr:
 
+class TestEnvStr:
     def test_env_str_default(self, monkeypatch):
         """Verify _env_str returns the default when the env var is not set."""
         monkeypatch.delenv("TEST_STR_MISSING", raising=False)
@@ -94,8 +91,8 @@ class TestEnvStr:
 # load_config
 # =========================================================================
 
-class TestLoadConfig:
 
+class TestLoadConfig:
     def test_load_config_defaults(self, monkeypatch):
         """Verify all defaults are correct when no env vars are set."""
         # Clear all relevant env vars
@@ -161,8 +158,8 @@ class TestLoadConfig:
 # configure_logging
 # =========================================================================
 
-class TestConfigureLogging:
 
+class TestConfigureLogging:
     def test_configure_logging_sets_level(self):
         """Verify logging level is set correctly by configure_logging."""
         configure_logging("WARNING")

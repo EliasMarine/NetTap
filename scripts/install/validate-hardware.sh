@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ detect_nics() {
         speed=$(get_nic_speed "$nic")
         if nic_has_carrier "$nic"; then carrier_str="link up"; else carrier_str="no link"; fi
         echo "  [${idx}] ${nic} — ${driver}, ${speed}, ${carrier_str}"
-        (( idx++ ))
+        (( ++idx ))
     done
 
     echo ""
@@ -202,12 +203,12 @@ validate_hardware() {
 
     # Run each check and capture its exit code without triggering set -e
     local rc
-    check_cpu;            rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_ram;            rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_disk;           rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_nics;           rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_kernel;         rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
-    check_virtualization; rc=$?; (( rc == 2 )) && (( errors++ ));  (( rc == 1 )) && (( warnings++ ))
+    check_cpu;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_ram;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_disk;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_nics;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_kernel;         rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    check_virtualization; rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
 
     echo ""
     echo "------------------------------------------"
@@ -234,8 +235,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --detect)     detect_nics; exit 0 ;;
-            -v|--verbose) NETTAP_VERBOSE="true"; shift ;;
-            --color)      NETTAP_COLOR="$2"; _setup_colors; shift 2 ;;
+            -v|--verbose) NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
+            --color)      NETTAP_COLOR="$2"; export NETTAP_COLOR; _setup_colors; shift 2 ;;
             -h|--help)
                 echo "Usage: $0 [OPTIONS]"
                 echo ""

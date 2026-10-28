@@ -18,6 +18,7 @@ logger = logging.getLogger("nettap.api.health_monitor")
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_health_status(request: web.Request) -> web.Response:
     """GET /api/internet/health
 
@@ -69,6 +70,7 @@ async def handle_health_check(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_health_monitor_routes(
     app: web.Application, monitor: InternetHealthMonitor

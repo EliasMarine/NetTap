@@ -91,7 +91,8 @@ class TestCreateInvestigation(AioHTTPTestCase):
     async def test_create_success(self):
         """POST /api/investigations creates a new investigation."""
         resp = await self.client.request(
-            "POST", "/api/investigations",
+            "POST",
+            "/api/investigations",
             json={"title": "New Case", "severity": "high"},
         )
         self.assertEqual(resp.status, 201)
@@ -105,7 +106,8 @@ class TestCreateInvestigation(AioHTTPTestCase):
     async def test_create_missing_title(self):
         """POST /api/investigations without title returns 400."""
         resp = await self.client.request(
-            "POST", "/api/investigations",
+            "POST",
+            "/api/investigations",
             json={"description": "No title"},
         )
         self.assertEqual(resp.status, 400)
@@ -114,7 +116,8 @@ class TestCreateInvestigation(AioHTTPTestCase):
     async def test_create_invalid_severity(self):
         """POST /api/investigations with invalid severity returns 400."""
         resp = await self.client.request(
-            "POST", "/api/investigations",
+            "POST",
+            "/api/investigations",
             json={"title": "Bad", "severity": "extreme"},
         )
         self.assertEqual(resp.status, 400)
@@ -159,7 +162,8 @@ class TestGetUpdateDeleteInvestigation(AioHTTPTestCase):
     async def test_update_title(self):
         """PUT /api/investigations/{id} updates the investigation."""
         resp = await self.client.request(
-            "PUT", f"/api/investigations/{self.inv.id}",
+            "PUT",
+            f"/api/investigations/{self.inv.id}",
             json={"title": "Updated Title"},
         )
         self.assertEqual(resp.status, 200)
@@ -170,7 +174,8 @@ class TestGetUpdateDeleteInvestigation(AioHTTPTestCase):
     async def test_update_nonexistent(self):
         """PUT /api/investigations/bad-id returns 404."""
         resp = await self.client.request(
-            "PUT", "/api/investigations/bad-id",
+            "PUT",
+            "/api/investigations/bad-id",
             json={"title": "Nope"},
         )
         self.assertEqual(resp.status, 404)
@@ -179,7 +184,8 @@ class TestGetUpdateDeleteInvestigation(AioHTTPTestCase):
     async def test_update_invalid_status(self):
         """PUT /api/investigations/{id} with invalid status returns 400."""
         resp = await self.client.request(
-            "PUT", f"/api/investigations/{self.inv.id}",
+            "PUT",
+            f"/api/investigations/{self.inv.id}",
             json={"status": "invalid"},
         )
         self.assertEqual(resp.status, 400)
@@ -224,7 +230,8 @@ class TestNotesEndpoints(AioHTTPTestCase):
     async def test_add_note(self):
         """POST /api/investigations/{id}/notes adds a note."""
         resp = await self.client.request(
-            "POST", f"/api/investigations/{self.inv.id}/notes",
+            "POST",
+            f"/api/investigations/{self.inv.id}/notes",
             json={"content": "New note"},
         )
         self.assertEqual(resp.status, 201)
@@ -236,7 +243,8 @@ class TestNotesEndpoints(AioHTTPTestCase):
     async def test_add_note_missing_content(self):
         """POST /api/investigations/{id}/notes without content returns 400."""
         resp = await self.client.request(
-            "POST", f"/api/investigations/{self.inv.id}/notes",
+            "POST",
+            f"/api/investigations/{self.inv.id}/notes",
             json={},
         )
         self.assertEqual(resp.status, 400)
@@ -246,7 +254,8 @@ class TestNotesEndpoints(AioHTTPTestCase):
         """PUT /api/investigations/{id}/notes/{note_id} updates a note."""
         note = self.store.add_note(self.inv.id, "Original")
         resp = await self.client.request(
-            "PUT", f"/api/investigations/{self.inv.id}/notes/{note.id}",
+            "PUT",
+            f"/api/investigations/{self.inv.id}/notes/{note.id}",
             json={"content": "Updated"},
         )
         self.assertEqual(resp.status, 200)
@@ -258,7 +267,8 @@ class TestNotesEndpoints(AioHTTPTestCase):
         """DELETE /api/investigations/{id}/notes/{note_id} deletes a note."""
         note = self.store.add_note(self.inv.id, "Delete me")
         resp = await self.client.request(
-            "DELETE", f"/api/investigations/{self.inv.id}/notes/{note.id}",
+            "DELETE",
+            f"/api/investigations/{self.inv.id}/notes/{note.id}",
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -290,7 +300,8 @@ class TestAlertLinkingEndpoints(AioHTTPTestCase):
     async def test_link_alert(self):
         """POST /api/investigations/{id}/alerts links an alert."""
         resp = await self.client.request(
-            "POST", f"/api/investigations/{self.inv.id}/alerts",
+            "POST",
+            f"/api/investigations/{self.inv.id}/alerts",
             json={"alert_id": "alert-123"},
         )
         self.assertEqual(resp.status, 200)
@@ -301,7 +312,8 @@ class TestAlertLinkingEndpoints(AioHTTPTestCase):
     async def test_link_alert_missing_id(self):
         """POST /api/investigations/{id}/alerts without alert_id returns 400."""
         resp = await self.client.request(
-            "POST", f"/api/investigations/{self.inv.id}/alerts",
+            "POST",
+            f"/api/investigations/{self.inv.id}/alerts",
             json={},
         )
         self.assertEqual(resp.status, 400)
@@ -311,7 +323,8 @@ class TestAlertLinkingEndpoints(AioHTTPTestCase):
         """DELETE /api/investigations/{id}/alerts/{alert_id} unlinks an alert."""
         self.store.link_alert(self.inv.id, "alert-456")
         resp = await self.client.request(
-            "DELETE", f"/api/investigations/{self.inv.id}/alerts/alert-456",
+            "DELETE",
+            f"/api/investigations/{self.inv.id}/alerts/alert-456",
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -343,7 +356,8 @@ class TestDeviceLinkingEndpoints(AioHTTPTestCase):
     async def test_link_device(self):
         """POST /api/investigations/{id}/devices links a device."""
         resp = await self.client.request(
-            "POST", f"/api/investigations/{self.inv.id}/devices",
+            "POST",
+            f"/api/investigations/{self.inv.id}/devices",
             json={"device_ip": "192.168.1.100"},
         )
         self.assertEqual(resp.status, 200)
@@ -354,7 +368,8 @@ class TestDeviceLinkingEndpoints(AioHTTPTestCase):
     async def test_link_device_missing_ip(self):
         """POST /api/investigations/{id}/devices without device_ip returns 400."""
         resp = await self.client.request(
-            "POST", f"/api/investigations/{self.inv.id}/devices",
+            "POST",
+            f"/api/investigations/{self.inv.id}/devices",
             json={},
         )
         self.assertEqual(resp.status, 400)

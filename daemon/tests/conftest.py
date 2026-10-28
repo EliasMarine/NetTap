@@ -16,6 +16,7 @@ from storage.manager import RetentionConfig
 # OpenSearch client mock
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_opensearch_client():
     """Return a MagicMock pretending to be an opensearch-py OpenSearch client.
@@ -34,6 +35,7 @@ def mock_opensearch_client():
 # ---------------------------------------------------------------------------
 # Sample index data
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sample_indices():
@@ -104,6 +106,7 @@ def sample_indices():
 # Retention configuration
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def retention_config():
     """Return a RetentionConfig with shortened test values."""
@@ -120,6 +123,7 @@ def retention_config():
 # ---------------------------------------------------------------------------
 # Sample smartctl JSON outputs
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_smartctl_nvme():
@@ -225,8 +229,66 @@ def mock_smartctl_sata():
 
 
 # ---------------------------------------------------------------------------
+# Sample nvme-cli JSON outputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_nvme_cli_smart_log():
+    """Return sample ``nvme smart-log -o json`` output for an NVMe drive.
+
+    Field names match what nvme-cli actually returns: temperature in Kelvin,
+    percent_used (not percentage_used), avail_spare, data_units_written, etc.
+    """
+    return {
+        "critical_warning": 0,
+        "temperature": 311,  # Kelvin -> 38C
+        "avail_spare": 100,
+        "spare_thresh": 10,
+        "percent_used": 3,
+        "endurance_grp_critical_warning_summary": 0,
+        "data_units_read": 52459106,
+        "data_units_written": 43285012,
+        "host_read_commands": 781254321,
+        "host_write_commands": 612345678,
+        "controller_busy_time": 1234,
+        "power_cycles": 150,
+        "power_on_hours": 8760,
+        "unsafe_shutdowns": 5,
+        "media_errors": 0,
+        "num_err_log_entries": 0,
+        "warning_temp_time": 0,
+        "critical_comp_time": 0,
+    }
+
+
+@pytest.fixture
+def mock_nvme_cli_wrapped(mock_nvme_cli_smart_log):
+    """Return nvme-cli data wrapped in the format get_raw_data() produces."""
+    return {
+        "_source": "nvme-cli",
+        "_nvme_smart_log": mock_nvme_cli_smart_log,
+    }
+
+
+@pytest.fixture
+def mock_nvme_cli_id_ctrl():
+    """Return sample ``nvme id-ctrl -o json`` output."""
+    return {
+        "vid": 5197,
+        "ssvid": 5197,
+        "sn": "S6B1NJ0TB12345  ",
+        "mn": "Samsung 980 PRO 1TB                     ",
+        "fr": "5B2QGXA7",
+        "rab": 6,
+        "nn": 1,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Filesystem helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_dir(tmp_path):

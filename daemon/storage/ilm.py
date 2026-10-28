@@ -40,9 +40,7 @@ def _load_policies(policy_path: str | None = None) -> dict[str, dict]:
         json.JSONDecodeError: If the file is not valid JSON.
         KeyError: If the file structure is missing the "policies" key.
     """
-    path = policy_path or os.environ.get(
-        "ILM_POLICY_PATH", DEFAULT_ILM_POLICY_PATH
-    )
+    path = policy_path or os.environ.get("ILM_POLICY_PATH", DEFAULT_ILM_POLICY_PATH)
     logger.info("Loading ILM policies from %s", path)
 
     with open(path, "r", encoding="utf-8") as f:
@@ -119,15 +117,11 @@ def _get_existing_policy(
     except os_exceptions.NotFoundError:
         return None, None, None
     except Exception as exc:
-        logger.error(
-            "Error fetching existing policy '%s': %s", policy_name, exc
-        )
+        logger.error("Error fetching existing policy '%s': %s", policy_name, exc)
         raise
 
 
-def _create_policy(
-    client: OpenSearch, policy_name: str, policy_body: dict
-) -> str:
+def _create_policy(client: OpenSearch, policy_name: str, policy_body: dict) -> str:
     """Create a new ISM policy in OpenSearch.
 
     Returns:
@@ -239,15 +233,11 @@ def apply_ilm_policies(
             logger.info("Processing ISM policy '%s'...", policy_name)
 
             # Check if the policy already exists
-            existing, seq_no, primary_term = _get_existing_policy(
-                client, policy_name
-            )
+            existing, seq_no, primary_term = _get_existing_policy(client, policy_name)
 
             if existing is None:
                 # Policy does not exist — create it
-                results[policy_name] = _create_policy(
-                    client, policy_name, policy_body
-                )
+                results[policy_name] = _create_policy(client, policy_name, policy_body)
             else:
                 # Policy exists — compare with local definition
                 normalized_remote = _normalize_remote_policy(existing)
@@ -255,14 +245,11 @@ def apply_ilm_policies(
                 remote_hash = _policy_hash(normalized_remote)
 
                 if local_hash == remote_hash:
-                    logger.info(
-                        "ISM policy '%s' is unchanged, skipping", policy_name
-                    )
+                    logger.info("ISM policy '%s' is unchanged, skipping", policy_name)
                     results[policy_name] = "unchanged"
                 else:
                     logger.info(
-                        "ISM policy '%s' has changed, updating "
-                        "(local=%s, remote=%s)",
+                        "ISM policy '%s' has changed, updating (local=%s, remote=%s)",
                         policy_name,
                         local_hash[:12],
                         remote_hash[:12],
@@ -276,9 +263,7 @@ def apply_ilm_policies(
                     )
         except Exception as exc:
             error_msg = f"error: {exc}"
-            logger.error(
-                "Failed to apply ISM policy '%s': %s", policy_name, exc
-            )
+            logger.error("Failed to apply ISM policy '%s': %s", policy_name, exc)
             results[policy_name] = error_msg
 
     # Summary log

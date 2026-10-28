@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetTap — Devices</title>
+<style>
+/* ============================================================
+   NetTap Devices v2 — Mission Control Aesthetic
+   Matching dashboard-v2 design system exactly
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-card: #0f1319;
+  --bg-card-hover: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --cyan-glow: rgba(0, 212, 255, 0.25);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --purple: #b388ff;
+  --purple-dim: rgba(179, 136, 255, 0.12);
+  --orange: #ff6d00;
+  --blue: #448aff;
+  --blue-dim: rgba(68, 138, 255, 0.12);
+  --pink: #ff4081;
+  --teal: #1de9b6;
+
+  --font-sans: 'DM Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --sidebar-w: 220px;
+  --topbar-h: 52px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+}
+
+.sidebar-brand {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.brand-icon {
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: #fff; font-size: 13px;
+  box-shadow: 0 0 16px var(--cyan-glow);
+}
+
+.brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+  position: relative;
+}
+
+.nav-item:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  background: var(--cyan);
+  border-radius: 0 2px 2px 0;
+}
+
+.nav-icon {
+  width: 18px; height: 18px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.nav-item.active .nav-icon { opacity: 1; }
+
+.sidebar-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-dim);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.5);
+}
+
+/* ============================================================
+   MAIN CONTENT
+   ============================================================ */
+.main {
+  flex: 1;
+  margin-left: var(--sidebar-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ---- Topbar ---- */
+.topbar {
+  height: var(--topbar-h);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.topbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.topbar-spacer { flex: 1; }
+
+.time-selector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.time-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.time-btn:hover { color: var(--text-primary); background: var(--bg-elevated); }
+.time-btn.active { color: var(--cyan); background: var(--cyan-dim); }
+
+.refresh-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.refresh-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.last-updated {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.topbar-status .status-dot { width: 5px; height: 5px; }
+
+/* ---- Content ---- */
+.content {
+  flex: 1;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ============================================================
+   PAGE HEADER
+   ============================================================ */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.page-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.page-subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 7px 14px;
+  min-width: 320px;
+  transition: border-color var(--transition);
+}
+
+.search-bar:focus-within {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px var(--cyan-dim);
+}
+
+.search-bar svg {
+  width: 14px; height: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.search-bar input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  width: 100%;
+}
+
+.search-bar input::placeholder {
+  color: var(--text-dim);
+}
+
+.view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.view-btn {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.view-btn:hover { color: var(--text-primary); background: var(--bg-elevated); }
+.view-btn.active { color: var(--cyan); background: var(--cyan-dim); }
+
+.view-btn svg { width: 13px; height: 13px; }
+
+/* ============================================================
+   DEVICE TABLE
+   ============================================================ */
+.table-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.device-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.device-table thead {
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.device-table th {
+  padding: 10px 14px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-align: left;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.device-table th.sortable { cursor: pointer; }
+.device-table th.sortable:hover { color: var(--text-secondary); }
+
+.device-table tbody tr {
+  border-bottom: 1px solid var(--border-dim);
+  transition: background var(--transition);
+  cursor: pointer;
+}
+
+.device-table tbody tr:last-child { border-bottom: none; }
+.device-table tbody tr:hover { background: var(--bg-card-hover); }
+.device-table tbody tr.expanded-row { background: var(--bg-card-hover); border-bottom: none; }
+
+.device-table td {
+  padding: 10px 14px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Status dot in table */
+.td-status {
+  width: 36px;
+  text-align: center;
+}
+
+.device-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.device-status.active {
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
+}
+
+.device-status.inactive {
+  background: var(--text-dim);
+}
+
+/* IP address */
+.td-ip {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--cyan);
+  font-size: 12px;
+}
+
+/* Hostname */
+.td-hostname {
+  color: var(--text-primary);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* NEW badge */
+.new-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cyan);
+  background: var(--cyan-dim);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 3px;
+  animation: new-pulse 2s ease-in-out infinite;
+}
+
+@keyframes new-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--cyan-dim); opacity: 1; }
+  50% { box-shadow: 0 0 12px var(--cyan-glow); opacity: 0.85; }
+}
+
+/* MAC */
+.td-mac {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Manufacturer */
+.td-manufacturer {
+  color: var(--text-secondary);
+}
+
+/* OS */
+.td-os {
+  color: var(--text-secondary);
+}
+
+/* Timestamps */
+.td-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Bandwidth */
+.td-bandwidth {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* Connections */
+.td-connections {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* Risk badge */
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 20px;
+  cursor: help;
+  position: relative;
+  white-space: nowrap;
+}
+
+.risk-badge.low {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.2);
+}
+
+.risk-badge.medium {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(255, 171, 0, 0.2);
+}
+
+.risk-badge.high {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(255, 71, 87, 0.2);
+}
+
+/* Risk tooltip */
+.risk-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: normal;
+  width: 260px;
+  line-height: 1.5;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.risk-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--border-bright);
+}
+
+.risk-badge:hover .risk-tooltip {
+  display: block;
+}
+
+.risk-tooltip-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+}
+
+/* ============================================================
+   EXPANDED DETAIL ROW
+   ============================================================ */
+.detail-panel {
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.detail-panel td {
+  padding: 0 !important;
+}
+
+.detail-content {
+  padding: 20px 24px;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  gap: 24px;
+}
+
+.detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+/* Sparkline */
+.sparkline-container {
+  height: 80px;
+  position: relative;
+}
+
+.sparkline-container svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sparkline-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* Mini donut */
+.mini-donut-container {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.mini-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mini-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.mini-legend-dot {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.mini-legend-pct {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-left: auto;
+  min-width: 30px;
+  text-align: right;
+}
+
+/* Alerts list */
+.detail-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+
+.detail-alert-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.detail-alert-text {
+  flex: 1;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.detail-alert-time {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Detail buttons */
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.detail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+
+.detail-btn-primary {
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 212, 255, 0.25);
+}
+
+.detail-btn-primary:hover {
+  background: rgba(0, 212, 255, 0.2);
+  border-color: var(--cyan);
+}
+
+.detail-btn-secondary {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+
+.detail-btn-secondary:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+}
+
+.detail-btn svg { width: 12px; height: 12px; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 1400px) {
+  .device-table { font-size: 11px; }
+  .device-table th, .device-table td { padding: 8px 10px; }
+  .search-bar { min-width: 240px; }
+  .detail-content { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; }
+  .page-header { flex-direction: column; align-items: flex-start; }
+  .page-header-right { width: 100%; flex-wrap: wrap; }
+  .search-bar { min-width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     SIDEBAR
+     ============================================================ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">N</div>
+    <span class="brand-name">NetTap</span>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </svg>
+      <span>Home</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <span>Log Explorer</span>
+    </a>
+    <a class="nav-item active" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      <span>Devices</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
+      </svg>
+      <span>Alerts</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+      </svg>
+      <span>Connections</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+      </svg>
+      <span>Infrastructure</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+      <span>Settings</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="status-dot"></span>
+    <span>System Online &middot; v0.4.0</span>
+  </div>
+</aside>
+
+<!-- ============================================================
+     MAIN
+     ============================================================ -->
+<div class="main">
+  <!-- Topbar -->
+  <header class="topbar">
+    <span class="topbar-title">Devices</span>
+    <span class="topbar-spacer"></span>
+
+    <div class="time-selector">
+      <button class="time-btn">15m</button>
+      <button class="time-btn">1h</button>
+      <button class="time-btn">4h</button>
+      <button class="time-btn active">24h</button>
+      <button class="time-btn">7d</button>
+      <button class="time-btn">30d</button>
+    </div>
+
+    <div class="refresh-group">
+      <button class="refresh-toggle">
+        <span class="refresh-dot"></span>
+        Auto 30s
+      </button>
+      <span class="last-updated">Updated 03:21:35</span>
+    </div>
+
+    <div class="topbar-status">
+      <span class="status-dot"></span>
+      <span>OpenSearch</span>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- ========== PAGE HEADER ========== -->
+    <div class="page-header">
+      <div class="page-header-left">
+        <span class="page-title">12 Devices</span>
+        <span class="page-subtitle">on your network</span>
+      </div>
+      <div class="page-header-right">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" placeholder="Filter by IP, hostname, manufacturer...">
+        </div>
+        <div class="view-toggle">
+          <button class="view-btn active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Table
+          </button>
+          <button class="view-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+            </svg>
+            Grid
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== DEVICE TABLE ========== -->
+    <div class="table-card">
+      <table class="device-table">
+        <thead>
+          <tr>
+            <th class="td-status"></th>
+            <th class="sortable">IP Address</th>
+            <th class="sortable">Hostname</th>
+            <th>MAC Address</th>
+            <th class="sortable">Manufacturer</th>
+            <th>OS Hint</th>
+            <th class="sortable">First Seen</th>
+            <th class="sortable">Last Seen</th>
+            <th class="sortable">Bandwidth</th>
+            <th class="sortable">Connections</th>
+            <th class="sortable">Risk</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Row 1 — MacBook (expanded) -->
+          <tr class="expanded-row" onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.42</td>
+            <td class="td-hostname">johns-macbook</td>
+            <td class="td-mac">A4:83:E7:2B:11:F0</td>
+            <td class="td-manufacturer">Apple</td>
+            <td class="td-os">macOS</td>
+            <td class="td-time">14 days ago</td>
+            <td class="td-time">2 min ago</td>
+            <td class="td-bandwidth">412.3 MB</td>
+            <td class="td-connections">8,241</td>
+            <td>
+              <span class="risk-badge low">23 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 23/100</div>
+                  Low risk. No unusual port activity, standard protocols only. All connections to well-known services.
+                </span>
+              </span>
+            </td>
+          </tr>
+          <!-- Expanded detail panel for Row 1 -->
+          <tr class="detail-panel">
+            <td colspan="11">
+              <div class="detail-content">
+                <!-- Sparkline chart -->
+                <div class="detail-section">
+                  <div class="detail-section-title">Bandwidth (Last 24h)</div>
+                  <div class="sparkline-container">
+                    <svg viewBox="0 0 400 80" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stop-color="var(--cyan)" stop-opacity="0.3"/>
+                          <stop offset="100%" stop-color="var(--cyan)" stop-opacity="0.02"/>
+                        </linearGradient>
+                      </defs>
+                      <!-- Grid -->
+                      <line x1="0" y1="20" x2="400" y2="20" stroke="var(--border-dim)" stroke-width="0.5" stroke-dasharray="2 4"/>
+                      <line x1="0" y1="40" x2="400" y2="40" stroke="var(--border-dim)" stroke-width="0.5" stroke-dasharray="2 4"/>
+                      <line x1="0" y1="60" x2="400" y2="60" stroke="var(--border-dim)" stroke-width="0.5" stroke-dasharray="2 4"/>
+                      <!-- Area fill -->
+                      <path fill="url(#sparkGrad)" d="M0,65 L17,60 L33,55 L50,58 L67,50 L83,45 L100,48 L117,40 L133,35 L150,38 L167,30 L183,25 L200,20 L217,22 L233,18 L250,15 L267,20 L283,25 L300,22 L317,18 L333,12 L350,15 L367,10 L383,8 L400,5 L400,80 L0,80 Z"/>
+                      <!-- Line -->
+                      <polyline fill="none" stroke="var(--cyan)" stroke-width="1.5" stroke-linejoin="round"
+                        points="0,65 17,60 33,55 50,58 67,50 83,45 100,48 117,40 133,35 150,38 167,30 183,25 200,20 217,22 233,18 250,15 267,20 283,25 300,22 317,18 333,12 350,15 367,10 383,8 400,5"/>
+                      <!-- Current dot -->
+                      <circle cx="400" cy="5" r="3" fill="var(--cyan)" stroke="var(--bg-elevated)" stroke-width="1.5"/>
+                    </svg>
+                  </div>
+                  <div class="sparkline-labels">
+                    <span>24h ago</span>
+                    <span>18h</span>
+                    <span>12h</span>
+                    <span>6h</span>
+                    <span>Now</span>
+                  </div>
+                </div>
+
+                <!-- Protocol donut -->
+                <div class="detail-section">
+                  <div class="detail-section-title">Protocol Breakdown</div>
+                  <div class="mini-donut-container">
+                    <svg width="90" height="90" viewBox="0 0 36 36">
+                      <!-- HTTPS 60% -->
+                      <circle cx="18" cy="18" r="14" fill="none" stroke="var(--cyan)" stroke-width="4"
+                        stroke-dasharray="87.96 146.6" stroke-dashoffset="0" transform="rotate(-90 18 18)"/>
+                      <!-- DNS 25% -->
+                      <circle cx="18" cy="18" r="14" fill="none" stroke="var(--blue)" stroke-width="4"
+                        stroke-dasharray="21.99 65.97" stroke-dashoffset="-87.96" transform="rotate(-90 18 18)"/>
+                      <!-- HTTP 10% -->
+                      <circle cx="18" cy="18" r="14" fill="none" stroke="var(--amber)" stroke-width="4"
+                        stroke-dasharray="8.796 79.164" stroke-dashoffset="-109.95" transform="rotate(-90 18 18)"/>
+                      <!-- Other 5% -->
+                      <circle cx="18" cy="18" r="14" fill="none" stroke="var(--purple)" stroke-width="4"
+                        stroke-dasharray="4.398 83.562" stroke-dashoffset="-118.746" transform="rotate(-90 18 18)"/>
+                      <!-- Center text -->
+                      <text x="18" y="17" text-anchor="middle" font-family="var(--font-mono)" font-size="4" font-weight="700" fill="var(--text-primary)">8,241</text>
+                      <text x="18" y="21" text-anchor="middle" font-family="var(--font-sans)" font-size="2.5" fill="var(--text-muted)">conns</text>
+                    </svg>
+                    <div class="mini-donut-legend">
+                      <div class="mini-legend-item">
+                        <span class="mini-legend-dot" style="background:var(--cyan)"></span>
+                        HTTPS <span class="mini-legend-pct">60%</span>
+                      </div>
+                      <div class="mini-legend-item">
+                        <span class="mini-legend-dot" style="background:var(--blue)"></span>
+                        DNS <span class="mini-legend-pct">25%</span>
+                      </div>
+                      <div class="mini-legend-item">
+                        <span class="mini-legend-dot" style="background:var(--amber)"></span>
+                        HTTP <span class="mini-legend-pct">10%</span>
+                      </div>
+                      <div class="mini-legend-item">
+                        <span class="mini-legend-dot" style="background:var(--purple)"></span>
+                        Other <span class="mini-legend-pct">5%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Recent alerts + actions -->
+                <div class="detail-section">
+                  <div class="detail-section-title">Recent Alerts</div>
+                  <div class="detail-alert">
+                    <span class="detail-alert-dot" style="background:var(--amber)"></span>
+                    <span class="detail-alert-text">Outbound connection to rare TLD (.xyz) — ads-tracker.example.xyz</span>
+                    <span class="detail-alert-time">41m ago</span>
+                  </div>
+                  <div class="detail-alert">
+                    <span class="detail-alert-dot" style="background:var(--green)"></span>
+                    <span class="detail-alert-text">DNS query for known analytics domain — metrics.google.com</span>
+                    <span class="detail-alert-time">2h ago</span>
+                  </div>
+                  <div class="detail-alert">
+                    <span class="detail-alert-dot" style="background:var(--green)"></span>
+                    <span class="detail-alert-text">TLS certificate renewed for icloud.com connection</span>
+                    <span class="detail-alert-time">6h ago</span>
+                  </div>
+                  <div class="detail-actions">
+                    <a class="detail-btn detail-btn-primary" href="/logs?ip=192.168.1.42">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                      View all logs
+                    </a>
+                    <a class="detail-btn detail-btn-secondary" href="/connections?ip=192.168.1.42">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                      View connections
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Row 2 — iPhone -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.43</td>
+            <td class="td-hostname">johns-iphone</td>
+            <td class="td-mac">B0:E2:3A:9C:44:D1</td>
+            <td class="td-manufacturer">Apple</td>
+            <td class="td-os">iOS</td>
+            <td class="td-time">14 days ago</td>
+            <td class="td-time">5 min ago</td>
+            <td class="td-bandwidth">287.1 MB</td>
+            <td class="td-connections">5,892</td>
+            <td>
+              <span class="risk-badge low">18 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 18/100</div>
+                  Low risk. Normal mobile browsing pattern. All traffic over TLS 1.3.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 3 — Smart TV -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.50</td>
+            <td class="td-hostname">living-room-tv</td>
+            <td class="td-mac">F4:F5:D8:7A:33:B2</td>
+            <td class="td-manufacturer">Samsung</td>
+            <td class="td-os">Tizen</td>
+            <td class="td-time">12 days ago</td>
+            <td class="td-time">18 min ago</td>
+            <td class="td-bandwidth">1.82 GB</td>
+            <td class="td-connections">3,412</td>
+            <td>
+              <span class="risk-badge medium">45 Med
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 45/100</div>
+                  Medium risk. Detected telemetry beacons to 14 unique tracking domains. High outbound DNS volume for a display device.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 4 — Ring Doorbell (NEW) -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.51</td>
+            <td class="td-hostname">
+              <span>ring-doorbell</span>
+              <span class="new-badge">NEW</span>
+            </td>
+            <td class="td-mac">DC:A6:32:1E:88:7F</td>
+            <td class="td-manufacturer">Amazon</td>
+            <td class="td-os">Linux</td>
+            <td class="td-time">6 hours ago</td>
+            <td class="td-time">1 min ago</td>
+            <td class="td-bandwidth">94.6 MB</td>
+            <td class="td-connections">1,203</td>
+            <td>
+              <span class="risk-badge medium">52 Med
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 52/100</div>
+                  Medium risk. New device with cloud upload activity. Connects to AWS endpoints and sends periodic UDP streams (video upload).
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 5 — Gaming Console -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.55</td>
+            <td class="td-hostname">ps5-living-room</td>
+            <td class="td-mac">00:D9:D1:3C:77:A5</td>
+            <td class="td-manufacturer">Sony</td>
+            <td class="td-os">FreeBSD</td>
+            <td class="td-time">10 days ago</td>
+            <td class="td-time">3 min ago</td>
+            <td class="td-bandwidth">3.41 GB</td>
+            <td class="td-connections">12,847</td>
+            <td>
+              <span class="risk-badge low">15 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 15/100</div>
+                  Low risk. Gaming traffic to PlayStation Network servers. Standard NAT traversal patterns.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 6 — Work Laptop -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.60</td>
+            <td class="td-hostname">sarah-thinkpad</td>
+            <td class="td-mac">54:E1:AD:B8:22:C3</td>
+            <td class="td-manufacturer">Lenovo</td>
+            <td class="td-os">Windows 11</td>
+            <td class="td-time">8 days ago</td>
+            <td class="td-time">12 min ago</td>
+            <td class="td-bandwidth">634.8 MB</td>
+            <td class="td-connections">9,103</td>
+            <td>
+              <span class="risk-badge low">28 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 28/100</div>
+                  Low risk. Corporate VPN detected (Cisco AnyConnect). Mostly encrypted tunnel traffic.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 7 — Google Home -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.62</td>
+            <td class="td-hostname">kitchen-speaker</td>
+            <td class="td-mac">48:D6:D5:9A:EE:14</td>
+            <td class="td-manufacturer">Google</td>
+            <td class="td-os">Cast OS</td>
+            <td class="td-time">14 days ago</td>
+            <td class="td-time">30 sec ago</td>
+            <td class="td-bandwidth">45.2 MB</td>
+            <td class="td-connections">2,891</td>
+            <td>
+              <span class="risk-badge medium">38 Med
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 38/100</div>
+                  Medium risk. Persistent connections to Google servers with periodic audio upload bursts. mDNS broadcast detected.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 8 — iPad -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.44</td>
+            <td class="td-hostname">kids-ipad</td>
+            <td class="td-mac">A4:83:E7:5D:92:F8</td>
+            <td class="td-manufacturer">Apple</td>
+            <td class="td-os">iPadOS</td>
+            <td class="td-time">11 days ago</td>
+            <td class="td-time">45 min ago</td>
+            <td class="td-bandwidth">892.1 MB</td>
+            <td class="td-connections">4,217</td>
+            <td>
+              <span class="risk-badge low">12 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 12/100</div>
+                  Low risk. Streaming video traffic (YouTube, Disney+). Screen Time restrictions active.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 9 — Router itself -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.1</td>
+            <td class="td-hostname">asus-router</td>
+            <td class="td-mac">04:D4:C4:FA:11:22</td>
+            <td class="td-manufacturer">ASUS</td>
+            <td class="td-os">AsusWRT</td>
+            <td class="td-time">14 days ago</td>
+            <td class="td-time">1 sec ago</td>
+            <td class="td-bandwidth">8.92 GB</td>
+            <td class="td-connections">47,283</td>
+            <td>
+              <span class="risk-badge low">5 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 5/100</div>
+                  Low risk. Gateway device. All traffic is expected NAT forwarding. Firmware up to date.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 10 — Roku (NEW) -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.70</td>
+            <td class="td-hostname">
+              <span>bedroom-roku</span>
+              <span class="new-badge">NEW</span>
+            </td>
+            <td class="td-mac">D8:31:34:5B:CC:01</td>
+            <td class="td-manufacturer">Roku</td>
+            <td class="td-os">Roku OS</td>
+            <td class="td-time">3 hours ago</td>
+            <td class="td-time">8 min ago</td>
+            <td class="td-bandwidth">215.7 MB</td>
+            <td class="td-connections">1,847</td>
+            <td>
+              <span class="risk-badge low">22 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 22/100</div>
+                  Low risk. New device. Streaming traffic to Netflix and Roku CDN. Standard SSDP discovery.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 11 — NAS -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status active"></span></td>
+            <td class="td-ip">192.168.1.100</td>
+            <td class="td-hostname">synology-nas</td>
+            <td class="td-mac">00:11:32:AB:44:67</td>
+            <td class="td-manufacturer">Synology</td>
+            <td class="td-os">DSM Linux</td>
+            <td class="td-time">14 days ago</td>
+            <td class="td-time">22 min ago</td>
+            <td class="td-bandwidth">2.13 GB</td>
+            <td class="td-connections">6,412</td>
+            <td>
+              <span class="risk-badge high">72 High
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 72/100</div>
+                  High risk. Detected outbound SSH on non-standard port (2222). 3 failed login attempts in last hour. Open SMB share visible on LAN.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+          <!-- Row 12 — Old Printer (inactive) -->
+          <tr onclick="toggleDetail(this)">
+            <td class="td-status"><span class="device-status inactive"></span></td>
+            <td class="td-ip">192.168.1.85</td>
+            <td class="td-hostname">hp-officejet</td>
+            <td class="td-mac">3C:2A:F4:E1:99:BB</td>
+            <td class="td-manufacturer">HP</td>
+            <td class="td-os">Embedded</td>
+            <td class="td-time">14 days ago</td>
+            <td class="td-time">3 days ago</td>
+            <td class="td-bandwidth">12.4 MB</td>
+            <td class="td-connections">284</td>
+            <td>
+              <span class="risk-badge low">8 Low
+                <span class="risk-tooltip">
+                  <div class="risk-tooltip-title">Risk Score: 8/100</div>
+                  Low risk. Inactive for 3 days. Minimal network activity when online. mDNS/Bonjour only.
+                </span>
+              </span>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// Toggle expanded detail for device rows
+function toggleDetail(row) {
+  const nextRow = row.nextElementSibling;
+  if (nextRow && nextRow.classList.contains('detail-panel')) {
+    // Collapse
+    row.classList.remove('expanded-row');
+    nextRow.style.display = 'none';
+  } else if (row.classList.contains('expanded-row')) {
+    // Already expanded on load — collapse
+    row.classList.remove('expanded-row');
+    const detail = row.nextElementSibling;
+    if (detail && detail.classList.contains('detail-panel')) {
+      detail.style.display = 'none';
+    }
+  }
+  // Note: In this static mockup, only Row 1 has an expandable detail panel.
+  // In production, clicking any row would dynamically render the detail panel.
+}
+
+// Make the pre-expanded row's detail visible
+document.addEventListener('DOMContentLoaded', function() {
+  const details = document.querySelectorAll('.detail-panel');
+  details.forEach(function(d) {
+    d.style.display = 'table-row';
+  });
+});
+</script>
+
+</body>
+</html>

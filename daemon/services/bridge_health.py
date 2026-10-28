@@ -12,10 +12,11 @@ or proc entries are missing, returning "unknown" states rather than
 crashing.
 
 Health status levels:
-    normal:   Bridge up, both NICs linked, no bypass
-    degraded: Bridge up but one NIC down, or elevated latency
-    bypass:   Bypass mode is active (traffic flows direct, no inspection)
-    down:     Bridge interface is down or both NICs unlinked
+    normal:         Bridge up, both NICs linked, no bypass
+    degraded:       Bridge up but one NIC down, or elevated latency
+    bypass:         Bypass mode is active (traffic flows direct, no inspection)
+    down:           Bridge interface is down or both NICs unlinked
+    not_configured: Bridge interface does not exist (setup not completed)
 """
 
 import asyncio
@@ -29,8 +30,12 @@ from datetime import datetime, timezone
 logger = logging.getLogger("nettap.services.bridge_health")
 
 # Path constants for Linux sysfs/proc/run
-_SYSFS_NET = "/sys/class/net"
-_BYPASS_STATE_FILE = "/var/run/nettap-bypass-active"
+# HOST_SYS_NET: When the daemon runs inside Docker without network_mode: host,
+# /sys/class/net shows container interfaces, not the host's. The host sysfs is
+# mounted at /host/sys via docker-compose volume, and the env var HOST_SYS_NET
+# points to the correct path for reading host bridge/NIC state.
+_SYSFS_NET = os.environ.get("HOST_SYS_NET", "/sys/class/net")
+_BYPASS_STATE_FILE = "/tmp/nettap-bypass-active"
 
 
 @dataclass
@@ -48,7 +53,7 @@ class BridgeHealthCheck:
     rx_packets_delta: int  # packets received since last check
     tx_packets_delta: int  # packets transmitted since last check
     uptime_seconds: float  # bridge uptime since last state change
-    health_status: str  # "normal" | "degraded" | "bypass" | "down"
+    health_status: str  # "normal" | "degraded" | "bypass" | "down" | "not_configured"
     issues: list  # human-readable issue descriptions
     last_check: str  # ISO timestamp
 
@@ -78,8 +83,11 @@ class BridgeHealthMonitor:
         max_history: int = DEFAULT_MAX_HISTORY,
     ) -> None:
         self._bridge_name = bridge_name
+        # wan_iface/lan_iface are fallback defaults; _discover_interfaces()
+        # overrides them with the actual bridge members from sysfs/brif.
         self._wan_iface = wan_iface
         self._lan_iface = lan_iface
+        self._interfaces_discovered = False
         self._max_history = max_history
 
         # Health check history (bounded deque)
@@ -121,6 +129,14 @@ class BridgeHealthMonitor:
             watchdog_active, latency_us, rx/tx deltas, uptime_seconds,
             health_status, issues, and last_check timestamp.
         """
+        # Auto-discover actual member interfaces from the bridge's brif
+        # directory. This handles hardware where NIC names differ from the
+        # eth0/eth1 defaults (e.g. enp2s0/enp3s0 on Intel N100).
+        # Re-discover every call until successful (bridge may not exist at
+        # daemon startup but gets created later via the Go Live workflow).
+        if not self._interfaces_discovered:
+            self._discover_interfaces()
+
         now = datetime.now(timezone.utc)
         issues: list[str] = []
 
@@ -165,19 +181,23 @@ class BridgeHealthMonitor:
         latency_us = self._estimate_latency(bridge_state, wan_link, lan_link)
 
         # Build issue list
-        if bridge_state == "down":
+        if bridge_state == "not_configured":
+            issues.append("Bridge interface has not been configured — run the setup wizard")
+        elif bridge_state == "down":
             issues.append("Bridge interface is down")
         elif bridge_state == "unknown":
             issues.append("Bridge interface state could not be determined")
 
-        if not wan_link:
-            issues.append(f"WAN interface {self._wan_iface} has no carrier")
-        if not lan_link:
-            issues.append(f"LAN interface {self._lan_iface} has no carrier")
-        if bypass_active:
-            issues.append("Bypass mode is active -- traffic is not being inspected")
-        if not watchdog_active:
-            issues.append("Watchdog service is not running")
+        # Only flag NIC issues if bridge is actually configured
+        if bridge_state != "not_configured":
+            if not wan_link:
+                issues.append(f"WAN interface {self._wan_iface} has no carrier")
+            if not lan_link:
+                issues.append(f"LAN interface {self._lan_iface} has no carrier")
+            if bypass_active:
+                issues.append("Bypass mode is active -- traffic is not being inspected")
+            if not watchdog_active:
+                issues.append("Watchdog service is not running")
 
         # Determine health status
         health_status = self._determine_health_status(
@@ -244,9 +264,7 @@ class BridgeHealthMonitor:
             }
 
         latencies = [h.latency_us for h in self._history if h.latency_us > 0]
-        avg_latency = (
-            round(sum(latencies) / len(latencies), 2) if latencies else None
-        )
+        avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else None
 
         total_rx_bytes = sum(h.rx_bytes_delta for h in self._history)
         total_tx_bytes = sum(h.tx_bytes_delta for h in self._history)
@@ -306,6 +324,15 @@ class BridgeHealthMonitor:
         """
         self._bypass_active = True
         self._write_bypass_file(active=True)
+
+        # Disable promiscuous mode on both NICs — stops packet capture
+        for iface in (self._wan_iface, self._lan_iface):
+            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "promisc", "off")
+            if rc != 0:
+                logger.warning("Failed to disable promisc on %s: %s", iface, err)
+            else:
+                logger.info("Disabled promiscuous mode on %s", iface)
+
         ts = datetime.now(timezone.utc).isoformat()
         logger.warning("Bypass mode ACTIVATED at %s", ts)
         return {
@@ -322,6 +349,15 @@ class BridgeHealthMonitor:
         """
         self._bypass_active = False
         self._write_bypass_file(active=False)
+
+        # Re-enable promiscuous mode on both NICs — resumes packet capture
+        for iface in (self._wan_iface, self._lan_iface):
+            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "promisc", "on")
+            if rc != 0:
+                logger.warning("Failed to enable promisc on %s: %s", iface, err)
+            else:
+                logger.info("Enabled promiscuous mode on %s", iface)
+
         ts = datetime.now(timezone.utc).isoformat()
         logger.info("Bypass mode DEACTIVATED at %s", ts)
         return {
@@ -334,15 +370,72 @@ class BridgeHealthMonitor:
     # Internal helpers
     # -------------------------------------------------------------------
 
+    async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
+        """Run a command in the host network namespace via nsenter."""
+        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            return (
+                proc.returncode or 0,
+                stdout.decode("utf-8", errors="replace"),
+                stderr.decode("utf-8", errors="replace"),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            return (1, "", "timeout")
+        except FileNotFoundError:
+            logger.debug("nsenter not available")
+            return (1, "", "nsenter not found")
+
+    def _discover_interfaces(self) -> None:
+        """Discover actual WAN/LAN member interfaces from the bridge's brif directory.
+
+        On hardware like Intel N100, NIC names are enp2s0/enp3s0 instead of
+        eth0/eth1. The brif directory under the bridge sysfs entry lists all
+        member interfaces. If found, overrides the fallback names and logs the
+        discovery. Only marks _interfaces_discovered=True on success, so
+        subsequent check_health calls retry until the bridge exists.
+        """
+        brif_dir = os.path.join(_SYSFS_NET, self._bridge_name, "brif")
+        try:
+            if os.path.isdir(brif_dir):
+                members = sorted(os.listdir(brif_dir))
+                if len(members) >= 2:
+                    old_wan, old_lan = self._wan_iface, self._lan_iface
+                    self._wan_iface = members[0]
+                    self._lan_iface = members[1]
+                    self._interfaces_discovered = True
+                    if old_wan != self._wan_iface or old_lan != self._lan_iface:
+                        logger.info(
+                            "Auto-discovered bridge members: wan=%s lan=%s "
+                            "(overriding defaults %s/%s)",
+                            self._wan_iface,
+                            self._lan_iface,
+                            old_wan,
+                            old_lan,
+                        )
+        except OSError as exc:
+            logger.debug("Could not discover bridge members: %s", exc)
+
     async def _check_bridge_state(self) -> str:
         """Check the bridge interface operational state via sysfs.
 
         Returns:
-            "up", "down", or "unknown" if sysfs is not accessible.
+            "up", "down", "not_configured" if the bridge interface does not
+            exist in sysfs, or "unknown" if sysfs is not accessible.
         """
-        operstate_path = os.path.join(
-            _SYSFS_NET, self._bridge_name, "operstate"
-        )
+        bridge_dir = os.path.join(_SYSFS_NET, self._bridge_name)
+        # If the bridge interface directory doesn't exist at all, the bridge
+        # hasn't been configured yet — this is informational, not an error.
+        if not os.path.exists(bridge_dir):
+            return "not_configured"
+
+        operstate_path = os.path.join(bridge_dir, "operstate")
         try:
             loop = asyncio.get_running_loop()
             content = await loop.run_in_executor(
@@ -400,9 +493,7 @@ class BridgeHealthMonitor:
             loop = asyncio.get_running_loop()
             for key in result:
                 path = os.path.join(stats_dir, key)
-                content = await loop.run_in_executor(
-                    None, self._read_sysfs_file, path
-                )
+                content = await loop.run_in_executor(None, self._read_sysfs_file, path)
                 if content is not None:
                     try:
                         result[key] = int(content.strip())
@@ -448,8 +539,11 @@ class BridgeHealthMonitor:
         """Determine overall health status from component states.
 
         Returns:
-            "normal", "degraded", "bypass", or "down".
+            "normal", "degraded", "bypass", "down", or "not_configured".
         """
+        if bridge_state == "not_configured":
+            return "not_configured"
+
         if bypass_active:
             return "bypass"
 
@@ -499,7 +593,6 @@ class BridgeHealthMonitor:
         """
         try:
             if active:
-                os.makedirs(os.path.dirname(_BYPASS_STATE_FILE), exist_ok=True)
                 with open(_BYPASS_STATE_FILE, "w") as f:
                     f.write(datetime.now(timezone.utc).isoformat())
             else:
@@ -518,7 +611,9 @@ class BridgeHealthMonitor:
         """
         try:
             proc = await asyncio.create_subprocess_exec(
-                "systemctl", "is-active", "nettap-watchdog",
+                "systemctl",
+                "is-active",
+                "nettap-watchdog",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

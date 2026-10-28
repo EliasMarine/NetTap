@@ -7,19 +7,23 @@ telemetry data from OpenSearch indices.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.risk_scoring import RiskScorer
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.risk")
 
-# Index patterns
-ZEEK_CONN_INDEX = "zeek-conn-*"
-SURICATA_INDEX = "suricata-*"
+# OLD CODE START — separate per-log-type indices replaced by unified Malcolm index
+# ZEEK_CONN_INDEX = "zeek-conn-*"
+# SURICATA_INDEX = "suricata-*"
+# OLD CODE END
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Default time range: last 24 hours
 _DEFAULT_RANGE_HOURS = 24
@@ -28,6 +32,7 @@ _DEFAULT_RANGE_HOURS = 24
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps."""
@@ -93,6 +98,7 @@ def _build_device_stats(
 # Route handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_risk_scores(request: web.Request) -> web.Response:
     """GET /api/risk/scores?from=&to=&limit=100
 
@@ -109,32 +115,40 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     risk_scorer: RiskScorer = request.app["risk_scorer"]
 
     # Query for device connection aggregations
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    risk_bool: dict = {
+        "filter": [
+            {
+                "range": {
+                    "@timestamp": {
+                        "gte": from_ts,
+                        "lte": to_ts,
+                        "format": "strict_date_optional_time",
+                    }
+                }
+            },
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+        ],
+    }
+    if excluded:
+        risk_bool["must_not"] = excluded
+
     conn_query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [{
-                    "range": {
-                        "ts": {
-                            "gte": from_ts,
-                            "lte": to_ts,
-                            "format": "strict_date_optional_time",
-                        }
-                    }
-                }]
-            }
-        },
+        "query": {"bool": risk_bool},
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "id.orig_h",
+                    "field": "source.ip.keyword",
                     "size": limit,
                 },
                 "aggs": {
                     "total_orig_bytes": {
                         "sum": {
                             "script": {
-                                "source": "doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0",
+                                "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
                                 "lang": "painless",
                             }
                         }
@@ -142,35 +156,31 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     "total_resp_bytes": {
                         "sum": {
                             "script": {
-                                "source": "doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0",
+                                "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
                                 "lang": "painless",
                             }
                         }
                     },
-                    "ports_used": {
-                        "terms": {"field": "id.resp_p", "size": 50}
-                    },
+                    "ports_used": {"terms": {"field": "destination.port.keyword", "size": 50}},
                     "external_conns": {
                         "filter": {
                             "bool": {
                                 "must_not": [
-                                    {"term": {"id.resp_h": "10.0.0.0/8"}},
-                                    {"term": {"id.resp_h": "172.16.0.0/12"}},
-                                    {"term": {"id.resp_h": "192.168.0.0/16"}},
+                                    {"term": {"destination.ip": "10.0.0.0/8"}},
+                                    {"term": {"destination.ip": "172.16.0.0/12"}},
+                                    {"term": {"destination.ip": "192.168.0.0/16"}},
                                 ]
                             }
                         }
                     },
                 },
             },
-            "conn_stats": {
-                "extended_stats": {"field": "_doc_count"}
-            },
+            "conn_stats": {"extended_stats": {"field": "_doc_count"}},
         },
     }
 
     try:
-        conn_result = client.search(index=ZEEK_CONN_INDEX, body=conn_query)
+        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in risk scores: %s", exc)
         return web.json_response(
@@ -187,7 +197,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
         network_avg = sum(counts) / len(counts)
         if len(counts) > 1:
             variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
-            network_stddev = variance ** 0.5
+            network_stddev = variance**0.5
         else:
             network_stddev = 0.0
     else:
@@ -207,30 +217,26 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     "filter": [
                         {
                             "range": {
-                                "timestamp": {
+                                "@timestamp": {
                                     "gte": from_ts,
                                     "lte": to_ts,
                                     "format": "strict_date_optional_time",
                                 }
                             }
                         },
-                        {"terms": {"src_ip": device_ips}},
+                        {"terms": {"source.ip": device_ips}},
+                        {"term": {"event.provider": "suricata"}},
+                        {"term": {"event.dataset": "alert"}},
                     ]
                 }
             },
-            "aggs": {
-                "by_ip": {
-                    "terms": {"field": "src_ip", "size": len(device_ips)}
-                }
-            },
+            "aggs": {"by_ip": {"terms": {"field": "source.ip.keyword", "size": len(device_ips)}}},
         }
 
         try:
-            alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+            alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
             for ab in (
-                alert_result.get("aggregations", {})
-                .get("by_ip", {})
-                .get("buckets", [])
+                alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
             ):
                 alert_counts[ab["key"]] = ab["doc_count"]
         except OpenSearchException as exc:
@@ -248,24 +254,28 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
             network_stddev=network_stddev,
         )
         score_result = risk_scorer.score_device(device_stats)
-        scored_devices.append({
-            "ip": ip,
-            "connection_count": bucket.get("doc_count", 0),
-            "alert_count": alert_counts.get(ip, 0),
-            **score_result,
-        })
+        scored_devices.append(
+            {
+                "ip": ip,
+                "connection_count": bucket.get("doc_count", 0),
+                "alert_count": alert_counts.get(ip, 0),
+                **score_result,
+            }
+        )
 
     # Sort by score descending (highest risk first)
     scored_devices.sort(key=lambda d: d["score"], reverse=True)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "device_count": len(scored_devices),
-        "network_avg_connections": round(network_avg, 2),
-        "network_stddev_connections": round(network_stddev, 2),
-        "devices": scored_devices,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "device_count": len(scored_devices),
+            "network_avg_connections": round(network_avg, 2),
+            "network_stddev_connections": round(network_stddev, 2),
+            "devices": scored_devices,
+        }
+    )
 
 
 async def handle_risk_score_single(request: web.Request) -> web.Response:
@@ -286,14 +296,16 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "ts": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
                     },
-                    {"term": {"id.orig_h": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
                 ]
             }
         },
@@ -301,7 +313,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             "total_orig_bytes": {
                 "sum": {
                     "script": {
-                        "source": "doc['orig_bytes'].size() > 0 ? doc['orig_bytes'].value : 0",
+                        "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
                         "lang": "painless",
                     }
                 }
@@ -309,21 +321,19 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             "total_resp_bytes": {
                 "sum": {
                     "script": {
-                        "source": "doc['resp_bytes'].size() > 0 ? doc['resp_bytes'].value : 0",
+                        "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
                         "lang": "painless",
                     }
                 }
             },
-            "ports_used": {
-                "terms": {"field": "id.resp_p", "size": 50}
-            },
+            "ports_used": {"terms": {"field": "destination.port.keyword", "size": 50}},
             "external_conns": {
                 "filter": {
                     "bool": {
                         "must_not": [
-                            {"term": {"id.resp_h": "10.0.0.0/8"}},
-                            {"term": {"id.resp_h": "172.16.0.0/12"}},
-                            {"term": {"id.resp_h": "192.168.0.0/16"}},
+                            {"term": {"destination.ip": "10.0.0.0/8"}},
+                            {"term": {"destination.ip": "172.16.0.0/12"}},
+                            {"term": {"destination.ip": "192.168.0.0/16"}},
                         ]
                     }
                 }
@@ -332,7 +342,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     }
 
     try:
-        conn_result = client.search(index=ZEEK_CONN_INDEX, body=conn_query)
+        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in single risk score: %s", exc)
         return web.json_response(
@@ -340,7 +350,9 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
         )
 
     total_hits = conn_result.get("hits", {}).get("total", {})
-    total_conn = total_hits.get("value", 0) if isinstance(total_hits, dict) else total_hits
+    total_conn = (
+        total_hits.get("value", 0) if isinstance(total_hits, dict) else total_hits
+    )
 
     if total_conn == 0:
         return web.json_response(
@@ -359,43 +371,44 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     }
 
     # Get network-wide stats for anomaly detection
+    net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    net_bool: dict = {
+        "filter": [
+            {
+                "range": {
+                    "@timestamp": {
+                        "gte": from_ts,
+                        "lte": to_ts,
+                        "format": "strict_date_optional_time",
+                    }
+                }
+            },
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+        ],
+    }
+    if net_excluded:
+        net_bool["must_not"] = net_excluded
+
     network_query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [{
-                    "range": {
-                        "ts": {
-                            "gte": from_ts,
-                            "lte": to_ts,
-                            "format": "strict_date_optional_time",
-                        }
-                    }
-                }]
-            }
-        },
-        "aggs": {
-            "devices": {
-                "terms": {"field": "id.orig_h", "size": 500}
-            }
-        },
+        "query": {"bool": net_bool},
+        "aggs": {"devices": {"terms": {"field": "source.ip.keyword", "size": 500}}},
     }
 
     network_avg = 0.0
     network_stddev = 0.0
     try:
-        network_result = client.search(index=ZEEK_CONN_INDEX, body=network_query)
+        network_result = client.search(index=NETWORK_INDEX, body=network_query)
         net_buckets = (
-            network_result.get("aggregations", {})
-            .get("devices", {})
-            .get("buckets", [])
+            network_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
         )
         if net_buckets:
             counts = [b.get("doc_count", 0) for b in net_buckets]
             network_avg = sum(counts) / len(counts)
             if len(counts) > 1:
                 variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
-                network_stddev = variance ** 0.5
+                network_stddev = variance**0.5
     except OpenSearchException as exc:
         logger.warning("Network stats query failed: %s", exc)
 
@@ -408,24 +421,28 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                 "filter": [
                     {
                         "range": {
-                            "timestamp": {
+                            "@timestamp": {
                                 "gte": from_ts,
                                 "lte": to_ts,
                                 "format": "strict_date_optional_time",
                             }
                         }
                     },
-                    {"term": {"src_ip": ip}},
+                    {"term": {"source.ip": ip}},
+                    {"term": {"event.provider": "suricata"}},
+                    {"term": {"event.dataset": "alert"}},
                 ]
             }
         },
     }
 
     try:
-        alert_result = client.search(index=SURICATA_INDEX, body=alert_query)
+        alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
         alert_total = alert_result.get("hits", {}).get("total", {})
         alert_count = (
-            alert_total.get("value", 0) if isinstance(alert_total, dict) else alert_total
+            alert_total.get("value", 0)
+            if isinstance(alert_total, dict)
+            else alert_total
         )
     except OpenSearchException as exc:
         logger.warning("Alert count query failed for %s: %s", ip, exc)
@@ -439,19 +456,22 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     )
     score_result = risk_scorer.score_device(device_stats)
 
-    return web.json_response({
-        "ip": ip,
-        "from": from_ts,
-        "to": to_ts,
-        "connection_count": total_conn,
-        "alert_count": alert_count,
-        **score_result,
-    })
+    return web.json_response(
+        {
+            "ip": ip,
+            "from": from_ts,
+            "to": to_ts,
+            "connection_count": total_conn,
+            "alert_count": alert_count,
+            **score_result,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
+
 
 def register_risk_routes(
     app: web.Application,

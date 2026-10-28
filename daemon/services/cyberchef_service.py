@@ -6,9 +6,10 @@ This service only monitors the container health and provides
 pre-built recipe URLs for common forensic operations.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
+
+import aiohttp
 
 logger = logging.getLogger("nettap.cyberchef")
 
@@ -19,6 +20,7 @@ CYBERCHEF_INTERNAL_URL = "http://nettap-cyberchef:8443"
 @dataclass
 class CyberChefRecipe:
     """A pre-built CyberChef recipe with URL fragment."""
+
     name: str
     description: str
     category: str  # "decode", "crypto", "network", "forensic"
@@ -97,25 +99,18 @@ class CyberChefService:
         self.base_url = base_url
 
     async def is_available(self) -> dict:
-        """Check if the CyberChef container is running."""
+        """Check if the CyberChef container is running via its HTTP health endpoint."""
         try:
-            cmd = [
-                "docker", "inspect", "--format",
-                "{{.State.Running}}", CYBERCHEF_CONTAINER,
-            ]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout_b, _ = await asyncio.wait_for(process.communicate(), timeout=5)
-            running = stdout_b.decode().strip().lower() == "true"
-            return {
-                "available": running,
-                "container_running": running,
-                "container_name": CYBERCHEF_CONTAINER,
-                "url": self.base_url if running else None,
-            }
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(f"{self.base_url}/health") as resp:
+                    running = resp.status == 200
+                    return {
+                        "available": running,
+                        "container_running": running,
+                        "container_name": CYBERCHEF_CONTAINER,
+                        "url": self.base_url if running else None,
+                    }
         except Exception as e:
             logger.error("Failed to check CyberChef availability: %s", e)
             return {
@@ -147,6 +142,7 @@ class CyberChefService:
         if input_data:
             # CyberChef accepts input via the &input= parameter (base64 encoded)
             import base64
+
             encoded = base64.b64encode(input_data.encode()).decode()
             if "&input=" not in url:
                 url += f"&input={encoded}"

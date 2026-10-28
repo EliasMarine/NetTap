@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Homepage Cards v2 — Top Devices + Alert Summary | NetTap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300..700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-void: #06080d; --bg-primary: #0a0e17; --bg-secondary: #0f1319;
+  --bg-tertiary: #141920; --bg-elevated: #181d27;
+  --text-primary: #e8edf5; --text-secondary: #8892a4; --text-muted: #555f73; --text-dim: #3a4255; --text-link: #00d4ff;
+  --border-dim: #1a1f2e; --border-default: #222939;
+  --cyan: #00d4ff; --green: #00e676; --amber: #ffab00; --red: #ff4757;
+  --purple: #b388ff; --orange: #ff6d00; --blue: #448aff; --teal: #00bfa5;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --text-xs: 0.75rem; --text-sm: 0.8125rem; --text-base: 0.875rem; --text-lg: 1rem;
+  --space-xs: 4px; --space-sm: 8px; --space-md: 16px; --space-lg: 24px; --space-xl: 32px;
+  --radius-sm: 4px; --radius-md: 8px;
+  --transition-fast: 150ms ease; --transition-slow: 400ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary); padding: var(--space-xl); }
+.mono { font-family: var(--font-mono); }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); max-width: 1200px; margin: 0 auto; }
+
+/* Card base */
+.card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); overflow: hidden; }
+.card-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
+.card-title { font-size: var(--text-sm); font-weight: 600; }
+.card-badge { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 8px; border-radius: var(--radius-sm); }
+
+/* ================================================================
+   TOP DEVICES CARD
+   ================================================================ */
+.device-item {
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.device-item:last-child { border-bottom: none; }
+.device-item:hover { background: var(--bg-tertiary); }
+
+.di-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.di-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.di-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.di-status.online { background: var(--green); box-shadow: 0 0 6px rgba(0,230,118,0.4); }
+
+.di-ip {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-link);
+  transition: color var(--transition-fast);
+}
+
+.device-item:hover .di-ip { color: var(--cyan); }
+
+.di-bytes {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.di-meta {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  margin-left: 16px;
+}
+
+/* DL/UL split bar */
+.di-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-left: 16px;
+  margin-bottom: 4px;
+}
+
+.di-split-bar {
+  flex: 1;
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  gap: 1px;
+}
+
+.di-bar-dl { background: var(--cyan); border-radius: 3px 0 0 3px; transition: width var(--transition-slow); }
+.di-bar-ul { background: var(--purple); border-radius: 0 3px 3px 0; transition: width var(--transition-slow); }
+
+.di-bar-labels {
+  display: flex;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.di-bar-dl-label { color: var(--cyan); }
+.di-bar-ul-label { color: var(--purple); }
+
+/* Category tags */
+.di-categories {
+  display: flex;
+  gap: 4px;
+  margin-left: 16px;
+  flex-wrap: wrap;
+}
+
+.di-cat-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-dim);
+}
+
+/* Card footer link */
+.card-link {
+  display: block;
+  padding: var(--space-sm) var(--space-lg);
+  border-top: 1px solid var(--border-dim);
+  font-size: var(--text-xs);
+  color: var(--text-link);
+  text-decoration: none;
+  text-align: center;
+  transition: background var(--transition-fast);
+}
+
+.card-link:hover { background: var(--bg-tertiary); }
+
+/* ================================================================
+   ALERT SUMMARY CARD
+   ================================================================ */
+
+/* Severity summary bar */
+.severity-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+}
+
+.sev-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.sev-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* Alert groups */
+.alert-group {
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-dim);
+  transition: background var(--transition-fast);
+  cursor: pointer;
+}
+
+.alert-group:last-child { border-bottom: none; }
+.alert-group:hover { background: var(--bg-tertiary); }
+
+.ag-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 3px;
+}
+
+.ag-sev {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ag-signature {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ag-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ag-meta {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 14px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.ag-category {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ag-suppressed {
+  color: var(--text-dim);
+  font-style: italic;
+}
+</style>
+</head>
+<body>
+
+<div class="grid">
+
+<!-- ============================================================
+     TOP DEVICES CARD
+     ============================================================ -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Top Devices</span>
+    <span class="card-badge">by bandwidth</span>
+  </div>
+
+  <div class="device-item">
+    <div class="di-top">
+      <div class="di-identity">
+        <span class="di-status online"></span>
+        <span class="di-ip">192.168.1.44</span>
+      </div>
+      <span class="di-bytes">26.1 GB</span>
+    </div>
+    <div class="di-meta">elias-desktop &middot; Linux</div>
+    <div class="di-bar-row">
+      <div class="di-split-bar">
+        <div class="di-bar-dl" style="width: 71%;"></div>
+        <div class="di-bar-ul" style="width: 29%;"></div>
+      </div>
+      <div class="di-bar-labels">
+        <span class="di-bar-dl-label">&darr;18.5</span>
+        <span class="di-bar-ul-label">&uarr;7.6</span>
+      </div>
+    </div>
+    <div class="di-categories">
+      <span class="di-cat-tag">Cloud 62%</span>
+      <span class="di-cat-tag">Streaming 25%</span>
+      <span class="di-cat-tag">Other 13%</span>
+    </div>
+  </div>
+
+  <div class="device-item">
+    <div class="di-top">
+      <div class="di-identity">
+        <span class="di-status online"></span>
+        <span class="di-ip">192.168.1.113</span>
+      </div>
+      <span class="di-bytes">6.7 GB</span>
+    </div>
+    <div class="di-meta">saras-iphone-2 &middot; iOS</div>
+    <div class="di-bar-row">
+      <div class="di-split-bar">
+        <div class="di-bar-dl" style="width: 78%;"></div>
+        <div class="di-bar-ul" style="width: 22%;"></div>
+      </div>
+      <div class="di-bar-labels">
+        <span class="di-bar-dl-label">&darr;5.2</span>
+        <span class="di-bar-ul-label">&uarr;1.5</span>
+      </div>
+    </div>
+    <div class="di-categories">
+      <span class="di-cat-tag">Social 45%</span>
+      <span class="di-cat-tag">Streaming 30%</span>
+      <span class="di-cat-tag">Web 25%</span>
+    </div>
+  </div>
+
+  <div class="device-item">
+    <div class="di-top">
+      <div class="di-identity">
+        <span class="di-status online"></span>
+        <span class="di-ip">192.168.1.228</span>
+      </div>
+      <span class="di-bytes">2.3 GB</span>
+    </div>
+    <div class="di-meta">nas-synology &middot; Linux</div>
+    <div class="di-bar-row">
+      <div class="di-split-bar">
+        <div class="di-bar-dl" style="width: 4%;"></div>
+        <div class="di-bar-ul" style="width: 96%;"></div>
+      </div>
+      <div class="di-bar-labels">
+        <span class="di-bar-dl-label">&darr;0.1</span>
+        <span class="di-bar-ul-label">&uarr;2.2</span>
+      </div>
+    </div>
+    <div class="di-categories">
+      <span class="di-cat-tag">Cloud 98%</span>
+    </div>
+  </div>
+
+  <div class="device-item">
+    <div class="di-top">
+      <div class="di-identity">
+        <span class="di-status"></span>
+        <span class="di-ip">192.168.1.193</span>
+      </div>
+      <span class="di-bytes">492 MB</span>
+    </div>
+    <div class="di-meta">macbook-pro &middot; macOS</div>
+    <div class="di-bar-row">
+      <div class="di-split-bar">
+        <div class="di-bar-dl" style="width: 52%;"></div>
+        <div class="di-bar-ul" style="width: 48%;"></div>
+      </div>
+      <div class="di-bar-labels">
+        <span class="di-bar-dl-label">&darr;256</span>
+        <span class="di-bar-ul-label">&uarr;236</span>
+      </div>
+    </div>
+    <div class="di-categories">
+      <span class="di-cat-tag">Work 55%</span>
+      <span class="di-cat-tag">Web 30%</span>
+    </div>
+  </div>
+
+  <a href="#" class="card-link">View all 25 devices &rarr;</a>
+</div>
+
+<!-- ============================================================
+     ALERT SUMMARY CARD
+     ============================================================ -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Alert Summary</span>
+    <span class="card-badge">1,247 total</span>
+  </div>
+
+  <!-- Severity summary -->
+  <div class="severity-bar">
+    <div class="sev-item"><span class="sev-dot" style="background: var(--red);"></span><span style="color: var(--red);">12</span> Critical</div>
+    <div class="sev-item"><span class="sev-dot" style="background: var(--red); opacity: 0.7;"></span><span style="color: var(--red);">89</span> High</div>
+    <div class="sev-item"><span class="sev-dot" style="background: var(--amber);"></span><span style="color: var(--amber);">342</span> Medium</div>
+    <div class="sev-item"><span class="sev-dot" style="background: var(--cyan);"></span><span style="color: var(--text-muted);">804</span> Low</div>
+  </div>
+
+  <!-- Grouped alerts -->
+  <div class="alert-group">
+    <div class="ag-top">
+      <span class="ag-sev" style="background: var(--red);"></span>
+      <span class="ag-signature">ET COMPROMISED Known Hostile Host Traffic</span>
+      <span class="ag-count">&times;23</span>
+    </div>
+    <div class="ag-meta">
+      <span class="ag-category">Malware & C2</span> &middot; 5 devices affected
+    </div>
+  </div>
+
+  <div class="alert-group">
+    <div class="ag-top">
+      <span class="ag-sev" style="background: var(--red);"></span>
+      <span class="ag-signature">ET CINS Active Threat Intelligence Poor Reputation IP</span>
+      <span class="ag-count">&times;18</span>
+    </div>
+    <div class="ag-meta">
+      <span class="ag-category">Malware & C2</span> &middot; 3 devices affected
+    </div>
+  </div>
+
+  <div class="alert-group">
+    <div class="ag-top">
+      <span class="ag-sev" style="background: var(--red);"></span>
+      <span class="ag-signature">ET DROP DShield Block Listed Source</span>
+      <span class="ag-count">&times;12</span>
+    </div>
+    <div class="ag-meta">
+      <span class="ag-category">Malware & C2</span> &middot; 2 devices affected
+    </div>
+  </div>
+
+  <div class="alert-group">
+    <div class="ag-top">
+      <span class="ag-sev" style="background: var(--amber);"></span>
+      <span class="ag-signature">ET SCAN Potential SSH Scan</span>
+      <span class="ag-count">&times;8</span>
+    </div>
+    <div class="ag-meta">
+      <span class="ag-category">Reconnaissance</span> &middot; 1 device affected
+    </div>
+  </div>
+
+  <div class="alert-group">
+    <div class="ag-top">
+      <span class="ag-sev" style="background: var(--cyan);"></span>
+      <span class="ag-signature">ET POLICY DNS Query to .cloud TLD</span>
+      <span class="ag-count">&times;847</span>
+    </div>
+    <div class="ag-meta">
+      <span class="ag-category">Policy Violation</span> &middot; 12 devices &middot; <span class="ag-suppressed">Noisy rule</span>
+    </div>
+  </div>
+
+  <a href="#" class="card-link">View threat intelligence &rarr;</a>
+</div>
+
+</div><!-- /grid -->
+</body>
+</html>

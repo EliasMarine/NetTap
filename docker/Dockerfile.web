@@ -21,26 +21,29 @@ LABEL org.opencontainers.image.description="NetTap web dashboard — SvelteKit-b
 LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
 LABEL org.opencontainers.image.licenses="LicenseRef-NetTap-Personal-Use"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
+
+# Remove package managers not needed at runtime — eliminates 14 npm CVEs
+# (tar, glob, minimatch vulnerabilities in bundled npm/yarn/corepack)
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+    /usr/local/lib/node_modules/corepack /usr/local/bin/corepack \
+    /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Copy built SvelteKit app
 COPY --from=build /app/build ./build
 COPY --from=build /app/package.json .
 COPY --from=build /app/node_modules ./node_modules
 
-# Create non-root user
+# Create non-root user and data directory (must exist before USER switch
+# so the named volume mount inherits correct ownership on first creation)
 RUN groupadd -r nettap && useradd -r -g nettap -s /sbin/nologin nettap
-RUN chown -R nettap:nettap /app
+RUN mkdir -p /var/lib/nettap-web && chown -R nettap:nettap /app /var/lib/nettap-web
 USER nettap
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -sf http://localhost:3000/api/health || exit 1
+    CMD node -e "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 ENV NODE_ENV=production
 ENV PORT=3000

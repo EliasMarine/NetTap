@@ -13,20 +13,37 @@
 	import DonutChart from '$components/charts/DonutChart.svelte';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTopTalkers, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TopTalker, TrafficCategory } from '$api/traffic';
-	import { getAlertCount, getAlerts } from '$api/alerts';
-	import type { AlertCountResponse, Alert } from '$api/alerts';
+	import { getAlertCount, getAlerts, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
+	import type { AlertCountResponse, Alert, SmartAlert, SmartAlertSummary } from '$api/alerts';
+	import { getDevices } from '$api/devices';
+	import type { Device } from '$api/devices';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
-	import { getDevices } from '$api/devices';
-	// DeviceListResponse type is inferred via getDevices() return type
+	import { getDeviceCount } from '$api/devices';
 	import IPAddress from '$components/IPAddress.svelte';
 	import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
 	import DashboardFilters from '$components/DashboardFilters.svelte';
 	import type { FilterState } from '$components/DashboardFilters.svelte';
+	import HorizontalBarList from '$components/HorizontalBarList.svelte';
+
+	// Mirror mode components
+	import { getCaptureMode } from '$api/capture';
+	import type { CaptureMode } from '$api/capture';
+	import { getRegistryDevices } from '$api/devices-registry';
+	import type { RegistryDevice } from '$api/devices-registry';
+	import DeviceGrid from '$components/DeviceGrid.svelte';
+	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
+	import { goto } from '$app/navigation';
+	import CaptureHealthPanel from '$components/CaptureHealthPanel.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
+
+	// Capture mode detection
+	let captureMode = $state<CaptureMode | null>(null);
+	let isMirrorMode = $derived(captureMode?.mode === 'mirror');
+	let registryDevices = $state<RegistryDevice[]>([]);
 
 	let autoRefresh = $state(true);
 	let loading = $state(true);
@@ -37,12 +54,16 @@
 	let trafficSummary = $state<TrafficSummary | null>(null);
 	let bandwidthData = $state<BandwidthPoint[]>([]);
 	let protocols = $state<ProtocolEntry[]>([]);
+	let services = $state<ProtocolEntry[]>([]);
 	let topTalkers = $state<TopTalker[]>([]);
 	let alertCount = $state<AlertCountResponse | null>(null);
 	let recentAlerts = $state<Alert[]>([]);
 	let systemHealth = $state<SystemHealth | null>(null);
 	let categories = $state<TrafficCategory[]>([]);
 	let deviceCount = $state(0);
+	let smartAlerts = $state<SmartAlert[]>([]);
+	let smartAlertSummary = $state<SmartAlertSummary | null>(null);
+	let topDevices = $state<Device[]>([]);
 
 	// Previous-period data for trend indicators
 	let prevTrafficSummary = $state<TrafficSummary | null>(null);
@@ -50,6 +71,19 @@
 
 	// Alert detail panel state
 	let selectedAlert = $state<Alert | null>(null);
+
+	// Alert table sort state
+	let alertSortField = $state<'severity' | 'signature' | 'src_ip' | 'dest_ip'>('severity');
+	let alertSortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleAlertSort(field: typeof alertSortField) {
+		if (alertSortField === field) {
+			alertSortDir = alertSortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			alertSortField = field;
+			alertSortDir = 'asc';
+		}
+	}
 
 	// Filter bar state
 	let activeFilters = $state<FilterState>({
@@ -82,6 +116,23 @@
 		loading = true;
 		error = false;
 
+		// Fetch capture mode first (or in parallel)
+		try {
+			captureMode = await getCaptureMode();
+		} catch {
+			captureMode = { mode: 'bridge', interface: '' };
+		}
+
+		// If mirror mode, also fetch registry devices
+		if (captureMode?.mode === 'mirror') {
+			try {
+				const regResult = await getRegistryDevices({ limit: 200 });
+				registryDevices = regResult.devices;
+			} catch {
+				registryDevices = [];
+			}
+		}
+
 		// Build time range params from active filters
 		const timeParams: { from?: string; to?: string } = {};
 		if (activeFilters.from && activeFilters.to) {
@@ -99,7 +150,7 @@
 			const [
 				summaryRes, bandwidthRes, protocolsRes, talkersRes,
 				alertCountRes, alertsRes, healthRes, categoriesRes,
-				devicesRes, prevSummaryRes, prevAlertCountRes,
+				deviceCountRes, prevSummaryRes, prevAlertCountRes,
 			] = await Promise.allSettled([
 				getTrafficSummary(timeParams),
 				getBandwidthTimeSeries({ ...timeParams, interval: '1h' }),
@@ -109,7 +160,7 @@
 				getAlerts({ ...timeParams, size: 10 }),
 				getSystemHealth(),
 				getTrafficCategories(timeParams),
-				getDevices(),
+				getDeviceCount(timeParams),
 				getTrafficSummary(prevTimeParams),
 				getAlertCount(prevTimeParams),
 			]);
@@ -117,14 +168,26 @@
 			trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
 			bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
 			protocols = protocolsRes.status === 'fulfilled' ? protocolsRes.value.protocols : [];
+			services = protocolsRes.status === 'fulfilled' ? protocolsRes.value.services : [];
 			topTalkers = talkersRes.status === 'fulfilled' ? talkersRes.value.top_talkers : [];
 			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
 			categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
-			deviceCount = devicesRes.status === 'fulfilled' ? devicesRes.value.devices.length : 0;
+			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
 			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
+
+			// Fetch smart alerts + top devices in parallel (non-blocking)
+			Promise.allSettled([
+				getSmartAlerts({ ...timeParams, limit: 10 }),
+				getSmartAlertSummary(timeParams),
+				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
+			]).then(([smartRes, summaryRes, devicesRes]) => {
+				smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
+				smartAlertSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+				topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
+			});
 
 			lastUpdated = new Date().toLocaleTimeString();
 
@@ -226,6 +289,13 @@
 		}))
 	);
 
+	// Protocol total for percentages
+	let protocolTotal = $derived(protocols.reduce((s, p) => s + p.count, 0));
+
+	// Service bar colors
+	const SERVICE_COLORS = ['var(--cyan)', 'var(--green)', 'var(--blue)', 'var(--purple)', 'var(--teal)', 'var(--amber)', 'var(--orange)', 'var(--red)'];
+	let maxServiceCount = $derived(services.length > 0 ? services[0].count : 1);
+
 	// Health status
 	let healthStatus = $derived.by(() => {
 		if (!systemHealth) return { label: '--', class: 'badge', healthy: false };
@@ -235,6 +305,26 @@
 
 	// Total alert count with fallback
 	let totalAlerts = $derived(alertCount?.counts?.total ?? 0);
+
+	// Sorted recent alerts for the table
+	let sortedAlerts = $derived.by(() => {
+		const alerts = recentAlerts.slice(0, 10);
+		const dir = alertSortDir === 'asc' ? 1 : -1;
+		return [...alerts].sort((a, b) => {
+			switch (alertSortField) {
+				case 'severity':
+					return ((a.alert?.severity ?? 99) - (b.alert?.severity ?? 99)) * dir;
+				case 'signature':
+					return (a.alert?.signature ?? '').localeCompare(b.alert?.signature ?? '') * dir;
+				case 'src_ip':
+					return (a.src_ip ?? '').localeCompare(b.src_ip ?? '') * dir;
+				case 'dest_ip':
+					return (a.dest_ip ?? '').localeCompare(b.dest_ip ?? '') * dir;
+				default:
+					return 0;
+			}
+		});
+	});
 
 	// ---------------------------------------------------------------------------
 	// Trend indicators (compare current vs previous period)
@@ -282,23 +372,102 @@
 		categories.length > 0 ? Math.max(...categories.map((c) => c.total_bytes)) : 1
 	);
 
-	// Category color palette
+	/** Split categories into two columns for the 2-column layout. */
+	let categoriesLeft = $derived(categories.slice(0, Math.ceil(categories.length / 2)));
+	let categoriesRight = $derived(categories.slice(Math.ceil(categories.length / 2)));
+
+	// OLD CODE START — color keys didn't match backend category keys (social_media vs social, etc.)
+	// const CATEGORY_COLORS: Record<string, string> = {
+	// 	streaming: '#f85149',
+	// 	social_media: '#58a6ff',
+	// 	gaming: '#bc8cff',
+	// 	productivity: '#3fb950',
+	// 	cloud: '#79c0ff',
+	// 	messaging: '#d29922',
+	// 	news: '#8b949e',
+	// 	shopping: '#f0883e',
+	// 	email: '#56d4dd',
+	// 	other: '#6e7681',
+	// };
+	// OLD CODE END
+
+	// Category color palette — keys match backend CATEGORIES dict in traffic_classifier.py
 	const CATEGORY_COLORS: Record<string, string> = {
-		streaming: '#f85149',
-		social_media: '#58a6ff',
-		gaming: '#bc8cff',
-		productivity: '#3fb950',
-		cloud: '#79c0ff',
-		messaging: '#d29922',
-		news: '#8b949e',
-		shopping: '#f0883e',
-		email: '#56d4dd',
-		other: '#6e7681',
+		streaming: 'var(--red)',
+		gaming: 'var(--purple)',
+		social: 'var(--blue)',
+		communication: 'var(--amber)',
+		work: 'var(--green)',
+		iot: 'var(--orange)',
+		cloud: 'var(--cyan)',
+		file_transfer: 'var(--teal)',
+		dns: 'var(--text-muted)',
+		email: 'var(--pink)',
+		web: 'var(--accent)',
+		security: 'var(--green)',
+		shopping: 'var(--orange)',
+		news: 'var(--blue)',
+		ads: 'var(--text-muted)',
+		updates: 'var(--teal)',
+		suspicious: 'var(--red)',
+		other: 'var(--text-muted)',
 	};
 
 	function categoryColor(name: string): string {
 		return CATEGORY_COLORS[name.toLowerCase()] || CATEGORY_COLORS['other'];
 	}
+
+	// ---------------------------------------------------------------------------
+	// Top talkers bar chart data
+	// ---------------------------------------------------------------------------
+
+	let maxTalkerBytes = $derived(
+		topTalkers.length > 0 ? Math.max(...topTalkers.map((t) => t.total_bytes)) : 1
+	);
+
+	// ---------------------------------------------------------------------------
+	// Alert sparkline data (severity breakdown over time)
+	// ---------------------------------------------------------------------------
+
+	let alertSparklinePoints = $derived.by(() => {
+		if (recentAlerts.length === 0) return { high: '', medium: '', low: '' };
+		// Group alerts into ~12 time buckets for sparkline
+		const sorted = [...recentAlerts].sort((a, b) =>
+			new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+		);
+		const bucketCount = Math.min(12, sorted.length);
+		const bucketSize = Math.ceil(sorted.length / bucketCount);
+
+		const highCounts: number[] = [];
+		const medCounts: number[] = [];
+		const lowCounts: number[] = [];
+
+		for (let i = 0; i < bucketCount; i++) {
+			const slice = sorted.slice(i * bucketSize, (i + 1) * bucketSize);
+			highCounts.push(slice.filter((a) => a.alert?.severity === 1).length);
+			medCounts.push(slice.filter((a) => a.alert?.severity === 2).length);
+			lowCounts.push(slice.filter((a) => a.alert?.severity === 3).length);
+		}
+
+		const maxCount = Math.max(1, ...highCounts.map((h, i) => h + medCounts[i] + lowCounts[i]));
+		const sparkW = 200;
+		const sparkH = 40;
+
+		function toPath(counts: number[], baseline: number[]): string {
+			return counts.map((c, i) => {
+				const x = (i / (bucketCount - 1 || 1)) * sparkW;
+				const y = sparkH - ((c + baseline[i]) / maxCount) * sparkH;
+				return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+			}).join(' ');
+		}
+
+		const zeros = new Array(bucketCount).fill(0);
+		return {
+			high: toPath(highCounts, medCounts.map((m, i) => m + lowCounts[i])),
+			medium: toPath(medCounts, lowCounts),
+			low: toPath(lowCounts, zeros),
+		};
+	});
 </script>
 
 <svelte:head>
@@ -306,21 +475,44 @@
 </svelte:head>
 
 <div class="dashboard">
-	<!-- Error banner -->
+	<!-- Error / status banners -->
 	{#if error}
 		<div class="alert alert-warning error-banner">
 			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
 			</svg>
-			<span>Unable to reach the monitoring daemon. Data may be stale or unavailable.</span>
+			<span>Unable to reach the monitoring daemon. Check that the NetTap daemon container is running.</span>
 		</div>
+	{:else if systemHealth && !systemHealth.opensearch_reachable}
+		<div class="alert alert-info error-banner">
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+			</svg>
+			<span>OpenSearch is not reachable. The daemon is running but cannot connect to OpenSearch. Traffic data will be unavailable until the connection is restored.</span>
+		</div>
+	{:else if !loading && systemHealth?.opensearch_reachable && !trafficSummary && bandwidthData.length === 0}
+		<div class="alert alert-info error-banner">
+			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+			</svg>
+			<span>No traffic data yet. OpenSearch is connected but no network logs have been indexed. Traffic will appear once Zeek and Suricata start capturing.</span>
+		</div>
+	{/if}
+
+	<!-- New device detection banner (mirror mode) -->
+	{#if isMirrorMode && registryDevices.length > 0}
+		<NewDeviceBanner devices={registryDevices} />
 	{/if}
 
 	<!-- Dashboard header -->
 	<div class="dashboard-header">
 		<div class="header-left">
-			<h2>Network Overview</h2>
-			<p class="text-muted">Real-time traffic, alerts, and system health.</p>
+			<h2>{isMirrorMode ? 'Device Overview' : 'Network Overview'}</h2>
+			<p class="text-muted">
+				{isMirrorMode
+					? 'Devices on your network, organized by type.'
+					: 'Real-time traffic, alerts, and system health.'}
+			</p>
 		</div>
 		<div class="header-controls">
 			{#if lastUpdated}
@@ -352,10 +544,22 @@
 		onchange={handleFilterChange}
 	/>
 
-	<!-- Row 1: Stat Cards -->
+	<!-- Mirror mode: Device grid + capture health -->
+	{#if isMirrorMode}
+		<div class="grid grid-cols-2 mirror-mode-grid">
+			<div class="mirror-main">
+				<DeviceGrid devices={registryDevices} loading={loading} />
+			</div>
+			<div class="mirror-sidebar">
+				<CaptureHealthPanel />
+			</div>
+		</div>
+	{/if}
+
+	<!-- Row 1: Stat Cards (always shown) -->
 	<div class="grid stat-grid stat-grid-5">
 		<!-- Total Bandwidth (24h) -->
-		<div class="card stat-card">
+		<a href="/logs" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Total Bandwidth (24h)</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -381,10 +585,10 @@
 					Inbound + outbound traffic
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- Active Connections -->
-		<div class="card stat-card">
+		<a href="/logs" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Connections (24h)</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -410,10 +614,10 @@
 					Total observed connections
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- Active Alerts (24h) -->
-		<div class="card stat-card">
+		<a href="/alerts" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Alerts (24h)</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -439,10 +643,10 @@
 					Suricata IDS detections
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- System Health -->
-		<div class="card stat-card">
+		<a href="/infrastructure" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">System Health</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="{healthStatus.healthy ? 'var(--success)' : 'var(--warning)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -463,10 +667,10 @@
 					Daemon + OpenSearch status
 				{/if}
 			</p>
-		</div>
+		</a>
 
 		<!-- Device Count -->
-		<div class="card stat-card">
+		<a href="/iot" class="card stat-card stat-card-link">
 			<div class="card-header">
 				<span class="card-subtitle">Devices</span>
 				<svg class="stat-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -481,9 +685,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				Unique devices seen on network
+				DHCP-leased devices on network
 			</p>
-		</div>
+		</a>
 	</div>
 
 	<!-- Row 2: Charts -->
@@ -507,156 +711,180 @@
 			{/if}
 		</div>
 
-		<!-- Protocol Distribution -->
+		<!-- Network Protocols — Dual Panel -->
 		<div class="card chart-card">
 			<div class="card-header">
-				<span class="card-title">Protocol Distribution</span>
-				<span class="card-subtitle">By connection count</span>
+				<span class="card-title">Network Protocols</span>
+				<span class="card-subtitle">Transport + Application layer</span>
 			</div>
 			{#if loading && protocols.length === 0}
 				<div class="skeleton skeleton-chart"></div>
 			{:else}
-				<div class="donut-wrapper">
-					<DonutChart
-						segments={donutSegments}
-						size={200}
-						formatValue={formatNumber}
-					/>
+				<div class="protocol-dual-panel">
+					<!-- Left: Transport donut -->
+					<div class="transport-panel">
+						<span class="panel-label">Transport</span>
+						<DonutChart
+							segments={donutSegments}
+							size={180}
+							formatValue={formatNumber}
+						/>
+					</div>
+					<!-- Right: Application services -->
+					<div class="services-panel">
+						<div class="panel-label services-label-bar">Application Layer</div>
+						{#if services.length > 0}
+							<div class="service-bar-list">
+								{#each services.slice(0, 8) as svc, i (`${svc.name}-${i}`)}
+									<div class="svc-bar-row">
+										<span class="svc-bar-name">{(svc.name || 'unknown').toUpperCase()}</span>
+										<div class="svc-bar-track">
+											<div class="svc-bar-fill" style="width: {(svc.count / maxServiceCount) * 100}%; background: {SERVICE_COLORS[i] ?? SERVICE_COLORS[SERVICE_COLORS.length - 1]};"></div>
+										</div>
+										<span class="svc-bar-value mono">{formatNumber(svc.count)}</span>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<p class="text-muted" style="padding: var(--space-lg); text-align: center; font-size: var(--text-sm);">No service data available.</p>
+						{/if}
+					</div>
 				</div>
 			{/if}
 		</div>
 	</div>
 
-	<!-- Row 2.5: Traffic Categories -->
-	{#if categories.length > 0}
-		<div class="card categories-card">
-			<div class="card-header">
-				<span class="card-title">Traffic Categories</span>
-				<span class="card-subtitle">Bandwidth by category</span>
-			</div>
-			<div class="categories-chart">
-				{#each categories.slice(0, 8) as cat}
-					<div class="category-row">
-						<span class="category-label" title={cat.label}>{cat.label}</span>
-						<div class="category-bar-track">
-							<div
-								class="category-bar-fill"
-								style="width: {(cat.total_bytes / maxCategoryBytes) * 100}%; background-color: {categoryColor(cat.name)};"
-							></div>
-						</div>
-						<span class="category-value mono">{formatBytesShort(cat.total_bytes)}</span>
-					</div>
+	<!-- Row 2.5: Traffic Categories (2-column layout) -->
+	<div class="card categories-card">
+		<div class="card-header">
+			<span class="card-title">Traffic Categories</span>
+			<span class="card-subtitle">Bandwidth by category</span>
+		</div>
+		{#if loading && categories.length === 0}
+			<div class="skeleton-table">
+				{#each Array(4) as _}
+					<div class="skeleton skeleton-row"></div>
 				{/each}
 			</div>
-		</div>
-	{/if}
+		{:else if categories.length === 0}
+			<div class="table-empty">
+				<p class="text-muted">No category data yet. Traffic will appear once Zeek captures ASN-tagged connections.</p>
+			</div>
+		{:else}
+			<div class="categories-columns">
+				<div class="categories-col">
+					<HorizontalBarList
+						items={categoriesLeft.map(cat => ({
+							key: cat.name,
+							label: cat.label,
+							value: cat.total_bytes,
+							formattedValue: formatBytesShort(cat.total_bytes),
+							color: categoryColor(cat.name),
+							href: '/traffic/' + cat.name,
+						}))}
+						maxValue={maxCategoryBytes}
+						showRank={false}
+						labelWidth={120}
+						barHeight={12}
+					/>
+				</div>
+				<div class="categories-col">
+					<HorizontalBarList
+						items={categoriesRight.map(cat => ({
+							key: cat.name,
+							label: cat.label,
+							value: cat.total_bytes,
+							formattedValue: formatBytesShort(cat.total_bytes),
+							color: categoryColor(cat.name),
+							href: '/traffic/' + cat.name,
+						}))}
+						maxValue={maxCategoryBytes}
+						showRank={false}
+						labelWidth={120}
+						barHeight={12}
+					/>
+				</div>
+			</div>
+		{/if}
+	</div>
 
-	<!-- Row 3: Tables -->
+	<!-- Row 3: Top Devices + Alert Summary -->
 	<div class="grid grid-cols-2 tables-grid">
-		<!-- Top Talkers -->
+		<!-- Top Devices -->
 		<div class="card table-card">
 			<div class="card-header">
-				<span class="card-title">Top Talkers</span>
-				<span class="card-subtitle">Source IPs by bandwidth</span>
+				<span class="card-title">Top Devices</span>
+				<span class="card-subtitle">by bandwidth</span>
 			</div>
-			{#if loading && topTalkers.length === 0}
+			{#if loading && topDevices.length === 0}
 				<div class="skeleton-table">
-					{#each Array(5) as _}
-						<div class="skeleton skeleton-row"></div>
-					{/each}
+					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
-			{:else if topTalkers.length === 0}
-				<div class="table-empty">
-					<p class="text-muted">No traffic data available.</p>
-				</div>
+			{:else if topDevices.length === 0}
+				<div class="table-empty"><p class="text-muted">No device data available.</p></div>
 			{:else}
-				<div class="table-scroll">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>Source IP</th>
-								<th>Bandwidth</th>
-								<th>Connections</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each topTalkers.slice(0, 10) as talker, i}
-								<tr>
-									<td class="row-num">{i + 1}</td>
-									<td class="ip-cell"><IPAddress ip={talker.ip} /></td>
-									<td>{formatBytes(talker.total_bytes)}</td>
-									<td>{talker.connection_count.toLocaleString()}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+				{#each topDevices.slice(0, 4) as device, i (`td-${device.ip}-${i}`)}
+					<a href="/devices/{encodeURIComponent(device.ip)}" class="td-item">
+						<div class="td-top">
+							<div class="td-identity">
+								<span class="td-status" class:online={device.last_seen && (Date.now() - new Date(device.last_seen).getTime()) < 300000}></span>
+								<span class="td-ip mono">{device.ip}</span>
+							</div>
+							<span class="td-bytes mono">{formatBytesShort(device.total_bytes)}</span>
+						</div>
+						{#if device.hostname || device.os_hint}
+							<div class="td-meta">{device.hostname ?? ''}{device.hostname && device.os_hint ? ' \u00b7 ' : ''}{device.os_hint ?? ''}</div>
+						{/if}
+						<div class="td-bar-row">
+							<div class="td-split-bar">
+								<div class="td-bar-dl" style="width: {device.total_bytes > 0 ? ((device.orig_bytes ?? device.total_bytes * 0.3) / device.total_bytes) * 100 : 50}%;"></div>
+								<div class="td-bar-ul" style="width: {device.total_bytes > 0 ? ((device.resp_bytes ?? device.total_bytes * 0.7) / device.total_bytes) * 100 : 50}%;"></div>
+							</div>
+						</div>
+					</a>
+				{/each}
+				<a href="/devices" class="card-link-bottom">View all {deviceCount || topDevices.length} devices &rarr;</a>
 			{/if}
 		</div>
 
-		<!-- Recent Alerts -->
+		<!-- Alert Summary (Smart Alerts) -->
 		<div class="card table-card">
 			<div class="card-header">
-				<span class="card-title">Recent Alerts</span>
-				<a href="/alerts" class="card-action">View all</a>
+				<span class="card-title">Alert Summary</span>
+				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.count ?? 0)} total</span>
 			</div>
-			{#if loading && recentAlerts.length === 0}
-				<div class="skeleton-table">
-					{#each Array(5) as _}
-						<div class="skeleton skeleton-row"></div>
+			{#if smartAlerts.length > 0}
+				<!-- Severity summary bar -->
+				<div class="sev-summary-bar">
+					{#each Object.entries(smartAlertSummary?.categories ?? {}) as [key, cat], i (`sev-${key}-${i}`)}
+						<span class="sev-summary-item">
+							<span class="sev-summary-dot" style="background: {key === 'malware_c2' ? 'var(--red)' : key === 'reconnaissance' ? 'var(--amber)' : key === 'exploit' ? 'var(--purple)' : key === 'policy' ? 'var(--blue)' : 'var(--text-dim)'};"></span>
+							<span class="mono" style="font-size: 10px;">{cat.groups}</span>
+							<span style="font-size: 10px; color: var(--text-muted);">{cat.label}</span>
+						</span>
 					{/each}
 				</div>
-			{:else if recentAlerts.length === 0}
-				<div class="table-empty">
-					<p class="text-muted">No alerts detected. All clear.</p>
+				<!-- Smart alert groups -->
+				{#each smartAlerts.slice(0, 5) as sa, i (`sa-${sa.signature_id}-${i}`)}
+					<div class="ag-item" onclick={() => goto('/threats')} role="button" tabindex="0">
+						<div class="ag-top-row">
+							<span class="ag-sev-dot" style="background: {sa.severity <= 2 ? 'var(--red)' : sa.severity === 3 ? 'var(--amber)' : 'var(--cyan)'};"></span>
+							<span class="ag-sig">{sa.signature}</span>
+							<span class="ag-count mono">&times;{formatNumber(sa.count)}</span>
+						</div>
+						<div class="ag-meta-row">
+							<span class="ag-cat">{sa.category_label}</span>
+						</div>
+					</div>
+				{/each}
+				<a href="/threats" class="card-link-bottom">View threat intelligence &rarr;</a>
+			{:else if loading}
+				<div class="skeleton-table">
+					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
 			{:else}
-				<div class="table-scroll">
-					<table class="data-table alerts-table">
-						<thead>
-							<tr>
-								<th>Severity</th>
-								<th>Signature</th>
-								<th>Source</th>
-								<th>Dest</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each recentAlerts.slice(0, 10) as alertItem}
-								{@const sev = severityBadge(alertItem.alert?.severity)}
-								<tr
-									class="alert-row-clickable"
-									onclick={() => (selectedAlert = alertItem)}
-									role="button"
-									tabindex="0"
-									onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedAlert = alertItem; } }}
-								>
-									<td>
-										<span class={sev.class}>{sev.label}</span>
-									</td>
-									<td class="signature-cell" title={alertItem.alert?.signature || 'Unknown'}>
-										{alertItem.alert?.signature || 'Unknown signature'}
-									</td>
-									<td class="ip-cell">
-										{#if alertItem.src_ip}
-											<IPAddress ip={alertItem.src_ip} />
-										{:else}
-											<span class="text-muted">--</span>
-										{/if}
-									</td>
-									<td class="ip-cell">
-										{#if alertItem.dest_ip}
-											<IPAddress ip={alertItem.dest_ip} />
-										{:else}
-											<span class="text-muted">--</span>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+				<div class="table-empty"><p class="text-muted">No actionable alerts detected.</p></div>
+				<a href="/alerts" class="card-link-bottom">View raw alerts &rarr;</a>
 			{/if}
 		</div>
 	</div>
@@ -715,7 +943,7 @@
 	.refresh-btn {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: var(--space-xs);
 	}
 
 	.refresh-icon {
@@ -745,6 +973,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-sm);
+	}
+
+	.stat-card-link {
+		text-decoration: none;
+		color: inherit;
+		cursor: pointer;
+		transition: border-color 0.15s, box-shadow 0.15s;
+	}
+
+	.stat-card-link:hover {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 1px var(--accent);
 	}
 
 	.stat-icon {
@@ -778,6 +1018,18 @@
 		margin-top: var(--space-xs);
 	}
 
+	.categories-columns {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--space-lg);
+	}
+
+	.categories-col {
+		min-width: 0;
+	}
+
+	/* OLD CODE START — replaced by HorizontalBarList component */
+	/*
 	.categories-chart {
 		display: flex;
 		flex-direction: column;
@@ -824,6 +1076,112 @@
 		color: var(--text-muted);
 		text-align: right;
 	}
+	*/
+	/* OLD CODE END */
+
+	/* OLD CODE START — replaced by HorizontalBarList component */
+	/*
+	.top-talkers-bars {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.talker-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-sm);
+		text-decoration: none;
+		color: inherit;
+		transition: background-color var(--transition-fast);
+	}
+
+	.talker-row:hover {
+		background-color: var(--bg-tertiary);
+		color: inherit;
+	}
+
+	.talker-rank {
+		flex-shrink: 0;
+		width: 20px;
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-align: right;
+	}
+
+	.talker-ip {
+		flex-shrink: 0;
+		width: 120px;
+		font-size: var(--text-xs);
+	}
+
+	.talker-bar-track {
+		flex: 1;
+		height: 18px;
+		background-color: var(--bg-tertiary);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+	}
+
+	.talker-bar-fill {
+		height: 100%;
+		border-radius: var(--radius-sm);
+		background: linear-gradient(90deg, var(--cyan), var(--blue));
+		transition: width 0.4s ease-out;
+		min-width: 2px;
+	}
+
+	.talker-value {
+		flex-shrink: 0;
+		width: 60px;
+		font-size: var(--text-xs);
+		color: var(--text-primary);
+		text-align: right;
+	}
+
+	.talker-conns {
+		flex-shrink: 0;
+		width: 70px;
+		font-size: var(--text-xs);
+		text-align: right;
+	}
+	*/
+	/* OLD CODE END */
+
+	/* Alert sparkline */
+	.alert-sparkline-container {
+		padding: var(--space-sm) 0;
+		margin-bottom: var(--space-sm);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.sparkline-legend {
+		display: flex;
+		gap: var(--space-md);
+		margin-bottom: var(--space-xs);
+	}
+
+	.sparkline-legend-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+	}
+
+	.sparkline-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		display: inline-block;
+	}
+
+	.alert-sparkline {
+		width: 100%;
+		height: 40px;
+	}
 
 	/* Clickable alert rows */
 	.alert-row-clickable {
@@ -849,10 +1207,98 @@
 		min-height: 340px;
 	}
 
-	.donut-wrapper {
+	/* OLD CODE START — donut-wrapper replaced by protocol-dual-panel */
+	/* .donut-wrapper {
 		display: flex;
 		justify-content: center;
 		padding: var(--space-md) 0;
+	} */
+	/* OLD CODE END */
+
+	/* Protocol Dual Panel */
+	.protocol-dual-panel {
+		display: grid;
+		grid-template-columns: 220px 1fr;
+		min-height: 280px;
+	}
+
+	.transport-panel {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: var(--space-md);
+		border-right: 1px solid var(--border-dim);
+		gap: var(--space-sm);
+	}
+
+	.panel-label {
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-dim);
+	}
+
+	.services-panel {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.services-label-bar {
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+	}
+
+	.service-bar-list {
+		flex: 1;
+		padding: var(--space-xs) 0;
+	}
+
+	.svc-bar-row {
+		display: grid;
+		grid-template-columns: 65px 1fr auto;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: 4px var(--space-lg);
+		transition: background var(--transition-fast);
+	}
+
+	.svc-bar-row:hover { background: var(--bg-tertiary); }
+
+	.svc-bar-name {
+		font-size: var(--text-xs);
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+
+	.svc-bar-track {
+		height: 8px;
+		background: var(--bg-tertiary);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+
+	.svc-bar-fill {
+		height: 100%;
+		border-radius: 4px;
+		opacity: 0.7;
+		transition: all 0.4s ease;
+	}
+
+	.svc-bar-row:hover .svc-bar-fill { opacity: 1; }
+
+	.svc-bar-value {
+		font-size: var(--text-xs);
+		color: var(--text-secondary);
+		text-align: right;
+		min-width: 45px;
+		white-space: nowrap;
+	}
+
+	@media (max-width: 768px) {
+		.protocol-dual-panel { grid-template-columns: 1fr; }
+		.transport-panel { border-right: none; border-bottom: 1px solid var(--border-dim); }
 	}
 
 	/* Tables */
@@ -863,6 +1309,75 @@
 	.table-card {
 		min-height: 280px;
 	}
+
+	/* Top Devices card */
+	.td-item {
+		display: block;
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+		text-decoration: none;
+		color: inherit;
+		transition: background var(--transition-fast);
+	}
+
+	.td-item:hover { background: var(--bg-tertiary); }
+	.td-item:last-of-type { border-bottom: none; }
+
+	.td-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+	.td-identity { display: flex; align-items: center; gap: var(--space-sm); }
+	.td-status { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+	.td-status.online { background: var(--green); box-shadow: 0 0 6px rgba(0,230,118,0.4); }
+	.td-ip { font-size: var(--text-sm); font-weight: 600; color: var(--text-link); transition: color var(--transition-fast); }
+	.td-item:hover .td-ip { color: var(--cyan); }
+	.td-bytes { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
+	.td-meta { font-size: var(--text-xs); color: var(--text-muted); margin-left: 16px; margin-bottom: 4px; }
+	.td-bar-row { margin-left: 16px; }
+	.td-split-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; gap: 1px; }
+	.td-bar-dl { background: var(--cyan); border-radius: 2px 0 0 2px; }
+	.td-bar-ul { background: var(--purple); border-radius: 0 2px 2px 0; }
+
+	.card-link-bottom {
+		display: block;
+		padding: var(--space-sm) var(--space-lg);
+		border-top: 1px solid var(--border-dim);
+		font-size: var(--text-xs);
+		color: var(--text-link);
+		text-decoration: none;
+		text-align: center;
+		transition: background var(--transition-fast);
+	}
+
+	.card-link-bottom:hover { background: var(--bg-tertiary); }
+
+	/* Alert Summary card */
+	.sev-summary-bar {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+		flex-wrap: wrap;
+	}
+
+	.sev-summary-item { display: flex; align-items: center; gap: 4px; }
+	.sev-summary-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+	.ag-item {
+		padding: var(--space-sm) var(--space-lg);
+		border-bottom: 1px solid var(--border-dim);
+		transition: background var(--transition-fast);
+		cursor: pointer;
+	}
+
+	.ag-item:last-of-type { border-bottom: none; }
+	.ag-item:hover { background: var(--bg-tertiary); }
+
+	.ag-top-row { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: 2px; }
+	.ag-sev-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+	.ag-sig { font-size: var(--text-sm); font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.ag-count { font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+	.ag-meta-row { font-size: 10px; color: var(--text-dim); margin-left: 14px; }
+	.ag-cat { color: var(--text-muted); font-weight: 500; }
 
 	.table-scroll {
 		overflow-x: auto;
@@ -888,6 +1403,16 @@
 	.data-table td {
 		padding: var(--space-sm) var(--space-sm);
 		border-bottom: 1px solid var(--border-muted);
+		color: var(--text-primary);
+	}
+
+	.sortable-th {
+		cursor: pointer;
+		user-select: none;
+		transition: color var(--transition-fast);
+	}
+
+	.sortable-th:hover {
 		color: var(--text-primary);
 	}
 
@@ -984,6 +1509,8 @@
 			max-width: 140px;
 		}
 
+		/* OLD CODE START — replaced by HorizontalBarList component */
+		/*
 		.category-label {
 			width: 70px;
 			font-size: var(--text-xs);
@@ -992,10 +1519,31 @@
 		.category-value {
 			width: 50px;
 		}
+		*/
+		/* OLD CODE END */
 	}
 
 	@media (max-width: 480px) {
 		.stat-grid-5 {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	/* Mirror mode layout */
+	.mirror-mode-grid {
+		grid-template-columns: 2fr 1fr;
+	}
+
+	.mirror-main {
+		min-width: 0;
+	}
+
+	.mirror-sidebar {
+		min-width: 0;
+	}
+
+	@media (max-width: 1024px) {
+		.mirror-mode-grid {
 			grid-template-columns: 1fr;
 		}
 	}

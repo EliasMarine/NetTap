@@ -174,7 +174,7 @@
 		border-radius: var(--radius-md);
 		background-color: var(--bg-secondary);
 		overflow-y: auto;
-		max-height: 480px;
+		height: 100%;
 	}
 
 	.empty-state {

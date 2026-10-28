@@ -41,7 +41,9 @@ def _make_conn_search_result(buckets=None, total=0):
     }
 
 
-def _make_device_bucket(ip, doc_count=100, orig_bytes=1000, resp_bytes=9000, ports=None):
+def _make_device_bucket(
+    ip, doc_count=100, orig_bytes=1000, resp_bytes=9000, ports=None
+):
     """Build a device aggregation bucket for mock data."""
     port_buckets = [{"key": p} for p in (ports or [80, 443])]
     return {
@@ -164,6 +166,7 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
     async def test_scores_opensearch_error(self):
         """OpenSearch failure returns 502."""
         from opensearchpy import OpenSearchException
+
         self.mock_storage._client.search.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/risk/scores")
         self.assertEqual(resp.status, 502)
@@ -199,6 +202,7 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
     async def test_scores_alert_query_failure_graceful(self):
         """If alert query fails, scoring should still succeed (0 alerts)."""
         from opensearchpy import OpenSearchException
+
         buckets = [_make_device_bucket("192.168.1.10")]
         conn_result = _make_conn_search_result(buckets=buckets, total=100)
 
@@ -268,6 +272,7 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
     async def test_single_device_opensearch_error(self):
         """OpenSearch failure returns 502 for single device."""
         from opensearchpy import OpenSearchException
+
         self.mock_storage._client.search.side_effect = OpenSearchException("error")
         resp = await self.client.request("GET", "/api/risk/scores/192.168.1.10")
         self.assertEqual(resp.status, 502)
@@ -345,6 +350,7 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
     async def test_single_device_network_query_failure_graceful(self):
         """If network stats query fails, scoring still works."""
         from opensearchpy import OpenSearchException
+
         conn_result = _make_single_conn_result(total=100)
         alert_result = _make_single_alert_result(total=0)
 
@@ -388,6 +394,7 @@ class TestRiskRouteRegistration(AioHTTPTestCase):
     async def test_single_score_route_exists(self):
         """The /api/risk/scores/{ip} route should be registered."""
         from opensearchpy import OpenSearchException
+
         # Will fail with 502 but not 404
         self.mock_storage._client.search.side_effect = OpenSearchException("test")
         resp = await self.client.request("GET", "/api/risk/scores/1.2.3.4")

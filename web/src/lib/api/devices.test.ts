@@ -3,6 +3,10 @@ import {
 	getDevices,
 	getDeviceDetail,
 	getDeviceConnections,
+	getDeviceCategories,
+	getDeviceAlerts,
+	getDevicePorts,
+	getDeviceRiskScore,
 } from './devices';
 
 // ---------------------------------------------------------------------------
@@ -268,6 +272,211 @@ describe('devices API client', () => {
 			expect(url).toContain('to=');
 			expect(url).toContain('page=2');
 			expect(url).toContain('size=100');
+		});
+	});
+
+	// -- getDeviceCategories --------------------------------------------------
+
+	describe('getDeviceCategories', () => {
+		it('returns parsed categories on success', async () => {
+			const expected = {
+				ip: '192.168.1.100',
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+				categories: [
+					{ name: 'streaming', label: 'Streaming', total_bytes: 500000, connection_count: 50 },
+					{ name: 'social', label: 'Social Media', total_bytes: 200000, connection_count: 30 },
+				],
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getDeviceCategories('192.168.1.100');
+
+			expect(fetch).toHaveBeenCalledWith('/api/devices/192.168.1.100/categories');
+			expect(result.categories).toHaveLength(2);
+			expect(result.categories[0].name).toBe('streaming');
+		});
+
+		it('returns empty categories on HTTP error', async () => {
+			mockFetchFailure(500);
+
+			const result = await getDeviceCategories('192.168.1.100');
+
+			expect(result.categories).toEqual([]);
+			expect(result.ip).toBe('192.168.1.100');
+		});
+
+		it('passes time range parameters', async () => {
+			mockFetchSuccess({ ip: '192.168.1.100', from: '', to: '', categories: [] });
+
+			await getDeviceCategories('192.168.1.100', {
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+			});
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toContain('from=');
+			expect(url).toContain('to=');
+		});
+	});
+
+	// -- getDeviceAlerts ------------------------------------------------------
+
+	describe('getDeviceAlerts', () => {
+		it('returns parsed alerts on success', async () => {
+			const expected = {
+				ip: '192.168.1.100',
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+				total: 2,
+				alerts: [
+					{
+						timestamp: '2026-02-25T12:00:00Z',
+						severity: 2,
+						signature: 'ET MALWARE Test',
+						category: 'Malware',
+						signature_id: 2000001,
+						source_ip: '192.168.1.100',
+						destination_ip: '10.0.0.1',
+						source_port: 54321,
+						destination_port: 443,
+					},
+				],
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getDeviceAlerts('192.168.1.100');
+
+			expect(fetch).toHaveBeenCalledWith('/api/devices/192.168.1.100/alerts');
+			expect(result.total).toBe(2);
+			expect(result.alerts).toHaveLength(1);
+			expect(result.alerts[0].signature).toBe('ET MALWARE Test');
+		});
+
+		it('returns empty alerts on HTTP error', async () => {
+			mockFetchFailure(500);
+
+			const result = await getDeviceAlerts('192.168.1.100');
+
+			expect(result.total).toBe(0);
+			expect(result.alerts).toEqual([]);
+			expect(result.ip).toBe('192.168.1.100');
+		});
+
+		it('passes time range and limit parameters', async () => {
+			mockFetchSuccess({ ip: '192.168.1.100', from: '', to: '', total: 0, alerts: [] });
+
+			await getDeviceAlerts('192.168.1.100', {
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+				limit: 20,
+			});
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toContain('from=');
+			expect(url).toContain('to=');
+			expect(url).toContain('limit=20');
+		});
+	});
+
+	// -- getDevicePorts -------------------------------------------------------
+
+	describe('getDevicePorts', () => {
+		it('returns parsed ports on success', async () => {
+			const expected = {
+				ip: '192.168.1.100',
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+				ports: [
+					{ port: 443, service: 'https', connections: 100, suspicious: false },
+					{ port: 8080, service: 'http-alt', connections: 5, suspicious: true },
+				],
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getDevicePorts('192.168.1.100');
+
+			expect(fetch).toHaveBeenCalledWith('/api/devices/192.168.1.100/ports');
+			expect(result.ports).toHaveLength(2);
+			expect(result.ports[0].port).toBe(443);
+			expect(result.ports[1].suspicious).toBe(true);
+		});
+
+		it('returns empty ports on HTTP error', async () => {
+			mockFetchFailure(500);
+
+			const result = await getDevicePorts('192.168.1.100');
+
+			expect(result.ports).toEqual([]);
+			expect(result.ip).toBe('192.168.1.100');
+		});
+
+		it('passes time range parameters', async () => {
+			mockFetchSuccess({ ip: '192.168.1.100', from: '', to: '', ports: [] });
+
+			await getDevicePorts('192.168.1.100', {
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+			});
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toContain('from=');
+			expect(url).toContain('to=');
+		});
+	});
+
+	// -- getDeviceRiskScore ---------------------------------------------------
+
+	describe('getDeviceRiskScore', () => {
+		it('returns parsed risk score on success', async () => {
+			const expected = {
+				ip: '192.168.1.100',
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+				score: 42,
+				level: 'medium',
+				factors: [
+					{ name: 'open_ports', score: 10, max: 25, description: 'Multiple open ports detected' },
+				],
+				connection_count: 200,
+				alert_count: 3,
+			};
+			mockFetchSuccess(expected);
+
+			const result = await getDeviceRiskScore('192.168.1.100');
+
+			expect(fetch).toHaveBeenCalledWith('/api/risk/scores/192.168.1.100');
+			expect(result.score).toBe(42);
+			expect(result.level).toBe('medium');
+			expect(result.factors).toHaveLength(1);
+			expect(result.connection_count).toBe(200);
+		});
+
+		it('returns zero-score fallback on HTTP error', async () => {
+			mockFetchFailure(500);
+
+			const result = await getDeviceRiskScore('192.168.1.100');
+
+			expect(result.score).toBe(0);
+			expect(result.level).toBe('low');
+			expect(result.factors).toEqual([]);
+			expect(result.ip).toBe('192.168.1.100');
+		});
+
+		it('passes time range parameters', async () => {
+			mockFetchSuccess({
+				ip: '192.168.1.100', from: '', to: '', score: 0,
+				level: 'low', factors: [], connection_count: 0, alert_count: 0,
+			});
+
+			await getDeviceRiskScore('192.168.1.100', {
+				from: '2026-02-25T00:00:00Z',
+				to: '2026-02-26T00:00:00Z',
+			});
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toContain('from=');
+			expect(url).toContain('to=');
 		});
 	});
 });

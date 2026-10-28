@@ -45,7 +45,7 @@ BUILTIN_PACK_DEFS: list[dict] = [
         "id": "et-open",
         "name": "Emerging Threats Open",
         "description": "Open-source Suricata rules from Proofpoint/ET. "
-                       "Covers malware, exploits, policy violations, and more.",
+        "Covers malware, exploits, policy violations, and more.",
         "version": "2026.02.01",
         "author": "Proofpoint Emerging Threats",
         "rule_count": 47000,
@@ -57,7 +57,7 @@ BUILTIN_PACK_DEFS: list[dict] = [
         "id": "et-iot",
         "name": "ET IoT Ruleset",
         "description": "Emerging Threats rules focused on IoT device detection, "
-                       "known IoT botnets, and vulnerable firmware signatures.",
+        "known IoT botnets, and vulnerable firmware signatures.",
         "version": "2026.01.15",
         "author": "Proofpoint Emerging Threats",
         "rule_count": 3200,
@@ -69,7 +69,7 @@ BUILTIN_PACK_DEFS: list[dict] = [
         "id": "abuse-ch",
         "name": "Abuse.ch Threat Intelligence",
         "description": "Suricata rules from abuse.ch covering botnet C2 servers, "
-                       "malware distribution URLs, and SSL certificate blocklists.",
+        "malware distribution URLs, and SSL certificate blocklists.",
         "version": "2026.02.10",
         "author": "abuse.ch",
         "rule_count": 8500,
@@ -81,7 +81,7 @@ BUILTIN_PACK_DEFS: list[dict] = [
         "id": "tgreen-hunting",
         "name": "TGreen Hunting Rules",
         "description": "Community threat hunting rules by Travis Green. "
-                       "Focused on lateral movement, persistence, and exfiltration detection.",
+        "Focused on lateral movement, persistence, and exfiltration detection.",
         "version": "2025.12.01",
         "author": "Travis Green",
         "rule_count": 1200,
@@ -93,7 +93,7 @@ BUILTIN_PACK_DEFS: list[dict] = [
         "id": "nettap-defaults",
         "name": "NetTap Default Rules",
         "description": "Curated ruleset optimized for home/small business networks. "
-                       "Includes DNS tunneling, port scan detection, and unusual traffic patterns.",
+        "Includes DNS tunneling, port scan detection, and unusual traffic patterns.",
         "version": "1.0.0",
         "author": "NetTap Team",
         "rule_count": 500,
@@ -264,9 +264,7 @@ class DetectionPackManager:
         enabled = sum(1 for p in self._packs.values() if p.enabled)
         disabled = total - enabled
         total_rules = sum(p.rule_count for p in self._packs.values())
-        enabled_rules = sum(
-            p.rule_count for p in self._packs.values() if p.enabled
-        )
+        enabled_rules = sum(p.rule_count for p in self._packs.values() if p.enabled)
 
         by_category: dict[str, int] = {}
         for pack in self._packs.values():
@@ -288,12 +286,14 @@ class DetectionPackManager:
         """
         available = []
         for bdef in BUILTIN_PACK_DEFS:
-            available.append({
-                "id": bdef["id"],
-                "name": bdef["name"],
-                "description": bdef["description"],
-                "category": bdef["category"],
-                "rule_count": bdef["rule_count"],
-                "installed": bdef["id"] in self._packs,
-            })
+            available.append(
+                {
+                    "id": bdef["id"],
+                    "name": bdef["name"],
+                    "description": bdef["description"],
+                    "category": bdef["category"],
+                    "rule_count": bdef["rule_count"],
+                    "installed": bdef["id"] in self._packs,
+                }
+            )
         return available

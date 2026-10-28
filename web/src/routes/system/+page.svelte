@@ -14,8 +14,8 @@
 	let cyberchefStatus = $state<CyberChefStatus | null>(null);
 	let loading = $state(true);
 
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
+	function formatBytes(bytes: number | null | undefined): string {
+		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(1024));
 		const val = bytes / Math.pow(1024, i);
@@ -164,10 +164,20 @@
 					<div class="info-row">
 						<span class="info-label">Indices</span>
 						<span class="info-value mono">
-							{storageStatus?.index_summary?.count ?? '--'}
+							{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
 						</span>
 					</div>
 				</div>
+				{#if systemHealth && !systemHealth.opensearch_reachable}
+					<div class="alert alert-info os-help">
+						OpenSearch is not reachable. Possible causes:
+						<ul>
+							<li>OpenSearch container is still starting (can take up to 3 minutes)</li>
+							<li>Credentials are not configured — check curlrc mount</li>
+							<li>OpenSearch security needs bootstrap — see CLAUDE.md</li>
+						</ul>
+					</div>
+				{/if}
 			</div>
 		</div>
 
@@ -249,27 +259,46 @@
 						</div>
 						<div class="info-row">
 							<span class="info-label">Temperature</span>
-							<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c)}">
-								{smartHealth.temperature_c}&deg;C
-							</span>
+							{#if smartHealth.temperature_c != null}
+								<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c)}">
+									{smartHealth.temperature_c}&deg;C
+								</span>
+							{:else}
+								<span class="info-value unavailable" title="SMART temperature data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+							{/if}
 						</div>
 						<div class="info-row">
 							<span class="info-label">Wear</span>
-							<div class="wear-cell">
-								<div class="wear-bar-container">
-									<div
-										class="wear-bar"
-										style="width: {Math.min(smartHealth.percentage_used, 100)}%; background-color: {smartHealth.percentage_used > 80 ? 'var(--danger)' : smartHealth.percentage_used > 50 ? 'var(--warning)' : 'var(--success)'}"
-									></div>
+							{#if smartHealth.percentage_used != null}
+								<div class="wear-cell">
+									<div class="wear-bar-container">
+										<div
+											class="wear-bar"
+											style="width: {Math.min(smartHealth.percentage_used, 100)}%; background-color: {smartHealth.percentage_used > 80 ? 'var(--danger)' : smartHealth.percentage_used > 50 ? 'var(--warning)' : 'var(--success)'}"
+										></div>
+									</div>
+									<span class="mono wear-text">{smartHealth.percentage_used}%</span>
 								</div>
-								<span class="mono wear-text">{smartHealth.percentage_used}%</span>
-							</div>
+							{:else}
+								<span class="info-value unavailable" title="SMART wear level data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+							{/if}
 						</div>
 						<div class="info-row">
 							<span class="info-label">Power-On Hours</span>
-							<span class="info-value mono">{smartHealth.power_on_hours.toLocaleString()}</span>
+							{#if smartHealth.power_on_hours != null}
+								<span class="info-value mono">{smartHealth.power_on_hours.toLocaleString()}</span>
+							{:else}
+								<span class="info-value unavailable" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+							{/if}
 						</div>
 					</div>
+					{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}
+						<div class="alert alert-info os-help">
+							SMART metrics are unavailable. The device was detected but no data could be read.
+							Check that the /dev volume is mounted without :ro in Docker Compose, as NVMe drives require write access for admin commands.
+							<a href="/api/smart/diagnostics" target="_blank" class="diag-link">View diagnostics</a>
+						</div>
+					{/if}
 					{#if smartHealth.warnings && smartHealth.warnings.length > 0}
 						<div class="smart-warnings">
 							{#each smartHealth.warnings as warning}
@@ -300,12 +329,14 @@
 								<span class="service-name">TShark</span>
 								{#if tsharkStatus?.version}
 									<span class="service-version mono">{tsharkStatus.version}</span>
+								{:else if tsharkStatus && !tsharkStatus.available}
+									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
 						{#if tsharkStatus}
-							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-danger'}>
-								{tsharkStatus.available ? 'Available' : 'Unavailable'}
+							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
+								{tsharkStatus.available ? 'Available' : 'Not Deployed'}
 							</span>
 						{:else}
 							<span class="badge">Checking...</span>
@@ -324,12 +355,14 @@
 								<span class="service-name">CyberChef</span>
 								{#if cyberchefStatus?.version}
 									<span class="service-version mono">{cyberchefStatus.version}</span>
+								{:else if cyberchefStatus && !cyberchefStatus.available}
+									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
 						{#if cyberchefStatus}
-							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-danger'}>
-								{cyberchefStatus.available ? 'Available' : 'Unavailable'}
+							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
+								{cyberchefStatus.available ? 'Available' : 'Not Deployed'}
 							</span>
 						{:else}
 							<span class="badge">Checking...</span>
@@ -517,6 +550,39 @@
 		color: var(--text-secondary);
 		min-width: 36px;
 		text-align: right;
+	}
+
+	/* Actionable help boxes */
+	.os-help {
+		margin-top: var(--space-md);
+		font-size: var(--text-sm);
+		line-height: 1.5;
+	}
+
+	.os-help ul {
+		margin: var(--space-xs) 0 0 var(--space-md);
+		padding: 0;
+	}
+
+	.os-help li {
+		margin-bottom: var(--space-xs);
+	}
+
+	/* Unavailable metric indicator */
+	.unavailable {
+		color: var(--text-muted);
+		font-size: var(--text-xs);
+		font-style: italic;
+		cursor: help;
+		border-bottom: 1px dotted var(--text-muted);
+	}
+
+	.diag-link {
+		display: inline-block;
+		margin-top: var(--space-xs);
+		color: var(--accent);
+		text-decoration: underline;
+		font-size: var(--text-xs);
 	}
 
 	/* SMART warnings */

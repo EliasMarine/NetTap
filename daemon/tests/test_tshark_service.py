@@ -70,9 +70,7 @@ class TestValidateDisplayFilter(unittest.TestCase):
 
     def test_validate_display_filter_clean(self):
         """Allow valid display filter with comparison operators."""
-        result = self.svc.validate_display_filter(
-            "http.request && ip.src == 10.0.0.1"
-        )
+        result = self.svc.validate_display_filter("http.request && ip.src == 10.0.0.1")
         self.assertEqual(result, "http.request && ip.src == 10.0.0.1")
 
     def test_validate_display_filter_shell_metachar(self):
@@ -214,10 +212,12 @@ class TestParseOutput(unittest.TestCase):
 
     def test_parse_json_output(self):
         """Valid JSON array should be parsed into list of dicts."""
-        json_data = json.dumps([
-            {"_index": "packets", "layers": {"frame": {}}},
-            {"_index": "packets", "layers": {"ip": {}}},
-        ])
+        json_data = json.dumps(
+            [
+                {"_index": "packets", "layers": {"frame": {}}},
+                {"_index": "packets", "layers": {"ip": {}}},
+            ]
+        )
         result = self.svc._parse_json_output(json_data)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["_index"], "packets")
@@ -292,12 +292,12 @@ class TestIsAvailable(unittest.TestCase):
         async def run():
             svc = TSharkService()
             mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b"true\n", b"")
-            )
+            mock_process.communicate = AsyncMock(return_value=(b"true\n", b""))
             mock_process.returncode = 0
 
-            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            with patch(
+                "asyncio.create_subprocess_exec", new_callable=AsyncMock
+            ) as mock_exec:
                 mock_exec.return_value = mock_process
                 with patch.object(
                     svc, "get_version", new_callable=AsyncMock
@@ -316,12 +316,12 @@ class TestIsAvailable(unittest.TestCase):
         async def run():
             svc = TSharkService()
             mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(
-                return_value=(b"false\n", b"")
-            )
+            mock_process.communicate = AsyncMock(return_value=(b"false\n", b""))
             mock_process.returncode = 0
 
-            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            with patch(
+                "asyncio.create_subprocess_exec", new_callable=AsyncMock
+            ) as mock_exec:
                 mock_exec.return_value = mock_process
                 result = await svc.is_available()
                 self.assertFalse(result["available"])

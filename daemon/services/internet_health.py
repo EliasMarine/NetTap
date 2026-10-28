@@ -67,13 +67,16 @@ class InternetHealthMonitor:
         try:
             timeout_sec = str(int(timeout))
             proc = await asyncio.create_subprocess_exec(
-                "ping", "-c", "3", "-W", timeout_sec, target,
+                "ping",
+                "-c",
+                "3",
+                "-W",
+                timeout_sec,
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout + 5
-            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 5)
             if proc.returncode != 0:
                 return None
 
@@ -124,13 +127,16 @@ class InternetHealthMonitor:
         try:
             timeout_sec = str(int(timeout))
             proc = await asyncio.create_subprocess_exec(
-                "ping", "-c", str(count), "-W", timeout_sec, target,
+                "ping",
+                "-c",
+                str(count),
+                "-W",
+                timeout_sec,
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout + 10
-            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 10)
 
             output = stdout.decode("utf-8", errors="replace")
             # Parse: "3 packets transmitted, 2 received, 33.3333% packet loss"
@@ -184,24 +190,18 @@ class InternetHealthMonitor:
         5. Store in history (bounded by history_size)
         """
         # Latency checks (concurrent)
-        latency_tasks = [
-            self.check_latency(t) for t in self._ping_targets
-        ]
+        latency_tasks = [self.check_latency(t) for t in self._ping_targets]
         latency_results = await asyncio.gather(*latency_tasks)
         valid_latencies = [r for r in latency_results if r is not None]
         median_latency = (
-            round(statistics.median(valid_latencies), 2)
-            if valid_latencies
-            else None
+            round(statistics.median(valid_latencies), 2) if valid_latencies else None
         )
 
         # DNS checks (concurrent)
         dns_tasks = [self.check_dns(d) for d in self._dns_targets]
         dns_results = await asyncio.gather(*dns_tasks)
         valid_dns = [r for r in dns_results if r is not None]
-        median_dns = (
-            round(statistics.median(valid_dns), 2) if valid_dns else None
-        )
+        median_dns = round(statistics.median(valid_dns), 2) if valid_dns else None
 
         # Packet loss check
         packet_loss = await self.check_packet_loss(self._ping_targets[0])
@@ -220,19 +220,24 @@ class InternetHealthMonitor:
         # Store in history with size limit
         self._history.append(check)
         if len(self._history) > self._history_size:
-            self._history = self._history[-self._history_size:]
+            self._history = self._history[-self._history_size :]
 
         return check
 
     def get_current_status(self) -> dict:
-        """Return most recent health check result, or a default if none."""
+        """Return most recent health check result, or a default if none.
+
+        When no checks have been run yet, returns ``status: 'not_configured'``
+        to indicate the service hasn't been initialized rather than implying
+        a failure condition.
+        """
         if not self._history:
             return {
                 "timestamp": None,
                 "latency_ms": None,
                 "dns_resolve_ms": None,
                 "packet_loss_pct": None,
-                "status": "unknown",
+                "status": "not_configured",
             }
         return self._history[-1].to_dict()
 
@@ -261,9 +266,7 @@ class InternetHealthMonitor:
                 "history_span_hours": 0,
             }
 
-        latencies = [
-            h.latency_ms for h in self._history if h.latency_ms is not None
-        ]
+        latencies = [h.latency_ms for h in self._history if h.latency_ms is not None]
         dns_times = [
             h.dns_resolve_ms for h in self._history if h.dns_resolve_ms is not None
         ]
@@ -277,9 +280,7 @@ class InternetHealthMonitor:
         try:
             first_ts = datetime.fromisoformat(self._history[0].timestamp)
             last_ts = datetime.fromisoformat(self._history[-1].timestamp)
-            span_hours = round(
-                (last_ts - first_ts).total_seconds() / 3600, 2
-            )
+            span_hours = round((last_ts - first_ts).total_seconds() / 3600, 2)
         except (ValueError, TypeError):
             span_hours = 0
 
@@ -295,15 +296,9 @@ class InternetHealthMonitor:
                 if latencies
                 else None
             ),
-            "min_latency_ms": (
-                round(min(latencies), 2) if latencies else None
-            ),
-            "max_latency_ms": (
-                round(max(latencies), 2) if latencies else None
-            ),
-            "avg_dns_ms": (
-                round(statistics.mean(dns_times), 2) if dns_times else None
-            ),
+            "min_latency_ms": (round(min(latencies), 2) if latencies else None),
+            "max_latency_ms": (round(max(latencies), 2) if latencies else None),
+            "avg_dns_ms": (round(statistics.mean(dns_times), 2) if dns_times else None),
             "avg_packet_loss_pct": round(statistics.mean(losses), 2),
             "uptime_pct": uptime_pct,
             "total_checks": len(self._history),

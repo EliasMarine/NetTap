@@ -1,0 +1,29 @@
+# NetTap — Trivy CVE Ignore List
+# Upstream base image CVEs with no fix available from Debian.
+# Last reviewed: 2026-03-03
+#
+# These are accepted risks for v1.0 release. All are in OS-level
+# libraries of the Debian 12 (bookworm) base image, not in NetTap
+# application code. Re-evaluate when upgrading base images.
+
+# ---------------------------------------------------------------------------
+# Debian 12 (bookworm) OS packages — no fix available
+# ---------------------------------------------------------------------------
+
+# glibc: integer overflow in memalign → heap corruption
+# Affects: libc-bin, libc6 in python:3.12-slim-bookworm & node:22-bookworm-slim
+# Status: "affected" — no patch from Debian
+# Risk: Low — requires specific memalign allocation patterns unlikely in our workload
+CVE-2026-0861
+
+# zlib: integer overflow in zipOpenNewFileInZip4_6 (minizip API)
+# Affects: zlib1g in both base images
+# Status: will_not_fix — Debian won't patch; the vuln is in minizip, not core zlib
+# Risk: None — NetTap never calls the minizip API
+CVE-2023-45853
+
+# SQLite: integer overflow
+# Affects: libsqlite3-0 in python:3.12-slim-bookworm only
+# Status: "affected" — no patch from Debian
+# Risk: Low — SQLite is a transitive dep of Python, not directly used by the daemon
+CVE-2025-7458

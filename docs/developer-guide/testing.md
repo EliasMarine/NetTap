@@ -240,3 +240,117 @@ A PR cannot be merged until all CI checks pass.
 - **Daemon tests** must mock OpenSearch (never connect to a real cluster)
 - **Web tests** must mock fetch (never make real API calls)
 - **Component tests** must cover loading, data, empty, and error states
+
+---
+
+## v1.0 Release Verification
+
+NetTap includes an automated release verification script that checks code quality, tests, and build integrity.
+
+### Quick Check (CI-friendly)
+
+Runs secrets audit, linting, tests, and type checking (~2-5 minutes):
+
+```bash
+cd ~/NetTap
+./scripts/verify-release.sh --quick
+```
+
+### Full Verification
+
+Includes Docker builds, Trivy CVE scanning, and E2E tests (~15-30 minutes):
+
+```bash
+cd ~/NetTap
+./scripts/verify-release.sh --full
+```
+
+### Other Modes
+
+```bash
+# Secrets audit only
+./scripts/verify-release.sh --secrets-only
+
+# Quick checks + Docker builds
+./scripts/verify-release.sh --docker
+
+# Quick checks + Docker builds + Trivy scan
+./scripts/verify-release.sh --trivy
+
+# Verbose output (show full command output)
+./scripts/verify-release.sh --quick -v
+```
+
+---
+
+## Deployment Verification (Target Hardware)
+
+These commands verify a full deployment on reference hardware (Intel N100 or similar).
+
+### 1. Clean Install
+
+```bash
+# On target host — fresh install
+cd /opt/nettap
+sudo scripts/install/install.sh
+
+# Verify all containers are healthy
+sudo docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+### 2. Container Health Checks
+
+```bash
+# Check each core service is responding
+curl -sf http://localhost:8880/api/health | python3 -m json.tool        # Daemon API
+curl -sk https://localhost:443/ -o /dev/null -w "HTTP %{http_code}\n"   # Web dashboard
+curl -sf http://localhost:9200/_cluster/health | python3 -m json.tool   # OpenSearch
+```
+
+### 3. Dashboard Load Timing
+
+Target: page loads in < 3 seconds on LAN.
+
+```bash
+# Measure full page load time
+curl -sk -o /dev/null -w "Total: %{time_total}s\nTTFB: %{time_starttransfer}s\n" https://localhost:443/
+```
+
+### 4. Bridge Throughput
+
+Target: 500Mbps sustained with zero packet loss.
+
+```bash
+# On a machine behind the bridge, run iperf3 against the router/upstream
+# Server side (on router or upstream machine):
+iperf3 -s
+
+# Client side (on machine behind bridge):
+iperf3 -c <router-ip> -t 60 -P 4
+# Expect: ~500+ Mbps, 0% packet loss
+```
+
+### 5. Alert Latency Test
+
+Target: Suricata alerts appear in < 10 seconds.
+
+```bash
+# Trigger a known ET rule (e.g., ICMP to external host)
+ping -c 1 8.8.8.8
+
+# Check for alert in OpenSearch (within 10 seconds)
+curl -sf 'http://localhost:9200/suricata-*/_search?size=1&sort=timestamp:desc' \
+  | python3 -m json.tool | head -20
+```
+
+### 6. Storage Pruning Verification
+
+Target: daemon prunes at 80% disk threshold.
+
+```bash
+# Check current disk usage and daemon pruning config
+curl -sf http://localhost:8880/api/storage/status | python3 -m json.tool
+
+# View daemon logs for pruning activity
+sudo docker logs nettap-storage-daemon 2>&1 | grep -i prune | tail -10
+```

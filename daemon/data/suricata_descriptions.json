@@ -329,6 +329,42 @@
       "description": "HTTP response data could not be matched to a request, which may indicate evasion techniques or protocol violations.",
       "risk_context": "This can indicate HTTP smuggling or desync attacks used to bypass security controls.",
       "recommendation": "Review web server configurations. Check for HTTP smuggling vulnerabilities in reverse proxies and load balancers."
+    },
+    "9000001": {
+      "signature": "SSLBL Malicious SSL Certificate Detected",
+      "description": "A TLS connection used a certificate that matches the abuse.ch SSL Blacklist, indicating communication with a known malicious server.",
+      "risk_context": "Malicious SSL certificates are used by malware C2 servers and phishing sites to appear legitimate. This is a high-confidence indicator of compromise.",
+      "recommendation": "Isolate the device immediately. Investigate the destination IP and domain. Check for malware on the connecting device."
+    },
+    "9000002": {
+      "signature": "SSLBL Malicious JA3 Fingerprint Detected",
+      "description": "A TLS client hello matched a known malware JA3 fingerprint from the abuse.ch database, suggesting the connecting application may be malware.",
+      "risk_context": "JA3 fingerprints identify specific TLS client implementations. A match with a known malware fingerprint is a strong indicator of infection.",
+      "recommendation": "Investigate the source device for malware. Compare the JA3 hash against threat intelligence databases for attribution."
+    },
+    "9000003": {
+      "signature": "TGreen Hunting: Suspicious TLS Beaconing Pattern",
+      "description": "A device is making regular, periodic TLS connections that resemble command-and-control beaconing behavior.",
+      "risk_context": "C2 beaconing uses regular intervals to check in with attacker infrastructure. This pattern is a hallmark of advanced persistent threats.",
+      "recommendation": "Monitor the device's network activity over 24 hours. Check destination reputation. Investigate for malware if the pattern persists."
+    },
+    "9000004": {
+      "signature": "PT Attack Detection: CVE Exploitation Attempt",
+      "description": "Positive Technologies rules detected an attempt to exploit a known CVE vulnerability against a service on your network.",
+      "risk_context": "CVE-based attacks target known vulnerabilities. Successful exploitation can lead to remote code execution or data theft.",
+      "recommendation": "Verify the targeted service is patched against the referenced CVE. Review logs for signs of successful exploitation."
+    },
+    "9000005": {
+      "signature": "OISF Traffic ID: Unknown Application Protocol",
+      "description": "An unidentified application protocol was detected that does not match any known protocol signatures.",
+      "risk_context": "Unknown protocols may indicate custom malware communication, encrypted tunneling, or proprietary applications. Warrants investigation.",
+      "recommendation": "Identify the source application. If no legitimate application accounts for this traffic, investigate for data exfiltration or C2."
+    },
+    "9000006": {
+      "signature": "Etnetera Aggressive: Known Malicious IP Communication",
+      "description": "A device communicated with an IP address on the Etnetera aggressive threat intelligence list, associated with malicious activity.",
+      "risk_context": "IP reputation lists track addresses involved in attacks, spam, botnets, and other malicious activities. Communication with listed IPs is suspicious.",
+      "recommendation": "Block the destination IP. Investigate the source device for compromise. Check if the connection was user-initiated or automated."
     }
   },
   "prefix_descriptions": {

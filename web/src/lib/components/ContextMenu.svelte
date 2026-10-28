@@ -13,7 +13,7 @@
 
 	export interface ContextMenuItem {
 		label: string;
-		icon?: string; // 'search' | 'device' | 'geoip' | 'copy' | 'external'
+		icon?: string; // 'search' | 'device' | 'geoip' | 'copy' | 'external' | 'whois' | 'dns' | 'alert'
 		action: () => void;
 		separator?: boolean;
 	}
@@ -133,6 +133,16 @@
 				return 'M8 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-2M16 4h2a2 2 0 012 2v4M8 4a2 2 0 012-2h4a2 2 0 012 2v0a2 2 0 01-2 2h-4a2 2 0 01-2-2z';
 			case 'external':
 				return 'M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L20.5 3.5';
+			case 'whois':
+				return 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2';
+			case 'dns':
+				return 'M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9';
+			case 'alert':
+				return 'M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01';
+			case 'ping':
+				return 'M22 12h-4l-3 9L9 3l-3 9H2';
+			case 'ssl':
+				return 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z';
 			default:
 				// Generic circle dot
 				return 'M12 12m-1 0a1 1 0 102 0 1 1 0 10-2 0';

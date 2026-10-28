@@ -78,9 +78,17 @@ export interface BandwidthResponse {
 	series: BandwidthPoint[];
 }
 
-export interface TrafficCategoryDomain {
-	domain: string;
-	count: number;
+// OLD CODE START — domain-based type replaced by ASN-based top_services
+// export interface TrafficCategoryDomain {
+// 	domain: string;
+// 	count: number;
+// }
+// OLD CODE END
+
+export interface TrafficCategoryService {
+	name: string;
+	bytes: number;
+	connections?: number;
 }
 
 export interface TrafficCategory {
@@ -88,7 +96,7 @@ export interface TrafficCategory {
 	label: string;
 	total_bytes: number;
 	connection_count: number;
-	top_domains: TrafficCategoryDomain[];
+	top_services: TrafficCategoryService[];
 }
 
 export interface CategoriesResponse {
@@ -97,12 +105,54 @@ export interface CategoriesResponse {
 	categories: TrafficCategory[];
 }
 
+export interface CategoryDevice {
+	ip: string;
+	hostname?: string;
+	total_bytes: number;
+	download_bytes: number;
+	upload_bytes: number;
+	connections: number;
+	percent: number;
+}
+
+export interface CategoryDetailResponse {
+	category: string;
+	label: string;
+	device_count: number;
+	total_bytes: number;
+	connection_count: number;
+	devices: CategoryDevice[];
+	services: TrafficCategoryService[];
+}
+
+export interface CategoryBandwidthPoint {
+	timestamp: string;
+	download_bytes: number;
+	upload_bytes: number;
+	total_bytes: number;
+	connections: number;
+}
+
+export interface CategoryBandwidthResponse {
+	category: string;
+	from: string;
+	to: string;
+	interval: string;
+	series: CategoryBandwidthPoint[];
+}
+
 export interface Connection {
 	_id: string;
 	_index: string;
-	ts?: string;
-	proto?: string;
-	service?: string;
+	/** ECS fields from OpenSearch _source */
+	'@timestamp'?: string;
+	source?: { ip?: string; port?: number; bytes?: number; packets?: number };
+	destination?: { ip?: string; port?: number; bytes?: number; packets?: number };
+	client?: { bytes?: number };
+	server?: { bytes?: number };
+	network?: { transport?: string; protocol?: string; community_id?: string };
+	event?: { duration?: number };
+	zeek?: { session_id?: string; conn?: { state?: string; history?: string } };
 	[key: string]: unknown;
 }
 
@@ -269,4 +319,56 @@ export async function getTrafficCategories(
 	}
 
 	return res.json();
+}
+
+/**
+ * Get detailed breakdown for a single traffic category, listing per-device usage.
+ */
+export async function getCategoryDetail(
+	category: string,
+	opts: TimeRangeParams = {}
+): Promise<CategoryDetailResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
+	try {
+		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch (err) {
+		console.error('[getCategoryDetail] fetch failed for', category, err);
+		return {
+			category,
+			label: category,
+			device_count: 0,
+			total_bytes: 0,
+			connection_count: 0,
+			devices: [],
+			services: [],
+		};
+	}
+}
+
+/**
+ * Get bandwidth time-series for a specific traffic category.
+ */
+export async function getCategoryBandwidth(
+	category: string,
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<CategoryBandwidthResponse> {
+	const q = buildQuery(opts as Record<string, string | number | undefined>);
+	const url = `/api/traffic/categories/${encodeURIComponent(category)}/bandwidth${q}`;
+	try {
+		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+		if (!res.ok) throw new Error(`${res.status}`);
+		return await res.json();
+	} catch (err) {
+		console.error('[getCategoryBandwidth] fetch failed for', category, err);
+		return {
+			category,
+			from: '',
+			to: '',
+			interval: opts.interval ?? '15m',
+			series: [],
+		};
+	}
 }

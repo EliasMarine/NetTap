@@ -13,10 +13,13 @@ Examples:
 """
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger("nettap.services.nl_search")
+
+NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 
 class NLSearchParser:
@@ -26,25 +29,34 @@ class NLSearchParser:
     # Each tuple: (compiled regex, method name)
     PATTERNS = [
         # Time patterns
-        (r'(?:in the )?last (\d+)\s*(hours?|days?|weeks?|minutes?|mins?)', '_parse_time_range'),
-        (r'\btoday\b', '_parse_today'),
-        (r'\byesterday\b', '_parse_yesterday'),
+        (
+            r"(?:in the )?last (\d+)\s*(hours?|days?|weeks?|minutes?|mins?)",
+            "_parse_time_range",
+        ),
+        (r"\btoday\b", "_parse_today"),
+        (r"\byesterday\b", "_parse_yesterday"),
         # IP patterns
-        (r'\bfrom\s+((?:\d{1,3}\.){3}\d{1,3})\b', '_parse_source_ip'),
-        (r'\bto\s+((?:\d{1,3}\.){3}\d{1,3})\b', '_parse_dest_ip'),
-        (r'(?:ip|address)\s+((?:\d{1,3}\.){3}\d{1,3})', '_parse_any_ip'),
+        (r"\bfrom\s+((?:\d{1,3}\.){3}\d{1,3})\b", "_parse_source_ip"),
+        (r"\bto\s+((?:\d{1,3}\.){3}\d{1,3})\b", "_parse_dest_ip"),
+        (r"(?:ip|address)\s+((?:\d{1,3}\.){3}\d{1,3})", "_parse_any_ip"),
         # Protocol patterns
-        (r'(?:using |over |protocol )(tcp|udp|http|https|dns|ssh|smtp|tls)', '_parse_protocol'),
+        (
+            r"(?:using |over |protocol )(tcp|udp|http|https|dns|ssh|smtp|tls)",
+            "_parse_protocol",
+        ),
         # Port patterns
-        (r'(?:on )?port\s+(\d+)', '_parse_port'),
+        (r"(?:on )?port\s+(\d+)", "_parse_port"),
         # Alert patterns
-        (r'(?:high|critical)\s+(?:severity\s+)?alerts?', '_parse_high_alerts'),
-        (r'alerts?\s+(?:from|for)\s+((?:\d{1,3}\.){3}\d{1,3})', '_parse_alert_ip'),
+        (r"(?:high|critical)\s+(?:severity\s+)?alerts?", "_parse_high_alerts"),
+        (r"alerts?\s+(?:from|for)\s+((?:\d{1,3}\.){3}\d{1,3})", "_parse_alert_ip"),
         # Device patterns
-        (r'(?:device|host)\s+((?:\d{1,3}\.){3}\d{1,3}|[\w.-]+)', '_parse_device'),
+        (r"(?:device|host)\s+((?:\d{1,3}\.){3}\d{1,3}|[\w.-]+)", "_parse_device"),
         # Traffic patterns
-        (r'(?:large|big|heavy)\s+(?:traffic|transfers?|uploads?)', '_parse_large_traffic'),
-        (r'dns\s+(?:queries?|lookups?)\s+(?:for|to)\s+([\w.-]+)', '_parse_dns_query'),
+        (
+            r"(?:large|big|heavy)\s+(?:traffic|transfers?|uploads?)",
+            "_parse_large_traffic",
+        ),
+        (r"dns\s+(?:queries?|lookups?)\s+(?:for|to)\s+([\w.-]+)", "_parse_dns_query"),
     ]
 
     # Pre-compiled patterns for performance
@@ -151,7 +163,7 @@ class NLSearchParser:
 
         Returns:
             {
-                index: str,            # 'zeek-*', 'suricata-*', or 'zeek-*,suricata-*'
+                index: str,            # NETWORK_INDEX (unified arkime_sessions3-*)
                 query: dict,           # OpenSearch query DSL
                 sort: list,            # sort specification
                 size: int,             # result limit
@@ -160,7 +172,7 @@ class NLSearchParser:
         """
         if not query or not query.strip():
             return {
-                "index": "zeek-*,suricata-*",
+                "index": NETWORK_INDEX,
                 "query": {"query": {"match_all": {}}},
                 "sort": [{"@timestamp": {"order": "desc"}}],
                 "size": 50,
@@ -171,7 +183,7 @@ class NLSearchParser:
         filters: list[dict] = []
         must_clauses: list[dict] = []
         descriptions: list[str] = []
-        index = "zeek-*"  # Default to zeek
+        index = NETWORK_INDEX  # Default to unified Malcolm index
         is_alert_query = False
         time_filter_set = False
 
@@ -196,22 +208,24 @@ class NLSearchParser:
                 if "index" in result:
                     index = result["index"]
 
-        # If it's an alert query, use suricata index
+        # If it's an alert query, still use unified index (suricata events are filtered by event.provider)
         if is_alert_query:
-            index = "suricata-*"
+            index = NETWORK_INDEX
 
         # If no time filter was set, default to last 24 hours
         if not time_filter_set:
             now = datetime.now(timezone.utc)
             from_time = (now - timedelta(hours=24)).isoformat()
-            filters.append({
-                "range": {
-                    "@timestamp": {
-                        "gte": from_time,
-                        "lte": now.isoformat(),
+            filters.append(
+                {
+                    "range": {
+                        "@timestamp": {
+                            "gte": from_time,
+                            "lte": now.isoformat(),
+                        }
                     }
                 }
-            })
+            )
             descriptions.append("in the last 24 hours")
 
         # Build the query body
@@ -360,7 +374,7 @@ class NLSearchParser:
         """Parse 'from <IP>'."""
         ip = match.group(1)
         return {
-            "filter": {"term": {"id.orig_h": ip}},
+            "filter": {"term": {"source.ip": ip}},
             "description": f"from source IP {ip}",
         }
 
@@ -368,7 +382,7 @@ class NLSearchParser:
         """Parse 'to <IP>'."""
         ip = match.group(1)
         return {
-            "filter": {"term": {"id.resp_h": ip}},
+            "filter": {"term": {"destination.ip": ip}},
             "description": f"to destination IP {ip}",
         }
 
@@ -379,10 +393,8 @@ class NLSearchParser:
             "must": {
                 "bool": {
                     "should": [
-                        {"term": {"id.orig_h": ip}},
-                        {"term": {"id.resp_h": ip}},
-                        {"term": {"src_ip": ip}},
-                        {"term": {"dest_ip": ip}},
+                        {"term": {"source.ip": ip}},
+                        {"term": {"destination.ip": ip}},
                     ],
                     "minimum_should_match": 1,
                 }
@@ -394,7 +406,7 @@ class NLSearchParser:
         """Parse 'using/over/protocol <protocol>'."""
         proto = match.group(1).lower()
         return {
-            "filter": {"term": {"proto": proto}},
+            "filter": {"term": {"network.transport": proto}},
             "description": f"using protocol {proto}",
         }
 
@@ -405,8 +417,8 @@ class NLSearchParser:
             "must": {
                 "bool": {
                     "should": [
-                        {"term": {"id.orig_p": port}},
-                        {"term": {"id.resp_p": port}},
+                        {"term": {"source.port": port}},
+                        {"term": {"destination.port": port}},
                     ],
                     "minimum_should_match": 1,
                 }
@@ -417,12 +429,10 @@ class NLSearchParser:
     def _parse_high_alerts(self, match: re.Match) -> dict:
         """Parse 'high/critical severity alerts'."""
         return {
-            "filter": {
-                "range": {"alert.severity": {"lte": 2}}
-            },
+            "filter": {"range": {"suricata.severity": {"lte": 2}}},
             "description": "high/critical severity alerts",
             "is_alert": True,
-            "index": "suricata-*",
+            "index": NETWORK_INDEX,
         }
 
     def _parse_alert_ip(self, match: re.Match) -> dict:
@@ -432,29 +442,29 @@ class NLSearchParser:
             "must": {
                 "bool": {
                     "should": [
-                        {"term": {"src_ip": ip}},
-                        {"term": {"dest_ip": ip}},
+                        {"term": {"source.ip": ip}},
+                        {"term": {"destination.ip": ip}},
                     ],
                     "minimum_should_match": 1,
                 }
             },
             "description": f"alerts involving {ip}",
             "is_alert": True,
-            "index": "suricata-*",
+            "index": NETWORK_INDEX,
         }
 
     def _parse_device(self, match: re.Match) -> dict:
         """Parse 'device/host <IP or hostname>'."""
         device = match.group(1)
         # Check if it looks like an IP
-        ip_pattern = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$')
+        ip_pattern = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
         if ip_pattern.match(device):
             return {
                 "must": {
                     "bool": {
                         "should": [
-                            {"term": {"id.orig_h": device}},
-                            {"term": {"id.resp_h": device}},
+                            {"term": {"source.ip": device}},
+                            {"term": {"destination.ip": device}},
                         ],
                         "minimum_should_match": 1,
                     }
@@ -466,7 +476,7 @@ class NLSearchParser:
                 "must": {
                     "query_string": {
                         "query": device,
-                        "fields": ["host", "hostname", "query"],
+                        "fields": ["host.name", "zeek.dhcp.host_name", "zeek.dns.query"],
                     }
                 },
                 "description": f"device/host {device}",
@@ -476,7 +486,7 @@ class NLSearchParser:
         """Parse 'large/big/heavy traffic/transfers'."""
         return {
             "filter": {
-                "range": {"orig_bytes": {"gte": 1048576}}  # 1MB+
+                "range": {"client.bytes": {"gte": 1048576}}  # 1MB+
             },
             "description": "large traffic transfers (>1MB)",
         }
@@ -485,7 +495,7 @@ class NLSearchParser:
         """Parse 'dns queries for <domain>'."""
         domain = match.group(1)
         return {
-            "filter": {"term": {"query": domain}},
+            "filter": {"term": {"zeek.dns.query": domain}},
             "description": f"DNS queries for {domain}",
-            "index": "zeek-dns-*",
+            "index": NETWORK_INDEX,
         }

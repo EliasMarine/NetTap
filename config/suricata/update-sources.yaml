@@ -1,0 +1,25 @@
+# NetTap Suricata Rule Sources
+# All free community rule feeds enabled by default
+# Managed by the NetTap daemon — edits via the web UI are persisted here.
+sources:
+  et/open:
+    enabled: true
+    description: "Emerging Threats Open — malware, exploits, scans, policy (~30,000 rules)"
+  sslbl/ssl-fp-blacklist:
+    enabled: true
+    description: "abuse.ch SSL Blacklist — malicious SSL certificates"
+  sslbl/ja3-fingerprints:
+    enabled: true
+    description: "abuse.ch JA3 Fingerprints — known malware TLS fingerprints"
+  tgreen/hunting:
+    enabled: true
+    description: "tgreen Hunting Rules — threat hunting patterns"
+  oisf/trafficid:
+    enabled: true
+    description: "OISF Traffic ID — application protocol identification"
+  ptresearch/attackdetection:
+    enabled: true
+    description: "Positive Technologies — CVE detections, web attacks"
+  etnetera/aggressive:
+    enabled: true
+    description: "Etnetera Aggressive — IP reputation and threat intel"
