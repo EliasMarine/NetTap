@@ -200,6 +200,38 @@ export async function createUser(
 	return user;
 }
 
+/** The first admin already exists (another setup request won the race). */
+export class SetupAlreadyComplete extends Error {
+	constructor() {
+		super('Setup is already complete.');
+		this.name = 'SetupAlreadyComplete';
+	}
+}
+
+// One Node process serves every request, so a promise chain serializes setup.
+let firstAdminLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Create the first admin, or throw SetupAlreadyComplete if any user exists.
+ * Serialized and re-checked after the slow password hash, so two concurrent
+ * setup requests can never both create an admin.
+ */
+export function createFirstAdmin(username: string, password: string): Promise<User> {
+	const attempt = firstAdminLock.then(async () => {
+		const passwordHash = await hashPassword(password);
+		const store = readUsers();
+		if (store.users.length > 0) {
+			throw new SetupAlreadyComplete();
+		}
+		const now = new Date().toISOString();
+		const user: User = { username, passwordHash, role: 'admin', createdAt: now, updatedAt: now };
+		writeUsers({ users: [user] });
+		return user;
+	});
+	firstAdminLock = attempt.catch(() => undefined);
+	return attempt;
+}
+
 export async function updatePassword(username: string, newPassword: string): Promise<void> {
 	const store = readUsers();
 	const user = store.users.find((u) => u.username === username);
