@@ -2,8 +2,9 @@
 NetTap Daemon HTTP API Server
 
 Provides aiohttp-based REST endpoints for storage status, SMART health,
-ILM policy management, and system health checks. Designed for LAN-only
-access from the NetTap web dashboard.
+ILM policy management, and system health checks. Every request except
+``GET /api/health`` must carry the shared daemon token (see daemon_auth.py);
+the web dashboard reaches the daemon only through its server-side proxy.
 
 Endpoints:
     GET  /api/health             Liveness check
@@ -30,6 +31,11 @@ from smart.monitor import SmartMonitor
 from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
+from api.daemon_auth import (
+    load_or_create_token,
+    make_auth_middleware,
+    DEFAULT_TOKEN_FILE,
+)
 from api.tshark import register_tshark_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
@@ -115,28 +121,32 @@ logger = logging.getLogger("nettap.api")
 # ---------------------------------------------------------------------------
 
 
-@web.middleware
-async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
-    """Add CORS headers to every response for LAN-only dashboard access.
-
-    Allows all origins since the appliance runs on a private network
-    segment and the dashboard may be accessed from any local IP.
-    """
-    # Handle preflight OPTIONS requests
-    if request.method == "OPTIONS":
-        response = web.Response(status=204)
-    else:
-        try:
-            response = await handler(request)
-        except web.HTTPException as exc:
-            response = exc
-
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
-    response.headers["Access-Control-Max-Age"] = "3600"
-
-    return response
+# OLD CODE START — CORS "*" let any web page on the LAN call the daemon from a
+# browser. The browser never calls the daemon directly (everything goes through
+# the SvelteKit proxy), and the daemon now requires a shared token (2026-10-29).
+# @web.middleware
+# async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
+#     """Add CORS headers to every response for LAN-only dashboard access.
+#
+#     Allows all origins since the appliance runs on a private network
+#     segment and the dashboard may be accessed from any local IP.
+#     """
+#     # Handle preflight OPTIONS requests
+#     if request.method == "OPTIONS":
+#         response = web.Response(status=204)
+#     else:
+#         try:
+#             response = await handler(request)
+#         except web.HTTPException as exc:
+#             response = exc
+#
+#     response.headers["Access-Control-Allow-Origin"] = "*"
+#     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+#     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+#     response.headers["Access-Control-Max-Age"] = "3600"
+#
+#     return response
+# OLD CODE END
 
 
 @web.middleware
@@ -660,6 +670,21 @@ async def handle_storage_config(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
+def _load_daemon_token() -> str | None:
+    """Load the shared API token, or None so the API fails closed."""
+    path = os.environ.get("DAEMON_TOKEN_FILE", DEFAULT_TOKEN_FILE)
+    try:
+        return load_or_create_token(path)
+    except OSError as exc:
+        logger.error(
+            "Daemon API token unavailable at %s (%s); rejecting all API requests "
+            "except /api/health until it can be created",
+            path,
+            exc,
+        )
+        return None
+
+
 def create_app(
     storage: StorageManager,
     smart: SmartMonitor,
@@ -685,7 +710,13 @@ def create_app(
     Returns:
         Configured aiohttp.web.Application ready to be served.
     """
-    app = web.Application(middlewares=[cors_middleware, logging_middleware])
+    # OLD CODE START — CORS middleware removed, token auth added (2026-10-29)
+    # app = web.Application(middlewares=[cors_middleware, logging_middleware])
+    # OLD CODE END
+    # Auth runs first so unauthenticated requests never reach any handler.
+    app = web.Application(
+        middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware]
+    )
 
     # Store subsystem references for handler access
     app["storage"] = storage

@@ -708,6 +708,11 @@ services:
       - /etc/netplan:/host/etc/netplan
       - /etc/systemd/system:/host/etc/systemd/system
       - /etc/sysctl.d:/host/etc/sysctl.d
+      # Shared daemon API token (rw: the daemon creates it on first start).
+      # Only nettap-web mounts this volume too (ro). Mounted at /var/run/...
+      # so it lands inside the /var/run tmpfs above (/var/run -> /run in the
+      # image) instead of racing it; the daemon reads /run/nettap-auth.
+      - daemon-auth:/var/run/nettap-auth
     environment:
       <<: *opensearch-env
       # Override OPENSEARCH_URL for host networking — Docker DNS (opensearch:9200)
@@ -779,10 +784,13 @@ services:
     volumes:
       - ../config:/opt/nettap/config:ro
       - web-data:/var/lib/nettap-web
+      # Shared daemon API token, read-only. daemonFetch sends it on every call.
+      - daemon-auth:/run/nettap-auth:ro
     environment:
       <<: *opensearch-env
       NETTAP_HOSTNAME: "${NETTAP_HOSTNAME:-nettap.local}"
       DAEMON_URL: "http://host.docker.internal:8880"
+      DAEMON_TOKEN_FILE: "/run/nettap-auth/daemon-token"
       CYBERCHEF_URL: "http://nettap-cyberchef:8443"
       # SvelteKit adapter-node: trust nginx proxy headers for CSRF origin check.
       # Without this, SvelteKit sees raw HTTP (port 3000) while browser sends
@@ -965,3 +973,5 @@ volumes:
   nettap-appdata:
   web-data:
   grafana-data:
+  # Shared daemon API token: rw in nettap-storage-daemon, ro in nettap-web only
+  daemon-auth:
