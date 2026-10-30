@@ -17,6 +17,9 @@ torn down first). Fixes CR-007: the wizard's choice now reaches the readers.
 Refused before anything is written: leaving an active DHCP gateway while no
 other DHCP server answers (409), and a mirror NIC that carries an address,
 the default route or the live gateway (400).
+
+POST /api/setup/bridge/preview checks the wizard's WAN/LAN pair without
+touching the host and refuses a port this machine still uses (CR-004).
 """
 
 import logging
@@ -50,6 +53,7 @@ ENV_FILE = os.environ.get("NETTAP_ENV_FILE", os.path.join(DATA_DIR, ".env"))
 
 CAPTURE_MODES = ("dhcp_gateway", "mirror", "bridge")
 DEFAULT_DHCP_SUBNET = CaptureConfig().dhcp_subnet
+BRIDGE_NAME = "br0"  # BridgeManager's default; Go Live builds this one
 
 
 def _write_capture_mode_conf(config: dict) -> str:
@@ -288,29 +292,59 @@ async def _router_dhcp_missing(current: DhcpGatewayManager):
     )
 
 
-async def _mirror_nic_in_use(current, interface: str):
-    """400 when the mirror NIC is in use: mirror setup flushes its addresses."""
+# OLD CODE START — replaced 2026-10-30 (CR-004): the in-use check moved to
+# _nic_in_use_problem so the bridge preview shares it
+# async def _mirror_nic_in_use(current, interface: str):
+#     """400 when the mirror NIC is in use: mirror setup flushes its addresses."""
+#     if (
+#         isinstance(current, DhcpGatewayManager)
+#         and current.routing_active
+#         and current.get_capture_interface() == interface
+#     ):
+#         problem = (
+#             "is the network card DHCP gateway mode is routing your devices through"
+#         )
+#     else:
+#         host = HostNetOps()
+#         routes = await host.ip_json("-4", "route", "show", "default")
+#         addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
+#         if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
+#             problem = "carries this machine's internet connection (its default route)"
+#         elif addrs:
+#             problem = (
+#                 f"has an IP address ({', '.join(addrs)}), so this machine uses it "
+#                 "to reach your network"
+#             )
+#         else:
+#             return None
+# OLD CODE END
+async def _nic_in_use_problem(current, interface: str) -> str | None:
+    """Why this machine still needs ``interface`` (gateway NIC, default route, an
+    address), or None when it is spare. Taking it over cuts that path off."""
     if (
         isinstance(current, DhcpGatewayManager)
         and current.routing_active
         and current.get_capture_interface() == interface
     ):
-        problem = (
-            "is the network card DHCP gateway mode is routing your devices through"
+        return "is the network card DHCP gateway mode is routing your devices through"
+    host = HostNetOps()
+    routes = await host.ip_json("-4", "route", "show", "default")
+    addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
+    if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
+        return "carries this machine's internet connection (its default route)"
+    if addrs:
+        return (
+            f"has an IP address ({', '.join(addrs)}), so this machine uses it "
+            "to reach your network"
         )
-    else:
-        host = HostNetOps()
-        routes = await host.ip_json("-4", "route", "show", "default")
-        addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
-        if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
-            problem = "carries this machine's internet connection (its default route)"
-        elif addrs:
-            problem = (
-                f"has an IP address ({', '.join(addrs)}), so this machine uses it "
-                "to reach your network"
-            )
-        else:
-            return None
+    return None
+
+
+async def _mirror_nic_in_use(current, interface: str):
+    """400 when the mirror NIC is in use: mirror setup flushes its addresses."""
+    problem = await _nic_in_use_problem(current, interface)
+    if problem is None:
+        return None
     return web.json_response(
         {
             "error": f"{interface} {problem}. Mirror mode takes over the network "
@@ -405,7 +439,73 @@ async def _apply_configuration(
         )
 
 
+async def handle_bridge_preview(request: web.Request) -> web.Response:
+    """POST /api/setup/bridge/preview — check a WAN/LAN pair; changes nothing.
+
+    CR-004: the wizard's Verify step called POST /api/setup/bridge, which builds
+    and persists br0. The bridge is built only on Go Live now. A port this
+    machine still uses is refused: bridging it would cut that connection off.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Body must be a JSON object"}, status=400)
+    try:
+        wan = validate_interface_name(body.get("wan_interface"))
+        lan = validate_interface_name(body.get("lan_interface"))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if wan == lan:
+        return web.json_response(
+            {"error": "WAN and LAN interfaces must be different"}, status=400
+        )
+
+    current = request.app.get("capture_manager")
+    for iface in (wan, lan):
+        # Also fails closed when nsenter can't reach the host
+        if not await HostNetOps().ip_json("link", "show", "dev", iface):
+            return web.json_response(
+                {"error": f"{iface} was not found on this machine."}, status=400
+            )
+        problem = await _nic_in_use_problem(current, iface)
+        if problem is not None:
+            return web.json_response(
+                {
+                    "error": f"{iface} {problem}. The bridge takes over both of its "
+                    "network cards, so bridging this one would cut that connection "
+                    "off, and you could lose this page. Pick two spare ports for the "
+                    "modem and router, and reach NetTap through a third port or "
+                    "Wi-Fi. Nothing was changed."
+                },
+                status=400,
+            )
+
+    return web.json_response(
+        {
+            "config_preview": "\n".join(
+                [
+                    "# NetTap bridge (created on the Go Live page)",
+                    f"BRIDGE_NAME={BRIDGE_NAME}",
+                    f"WAN_INTERFACE={wan}",
+                    f"LAN_INTERFACE={lan}",
+                    "# Transparent Layer 2 forwarding, no IP address on the bridge",
+                    "# Promiscuous mode on both ports for packet capture",
+                ]
+            ),
+            "wan": wan,
+            "lan": lan,
+            "bridge_name": BRIDGE_NAME,
+            "ready": True,
+            "warnings": [],
+            "source": "daemon",
+        }
+    )
+
+
 def register_setup_routes(app: web.Application) -> None:
     """Register setup wizard API routes."""
     ensure_capture_lock(app)
     app.router.add_post("/api/setup/configure", handle_setup_configure)
+    app.router.add_post("/api/setup/bridge/preview", handle_bridge_preview)

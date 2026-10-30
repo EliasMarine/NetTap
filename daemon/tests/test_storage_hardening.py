@@ -178,21 +178,23 @@ class TestPredictiveExhaustion:
 
 class TestEmergencyCascade:
     def test_emergency_cascade_at_90_percent(self):
-        """At 90%: should prune indices and PCAPs, NOT stop capture."""
+        """At 90%: should prune PCAPs then indices, NOT stop capture."""
         mgr = _make_manager()
 
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.91),
             patch.object(mgr, "prune_emergency", return_value=3) as mock_prune,
             patch.object(mgr, "_delete_oldest_pcaps", return_value=2) as mock_pcap,
-            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "_stop_capture") as mock_stop,
             patch.object(mgr, "is_capture_stopped", return_value=False),
         ):
             deleted = mgr.emergency_cascade()
 
         assert deleted == 5
         mock_prune.assert_called_once()
-        mock_pcap.assert_called_once_with(max_delete=10)
+        mock_pcap.assert_called_once_with(
+            max_delete=StorageManager._EMERGENCY_PCAP_DELETE_CAP
+        )
         mock_stop.assert_not_called()
 
     def test_emergency_stop_capture_at_95_percent(self):
@@ -203,7 +205,7 @@ class TestEmergencyCascade:
             patch.object(mgr, "check_disk_usage", return_value=0.96),
             patch.object(mgr, "prune_emergency", return_value=5) as mock_prune,
             patch.object(mgr, "_delete_oldest_pcaps", return_value=3) as mock_pcap,
-            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "_stop_capture") as mock_stop,
             patch.object(mgr, "is_capture_stopped", return_value=True),
         ):
             deleted = mgr.emergency_cascade()
@@ -211,7 +213,9 @@ class TestEmergencyCascade:
         assert deleted == 8
         mock_stop.assert_called_once()
         mock_prune.assert_called_once()
-        mock_pcap.assert_called_once_with(max_delete=20)
+        mock_pcap.assert_called_once_with(
+            max_delete=StorageManager._EMERGENCY_PCAP_DELETE_CAP
+        )
 
     def test_emergency_resume_below_85_percent(self, tmp_path):
         """When disk drops below 85%, capture should be resumed."""
@@ -257,8 +261,11 @@ class TestEmergencyCascade:
         assert not mgr.is_capture_stopped()
         assert not flag_file.exists()
 
-    def test_run_cycle_resumes_capture_below_resume_threshold(self, tmp_path):
-        """run_cycle should clear stop flag when disk is below resume threshold."""
+    def test_run_cycle_resumes_capture_below_resume_threshold(
+        self, tmp_path, monkeypatch
+    ):
+        """run_cycle should start capture and clear the flag below resume threshold."""
+        monkeypatch.setenv("NETTAP_ENV_FILE", str(tmp_path / ".env"))
         flag_file = tmp_path / "stop-capture"
         flag_file.write_text("stopped\n")
 
@@ -276,9 +283,12 @@ class TestEmergencyCascade:
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.70),
             patch.object(mgr, "get_disk_prediction", return_value={}),
+            patch("storage.manager.subprocess.run") as mock_run,
         ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             mgr.run_cycle()
 
+        assert mock_run.call_args.args[0] == ["docker", "start", "nettap-pcap-capture"]
         assert not flag_file.exists()
 
 
@@ -406,9 +416,15 @@ class TestTierUsageAccounting:
 
             result = mgr.get_tier_usage()
 
-        assert result["hot_bytes"] == 80_000_000  # 50M + 30M
+        # OLD CODE START — arkime_sessions3 was counted as cold (CR-038)
+        # assert result["hot_bytes"] == 80_000_000  # 50M + 30M
+        # assert result["warm_bytes"] == 10_000_000
+        # assert result["cold_bytes"] == 200_000_000
+        # OLD CODE END
+        # arkime_sessions3 holds Zeek metadata and Suricata alerts: hot tier
+        assert result["hot_bytes"] == 280_000_000  # 50M + 30M + 200M
         assert result["warm_bytes"] == 10_000_000
-        assert result["cold_bytes"] == 200_000_000
+        assert result["cold_bytes"] == 0
         assert result["total_bytes"] == 290_000_000
         assert result["disk_capacity_bytes"] == 1_000_000_000_000
 

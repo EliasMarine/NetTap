@@ -612,6 +612,42 @@ print('All services use restart: unless-stopped')
     grep -q '127.0.0.1:9200:9200' "$COMPOSE_FILE"
 }
 
+@test "compose: opensearch sets every ROLE_* its role mapping uses (MS-001)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Malcolm's setup-internal-users.sh envsubsts roles_mapping.yml.orig and
+    # deletes any entry with an empty role. These are every $ROLE_* it uses.
+    run _compose_query "
+env = data['services']['opensearch']['environment']
+assert env.get('ROLE_ADMIN') == 'admin', 'ROLE_ADMIN must be admin (malcolm_internal backend role)'
+for key in ('ROLE_CAPTURE_SERVICE', 'ROLE_READ_ACCESS', 'ROLE_READ_WRITE_ACCESS',
+            'ROLE_DASHBOARDS_READ_ACCESS', 'ROLE_DASHBOARDS_READ_ALL_APPS_ACCESS',
+            'ROLE_DASHBOARDS_READ_WRITE_ACCESS', 'ROLE_DASHBOARDS_READ_WRITE_ALL_APPS_ACCESS'):
+    assert env.get(key), key + ' must be set'
+print('opensearch roles: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: nettap-web reads the client IP from nginx's X-Real-IP and is not published (CR-034)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Login throttling keys on getClientAddress(). Without ADDRESS_HEADER every
+    # client is nginx's IP; with port 3000 published, clients could forge it.
+    run _compose_query "
+svc = data['services']['nettap-web']
+assert svc['environment'].get('ADDRESS_HEADER') == 'x-real-ip', 'ADDRESS_HEADER must be x-real-ip'
+assert not svc.get('ports'), 'nettap-web must not publish ports; only nginx may reach it'
+print('nettap-web: OK')
+"
+    [ "$status" -eq 0 ]
+    grep -Eq 'proxy_set_header[[:space:]]+X-Real-IP[[:space:]]+\$remote_addr;' "${REPO_ROOT}/docker/nginx.conf"
+}
+
 # ==========================================================================
 # Capture settings from the daemon (DHCP gateway / mirror mode)
 # ==========================================================================
@@ -653,6 +689,67 @@ for cap in ('SETUID', 'SETGID', 'KILL'):
 volumes = [str(v) for v in svc.get('volumes', [])]
 assert '/etc/nettap:/etc/nettap' in volumes, 'daemon must mount /etc/nettap read-write'
 print('nettap-storage-daemon: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: Arkime and Grafana secrets have no public fallback (CR-021, CR-022)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+arkime = data['services']['arkime-live']['environment']['ARKIME_PASSWORD_SECRET']
+assert arkime.startswith('\${ARKIME_SECRET:?'), 'ARKIME_SECRET must be required: ' + arkime
+grafana = [e for e in data['services']['nettap-grafana']['environment'] if e.startswith('GF_SECURITY_ADMIN_PASSWORD=')]
+assert grafana and grafana[0].startswith('GF_SECURITY_ADMIN_PASSWORD=\${GRAFANA_ADMIN_PASSWORD:?'), grafana
+print('secrets: OK')
+"
+    [ "$status" -eq 0 ]
+    ! grep -v '^[[:space:]]*#' "$COMPOSE_FILE" | grep -q 'NetTap_Arkime_Secret'
+}
+
+@test "compose: Arkime viewer is pinned to loopback (CR-021)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+cmd = data['services']['arkime-live']['entrypoint'][2]
+pin = \"sed -i 's/^viewHost=.*/viewHost=127.0.0.1/' /opt/arkime/etc/config*.ini\"
+assert pin in cmd, cmd
+assert cmd.index(pin) < cmd.index('exec /usr/bin/tini'), 'pin must run before Arkime starts'
+print('viewHost: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: daemon can delete PCAP (CR-001)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-storage-daemon']
+volumes = [str(v) for v in svc.get('volumes', [])]
+assert 'pcap-data:/opt/nettap/pcap' in volumes, 'pcap-data must be mounted read-write: ' + str(volumes)
+assert svc['environment']['PCAP_DIR'] == '/opt/nettap/pcap', 'PCAP_DIR must match the mount'
+assert 'DAC_OVERRIDE' in svc.get('cap_add', []), 'root needs DAC_OVERRIDE to unlink in uid-1000 PCAP folders'
+print('pcap mount: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: netsniff is the only PCAP writer (CR-020, MS-002)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+arkime = data['services']['arkime-live']['environment']
+assert arkime.get('ARKIME_PCAP_WRITE_METHOD') == 'null', 'Arkime must not write PCAP: ' + repr(arkime.get('ARKIME_PCAP_WRITE_METHOD'))
+assert data['services']['pcap-capture']['environment']['PCAP_ENABLE_NETSNIFF'] == 'true'
+print('pcap writer: OK')
 "
     [ "$status" -eq 0 ]
 }

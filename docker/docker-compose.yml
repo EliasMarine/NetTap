@@ -111,6 +111,18 @@ services:
       indices.query.bool.max_clause_count: "8192"
       path.repo: "/opt/opensearch/backup"
       logger.level: "WARN"
+      # Malcolm rebuilds roles_mapping.yml from these on every start and drops
+      # any entry whose role is empty. Without them only _meta survived and
+      # malcolm_internal got 403 after every restart (MS-001, Chain 11).
+      # Values from Malcolm's config/auth-common.env.example.
+      ROLE_ADMIN: "admin"
+      ROLE_CAPTURE_SERVICE: "capture_service"
+      ROLE_READ_ACCESS: "read_access"
+      ROLE_READ_WRITE_ACCESS: "read_write_access"
+      ROLE_DASHBOARDS_READ_ACCESS: "dashboards_read_access"
+      ROLE_DASHBOARDS_READ_ALL_APPS_ACCESS: "dashboards_read_all_apps_access"
+      ROLE_DASHBOARDS_READ_WRITE_ACCESS: "dashboards_read_write_access"
+      ROLE_DASHBOARDS_READ_WRITE_ALL_APPS_ACCESS: "dashboards_read_write_all_apps_access"
     ulimits:
       memlock:
         soft: -1
@@ -513,6 +525,9 @@ services:
     # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
     # from /etc/nettap/capture.env when the daemon has written one (capture mode
     # set from the wizard, e.g. DHCP gateway). No file = compose env below.
+    # The viewer is pinned to loopback (CR-021): on host networking its default
+    # viewHost=0.0.0.0 put an admin service on :8005 for the whole LAN. It keeps
+    # running because it is what expires Arkime's PCAP.
     entrypoint:
       - /bin/bash
       - -c
@@ -520,6 +535,7 @@ services:
         . /usr/local/bin/nettap-capture-env.sh
         && mkdir -p /data/pcap/arkime-live
         && chown -R $${PUID:-1000}:$${PGID:-1000} /data/pcap
+        && sed -i 's/^viewHost=.*/viewHost=127.0.0.1/' /opt/arkime/etc/config*.ini
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
         /usr/local/bin/service_check_passthrough.sh -s arkime
@@ -535,7 +551,16 @@ services:
       ARKIME_VIEWER_PORT: "8005"
       ARKIME_ROTATE_INDEX: "daily"
       ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"
-      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      # OLD CODE START — replaced 2026-10-30 (CR-021): the public fallback let
+      # anyone forge the viewer's admin S2S token
+      # ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      # OLD CODE END
+      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:?set ARKIME_SECRET in docker/.env (scripts/install/malcolm-config.sh adds it)}"
+      # CR-020/MS-002: one PCAP writer. The entrypoint seds this into
+      # pcapWriteMethod; Arkime's "null" method writes no PCAP to disk but
+      # still indexes sessions. netsniff in pcap-capture is the only writer,
+      # and it is what the UI's capture toggle and file-size setting control.
+      ARKIME_PCAP_WRITE_METHOD: "null"
       MANAGE_PCAP_FILES: "false"
       MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
@@ -696,6 +721,7 @@ services:
       - SETUID # dnsmasq drops to the unprivileged nobody user
       - SETGID # dnsmasq drops to the unprivileged nogroup group
       - KILL # the daemon (root) stops dnsmasq once it runs as nobody; with pid: host it can signal any host process, a small gain over SYS_ADMIN/SYS_PTRACE/docker.sock
+      - DAC_OVERRIDE # CR-001: PCAP folders are owned by uid 1000; without it root can't unlink there to enforce PCAP retention
     # pid: host lets nsenter target PID 1 (host init) for network namespace
     pid: "host"
     # Override Dockerfile USER — capabilities only work for root in Docker.
@@ -723,7 +749,11 @@ services:
       - /dev:/dev
       - storage-data:/var/lib/nettap
       - nettap-appdata:/opt/nettap/data
-      - pcap-data:/opt/nettap/pcap:ro
+      # OLD CODE START — CR-001: read-only, so PCAP retention could never delete
+      # - pcap-data:/opt/nettap/pcap:ro
+      # OLD CODE END
+      # Read-write: the storage manager deletes old PCAP (retention + emergency)
+      - pcap-data:/opt/nettap/pcap
       # OpenSearch credentials — daemon needs Basic Auth to query OpenSearch.
       # Without this, StorageManager gets 403 on all API calls.
       - ./curlrc:/var/local/curlrc:ro
@@ -832,6 +862,10 @@ services:
       # Origin: https://..., causing silent 403 CSRF rejection on form POSTs.
       PROTOCOL_HEADER: "x-forwarded-proto"
       HOST_HEADER: "host"
+      # getClientAddress() = the real client, so login throttling is per device
+      # (CR-034). nginx overwrites X-Real-IP with $remote_addr; safe only while
+      # port 3000 stays unpublished so nothing but nginx can set it.
+      ADDRESS_HEADER: "x-real-ip"
     networks:
       - default
     depends_on:
@@ -856,9 +890,15 @@ services:
     environment:
       - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-nettap}
+      # OLD CODE START — replaced 2026-10-30 (CR-022): admin/nettap was the
+      # login on every install
+      # - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-nettap}
+      # OLD CODE END
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in docker/.env (scripts/install/malcolm-config.sh adds it)}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_INSTALL_PLUGINS=grafana-opensearch-datasource
+      # Anonymous Viewer stays on: nginx only lets logged-in NetTap users reach
+      # /grafana/ (CR-022), and with it off they'd hit Grafana's own login.
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:

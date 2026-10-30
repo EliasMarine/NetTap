@@ -20,6 +20,8 @@ import os
 import textwrap
 from pathlib import Path
 
+from services.dhcp_gateway_host import replace_symlink
+
 logger = logging.getLogger("nettap.services.bridge_manager")
 
 # Host sysfs for reading NIC state (container mounts host /sys at /host/sys)
@@ -630,9 +632,19 @@ class BridgeManager:
                 if os.path.isdir(wants_dir):
                     symlink_path = os.path.join(wants_dir, "nettap-bridge.service")
                     try:
-                        if os.path.exists(symlink_path):
-                            os.remove(symlink_path)
-                        os.symlink(unit_path, symlink_path)
+                        # OLD CODE START — replaced 2026-10-30 (LD-001): the target was
+                        # the container path (/host/etc/...), which doesn't exist on the
+                        # host, so systemd never started the unit; exists() is also False
+                        # for that dangling link, so re-creating it hit FileExistsError.
+                        # if os.path.exists(symlink_path):
+                        #     os.remove(symlink_path)
+                        # os.symlink(unit_path, symlink_path)
+                        # OLD CODE END
+                        # Relative target resolves on the host and in the container
+                        replace_symlink(
+                            os.path.join("..", os.path.basename(unit_path)),
+                            symlink_path,
+                        )
                         logger.info("Created systemd symlink: %s", symlink_path)
                     except OSError as exc:
                         logger.warning("Could not create systemd symlink: %s", exc)

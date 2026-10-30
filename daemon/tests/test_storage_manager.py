@@ -117,8 +117,15 @@ class TestParseIndexTier:
 
     def test_parse_index_tier_cold_arkime(self):
         """Arkime indices should be classified as cold tier."""
-        assert StorageManager._parse_index_tier("arkime_sessions3-260125") == "cold"
+        # OLD CODE START — arkime_sessions3 is network data, now hot (CR-038)
+        # assert StorageManager._parse_index_tier("arkime_sessions3-260125") == "cold"
+        # OLD CODE END
         assert StorageManager._parse_index_tier("arkime-history-v1-260201") == "cold"
+
+    def test_parse_index_tier_hot_malcolm(self):
+        """Malcolm's network and beats indices follow hot retention (CR-038)."""
+        assert StorageManager._parse_index_tier("arkime_sessions3-260125") == "hot"
+        assert StorageManager._parse_index_tier("malcolm_beats_260125") == "hot"
 
     def test_parse_index_tier_cold_sessions(self):
         """Indices with 'sessions' prefix should be classified as cold tier."""
@@ -228,7 +235,10 @@ class TestPruneOldestIndices:
         now = datetime.now(timezone.utc)
         # Cold retention = 15 days; create an index 30 days old
         old_cold_date = now - timedelta(days=30)
-        old_cold_name = f"arkime_sessions3-{old_cold_date.strftime('%y%m%d')}"
+        # OLD CODE START — arkime_sessions3 is hot now (CR-038)
+        # old_cold_name = f"arkime_sessions3-{old_cold_date.strftime('%y%m%d')}"
+        # OLD CODE END
+        old_cold_name = f"sessions3-{old_cold_date.strftime('%y%m%d')}"
 
         # Fresh hot index within retention
         fresh_hot_date = now - timedelta(days=5)
@@ -267,7 +277,10 @@ class TestPruneOldestIndices:
         old = now - timedelta(days=200)
 
         # All indices expired (retention: cold=15, warm=60, hot=30)
-        cold_name = f"arkime_sessions3-{old.strftime('%y%m%d')}"
+        # OLD CODE START — arkime_sessions3 is hot now (CR-038)
+        # cold_name = f"arkime_sessions3-{old.strftime('%y%m%d')}"
+        # OLD CODE END
+        cold_name = f"sessions3-{old.strftime('%y%m%d')}"
         warm_name = f"suricata-alert-{old.strftime('%Y-%m-%d')}"
         hot_name = f"zeek-conn-{old.strftime('%Y.%m.%d')}"
 
@@ -317,6 +330,25 @@ class TestPruneOldestIndices:
 
         assert deleted_names.index(cold_name) < deleted_names.index(warm_name)
         assert deleted_names.index(warm_name) < deleted_names.index(hot_name)
+
+    def test_prune_keeps_network_index_for_hot_days(
+        self, retention_config, mock_opensearch_client
+    ):
+        """arkime_sessions3 (Zeek + Suricata) is kept hot_days, not cold_days (CR-038)."""
+        now = datetime.now(timezone.utc)
+        # retention_config: cold=15, hot=30
+        kept = f"arkime_sessions3-{(now - timedelta(days=20)).strftime('%y%m%d')}"
+        expired = f"arkime_sessions3-{(now - timedelta(days=40)).strftime('%y%m%d')}"
+        mock_opensearch_client.cat.indices.return_value = [
+            {"index": name, "store.size": "1mb", "pri.store.size": "1mb"}
+            for name in (kept, expired)
+        ]
+
+        mgr = self._make_manager(retention_config, mock_opensearch_client)
+        with patch.object(mgr, "check_disk_usage", return_value=0.85):
+            mgr.prune_oldest_indices()
+
+        mock_opensearch_client.indices.delete.assert_called_once_with(index=expired)
 
     def test_prune_oldest_indices_stops_below_threshold(
         self, retention_config, mock_opensearch_client

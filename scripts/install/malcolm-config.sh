@@ -303,6 +303,23 @@ calculate_heap_sizes() {
 # ---------------------------------------------------------------------------
 # Generate the .env file for docker-compose variable substitution
 # ---------------------------------------------------------------------------
+# 32 hex chars from the kernel RNG (coreutils only, no openssl needed)
+_random_secret() {
+    head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+# Append KEY=<random> to an existing .env when KEY is missing. Compose requires
+# these (no public fallback), so an older .env must gain them (CR-021, CR-022).
+_ensure_compose_secret() {
+    local env_file="$1" key="$2"
+    grep -q "^${key}=." "$env_file" && return 0
+    # Drop an empty KEY= line too: compose's ':?' rejects empty values.
+    local kept
+    kept=$(grep -v "^${key}=$" "$env_file" || true)
+    printf '%s\n%s=%s\n' "$kept" "$key" "$(_random_secret)" > "$env_file"
+    log "Added missing ${key} to ${env_file}"
+}
+
 generate_compose_env() {
     local env_file="${PROJECT_ROOT}/docker/.env"
 
@@ -315,6 +332,8 @@ generate_compose_env() {
 
     if [[ -f "$env_file" ]]; then
         log "Docker .env already exists at ${env_file}, skipping generation"
+        _ensure_compose_secret "$env_file" ARKIME_SECRET
+        _ensure_compose_secret "$env_file" GRAFANA_ADMIN_PASSWORD
         return 0
     fi
 
@@ -331,6 +350,9 @@ generate_compose_env() {
     fi
 
     log "Generating docker-compose .env file..."
+    # 2026-10-30 (CR-021, CR-022): ARKIME_SECRET no longer falls back to the
+    # public "NetTap_Arkime_Secret" when openssl is missing, and Grafana gets a
+    # generated admin password instead of compose's old "nettap" default.
     cat > "$env_file" <<ENVEOF
 # ==========================================================================
 # NetTap Docker Compose Environment
@@ -359,7 +381,8 @@ DASHBOARD_PORT=${DASHBOARD_PORT:-443}
 
 # Auth
 NGINX_AUTH_MODE=basic
-ARKIME_SECRET=${ARKIME_SECRET:-$(openssl rand -hex 16 2>/dev/null || echo "NetTap_Arkime_Secret")}
+ARKIME_SECRET=${ARKIME_SECRET:-$(_random_secret)}
+GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-$(_random_secret)}
 REDIS_PASSWORD=${REDIS_PASSWORD:-$(openssl rand -hex 16 2>/dev/null || echo "NetTap_Redis_Secret")}
 
 # Certificate and auth paths

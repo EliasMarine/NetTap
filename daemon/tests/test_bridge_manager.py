@@ -360,6 +360,25 @@ class TestWritePersistence(unittest.TestCase):
             self.assertIn("enp2s0", content)
             self.assertIn("enp3s0", content)
 
+    def test_boot_unit_link_resolves_on_the_host(self):
+        """LD-001: the wants/ link is relative, so it resolves on the host too.
+
+        A stale link pointing at the container path is replaced, not left
+        to raise FileExistsError.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            systemd_dir = os.path.join(tmpdir, "systemd")
+            wants = os.path.join(systemd_dir, "multi-user.target.wants")
+            os.makedirs(wants)
+            link = os.path.join(wants, "nettap-bridge.service")
+            os.symlink("/host/etc/systemd/system/nettap-bridge.service", link)
+
+            mgr = BridgeManager(netplan_dir="", systemd_dir=systemd_dir, sysctl_dir="")
+            mgr._write_persistence("enp2s0", "enp3s0")
+
+            self.assertEqual(os.readlink(link), "../nettap-bridge.service")
+            self.assertTrue(os.path.isfile(link))
+
     def test_writes_sysctl_config(self):
         """_write_persistence should write sysctl config."""
         with tempfile.TemporaryDirectory() as tmpdir:
