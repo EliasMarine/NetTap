@@ -68,6 +68,7 @@ from api.logstash import register_logstash_routes
 from api.lookup import register_lookup_routes
 from api.tools import register_tools_routes
 from api.capture import register_capture_routes
+from api.dhcp_gateway import register_dhcp_gateway_routes
 from api.devices_v2 import register_devices_v2_routes
 from api.live import register_live_routes
 from api.bandwidth import register_bandwidth_routes
@@ -1072,6 +1073,9 @@ def create_app(
     if "capture_manager" not in app:
         app["capture_manager"] = CaptureManagerStub()
     register_capture_routes(app)
+
+    # DHCP gateway go-live (preflight / enable / disable / status)
+    register_dhcp_gateway_routes(app)
 
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
     device_registry = DeviceRegistry(client=storage._client)

@@ -12,11 +12,24 @@ export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
 
-		const { data, error, status } = await daemonJSON('/api/setup/configure', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body),
-		});
+		// OLD CODE START — 2026-10-30: default 10 s timeout; saving now restarts capture containers and can take longer
+		// const { data, error, status } = await daemonJSON('/api/setup/configure', {
+		// 	method: 'POST',
+		// 	headers: { 'Content-Type': 'application/json' },
+		// 	body: JSON.stringify(body),
+		// });
+		// OLD CODE END
+		// Saving writes the config, restarts the capture containers and may tear
+		// down an active DHCP gateway first, so wait up to 60 s.
+		const { data, error, status } = await daemonJSON(
+			'/api/setup/configure',
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			},
+			60_000
+		);
 
 		if (error) {
 			return json({ error }, { status });

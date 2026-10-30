@@ -16,7 +16,7 @@ CaptureManager, it can replace ``app["capture_manager"]`` at runtime.
 
 import logging
 
-from services.capture_config import load_capture_config
+from services.capture_config import CaptureConfig, load_capture_config
 from services.capture_manager import (
     CaptureHealth,
     CaptureManager,
@@ -36,7 +36,15 @@ class CaptureManagerStub(CaptureManager):
     """
 
     def __init__(self) -> None:
-        cfg = load_capture_config()
+        # OLD CODE START — replaced 2026-10-30: the stub is the CR-167 fallback
+        # for an unreadable capture-mode.conf, so it must not raise on one too
+        # cfg = load_capture_config()
+        # OLD CODE END
+        try:
+            cfg = load_capture_config()
+        except Exception:
+            logger.exception("Could not load capture config; stub uses defaults")
+            cfg = CaptureConfig()
         self._mode = cfg.mode
         # In bridge mode the capture interface is the bridge; in mirror
         # mode it is the mirror NIC.

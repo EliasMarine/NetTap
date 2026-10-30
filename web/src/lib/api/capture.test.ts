@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	getCaptureMode,
+	fetchCaptureMode,
 	getCaptureHealth,
 	getCaptureStats,
 	getCaptureStatus,
@@ -79,6 +80,40 @@ describe('capture API client', () => {
 
 			expect(result.mode).toBe('bridge');
 			expect(result.interface).toBe('');
+		});
+	});
+
+	// -- fetchCaptureMode -----------------------------------------------------
+
+	describe('fetchCaptureMode', () => {
+		it('returns the mode on success', async () => {
+			mockFetchSuccess({ mode: 'dhcp_gateway', interface: 'enp1s0' });
+
+			await expect(fetchCaptureMode()).resolves.toEqual({ mode: 'dhcp_gateway', interface: 'enp1s0' });
+		});
+
+		it('throws the daemon error instead of guessing bridge', async () => {
+			mockFetchSuccess({ error: 'Daemon unreachable: ECONNREFUSED' }, 502);
+
+			await expect(fetchCaptureMode()).rejects.toThrow('Daemon unreachable: ECONNREFUSED');
+		});
+
+		it('throws HTTP <status> when the error body is not JSON', async () => {
+			mockFetchFailure(503);
+
+			await expect(fetchCaptureMode()).rejects.toThrow('HTTP 503');
+		});
+
+		it('throws on a network error', async () => {
+			mockFetchReject();
+
+			await expect(fetchCaptureMode()).rejects.toThrow('network error');
+		});
+
+		it('throws when the response has no mode', async () => {
+			mockFetchSuccess({ error: 'Failed to parse daemon response' });
+
+			await expect(fetchCaptureMode()).rejects.toThrow(/no mode/);
 		});
 	});
 

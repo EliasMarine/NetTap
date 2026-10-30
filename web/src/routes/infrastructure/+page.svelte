@@ -774,7 +774,12 @@
 					<div>
 						<div class="detail-title">Packet Capture</div>
 						<div class="detail-subtitle">
+							<!-- OLD CODE START — 2026-10-30: dhcp_gateway was shown as br0 bridge capture (CR-247)
 							{captureMode?.mode === 'mirror' ? 'Mirror / SPAN mode' : 'Promiscuous mode on br0 — Bridge capture'}
+							OLD CODE END -->
+							{captureMode?.mode === 'mirror' ? 'Mirror / SPAN mode'
+								: captureMode?.mode === 'dhcp_gateway' ? `DHCP gateway on ${captureMode.interface || 'the LAN port'}`
+								: 'Promiscuous mode on br0 — Bridge capture'}
 						</div>
 					</div>
 				</div>
@@ -784,12 +789,20 @@
 				<div class="detail-grid">
 					<div class="detail-stat">
 						<div class="detail-stat-label">Capture Mode</div>
+						<!-- OLD CODE START — 2026-10-30: dhcp_gateway was shown as Bridge (CR-247)
 						<div class="detail-stat-value">{captureMode?.mode === 'mirror' ? 'Mirror' : 'Bridge'}</div>
+						OLD CODE END -->
+						<div class="detail-stat-value">
+							{captureMode?.mode === 'mirror' ? 'Mirror' : captureMode?.mode === 'dhcp_gateway' ? 'DHCP Gateway' : 'Bridge'}
+						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Interface</div>
 						<div class="detail-stat-value mono" style="font-size: var(--text-lg)">
+							<!-- OLD CODE START — 2026-10-30: fell back to br0 in dhcp_gateway mode (CR-247)
 							{captureStats?.capture_interface || captureMode?.interface || 'br0'}
+							OLD CODE END -->
+							{captureStats?.capture_interface || captureMode?.interface || (captureMode?.mode === 'dhcp_gateway' ? '--' : 'br0')}
 						</div>
 					</div>
 					<div class="detail-stat">

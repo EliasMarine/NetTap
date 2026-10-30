@@ -11,7 +11,7 @@ import logging
 import sys
 import pathlib
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # We import the module-level functions directly. Note: main.py uses
 # relative imports like ``from storage.manager import ...`` which are
@@ -27,6 +27,13 @@ if _daemon_dir not in sys.path:
 
 from main import _env_int, _env_float, _env_str, load_config, configure_logging  # noqa: E402
 from main import storage_loop  # noqa: E402
+from main import async_main, capture_health_loop, init_capture_manager  # noqa: E402
+from services.bridge_capture_adapter import BridgeCaptureAdapter  # noqa: E402
+from services.capture_config import CaptureConfig, save_capture_config  # noqa: E402
+from services.capture_manager import CaptureHealth, CaptureMode  # noqa: E402
+from services.capture_mode_stub import CaptureManagerStub  # noqa: E402
+from services.dhcp_gateway import DhcpGatewayManager  # noqa: E402
+from storage.manager import RetentionConfig  # noqa: E402
 
 
 # =========================================================================
@@ -221,3 +228,237 @@ class TestStorageLoop:
         ran_on = asyncio.run(scenario())
         assert len(ran_on) == 1
         assert ran_on[0] is not loop_thread
+
+
+# =========================================================================
+# capture_health_loop
+# =========================================================================
+
+
+HEALTHY = CaptureHealth(
+    mode="dhcp_gateway",
+    status="normal",
+    capture_interface="enp1s0",
+    link_up=True,
+    promisc_enabled=False,
+)
+
+
+def _fake_manager(name: str, calls: list) -> MagicMock:
+    mgr = MagicMock()
+    mgr.mode = CaptureMode.DHCP_GATEWAY
+    mgr.reconcile = AsyncMock(side_effect=lambda: calls.append(f"{name}.reconcile"))
+    mgr.get_health = AsyncMock(return_value=HEALTHY)
+    return mgr
+
+
+class TestCaptureHealthLoop:
+    def test_reconciles_then_checks_the_live_manager_each_tick(self):
+        """The loop re-reads the manager each tick (setup can swap it)."""
+        calls: list[str] = []
+        first, second = _fake_manager("first", calls), _fake_manager("second", calls)
+        current = {"mgr": first}
+
+        async def scenario():
+            shutdown = asyncio.Event()
+
+            async def swap_after_health():
+                calls.append("first.health")
+                current["mgr"] = second
+                return HEALTHY
+
+            async def stop_after_health():
+                calls.append("second.health")
+                shutdown.set()
+                return HEALTHY
+
+            first.get_health.side_effect = swap_after_health
+            second.get_health.side_effect = stop_after_health
+            await asyncio.wait_for(
+                capture_health_loop(lambda: current["mgr"], 0.01, shutdown), timeout=5
+            )
+
+        asyncio.run(scenario())
+        assert calls == [
+            "first.reconcile",
+            "first.health",
+            "second.reconcile",
+            "second.health",
+        ]
+
+    def test_a_failing_tick_does_not_stop_the_loop(self):
+        calls: list[str] = []
+        mgr = _fake_manager("m", calls)
+
+        async def scenario():
+            shutdown = asyncio.Event()
+            mgr.reconcile.side_effect = [RuntimeError("nsenter gone"), None]
+
+            async def stop_after_health():
+                shutdown.set()
+                return HEALTHY
+
+            mgr.get_health.side_effect = stop_after_health
+            await asyncio.wait_for(
+                capture_health_loop(lambda: mgr, 0.01, shutdown), timeout=5
+            )
+
+        asyncio.run(scenario())
+        assert mgr.reconcile.await_count == 2
+        mgr.get_health.assert_awaited_once()  # skipped on the failing tick
+
+
+# =========================================================================
+# init_capture_manager (CR-167 guard)
+# =========================================================================
+
+
+class TestInitCaptureManager:
+    def _with_config(self, monkeypatch, tmp_path, config=None, text=None):
+        path = tmp_path / "capture-mode.conf"
+        monkeypatch.setenv("CAPTURE_CONFIG_PATH", str(path))
+        if text is not None:
+            path.write_text(text)
+        else:
+            save_capture_config(config)
+
+    def test_unreadable_config_falls_back_to_stub(self, monkeypatch, tmp_path):
+        """CR-167: a bad capture-mode.conf must not crash-loop the daemon."""
+        self._with_config(monkeypatch, tmp_path, text="mode = dhcp_gateway %(\n")
+        mgr, bridge_health = asyncio.run(init_capture_manager())
+        assert isinstance(mgr, CaptureManagerStub)
+        assert bridge_health is None
+
+    def test_failing_setup_falls_back_to_stub(self, monkeypatch, tmp_path):
+        self._with_config(
+            monkeypatch,
+            tmp_path,
+            CaptureConfig(mode=CaptureMode.MIRROR, interface="enp2s0"),
+        )
+        mirror_cls = MagicMock()
+        mirror_cls.return_value.setup = AsyncMock(side_effect=OSError("no nsenter"))
+        monkeypatch.setattr("main.MirrorManager", mirror_cls)
+        mgr, _ = asyncio.run(init_capture_manager())
+        assert isinstance(mgr, CaptureManagerStub)
+
+    def test_dhcp_mode_with_routing_runs_setup(self, monkeypatch, tmp_path):
+        self._with_config(
+            monkeypatch,
+            tmp_path,
+            CaptureConfig(
+                mode=CaptureMode.DHCP_GATEWAY,
+                interface="enp1s0",
+                dhcp_upstream_address="192.168.1.50/24",
+                dhcp_upstream_gateway="192.168.1.1",
+                dhcp_enabled=True,
+            ),
+        )
+        setup = AsyncMock(return_value={"success": True, "warnings": [], "errors": []})
+        monkeypatch.setattr(DhcpGatewayManager, "setup", setup)
+        mgr, bridge_health = asyncio.run(init_capture_manager())
+        assert isinstance(mgr, DhcpGatewayManager)
+        assert mgr.routing_active
+        assert bridge_health is None
+        setup.assert_awaited_once()
+
+    def test_dhcp_mode_not_enabled_skips_setup(self, monkeypatch, tmp_path):
+        self._with_config(
+            monkeypatch,
+            tmp_path,
+            CaptureConfig(mode=CaptureMode.DHCP_GATEWAY, interface="enp1s0"),
+        )
+        setup = AsyncMock()
+        monkeypatch.setattr(DhcpGatewayManager, "setup", setup)
+        mgr, _ = asyncio.run(init_capture_manager())
+        assert isinstance(mgr, DhcpGatewayManager)
+        setup.assert_not_awaited()
+
+    def test_bridge_mode_returns_adapter_and_bridge_health(self, monkeypatch, tmp_path):
+        self._with_config(monkeypatch, tmp_path, CaptureConfig())
+        mgr, bridge_health = asyncio.run(init_capture_manager())
+        assert isinstance(mgr, BridgeCaptureAdapter)
+        assert bridge_health is not None
+
+
+# =========================================================================
+# async_main startup order
+# =========================================================================
+
+
+class TestAsyncMainStartup:
+    def _run(self, monkeypatch, capture_result):
+        events: list = []
+        runner = MagicMock()
+        runner.app = {}
+        runner.cleanup = AsyncMock()
+        config_manager = MagicMock()
+        config_manager.load.return_value = RetentionConfig()
+
+        async def fake_storage_loop(storage, interval, shutdown):
+            events.append("storage")
+            await shutdown.wait()
+
+        async def fake_smart_loop(smart, interval, shutdown):
+            events.append("smart")
+            await shutdown.wait()
+
+        async def fake_init():
+            await asyncio.sleep(0)  # let already-created tasks take their first step
+            events.append("capture_init")
+            return capture_result
+
+        async def fake_capture_loop(get_manager, interval, shutdown):
+            events.append(("capture_loop", get_manager()))
+            shutdown.set()
+
+        async def fake_bridge_loop(bridge_health, interval, shutdown):
+            events.append("bridge")
+            await shutdown.wait()
+
+        monkeypatch.setattr(
+            "main.load_config",
+            lambda: {
+                "log_level": "INFO",
+                "opensearch_url": "http://localhost:9200",
+                "smart_device": "/dev/nvme0n1",
+                "storage_check_interval": 300,
+                "smart_check_interval": 3600,
+                "bridge_check_interval": 30,
+                "api_port": 8880,
+            },
+        )
+        monkeypatch.setattr("main.configure_logging", lambda level: None)
+        monkeypatch.setattr("main.RetentionConfigManager", lambda **kw: config_manager)
+        monkeypatch.setattr("main.StorageManager", MagicMock())
+        monkeypatch.setattr("main.SmartMonitor", MagicMock())
+        monkeypatch.setattr("main.start_api", AsyncMock(return_value=runner))
+        monkeypatch.setattr("main.enforce_capture_state", AsyncMock())
+        monkeypatch.setattr("main.storage_loop", fake_storage_loop)
+        monkeypatch.setattr("main.smart_loop", fake_smart_loop)
+        monkeypatch.setattr("main.init_capture_manager", fake_init)
+        monkeypatch.setattr("main.capture_health_loop", fake_capture_loop)
+        monkeypatch.setattr("main.bridge_loop", fake_bridge_loop)
+        monkeypatch.delenv("OPENSEARCH_CREDS_CONFIG_FILE", raising=False)
+
+        asyncio.run(asyncio.wait_for(async_main(), timeout=5))
+        return events, runner
+
+    def test_storage_and_smart_start_before_capture_setup(self, monkeypatch):
+        """CR-167: a slow or broken capture setup can't hold up storage / SMART."""
+        mgr = MagicMock()
+        events, runner = self._run(monkeypatch, (mgr, None))
+        assert events.index("storage") < events.index("capture_init")
+        assert events.index("smart") < events.index("capture_init")
+        assert runner.app["capture_manager"] is mgr
+
+    def test_capture_loop_runs_in_every_mode_and_bridge_keeps_its_loop(
+        self, monkeypatch
+    ):
+        mgr = MagicMock()
+        events, _ = self._run(monkeypatch, (mgr, None))
+        assert ("capture_loop", mgr) in events
+        assert "bridge" not in events
+
+        events, _ = self._run(monkeypatch, (mgr, MagicMock()))
+        assert ("capture_loop", mgr) in events
+        assert "bridge" in events

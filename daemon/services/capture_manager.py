@@ -1,9 +1,11 @@
 """
 NetTap Capture Manager — Abstract base class for capture modes.
 
-NetTap supports two capture modes:
-    - Bridge: Inline transparent tap between modem and router (br0)
+NetTap supports three capture modes:
+    - DHCP gateway: NetTap hands out addresses on its own subnet and routes
+      devices to the router, so capture sees each device before the router's NAT
     - Mirror/SPAN: Passive listener on a switch port mirror (single NIC, no IP)
+    - Bridge: Inline transparent tap between modem and router (br0)
 
 This module defines the CaptureMode enum and the CaptureManager abstract base
 class that both modes implement. Downstream code calls get_capture_interface()
@@ -25,13 +27,14 @@ class CaptureMode(enum.Enum):
 
     BRIDGE = "bridge"
     MIRROR = "mirror"
+    DHCP_GATEWAY = "dhcp_gateway"
 
 
 @dataclass
 class CaptureHealth:
     """Health status for any capture mode."""
 
-    mode: str  # "bridge" or "mirror"
+    mode: str  # "bridge", "mirror" or "dhcp_gateway"
     status: str  # "normal", "degraded", "down", "not_configured"
     capture_interface: str  # interface being captured (br0, enp2s0, etc.)
     link_up: bool  # primary capture interface has carrier
@@ -130,3 +133,10 @@ class CaptureManager(ABC):
     @abstractmethod
     def mode(self) -> CaptureMode:
         """The capture mode this manager implements."""
+
+    async def reconcile(self) -> None:
+        """Re-apply runtime state that has gone missing (addresses, rules, processes).
+
+        Called every capture-health interval, so it must be cheap and must
+        never raise. The default is a no-op for modes with nothing to re-apply.
+        """

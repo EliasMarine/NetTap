@@ -11,6 +11,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # Docker CLI for docker exec into sibling containers (TShark)
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
+# iptables + dnsmasq-base: DHCP gateway capture mode (NAT/forward rules, DHCP server)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nvme-cli \
     smartmontools \
@@ -23,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     openssl \
     curl \
+    iptables \
+    dnsmasq-base \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/nettap/daemon

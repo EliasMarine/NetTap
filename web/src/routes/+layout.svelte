@@ -13,6 +13,14 @@
 	let mobileOpen = $state(false);
 	let captureMode = $state<CaptureMode | null>(null);
 
+	// Top-bar badge per capture mode; anything unknown shows as Bridge (the old default)
+	const MODE_BADGES: Record<string, { label: string; cls: string }> = {
+		mirror: { label: 'Mirror', cls: 'mode-mirror' },
+		dhcp_gateway: { label: 'DHCP Gateway', cls: 'mode-dhcp' },
+	};
+	const BRIDGE_BADGE = { label: 'Bridge', cls: 'mode-bridge' };
+	let modeBadge = $derived(captureMode ? (MODE_BADGES[captureMode.mode] ?? BRIDGE_BADGE) : null);
+
 	$effect(() => {
 		getCaptureMode().then((mode) => {
 			captureMode = mode;
@@ -178,9 +186,16 @@
 				<h1 class="topbar-title">{getPageTitle($page.url.pathname)}</h1>
 
 				<div class="topbar-right">
+					<!-- OLD CODE START — two-way badge showed dhcp_gateway as Bridge (2026-10-30)
 					{#if captureMode}
 						<span class="mode-badge {captureMode.mode === 'mirror' ? 'mode-mirror' : 'mode-bridge'}" title="Capture mode: {captureMode.mode}">
 							{captureMode.mode === 'mirror' ? 'Mirror' : 'Bridge'}
+						</span>
+					{/if}
+					OLD CODE END -->
+					{#if captureMode && modeBadge}
+						<span class="mode-badge {modeBadge.cls}" title="Capture mode: {captureMode.mode}">
+							{modeBadge.label}
 						</span>
 					{/if}
 
@@ -419,6 +434,11 @@
 	.mode-bridge {
 		background-color: var(--green-dim);
 		color: var(--green);
+	}
+
+	.mode-dhcp {
+		background-color: var(--purple-dim);
+		color: var(--purple);
 	}
 
 	.desktop-only {

@@ -9,6 +9,30 @@
 		type BridgeReadiness,
 		type BridgeHealth,
 	} from '$lib/api/bridge.js';
+	import { fetchCaptureMode } from '$lib/api/capture.js';
+	import DhcpGoLive from '$lib/components/golive/DhcpGoLive.svelte';
+
+	// ----- Capture mode -----
+	// null until /api/capture/mode answers. Bridge polling waits for it, so a
+	// DHCP gateway install never hits the bridge endpoints from this page.
+	let captureModeName = $state<string | null>(null);
+	let modeError = $state('');
+	let bridgeFlow = $derived(captureModeName !== null && captureModeName !== 'dhcp_gateway');
+
+	async function loadCaptureMode() {
+		modeError = '';
+		try {
+			// Throws on failure: getCaptureMode() guesses 'bridge', which would start
+			// the bridge flow on a DHCP gateway install
+			captureModeName = (await fetchCaptureMode()).mode;
+		} catch (e) {
+			modeError = `Could not read the capture mode: ${e instanceof Error ? e.message : 'unknown error'}`;
+		}
+	}
+
+	$effect(() => {
+		loadCaptureMode();
+	});
 
 	// ----- Phase state -----
 	// Phase 1 = readiness checks, Phase 2 = wiring guide, Phase 3 = live monitoring
@@ -84,6 +108,8 @@
 	}
 
 	$effect(() => {
+		if (!bridgeFlow) return;
+
 		// Initial fetch
 		fetchReadiness();
 
@@ -195,6 +221,14 @@
 		<p class="text-muted">Connect your NetTap appliance to the network</p>
 	</div>
 
+	{#if modeError}
+		<div class="alert alert-danger" style="margin-bottom: var(--space-md);">{modeError}</div>
+		<button class="btn btn-secondary" onclick={loadCaptureMode}>Retry</button>
+	{:else if captureModeName === null}
+		<p class="text-muted">Loading...</p>
+	{:else if captureModeName === 'dhcp_gateway'}
+		<DhcpGoLive />
+	{:else}
 	<!-- Phase indicator -->
 	<div class="phase-indicator">
 		<div class="phase-step" class:active={phase >= 1} class:completed={phase > 1}>
@@ -485,6 +519,7 @@
 				</div>
 			</div>
 		{/if}
+	{/if}
 	{/if}
 </div>
 
