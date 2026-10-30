@@ -19,6 +19,11 @@ web/dashboard/dist/
 
 # Docker volumes and runtime data
 data/
+# ...but ship the bundled OUI vendor DB; the rest of daemon/data/ stays ignored
+# (e.g. notifications.json holds SMTP passwords and API tokens)
+!/daemon/data/
+/daemon/data/*
+!/daemon/data/oui_database.json
 pcap/
 logs/
 
