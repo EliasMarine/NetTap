@@ -192,7 +192,13 @@ class UnifiIntegration:
         # self._last_error = None
         # OLD CODE END
         url = normalize_controller_url(controller_url)
-        new_site_id = site_id if site_id is not None else self._site_id
+        # An omitted site_id keeps the site only for the same controller
+        if site_id is not None:
+            new_site_id = site_id
+        elif url == self._base_url:
+            new_site_id = self._site_id
+        else:
+            new_site_id = None
         current = (self._base_url, self._api_key, self._site_id)
         if (url, api_key, new_site_id) != current:
             self._reset_connection_state()

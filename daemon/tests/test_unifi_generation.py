@@ -221,6 +221,12 @@ class TestConfigureIdentity:
         unifi.configure(URL_A, api_key="key-a")
         assert unifi.get_status()["site_id"] == "site-a"
 
+    def test_new_controller_does_not_inherit_the_old_site(self):
+        unifi = UnifiIntegration()
+        unifi.configure(URL_A, api_key="key-a", site_id="site-a")
+        unifi.configure(URL_B, api_key="key-b")
+        assert unifi.get_status()["site_id"] is None
+
 
 def _make_app(unifi: UnifiIntegration) -> web.Application:
     app = web.Application()
