@@ -53,18 +53,20 @@ describe('infrastructure API client', () => {
 
 	describe('getOpenSearchCluster', () => {
 		it('returns parsed cluster health on success', async () => {
-			const expected = {
+			// Shape of daemon/api/opensearch_cluster.py handle_cluster_health:
+			// cluster.health fields + total_indices/total_docs/total_size_bytes
+			mockFetchSuccess({
 				status: 'green',
 				number_of_nodes: 1,
 				active_primary_shards: 5,
 				active_shards: 5,
 				unassigned_shards: 0,
 				relocating_shards: 0,
-				pending_tasks: 0,
+				number_of_pending_tasks: 0,
+				total_indices: 12,
 				total_docs: 123456,
-				total_data_size_bytes: 99887766,
-			};
-			mockFetchSuccess(expected);
+				total_size_bytes: 99887766,
+			});
 
 			const result = await getOpenSearchCluster();
 
@@ -73,6 +75,14 @@ describe('infrastructure API client', () => {
 			expect(result.active_primary_shards).toBe(5);
 			expect(result.total_docs).toBe(123456);
 			expect(result.total_data_size_bytes).toBe(99887766);
+		});
+
+		it('defaults the data size to 0 when the daemon omits it', async () => {
+			mockFetchSuccess({ status: 'yellow' });
+
+			const result = await getOpenSearchCluster();
+
+			expect(result.total_data_size_bytes).toBe(0);
 		});
 
 		it('calls the correct URL', async () => {
@@ -161,21 +171,23 @@ describe('infrastructure API client', () => {
 	// -- getOpenSearchTemplates -----------------------------------------------
 
 	describe('getOpenSearchTemplates', () => {
-		it('returns parsed templates on success', async () => {
-			const expected = [
-				{ name: 'zeek_template', index_patterns: ['zeek-*'] },
-				{ name: 'suricata_template', index_patterns: ['suricata-*'] },
-			];
-			mockFetchSuccess(expected);
+		it('unwraps the daemon { templates, count } envelope', async () => {
+			mockFetchSuccess({
+				templates: [
+					{ name: 'zeek_template', index_patterns: '[zeek-*]', order: '0', version: '' },
+					{ name: 'suricata_template', index_patterns: '[suricata-*]', order: '0', version: '' },
+				],
+				count: 2,
+			});
 
 			const result = await getOpenSearchTemplates();
 
 			expect(result).toHaveLength(2);
-			expect(result[0]).toEqual({ name: 'zeek_template', index_patterns: ['zeek-*'] });
+			expect(result[0]).toMatchObject({ name: 'zeek_template' });
 		});
 
 		it('calls the correct URL', async () => {
-			mockFetchSuccess([]);
+			mockFetchSuccess({ templates: [], count: 0 });
 
 			await getOpenSearchTemplates();
 
@@ -314,56 +326,55 @@ describe('infrastructure API client', () => {
 	// -- getLogstashPipelines -------------------------------------------------
 
 	describe('getLogstashPipelines', () => {
-		it('returns parsed pipelines from array response', async () => {
-			const expected = [
-				{
-					id: 'main',
-					events_in: 5000,
-					events_out: 4500,
-					events_filtered: 500,
-					duration_in_millis: 6000,
-				},
-			];
-			mockFetchSuccess(expected);
+		/** Shape of daemon/api/logstash.py handle_logstash_pipelines entries */
+		function daemonPipeline(id: string, inN: number, out: number, filtered: number, ms: number) {
+			return {
+				id,
+				events: { in: inN, out, filtered, duration_ms: ms },
+				plugins: {},
+				reloads: { successes: 0, failures: 0 },
+			};
+		}
+
+		it('flattens nested events into the pipeline fields', async () => {
+			mockFetchSuccess({ pipelines: [daemonPipeline('main', 5000, 4500, 500, 6000)], count: 1 });
 
 			const result = await getLogstashPipelines();
 
 			expect(result).toHaveLength(1);
-			expect(result[0].id).toBe('main');
-			expect(result[0].events_in).toBe(5000);
-			expect(result[0].events_out).toBe(4500);
+			expect(result[0]).toMatchObject({
+				id: 'main',
+				events_in: 5000,
+				events_out: 4500,
+				events_filtered: 500,
+				duration_in_millis: 6000,
+			});
 		});
 
 		it('unwraps { pipelines: [...] } envelope', async () => {
-			const wrapped = {
-				pipelines: [
-					{
-						id: 'main',
-						events_in: 3000,
-						events_out: 2800,
-						events_filtered: 200,
-						duration_in_millis: 4000,
-					},
-					{
-						id: 'beats',
-						events_in: 1000,
-						events_out: 1000,
-						events_filtered: 0,
-						duration_in_millis: 500,
-					},
-				],
-			};
-			mockFetchSuccess(wrapped);
+			mockFetchSuccess({
+				pipelines: [daemonPipeline('main', 3000, 2800, 200, 4000), daemonPipeline('beats', 1000, 1000, 0, 500)],
+				count: 2,
+			});
 
 			const result = await getLogstashPipelines();
 
 			expect(result).toHaveLength(2);
 			expect(result[0].id).toBe('main');
 			expect(result[1].id).toBe('beats');
+			expect(result[1].duration_in_millis).toBe(500);
+		});
+
+		it('zeroes missing event counters', async () => {
+			mockFetchSuccess({ pipelines: [{ id: 'empty' }], count: 1 });
+
+			const [p] = await getLogstashPipelines();
+
+			expect(p).toMatchObject({ events_in: 0, events_out: 0, events_filtered: 0, duration_in_millis: 0 });
 		});
 
 		it('calls the correct URL', async () => {
-			mockFetchSuccess([]);
+			mockFetchSuccess({ pipelines: [], count: 0 });
 
 			await getLogstashPipelines();
 
