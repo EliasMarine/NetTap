@@ -7,9 +7,9 @@ All tests use mocks -- no Docker or CyberChef container required.
 import asyncio
 import base64
 import unittest
+from unittest.mock import MagicMock, patch
 
 import aiohttp
-from aioresponses import aioresponses
 
 import sys
 import os
@@ -151,6 +151,22 @@ class TestBuildRecipeUrlWithInput(unittest.TestCase):
 _HEALTH_URL = f"{CYBERCHEF_INTERNAL_URL}/health"
 
 
+def _patched_session(status=None, exc=None):
+    """Patch aiohttp.ClientSession so GET /health returns `status` or raises `exc`.
+
+    Plain unittest.mock on purpose: aioresponses lags aiohttp releases
+    (0.7.9 breaks on aiohttp 3.14), and CI installs the newest aiohttp.
+    """
+    session = MagicMock()
+    if exc is not None:
+        session.get.side_effect = exc
+    else:
+        session.get.return_value.__aenter__.return_value.status = status
+    factory = MagicMock()
+    factory.return_value.__aenter__.return_value = session
+    return patch("aiohttp.ClientSession", factory), session
+
+
 class TestIsAvailableRunning(unittest.TestCase):
     """is_available() checks CyberChef's HTTP health endpoint."""
 
@@ -158,9 +174,10 @@ class TestIsAvailableRunning(unittest.TestCase):
         """A 200 from /health reports available=True with the URL."""
 
         async def run():
-            with aioresponses() as mocked:
-                mocked.get(_HEALTH_URL, status=200)
+            patcher, session = _patched_session(status=200)
+            with patcher:
                 result = await CyberChefService().is_available()
+            session.get.assert_called_once_with(_HEALTH_URL)
             self.assertTrue(result["available"])
             self.assertTrue(result["container_running"])
             self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
@@ -177,8 +194,8 @@ class TestIsAvailableNotRunning(unittest.TestCase):
         """A non-200 from /health reports available=False with no URL."""
 
         async def run():
-            with aioresponses() as mocked:
-                mocked.get(_HEALTH_URL, status=503)
+            patcher, _ = _patched_session(status=503)
+            with patcher:
                 result = await CyberChefService().is_available()
             self.assertFalse(result["available"])
             self.assertFalse(result["container_running"])
@@ -192,11 +209,10 @@ class TestIsAvailableNotRunning(unittest.TestCase):
         """A connection error reports unavailable and carries the error text."""
 
         async def run():
-            with aioresponses() as mocked:
-                mocked.get(
-                    _HEALTH_URL,
-                    exception=aiohttp.ClientConnectionError("connection refused"),
-                )
+            patcher, _ = _patched_session(
+                exc=aiohttp.ClientConnectionError("connection refused")
+            )
+            with patcher:
                 result = await CyberChefService().is_available()
             self.assertFalse(result["available"])
             self.assertFalse(result["container_running"])
