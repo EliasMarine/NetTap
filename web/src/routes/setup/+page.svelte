@@ -481,9 +481,15 @@
 					api_key: unifiApiKey,
 				}),
 			});
-			if (!res.ok) {
-				const data = await res.json();
-				throw new Error(data.error || `HTTP ${res.status}`);
+			// OLD CODE START — the daemon answers 200 with success:false for a bad key
+			// if (!res.ok) {
+			// 	const data = await res.json();
+			// 	throw new Error(data.error || `HTTP ${res.status}`);
+			// }
+			// OLD CODE END
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || data.status?.last_error || `Connection test failed (HTTP ${res.status})`);
 			}
 			unifiTestResult = 'success';
 		} catch (err) {

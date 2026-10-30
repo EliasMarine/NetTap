@@ -138,3 +138,32 @@ describe('setup wizard after account creation', () => {
 		expect(await screen.findByText('Connected (7 clients)')).toBeInTheDocument();
 	});
 });
+
+describe('setup wizard UniFi test connection', () => {
+	it('reports a failure when the daemon answers 200 with success: false', async () => {
+		mockFetch({
+			'POST /api/integrations/unifi/configure': { body: { status: 'configured' } },
+			'POST /api/integrations/unifi/test': {
+				body: { success: false, status: { last_error: 'Invalid API key' } },
+			},
+		});
+		render(SetupPage, { props: { form: null } });
+		const start = await screen.findByRole('button', { name: /Get Started/ });
+		await waitFor(() => expect(start).not.toBeDisabled());
+		await fireEvent.click(start);
+		await fireEvent.click(await screen.findByRole('button', { name: /Mirror \/ SPAN/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+		const nicSelect = await screen.findByLabelText(/Capture Interface/);
+		await fireEvent.change(nicSelect, { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: /Skip/ }));
+		await fireEvent.click(await screen.findByRole('checkbox'));
+		await fireEvent.input(screen.getByLabelText('Controller URL'), { target: { value: 'https://10.0.0.1' } });
+		await fireEvent.input(screen.getByLabelText('API Key'), { target: { value: 'wrong-key' } });
+
+		await fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
+
+		expect(await screen.findByText('Connection failed: Invalid API key')).toBeInTheDocument();
+		expect(screen.queryByText('Successfully connected to UniFi controller.')).not.toBeInTheDocument();
+	});
+});
