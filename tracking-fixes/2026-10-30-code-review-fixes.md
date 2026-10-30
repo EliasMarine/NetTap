@@ -1,6 +1,6 @@
 # Code Review Fix Tracker (review of 2026-10-30)
 
-**Progress:** <!--P-->10 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->3/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
+**Progress:** <!--P-->11 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->4/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
 
 **Findings:** `docs/reviews/2026-10-30-code-review.md` ([PR #146](https://github.com/EliasMarine/NetTap/pull/146)). The detail and recommended fix for each ID are there.  
 **Linear:** NET-112 (umbrella).  
@@ -28,7 +28,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 - [ ] <!--B:CR-020-->CR-020: Two full-PCAP writers fill the disk
 - [ ] <!--B:MS-002-->MS-002: Full-time PCAP has no retention
 - [ ] <!--B:CR-004-->CR-004: Wizard 'Verify' builds the live bridge
-- [ ] <!--B:CR-025-->CR-025: nettap.service runs compose down on stop
+- [x] <!--B:CR-025-->CR-025: nettap.service runs compose down on stop
 - [ ] <!--B:CR-034-->CR-034: Login has no effective rate limit
 - [ ] <!--B:CR-017-->CR-017: Generated ISM policies never manage a real index
 - [ ] <!--B:CR-038-->CR-038: Static ISM policy matches no real index
@@ -42,6 +42,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | 2026-10-30 | MS-001 (NET-113) | opensearch gets Malcolm's 8 ROLE_* vars, so its own startup builds and pushes the full role mapping; deploy-malcolm.sh waits for that push instead of overwriting it; fix-opensearch.sh writes the minimal mapping only on an old container. Device check pending (Chain 21) | bats: 2 new deploy + 1 new compose test, fail without the fix |
 | 2026-10-30 | CR-003 | NET-114: /dashboards/ needs a NetTap login (nginx auth_request to /api/auth/me); nginx sets X-Forwarded-User/Roles from the session and drops the client's. Still open: direct container access to dashboards:5601 and OpenSearch :9200 with spoofed headers | vitest +2, bats +3 (new test_nginx_conf.bats), fail without the fix |
 | 2026-10-30 | CR-021, CR-022 | NET-115: ARKIME_SECRET and GRAFANA_ADMIN_PASSWORD required in compose (no public fallback); malcolm-config.sh adds missing secrets to an existing .env; Arkime viewer pinned to 127.0.0.1; /grafana/ behind NetTap login (anonymous Viewer kept behind the gate). Device: deploy script must add .env keys first and reset Grafana's stored admin password | bats +6 (compose 2, nginx 1, malcolm-config 3; 5 fail without the fix, 1 guards existing secrets) |
+| 2026-10-30 | CR-025 | NET-116: nettap.service ExecStop uses 'docker compose stop' instead of 'down', so reboots keep containers. Device: the deploy script rewrites the installed unit. Not done: capture containers still depend on daemon health | bats +1 (new test_install.bats), fails without the fix |
 <!--LOG-->
 
 ## Found while fixing
@@ -89,7 +90,7 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ✅ | CR-022 | malcolm-stack, scripts-infra, security-crosscut | `docker/docker-compose.yml:824` | Grafana is reachable without NetTap login, with anonymous viewer and default admin password 'nettap' | Fixed (batch 1) |
 | ☐ | CR-023 | scripts-infra | `scripts/bridge/setup-bridge.sh:403` | --dry-run --persist writes the real netplan bridge, NetworkManager and sysctl configs | Open |
 | ☐ | CR-024 | malcolm-stack, scripts-infra | `scripts/install/deploy-malcolm.sh:601` | (( applied++ )) under set -e kills the installer at the first ISM policy | Open |
-| ☐ | CR-025 | scripts-infra | `scripts/install/install.sh:397` | nettap.service ExecStop runs 'docker compose down', so every reboot recreates OpenSearch and breaks auth | Open |
+| ✅ | CR-025 | scripts-infra | `scripts/install/install.sh:397` | nettap.service ExecStop runs 'docker compose down', so every reboot recreates OpenSearch and breaks auth | Fixed (batch 1) |
 | ☐ | CR-026 | gap-pass, scripts-infra | `scripts/install/setup-firewall.sh:225` | Documented firewall hardening blocks nettap-web from reaching the daemon | Open |
 | ☐ | CR-027 | contracts-integration, web-components | `web/src/lib/api/bridge.ts:37 (+1)` | The System page bypass control reads `active` but the daemon sends `bypass_active`, so bypass cannot be turned off there | Open |
 | ☐ | CR-028 | contracts-integration, web-components | `web/src/lib/components/NotificationBell.svelte:50 (+1)` | Each page load re-sends alert notifications to email and webhook | Open |
