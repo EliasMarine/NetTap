@@ -56,6 +56,7 @@
 	}
 
 	function modeLabel(mode: string): string {
+		if (mode === 'dhcp_gateway') return 'DHCP Gateway'; // CR-212: was labelled Inline Bridge
 		return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline Bridge';
 	}
 

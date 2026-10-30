@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 export interface CaptureMode {
-	mode: string; // "bridge" | "mirror"
+	mode: string; // "bridge" | "mirror" | "dhcp_gateway"
 	interface: string;
 }
 
@@ -89,7 +89,7 @@ export function captureState(status: CaptureStatus | null): CaptureState {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the current capture mode (bridge or mirror).
+ * Get the current capture mode (bridge, mirror or dhcp_gateway).
  */
 export async function getCaptureMode(): Promise<CaptureMode> {
 	try {
@@ -101,6 +101,24 @@ export async function getCaptureMode(): Promise<CaptureMode> {
 	} catch {
 		return { mode: 'bridge', interface: '' };
 	}
+}
+
+/**
+ * Get the current capture mode, throwing on any failure instead of guessing
+ * 'bridge'. For flows that must not act on a guessed mode (Go Live).
+ * Throws Error with the daemon's `error` text, or `HTTP <status>`.
+ */
+export async function fetchCaptureMode(): Promise<CaptureMode> {
+	const res = await fetch('/api/capture/mode');
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(typeof data?.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
+	}
+	const data = await res.json();
+	if (typeof data?.mode !== 'string' || !data.mode) {
+		throw new Error('The capture mode response had no mode.');
+	}
+	return data as CaptureMode;
 }
 
 /**

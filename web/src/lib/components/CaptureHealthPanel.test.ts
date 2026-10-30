@@ -1,4 +1,59 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import * as captureApi from '$api/capture';
+import CaptureHealthPanel from './CaptureHealthPanel.svelte';
+
+vi.mock('$api/capture', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/capture')>()),
+	getCaptureHealth: vi.fn(),
+	getCaptureStats: vi.fn(),
+}));
+
+// ---------------------------------------------------------------------------
+// Rendered panel: mode badge (CR-212)
+// ---------------------------------------------------------------------------
+
+describe('CaptureHealthPanel mode badge', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	async function renderWithMode(mode: string) {
+		vi.mocked(captureApi.getCaptureHealth).mockResolvedValue({
+			mode,
+			status: 'normal',
+			capture_interface: 'enp1s0',
+			link_up: true,
+			promisc_enabled: true,
+			issues: [],
+		});
+		vi.mocked(captureApi.getCaptureStats).mockResolvedValue({
+			capture_interface: 'enp1s0',
+			rx_bytes: 0,
+			tx_bytes: 0,
+			rx_packets: 0,
+			tx_packets: 0,
+			rx_dropped: 0,
+			rx_missed_errors: 0,
+			link_speed_mbps: 0,
+			drop_rate_pct: 0,
+		});
+		render(CaptureHealthPanel);
+		await vi.waitFor(() => expect(screen.getByText('enp1s0')).toBeInTheDocument());
+	}
+
+	it('labels dhcp_gateway as DHCP Gateway, not Inline Bridge', async () => {
+		await renderWithMode('dhcp_gateway');
+
+		expect(screen.getByText('DHCP Gateway')).toBeInTheDocument();
+		expect(screen.queryByText('Inline Bridge')).not.toBeInTheDocument();
+	});
+
+	it('still labels bridge as Inline Bridge', async () => {
+		await renderWithMode('bridge');
+		expect(screen.getByText('Inline Bridge')).toBeInTheDocument();
+	});
+});
 
 /**
  * Tests for CaptureHealthPanel component logic.
@@ -35,6 +90,7 @@ function modeBadgeClass(mode: string): string {
 }
 
 function modeLabel(mode: string): string {
+	if (mode === 'dhcp_gateway') return 'DHCP Gateway';
 	return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline Bridge';
 }
 

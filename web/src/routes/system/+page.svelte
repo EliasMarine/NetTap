@@ -6,6 +6,7 @@
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
+	import { getCaptureMode } from '$api/capture.js';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -13,6 +14,8 @@
 	let tsharkStatus = $state<TSharkStatus | null>(null);
 	let cyberchefStatus = $state<CyberChefStatus | null>(null);
 	let loading = $state(true);
+	// BridgeStatus (and its /api/bridge polling) only makes sense in bridge mode
+	let captureModeName = $state<string | null>(null);
 
 	function formatBytes(bytes: number | null | undefined): string {
 		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
@@ -70,6 +73,9 @@
 
 	$effect(() => {
 		fetchAll();
+		getCaptureMode().then((m) => {
+			captureModeName = m.mode;
+		});
 	});
 </script>
 
@@ -182,7 +188,12 @@
 		</div>
 
 		<!-- Bridge & Failover Status -->
+		<!-- OLD CODE START — rendered (and polled /api/bridge) in every capture mode (2026-10-30)
 		<BridgeStatus />
+		OLD CODE END -->
+		{#if captureModeName === 'bridge'}
+			<BridgeStatus />
+		{/if}
 
 		<!-- Storage card (full width) -->
 		<div class="card">

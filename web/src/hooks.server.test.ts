@@ -170,6 +170,28 @@ describe('hooks.server', () => {
 		});
 	});
 
+	describe('DHCP gateway proxy routes', () => {
+		// Dedicated +server.ts routes must be gated exactly like the catch-all proxy
+		it.each(['/api/capture/dhcp/enable', '/api/capture/dhcp/disable'])(
+			'POST %s needs a session after setup and stays closed during first run',
+			async (path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				await expect(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve })).rejects.toThrow('redirect');
+
+				mockHasUsers.mockReturnValue(false);
+				await expect(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve })).rejects.toThrow('redirect');
+				expect(mockResolve).not.toHaveBeenCalled();
+
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+				const authed = createMockEvent(path, 'valid-token', undefined, 'POST');
+				await handle({ event: authed, resolve: mockResolve });
+				expect(mockResolve).toHaveBeenCalledWith(authed);
+			}
+		);
+	});
+
 	describe('auth guard', () => {
 		it('redirects unauthenticated users to /login on protected routes', async () => {
 			mockHasUsers.mockReturnValue(true);

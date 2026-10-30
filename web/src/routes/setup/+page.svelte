@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import Collapsible from '$components/Collapsible.svelte';
+	import DhcpGatewayStep from '$components/setup/DhcpGatewayStep.svelte';
+	import { DEFAULT_DHCP_SUBNET } from '$lib/utils/dhcpSubnet';
 
 	// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
 	// Port 8880 is Docker-internal only. Use relative paths through SvelteKit proxy.
@@ -17,19 +20,26 @@
 	// const stepLabels = ['Welcome', 'Interfaces', 'Bridge', 'Storage', 'Account'];
 	// OLD CODE END
 
-	// Capture mode: 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge)
-	type CaptureMode = 'mirror' | 'bridge' | '';
+	// OLD CODE START — two modes only; DHCP gateway added 2026-10-30
+	// // Capture mode: 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge)
+	// type CaptureMode = 'mirror' | 'bridge' | '';
+	// OLD CODE END
+	// Capture mode: 'dhcp_gateway' (DHCP Gateway), 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge, under Advanced)
+	type CaptureMode = 'dhcp_gateway' | 'mirror' | 'bridge' | '';
 	let selectedMode = $state<CaptureMode>('');
 
 	// Dynamic step labels based on mode
 	// Mirror: Welcome -> Capture Mode -> Interfaces (mirror) -> Storage -> Enrichment -> Account -> Verification
 	// Bridge: Welcome -> Capture Mode -> Interfaces (bridge) -> Bridge Config -> Storage -> Enrichment -> Account -> Verification
+	// DHCP gateway: Welcome -> Capture Mode -> Interfaces (router port) -> DHCP Gateway -> Storage -> Enrichment -> Account -> Verification
 	// Before mode selected: Welcome -> Capture Mode (only 2 steps available)
 	let stepLabels = $derived.by(() => {
 		if (selectedMode === 'mirror') {
 			return ['Welcome', 'Capture Mode', 'Interfaces', 'Storage', 'Enrichment', 'Account', 'Verification'];
 		} else if (selectedMode === 'bridge') {
 			return ['Welcome', 'Capture Mode', 'Interfaces', 'Bridge', 'Storage', 'Enrichment', 'Account', 'Verification'];
+		} else if (selectedMode === 'dhcp_gateway') {
+			return ['Welcome', 'Capture Mode', 'Interfaces', 'DHCP Gateway', 'Storage', 'Enrichment', 'Account', 'Verification'];
 		}
 		return ['Welcome', 'Capture Mode'];
 	});
@@ -72,6 +82,9 @@
 	let selectedMirrorNic = $state('');
 	let selectedManagementNic = $state('');
 
+	// DHCP gateway NIC selection (the one port plugged into the router)
+	let selectedDhcpNic = $state('');
+
 	// Filter to only usable (non-loopback) interfaces for NIC selection
 	let selectableInterfaces = $derived(
 		interfaces.filter((iface) => iface.type !== 'loopback')
@@ -93,9 +106,16 @@
 		interfaces.find((iface) => iface.name === selectedManagementNic)
 	);
 
+	let selectedDhcpNicDetails = $derived(
+		interfaces.find((iface) => iface.name === selectedDhcpNic)
+	);
+
 	let nicSelectionValid = $derived.by(() => {
 		if (selectedMode === 'mirror') {
 			return selectedMirrorNic !== '';
+		}
+		if (selectedMode === 'dhcp_gateway') {
+			return selectedDhcpNic !== '';
 		}
 		return selectedWan !== '' && selectedLan !== '' && selectedWan !== selectedLan;
 	});
@@ -115,6 +135,14 @@
 	let bridgeLoading = $state(false);
 	let bridgeError = $state('');
 	let bridgeVerified = $state(false);
+
+	// ----- Step 4 (DHCP gateway mode): subnet NetTap hands out -----
+	let dhcpSubnet = $state(DEFAULT_DHCP_SUBNET);
+	let dhcpSubnetValid = $state(false);
+	// The subnet must not contain any address NetTap already uses
+	let dhcpNicAddresses = $derived(
+		interfaces.map((iface) => iface.ipv4 || '').filter((ip) => ip !== '')
+	);
 
 	// ----- Storage Configuration -----
 	interface StorageStatus {
@@ -218,6 +246,8 @@
 				return nicSelectionValid;
 			case 'Bridge':
 				return true; // Bridge verification is optional
+			case 'DHCP Gateway':
+				return dhcpSubnetValid;
 			case 'Storage':
 				return true; // Storage config has defaults
 			case 'Enrichment':
@@ -604,6 +634,9 @@
 				if (selectedManagementNic) {
 					payload.management_interface = selectedManagementNic;
 				}
+			} else if (selectedMode === 'dhcp_gateway') {
+				payload.capture_interface = selectedDhcpNic;
+				payload.dhcp_subnet = dhcpSubnet;
 			} else {
 				payload.wan_interface = selectedWan;
 				payload.lan_interface = selectedLan;
@@ -722,7 +755,10 @@
 					<div class="info-box">
 						<h3>What this wizard will configure:</h3>
 						<ol class="setup-list">
+							<!-- OLD CODE START — listed two modes; DHCP gateway added 2026-10-30
 							<li>Choose your capture mode (Mirror/SPAN or Inline Bridge)</li>
+							OLD CODE END -->
+							<li>Choose your capture mode (DHCP Gateway, Mirror/SPAN, or Inline Bridge under Advanced)</li>
 							<li>Detect and select network interfaces</li>
 							<li>Set up storage retention policies</li>
 							<li>Create your admin account</li>
@@ -790,11 +826,41 @@
 					<div class="mode-cards">
 						<button
 							class="mode-card"
+							class:selected={selectedMode === 'dhcp_gateway'}
+							onclick={() => { selectedMode = 'dhcp_gateway'; }}
+							type="button"
+						>
+							<div class="mode-badge recommended">Recommended</div>
+							<div class="mode-icon">
+								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
+									<rect x="10" y="4" width="12" height="8" rx="2"/>
+									<path d="M16 12v6M6 18h20M6 18v4M16 18v4M26 18v4"/>
+									<circle cx="6" cy="25" r="2.5"/>
+									<circle cx="16" cy="25" r="2.5"/>
+									<circle cx="26" cy="25" r="2.5"/>
+								</svg>
+							</div>
+							<h3>DHCP Gateway</h3>
+							<p class="mode-desc">
+								NetTap hands out addresses to your devices and passes their traffic on to your router.
+								Works with any router, no special switch needed.
+							</p>
+							<ul class="mode-features">
+								<li>Requires 1 NIC, plugged into your router</li>
+								<li>You turn off your router's DHCP at Go Live</li>
+								<li>See traffic per device, with each device's own address</li>
+							</ul>
+						</button>
+
+						<button
+							class="mode-card"
 							class:selected={selectedMode === 'mirror'}
 							onclick={() => { selectedMode = 'mirror'; }}
 							type="button"
 						>
+							<!-- OLD CODE START — Mirror was the recommended mode until DHCP gateway (2026-10-30)
 							<div class="mode-badge recommended">Recommended</div>
+							OLD CODE END -->
 							<div class="mode-icon">
 								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
 									<rect x="4" y="8" width="24" height="16" rx="3"/>
@@ -814,32 +880,43 @@
 								<li>See traffic per device on the LAN</li>
 							</ul>
 						</button>
+					</div>
 
-						<button
-							class="mode-card"
-							class:selected={selectedMode === 'bridge'}
-							onclick={() => { selectedMode = 'bridge'; }}
-							type="button"
+					<!-- Inline bridge stays available, but only under Advanced; open when it is the current choice -->
+					<div class="advanced-modes">
+						<Collapsible
+							title="Advanced"
+							subtitle="Put NetTap between your modem and router (needs two NICs)"
+							expanded={selectedMode === 'bridge'}
 						>
-							<div class="mode-icon">
-								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
-									<rect x="2" y="12" width="12" height="8" rx="2"/>
-									<rect x="18" y="12" width="12" height="8" rx="2"/>
-									<path d="M14 16h4"/>
-									<path d="M8 12V8M24 12V8"/>
-								</svg>
+							<div class="mode-cards">
+								<button
+									class="mode-card"
+									class:selected={selectedMode === 'bridge'}
+									onclick={() => { selectedMode = 'bridge'; }}
+									type="button"
+								>
+									<div class="mode-icon">
+										<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="2" y="12" width="12" height="8" rx="2"/>
+											<rect x="18" y="12" width="12" height="8" rx="2"/>
+											<path d="M14 16h4"/>
+											<path d="M8 12V8M24 12V8"/>
+										</svg>
+									</div>
+									<h3>Inline Bridge</h3>
+									<p class="mode-desc">
+										NetTap sits between your modem and router. Sees all WAN traffic.
+										Requires two dedicated NICs.
+									</p>
+									<ul class="mode-features">
+										<li>Requires 2 NICs (WAN + LAN)</li>
+										<li>Transparent Layer 2 bridge</li>
+										<li>Sees all WAN ingress/egress</li>
+									</ul>
+								</button>
 							</div>
-							<h3>Inline Bridge</h3>
-							<p class="mode-desc">
-								NetTap sits between your modem and router. Sees all WAN traffic.
-								Requires two dedicated NICs.
-							</p>
-							<ul class="mode-features">
-								<li>Requires 2 NICs (WAN + LAN)</li>
-								<li>Transparent Layer 2 bridge</li>
-								<li>Sees all WAN ingress/egress</li>
-							</ul>
-						</button>
+						</Collapsible>
 					</div>
 
 					{#if selectedMode === 'bridge' && detectedEthernetNicCount < 2}
@@ -973,6 +1050,73 @@
 												<span class="badge">{selectedManagementNicDetails.ipv4}</span>
 											{/if}
 										</div>
+									{/if}
+								</div>
+							</div>
+
+							<button class="btn btn-sm btn-secondary" onclick={fetchNics} type="button" style="margin-top: var(--space-sm);">
+								Refresh Interfaces
+							</button>
+						{/if}
+					{:else if selectedMode === 'dhcp_gateway'}
+						<!-- DHCP gateway mode: the one NIC plugged into the router -->
+						<h2>Select Router Port</h2>
+						<p class="text-muted step-desc">
+							Choose the port plugged into your router. NetTap keeps its current address on this port
+							and hands out addresses to your devices through it.
+						</p>
+
+						{#if nicsSource === 'mock'}
+							<div class="alert alert-warning" style="margin-bottom: var(--space-md);">
+								Daemon unavailable — showing sample interface data. Actual interfaces will be detected on the target system.
+							</div>
+						{/if}
+
+						{#if nicsError}
+							<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+								{nicsError}
+								<button class="btn btn-sm" style="margin-left: var(--space-sm);" onclick={fetchNics} type="button">Retry</button>
+							</div>
+						{/if}
+
+						{#if nicsLoading}
+							<div class="loading-container">
+								<span class="spinner"></span>
+								<span>Detecting network interfaces...</span>
+							</div>
+						{:else}
+							<div class="nic-selectors">
+								<div class="form-group">
+									<label for="dhcp-nic-select" class="label">
+										Router Port
+										<span class="text-muted">(the port plugged into your router)</span>
+									</label>
+									<select id="dhcp-nic-select" class="input" bind:value={selectedDhcpNic}>
+										<option value="">-- Select the port plugged into your router --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+												{#if iface.ipv4} ({iface.ipv4}){/if}
+											</option>
+										{/each}
+									</select>
+									{#if selectedDhcpNicDetails}
+										<div class="nic-details">
+											<span class="badge badge-accent">{selectedDhcpNicDetails.driver || 'unknown'}</span>
+											<span class="badge">{selectedDhcpNicDetails.speed || 'N/A'}</span>
+											<span class="badge" class:badge-success={selectedDhcpNicDetails.state === 'up'} class:badge-danger={selectedDhcpNicDetails.state === 'down'}>
+												{selectedDhcpNicDetails.state}
+											</span>
+											{#if selectedDhcpNicDetails.ipv4}
+												<span class="badge mono">{selectedDhcpNicDetails.ipv4}</span>
+											{/if}
+										</div>
+										{#if !selectedDhcpNicDetails.ipv4}
+											<div class="alert alert-warning" style="margin-top: var(--space-sm);">
+												This port has no IPv4 address. NetTap needs an address from your router on this port
+												to pass traffic on. Check that it's plugged into your router, then refresh.
+											</div>
+										{/if}
 									{/if}
 								</div>
 							</div>
@@ -1227,6 +1371,23 @@
 						The bridge will be configured when you complete the setup wizard and start NetTap services.
 						No changes will be made to your network until then.
 					</div>
+				</div>
+
+			<!-- ===== STEP: DHCP Gateway (dhcp_gateway mode only) ===== -->
+			{:else if getStepName(currentStep) === 'DHCP Gateway'}
+				<div class="step-panel">
+					<h2>DHCP Gateway</h2>
+					<p class="text-muted step-desc">
+						Pick the address range NetTap gives your devices. Keep the default unless your network
+						already uses it.
+					</p>
+
+					<DhcpGatewayStep
+						bind:subnet={dhcpSubnet}
+						bind:valid={dhcpSubnetValid}
+						nicAddresses={dhcpNicAddresses}
+						selectedInterface={selectedDhcpNic}
+					/>
 				</div>
 
 			<!-- ===== STEP: Storage Configuration ===== -->
@@ -1682,6 +1843,18 @@
 						Checking that all services are running correctly...
 					</p>
 
+					{#if configSaveError}
+						<div class="alert alert-danger" role="alert">
+							<strong>Your capture settings were not saved.</strong>
+							{configSaveError}
+							<div style="margin-top: var(--space-sm);">
+								<button class="btn btn-secondary btn-sm" type="button" onclick={saveSetupConfig} disabled={configSaving}>
+									{configSaving ? 'Saving...' : 'Try saving again'}
+								</button>
+							</div>
+						</div>
+					{/if}
+
 					<div class="verification-list" style="margin-top: var(--space-lg);">
 						{#each healthChecks as check}
 							<div class="verification-item" style="display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-dim);">
@@ -1705,7 +1878,13 @@
 					{#if verificationDone}
 						<div style="margin-top: var(--space-xl); display: flex; gap: var(--space-sm);">
 							<a href="/" class="btn btn-primary">Go to Dashboard</a>
+							<!-- OLD CODE START — offered Go Live even when the capture settings failed to save (2026-10-30)
 							<a href="/go-live" class="btn btn-secondary">Go Live Setup</a>
+							OLD CODE END -->
+							<!-- Go Live acts on the saved capture mode, so wait for a successful save -->
+							{#if !configSaveError}
+								<a href="/go-live" class="btn btn-secondary">Go Live Setup</a>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -2056,6 +2235,14 @@
 		color: var(--accent);
 		font-weight: bold;
 		margin-right: var(--space-xs);
+	}
+
+	.advanced-modes {
+		margin-top: var(--space-lg);
+	}
+
+	.advanced-modes .mode-cards {
+		margin-top: var(--space-md);
 	}
 
 	/* ===== Network Interfaces ===== */
