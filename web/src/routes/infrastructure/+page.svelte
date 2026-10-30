@@ -767,6 +767,38 @@
 							<span class="info-label">Power-On Hours</span>
 							<span class="info-value mono">{smartHealth.power_on_hours != null ? smartHealth.power_on_hours.toLocaleString() : '--'}</span>
 						</div>
+						<div class="info-row">
+							<span class="info-label">Total Written</span>
+							<span class="info-value mono">{smartHealth.total_bytes_written != null ? formatBytes(smartHealth.total_bytes_written) : '--'}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Total Read</span>
+							<span class="info-value mono">{smartHealth.total_bytes_read != null ? formatBytes(smartHealth.total_bytes_read) : '--'}</span>
+						</div>
+						{#if smartHealth.device_type === 'nvme'}
+							<div class="info-row">
+								<span class="info-label">Media Errors</span>
+								<span class="info-value mono" style="color: {smartHealth.media_errors != null && smartHealth.media_errors > 0 ? 'var(--danger)' : 'var(--success)'}">
+									{smartHealth.media_errors != null ? smartHealth.media_errors.toLocaleString() : '--'}
+								</span>
+							</div>
+						{/if}
+						{#if smartHealth.device_type === 'sata'}
+							<div class="info-row">
+								<span class="info-label">Reallocated Sectors</span>
+								<span class="info-value mono" style="color: {smartHealth.reallocated_sectors != null && smartHealth.reallocated_sectors > 0 ? 'var(--danger)' : 'var(--success)'}">
+									{smartHealth.reallocated_sectors != null ? smartHealth.reallocated_sectors.toLocaleString() : '--'}
+								</span>
+							</div>
+						{/if}
+						<div class="info-row">
+							<span class="info-label">Serial</span>
+							<span class="info-value mono">{smartHealth.serial || '--'}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Type</span>
+							<span class="info-value">{smartHealth.device_type === 'nvme' ? 'NVMe' : smartHealth.device_type === 'sata' ? 'SATA' : '--'}</span>
+						</div>
 					</div>
 				{:else}
 					<p class="text-muted">SMART data unavailable</p>

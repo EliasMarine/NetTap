@@ -78,6 +78,7 @@ from services.bridge_capture_adapter import BridgeCaptureAdapter
 from services.bridge_manager import BridgeManager
 from services.mirror_manager import MirrorManager
 from api.server import start_api
+from api.capture_control import enforce_capture_state
 
 logger = logging.getLogger("nettap")
 
@@ -432,6 +433,10 @@ async def async_main() -> None:
         port=cfg["api_port"],
         shutdown_event=shutdown_event,
     )
+
+    # --- Enforce persisted PCAP capture state ---
+    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
+    await enforce_capture_state(env_file)
 
     # --- Load capture mode configuration ---
     capture_cfg = load_capture_config()

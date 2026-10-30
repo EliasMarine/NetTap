@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.traffic_classifier import get_category_stats, CATEGORIES
+from services.traffic_classifier import get_category_stats
 
 
 def _mock_os_response(asn_buckets):

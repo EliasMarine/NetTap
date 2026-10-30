@@ -6,7 +6,6 @@ etc.) indexed to ``nettap-changelog-*`` in OpenSearch.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 

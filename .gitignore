@@ -32,9 +32,6 @@ docker/.env
 # Generated TLS certificates for nginx reverse proxy
 docker/ssl/
 
-# Remote scripts (generated for copy-paste to NetTap device)
-scripts/remote/
-
 # OS files
 .DS_Store
 Thumbs.db

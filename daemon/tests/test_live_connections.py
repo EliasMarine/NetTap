@@ -5,11 +5,10 @@ All tests use mocks -- no OpenSearch connection required.
 Tests cover tracker logic, filtering, rate calculation, and OpenSearch integration.
 """
 
-import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from services.live_connections import LiveConnectionTracker, MAX_CONNECTIONS, RATE_WINDOW_SECONDS
+from services.live_connections import LiveConnectionTracker, RATE_WINDOW_SECONDS
 
 
 def _make_connection(

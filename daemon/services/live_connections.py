@@ -10,7 +10,7 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException

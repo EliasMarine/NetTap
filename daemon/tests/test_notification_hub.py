@@ -5,7 +5,6 @@ Covers channel CRUD, test delivery, routing rules, and event processing.
 All tests use mocks and temp files — no external dependencies required.
 """
 
-import json
 import os
 import sys
 import tempfile
@@ -16,7 +15,7 @@ import asyncio
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.notification_hub import NotificationHub, CHANNEL_TYPES, EVENT_TYPES
+from services.notification_hub import NotificationHub, CHANNEL_TYPES
 
 
 def run_async(coro):

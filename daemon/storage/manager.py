@@ -13,8 +13,9 @@ import os
 import re
 import logging
 import shutil
+import threading
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -144,6 +145,9 @@ class StorageManager:
 
         # C3: Track whether ILM policy has been verified this session
         self._ilm_verified: bool = False
+
+        # Lock to prevent manual cleanup from racing with auto-prune cycles
+        self._cleanup_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Client helpers
@@ -370,54 +374,55 @@ class StorageManager:
 
         Returns the number of indices deleted.
         """
-        indices = self.list_indices()
-        if not indices:
-            logger.debug("No indices found; nothing to prune")
-            return 0
+        with self._cleanup_lock:
+            indices = self.list_indices()
+            if not indices:
+                logger.debug("No indices found; nothing to prune")
+                return 0
 
-        # Group by tier
-        tier_order = ["cold", "warm", "hot"]
-        tier_groups: dict[str, list[dict]] = {t: [] for t in tier_order}
-        for idx in indices:
-            tier = idx["tier"]
-            if tier in tier_groups:
-                tier_groups[tier].append(idx)
+            # Group by tier
+            tier_order = ["cold", "warm", "hot"]
+            tier_groups: dict[str, list[dict]] = {t: [] for t in tier_order}
+            for idx in indices:
+                tier = idx["tier"]
+                if tier in tier_groups:
+                    tier_groups[tier].append(idx)
 
-        deleted = 0
+            deleted = 0
 
-        for tier in tier_order:
-            group = tier_groups[tier]
-            if not group:
-                continue
+            for tier in tier_order:
+                group = tier_groups[tier]
+                if not group:
+                    continue
 
-            cutoff = self._cutoff_date_for_tier(tier)
+                cutoff = self._cutoff_date_for_tier(tier)
 
-            # Sort oldest first
-            dated = [idx for idx in group if idx["parsed_date"] is not None]
-            dated.sort(key=lambda x: x["parsed_date"])
+                # Sort oldest first
+                dated = [idx for idx in group if idx["parsed_date"] is not None]
+                dated.sort(key=lambda x: x["parsed_date"])
 
-            for idx in dated:
-                if idx["parsed_date"] >= cutoff:
-                    # Remaining indices in this tier are within retention
-                    break
+                for idx in dated:
+                    if idx["parsed_date"] >= cutoff:
+                        # Remaining indices in this tier are within retention
+                        break
 
-                if self._delete_index(idx["name"]):
-                    deleted += 1
+                    if self._delete_index(idx["name"]):
+                        deleted += 1
 
-                # Re-check disk after each deletion
-                usage = self.check_disk_usage()
-                if usage < self.config.disk_threshold:
-                    logger.info(
-                        "Disk usage %.1f%% now below threshold %.1f%%; "
-                        "stopping prune (deleted %d indices)",
-                        usage * 100,
-                        self.config.disk_threshold * 100,
-                        deleted,
-                    )
-                    return deleted
+                    # Re-check disk after each deletion
+                    usage = self.check_disk_usage()
+                    if usage < self.config.disk_threshold:
+                        logger.info(
+                            "Disk usage %.1f%% now below threshold %.1f%%; "
+                            "stopping prune (deleted %d indices)",
+                            usage * 100,
+                            self.config.disk_threshold * 100,
+                            deleted,
+                        )
+                        return deleted
 
-        logger.info("Tiered prune complete: deleted %d indices", deleted)
-        return deleted
+            logger.info("Tiered prune complete: deleted %d indices", deleted)
+            return deleted
 
     # ------------------------------------------------------------------
     # Emergency pruning
@@ -437,38 +442,39 @@ class StorageManager:
             self.config.emergency_threshold * 100,
         )
 
-        indices = self.list_indices()
-        if not indices:
-            logger.warning("No indices available for emergency pruning")
-            return 0
+        with self._cleanup_lock:
+            indices = self.list_indices()
+            if not indices:
+                logger.warning("No indices available for emergency pruning")
+                return 0
 
-        # Collect all dated indices, sort oldest first globally
-        dated = [idx for idx in indices if idx["parsed_date"] is not None]
-        dated.sort(key=lambda x: x["parsed_date"])
+            # Collect all dated indices, sort oldest first globally
+            dated = [idx for idx in indices if idx["parsed_date"] is not None]
+            dated.sort(key=lambda x: x["parsed_date"])
 
-        deleted = 0
+            deleted = 0
 
-        for idx in dated:
-            if self._delete_index(idx["name"]):
-                deleted += 1
+            for idx in dated:
+                if self._delete_index(idx["name"]):
+                    deleted += 1
 
-            # Re-check disk after each deletion
-            usage = self.check_disk_usage()
-            if usage < self.config.disk_threshold:
-                logger.info(
-                    "Emergency prune brought disk to %.1f%%; deleted %d indices total",
-                    usage * 100,
-                    deleted,
-                )
-                return deleted
+                # Re-check disk after each deletion
+                usage = self.check_disk_usage()
+                if usage < self.config.disk_threshold:
+                    logger.info(
+                        "Emergency prune brought disk to %.1f%%; deleted %d indices total",
+                        usage * 100,
+                        deleted,
+                    )
+                    return deleted
 
-        logger.warning(
-            "Emergency prune exhausted all deletable indices "
-            "(deleted %d); disk still at %.1f%%",
-            deleted,
-            self.check_disk_usage() * 100,
-        )
-        return deleted
+            logger.warning(
+                "Emergency prune exhausted all deletable indices "
+                "(deleted %d); disk still at %.1f%%",
+                deleted,
+                self.check_disk_usage() * 100,
+            )
+            return deleted
 
     # ------------------------------------------------------------------
     # C1: Predictive disk exhaustion alerting
@@ -849,6 +855,206 @@ class StorageManager:
             "total_bytes": total,
             "disk_capacity_bytes": capacity,
         }
+
+    # ------------------------------------------------------------------
+    # Manual data cleanup (preview + execute)
+    # ------------------------------------------------------------------
+
+    def preview_cleanup(self, older_than_days: int) -> dict:
+        """Calculate what would be deleted by a manual cleanup.
+
+        Returns a preview of indices and PCAP files older than the cutoff
+        date, with their sizes, without actually deleting anything.
+
+        Args:
+            older_than_days: Delete data older than this many days.
+
+        Returns:
+            Dict with indices, pcap_files, totals, and cutoff_date.
+        """
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=older_than_days)
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Get indices with date parsing
+        indices = self.list_indices()
+
+        # Get per-index byte sizes from stats API
+        index_sizes: dict[str, int] = {}
+        try:
+            stats = self._client.indices.stats(metric="store")
+            for idx_name, idx_data in stats.get("indices", {}).items():
+                index_sizes[idx_name] = (
+                    idx_data.get("total", {})
+                    .get("store", {})
+                    .get("size_in_bytes", 0)
+                )
+        except OpenSearchException as exc:
+            logger.error("Failed to get index stats for cleanup preview: %s", exc)
+
+        # Filter indices older than cutoff, protect today
+        target_indices = []
+        total_index_bytes = 0
+        for idx in indices:
+            parsed = idx.get("parsed_date")
+            if parsed is None:
+                continue
+            # Never delete today's active index
+            if parsed >= today:
+                continue
+            if parsed < cutoff:
+                size_bytes = index_sizes.get(idx["name"], 0)
+                target_indices.append({
+                    "name": idx["name"],
+                    "size_bytes": size_bytes,
+                    "tier": idx["tier"],
+                    "parsed_date": parsed.isoformat(),
+                })
+                total_index_bytes += size_bytes
+
+        # Scan PCAP files older than cutoff
+        target_pcaps = []
+        total_pcap_bytes = 0
+        pcap_dir = Path(self.config.pcap_dir)
+        if pcap_dir.exists():
+            try:
+                for pcap_file in pcap_dir.glob("*.pcap"):
+                    try:
+                        stat = pcap_file.stat()
+                        file_time = datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        )
+                        if file_time < cutoff:
+                            target_pcaps.append({
+                                "name": pcap_file.name,
+                                "size_bytes": stat.st_size,
+                                "modified": file_time.isoformat(),
+                            })
+                            total_pcap_bytes += stat.st_size
+                    except OSError:
+                        pass
+            except OSError as exc:
+                logger.error("Failed to scan PCAP dir for cleanup preview: %s", exc)
+
+        return {
+            "indices": target_indices,
+            "pcap_files": target_pcaps,
+            "total_indices": len(target_indices),
+            "total_pcap_files": len(target_pcaps),
+            "total_size_bytes": total_index_bytes + total_pcap_bytes,
+            "index_size_bytes": total_index_bytes,
+            "pcap_size_bytes": total_pcap_bytes,
+            "cutoff_date": cutoff.isoformat(),
+            "estimated_freed_bytes": total_index_bytes + total_pcap_bytes,
+        }
+
+    def execute_cleanup(self, older_than_days: int) -> dict:
+        """Execute manual data cleanup, deleting indices and PCAPs older than cutoff.
+
+        Acquires the cleanup lock to prevent races with automatic prune cycles.
+
+        Args:
+            older_than_days: Delete data older than this many days.
+
+        Returns:
+            Dict with deleted counts, freed bytes estimate, and any errors.
+
+        Raises:
+            RuntimeError: If the cleanup lock cannot be acquired (auto-prune running).
+        """
+        if not self._cleanup_lock.acquire(blocking=False):
+            raise RuntimeError(
+                "A storage maintenance cycle is currently running. "
+                "Please try again in a few minutes."
+            )
+
+        try:
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(days=older_than_days)
+            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Get indices
+            indices = self.list_indices()
+
+            # Get byte sizes for reporting
+            index_sizes: dict[str, int] = {}
+            try:
+                stats = self._client.indices.stats(metric="store")
+                for idx_name, idx_data in stats.get("indices", {}).items():
+                    index_sizes[idx_name] = (
+                        idx_data.get("total", {})
+                        .get("store", {})
+                        .get("size_in_bytes", 0)
+                    )
+            except OpenSearchException:
+                pass
+
+            deleted_indices = 0
+            deleted_pcaps = 0
+            freed_bytes = 0
+            errors: list[str] = []
+
+            # Delete indices older than cutoff
+            for idx in indices:
+                parsed = idx.get("parsed_date")
+                if parsed is None:
+                    continue
+                if parsed >= today:
+                    continue
+                if parsed < cutoff:
+                    size = index_sizes.get(idx["name"], 0)
+                    if self._delete_index(idx["name"]):
+                        deleted_indices += 1
+                        freed_bytes += size
+                    else:
+                        errors.append(f"Failed to delete index: {idx['name']}")
+
+            # Delete PCAP files older than cutoff
+            pcap_dir = Path(self.config.pcap_dir)
+            if pcap_dir.exists():
+                try:
+                    for pcap_file in sorted(
+                        pcap_dir.glob("*.pcap"),
+                        key=lambda p: p.stat().st_mtime,
+                    ):
+                        try:
+                            stat = pcap_file.stat()
+                            file_time = datetime.fromtimestamp(
+                                stat.st_mtime, tz=timezone.utc
+                            )
+                            if file_time < cutoff:
+                                file_size = stat.st_size
+                                # Remove checksum sidecars
+                                for ext in (".xxh3", ".sha256"):
+                                    sidecar = pcap_file.parent / f"{pcap_file.name}{ext}"
+                                    if sidecar.exists():
+                                        sidecar.unlink()
+                                pcap_file.unlink()
+                                deleted_pcaps += 1
+                                freed_bytes += file_size
+                        except OSError as exc:
+                            errors.append(f"Failed to delete PCAP {pcap_file.name}: {exc}")
+                except OSError as exc:
+                    errors.append(f"Failed to scan PCAP directory: {exc}")
+
+            logger.info(
+                "Manual cleanup complete: deleted %d indices + %d PCAPs, "
+                "freed ~%d bytes, older_than_days=%d",
+                deleted_indices,
+                deleted_pcaps,
+                freed_bytes,
+                older_than_days,
+            )
+
+            return {
+                "deleted_indices": deleted_indices,
+                "deleted_pcap_files": deleted_pcaps,
+                "freed_bytes_estimate": freed_bytes,
+                "errors": errors,
+                "cutoff_date": cutoff.isoformat(),
+            }
+        finally:
+            self._cleanup_lock.release()
 
     # ------------------------------------------------------------------
     # C6: Re-index from logs recovery path
