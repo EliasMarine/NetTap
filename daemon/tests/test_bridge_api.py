@@ -9,7 +9,7 @@ using AioHTTPTestCase.
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -20,6 +20,7 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 from api.bridge import register_bridge_routes
 from services.bridge_health import BridgeHealthMonitor
 from services.bridge_manager import BridgeManager
+from services.capture_manager import CaptureMode
 
 
 def _make_mock_monitor():
@@ -425,6 +426,56 @@ class TestBridgeCreateEndpoint(AioHTTPTestCase):
             json={"wan_interface": "eth0", "lan_interface": "eth0"},
         )
         self.assertEqual(resp.status, 400)
+
+
+class TestBridgeCreateRefusedInDhcpGatewayMode(AioHTTPTestCase):
+    """POST /api/setup/bridge must not enslave the DHCP gateway's NIC."""
+
+    def setUp(self):
+        self.mock_monitor = _make_mock_monitor()
+        self.mock_manager = _make_mock_manager()
+        self.mock_manager.create_bridge = AsyncMock(return_value={"created": True})
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        capture_manager = MagicMock()
+        capture_manager.mode = CaptureMode.DHCP_GATEWAY
+        capture_manager.routing_active = True
+        app["capture_manager"] = capture_manager
+        register_bridge_routes(app, self.mock_monitor, self.mock_manager)
+        return app
+
+    async def test_create_is_409(self):
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0", "lan_interface": "enp1s0"},
+        )
+        self.assertEqual(resp.status, 409)
+        self.assertIn("DHCP gateway mode", (await resp.json())["error"])
+        self.mock_manager.create_bridge.assert_not_awaited()
+
+    async def test_dhcp_config_that_never_routed_still_creates(self):
+        # A saved but never-enabled DHCP config must not dead-end the wizard
+        self.app["capture_manager"].routing_active = False
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0", "lan_interface": "enp1s0"},
+        )
+        self.assertEqual(resp.status, 200)
+        self.mock_manager.create_bridge.assert_awaited_once()
+
+    async def test_other_modes_still_create(self):
+        self.app["capture_manager"].mode = CaptureMode.MIRROR
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0", "lan_interface": "enp1s0"},
+        )
+        self.assertEqual(resp.status, 200)
+        self.mock_manager.create_bridge.assert_awaited_once()
 
 
 class TestBridgeTeardownEndpoint(AioHTTPTestCase):

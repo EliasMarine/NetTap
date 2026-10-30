@@ -9,6 +9,9 @@ Endpoints:
     GET  /api/capture/status     Read capture state + container status
     PUT  /api/capture/toggle     Start or stop the pcap-capture container
     PUT  /api/capture/settings   Update max file size (10-10000 MB)
+
+Also provides restart_capture_containers(), used after /etc/nettap/capture.env
+changes so the capture containers' entrypoints re-read it.
 """
 
 import asyncio
@@ -21,6 +24,13 @@ from api.settings import _load_env_file, _save_env_file
 logger = logging.getLogger("nettap.api.capture_control")
 
 CONTAINER_NAME = "nettap-pcap-capture"
+# Containers whose entrypoint reads /etc/nettap/capture.env
+CAPTURE_CONTAINERS = (
+    "nettap-zeek-live",
+    "nettap-suricata-live",
+    "nettap-arkime-live",
+    CONTAINER_NAME,
+)
 DEFAULT_ENV_FILE = "/opt/nettap/data/.env"
 DEFAULT_MAX_FILE_SIZE_MB = 100
 MIN_FILE_SIZE_MB = 10
@@ -108,6 +118,46 @@ async def _get_container_status(container: str) -> dict:
     running = parts[0].lower() == "true" if parts else False
     status = parts[1] if len(parts) > 1 else "unknown"
     return {"running": running, "status": status}
+
+
+async def _restart_if_running(container: str) -> tuple[bool, str]:
+    """Restart one container if it is running.
+
+    Returns (restarted, error). A stopped container is left stopped:
+    ``docker restart`` would start it, and the PCAP toggle stops
+    nettap-pcap-capture on purpose. It reads capture.env when it next starts.
+    """
+    try:
+        status = await _get_container_status(container)
+        if not status["running"]:
+            logger.info("Not restarting %s: it is %s", container, status["status"])
+            return False, ""
+        returncode, output = await _docker_cmd("restart", container)
+    except Exception as exc:  # docker CLI missing, socket unreachable
+        returncode, output = -1, str(exc)
+    if returncode != 0:
+        logger.warning(
+            "docker restart %s failed (rc=%d): %s", container, returncode, output
+        )
+        return False, f"{container}: {output or f'exit code {returncode}'}"
+    return True, ""
+
+
+async def restart_capture_containers() -> dict:
+    """Restart the running capture containers so they re-read capture.env.
+
+    Best effort and never raises: one failure doesn't stop the others.
+    Containers are never created or removed.
+
+    Returns:
+        {"restarted": [container, ...], "errors": [message, ...]}
+    """
+    results = await asyncio.gather(
+        *(_restart_if_running(c) for c in CAPTURE_CONTAINERS)
+    )
+    restarted = [c for c, (ok, _) in zip(CAPTURE_CONTAINERS, results) if ok]
+    errors = [err for _, err in results if err]
+    return {"restarted": restarted, "errors": errors}
 
 
 # ---------------------------------------------------------------------------

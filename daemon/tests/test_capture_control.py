@@ -314,5 +314,87 @@ class TestEnforceCaptureState(unittest.TestCase):
             os.unlink(tmp.name)
 
 
+# ---------------------------------------------------------------------------
+# restart_capture_containers
+# ---------------------------------------------------------------------------
+
+
+class TestRestartCaptureContainers(unittest.TestCase):
+    """Tests for restart_capture_containers (capture.env reload helper)."""
+
+    ALL = [
+        "nettap-zeek-live",
+        "nettap-suricata-live",
+        "nettap-arkime-live",
+        "nettap-pcap-capture",
+    ]
+
+    def _run(self, status_side_effect, cmd_side_effect):
+        import asyncio
+        from api.capture_control import restart_capture_containers
+
+        with (
+            patch(
+                f"{MODULE}._get_container_status",
+                new_callable=AsyncMock,
+                side_effect=status_side_effect,
+            ),
+            patch(
+                f"{MODULE}._docker_cmd",
+                new_callable=AsyncMock,
+                side_effect=cmd_side_effect,
+            ) as mock_cmd,
+        ):
+            result = asyncio.run(restart_capture_containers())
+        return result, mock_cmd
+
+    def test_restarts_all_four_running_containers(self):
+        result, mock_cmd = self._run(
+            lambda c: _mock_container_status(True), lambda a, c: (0, "")
+        )
+        self.assertEqual(result, {"restarted": self.ALL, "errors": []})
+        self.assertEqual(
+            sorted(call.args for call in mock_cmd.await_args_list),
+            sorted(("restart", c) for c in self.ALL),
+        )
+
+    def test_one_failure_does_not_stop_the_others(self):
+        def cmd(action, container):
+            if container == "nettap-suricata-live":
+                return (1, "Error response from daemon: boom")
+            return (0, "")
+
+        result, _ = self._run(lambda c: _mock_container_status(True), cmd)
+        self.assertEqual(
+            result["restarted"],
+            ["nettap-zeek-live", "nettap-arkime-live", "nettap-pcap-capture"],
+        )
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("nettap-suricata-live", result["errors"][0])
+        self.assertIn("boom", result["errors"][0])
+
+    def test_never_raises_when_docker_is_missing(self):
+        def cmd(action, container):
+            raise FileNotFoundError("docker")
+
+        result, _ = self._run(lambda c: _mock_container_status(True), cmd)
+        self.assertEqual(result["restarted"], [])
+        self.assertEqual(len(result["errors"]), 4)
+
+    def test_stopped_container_is_left_stopped(self):
+        """docker restart would start it; the PCAP toggle stops it on purpose."""
+
+        def status(container):
+            return _mock_container_status(container != "nettap-pcap-capture")
+
+        result, mock_cmd = self._run(status, lambda a, c: (0, ""))
+        self.assertNotIn("nettap-pcap-capture", result["restarted"])
+        self.assertEqual(result["errors"], [])
+        self.assertNotIn(
+            ("restart", "nettap-pcap-capture"),
+            [call.args for call in mock_cmd.await_args_list],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

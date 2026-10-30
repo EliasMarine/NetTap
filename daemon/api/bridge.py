@@ -12,6 +12,7 @@ from aiohttp import web
 
 from services.bridge_health import BridgeHealthMonitor
 from services.bridge_manager import BridgeManager
+from services.capture_manager import CaptureMode
 
 logger = logging.getLogger("nettap.api.bridge")
 
@@ -140,12 +141,29 @@ async def handle_bridge_create(request: web.Request) -> web.Response:
 
     Create the Linux bridge with the specified WAN and LAN interfaces.
     Expects JSON body: {"wan_interface": "...", "lan_interface": "..."}
+    Refused (409) while a DHCP gateway is routing.
     """
     manager: BridgeManager | None = request.app.get("bridge_manager")
     if manager is None:
         return web.json_response(
             {"error": "Bridge manager not available"},
             status=503,
+        )
+
+    # A bridge would enslave the gateway's LAN NIC and cut off its routing.
+    # Keyed on live routing, not the saved mode, so a never-enabled DHCP
+    # config doesn't dead-end the wizard's bridge path.
+    capture_manager = request.app.get("capture_manager")
+    if getattr(capture_manager, "mode", None) == CaptureMode.DHCP_GATEWAY and getattr(
+        capture_manager, "routing_active", False
+    ):
+        return web.json_response(
+            {
+                "error": "NetTap is set to DHCP gateway mode, and creating a bridge "
+                "would take over its network card and cut your devices off. "
+                "Switch NetTap to another capture mode first."
+            },
+            status=409,
         )
 
     try:
