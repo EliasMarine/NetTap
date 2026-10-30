@@ -631,6 +631,23 @@ print('opensearch roles: OK')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: nettap-web reads the client IP from nginx's X-Real-IP and is not published (CR-034)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Login throttling keys on getClientAddress(). Without ADDRESS_HEADER every
+    # client is nginx's IP; with port 3000 published, clients could forge it.
+    run _compose_query "
+svc = data['services']['nettap-web']
+assert svc['environment'].get('ADDRESS_HEADER') == 'x-real-ip', 'ADDRESS_HEADER must be x-real-ip'
+assert not svc.get('ports'), 'nettap-web must not publish ports; only nginx may reach it'
+print('nettap-web: OK')
+"
+    [ "$status" -eq 0 ]
+    grep -Eq 'proxy_set_header[[:space:]]+X-Real-IP[[:space:]]+\$remote_addr;' "${REPO_ROOT}/docker/nginx.conf"
+}
+
 # ==========================================================================
 # Capture settings from the daemon (DHCP gateway / mirror mode)
 # ==========================================================================

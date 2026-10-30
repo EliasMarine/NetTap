@@ -852,6 +852,10 @@ services:
       # Origin: https://..., causing silent 403 CSRF rejection on form POSTs.
       PROTOCOL_HEADER: "x-forwarded-proto"
       HOST_HEADER: "host"
+      # getClientAddress() = the real client, so login throttling is per device
+      # (CR-034). nginx overwrites X-Real-IP with $remote_addr; safe only while
+      # port 3000 stays unpublished so nothing but nginx can set it.
+      ADDRESS_HEADER: "x-real-ip"
     networks:
       - default
     depends_on:
