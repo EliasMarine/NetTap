@@ -2,10 +2,10 @@
 
 **Status:** Code complete, gates green locally. Not run on hardware.
 **Type:** feat (+ fixes for review findings CR-007, CR-165, CR-166, CR-167, CR-212, CR-247)
-**Branch:** `phase-4/dhcp-gateway-mode` → `fix/pr110-review` (`develop` no longer exists, so this PR is stacked like #143 and #144)
+**Branch:** `phase-4/dhcp-gateway-mode` → `fix/pr110-review`, [PR #145](https://github.com/EliasMarine/NetTap/pull/145) (`develop` no longer exists, so this PR is stacked like #143 and #144)
 **Design:** `docs/plans/2026-10-30-dhcp-gateway-mode-design.md`
 **Architecture:** `Debugging/BRIDGE-ARCHITECTURE.md` §16
-**Review:** `docs/reviews/2026-10-30-code-review.md` (branch `chore/code-review-2026-10`)
+**Review:** `docs/reviews/2026-10-30-code-review.md` (branch `chore/code-review-2026-10`, [PR #146](https://github.com/EliasMarine/NetTap/pull/146))
 
 ## Problem
 - NetTap's inline bridge sits between the modem and the router, outside the router's NAT. It only sees the router's public IP, so it can't say which device did what.
