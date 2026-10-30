@@ -188,6 +188,26 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertTrue(has_severity)
 
     @unittest_run_loop
+    async def test_alerts_list_category_filter_uses_keyword_field(self):
+        """Category wildcards target rule.name.keyword, case-insensitively."""
+        from services.alert_intelligence import THREAT_CATEGORIES
+
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        category = next(iter(THREAT_CATEGORIES))
+
+        resp = await self.client.request("GET", f"/api/alerts?category={category}")
+        self.assertEqual(resp.status, 200)
+
+        body = self.mock_client.search.call_args.kwargs["body"]
+        should = body["query"]["bool"]["filter"][-1]["bool"]["should"]
+        self.assertEqual(len(should), len(THREAT_CATEGORIES[category]["patterns"]))
+        for clause in should:
+            self.assertEqual(list(clause["wildcard"]), ["rule.name.keyword"])
+            self.assertTrue(clause["wildcard"]["rule.name.keyword"]["case_insensitive"])
+
+    @unittest_run_loop
     async def test_alerts_list_invalid_severity_ignored(self):
         """Invalid severity param is ignored (no filter)."""
         self.mock_client.search.return_value = {

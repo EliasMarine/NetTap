@@ -345,10 +345,23 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             # pattern in the category.  Case-insensitive wildcard on .keyword.
             should_clauses = []
             for pattern in cat_info["patterns"]:
+                # OLD CODE START — analyzed rule.name holds single tokens, so
+                # multi-word patterns never matched; wildcard needs the keyword
+                # should_clauses.append(
+                #     {
+                #         "wildcard": {
+                #             "rule.name": {
+                #                 "value": f"*{pattern}*",
+                #                 "case_insensitive": True,
+                #             }
+                #         }
+                #     }
+                # )
+                # OLD CODE END
                 should_clauses.append(
                     {
                         "wildcard": {
-                            "rule.name": {
+                            "rule.name.keyword": {
                                 "value": f"*{pattern}*",
                                 "case_insensitive": True,
                             }
