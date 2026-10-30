@@ -86,10 +86,22 @@ _DATE_PATTERN_COMPACT = re.compile(r"(\d{6})$")  # YYMMDD used by Arkime
 
 
 # Tier classification prefixes
+# OLD CODE START — every arkime* index was cold (30 days), but arkime_sessions3
+# holds all Zeek metadata and Suricata alerts, and malcolm_beats_* was unknown
+# so never pruned by age (CR-038).
+# _TIER_PREFIXES = {
+#     "cold": ["arkime", "sessions"],
+#     "warm": ["suricata"],
+#     "hot": ["zeek"],
+# }
+# OLD CODE END
+# Malcolm puts Zeek and Suricata in one daily arkime_sessions3 index, so all
+# network data follows hot_days, matching the nettap-hot-policy ISM policy.
+# Checked in order: hot must come before cold's broader "arkime" prefix.
 _TIER_PREFIXES = {
-    "cold": ["arkime", "sessions"],
+    "hot": ["arkime_sessions3", "malcolm_beats", "zeek"],
     "warm": ["suricata"],
-    "hot": ["zeek"],
+    "cold": ["arkime", "sessions"],
 }
 
 
@@ -272,9 +284,10 @@ class StorageManager:
         Returns one of: "cold", "warm", "hot", "unknown".
 
         Tier mapping:
-          - cold: arkime-*, sessions* (PCAP indices)
+          - hot: arkime_sessions3-* (Zeek metadata and Suricata alerts),
+            malcolm_beats_*, zeek-*
           - warm: suricata-* (IDS alert indices)
-          - hot: zeek-* (metadata log indices)
+          - cold: other arkime*, sessions* indices
         """
         lower = index_name.lower()
         for tier, prefixes in _TIER_PREFIXES.items():

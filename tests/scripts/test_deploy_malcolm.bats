@@ -26,7 +26,23 @@ load 'helpers/setup'
     [ "$status" -eq 0 ]
 }
 
-@test "ILM JSON: contains exactly 3 policies" {
+# OLD CODE START — one network policy replaced the three tiers (CR-017/CR-038).
+# @test "ILM JSON: contains exactly 3 policies" {
+#     local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
+#
+#     run python3 -c "
+# import json
+# with open('${ilm_file}') as f:
+#     data = json.load(f)
+# names = list(data.get('policies', {}).keys())
+# assert len(names) == 3, f'Expected 3 policies, got {len(names)}: {names}'
+# print('OK: ' + ', '.join(names))
+# "
+#     [ "$status" -eq 0 ]
+# }
+# OLD CODE END
+
+@test "ILM JSON: contains exactly 1 policy" {
     local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
 
     run python3 -c "
@@ -34,7 +50,7 @@ import json
 with open('${ilm_file}') as f:
     data = json.load(f)
 names = list(data.get('policies', {}).keys())
-assert len(names) == 3, f'Expected 3 policies, got {len(names)}: {names}'
+assert names == ['nettap-hot-policy'], f'Expected [nettap-hot-policy], got {names}'
 print('OK: ' + ', '.join(names))
 "
     [ "$status" -eq 0 ]
@@ -119,65 +135,92 @@ print('OK: zeek-* with 90d retention')
     [ "$status" -eq 0 ]
 }
 
-@test "ILM warm policy: targets suricata-* with warm stage at 7d, delete at 180d" {
+# OLD CODE START — suricata-* matched no index; Suricata alerts live in
+# arkime_sessions3 with Zeek and follow the hot policy (CR-017/CR-038).
+# @test "ILM warm policy: targets suricata-* with warm stage at 7d, delete at 180d" {
+#     local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
+#
+#     run python3 -c "
+# import json
+# with open('${ilm_file}') as f:
+#     data = json.load(f)
+# policy = data['policies']['nettap-warm-policy']['policy']
+#
+# templates = policy.get('ism_template', [])
+# patterns = [p for t in templates for p in t.get('index_patterns', [])]
+# assert 'suricata-*' in patterns, f'Expected suricata-* in {patterns}'
+#
+# states = {s['name']: s for s in policy['states']}
+#
+# # hot -> warm at 7d
+# hot_transitions = states['hot'].get('transitions', [])
+# warm_t = [t for t in hot_transitions if t['state_name'] == 'warm']
+# assert len(warm_t) == 1
+# assert warm_t[0]['conditions']['min_index_age'] == '7d'
+#
+# # warm -> delete at 180d
+# warm_transitions = states['warm'].get('transitions', [])
+# delete_t = [t for t in warm_transitions if t['state_name'] == 'delete']
+# assert len(delete_t) == 1
+# assert delete_t[0]['conditions']['min_index_age'] == '180d'
+#
+# # warm stage has force_merge
+# warm_actions = states['warm'].get('actions', [])
+# has_force_merge = any('force_merge' in a for a in warm_actions)
+# assert has_force_merge, 'warm stage should have force_merge action'
+# print('OK: suricata-* with 7d warm, 180d delete, force_merge')
+# "
+#     [ "$status" -eq 0 ]
+# }
+# OLD CODE END
+
+@test "ILM hot policy: targets Malcolm's indices with no rollover (CR-017)" {
     local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
 
     run python3 -c "
 import json
 with open('${ilm_file}') as f:
     data = json.load(f)
-policy = data['policies']['nettap-warm-policy']['policy']
+policy = data['policies']['nettap-hot-policy']['policy']
 
 templates = policy.get('ism_template', [])
 patterns = [p for t in templates for p in t.get('index_patterns', [])]
-assert 'suricata-*' in patterns, f'Expected suricata-* in {patterns}'
+assert 'arkime_sessions3-*' in patterns, f'Expected arkime_sessions3-* in {patterns}'
+assert 'malcolm_beats_*' in patterns, f'Expected malcolm_beats_* in {patterns}'
 
-states = {s['name']: s for s in policy['states']}
-
-# hot -> warm at 7d
-hot_transitions = states['hot'].get('transitions', [])
-warm_t = [t for t in hot_transitions if t['state_name'] == 'warm']
-assert len(warm_t) == 1
-assert warm_t[0]['conditions']['min_index_age'] == '7d'
-
-# warm -> delete at 180d
-warm_transitions = states['warm'].get('transitions', [])
-delete_t = [t for t in warm_transitions if t['state_name'] == 'delete']
-assert len(delete_t) == 1
-assert delete_t[0]['conditions']['min_index_age'] == '180d'
-
-# warm stage has force_merge
-warm_actions = states['warm'].get('actions', [])
-has_force_merge = any('force_merge' in a for a in warm_actions)
-assert has_force_merge, 'warm stage should have force_merge action'
-print('OK: suricata-* with 7d warm, 180d delete, force_merge')
+# Malcolm's dated indices have no rollover alias; a rollover would block delete
+actions = [a for s in policy['states'] for a in s.get('actions', [])]
+assert not any('rollover' in a for a in actions), 'rollover must not be used'
+print('OK: Malcolm indices, no rollover')
 "
     [ "$status" -eq 0 ]
 }
 
-@test "ILM cold policy: targets arkime-*/pcap-* with 30-day delete" {
-    local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
-
-    run python3 -c "
-import json
-with open('${ilm_file}') as f:
-    data = json.load(f)
-policy = data['policies']['nettap-cold-policy']['policy']
-
-templates = policy.get('ism_template', [])
-patterns = [p for t in templates for p in t.get('index_patterns', [])]
-assert 'arkime-*' in patterns, f'Expected arkime-* in {patterns}'
-assert 'pcap-*' in patterns, f'Expected pcap-* in {patterns}'
-
-states = {s['name']: s for s in policy['states']}
-hot_transitions = states['hot'].get('transitions', [])
-delete_t = [t for t in hot_transitions if t['state_name'] == 'delete']
-assert len(delete_t) == 1
-assert delete_t[0]['conditions']['min_index_age'] == '30d'
-print('OK: arkime-*/pcap-* with 30d retention')
-"
-    [ "$status" -eq 0 ]
-}
+# OLD CODE START — arkime-*/pcap-* matched no index (CR-017/CR-038).
+# @test "ILM cold policy: targets arkime-*/pcap-* with 30-day delete" {
+#     local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
+#
+#     run python3 -c "
+# import json
+# with open('${ilm_file}') as f:
+#     data = json.load(f)
+# policy = data['policies']['nettap-cold-policy']['policy']
+#
+# templates = policy.get('ism_template', [])
+# patterns = [p for t in templates for p in t.get('index_patterns', [])]
+# assert 'arkime-*' in patterns, f'Expected arkime-* in {patterns}'
+# assert 'pcap-*' in patterns, f'Expected pcap-* in {patterns}'
+#
+# states = {s['name']: s for s in policy['states']}
+# hot_transitions = states['hot'].get('transitions', [])
+# delete_t = [t for t in hot_transitions if t['state_name'] == 'delete']
+# assert len(delete_t) == 1
+# assert delete_t[0]['conditions']['min_index_age'] == '30d'
+# print('OK: arkime-*/pcap-* with 30d retention')
+# "
+#     [ "$status" -eq 0 ]
+# }
+# OLD CODE END
 
 @test "ILM policies: all actions have retry config for resilience" {
     local ilm_file="${REPO_ROOT}/config/opensearch/ilm-policy.json"
@@ -416,15 +459,24 @@ print('OK: all actions have retry config')
         "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
 }
 
-@test "deploy: bootstrap runs before apply_ilm_policy in start_services" {
-    # bootstrap_opensearch_security must appear before apply_ilm_policy
-    local bootstrap_line
-    bootstrap_line=$(grep -n "bootstrap_opensearch_security" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*bootstrap_opensearch_security()" | head -1 | cut -d: -f1)
-    local ilm_line
-    ilm_line=$(grep -n "apply_ilm_policy" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*apply_ilm_policy()" | head -1 | cut -d: -f1)
-    [ -n "$bootstrap_line" ]
-    [ -n "$ilm_line" ]
-    [ "$bootstrap_line" -lt "$ilm_line" ]
+# OLD CODE START — deploy no longer applies the static ISM file (CR-017).
+# @test "deploy: bootstrap runs before apply_ilm_policy in start_services" {
+#     # bootstrap_opensearch_security must appear before apply_ilm_policy
+#     local bootstrap_line
+#     bootstrap_line=$(grep -n "bootstrap_opensearch_security" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*bootstrap_opensearch_security()" | head -1 | cut -d: -f1)
+#     local ilm_line
+#     ilm_line=$(grep -n "apply_ilm_policy" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh" | grep -v "^.*#" | grep -v "^.*apply_ilm_policy()" | head -1 | cut -d: -f1)
+#     [ -n "$bootstrap_line" ]
+#     [ -n "$ilm_line" ]
+#     [ "$bootstrap_line" -lt "$ilm_line" ]
+# }
+# OLD CODE END
+
+@test "deploy: start_services leaves ISM policies to the daemon (CR-017)" {
+    # The static file overwrote the user's retention; the daemon applies and
+    # attaches the generated policy instead.
+    run bash -c "grep -v '^[[:space:]]*#' '${REPO_ROOT}/scripts/install/deploy-malcolm.sh' | grep -v 'apply_ilm_policy()' | grep -q 'apply_ilm_policy'"
+    [ "$status" -ne 0 ]
 }
 
 @test "deploy: bootstrap_index_templates function is defined" {

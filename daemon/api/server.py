@@ -30,7 +30,11 @@ from aiohttp import web
 
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
-from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
+
+# OLD CODE START — apply_ilm_policies (static file) is no longer used (CR-038)
+# from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
+# OLD CODE END
+from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
 from api.daemon_auth import (
@@ -494,9 +498,14 @@ async def handle_system_health(request: web.Request) -> web.Response:
 async def handle_ilm_apply(request: web.Request) -> web.Response:
     """POST /api/ilm/apply -- Apply ILM policies to OpenSearch."""
     try:
-        opensearch_url: str = request.app["opensearch_url"]
+        # OLD CODE START — applied the static ilm-policy.json (fixed days, no
+        # auth, not in the daemon image), overwriting the user's retention (CR-038).
+        # opensearch_url: str = request.app["opensearch_url"]
+        # loop = asyncio.get_running_loop()
+        # results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
+        # OLD CODE END
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
+        results = await loop.run_in_executor(None, _apply_current_ilm, request.app)
         return web.json_response(
             {
                 "result": "ilm_policies_applied",
@@ -620,6 +629,19 @@ def _apply_latest_ilm(app: web.Application) -> dict[str, str] | None:
         config_manager.mark_ilm_applied(results)
         state.applied_revision = revision
         return results
+
+
+def _apply_current_ilm(app: web.Application) -> dict[str, str]:
+    """Apply ILM for the current retention config, even if already applied.
+
+    Holds the same lock as ``_apply_latest_ilm`` so a concurrent save is
+    never overwritten with an older config.
+    """
+    with app["ilm_sync"].lock:
+        policies = generate_ilm_policies(app["storage"].config)
+        return apply_ilm_policies_from_config(
+            app["opensearch_url"], policies, http_auth=app.get("http_auth")
+        )
 
 
 def _ilm_in_sync(app: web.Application) -> bool:

@@ -406,9 +406,15 @@ class TestTierUsageAccounting:
 
             result = mgr.get_tier_usage()
 
-        assert result["hot_bytes"] == 80_000_000  # 50M + 30M
+        # OLD CODE START — arkime_sessions3 was counted as cold (CR-038)
+        # assert result["hot_bytes"] == 80_000_000  # 50M + 30M
+        # assert result["warm_bytes"] == 10_000_000
+        # assert result["cold_bytes"] == 200_000_000
+        # OLD CODE END
+        # arkime_sessions3 holds Zeek metadata and Suricata alerts: hot tier
+        assert result["hot_bytes"] == 280_000_000  # 50M + 30M + 200M
         assert result["warm_bytes"] == 10_000_000
-        assert result["cold_bytes"] == 200_000_000
+        assert result["cold_bytes"] == 0
         assert result["total_bytes"] == 290_000_000
         assert result["disk_capacity_bytes"] == 1_000_000_000_000
 

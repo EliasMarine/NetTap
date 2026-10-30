@@ -164,6 +164,53 @@ def _update_policy(
     return "updated"
 
 
+def _attach_policy(client: OpenSearch, policy_name: str, policy_body: dict) -> None:
+    """Attach *policy_name* to the existing indices its ism_template matches.
+
+    ism_template only catches indices created after the policy exists, so
+    ``add`` attaches the ones already there; indices that already have a
+    policy are reported back and left alone. Updating a policy does not
+    reach indices it already manages, so ``change_policy`` moves them onto
+    the latest version (it also moves them off any other policy; nothing
+    else manages these indices). Both calls are idempotent.
+
+    Raises:
+        Exception from opensearch-py if a request fails.
+    """
+    patterns = [
+        pattern
+        for template in policy_body["policy"].get("ism_template", [])
+        for pattern in template.get("index_patterns", [])
+    ]
+    if not patterns:
+        return
+    target = ",".join(patterns)
+    for api in ("add", "change_policy"):
+        response = client.transport.perform_request(
+            "POST", f"/_plugins/_ism/{api}/{target}", body={"policy_id": policy_name}
+        )
+        logger.info(
+            "ISM %s '%s' on %s: %s indices updated",
+            api,
+            policy_name,
+            target,
+            response.get("updated_indices", 0),
+        )
+        failed = [
+            f
+            for f in response.get("failed_indices", [])
+            if "already has a policy" not in f.get("reason", "")
+        ]
+        if failed:
+            logger.warning(
+                "ISM %s '%s' skipped %d indices: %s",
+                api,
+                policy_name,
+                len(failed),
+                failed[:5],
+            )
+
+
 # OLD CODE START — apply_ilm_policies() loads policies from a JSON file.
 # Replaced by apply_ilm_policies_from_config() which accepts pre-generated
 # policy dicts from ilm_generator.generate_ilm_policies(). The file-based
@@ -302,7 +349,8 @@ def apply_ilm_policies_from_config(
 
     Same create/update/skip logic as ``apply_ilm_policies()`` but uses
     pre-generated policy bodies from ``generate_ilm_policies()`` instead
-    of loading from the static JSON file.
+    of loading from the static JSON file. Each policy is then attached to
+    the existing indices it targets (``_attach_policy``).
 
     Args:
         opensearch_url: Base URL of the OpenSearch cluster
@@ -389,6 +437,10 @@ def apply_ilm_policies_from_config(
                         seq_no,
                         primary_term,
                     )
+
+            # A failure here marks the policy as an error so the ILM retry
+            # worker tries again.
+            _attach_policy(client, policy_name, policy_body)
         except Exception as exc:
             error_msg = f"error: {exc}"
             logger.error("Failed to apply ISM policy '%s': %s", policy_name, exc)

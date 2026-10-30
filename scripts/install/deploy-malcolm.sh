@@ -196,8 +196,13 @@ start_services() {
     # ---------------------------------------------------------------------------
     monitor_startup
 
-    # Apply ILM policy once OpenSearch is confirmed healthy and auth works
-    apply_ilm_policy
+    # OLD CODE START — the static file's update path overwrote the user's
+    # retention, and it never attached the policy to existing indices. The
+    # storage daemon now applies and attaches ISM on startup and on every
+    # retention save (CR-017/CR-038).
+    # # Apply ILM policy once OpenSearch is confirmed healthy and auth works
+    # apply_ilm_policy
+    # OLD CODE END
 
     # Final status report
     log ""
@@ -554,6 +559,7 @@ bootstrap_index_templates() {
 # ---------------------------------------------------------------------------
 # Apply OpenSearch ISM (Index State Management) policies
 # ---------------------------------------------------------------------------
+# NOT CALLED since CR-017: the storage daemon owns ISM (see start_services).
 # The ILM JSON contains 3 separate policies under .policies.*:
 #   - nettap-hot-policy   (Zeek metadata, 90-day retention)
 #   - nettap-warm-policy  (Suricata alerts, 180-day retention)
