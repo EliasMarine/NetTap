@@ -385,7 +385,7 @@ class TestGetStats:
             "aggregations": {
                 "unique_domains": {"value": 500},
                 "nxdomain_count": {"doc_count": 42},
-                "avg_rtt": {"value": 5000000},  # 5ms in nanoseconds
+                "avg_rtt": {"value": 0.005},  # 5ms; zeek.dns.rtt is seconds
             },
         }
 
