@@ -1,6 +1,6 @@
 # Code Review Fix Tracker (review of 2026-10-30)
 
-**Progress:** <!--P-->11 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->4/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
+**Progress:** <!--P-->12 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->5/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
 
 **Findings:** `docs/reviews/2026-10-30-code-review.md` ([PR #146](https://github.com/EliasMarine/NetTap/pull/146)). The detail and recommended fix for each ID are there.  
 **Linear:** NET-112 (umbrella).  
@@ -32,7 +32,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 - [ ] <!--B:CR-034-->CR-034: Login has no effective rate limit
 - [ ] <!--B:CR-017-->CR-017: Generated ISM policies never manage a real index
 - [ ] <!--B:CR-038-->CR-038: Static ISM policy matches no real index
-- [ ] <!--B:LD-001-->LD-001: Daemon boot units are never enabled
+- [x] <!--B:LD-001-->LD-001: Daemon boot units are never enabled
 
 ## Fix log
 
@@ -43,6 +43,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | 2026-10-30 | CR-003 | NET-114: /dashboards/ needs a NetTap login (nginx auth_request to /api/auth/me); nginx sets X-Forwarded-User/Roles from the session and drops the client's. Still open: direct container access to dashboards:5601 and OpenSearch :9200 with spoofed headers | vitest +2, bats +3 (new test_nginx_conf.bats), fail without the fix |
 | 2026-10-30 | CR-021, CR-022 | NET-115: ARKIME_SECRET and GRAFANA_ADMIN_PASSWORD required in compose (no public fallback); malcolm-config.sh adds missing secrets to an existing .env; Arkime viewer pinned to 127.0.0.1; /grafana/ behind NetTap login (anonymous Viewer kept behind the gate). Device: deploy script must add .env keys first and reset Grafana's stored admin password | bats +6 (compose 2, nginx 1, malcolm-config 3; 5 fail without the fix, 1 guards existing secrets) |
 | 2026-10-30 | CR-025 | NET-116: nettap.service ExecStop uses 'docker compose stop' instead of 'down', so reboots keep containers. Device: the deploy script rewrites the installed unit. Not done: capture containers still depend on daemon health | bats +1 (new test_install.bats), fails without the fix |
+| 2026-10-30 | LD-001 | NET-117: bridge/mirror wants/ links use the relative target ../<unit> via replace_symlink() | pytest +2 (fail without the fix), 49 passed; ruff clean |
 <!--LOG-->
 
 ## Found while fixing
@@ -103,7 +104,7 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ☐ | CR-035 | web-pages-B | `web/src/routes/system/updates/+page.svelte:282` | Apply Updates shows "Update Complete" after the 10 s proxy timeout while the update is still running | Open |
 | ☐ | CR-036 | web-pages-C | `web/src/routes/threats/+page.svelte:145` | Threats page shows a clean 'no threats' report when the threat analysis fails | Open |
 | ☐ | CR-038 | malcolm-stack, scripts-infra | `config/opensearch/ilm-policy.json:92 (+1)` | ISM policies match no real index and use rollover without an alias, so tiered retention never applies | Open |
-| ☐ | LD-001 | lead (DHCP design recon) | `daemon/services/bridge_manager.py:635 (+1)` | Boot units written by the daemon are never enabled: the wants/ symlinks point at the container path | Open |
+| ✅ | LD-001 | lead (DHCP design recon) | `daemon/services/bridge_manager.py:635 (+1)` | Boot units written by the daemon are never enabled: the wants/ symlinks point at the container path | Fixed (batch 1) |
 | ☐ | MS-003 | malcolm-stack | `docker/docker-compose.yml:473` | A disabled packet-capture setting is turned back on at every boot | Open |
 | ☐ | MS-004 | malcolm-stack | `docker/docker-compose.yml:518` | arkime-live has no curlrc mount, so it hangs forever and never captures or initialises the DB | Open |
 | ☐ | MS-005 | malcolm-stack | `scripts/install/deploy-malcolm.sh:521` | malcolm_template is pushed with a literal REPLACER index pattern, so it never applies | Open |

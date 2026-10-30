@@ -192,6 +192,30 @@ class TestSetup(unittest.TestCase):
             self.assertTrue(len(result["persistence_files"]) >= 1)
 
 
+class TestBootUnitLink(unittest.TestCase):
+    """LD-001: the boot unit's wants/ link must resolve on the host."""
+
+    def test_link_is_relative_and_replaces_a_stale_one(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as systemd_dir:
+            wants = os.path.join(systemd_dir, "multi-user.target.wants")
+            os.makedirs(wants)
+            link = os.path.join(wants, "nettap-mirror.service")
+            os.symlink("/host/etc/systemd/system/nettap-mirror.service", link)
+
+            mgr = MirrorManager(
+                interface="enp2s0",
+                management_interface="enp3s0",
+                netplan_dir="",
+                systemd_dir=systemd_dir,
+            )
+            mgr._write_systemd_persistence()
+
+            self.assertEqual(os.readlink(link), "../nettap-mirror.service")
+            self.assertTrue(os.path.isfile(link))
+
+
 class TestTeardown(unittest.TestCase):
     """Tests for teardown()."""
 

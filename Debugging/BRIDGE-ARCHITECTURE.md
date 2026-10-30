@@ -646,6 +646,7 @@ Verifies:
 | **No bridge creation from daemon** | Wizard step 3 only generated mock preview | Added `BridgeManager.create_bridge()` + `/api/setup/bridge` endpoint | **FIXED** (PR #83) |
 | **No readiness check** | User had no guidance on cable migration | Added 8-point readiness check at `/api/bridge/readiness` | **FIXED** (PR #83) |
 | **No Go Live page** | Wizard redirected to `/login` with no guidance | Added `/go-live` page with 3-phase workflow | **FIXED** (PR #83) |
+| **Boot units never enabled** (review LD-001) | `nettap-bridge.service` / `nettap-mirror.service` wants/ links pointed at the container path `/host/etc/...`, which doesn't exist on the host, so the oneshot never ran at boot; re-creating the dangling link also raised FileExistsError | Links now use the relative target `../<unit>` via `replace_symlink()` (lexists-aware). Existing devices get the fixed link the next time the bridge or mirror persistence is written | **FIXED** (fix/code-review-batch-1), device check pending |
 
 ### Design Gaps
 
