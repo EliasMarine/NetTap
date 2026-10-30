@@ -756,6 +756,10 @@
 							<span class="info-value mono">{smartHealth.model || '--'}</span>
 						</div>
 						<div class="info-row">
+							<span class="info-label">Serial</span>
+							<span class="info-value mono">{smartHealth.serial || '--'}</span>
+						</div>
+						<div class="info-row">
 							<span class="info-label">Temperature</span>
 							<span class="info-value mono">{smartHealth.temperature_c ?? '--'}&deg;C</span>
 						</div>
@@ -766,6 +770,18 @@
 						<div class="info-row">
 							<span class="info-label">Power-On Hours</span>
 							<span class="info-value mono">{smartHealth.power_on_hours != null ? smartHealth.power_on_hours.toLocaleString() : '--'}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Total Written</span>
+							<span class="info-value mono">{smartHealth.total_bytes_written != null ? (smartHealth.total_bytes_written / (1024**4)).toFixed(2) + ' TB' : '--'}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Total Read</span>
+							<span class="info-value mono">{smartHealth.total_bytes_read != null ? (smartHealth.total_bytes_read / (1024**4)).toFixed(2) + ' TB' : '--'}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Media Errors</span>
+							<span class="info-value mono">{smartHealth.media_errors ?? '--'}</span>
 						</div>
 					</div>
 				{:else}
