@@ -236,8 +236,14 @@ class RetentionConfigManager:
             # partial updates that create invalid combinations (e.g. lowering
             # emergency_threshold below the existing disk_threshold)
             merged_dict = {
-                "disk_threshold_percent": int(merged.disk_threshold * 100),
-                "emergency_threshold_percent": int(merged.emergency_threshold * 100),
+                # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+                # "disk_threshold_percent": int(merged.disk_threshold * 100),
+                # OLD CODE END
+                "disk_threshold_percent": round(merged.disk_threshold * 100),
+                # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+                # "emergency_threshold_percent": int(merged.emergency_threshold * 100),
+                # OLD CODE END
+                "emergency_threshold_percent": round(merged.emergency_threshold * 100),
             }
             validate_config(merged_dict)
             self._config = merged
@@ -329,14 +335,21 @@ class RetentionConfigManager:
             cold_days=int(os.environ.get("RETENTION_COLD", defaults.cold_days)),
             disk_threshold=int(
                 os.environ.get(
-                    "DISK_THRESHOLD_PERCENT", int(defaults.disk_threshold * 100)
+                    # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+                    # "DISK_THRESHOLD_PERCENT", int(defaults.disk_threshold * 100)
+                    # OLD CODE END
+                    "DISK_THRESHOLD_PERCENT",
+                    round(defaults.disk_threshold * 100),
                 )
             )
             / 100.0,
             emergency_threshold=int(
                 os.environ.get(
                     "EMERGENCY_THRESHOLD_PERCENT",
-                    int(defaults.emergency_threshold * 100),
+                    # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+                    # int(defaults.emergency_threshold * 100),
+                    # OLD CODE END
+                    round(defaults.emergency_threshold * 100),
                 )
             )
             / 100.0,
@@ -367,12 +380,18 @@ class RetentionConfigManager:
         disk_pct = (
             int(t["disk_threshold_percent"])
             if "disk_threshold_percent" in t
-            else int(self._config.disk_threshold * 100)
+            # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+            # else int(self._config.disk_threshold * 100)
+            # OLD CODE END
+            else round(self._config.disk_threshold * 100)
         )
         emergency_pct = (
             int(t["emergency_threshold_percent"])
             if "emergency_threshold_percent" in t
-            else int(self._config.emergency_threshold * 100)
+            # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+            # else int(self._config.emergency_threshold * 100)
+            # OLD CODE END
+            else round(self._config.emergency_threshold * 100)
         )
 
         return RetentionConfig(
@@ -398,8 +417,14 @@ class RetentionConfigManager:
                 "cold_days": config.cold_days,
             },
             "thresholds": {
-                "disk_threshold_percent": int(config.disk_threshold * 100),
-                "emergency_threshold_percent": int(config.emergency_threshold * 100),
+                # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+                # "disk_threshold_percent": int(config.disk_threshold * 100),
+                # OLD CODE END
+                "disk_threshold_percent": round(config.disk_threshold * 100),
+                # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+                # "emergency_threshold_percent": int(config.emergency_threshold * 100),
+                # OLD CODE END
+                "emergency_threshold_percent": round(config.emergency_threshold * 100),
             },
             "ilm_applied": self._ilm_status
             or {
@@ -433,8 +458,14 @@ class RetentionConfigManager:
             "RETENTION_HOT": str(config.hot_days),
             "RETENTION_WARM": str(config.warm_days),
             "RETENTION_COLD": str(config.cold_days),
-            "DISK_THRESHOLD_PERCENT": str(int(config.disk_threshold * 100)),
-            "EMERGENCY_THRESHOLD_PERCENT": str(int(config.emergency_threshold * 100)),
+            # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+            # "DISK_THRESHOLD_PERCENT": str(int(config.disk_threshold * 100)),
+            # OLD CODE END
+            "DISK_THRESHOLD_PERCENT": str(round(config.disk_threshold * 100)),
+            # OLD CODE START — int() truncated 0.57*100 (56.99..) to 56
+            # "EMERGENCY_THRESHOLD_PERCENT": str(int(config.emergency_threshold * 100)),
+            # OLD CODE END
+            "EMERGENCY_THRESHOLD_PERCENT": str(round(config.emergency_threshold * 100)),
         }
 
         # Read existing .env if it exists
