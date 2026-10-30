@@ -51,7 +51,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned: an unpinned ruff changes its default rules and formatter between releases
+        run: pip install ruff==0.17.3
 
       - name: Ruff check (lint)
         run: ruff check daemon/

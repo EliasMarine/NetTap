@@ -17,3 +17,8 @@ dev = [
     "pytest-cov>=4.1",
     "aioresponses>=0.7",
 ]
+
+[tool.ruff.lint]
+# Pin the rule set. Ruff 0.17 widened its defaults from E4/E7/E9/F to ~400 rules,
+# which turned the daemon from 5 lint errors into 700+ with no code change.
+select = ["E4", "E7", "E9", "F"]
