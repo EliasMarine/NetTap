@@ -536,6 +536,9 @@
 				const exData = await exRes.json();
 				const count = (exData.excluded_ips || []).length;
 				healthChecks[2] = { label: 'Self-Traffic Exclusion', status: count > 0 ? 'pass' : 'warn', detail: count > 0 ? `${count} IP(s) excluded` : 'No IPs configured' };
+			} else {
+				// OLD CODE: no else branch — a non-OK response left the row "Checking..." forever (2026-10-29)
+				healthChecks[2] = { label: 'Self-Traffic Exclusion', status: 'warn', detail: `Could not check (HTTP ${exRes.status})` };
 			}
 		} catch { healthChecks[2] = { label: 'Self-Traffic Exclusion', status: 'warn', detail: 'Could not check' }; }
 
@@ -546,7 +549,13 @@
 				const brRes = await fetch('/api/bridge/health');
 				if (brRes.ok) {
 					const brData = await brRes.json();
-					healthChecks[idx] = { label: 'Bridge Health', status: brData.healthy ? 'pass' : 'warn', detail: brData.healthy ? 'Bridge active' : 'Bridge not fully healthy' };
+					// OLD CODE START — the daemon never sends `healthy`, so this row always warned (2026-10-29)
+					// healthChecks[idx] = { label: 'Bridge Health', status: brData.healthy ? 'pass' : 'warn', detail: brData.healthy ? 'Bridge active' : 'Bridge not fully healthy' };
+					// OLD CODE END
+					const bridgeNormal = brData.health_status === 'normal';
+					healthChecks[idx] = { label: 'Bridge Health', status: bridgeNormal ? 'pass' : 'warn', detail: bridgeNormal ? 'Bridge active' : 'Bridge not fully healthy' };
+				} else {
+					healthChecks[idx] = { label: 'Bridge Health', status: 'warn', detail: `Could not check (HTTP ${brRes.status})` };
 				}
 			} catch { healthChecks[idx] = { label: 'Bridge Health', status: 'warn', detail: 'Could not check' }; }
 			idx++;
@@ -558,7 +567,15 @@
 				const uRes = await fetch('/api/integrations/unifi/status');
 				if (uRes.ok) {
 					const uData = await uRes.json();
-					healthChecks[idx] = { label: 'UniFi Controller', status: uData.configured ? 'pass' : 'warn', detail: uData.configured ? `Connected (${uData.cache_counts?.clients || 0} clients)` : 'Not configured' };
+					// OLD CODE START — "configured" was reported as connected before any poll succeeded (2026-10-29)
+					// healthChecks[idx] = { label: 'UniFi Controller', status: uData.configured ? 'pass' : 'warn', detail: uData.configured ? `Connected (${uData.cache_counts?.clients || 0} clients)` : 'Not configured' };
+					// OLD CODE END
+					const unifiDetail = uData.connected
+						? `Connected (${uData.cache_counts?.clients || 0} clients)`
+						: uData.configured ? 'Configured, not connected yet' : 'Not configured';
+					healthChecks[idx] = { label: 'UniFi Controller', status: uData.connected ? 'pass' : 'warn', detail: unifiDetail };
+				} else {
+					healthChecks[idx] = { label: 'UniFi Controller', status: 'warn', detail: `Could not check (HTTP ${uRes.status})` };
 				}
 			} catch { healthChecks[idx] = { label: 'UniFi Controller', status: 'warn', detail: 'Could not check' }; }
 		}
