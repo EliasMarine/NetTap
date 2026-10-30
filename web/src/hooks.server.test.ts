@@ -24,9 +24,11 @@ vi.mock('@sveltejs/kit', async (importOriginal) => {
 	};
 });
 
-function createMockEvent(pathname: string, token?: string, user?: any) {
+function createMockEvent(pathname: string, token?: string, user?: any, method = 'GET') {
+	const url = new URL(`http://localhost${pathname}`);
 	return {
-		url: new URL(`http://localhost${pathname}`),
+		url,
+		request: new Request(url, { method }),
 		cookies: {
 			get: vi.fn().mockImplementation((name: string) => {
 				if (name === 'nettap_token') return token;

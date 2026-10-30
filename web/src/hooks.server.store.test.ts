@@ -102,3 +102,43 @@ describe('first-run routes with a real user store', () => {
 		await expect(auth.createUser('attacker', 'Password1')).rejects.toThrow('User store unusable');
 	});
 });
+
+describe('exact pre-Account wizard requests', () => {
+	const BOOTSTRAP: [string, string][] = [
+		['GET', '/api/settings/excluded-ips'],
+		['POST', '/api/integrations/unifi/configure'],
+		['POST', '/api/integrations/unifi/test'],
+	];
+
+	it.each(BOOTSTRAP)('%s %s is open with no store', async (method, path) => {
+		await run(path, method);
+		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(BOOTSTRAP)('%s %s needs a session once a user exists', async (method, path) => {
+		writeStore(ADMIN_STORE);
+		await expect(run(path, method)).rejects.toMatchObject({ status: 302, location: '/login' });
+
+		await run(path, method, sessionToken);
+		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(BOOTSTRAP)('%s %s fails closed on a corrupt store', async (method, path) => {
+		writeStore('{"users": [ {');
+		await expect(run(path, method)).rejects.toMatchObject({ location: '/login' });
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['PUT', '/api/settings/excluded-ips'],
+		['POST', '/api/settings/excluded-ips'],
+		['GET', '/api/integrations/unifi/sites'],
+		['GET', '/api/integrations/unifi/configure'],
+		['POST', '/api/integrations/unifi/configure/x'],
+		['POST', '/api/integrations/unifi/test/'],
+		['GET', '/api/settings/excluded-ips/extra'],
+	])('%s %s stays protected even with no store', async (method, path) => {
+		await expect(run(path, method)).rejects.toMatchObject({ status: 302, location: '/setup' });
+		expect(resolve).not.toHaveBeenCalled();
+	});
+});

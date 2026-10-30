@@ -28,12 +28,25 @@ const PUBLIC_PATHS = ['/login', '/api/auth', '/api/tools', '/api/lookup', '/tool
  */
 const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
 
+/** The calls the wizard makes before its Account step, matched by exact
+ * method and path (not prefix). Opening them before the first admin exists
+ * adds nothing: whoever can reach the device then can claim it anyway.
+ */
+const FIRST_RUN_REQUESTS = new Set([
+	'GET /api/settings/excluded-ips',
+	'POST /api/integrations/unifi/configure',
+	'POST /api/integrations/unifi/test',
+]);
+
 function isPublicPath(pathname: string): boolean {
 	return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 }
 
-function isFirstRunPath(pathname: string): boolean {
-	return FIRST_RUN_PATHS.some((p) => pathname.startsWith(p));
+function isFirstRunPath(method: string, pathname: string): boolean {
+	return (
+		FIRST_RUN_PATHS.some((p) => pathname.startsWith(p)) ||
+		FIRST_RUN_REQUESTS.has(`${method} ${pathname}`)
+	);
 }
 
 /** True only for a readable, empty user store. A damaged store never reopens first-run. */
@@ -92,7 +105,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (!isPublicPath(pathname)) {
 		// --- First run: only the wizard and Go Live are open; everything else goes to setup ---
 		const firstRun = isFirstRun();
-		if (firstRun && isFirstRunPath(pathname)) {
+		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
 			return resolve(event);
 		}
 		if (firstRun) {
