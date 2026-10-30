@@ -55,6 +55,31 @@ _CACHE_TTL_VPN = 600  # 10 minutes
 # Kept for backward compat with tests that import it
 _CACHE_TTL = _CACHE_TTL_CLIENTS
 
+# Every per-data-type cache: ``_cache_<name>`` plus ``_cache_<name>_time``
+_CACHE_NAMES = (
+    "clients",
+    "devices",
+    "networks",
+    "wifi",
+    "firewall_policies",
+    "firewall_zones",
+    "acl_rules",
+    "dns_policies",
+    "dpi_categories",
+    "dpi_applications",
+    "wans",
+    "vpn_tunnels",
+)
+
+
+def normalize_controller_url(controller_url: str) -> str:
+    """Strip a trailing slash and auto-upgrade http:// to https://."""
+    url = controller_url.rstrip("/")
+    if url.startswith("http://"):
+        url = "https://" + url[7:]
+        logger.info("Auto-upgraded UniFi URL to HTTPS: %s", url)
+    return url
+
 
 class UnifiAuthError(Exception):
     """Raised when the UniFi API rejects the API key (HTTP 401)."""
@@ -131,6 +156,10 @@ class UnifiIntegration:
         self._last_poll_time: float = 0
         self._last_error: str | None = None
 
+        # Bumped whenever the controller identity changes. Polls and tests
+        # capture it before awaiting and drop results from an older value.
+        self._generation: int = 0
+
     @property
     def is_configured(self) -> bool:
         return self._configured
@@ -146,21 +175,43 @@ class UnifiIntegration:
         Args:
             controller_url: Base URL (e.g. "https://192.168.1.1").
             api_key: UniFi API key (generated in Integrations settings).
-            site_id: Optional site UUID. If None, call list_sites() to
-                discover it.
+            site_id: Optional site UUID. If None, the current site is kept
+                (call list_sites() to discover one).
         """
-        # Strip trailing slash and auto-upgrade to HTTPS
-        url = controller_url.rstrip("/")
-        if url.startswith("http://"):
-            url = "https://" + url[7:]
-            logger.info("Auto-upgraded UniFi URL to HTTPS: %s", url)
+        # OLD CODE START — every configure() kept the old poll state and caches
+        # and replaced site_id with None when it was omitted (2026-10-29)
+        # # Strip trailing slash and auto-upgrade to HTTPS
+        # url = controller_url.rstrip("/")
+        # if url.startswith("http://"):
+        #     url = "https://" + url[7:]
+        #     logger.info("Auto-upgraded UniFi URL to HTTPS: %s", url)
+        # self._base_url = url
+        # self._api_key = api_key
+        # self._site_id = site_id
+        # self._configured = True
+        # self._last_error = None
+        # OLD CODE END
+        url = normalize_controller_url(controller_url)
+        new_site_id = site_id if site_id is not None else self._site_id
+        current = (self._base_url, self._api_key, self._site_id)
+        if (url, api_key, new_site_id) != current:
+            self._reset_connection_state()
         self._base_url = url
         self._api_key = api_key
-        self._site_id = site_id
+        self._site_id = new_site_id
         self._configured = True
-        self._last_error = None
         self._save_config()
         logger.info("UniFi integration configured for %s", self._base_url)
+
+    def _reset_connection_state(self) -> None:
+        """Forget polls, errors and caches that belong to the old controller."""
+        self._generation += 1
+        for name in _CACHE_NAMES:
+            setattr(self, f"_cache_{name}", [])
+            setattr(self, f"_cache_{name}_time", 0)
+        self._device_cache = self._cache_clients
+        self._last_poll_time = 0
+        self._last_error = None
 
     def _save_config(self) -> None:
         """Persist UniFi config to disk so it survives container restarts."""
@@ -239,31 +290,46 @@ class UnifiIntegration:
         Raises:
             UnifiAuthError: If the API returns 401 (invalid/expired key).
             aiohttp.ClientResponseError: On other non-2xx responses.
-            Exception: On connection errors (timeout, refused, SSL) — stored
-                in ``self._last_error`` before re-raising so callers can
-                surface the message without catching.
+            Exception: On connection errors (timeout, refused, SSL).
+
+        Never writes shared status: only the generation-checked callers
+        (``_cached_poll`` and ``test_connection``) update ``_last_error``.
         """
         session = await self._get_session()
         url = f"{self._base_url}/proxy/network/integration{path}"
         headers = {"X-API-Key": self._api_key}
-        try:
-            async with session.request(
-                method,
-                url,
-                headers=headers,
-                params=params,
-                ssl=False,
-            ) as resp:
-                if resp.status == 401:
-                    self._last_error = "Invalid API key"
-                    raise UnifiAuthError("Invalid API key")
-                resp.raise_for_status()
-                return await resp.json()
-        except UnifiAuthError:
-            raise
-        except Exception as exc:
-            self._last_error = f"Request error ({method} {path}): {exc}"
-            raise
+        # OLD CODE START — the transport wrote shared status, so a slow request
+        # for an old controller could overwrite the current one's (2026-10-29)
+        # try:
+        #     async with session.request(
+        #         method,
+        #         url,
+        #         headers=headers,
+        #         params=params,
+        #         ssl=False,
+        #     ) as resp:
+        #         if resp.status == 401:
+        #             self._last_error = "Invalid API key"
+        #             raise UnifiAuthError("Invalid API key")
+        #         resp.raise_for_status()
+        #         return await resp.json()
+        # except UnifiAuthError:
+        #     raise
+        # except Exception as exc:
+        #     self._last_error = f"Request error ({method} {path}): {exc}"
+        #     raise
+        # OLD CODE END
+        async with session.request(
+            method,
+            url,
+            headers=headers,
+            params=params,
+            ssl=False,
+        ) as resp:
+            if resp.status == 401:
+                raise UnifiAuthError("Invalid API key")
+            resp.raise_for_status()
+            return await resp.json()
 
     async def _paginate(
         self,
@@ -358,17 +424,33 @@ class UnifiIntegration:
             self._last_error = "Not configured"
             return False
 
+        # OLD CODE START — wrote status even if the controller changed meanwhile (2026-10-29)
+        # try:
+        #     await self.get_info()
+        #     self._last_error = None
+        #     return True
+        # except UnifiAuthError:
+        #     self._last_error = "Invalid API key"
+        #     return False
+        # except Exception as exc:
+        #     self._last_error = f"Connection error: {exc}"
+        #     logger.warning("UniFi connection test failed: %s", exc)
+        #     return False
+        # OLD CODE END
+        generation = self._generation
         try:
             await self.get_info()
-            self._last_error = None
-            return True
+            error = None
         except UnifiAuthError:
-            self._last_error = "Invalid API key"
-            return False
+            error = "Invalid API key"
         except Exception as exc:
-            self._last_error = f"Connection error: {exc}"
+            error = f"Connection error: {exc}"
             logger.warning("UniFi connection test failed: %s", exc)
-            return False
+
+        if generation != self._generation:
+            return False  # tested a controller that is no longer configured
+        self._last_error = error
+        return error is None
 
     # ------------------------------------------------------------------
     # Helpers: site-aware path + cached poll
@@ -430,24 +512,29 @@ class UnifiIntegration:
         if cache and (now - cache_time) < ttl:
             return cache
 
+        generation = self._generation
         try:
             if paginated:
                 data = await self._paginate(path)
             else:
                 result = await self._request("GET", path)
                 data = result.get("data", []) if isinstance(result, dict) else []
-
-            setattr(self, cache_attr, data)
-            setattr(self, time_attr, now)
-            self._last_poll_time = now
-            self._last_error = None
-            logger.info("UniFi poll %s: got %d items", label or path, len(data))
-            return data
-
         except Exception as exc:
+            if generation != self._generation:
+                return getattr(self, cache_attr)  # stale: drop the old error
             self._last_error = f"Poll error ({label or path}): {exc}"
             logger.warning("UniFi poll %s failed: %s", label or path, exc)
             return cache  # Return stale cache
+
+        if generation != self._generation:
+            # The controller changed while this poll ran: keep its data out.
+            return getattr(self, cache_attr)
+        setattr(self, cache_attr, data)
+        setattr(self, time_attr, now)
+        self._last_poll_time = now
+        self._last_error = None
+        logger.info("UniFi poll %s: got %d items", label or path, len(data))
+        return data
 
     # ------------------------------------------------------------------
     # Clients (device enrichment — primary use case)
@@ -745,26 +832,18 @@ class UnifiIntegration:
         """
         # Aggregate cache stats across all data types
         cache_stats: dict[str, int] = {}
-        for name in (
-            "clients",
-            "devices",
-            "networks",
-            "wifi",
-            "firewall_policies",
-            "firewall_zones",
-            "acl_rules",
-            "dns_policies",
-            "dpi_categories",
-            "dpi_applications",
-            "wans",
-            "vpn_tunnels",
-        ):
+        for name in _CACHE_NAMES:
             cache_list: list[dict] = getattr(self, f"_cache_{name}", [])
             cache_stats[name] = len(cache_list)
 
         return {
             "configured": self._configured,
             "controller_url": self._base_url,
+            "site_id": self._site_id,
+            # True only once the current configuration has polled successfully
+            "connected": bool(
+                self._configured and self._last_poll_time > 0 and not self._last_error
+            ),
             "last_poll_time": self._last_poll_time,
             "cache_counts": cache_stats,
             # Legacy compat fields

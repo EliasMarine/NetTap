@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 
 from services.device_registry import DeviceRegistry
-from services.unifi_integration import UnifiIntegration
+from services.unifi_integration import UnifiIntegration, normalize_controller_url
 
 logger = logging.getLogger("nettap.api.devices_v2")
 
@@ -197,10 +197,24 @@ async def handle_unifi_configure(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
+    if not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+
     controller_url = body.get("controller_url")
     api_key = body.get("api_key")
-    site_id = body.get("site_id")
+    # OLD CODE START — an empty site_id wiped the stored site (2026-10-29)
+    # site_id = body.get("site_id")
+    # OLD CODE END
+    site_id = body.get("site_id") or None  # omitted or empty keeps the current site
 
+    if any(
+        value is not None and not isinstance(value, str)
+        for value in (controller_url, api_key, site_id)
+    ):
+        return web.json_response(
+            {"error": "controller_url, api_key and site_id must be strings"},
+            status=400,
+        )
     if not controller_url:
         return web.json_response(
             {"error": "controller_url is required"},
@@ -211,6 +225,14 @@ async def handle_unifi_configure(request: web.Request) -> web.Response:
     if not api_key and not unifi.is_configured:
         return web.json_response(
             {"error": "api_key is required for initial configuration"},
+            status=400,
+        )
+    # The stored key may only go to the controller it was entered for.
+    # Otherwise anyone could point controller_url at their own server
+    # and receive the key in the X-API-Key header of the next request.
+    if not api_key and normalize_controller_url(controller_url) != unifi._base_url:
+        return web.json_response(
+            {"error": "api_key is required when changing controller_url"},
             status=400,
         )
 
