@@ -6,6 +6,7 @@ import {
 	getAlertTopSignatures,
 	getAlertTopIps,
 	getAlertCategories,
+	getEnhancedCategories,
 	formatNumber,
 	severityLabel,
 	severityBadgeClass,
@@ -245,6 +246,63 @@ describe('alerts API client', () => {
 		it('returns empty on error', async () => {
 			mockFetchFailure(502);
 			const result = await getAlertCategories();
+			expect(result.categories).toEqual([]);
+		});
+	});
+
+	// -- getEnhancedCategories -------------------------------------------------
+
+	describe('getEnhancedCategories', () => {
+		/** Shape of one entry from daemon/api/alerts.py handle_alerts_categories */
+		function daemonCategory(overrides: Record<string, unknown> = {}) {
+			return {
+				id: 'malware',
+				label: 'Malware',
+				icon: 'bug',
+				color: 'red',
+				description: 'Malware activity',
+				count: 42,
+				severity_breakdown: { critical: 2, high: 10, medium: 30, low: 0, info: 0 },
+				trend: 'increasing',
+				sparkline: [
+					{ timestamp: '2026-10-29T10:00:00.000Z', count: 3 },
+					{ timestamp: '2026-10-29T11:00:00.000Z', count: 9 },
+				],
+				sub_categories: [{ id: 'trojan', label: 'Trojan', count: 12 }],
+				mitre_techniques: [],
+				...overrides,
+			};
+		}
+
+		it('maps the trend string to { direction, percentage: 0 }', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', interval: '1h', categories: [daemonCategory()] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].trend).toEqual({ direction: 'increasing', percentage: 0 });
+		});
+
+		it('maps sparkline points to their counts', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory()] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].sparkline).toEqual([3, 9]);
+		});
+
+		it('falls back to stable for an unknown trend and keeps other fields', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory({ trend: 'sideways', sparkline: undefined })] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].trend.direction).toBe('stable');
+			expect(categories[0].sparkline).toEqual([]);
+			expect(categories[0]).toMatchObject({ id: 'malware', count: 42, sub_categories: [{ id: 'trojan' }] });
+		});
+
+		it('returns empty on HTTP error', async () => {
+			mockFetchFailure(500);
+			const result = await getEnhancedCategories();
 			expect(result.categories).toEqual([]);
 		});
 	});

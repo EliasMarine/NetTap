@@ -409,12 +409,14 @@
 					{#if categoryData?.category?.description}
 						<p class="subtitle">{categoryData.category.description}</p>
 					{/if}
+					<!-- OLD CODE START — dead badge: the daemon never sends category.mitre_tactic
 					{#if categoryData?.category?.mitre_tactic}
 						<span class="mitre-badge">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
 							{categoryData.category.mitre_tactic.id}: {categoryData.category.mitre_tactic.name}
 						</span>
 					{/if}
+					OLD CODE END -->
 				</div>
 			</div>
 		</div>
@@ -905,6 +907,7 @@
 		margin-top: 2px;
 	}
 
+	/* OLD CODE START — style for the removed mitre_tactic badge
 	.mitre-badge {
 		display: inline-flex;
 		align-items: center;
@@ -919,6 +922,7 @@
 		margin-top: var(--space-sm);
 		border: 1px solid rgba(68, 138, 255, 0.15);
 	}
+	OLD CODE END */
 
 	.header-right {
 		display: flex;

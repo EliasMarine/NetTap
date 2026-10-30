@@ -786,7 +786,10 @@
 						<div class="cat-card-bottom">
 							<span class="cat-trend {trendClass(cat.trend.direction)}">
 								{cat.trend.direction === 'increasing' ? '\u2191' : cat.trend.direction === 'decreasing' ? '\u2193' : '\u2192'}
+								<!-- OLD CODE START — the daemon sends no percentage, so this read "↑ stable" for a rising category
 								{cat.trend.percentage > 0 ? `${cat.trend.percentage}%` : 'stable'}
+								OLD CODE END -->
+								{cat.trend.percentage > 0 ? `${cat.trend.percentage}%` : cat.trend.direction}
 							</span>
 							{#if cat.sparkline.length > 0}
 								<svg class="cat-sparkline" width="56" height="20" viewBox="0 0 56 20">
