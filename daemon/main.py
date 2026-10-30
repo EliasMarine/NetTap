@@ -240,9 +240,13 @@ async def storage_loop(
     Exits cleanly when *shutdown_event* is set.
     """
     logger.info("Storage monitor loop started (interval=%ds)", interval)
+    loop = asyncio.get_running_loop()
     while not shutdown_event.is_set():
         try:
-            storage.run_cycle()
+            # OLD CODE START — a cycle waiting on _cleanup_lock froze the event loop
+            # storage.run_cycle()
+            # OLD CODE END
+            await loop.run_in_executor(None, storage.run_cycle)
         except Exception:
             logger.exception("Unhandled error in storage cycle")
 
