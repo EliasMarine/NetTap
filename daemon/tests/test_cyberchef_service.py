@@ -7,7 +7,9 @@ All tests use mocks -- no Docker or CyberChef container required.
 import asyncio
 import base64
 import unittest
-from unittest.mock import AsyncMock, patch
+
+import aiohttp
+from aioresponses import aioresponses
 
 import sys
 import os
@@ -146,72 +148,60 @@ class TestBuildRecipeUrlWithInput(unittest.TestCase):
         self.assertTrue(url.startswith(custom_url))
 
 
+_HEALTH_URL = f"{CYBERCHEF_INTERNAL_URL}/health"
+
+
 class TestIsAvailableRunning(unittest.TestCase):
-    """test_is_available_running: Mock docker inspect returning 'true'."""
+    """is_available() checks CyberChef's HTTP health endpoint."""
 
     def test_is_available_running(self):
-        """When container is running, should report available=True with URL."""
+        """A 200 from /health reports available=True with the URL."""
 
         async def run():
-            svc = CyberChefService()
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(return_value=(b"true\n", b""))
-            mock_process.returncode = 0
-
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock
-            ) as mock_exec:
-                mock_exec.return_value = mock_process
-                result = await svc.is_available()
-                self.assertTrue(result["available"])
-                self.assertTrue(result["container_running"])
-                self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
-                self.assertEqual(result["url"], CYBERCHEF_INTERNAL_URL)
-                self.assertNotIn("error", result)
+            with aioresponses() as mocked:
+                mocked.get(_HEALTH_URL, status=200)
+                result = await CyberChefService().is_available()
+            self.assertTrue(result["available"])
+            self.assertTrue(result["container_running"])
+            self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
+            self.assertEqual(result["url"], CYBERCHEF_INTERNAL_URL)
+            self.assertNotIn("error", result)
 
         asyncio.run(run())
 
 
 class TestIsAvailableNotRunning(unittest.TestCase):
-    """test_is_available_not_running: Mock docker inspect returning 'false'."""
+    """Non-200 responses and connection errors report unavailable."""
 
     def test_is_available_not_running(self):
-        """When container is not running, should report available=False with no URL."""
+        """A non-200 from /health reports available=False with no URL."""
 
         async def run():
-            svc = CyberChefService()
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(return_value=(b"false\n", b""))
-            mock_process.returncode = 0
-
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock
-            ) as mock_exec:
-                mock_exec.return_value = mock_process
-                result = await svc.is_available()
-                self.assertFalse(result["available"])
-                self.assertFalse(result["container_running"])
-                self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
-                self.assertIsNone(result["url"])
+            with aioresponses() as mocked:
+                mocked.get(_HEALTH_URL, status=503)
+                result = await CyberChefService().is_available()
+            self.assertFalse(result["available"])
+            self.assertFalse(result["container_running"])
+            self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
+            self.assertIsNone(result["url"])
+            self.assertNotIn("error", result)
 
         asyncio.run(run())
 
     def test_is_available_error(self):
-        """When docker inspect fails, should return error info."""
+        """A connection error reports unavailable and carries the error text."""
 
         async def run():
-            svc = CyberChefService()
-
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock
-            ) as mock_exec:
-                mock_exec.side_effect = FileNotFoundError("docker not found")
-                result = await svc.is_available()
-                self.assertFalse(result["available"])
-                self.assertFalse(result["container_running"])
-                self.assertIsNone(result["url"])
-                self.assertIn("error", result)
-                self.assertIn("docker not found", result["error"])
+            with aioresponses() as mocked:
+                mocked.get(
+                    _HEALTH_URL,
+                    exception=aiohttp.ClientConnectionError("connection refused"),
+                )
+                result = await CyberChefService().is_available()
+            self.assertFalse(result["available"])
+            self.assertFalse(result["container_running"])
+            self.assertIsNone(result["url"])
+            self.assertIn("connection refused", result["error"])
 
         asyncio.run(run())
 
