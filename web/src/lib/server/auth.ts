@@ -1,6 +1,6 @@
 import * as argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'fs';
 import { dirname } from 'path';
 import { randomBytes } from 'crypto';
 
@@ -110,13 +110,49 @@ function ensureDataDir(): void {
 	}
 }
 
-function readUsers(): UsersStore {
-	try {
-		const data = readFileSync(USERS_FILE, 'utf-8');
-		return JSON.parse(data) as UsersStore;
-	} catch {
-		return { users: [] };
+/** The users file exists but cannot be read, parsed or understood. */
+export class UserStoreError extends Error {
+	constructor(reason: string) {
+		super(`User store unusable: ${reason}`);
+		this.name = 'UserStoreError';
 	}
+}
+
+// OLD CODE START — any read/parse failure looked like "no users", so a damaged
+// store reopened first-run setup and createUser could overwrite it (2026-10-29)
+// function readUsers(): UsersStore {
+// 	try {
+// 		const data = readFileSync(USERS_FILE, 'utf-8');
+// 		return JSON.parse(data) as UsersStore;
+// 	} catch {
+// 		return { users: [] };
+// 	}
+// }
+// OLD CODE END
+
+/**
+ * Only a missing file means "no users yet". Anything else throws
+ * UserStoreError so callers fail closed instead of reopening first-run.
+ */
+function readUsers(): UsersStore {
+	let data: string;
+	try {
+		data = readFileSync(USERS_FILE, 'utf-8');
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT') return { users: [] };
+		throw new UserStoreError(code ?? 'unreadable');
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(data);
+	} catch {
+		throw new UserStoreError('invalid JSON');
+	}
+	if (!Array.isArray((parsed as Partial<UsersStore> | null)?.users)) {
+		throw new UserStoreError('missing users array');
+	}
+	return parsed as UsersStore;
 }
 
 function writeUsers(store: UsersStore): void {
@@ -125,7 +161,13 @@ function writeUsers(store: UsersStore): void {
 	if (!existsSync(dir)) {
 		mkdirSync(dir, { recursive: true });
 	}
-	writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), 'utf-8');
+	// OLD CODE START — wrote in place; a crash mid-write left a corrupt store (2026-10-29)
+	// writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), 'utf-8');
+	// OLD CODE END
+	// Write then rename so a crash never leaves a half-written (now fail-closed) store.
+	const tmpFile = `${USERS_FILE}.tmp`;
+	writeFileSync(tmpFile, JSON.stringify(store, null, 2), 'utf-8');
+	renameSync(tmpFile, USERS_FILE);
 }
 
 export function getUser(username: string): User | undefined {

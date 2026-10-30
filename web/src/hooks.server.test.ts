@@ -79,14 +79,6 @@ describe('hooks.server', () => {
 	});
 
 	describe('public paths', () => {
-		it('allows /setup without auth', async () => {
-			mockHasUsers.mockReturnValue(true);
-			const event = createMockEvent('/setup');
-
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
-		});
-
 		it('allows /login without auth', async () => {
 			mockHasUsers.mockReturnValue(true);
 			const event = createMockEvent('/login');
@@ -103,24 +95,18 @@ describe('hooks.server', () => {
 			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
-		it('allows /api/setup endpoints without auth', async () => {
-			mockHasUsers.mockReturnValue(true);
-			const event = createMockEvent('/api/setup/nics');
-
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
-		});
-
-		it('allows /go-live without auth', async () => {
-			mockHasUsers.mockReturnValue(true);
-			const event = createMockEvent('/go-live');
-
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
-		});
-
 		it('allows /api/health without auth', async () => {
 			mockHasUsers.mockReturnValue(true);
+			const event = createMockEvent('/api/health');
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it('allows /api/health even when the user store is damaged', async () => {
+			mockHasUsers.mockImplementation(() => {
+				throw new Error('User store unusable: invalid JSON');
+			});
 			const event = createMockEvent('/api/health');
 
 			await handle({ event, resolve: mockResolve });
@@ -136,12 +122,49 @@ describe('hooks.server', () => {
 			await expect(handle({ event, resolve: mockResolve })).rejects.toThrow('redirect');
 		});
 
-		it('does not redirect public paths even with no users', async () => {
-			mockHasUsers.mockReturnValue(false);
-			const event = createMockEvent('/setup');
+		it.each(['/setup', '/api/setup/nics', '/api/bridge/create', '/go-live'])(
+			'leaves %s open while no users exist',
+			async (path) => {
+				mockHasUsers.mockReturnValue(false);
+				const event = createMockEvent(path);
+
+				await handle({ event, resolve: mockResolve });
+				expect(mockResolve).toHaveBeenCalledWith(event);
+			}
+		);
+	});
+
+	describe('setup and bridge routes after setup', () => {
+		it.each(['/setup', '/api/setup/nics', '/api/bridge/teardown', '/go-live'])(
+			'requires a session for %s once a user exists',
+			async (path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				const event = createMockEvent(path);
+
+				await expect(handle({ event, resolve: mockResolve })).rejects.toThrow();
+				expect(mockResolve).not.toHaveBeenCalled();
+			}
+		);
+
+		it('allows them with a session once a user exists', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const event = createMockEvent('/api/bridge/create', 'valid-token');
 
 			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalled();
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it('requires a session when the user store cannot be read', async () => {
+			mockHasUsers.mockImplementation(() => {
+				throw new Error('User store unusable: EACCES');
+			});
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/api/setup/configure');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toThrow();
+			expect(mockResolve).not.toHaveBeenCalled();
 		});
 	});
 

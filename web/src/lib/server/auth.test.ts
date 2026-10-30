@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
 	readFileSync: vi.fn().mockReturnValue('{"users":[]}'),
 	writeFileSync: vi.fn(),
 	mkdirSync: vi.fn(),
+	renameSync: vi.fn(),
 	argonHash: vi.fn().mockResolvedValue('$argon2id$mock-hash'),
 	argonVerify: vi.fn().mockResolvedValue(false),
 	jwtSign: vi.fn().mockReturnValue('mock-jwt-token'),
@@ -17,6 +18,7 @@ vi.mock('fs', () => {
 		readFileSync: mocks.readFileSync,
 		writeFileSync: mocks.writeFileSync,
 		mkdirSync: mocks.mkdirSync,
+		renameSync: mocks.renameSync,
 	};
 	return { ...fsMock, default: fsMock };
 });
@@ -43,6 +45,7 @@ import {
 	getUser,
 	createUser,
 	updatePassword,
+	UserStoreError,
 } from './auth';
 
 describe('auth server module', () => {
@@ -51,6 +54,7 @@ describe('auth server module', () => {
 		mocks.readFileSync.mockReset().mockReturnValue('{"users":[]}');
 		mocks.writeFileSync.mockReset();
 		mocks.mkdirSync.mockReset();
+		mocks.renameSync.mockReset();
 		mocks.argonHash.mockReset().mockResolvedValue('$argon2id$mock-hash');
 		mocks.argonVerify.mockReset().mockResolvedValue(false);
 		mocks.jwtSign.mockReset().mockReturnValue('mock-jwt-token');
@@ -110,9 +114,26 @@ describe('auth server module', () => {
 	describe('hasUsers', () => {
 		it('returns false when no users file exists', () => {
 			mocks.readFileSync.mockImplementation(() => {
-				throw new Error('ENOENT');
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			});
 			expect(hasUsers()).toBe(false);
+		});
+
+		it('throws instead of reporting no users when the store is unreadable', () => {
+			mocks.readFileSync.mockImplementation(() => {
+				throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+			});
+			expect(() => hasUsers()).toThrow(UserStoreError);
+		});
+
+		it('throws on corrupt JSON', () => {
+			mocks.readFileSync.mockReturnValue('{"users": [');
+			expect(() => hasUsers()).toThrow('invalid JSON');
+		});
+
+		it('throws when the store has no users array', () => {
+			mocks.readFileSync.mockReturnValue('{"users": {}}');
+			expect(() => hasUsers()).toThrow('missing users array');
 		});
 
 		it('returns false when users array is empty', () => {
@@ -153,6 +174,23 @@ describe('auth server module', () => {
 			expect(user.passwordHash).toBe('$argon2id$mock-hash');
 			expect(user.role).toBe('admin');
 			expect(mocks.writeFileSync).toHaveBeenCalled();
+		});
+
+		it('writes a temp file and renames it over the store', async () => {
+			mocks.readFileSync.mockReturnValue('{"users":[]}');
+			mocks.existsSync.mockReturnValue(true);
+
+			await createUser('newuser', 'password123');
+
+			const tmpPath = mocks.writeFileSync.mock.calls[0][0] as string;
+			expect(tmpPath).toMatch(/users\.json\.tmp$/);
+			expect(mocks.renameSync).toHaveBeenCalledWith(tmpPath, tmpPath.replace(/\.tmp$/, ''));
+		});
+
+		it('refuses to overwrite a corrupt store', async () => {
+			mocks.readFileSync.mockReturnValue('not json');
+			await expect(createUser('newuser', 'password123')).rejects.toThrow(UserStoreError);
+			expect(mocks.writeFileSync).not.toHaveBeenCalled();
 		});
 
 		it('throws if user already exists', async () => {
