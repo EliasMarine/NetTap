@@ -611,3 +611,48 @@ print('All services use restart: unless-stopped')
 @test "compose: OpenSearch 9200 is bound to loopback only" {
     grep -q '127.0.0.1:9200:9200' "$COMPOSE_FILE"
 }
+
+# ==========================================================================
+# Capture settings from the daemon (DHCP gateway / mirror mode)
+# ==========================================================================
+
+@test "compose: capture entrypoints source the capture env loader first" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # The loader must run before exec tini so the exported PCAP_IFACE /
+    # PCAP_FILTER / CAPTURE_FILTER reach the Malcolm entrypoint.
+    local capture_services=(zeek-live suricata-live pcap-capture arkime-live)
+
+    for svc in "${capture_services[@]}"; do
+        run _compose_query "
+svc = data['services']['${svc}']
+cmd = svc['entrypoint'][2]
+assert cmd.startswith('. /usr/local/bin/nettap-capture-env.sh && mkdir -p '), '${svc}: ' + cmd[:80]
+volumes = [str(v) for v in svc.get('volumes', [])]
+assert '/etc/nettap:/etc/nettap:ro' in volumes, '${svc}: /etc/nettap must be mounted read-only'
+assert '../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro' in volumes, '${svc}: loader not mounted'
+print('${svc}: OK')
+"
+        [ "$status" -eq 0 ]
+    done
+    [ -f "${REPO_ROOT}/config/capture/nettap-capture-env.sh" ]
+}
+
+@test "compose: daemon can write /etc/nettap and bind the DHCP port" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-storage-daemon']
+assert 'NET_BIND_SERVICE' in svc.get('cap_add', []), 'dnsmasq needs NET_BIND_SERVICE for UDP 67'
+for cap in ('SETUID', 'SETGID', 'KILL'):
+    assert cap in svc.get('cap_add', []), 'dnsmasq runs as nobody: daemon needs ' + cap
+volumes = [str(v) for v in svc.get('volumes', [])]
+assert '/etc/nettap:/etc/nettap' in volumes, 'daemon must mount /etc/nettap read-write'
+print('nettap-storage-daemon: OK')
+"
+    [ "$status" -eq 0 ]
+}

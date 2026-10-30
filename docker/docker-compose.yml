@@ -328,11 +328,15 @@ services:
     # docker-uid-gid-setup.sh drops privileges. Without this, zeekctl
     # crash-loops with "Permission denied" on /zeek/live/logs.
     # Original: [tini -- docker-uid-gid-setup.sh docker_entrypoint.sh service_check_passthrough.sh -s zeek]
+    # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
+    # from /etc/nettap/capture.env when the daemon has written one (capture mode
+    # set from the wizard, e.g. DHCP gateway). No file = compose env below.
     entrypoint:
       - /bin/bash
       - -c
       - >-
-        mkdir -p /zeek/live/logs /zeek/live/spool /zeek/live/extract_files
+        . /usr/local/bin/nettap-capture-env.sh
+        && mkdir -p /zeek/live/logs /zeek/live/spool /zeek/live/extract_files
         && chown -R $${PUID:-1000}:$${PGID:-1000} /zeek/live
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
@@ -360,6 +364,9 @@ services:
     volumes:
       - zeek-live-logs:/zeek/live
       - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+      # Capture settings written by the daemon (capture.env) + their loader
+      - /etc/nettap:/etc/nettap:ro
+      - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
     depends_on:
       nettap-storage-daemon:
         condition: service_healthy
@@ -378,11 +385,15 @@ services:
     # Wrap the original entrypoint to create log dirs as root BEFORE
     # docker-uid-gid-setup.sh drops privileges. Suricata needs /var/log/suricata/live.
     # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s suricata docker_entrypoint.sh]
+    # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
+    # from /etc/nettap/capture.env when the daemon has written one (capture mode
+    # set from the wizard, e.g. DHCP gateway). No file = compose env below.
     entrypoint:
       - /bin/bash
       - -c
       - >-
-        mkdir -p /var/log/suricata/live
+        . /usr/local/bin/nettap-capture-env.sh
+        && mkdir -p /var/log/suricata/live
         && chown -R $${PUID:-1000}:$${PGID:-1000} /var/log/suricata
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
@@ -411,6 +422,9 @@ services:
       - suricata-rules:/var/lib/suricata/rules
       - ../config/suricata/nettap.yaml:/etc/suricata/nettap.yaml:ro
       - ../config/suricata/update-sources.yaml:/etc/suricata/update-sources.yaml:ro
+      # Capture settings written by the daemon (capture.env) + their loader
+      - /etc/nettap:/etc/nettap:ro
+      - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
     depends_on:
       nettap-storage-daemon:
         condition: service_healthy
@@ -434,11 +448,15 @@ services:
     # PID 1 — usermod refuses to modify a user that owns a running process.
     # Since we stay as root (netsniff-ng needs NET_RAW/NET_ADMIN capabilities),
     # there's no UID remapping needed.
+    # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
+    # from /etc/nettap/capture.env when the daemon has written one (capture mode
+    # set from the wizard, e.g. DHCP gateway). No file = compose env below.
     entrypoint:
       - /bin/bash
       - -c
       - >-
-        mkdir -p /pcap
+        . /usr/local/bin/nettap-capture-env.sh
+        && mkdir -p /pcap
         && chown -R $${PUID:-1000}:$${PGID:-1000} /pcap &&
         exec /usr/bin/tini --
         /usr/local/bin/service_check_passthrough.sh -s pcap-capture
@@ -470,6 +488,9 @@ services:
       PCAP_FILTER: ""
     volumes:
       - pcap-data:/pcap
+      # Capture settings written by the daemon (capture.env) + their loader
+      - /etc/nettap:/etc/nettap:ro
+      - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
     depends_on:
       nettap-storage-daemon:
         condition: service_healthy
@@ -489,11 +510,15 @@ services:
     # Arkime's supervisor does chdir to /data/pcap/arkime-live which must
     # exist and be writable by PUID:PGID. Fresh volumes are root-owned.
     # Original: [tini -- docker-uid-gid-setup.sh service_check_passthrough.sh -s arkime docker_entrypoint.sh]
+    # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
+    # from /etc/nettap/capture.env when the daemon has written one (capture mode
+    # set from the wizard, e.g. DHCP gateway). No file = compose env below.
     entrypoint:
       - /bin/bash
       - -c
       - >-
-        mkdir -p /data/pcap/arkime-live
+        . /usr/local/bin/nettap-capture-env.sh
+        && mkdir -p /data/pcap/arkime-live
         && chown -R $${PUID:-1000}:$${PGID:-1000} /data/pcap
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
@@ -517,6 +542,9 @@ services:
       EXTRA_TAGS: ""
     volumes:
       - pcap-data:/data/pcap
+      # Capture settings written by the daemon (capture.env) + their loader
+      - /etc/nettap:/etc/nettap:ro
+      - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
     depends_on:
       nettap-storage-daemon:
         condition: service_healthy
@@ -664,6 +692,10 @@ services:
       - SYS_ADMIN
       - SYS_PTRACE
       - SYS_RAWIO
+      - NET_BIND_SERVICE # dnsmasq binds UDP 67 in DHCP gateway mode
+      - SETUID # dnsmasq drops to the unprivileged nobody user
+      - SETGID # dnsmasq drops to the unprivileged nogroup group
+      - KILL # the daemon (root) stops dnsmasq once it runs as nobody; with pid: host it can signal any host process, a small gain over SYS_ADMIN/SYS_PTRACE/docker.sock
     # pid: host lets nsenter target PID 1 (host init) for network namespace
     pid: "host"
     # Override Dockerfile USER — capabilities only work for root in Docker.
@@ -708,6 +740,9 @@ services:
       - /etc/netplan:/host/etc/netplan
       - /etc/systemd/system:/host/etc/systemd/system
       - /etc/sysctl.d:/host/etc/sysctl.d
+      # Capture settings (rw): capture-mode.conf, capture.env and the DHCP gateway
+      # firewall script. capture.env is read by the capture containers (ro mount).
+      - /etc/nettap:/etc/nettap
       # Shared daemon API token (rw: the daemon creates it on first start).
       # Only nettap-web mounts this volume too (ro). Mounted at /var/run/...
       # so it lands inside the /var/run tmpfs above (/var/run -> /run in the
