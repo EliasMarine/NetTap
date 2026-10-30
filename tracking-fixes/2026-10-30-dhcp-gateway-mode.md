@@ -3,6 +3,7 @@
 **Status:** Code complete, gates green locally. Not run on hardware.
 **Type:** feat (+ fixes for review findings CR-007, CR-165, CR-166, CR-167, CR-212, CR-247)
 **Branch:** `phase-4/dhcp-gateway-mode` → `fix/pr110-review`, [PR #145](https://github.com/EliasMarine/NetTap/pull/145) (`develop` no longer exists, so this PR is stacked like #143 and #144)
+**Linear:** NET-111 (feature), NET-112 (review)
 **Design:** `docs/plans/2026-10-30-dhcp-gateway-mode-design.md`
 **Architecture:** `Debugging/BRIDGE-ARCHITECTURE.md` §16
 **Review:** `docs/reviews/2026-10-30-code-review.md` (branch `chore/code-review-2026-10`, [PR #146](https://github.com/EliasMarine/NetTap/pull/146))
