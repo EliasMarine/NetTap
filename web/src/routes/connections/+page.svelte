@@ -284,7 +284,11 @@
 		return parts.join(' ');
 	}
 
-	async function fetchAll() {
+	// OLD CODE START — always reloaded page 1, so auto-refresh threw the user back to the first page
+	// async function fetchAll() {
+	// OLD CODE END
+	/** Reload everything; the table stays on `pg` (the current page unless told otherwise). */
+	async function fetchAll(pg: number = currentPage) {
 		loading = true;
 		const { from, to } = getTimeRange();
 		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
@@ -310,7 +314,10 @@
 			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.stats?.active_devices ?? 0;
 		} catch { /* handled per-request */ }
 
-		await fetchConnections(1);
+		// OLD CODE START
+		// await fetchConnections(1);
+		// OLD CODE END
+		await fetchConnections(pg);
 		loading = false;
 	}
 
@@ -351,7 +358,8 @@
 
 	function handleTimeRangeChange(range: TimeRange) {
 		selectedTimeRange = range;
-		if (initialized) fetchAll();
+		// A new time range is a new result set: start from page 1
+		if (initialized) fetchAll(1);
 	}
 
 	function handleSankeyNodeClick(type: 'source' | 'protocol' | 'destination', id: string) {
@@ -377,7 +385,10 @@
 	function toggleAutoRefresh() {
 		autoRefresh = !autoRefresh;
 		if (autoRefresh) {
-			refreshInterval = setInterval(fetchAll, 15_000);
+			// OLD CODE START
+			// refreshInterval = setInterval(fetchAll, 15_000);
+			// OLD CODE END
+			refreshInterval = setInterval(() => fetchAll(), 15_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;

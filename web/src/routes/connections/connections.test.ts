@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getConnections } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
@@ -34,7 +34,15 @@ describe('Connections v3 page', () => {
 // ---------------------------------------------------------------------------
 
 function connectionsPage(page: number, totalPages = 5) {
-	return { from: '', to: '', page, size: 50, total: totalPages * 50, total_pages: totalPages, connections: [] };
+	const conn = {
+		_id: `c${page}`,
+		_index: 'zeek-conn',
+		'@timestamp': '2026-10-29T10:00:00Z',
+		source: { ip: '10.0.0.5', port: 50000 },
+		destination: { ip: '8.8.8.8', port: 53 },
+		network: { transport: 'udp' },
+	};
+	return { from: '', to: '', page, size: 50, total: totalPages * 50, total_pages: totalPages, connections: [conn] };
 }
 
 function dashboard(activeDevices: number) {
@@ -80,5 +88,35 @@ describe('Connections — Active Devices card', () => {
 		const card = screen.getByText('Active Devices').closest('.stat-card');
 		expect(card).toHaveTextContent('17');
 		expect(getLiveDashboard).toHaveBeenCalledWith({ limit: 1 });
+	});
+});
+
+describe('Connections — auto-refresh', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
+
+	it('reloads the page the user is on, not page 1', async () => {
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		await flush();
+		expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		vi.mocked(getConnections).mockClear();
+		vi.advanceTimersByTime(15_000);
+		await flush();
+
+		expect(getConnections).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
+		expect(getConnections).not.toHaveBeenCalledWith(expect.objectContaining({ page: 1 }));
+		expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
 	});
 });
