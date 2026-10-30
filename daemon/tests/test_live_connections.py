@@ -290,6 +290,14 @@ class TestLiveDashboardQueries(unittest.TestCase):
         result, _ = self._run_dashboard(alert_keys=["1.2.3.4>10.0.0.5"])
         self.assertTrue(result["connections"][0]["has_alert"])
 
+    def test_top_talkers_ordered_by_total_bytes(self):
+        """Top talkers rank by bytes, not by doc count plus bucket_sort."""
+        _, (conn_body, _) = self._run_dashboard()
+        agg = conn_body["aggs"]["top_talkers"]
+        self.assertEqual(agg["terms"]["order"], {"total_bytes": "desc"})
+        self.assertIn("total_bytes", agg["aggs"])
+        self.assertNotIn("bucket_sort", agg["aggs"])
+
 
 if __name__ == "__main__":
     unittest.main()

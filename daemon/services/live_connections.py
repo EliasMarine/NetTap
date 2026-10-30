@@ -399,7 +399,14 @@ class LiveConnectionTracker:
                     "terms": {"field": "network.transport.keyword", "size": 10},
                 },
                 "top_talkers": {
-                    "terms": {"field": "source.ip.keyword", "size": 5},
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "terms": {"field": "source.ip.keyword", "size": 5},
+                    # OLD CODE END
+                    "terms": {
+                        "field": "source.ip.keyword",
+                        "size": 5,
+                        "order": {"total_bytes": "desc"},
+                    },
                     "aggs": {
                         "total_bytes": {
                             "sum": {
@@ -409,11 +416,13 @@ class LiveConnectionTracker:
                                 }
                             }
                         },
-                        "bucket_sort": {
-                            "bucket_sort": {
-                                "sort": [{"total_bytes": {"order": "desc"}}]
-                            }
-                        },
+                        # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                        # "bucket_sort": {
+                        #     "bucket_sort": {
+                        #         "sort": [{"total_bytes": {"order": "desc"}}]
+                        #     }
+                        # },
+                        # OLD CODE END
                     },
                 },
                 "geo_destinations": {

@@ -518,5 +518,49 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 502)
 
 
+class TestTopByBytesOrdering(AioHTTPTestCase):
+    """Top-N-by-bytes aggs must rank buckets by bytes, not by doc count."""
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []},
+            "aggregations": {},
+        }
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_traffic_routes(app, self.storage)
+        return app
+
+    def _agg(self, name: str) -> dict:
+        for call in self.mock_client.search.call_args_list:
+            aggs = call.kwargs["body"].get("aggs", {})
+            if name in aggs:
+                return aggs[name]
+        self.fail(f"no search built the {name!r} aggregation")
+
+    @unittest_run_loop
+    async def test_top_by_bytes_aggs_order_terms_by_total_bytes(self):
+        cases = [
+            ("/api/traffic/top-talkers", "top_sources"),
+            ("/api/traffic/top-destinations", "top_destinations"),
+            ("/api/traffic/connections/stats", "top_sources"),
+            ("/api/traffic/connections/stats", "top_destinations"),
+            ("/api/traffic/connections/sankey", "by_source"),
+        ]
+        for path, agg_name in cases:
+            self.mock_client.search.reset_mock()
+            resp = await self.client.request("GET", path)
+            self.assertEqual(resp.status, 200, path)
+
+            agg = self._agg(agg_name)
+            self.assertEqual(agg["terms"].get("order"), {"total_bytes": "desc"}, path)
+            self.assertIn("total_bytes", agg["aggs"], path)
+            self.assertNotIn("bucket_sort", agg["aggs"], path)
+
+
 if __name__ == "__main__":
     unittest.main()
