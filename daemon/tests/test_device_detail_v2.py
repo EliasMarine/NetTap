@@ -255,7 +255,9 @@ class TestDeviceAlertsHandler(AioHTTPTestCase):
         # Second alert — parsed from top-level alert field (fallback)
         alert1 = data["alerts"][1]
         self.assertEqual(alert1["severity"], 2)
-        self.assertEqual(alert1["signature"], "ET INFO Observed DNS Query for Suspicious TLD")
+        self.assertEqual(
+            alert1["signature"], "ET INFO Observed DNS Query for Suspicious TLD"
+        )
         self.assertEqual(alert1["signature_id"], 2027863)
 
     @unittest_run_loop
@@ -321,7 +323,10 @@ class TestDeviceAlertsHandler(AioHTTPTestCase):
         self.assertIsNotNone(
             should_clause, "Should clause for bidirectional matching not found"
         )
-        ips = [s["term"].get("source.ip") or s["term"].get("destination.ip") for s in should_clause]
+        ips = [
+            s["term"].get("source.ip") or s["term"].get("destination.ip")
+            for s in should_clause
+        ]
         self.assertIn("192.168.1.100", ips)
 
 
@@ -493,21 +498,23 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_includes_orig_resp_bytes(self):
         """Device detail includes orig_bytes and resp_bytes fields."""
-        self._setup_detail_responses({
-            "hits": {"total": {"value": 100}},
-            "aggregations": {
-                "total_bytes": {"value": 3000000},
-                "total_orig_bytes": {"value": 1000000},
-                "total_resp_bytes": {"value": 2000000},
-                "unique_destinations": {"value": 42},
-                "top_services": {"buckets": []},
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 90}]},
-                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                "top_destinations": {"buckets": []},
-                "bandwidth_series": {"buckets": []},
-            },
-        })
+        self._setup_detail_responses(
+            {
+                "hits": {"total": {"value": 100}},
+                "aggregations": {
+                    "total_bytes": {"value": 3000000},
+                    "total_orig_bytes": {"value": 1000000},
+                    "total_resp_bytes": {"value": 2000000},
+                    "unique_destinations": {"value": 42},
+                    "top_services": {"buckets": []},
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 90}]},
+                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+                    "top_destinations": {"buckets": []},
+                    "bandwidth_series": {"buckets": []},
+                },
+            }
+        )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
         self.assertEqual(resp.status, 200)
@@ -520,21 +527,23 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_includes_unique_destinations(self):
         """Device detail includes unique_destinations count."""
-        self._setup_detail_responses({
-            "hits": {"total": {"value": 50}},
-            "aggregations": {
-                "total_bytes": {"value": 500000},
-                "total_orig_bytes": {"value": 200000},
-                "total_resp_bytes": {"value": 300000},
-                "unique_destinations": {"value": 25},
-                "top_services": {"buckets": []},
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                "top_destinations": {"buckets": []},
-                "bandwidth_series": {"buckets": []},
-            },
-        })
+        self._setup_detail_responses(
+            {
+                "hits": {"total": {"value": 50}},
+                "aggregations": {
+                    "total_bytes": {"value": 500000},
+                    "total_orig_bytes": {"value": 200000},
+                    "total_resp_bytes": {"value": 300000},
+                    "unique_destinations": {"value": 25},
+                    "top_services": {"buckets": []},
+                    "protocols": {"buckets": []},
+                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+                    "top_destinations": {"buckets": []},
+                    "bandwidth_series": {"buckets": []},
+                },
+            }
+        )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
         self.assertEqual(resp.status, 200)
@@ -544,39 +553,41 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_includes_top_services(self):
         """Device detail includes top_services with merged ASN names."""
-        self._setup_detail_responses({
-            "hits": {"total": {"value": 200}},
-            "aggregations": {
-                "total_bytes": {"value": 1000000},
-                "total_orig_bytes": {"value": 400000},
-                "total_resp_bytes": {"value": 600000},
-                "unique_destinations": {"value": 15},
-                "top_services": {
-                    "buckets": [
-                        {
-                            "key": "AS16509 Amazon.com, Inc.",
-                            "doc_count": 80,
-                            "bytes": {"value": 500000},
-                        },
-                        {
-                            "key": "AS14618 Amazon.com, Inc.",
-                            "doc_count": 40,
-                            "bytes": {"value": 200000},
-                        },
-                        {
-                            "key": "AS2906 Netflix Inc",
-                            "doc_count": 60,
-                            "bytes": {"value": 300000},
-                        },
-                    ]
+        self._setup_detail_responses(
+            {
+                "hits": {"total": {"value": 200}},
+                "aggregations": {
+                    "total_bytes": {"value": 1000000},
+                    "total_orig_bytes": {"value": 400000},
+                    "total_resp_bytes": {"value": 600000},
+                    "unique_destinations": {"value": 15},
+                    "top_services": {
+                        "buckets": [
+                            {
+                                "key": "AS16509 Amazon.com, Inc.",
+                                "doc_count": 80,
+                                "bytes": {"value": 500000},
+                            },
+                            {
+                                "key": "AS14618 Amazon.com, Inc.",
+                                "doc_count": 40,
+                                "bytes": {"value": 200000},
+                            },
+                            {
+                                "key": "AS2906 Netflix Inc",
+                                "doc_count": 60,
+                                "bytes": {"value": 300000},
+                            },
+                        ]
+                    },
+                    "protocols": {"buckets": []},
+                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+                    "top_destinations": {"buckets": []},
+                    "bandwidth_series": {"buckets": []},
                 },
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                "top_destinations": {"buckets": []},
-                "bandwidth_series": {"buckets": []},
-            },
-        })
+            }
+        )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
         self.assertEqual(resp.status, 200)
@@ -598,38 +609,40 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_bandwidth_includes_dl_ul(self):
         """Bandwidth series items include download_bytes and upload_bytes."""
-        self._setup_detail_responses({
-            "hits": {"total": {"value": 100}},
-            "aggregations": {
-                "total_bytes": {"value": 500000},
-                "total_orig_bytes": {"value": 200000},
-                "total_resp_bytes": {"value": 300000},
-                "unique_destinations": {"value": 10},
-                "top_services": {"buckets": []},
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                "top_destinations": {"buckets": []},
-                "bandwidth_series": {
-                    "buckets": [
-                        {
-                            "key_as_string": "2026-03-12T00:00:00.000Z",
-                            "doc_count": 10,
-                            "bytes": {"value": 5000},
-                            "download_bytes": {"value": 3000},
-                            "upload_bytes": {"value": 2000},
-                        },
-                        {
-                            "key_as_string": "2026-03-12T00:05:00.000Z",
-                            "doc_count": 15,
-                            "bytes": {"value": 8000},
-                            "download_bytes": {"value": 6000},
-                            "upload_bytes": {"value": 2000},
-                        },
-                    ]
+        self._setup_detail_responses(
+            {
+                "hits": {"total": {"value": 100}},
+                "aggregations": {
+                    "total_bytes": {"value": 500000},
+                    "total_orig_bytes": {"value": 200000},
+                    "total_resp_bytes": {"value": 300000},
+                    "unique_destinations": {"value": 10},
+                    "top_services": {"buckets": []},
+                    "protocols": {"buckets": []},
+                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+                    "top_destinations": {"buckets": []},
+                    "bandwidth_series": {
+                        "buckets": [
+                            {
+                                "key_as_string": "2026-03-12T00:00:00.000Z",
+                                "doc_count": 10,
+                                "bytes": {"value": 5000},
+                                "download_bytes": {"value": 3000},
+                                "upload_bytes": {"value": 2000},
+                            },
+                            {
+                                "key_as_string": "2026-03-12T00:05:00.000Z",
+                                "doc_count": 15,
+                                "bytes": {"value": 8000},
+                                "download_bytes": {"value": 6000},
+                                "upload_bytes": {"value": 2000},
+                            },
+                        ]
+                    },
                 },
-            },
-        })
+            }
+        )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
         self.assertEqual(resp.status, 200)

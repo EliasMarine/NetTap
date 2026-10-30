@@ -5,6 +5,8 @@ Covers: BPF filter validation, file listing, preview extraction,
 search, and download.
 """
 
+import asyncio
+import os
 
 import pytest
 
@@ -68,16 +70,24 @@ class TestBpfValidation:
         assert valid is False
 
     def test_forbidden_characters(self, service):
-        """Filters with shell injection chars should be rejected."""
+        """; ` and $ are rejected; | and & are allowed.
+
+        Filters are Wireshark display filters, which use || and && for OR/AND.
+        They reach tshark as a single argv element via create_subprocess_exec
+        (no shell) -- see TestFilterArgvBoundary for the guarantee itself.
+        """
         valid, err = service.validate_bpf_filter("tcp; rm -rf /")
         assert valid is False
         assert "forbidden" in err.lower()
 
-        valid, err = service.validate_bpf_filter("host 1.1.1.1 | grep")
-        assert valid is False
-
         valid, err = service.validate_bpf_filter("tcp `whoami`")
         assert valid is False
+
+        valid, err = service.validate_bpf_filter("ip.src == $(id)")
+        assert valid is False
+
+        assert service.validate_bpf_filter("tcp || udp")[0] is True
+        assert service.validate_bpf_filter("tcp && !dns")[0] is True
 
     def test_too_long_filter(self, service):
         """Excessively long filters should be rejected."""
@@ -138,8 +148,8 @@ class TestGetAvailablePcaps:
 class TestSearch:
     @pytest.mark.asyncio
     async def test_invalid_filter_raises(self, service):
-        """Should raise ValueError for invalid BPF filter."""
-        with pytest.raises(ValueError, match="Invalid BPF filter"):
+        """Should raise ValueError for an invalid display filter."""
+        with pytest.raises(ValueError, match="Invalid display filter"):
             await service.search("")
 
     @pytest.mark.asyncio
@@ -171,9 +181,9 @@ class TestPreview:
 
     @pytest.mark.asyncio
     async def test_invalid_bpf_filter_rejected(self, service, pcap_dir):
-        """Should reject invalid BPF filter in preview."""
+        """Should reject an invalid display filter in preview."""
         pcap_file = str(pcap_dir / "capture_001.pcap")
-        with pytest.raises(ValueError, match="Invalid BPF filter"):
+        with pytest.raises(ValueError, match="Invalid display filter"):
             await service.preview(pcap_file, bpf_filter="tcp; evil")
 
 
@@ -185,8 +195,8 @@ class TestPreview:
 class TestDownload:
     @pytest.mark.asyncio
     async def test_invalid_filter_raises(self, service):
-        """Should raise ValueError for invalid BPF filter."""
-        with pytest.raises(ValueError, match="Invalid BPF filter"):
+        """Should raise ValueError for an invalid display filter."""
+        with pytest.raises(ValueError, match="Invalid display filter"):
             await service.download_filtered("")
 
     @pytest.mark.asyncio
@@ -195,3 +205,66 @@ class TestDownload:
         svc = PcapSearchService(pcap_dir=str(tmp_path / "empty"))
         result = await svc.download_filtered("tcp port 80")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Filter argv boundary (mocked subprocess)
+# ---------------------------------------------------------------------------
+
+_DISPLAY_FILTER = "ip.src == 10.0.0.1 || (tcp.port == 443 && !dns)"
+
+
+class _FakeProc:
+    returncode = 0
+
+    async def communicate(self):
+        return b"1\n2\n", b""
+
+
+@pytest.fixture
+def recorded_argv(monkeypatch):
+    """Record every create_subprocess_exec argv; fail if a shell is ever used."""
+    calls = []
+
+    async def fake_exec(*argv, **kwargs):
+        calls.append(list(argv))
+        return _FakeProc()
+
+    async def no_shell(*args, **kwargs):
+        raise AssertionError("create_subprocess_shell must never be used")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", no_shell)
+    return calls
+
+
+def _assert_filter_is_one_arg(calls):
+    tshark_calls = [argv for argv in calls if "tshark" in argv]
+    assert tshark_calls, "expected at least one tshark invocation"
+    for argv in tshark_calls:
+        assert argv[argv.index("-Y") + 1] == _DISPLAY_FILTER
+
+
+class TestFilterArgvBoundary:
+    @pytest.mark.asyncio
+    async def test_search_passes_filter_as_single_arg(self, service, recorded_argv):
+        await service.search(_DISPLAY_FILTER)
+        _assert_filter_is_one_arg(recorded_argv)
+
+    @pytest.mark.asyncio
+    async def test_preview_passes_filter_as_single_arg(
+        self, service, pcap_dir, recorded_argv
+    ):
+        await service.preview(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter=_DISPLAY_FILTER
+        )
+        _assert_filter_is_one_arg(recorded_argv)
+
+    @pytest.mark.asyncio
+    async def test_download_passes_filter_as_single_arg(self, service, recorded_argv):
+        path = await service.download_filtered(_DISPLAY_FILTER)
+        try:
+            _assert_filter_is_one_arg(recorded_argv)
+        finally:
+            if path:
+                os.unlink(path)

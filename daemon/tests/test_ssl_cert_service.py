@@ -197,14 +197,10 @@ sha256 Fingerprint=AB:CD:EF:01:23:45
 """
 
         s_client_proc = MagicMock()
-        s_client_proc.communicate = AsyncMock(
-            return_value=(s_client_output, b"")
-        )
+        s_client_proc.communicate = AsyncMock(return_value=(s_client_output, b""))
 
         x509_proc = MagicMock()
-        x509_proc.communicate = AsyncMock(
-            return_value=(x509_output, b"")
-        )
+        x509_proc.communicate = AsyncMock(return_value=(x509_output, b""))
 
         call_count = 0
 

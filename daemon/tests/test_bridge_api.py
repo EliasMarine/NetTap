@@ -483,7 +483,9 @@ class TestBridgeReadinessEndpoint(AioHTTPTestCase):
         self.mock_manager.check_readiness = AsyncMock(
             return_value={
                 "ready": False,
-                "checks": [{"name": "bridge_exists", "passed": False, "detail": "Not found"}],
+                "checks": [
+                    {"name": "bridge_exists", "passed": False, "detail": "Not found"}
+                ],
                 "message": "Bridge not configured",
             }
         )

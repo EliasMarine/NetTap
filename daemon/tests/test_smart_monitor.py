@@ -467,7 +467,9 @@ class TestSelfTest:
         assert "SYS_ADMIN" in guidance_text
 
     @patch.object(SmartMonitor, "get_raw_data")
-    def test_self_test_no_missing_fields_when_all_present(self, mock_get_raw, mock_smartctl_nvme):
+    def test_self_test_no_missing_fields_when_all_present(
+        self, mock_get_raw, mock_smartctl_nvme
+    ):
         """Self-test reports no missing fields when all data is present."""
         mock_get_raw.return_value = mock_smartctl_nvme
         monitor = SmartMonitor(device="/dev/nvme0n1")
@@ -873,7 +875,9 @@ class TestNvmeCliGetRawData:
 
     @patch("smart.monitor.subprocess.run")
     @patch.object(SmartMonitor, "_get_nvme_raw_data")
-    def test_get_raw_data_falls_back_to_smartctl(self, mock_nvme_raw, mock_run, mock_smartctl_nvme):
+    def test_get_raw_data_falls_back_to_smartctl(
+        self, mock_nvme_raw, mock_run, mock_smartctl_nvme
+    ):
         """When nvme-cli returns nothing, falls back to smartctl."""
         mock_nvme_raw.return_value = {}
         mock_run.return_value = MagicMock(
@@ -897,7 +901,9 @@ class TestNvmeCliGetRawData:
 class TestNvmeCliHealthAssessment:
     @patch.object(SmartMonitor, "get_raw_data")
     @patch.object(SmartMonitor, "_get_nvme_identity")
-    def test_healthy_when_critical_warning_zero(self, mock_id, mock_get_raw, mock_nvme_cli_wrapped):
+    def test_healthy_when_critical_warning_zero(
+        self, mock_id, mock_get_raw, mock_nvme_cli_wrapped
+    ):
         """critical_warning=0 means healthy."""
         mock_get_raw.return_value = mock_nvme_cli_wrapped
         mock_id.return_value = ("Test NVMe", "SN123")
@@ -934,7 +940,9 @@ class TestNvmeCliHealthAssessment:
 
     @patch.object(SmartMonitor, "get_raw_data")
     @patch.object(SmartMonitor, "_get_nvme_identity")
-    def test_get_status_with_nvme_cli(self, mock_id, mock_get_raw, mock_nvme_cli_wrapped):
+    def test_get_status_with_nvme_cli(
+        self, mock_id, mock_get_raw, mock_nvme_cli_wrapped
+    ):
         """get_status returns JSON-serializable dict from nvme-cli data."""
         mock_get_raw.return_value = mock_nvme_cli_wrapped
         mock_id.return_value = ("Test NVMe", "SN123")

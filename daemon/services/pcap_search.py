@@ -101,13 +101,15 @@ class PcapSearchService:
             if to_dt and modified > to_dt:
                 continue
 
-            results.append({
-                "file": str(path),
-                "name": path.name,
-                "size_bytes": stat.st_size,
-                "modified": modified.isoformat(),
-                "relative_path": str(path.relative_to(self._pcap_dir)),
-            })
+            results.append(
+                {
+                    "file": str(path),
+                    "name": path.name,
+                    "size_bytes": stat.st_size,
+                    "modified": modified.isoformat(),
+                    "relative_path": str(path.relative_to(self._pcap_dir)),
+                }
+            )
 
         # Sort by modification time, newest first
         results.sort(key=lambda r: r["modified"], reverse=True)
@@ -156,20 +158,18 @@ class PcapSearchService:
 
         matching = []
         for pcap in pcaps:
-            count = await self._count_matching_packets(
-                pcap["file"], bpf_filter
-            )
+            count = await self._count_matching_packets(pcap["file"], bpf_filter)
             if count > 0:
-                matching.append({
-                    **pcap,
-                    "matching_packets": count,
-                })
+                matching.append(
+                    {
+                        **pcap,
+                        "matching_packets": count,
+                    }
+                )
 
         return matching
 
-    async def _count_matching_packets(
-        self, pcap_file: str, bpf_filter: str
-    ) -> int:
+    async def _count_matching_packets(self, pcap_file: str, bpf_filter: str) -> int:
         """Count packets matching BPF filter in a PCAP file.
 
         Runs tshark inside the nettap-tshark container via docker exec.
@@ -178,12 +178,18 @@ class PcapSearchService:
         """
         container_path = self._to_container_path(pcap_file)
         cmd = [
-            "docker", "exec", _TSHARK_CONTAINER,
+            "docker",
+            "exec",
+            _TSHARK_CONTAINER,
             "tshark",
-            "-r", container_path,
-            "-Y", bpf_filter,
-            "-T", "fields",
-            "-e", "frame.number",
+            "-r",
+            container_path,
+            "-Y",
+            bpf_filter,
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
         ]
         try:
             async with self._semaphore:
@@ -193,9 +199,7 @@ class PcapSearchService:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=45
-                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
 
             if proc.returncode != 0:
                 logger.debug(
@@ -244,19 +248,32 @@ class PcapSearchService:
 
         container_path = self._to_container_path(pcap_file)
         cmd = [
-            "docker", "exec", _TSHARK_CONTAINER,
+            "docker",
+            "exec",
+            _TSHARK_CONTAINER,
             "tshark",
-            "-r", container_path,
-            "-T", "fields",
-            "-e", "frame.number",
-            "-e", "frame.time",
-            "-e", "ip.src",
-            "-e", "ip.dst",
-            "-e", "frame.protocols",
-            "-e", "frame.len",
-            "-e", "_ws.col.Info",
-            "-E", "separator=|",
-            "-c", str(limit),
+            "-r",
+            container_path,
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "frame.time",
+            "-e",
+            "ip.src",
+            "-e",
+            "ip.dst",
+            "-e",
+            "frame.protocols",
+            "-e",
+            "frame.len",
+            "-e",
+            "_ws.col.Info",
+            "-E",
+            "separator=|",
+            "-c",
+            str(limit),
         ]
 
         if bpf_filter:
@@ -273,9 +290,7 @@ class PcapSearchService:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=45
-                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
 
             if proc.returncode != 0:
                 err_msg = stderr.decode(errors="replace").strip()
@@ -288,15 +303,17 @@ class PcapSearchService:
                     continue
                 parts = line.split("|", 6)
                 if len(parts) >= 6:
-                    packets.append({
-                        "frame_number": parts[0].strip(),
-                        "timestamp": parts[1].strip(),
-                        "source": parts[2].strip(),
-                        "destination": parts[3].strip(),
-                        "protocol": parts[4].strip(),
-                        "length": parts[5].strip(),
-                        "info": parts[6].strip() if len(parts) > 6 else "",
-                    })
+                    packets.append(
+                        {
+                            "frame_number": parts[0].strip(),
+                            "timestamp": parts[1].strip(),
+                            "source": parts[2].strip(),
+                            "destination": parts[3].strip(),
+                            "protocol": parts[4].strip(),
+                            "length": parts[5].strip(),
+                            "info": parts[6].strip() if len(parts) > 6 else "",
+                        }
+                    )
 
             return packets
 
@@ -357,11 +374,17 @@ class PcapSearchService:
                 else:
                     # Merge multiple PCAPs inside the container
                     merge_cmd = [
-                        "docker", "exec", _TSHARK_CONTAINER,
-                        "mergecap", "-w", container_merged_path,
+                        "docker",
+                        "exec",
+                        _TSHARK_CONTAINER,
+                        "mergecap",
+                        "-w",
+                        container_merged_path,
                     ] + container_pcap_files
 
-                    logger.debug("Running: %s", " ".join(shlex.quote(c) for c in merge_cmd))
+                    logger.debug(
+                        "Running: %s", " ".join(shlex.quote(c) for c in merge_cmd)
+                    )
                     proc = await asyncio.create_subprocess_exec(
                         *merge_cmd,
                         stdout=asyncio.subprocess.PIPE,
@@ -384,13 +407,20 @@ class PcapSearchService:
                 # Filter inside the container, write to stdout (``-w -``)
                 # and capture the binary output on the daemon side.
                 filter_cmd = [
-                    "docker", "exec", _TSHARK_CONTAINER,
+                    "docker",
+                    "exec",
+                    _TSHARK_CONTAINER,
                     "tshark",
-                    "-r", source_path,
-                    "-Y", bpf_filter,
-                    "-w", "-",
+                    "-r",
+                    source_path,
+                    "-Y",
+                    bpf_filter,
+                    "-w",
+                    "-",
                 ]
-                logger.debug("Running: %s", " ".join(shlex.quote(c) for c in filter_cmd))
+                logger.debug(
+                    "Running: %s", " ".join(shlex.quote(c) for c in filter_cmd)
+                )
                 proc = await asyncio.create_subprocess_exec(
                     *filter_cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -439,8 +469,12 @@ class PcapSearchService:
             return  # No merged file was created
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", _TSHARK_CONTAINER,
-                "rm", "-f", container_path,
+                "docker",
+                "exec",
+                _TSHARK_CONTAINER,
+                "rm",
+                "-f",
+                container_path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )

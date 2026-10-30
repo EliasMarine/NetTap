@@ -184,7 +184,11 @@ class TestDiscoverInterfaces(AioHTTPTestCase):
             sys_net = _create_fake_sysfs(Path(tmpdir))
 
             mock_ipv4 = {"wlan0": "192.168.1.50"}
-            with patch("api.nic_discovery._get_ipv4_map", new_callable=AsyncMock, return_value=mock_ipv4):
+            with patch(
+                "api.nic_discovery._get_ipv4_map",
+                new_callable=AsyncMock,
+                return_value=mock_ipv4,
+            ):
                 with patch("api.nic_discovery._get_sys_net_path", return_value=sys_net):
                     result = await discover_interfaces()
 
@@ -222,10 +226,20 @@ class TestNicListEndpoint(AioHTTPTestCase):
     @unittest_run_loop
     async def test_returns_interfaces(self):
         mock_ifaces = [
-            {"name": "eth0", "mac": "aa:bb:cc:dd:ee:ff", "state": "up",
-             "speed": "2.5Gb/s", "driver": "igc", "type": "ethernet"},
+            {
+                "name": "eth0",
+                "mac": "aa:bb:cc:dd:ee:ff",
+                "state": "up",
+                "speed": "2.5Gb/s",
+                "driver": "igc",
+                "type": "ethernet",
+            },
         ]
-        with patch("api.nic_discovery.discover_interfaces", new_callable=AsyncMock, return_value=mock_ifaces):
+        with patch(
+            "api.nic_discovery.discover_interfaces",
+            new_callable=AsyncMock,
+            return_value=mock_ifaces,
+        ):
             resp = await self.client.request("GET", "/api/setup/nics")
             self.assertEqual(resp.status, 200)
             data = await resp.json()
@@ -235,7 +249,11 @@ class TestNicListEndpoint(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_empty_when_no_interfaces(self):
-        with patch("api.nic_discovery.discover_interfaces", new_callable=AsyncMock, return_value=[]):
+        with patch(
+            "api.nic_discovery.discover_interfaces",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
             resp = await self.client.request("GET", "/api/setup/nics")
             self.assertEqual(resp.status, 200)
             data = await resp.json()

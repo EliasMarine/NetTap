@@ -116,7 +116,7 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                                         if (a == 192 && b == 168) return false;
                                         return true;
                                     """,
-                                    "lang": "painless"
+                                    "lang": "painless",
                                 }
                             }
                         },
@@ -134,7 +134,9 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         }
 
         result = client.search(index=NETWORK_INDEX, body=query)
-        buckets = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        buckets = (
+            result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        )
 
         if not buckets:
             logger.warning("LAN detection: no source IPs found in OpenSearch")
@@ -250,7 +252,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                         if (a == 192 && b == 168) return true;
                         return false;
                     """,
-                    "lang": "painless"
+                    "lang": "painless",
                 }
             }
         }
@@ -279,7 +281,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                     int c = Integer.parseInt(parts[2]);
                     return {condition_str};
                 """,
-                "lang": "painless"
+                "lang": "painless",
             }
         }
     }

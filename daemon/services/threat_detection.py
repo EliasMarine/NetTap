@@ -28,19 +28,45 @@ BEACONING_MIN_CONNECTIONS = 10
 COMMON_BEACON_INTERVALS = [30, 60, 120, 300, 600, 900, 1800, 3600]
 
 LATERAL_MOVEMENT_PORTS = {
-    22: "SSH", 23: "Telnet", 445: "SMB", 3389: "RDP",
-    5985: "WinRM", 5986: "WinRM-HTTPS", 135: "RPC",
-    139: "NetBIOS", 1433: "MSSQL", 3306: "MySQL",
-    5432: "PostgreSQL", 6379: "Redis", 27017: "MongoDB",
+    22: "SSH",
+    23: "Telnet",
+    445: "SMB",
+    3389: "RDP",
+    5985: "WinRM",
+    5986: "WinRM-HTTPS",
+    135: "RPC",
+    139: "NetBIOS",
+    1433: "MSSQL",
+    3306: "MySQL",
+    5432: "PostgreSQL",
+    6379: "Redis",
+    27017: "MongoDB",
 }
 
 DGA_ENTROPY_THRESHOLD = 3.8
 DNS_TUNNEL_LENGTH_THRESHOLD = 50
 SUSPICIOUS_TLDS = {".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".buzz", ".rest"}
 
-INTERNAL_PREFIXES = ("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
-                     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-                     "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")
+INTERNAL_PREFIXES = (
+    "10.",
+    "192.168.",
+    "172.16.",
+    "172.17.",
+    "172.18.",
+    "172.19.",
+    "172.20.",
+    "172.21.",
+    "172.22.",
+    "172.23.",
+    "172.24.",
+    "172.25.",
+    "172.26.",
+    "172.27.",
+    "172.28.",
+    "172.29.",
+    "172.30.",
+    "172.31.",
+)
 
 
 def _is_internal(ip: str) -> bool:
@@ -84,14 +110,18 @@ def _beacon_confidence(cv: float, count: int, interval: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def detect_beaconing(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[dict]:
+def detect_beaconing(
+    client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+) -> list[dict]:
     """Detect periodic callback patterns indicative of C2 beaconing."""
     excluded = build_excluded_ips_filter(excluded_ips or [])
-    bool_clause: dict = {"filter": [
-        {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "conn"}},
-    ]}
+    bool_clause: dict = {
+        "filter": [
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+        ]
+    }
     if excluded:
         bool_clause["must_not"] = excluded
 
@@ -153,20 +183,22 @@ def detect_beaconing(client, from_ts: str, to_ts: str, excluded_ips: list[str] |
         if cv < BEACONING_JITTER_THRESHOLD:
             interval_sec = mean_delta / 1000
             confidence = _beacon_confidence(cv, conn_count, interval_sec)
-            beacons.append({
-                "source_ip": bucket["key"]["src"],
-                "destination_ip": bucket["key"]["dst"],
-                "destination_port": bucket["key"]["port"],
-                "connection_count": conn_count,
-                "interval_seconds": round(interval_sec, 1),
-                "jitter_coefficient": round(cv, 4),
-                "confidence": round(confidence, 1),
-                "assessment": (
-                    f"Periodic callbacks every ~{round(interval_sec)}s with "
-                    f"{round(cv * 100, 1)}% jitter over {conn_count} connections. "
-                    f"Consistent with C2 beaconing."
-                ),
-            })
+            beacons.append(
+                {
+                    "source_ip": bucket["key"]["src"],
+                    "destination_ip": bucket["key"]["dst"],
+                    "destination_port": bucket["key"]["port"],
+                    "connection_count": conn_count,
+                    "interval_seconds": round(interval_sec, 1),
+                    "jitter_coefficient": round(cv, 4),
+                    "confidence": round(confidence, 1),
+                    "assessment": (
+                        f"Periodic callbacks every ~{round(interval_sec)}s with "
+                        f"{round(cv * 100, 1)}% jitter over {conn_count} connections. "
+                        f"Consistent with C2 beaconing."
+                    ),
+                }
+            )
 
     beacons.sort(key=lambda b: b["confidence"], reverse=True)
     return beacons
@@ -177,17 +209,21 @@ def detect_beaconing(client, from_ts: str, to_ts: str, excluded_ips: list[str] |
 # ---------------------------------------------------------------------------
 
 
-def detect_lateral_movement(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[dict]:
+def detect_lateral_movement(
+    client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+) -> list[dict]:
     """Find internal hosts connecting to other internal hosts on admin ports."""
     port_filters = [{"term": {"destination.port": p}} for p in LATERAL_MOVEMENT_PORTS]
     excluded = build_excluded_ips_filter(excluded_ips or [])
 
-    bool_clause: dict = {"filter": [
-        {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "conn"}},
-        {"bool": {"should": port_filters, "minimum_should_match": 1}},
-    ]}
+    bool_clause: dict = {
+        "filter": [
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+            {"bool": {"should": port_filters, "minimum_should_match": 1}},
+        ]
+    }
     if excluded:
         bool_clause["must_not"] = excluded
 
@@ -232,19 +268,21 @@ def detect_lateral_movement(client, from_ts: str, to_ts: str, excluded_ips: list
         service = LATERAL_MOVEMENT_PORTS.get(port, f"port {port}")
         count = bucket["doc_count"]
 
-        suspicious.append({
-            "source_ip": src,
-            "destination_ip": dst,
-            "port": port,
-            "service": service,
-            "connection_count": count,
-            "first_seen": bucket.get("first_seen", {}).get("value_as_string"),
-            "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
-            "assessment": (
-                f"Internal host {src} connected to {dst} via {service} "
-                f"({count} times). Verify this is authorized administrative access."
-            ),
-        })
+        suspicious.append(
+            {
+                "source_ip": src,
+                "destination_ip": dst,
+                "port": port,
+                "service": service,
+                "connection_count": count,
+                "first_seen": bucket.get("first_seen", {}).get("value_as_string"),
+                "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
+                "assessment": (
+                    f"Internal host {src} connected to {dst} via {service} "
+                    f"({count} times). Verify this is authorized administrative access."
+                ),
+            }
+        )
 
     # Flag fan-out (one source hitting multiple internal targets)
     src_targets: dict[str, set] = defaultdict(set)
@@ -269,14 +307,18 @@ def detect_lateral_movement(client, from_ts: str, to_ts: str, excluded_ips: list
 # ---------------------------------------------------------------------------
 
 
-def analyze_dns_anomalies(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> dict:
+def analyze_dns_anomalies(
+    client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+) -> dict:
     """Detect DNS-based threats: DGA, tunneling, NXDOMAIN spikes."""
     excluded = build_excluded_ips_filter(excluded_ips or [])
-    bool_clause: dict = {"filter": [
-        {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "dns"}},
-    ]}
+    bool_clause: dict = {
+        "filter": [
+            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "dns"}},
+        ]
+    }
     if excluded:
         bool_clause["must_not"] = excluded
 
@@ -290,7 +332,9 @@ def analyze_dns_anomalies(client, from_ts: str, to_ts: str, excluded_ips: list[s
             "by_source": {
                 "terms": {"field": "source.ip.keyword", "size": 100},
                 "aggs": {
-                    "unique_domains": {"cardinality": {"field": "zeek.dns.query.keyword"}},
+                    "unique_domains": {
+                        "cardinality": {"field": "zeek.dns.query.keyword"}
+                    },
                     "nxdomain_count": {
                         "filter": {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}}
                     },
@@ -303,11 +347,18 @@ def analyze_dns_anomalies(client, from_ts: str, to_ts: str, excluded_ips: list[s
         result = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
         logger.error("DNS anomaly analysis failed", exc_info=True)
-        return {"dga_suspects": [], "tunnel_suspects": [], "nxdomain_spikes": [], "suspicious_tlds": []}
+        return {
+            "dga_suspects": [],
+            "tunnel_suspects": [],
+            "nxdomain_spikes": [],
+            "suspicious_tlds": [],
+        }
 
     findings: dict[str, list] = {
-        "dga_suspects": [], "tunnel_suspects": [],
-        "nxdomain_spikes": [], "suspicious_tlds": [],
+        "dga_suspects": [],
+        "tunnel_suspects": [],
+        "nxdomain_spikes": [],
+        "suspicious_tlds": [],
     }
 
     for bucket in result.get("aggregations", {}).get("domains", {}).get("buckets", []):
@@ -323,49 +374,61 @@ def analyze_dns_anomalies(client, from_ts: str, to_ts: str, excluded_ips: list[s
         registrable = parts[0] if len(parts) >= 2 else domain
         entropy = _shannon_entropy(registrable)
         if entropy > DGA_ENTROPY_THRESHOLD and len(registrable) > 8:
-            findings["dga_suspects"].append({
-                "domain": domain,
-                "entropy": round(entropy, 3),
-                "query_count": count,
-                "assessment": f"Domain has entropy {entropy:.2f} — consistent with algorithmic generation.",
-            })
+            findings["dga_suspects"].append(
+                {
+                    "domain": domain,
+                    "entropy": round(entropy, 3),
+                    "query_count": count,
+                    "assessment": f"Domain has entropy {entropy:.2f} — consistent with algorithmic generation.",
+                }
+            )
 
         # DNS tunneling
         subdomain = ".".join(parts[:-2]) if len(parts) > 2 else ""
         if len(subdomain) > DNS_TUNNEL_LENGTH_THRESHOLD:
-            findings["tunnel_suspects"].append({
-                "domain": domain,
-                "subdomain_length": len(subdomain),
-                "query_count": count,
-                "assessment": f"Subdomain length ({len(subdomain)} chars) suggests DNS tunneling.",
-            })
+            findings["tunnel_suspects"].append(
+                {
+                    "domain": domain,
+                    "subdomain_length": len(subdomain),
+                    "query_count": count,
+                    "assessment": f"Subdomain length ({len(subdomain)} chars) suggests DNS tunneling.",
+                }
+            )
 
         # Suspicious TLD
         tld = "." + parts[-1] if parts else ""
         if tld in SUSPICIOUS_TLDS and count > 10:
-            findings["suspicious_tlds"].append({
-                "domain": domain, "tld": tld, "query_count": count,
-            })
+            findings["suspicious_tlds"].append(
+                {
+                    "domain": domain,
+                    "tld": tld,
+                    "query_count": count,
+                }
+            )
 
     # NXDOMAIN spikes per source
-    for bucket in result.get("aggregations", {}).get("by_source", {}).get("buckets", []):
+    for bucket in (
+        result.get("aggregations", {}).get("by_source", {}).get("buckets", [])
+    ):
         src_ip = bucket["key"]
         total = bucket["doc_count"]
         nxdomain = bucket.get("nxdomain_count", {}).get("doc_count", 0)
 
         if total > 50 and nxdomain / total > 0.4:
-            findings["nxdomain_spikes"].append({
-                "source_ip": src_ip,
-                "total_queries": total,
-                "unique_domains": bucket.get("unique_domains", {}).get("value", 0),
-                "nxdomain_count": nxdomain,
-                "nxdomain_ratio": round(nxdomain / total, 3),
-                "assessment": (
-                    f"{src_ip} generated {nxdomain} NXDOMAIN responses out of "
-                    f"{total} queries ({round(nxdomain / total * 100)}%) — "
-                    f"consistent with DGA domain bruteforcing."
-                ),
-            })
+            findings["nxdomain_spikes"].append(
+                {
+                    "source_ip": src_ip,
+                    "total_queries": total,
+                    "unique_domains": bucket.get("unique_domains", {}).get("value", 0),
+                    "nxdomain_count": nxdomain,
+                    "nxdomain_ratio": round(nxdomain / total, 3),
+                    "assessment": (
+                        f"{src_ip} generated {nxdomain} NXDOMAIN responses out of "
+                        f"{total} queries ({round(nxdomain / total * 100)}%) — "
+                        f"consistent with DGA domain bruteforcing."
+                    ),
+                }
+            )
 
     findings["dga_suspects"].sort(key=lambda d: d["entropy"], reverse=True)
     return findings

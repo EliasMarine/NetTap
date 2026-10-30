@@ -151,31 +151,37 @@ class LiveConnectionTracker:
         ]
 
         # Time filter: last 5 minutes for "active" connections
-        filters.append({
-            "range": {
-                "@timestamp": {
-                    "gte": "now-5m",
-                    "lte": "now",
+        filters.append(
+            {
+                "range": {
+                    "@timestamp": {
+                        "gte": "now-5m",
+                        "lte": "now",
+                    }
                 }
             }
-        })
+        )
 
         if device:
-            filters.append({
-                "bool": {
-                    "should": [
-                        {"term": {"source.ip.keyword": device}},
-                        {"term": {"destination.ip.keyword": device}},
-                    ],
-                    "minimum_should_match": 1,
+            filters.append(
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"source.ip.keyword": device}},
+                            {"term": {"destination.ip.keyword": device}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
                 }
-            })
+            )
 
         if proto:
             filters.append({"term": {"network.transport.keyword": proto.lower()}})
 
         if country:
-            filters.append({"term": {"destination.geo.country_iso_code.keyword": country.upper()}})
+            filters.append(
+                {"term": {"destination.geo.country_iso_code.keyword": country.upper()}}
+            )
 
         query = {
             "size": min(limit, 500),
@@ -218,15 +224,11 @@ class LiveConnectionTracker:
         dst_as = dst.get("as", {}) or {}
 
         # Calculate bytes
-        total_bytes = (
-            (client_bytes.get("bytes", 0) or 0) +
-            (server_bytes.get("bytes", 0) or 0)
+        total_bytes = (client_bytes.get("bytes", 0) or 0) + (
+            server_bytes.get("bytes", 0) or 0
         )
         if total_bytes == 0:
-            total_bytes = (
-                (src.get("bytes", 0) or 0) +
-                (dst.get("bytes", 0) or 0)
-            )
+            total_bytes = (src.get("bytes", 0) or 0) + (dst.get("bytes", 0) or 0)
 
         # Calculate duration
         duration = 0.0
@@ -234,7 +236,9 @@ class LiveConnectionTracker:
         event_end = event.get("end")
         if event_start and event_end:
             try:
-                start_dt = datetime.fromisoformat(str(event_start).replace("Z", "+00:00"))
+                start_dt = datetime.fromisoformat(
+                    str(event_start).replace("Z", "+00:00")
+                )
                 end_dt = datetime.fromisoformat(str(event_end).replace("Z", "+00:00"))
                 duration = (end_dt - start_dt).total_seconds()
             except (ValueError, TypeError):
@@ -355,20 +359,20 @@ class LiveConnectionTracker:
         ]
 
         if device:
-            conn_filters.append({
-                "bool": {
-                    "should": [
-                        {"term": {"source.ip.keyword": device}},
-                        {"term": {"destination.ip.keyword": device}},
-                    ],
-                    "minimum_should_match": 1,
+            conn_filters.append(
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"source.ip.keyword": device}},
+                            {"term": {"destination.ip.keyword": device}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
                 }
-            })
+            )
 
         if proto:
-            conn_filters.append(
-                {"term": {"network.transport.keyword": proto.lower()}}
-            )
+            conn_filters.append({"term": {"network.transport.keyword": proto.lower()}})
 
         if country:
             conn_filters.append(
@@ -482,15 +486,11 @@ class LiveConnectionTracker:
                         },
                     },
                 },
-                "total_bytes_in": {
-                    "sum": {"field": "source.bytes", "missing": 0}
-                },
+                "total_bytes_in": {"sum": {"field": "source.bytes", "missing": 0}},
                 "total_bytes_out": {
                     "sum": {"field": "destination.bytes", "missing": 0}
                 },
-                "active_devices": {
-                    "cardinality": {"field": "source.ip.keyword"}
-                },
+                "active_devices": {"cardinality": {"field": "source.ip.keyword"}},
                 "top_country": {
                     "terms": {
                         "field": "destination.geo.country_name.keyword",
@@ -534,17 +534,13 @@ class LiveConnectionTracker:
         }
 
         try:
-            conn_result = self._client.search(
-                index=NETWORK_INDEX, body=conn_query
-            )
+            conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
         except OpenSearchException as exc:
             logger.error("OpenSearch error in dashboard connections query: %s", exc)
             return self._empty_dashboard_response()
 
         try:
-            alert_result = self._client.search(
-                index=NETWORK_INDEX, body=alert_query
-            )
+            alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
         except OpenSearchException as exc:
             logger.warning("OpenSearch error in dashboard alert query: %s", exc)
             # Degrade gracefully — dashboard still works without alert flags
@@ -566,8 +562,7 @@ class LiveConnectionTracker:
         # Build alert pairs set for cross-referencing
         alert_pairs: set[str] = set()
         alert_buckets = (
-            alert_result
-            .get("aggregations", {})
+            alert_result.get("aggregations", {})
             .get("alert_pairs", {})
             .get("buckets", [])
         )
@@ -587,9 +582,7 @@ class LiveConnectionTracker:
         # Total hits (for connections_per_second calculation)
         hits_total = conn_result.get("hits", {}).get("total", {})
         total_hits = (
-            hits_total.get("value", 0)
-            if isinstance(hits_total, dict)
-            else hits_total
+            hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
         )
 
         # Bandwidth
@@ -609,7 +602,12 @@ class LiveConnectionTracker:
         # Protocol percentages
         proto_buckets = aggs.get("protocols", {}).get("buckets", [])
         total_proto_count = sum(b.get("doc_count", 0) for b in proto_buckets)
-        protocols: dict[str, float] = {"tcp": 0.0, "udp": 0.0, "icmp": 0.0, "other": 0.0}
+        protocols: dict[str, float] = {
+            "tcp": 0.0,
+            "udp": 0.0,
+            "icmp": 0.0,
+            "other": 0.0,
+        }
         for bucket in proto_buckets:
             name = bucket.get("key", "").lower()
             pct = (
@@ -650,36 +648,30 @@ class LiveConnectionTracker:
             country_code = cc_b[0]["key"] if cc_b else ""
 
             # Extract lat/lon from top_hits
-            loc_hits = (
-                bucket
-                .get("location", {})
-                .get("hits", {})
-                .get("hits", [])
-            )
+            loc_hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
             lat = None
             lon = None
             if loc_hits:
                 loc_src = loc_hits[0].get("_source", {})
                 loc_data = (
-                    loc_src
-                    .get("destination", {})
-                    .get("geo", {})
-                    .get("location", {})
+                    loc_src.get("destination", {}).get("geo", {}).get("location", {})
                 )
                 if isinstance(loc_data, dict):
                     lat = loc_data.get("lat")
                     lon = loc_data.get("lon")
 
             if city and lat is not None and lon is not None:
-                geo_arcs.append({
-                    "city": city,
-                    "country": country_name,
-                    "country_code": country_code,
-                    "lat": lat,
-                    "lon": lon,
-                    "count": count,
-                    "bytes": total_b,
-                })
+                geo_arcs.append(
+                    {
+                        "city": city,
+                        "country": country_name,
+                        "country_code": country_code,
+                        "lat": lat,
+                        "lon": lon,
+                        "count": count,
+                        "bytes": total_b,
+                    }
+                )
 
         # Country-level fallbacks: add arcs for countries that have
         # connections but no city-level entry in the top-20 city list.
@@ -699,32 +691,29 @@ class LiveConnectionTracker:
             city_b = bucket.get("top_city", {}).get("buckets", [])
             c_city = city_b[0]["key"] if city_b else ""
 
-            c_loc_hits = (
-                bucket.get("location", {}).get("hits", {}).get("hits", [])
-            )
+            c_loc_hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
             c_lat, c_lon = None, None
             if c_loc_hits:
                 c_loc_src = c_loc_hits[0].get("_source", {})
                 c_loc_data = (
-                    c_loc_src
-                    .get("destination", {})
-                    .get("geo", {})
-                    .get("location", {})
+                    c_loc_src.get("destination", {}).get("geo", {}).get("location", {})
                 )
                 if isinstance(c_loc_data, dict):
                     c_lat = c_loc_data.get("lat")
                     c_lon = c_loc_data.get("lon")
 
             if c_lat is not None and c_lon is not None:
-                geo_arcs.append({
-                    "city": c_city or c_country,
-                    "country": c_country,
-                    "country_code": cc,
-                    "lat": c_lat,
-                    "lon": c_lon,
-                    "count": c_count,
-                    "bytes": c_bytes,
-                })
+                geo_arcs.append(
+                    {
+                        "city": c_city or c_country,
+                        "country": c_country,
+                        "country_code": cc,
+                        "lat": c_lat,
+                        "lon": c_lon,
+                        "count": c_count,
+                        "bytes": c_bytes,
+                    }
+                )
 
         return {
             "connections": connections,
@@ -771,22 +760,28 @@ class LiveConnectionTracker:
         ip_pair_filter = {
             "bool": {
                 "should": [
-                    {"bool": {"must": [
-                        {"term": {"source.ip.keyword": src_ip}},
-                        {"term": {"destination.ip.keyword": dst_ip}},
-                    ]}},
-                    {"bool": {"must": [
-                        {"term": {"source.ip.keyword": dst_ip}},
-                        {"term": {"destination.ip.keyword": src_ip}},
-                    ]}},
+                    {
+                        "bool": {
+                            "must": [
+                                {"term": {"source.ip.keyword": src_ip}},
+                                {"term": {"destination.ip.keyword": dst_ip}},
+                            ]
+                        }
+                    },
+                    {
+                        "bool": {
+                            "must": [
+                                {"term": {"source.ip.keyword": dst_ip}},
+                                {"term": {"destination.ip.keyword": src_ip}},
+                            ]
+                        }
+                    },
                 ],
                 "minimum_should_match": 1,
             }
         }
 
-        port_filter = (
-            {"term": {"destination.port": dst_port}} if dst_port else None
-        )
+        port_filter = {"term": {"destination.port": dst_port}} if dst_port else None
 
         # --- Query A: Latest session with full geo/ASN ---
         session_filters: list[dict] = [
@@ -802,8 +797,12 @@ class LiveConnectionTracker:
             "query": {"bool": {"filter": session_filters}},
             "sort": [{"@timestamp": {"order": "desc"}}],
             "_source": [
-                "destination.ip", "destination.geo.*", "destination.as.*",
-                "source.ip", "source.geo.*", "source.as.*",
+                "destination.ip",
+                "destination.geo.*",
+                "destination.as.*",
+                "source.ip",
+                "source.geo.*",
+                "source.as.*",
                 "@timestamp",
             ],
         }
@@ -824,10 +823,15 @@ class LiveConnectionTracker:
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
             "_source": [
-                "@timestamp", "rule.name", "rule.category",
-                "suricata.alert.signature", "suricata.alert.severity",
+                "@timestamp",
+                "rule.name",
+                "rule.category",
+                "suricata.alert.signature",
+                "suricata.alert.severity",
                 "suricata.alert.category",
-                "alert.signature", "alert.severity", "alert.category",
+                "alert.signature",
+                "alert.severity",
+                "alert.category",
                 "suricata.severity",
             ],
         }
@@ -889,9 +893,7 @@ class LiveConnectionTracker:
 
         alert_result = {}
         try:
-            alert_result = self._client.search(
-                index=NETWORK_INDEX, body=alert_query
-            )
+            alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
         except OpenSearchException as exc:
             logger.warning("OpenSearch error in detail alert query: %s", exc)
 
@@ -925,9 +927,7 @@ class LiveConnectionTracker:
         )
         total_bytes = history_aggs.get("total_bytes", {}).get("value", 0) or 0
 
-        timeline_buckets = (
-            history_aggs.get("over_time", {}).get("buckets", [])
-        )
+        timeline_buckets = history_aggs.get("over_time", {}).get("buckets", [])
         timeline = [
             {
                 "timestamp": b.get("key_as_string", b.get("key")),

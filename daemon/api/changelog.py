@@ -35,7 +35,9 @@ async def handle_get_events(request: web.Request) -> web.Response:
 
     # Parse event types filter
     type_param = request.query.get("type", "")
-    event_types = [t.strip() for t in type_param.split(",") if t.strip()] if type_param else None
+    event_types = (
+        [t.strip() for t in type_param.split(",") if t.strip()] if type_param else None
+    )
 
     # Parse limit
     try:

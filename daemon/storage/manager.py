@@ -663,9 +663,7 @@ class StorageManager:
         try:
             if flag_path.exists():
                 flag_path.unlink()
-                logger.info(
-                    "CAPTURE RESUMED: Cleared stop flag %s", flag_path
-                )
+                logger.info("CAPTURE RESUMED: Cleared stop flag %s", flag_path)
         except OSError as exc:
             logger.error("Failed to clear capture stop flag: %s", exc)
 
@@ -815,7 +813,9 @@ class StorageManager:
                 if status == "created":
                     logger.warning("ILM policy '%s' was MISSING — recreated", name)
                 elif status.startswith("error"):
-                    logger.error("ILM policy '%s' verification failed: %s", name, status)
+                    logger.error(
+                        "ILM policy '%s' verification failed: %s", name, status
+                    )
                 else:
                     logger.info("ILM policy '%s': %s", name, status)
 
@@ -854,8 +854,10 @@ class StorageManager:
                     continue
                 tier = self._parse_index_tier(index_name)
                 if tier in tier_bytes:
-                    size = index_data.get("total", {}).get("store", {}).get(
-                        "size_in_bytes", 0
+                    size = (
+                        index_data.get("total", {})
+                        .get("store", {})
+                        .get("size_in_bytes", 0)
                     )
                     tier_bytes[tier] += size
         except OpenSearchException as exc:
@@ -919,9 +921,7 @@ class StorageManager:
             stats = self._client.indices.stats(metric="store")
             for idx_name, idx_data in stats.get("indices", {}).items():
                 index_sizes[idx_name] = (
-                    idx_data.get("total", {})
-                    .get("store", {})
-                    .get("size_in_bytes", 0)
+                    idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
                 )
         except OpenSearchException as exc:
             logger.error("Failed to get index stats for cleanup preview: %s", exc)
@@ -938,12 +938,14 @@ class StorageManager:
                 continue
             if parsed < cutoff:
                 size_bytes = index_sizes.get(idx["name"], 0)
-                target_indices.append({
-                    "name": idx["name"],
-                    "size_bytes": size_bytes,
-                    "tier": idx["tier"],
-                    "parsed_date": parsed.isoformat(),
-                })
+                target_indices.append(
+                    {
+                        "name": idx["name"],
+                        "size_bytes": size_bytes,
+                        "tier": idx["tier"],
+                        "parsed_date": parsed.isoformat(),
+                    }
+                )
                 total_index_bytes += size_bytes
 
         # Scan PCAP files older than cutoff
@@ -959,11 +961,13 @@ class StorageManager:
                             stat.st_mtime, tz=timezone.utc
                         )
                         if file_time < cutoff:
-                            target_pcaps.append({
-                                "name": pcap_file.name,
-                                "size_bytes": stat.st_size,
-                                "modified": file_time.isoformat(),
-                            })
+                            target_pcaps.append(
+                                {
+                                    "name": pcap_file.name,
+                                    "size_bytes": stat.st_size,
+                                    "modified": file_time.isoformat(),
+                                }
+                            )
                             total_pcap_bytes += stat.st_size
                     except OSError:
                         pass
@@ -1060,14 +1064,18 @@ class StorageManager:
                                 file_size = stat.st_size
                                 # Remove checksum sidecars
                                 for ext in (".xxh3", ".sha256"):
-                                    sidecar = pcap_file.parent / f"{pcap_file.name}{ext}"
+                                    sidecar = (
+                                        pcap_file.parent / f"{pcap_file.name}{ext}"
+                                    )
                                     if sidecar.exists():
                                         sidecar.unlink()
                                 pcap_file.unlink()
                                 deleted_pcaps += 1
                                 freed_bytes += file_size
                         except OSError as exc:
-                            errors.append(f"Failed to delete PCAP {pcap_file.name}: {exc}")
+                            errors.append(
+                                f"Failed to delete PCAP {pcap_file.name}: {exc}"
+                            )
                 except OSError as exc:
                     errors.append(f"Failed to scan PCAP directory: {exc}")
 
@@ -1405,9 +1413,7 @@ class StorageManager:
             "cold_days": self.config.cold_days,
             # Thresholds as 0-100 percentages (not 0-1 fractions)
             "disk_threshold_percent": round(self.config.disk_threshold * 100),
-            "emergency_threshold_percent": round(
-                self.config.emergency_threshold * 100
-            ),
+            "emergency_threshold_percent": round(self.config.emergency_threshold * 100),
             # Estimates
             "estimated_daily_gb": 1.2,
             "source": "daemon",
@@ -1441,9 +1447,7 @@ class StorageManager:
         if self._retention_config_manager is not None:
             raw = self._retention_config_manager.get_ilm_status()
             policies = raw.get("policies", {})
-            has_errors = any(
-                str(v).startswith("error") for v in policies.values()
-            )
+            has_errors = any(str(v).startswith("error") for v in policies.values())
             return {
                 "synced": bool(raw.get("last_success")) and not has_errors,
                 "last_applied": raw.get("last_success"),

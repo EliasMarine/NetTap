@@ -20,7 +20,9 @@ logger = logging.getLogger("nettap.services.suricata_rules")
 # Default config path -- overridable via env var
 DEFAULT_SOURCES_CONFIG = os.environ.get(
     "SURICATA_SOURCES_CONFIG",
-    os.path.join(os.path.dirname(__file__), "../../config/suricata/update-sources.yaml"),
+    os.path.join(
+        os.path.dirname(__file__), "../../config/suricata/update-sources.yaml"
+    ),
 )
 
 DEFAULT_CONTAINER_NAME = os.environ.get(
@@ -96,11 +98,13 @@ class SuricataRuleManager:
         sources = data.get("sources", {})
         result = []
         for source_id, config in sources.items():
-            result.append({
-                "id": source_id,
-                "enabled": config.get("enabled", False),
-                "description": config.get("description", ""),
-            })
+            result.append(
+                {
+                    "id": source_id,
+                    "enabled": config.get("enabled", False),
+                    "description": config.get("description", ""),
+                }
+            )
         return result
 
     def enable_source(self, source_id: str) -> bool:
@@ -139,7 +143,9 @@ class SuricataRuleManager:
         # Step 1: Run suricata-update
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", container,
+                "docker",
+                "exec",
+                container,
                 "suricata-update",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -160,13 +166,21 @@ class SuricataRuleManager:
         if update_success:
             try:
                 reload_proc = await asyncio.create_subprocess_exec(
-                    "docker", "exec", container,
-                    "suricatasc", "-c", "reload-rules",
+                    "docker",
+                    "exec",
+                    container,
+                    "suricatasc",
+                    "-c",
+                    "reload-rules",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )
                 reload_stdout, _ = await reload_proc.communicate()
-                reload_output = reload_stdout.decode("utf-8", errors="replace") if reload_stdout else ""
+                reload_output = (
+                    reload_stdout.decode("utf-8", errors="replace")
+                    if reload_stdout
+                    else ""
+                )
             except Exception as exc:
                 logger.error("Failed to reload rules: %s", exc)
                 reload_output = "Reload failed: {}".format(exc)
@@ -258,7 +272,9 @@ class SuricataRuleManager:
         valid_intervals = {"daily", "weekly", "manual"}
         if interval not in valid_intervals:
             raise ValueError(
-                "Invalid interval '{}'. Must be one of: {}".format(interval, valid_intervals)
+                "Invalid interval '{}'. Must be one of: {}".format(
+                    interval, valid_intervals
+                )
             )
 
         enabled = interval != "manual"
@@ -306,7 +322,9 @@ class SuricataRuleManager:
     # Commercial source configuration
     # ------------------------------------------------------------------
 
-    def configure_commercial(self, source_type: str, license_key: str) -> dict[str, Any]:
+    def configure_commercial(
+        self, source_type: str, license_key: str
+    ) -> dict[str, Any]:
         """Configure a commercial rule source (ET Pro or Snort Subscriber).
 
         Args:
@@ -316,7 +334,9 @@ class SuricataRuleManager:
         valid_types = {"etpro", "snort"}
         if source_type not in valid_types:
             raise ValueError(
-                "Invalid source type '{}'. Must be one of: {}".format(source_type, valid_types)
+                "Invalid source type '{}'. Must be one of: {}".format(
+                    source_type, valid_types
+                )
             )
 
         if not license_key or len(license_key) < 8:

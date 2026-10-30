@@ -249,12 +249,14 @@ async def handle_cleanup_preview(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     older_than_days = body.get("older_than_days")
-    if not isinstance(older_than_days, int) or older_than_days < 1 or older_than_days > 3650:
+    if (
+        not isinstance(older_than_days, int)
+        or older_than_days < 1
+        or older_than_days > 3650
+    ):
         return web.json_response(
             {"error": "older_than_days must be an integer between 1 and 3650"},
             status=400,
@@ -280,12 +282,14 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     older_than_days = body.get("older_than_days")
-    if not isinstance(older_than_days, int) or older_than_days < 1 or older_than_days > 3650:
+    if (
+        not isinstance(older_than_days, int)
+        or older_than_days < 1
+        or older_than_days > 3650
+    ):
         return web.json_response(
             {"error": "older_than_days must be an integer between 1 and 3650"},
             status=400,
@@ -328,9 +332,7 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
         return web.json_response(result)
     except RuntimeError as exc:
         # Lock contention — auto-prune is running
-        return web.json_response(
-            {"error": str(exc)}, status=409
-        )
+        return web.json_response({"error": str(exc)}, status=409)
     except Exception as exc:
         logger.exception("Error executing cleanup")
         return web.json_response(
@@ -379,10 +381,12 @@ async def handle_smart_test(request: web.Request) -> web.Response:
         diagnostics = await loop.run_in_executor(None, smart.run_self_test)
         # Also get fresh metrics
         status = await loop.run_in_executor(None, smart.get_status)
-        return web.json_response({
-            "diagnostics": diagnostics,
-            "health": status,
-        })
+        return web.json_response(
+            {
+                "diagnostics": diagnostics,
+                "health": status,
+            }
+        )
     except Exception as exc:
         logger.exception("Error running SMART test")
         return web.json_response(
@@ -498,6 +502,7 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
 # Background ILM retry (used when OpenSearch is down during config save)
 # ---------------------------------------------------------------------------
 
+
 async def _ilm_retry_background(
     app: web.Application,
     config_manager: RetentionConfigManager,
@@ -575,18 +580,14 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     # --- Validate and save config ---
     config_manager: RetentionConfigManager = request.app["retention_config_manager"]
     try:
         new_config = config_manager.save(body)
     except ValueError as exc:
-        return web.json_response(
-            {"error": str(exc)}, status=400
-        )
+        return web.json_response({"error": str(exc)}, status=400)
 
     # --- Hot-reload StorageManager config ---
     storage: StorageManager = request.app["storage"]
@@ -606,20 +607,22 @@ async def handle_storage_config(request: web.Request) -> web.Response:
             ),
         )
         config_manager.mark_ilm_applied(results)
-        return web.json_response({
-            "saved": True,
-            "ilm_applied": True,
-            "ilm_results": results,
-            "config": {
-                "hot_days": new_config.hot_days,
-                "warm_days": new_config.warm_days,
-                "cold_days": new_config.cold_days,
-                "disk_threshold_percent": round(new_config.disk_threshold * 100),
-                "emergency_threshold_percent": round(
-                    new_config.emergency_threshold * 100
-                ),
-            },
-        })
+        return web.json_response(
+            {
+                "saved": True,
+                "ilm_applied": True,
+                "ilm_results": results,
+                "config": {
+                    "hot_days": new_config.hot_days,
+                    "warm_days": new_config.warm_days,
+                    "cold_days": new_config.cold_days,
+                    "disk_threshold_percent": round(new_config.disk_threshold * 100),
+                    "emergency_threshold_percent": round(
+                        new_config.emergency_threshold * 100
+                    ),
+                },
+            }
+        )
     except Exception as exc:
         # OpenSearch is down — config is saved, schedule background retry
         logger.warning(
@@ -633,21 +636,23 @@ async def handle_storage_config(request: web.Request) -> web.Response:
                 ),
                 name="ilm-retry",
             )
-        return web.json_response({
-            "saved": True,
-            "ilm_applied": False,
-            "ilm_retry_scheduled": True,
-            "ilm_error": str(exc),
-            "config": {
-                "hot_days": new_config.hot_days,
-                "warm_days": new_config.warm_days,
-                "cold_days": new_config.cold_days,
-                "disk_threshold_percent": round(new_config.disk_threshold * 100),
-                "emergency_threshold_percent": round(
-                    new_config.emergency_threshold * 100
-                ),
-            },
-        })
+        return web.json_response(
+            {
+                "saved": True,
+                "ilm_applied": False,
+                "ilm_retry_scheduled": True,
+                "ilm_error": str(exc),
+                "config": {
+                    "hot_days": new_config.hot_days,
+                    "warm_days": new_config.warm_days,
+                    "cold_days": new_config.cold_days,
+                    "disk_threshold_percent": round(new_config.disk_threshold * 100),
+                    "emergency_threshold_percent": round(
+                        new_config.emergency_threshold * 100
+                    ),
+                },
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +917,9 @@ def create_app(
     # Suricata rule source management (update-sources.yaml + docker exec)
     suricata_sources_config = os.environ.get(
         "SURICATA_SOURCES_CONFIG",
-        os.path.join(os.path.dirname(__file__), "../config/suricata/update-sources.yaml"),
+        os.path.join(
+            os.path.dirname(__file__), "../config/suricata/update-sources.yaml"
+        ),
     )
     suricata_rule_manager = SuricataRuleManager(sources_config=suricata_sources_config)
     register_suricata_rules_routes(app, suricata_rule_manager)
@@ -921,9 +928,7 @@ def create_app(
     mac_merge_file = os.environ.get(
         "MAC_MERGE_FILE", "/opt/nettap/data/mac_merges.json"
     )
-    mac_correlator = MACCorrelator(
-        client=storage._client, merge_file=mac_merge_file
-    )
+    mac_correlator = MACCorrelator(client=storage._client, merge_file=mac_merge_file)
     register_mac_correlation_routes(app, mac_correlator)
 
     # PCAP search (file listing, BPF filter search, preview, download)
@@ -981,7 +986,9 @@ async def start_api(
         via ``await runner.cleanup()``.
     """
     app = create_app(
-        storage, smart, opensearch_url,
+        storage,
+        smart,
+        opensearch_url,
         retention_config_manager=retention_config_manager,
         http_auth=http_auth,
     )

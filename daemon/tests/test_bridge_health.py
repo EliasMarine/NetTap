@@ -170,12 +170,16 @@ class TestDetermineHealthStatus(unittest.TestCase):
 
     def test_not_configured_status(self):
         """Bridge not_configured should return 'not_configured'."""
-        status = self.monitor._determine_health_status("not_configured", False, False, False)
+        status = self.monitor._determine_health_status(
+            "not_configured", False, False, False
+        )
         self.assertEqual(status, "not_configured")
 
     def test_not_configured_overrides_bypass(self):
         """not_configured should take priority over bypass."""
-        status = self.monitor._determine_health_status("not_configured", False, False, True)
+        status = self.monitor._determine_health_status(
+            "not_configured", False, False, True
+        )
         self.assertEqual(status, "not_configured")
 
 
@@ -661,6 +665,7 @@ class TestBypassStateFilePath(unittest.TestCase):
     def test_bypass_file_uses_tmp(self):
         """Bypass state file should be at /tmp, not /var/run."""
         from services.bridge_health import _BYPASS_STATE_FILE
+
         self.assertTrue(_BYPASS_STATE_FILE.startswith("/tmp/"))
         self.assertNotIn("/var/run/", _BYPASS_STATE_FILE)
 
@@ -674,8 +679,10 @@ class TestDiscoverInterfaces(unittest.TestCase):
         self.assertEqual(monitor._wan_iface, "eth0")
         self.assertEqual(monitor._lan_iface, "eth1")
 
-        with patch("os.path.isdir", return_value=True), \
-             patch("os.listdir", return_value=["enp2s0", "enp3s0"]):
+        with (
+            patch("os.path.isdir", return_value=True),
+            patch("os.listdir", return_value=["enp2s0", "enp3s0"]),
+        ):
             monitor._discover_interfaces()
 
         self.assertEqual(monitor._wan_iface, "enp2s0")
@@ -697,8 +704,10 @@ class TestDiscoverInterfaces(unittest.TestCase):
         """Should keep defaults when bridge has fewer than 2 members."""
         monitor = BridgeHealthMonitor()
 
-        with patch("os.path.isdir", return_value=True), \
-             patch("os.listdir", return_value=["enp2s0"]):
+        with (
+            patch("os.path.isdir", return_value=True),
+            patch("os.listdir", return_value=["enp2s0"]),
+        ):
             monitor._discover_interfaces()
 
         self.assertEqual(monitor._wan_iface, "eth0")
@@ -719,8 +728,10 @@ class TestDiscoverInterfaces(unittest.TestCase):
         """Members should be sorted so assignment is deterministic."""
         monitor = BridgeHealthMonitor()
 
-        with patch("os.path.isdir", return_value=True), \
-             patch("os.listdir", return_value=["enp3s0", "enp2s0"]):
+        with (
+            patch("os.path.isdir", return_value=True),
+            patch("os.listdir", return_value=["enp3s0", "enp2s0"]),
+        ):
             monitor._discover_interfaces()
 
         # Sorted: enp2s0, enp3s0

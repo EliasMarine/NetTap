@@ -495,7 +495,7 @@
 				<button
 					class="tshark-btn tshark-btn-primary"
 					onclick={() => runAnalysis()}
-					disabled={analyzing || tsharkAvailable === false}
+					disabled={analyzing}
 				>
 					{analyzing ? 'Analyzing...' : '\u25B6 Analyze'}
 				</button>

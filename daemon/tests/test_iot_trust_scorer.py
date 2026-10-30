@@ -6,7 +6,6 @@ All tests are pure-computation -- no external dependencies required.
 
 import sys
 import os
-from unittest.mock import MagicMock
 
 import pytest
 

@@ -47,16 +47,22 @@ class TestCategoryBandwidth(unittest.TestCase):
 
     def test_returns_time_series_data(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_bandwidth_response([
-            ("2026-03-01T00:00:00Z", 10, 1_000_000, 200_000),
-            ("2026-03-01T00:15:00Z", 20, 2_000_000, 400_000),
-            ("2026-03-01T00:30:00Z", 15, 1_500_000, 300_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_bandwidth_response(
+                [
+                    ("2026-03-01T00:00:00Z", 10, 1_000_000, 200_000),
+                    ("2026-03-01T00:15:00Z", 20, 2_000_000, 400_000),
+                    ("2026-03-01T00:30:00Z", 15, 1_500_000, 300_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_bandwidth(
-                client, "streaming",
-                "2026-03-01T00:00:00Z", "2026-03-01T01:00:00Z",
+                client,
+                "streaming",
+                "2026-03-01T00:00:00Z",
+                "2026-03-01T01:00:00Z",
             )
         )
         self.assertEqual(len(result), 3)
@@ -72,8 +78,10 @@ class TestCategoryBandwidth(unittest.TestCase):
 
         result = asyncio.run(
             get_category_bandwidth(
-                client, "nonexistent",
-                "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z",
+                client,
+                "nonexistent",
+                "2026-03-01T00:00:00Z",
+                "2026-03-02T00:00:00Z",
             )
         )
         self.assertEqual(result, [])
@@ -85,22 +93,30 @@ class TestCategoryBandwidth(unittest.TestCase):
 
         result = asyncio.run(
             get_category_bandwidth(
-                client, "streaming",
-                "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z",
+                client,
+                "streaming",
+                "2026-03-01T00:00:00Z",
+                "2026-03-02T00:00:00Z",
             )
         )
         self.assertEqual(result, [])
 
     def test_series_includes_all_fields(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_bandwidth_response([
-            ("2026-03-01T00:00:00Z", 5, 500_000, 100_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_bandwidth_response(
+                [
+                    ("2026-03-01T00:00:00Z", 5, 500_000, 100_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_bandwidth(
-                client, "streaming",
-                "2026-03-01T00:00:00Z", "2026-03-01T01:00:00Z",
+                client,
+                "streaming",
+                "2026-03-01T00:00:00Z",
+                "2026-03-01T01:00:00Z",
             )
         )
         self.assertEqual(len(result), 1)

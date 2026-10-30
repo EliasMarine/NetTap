@@ -117,7 +117,9 @@ class TestTimeRangeFilter(unittest.TestCase):
         result = _time_range_filter("2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z")
         self.assertEqual(result["range"]["@timestamp"]["gte"], "2026-02-25T00:00:00Z")
         self.assertEqual(result["range"]["@timestamp"]["lte"], "2026-02-26T00:00:00Z")
-        self.assertEqual(result["range"]["@timestamp"]["format"], "strict_date_optional_time")
+        self.assertEqual(
+            result["range"]["@timestamp"]["format"], "strict_date_optional_time"
+        )
 
 
 class TestTrafficSummaryHandler(AioHTTPTestCase):

@@ -40,7 +40,9 @@ async def auto_investigate(client, alert: dict) -> dict:
     investigation["sections"]["destination_profile"] = _get_host_profile(client, dst_ip)
 
     # 3. Connection history between this pair (last 7 days)
-    investigation["sections"]["connection_history"] = _get_pair_history(client, src_ip, dst_ip)
+    investigation["sections"]["connection_history"] = _get_pair_history(
+        client, src_ip, dst_ip
+    )
 
     # 4. Recommendation
     investigation["recommendation"] = _generate_recommendation(alert)
@@ -52,12 +54,16 @@ def _get_host_profile(client, ip: str) -> dict:
     """Get basic host profile from connection data."""
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": "now-24h"}}},
-            {"term": {"source.ip.keyword": ip}},
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    {"range": {"@timestamp": {"gte": "now-24h"}}},
+                    {"term": {"source.ip.keyword": ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                ]
+            }
+        },
         "aggs": {
             "total_bytes": {"sum": {"field": "source.bytes"}},
             "unique_dests": {"cardinality": {"field": "destination.ip.keyword"}},
@@ -73,7 +79,9 @@ def _get_host_profile(client, ip: str) -> dict:
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
-    conn_count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    conn_count = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     return {
         "ip": ip,
@@ -89,13 +97,17 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
     """Get connection history between two IPs over last 7 days."""
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            {"range": {"@timestamp": {"gte": "now-7d"}}},
-            {"term": {"source.ip.keyword": src_ip}},
-            {"term": {"destination.ip.keyword": dst_ip}},
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    {"range": {"@timestamp": {"gte": "now-7d"}}},
+                    {"term": {"source.ip.keyword": src_ip}},
+                    {"term": {"destination.ip.keyword": dst_ip}},
+                    {"term": {"event.provider": "zeek"}},
+                    {"term": {"event.dataset": "conn"}},
+                ]
+            }
+        },
         "aggs": {
             "total_bytes": {
                 "sum": {
@@ -108,7 +120,11 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
             "by_day": {
-                "date_histogram": {"field": "@timestamp", "calendar_interval": "day", "min_doc_count": 0},
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "calendar_interval": "day",
+                    "min_doc_count": 0,
+                },
             },
         },
     }
@@ -120,7 +136,9 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
-    total_conns = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    total_conns = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     daily = [
         {"date": b.get("key_as_string", ""), "count": b["doc_count"]}
@@ -150,15 +168,21 @@ def _generate_recommendation(alert: dict) -> str:
         parts.append("HIGH PRIORITY: Investigate this alert within the next hour.")
 
     if cat == "malware_c2":
-        parts.append("Check for malware on the source device. Scan with endpoint security tools.")
+        parts.append(
+            "Check for malware on the source device. Scan with endpoint security tools."
+        )
     elif cat == "exfiltration":
         parts.append("Check for data exfiltration — review large outbound transfers.")
     elif cat == "reconnaissance":
-        parts.append("Determine if this is authorized scanning (pentest, vulnerability scan).")
+        parts.append(
+            "Determine if this is authorized scanning (pentest, vulnerability scan)."
+        )
 
     ti = alert.get("threat_intel", [])
     if ti:
-        parts.append(f"Destination matches {ti[0].get('label', 'threat intel')} — block at firewall.")
+        parts.append(
+            f"Destination matches {ti[0].get('label', 'threat intel')} — block at firewall."
+        )
 
     if not parts:
         parts.append("Review the connection history and related alerts for patterns.")
@@ -166,25 +190,45 @@ def _generate_recommendation(alert: dict) -> str:
     return " ".join(parts)
 
 
-async def generate_threat_report(client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> dict:
+async def generate_threat_report(
+    client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+) -> dict:
     """Unified threat report — the single API call that powers the /threats page."""
-    from services.alert_intelligence import get_smart_alerts, get_smart_alert_summary, detect_kill_chains
-    from services.threat_detection import detect_beaconing, detect_lateral_movement, analyze_dns_anomalies
+    from services.alert_intelligence import (
+        get_smart_alerts,
+        get_smart_alert_summary,
+        detect_kill_chains,
+    )
+    from services.threat_detection import (
+        detect_beaconing,
+        detect_lateral_movement,
+        analyze_dns_anomalies,
+    )
     from services.excluded_ips import build_excluded_ips_filter
 
     excluded = build_excluded_ips_filter(excluded_ips or [])
 
-    summary = await get_smart_alert_summary(client, from_ts, to_ts, excluded_ips=excluded)
-    alerts = await get_smart_alerts(client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded)
+    summary = await get_smart_alert_summary(
+        client, from_ts, to_ts, excluded_ips=excluded
+    )
+    alerts = await get_smart_alerts(
+        client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded
+    )
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": {"from": from_ts, "to": to_ts},
         "summary": summary,
         "kill_chains": detect_kill_chains(alerts),
-        "beaconing": detect_beaconing(client, from_ts, to_ts, excluded_ips=excluded_ips),
-        "dns_anomalies": analyze_dns_anomalies(client, from_ts, to_ts, excluded_ips=excluded_ips),
-        "lateral_movement": detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        "beaconing": detect_beaconing(
+            client, from_ts, to_ts, excluded_ips=excluded_ips
+        ),
+        "dns_anomalies": analyze_dns_anomalies(
+            client, from_ts, to_ts, excluded_ips=excluded_ips
+        ),
+        "lateral_movement": detect_lateral_movement(
+            client, from_ts, to_ts, excluded_ips=excluded_ips
+        ),
         "investigations": [],
     }
 
@@ -195,6 +239,10 @@ async def generate_threat_report(client, from_ts: str, to_ts: str, excluded_ips:
             inv = await auto_investigate(client, alert)
             report["investigations"].append(inv)
         except Exception:
-            logger.warning("Auto-investigation failed for alert %s", alert.get("signature"), exc_info=True)
+            logger.warning(
+                "Auto-investigation failed for alert %s",
+                alert.get("signature"),
+                exc_info=True,
+            )
 
     return report

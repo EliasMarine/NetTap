@@ -47,17 +47,21 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        anomalies = detector.get_all_anomalies(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        anomalies = detector.get_all_anomalies(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("LAN anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "anomalies": anomalies,
-        "count": len(anomalies),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "anomalies": anomalies,
+            "count": len(anomalies),
+        }
+    )
 
 
 async def handle_arp_spoofing(request: web.Request) -> web.Response:
@@ -67,17 +71,21 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        alerts = detector.detect_arp_spoofing(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        alerts = detector.detect_arp_spoofing(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("ARP spoofing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "alerts": alerts,
-        "count": len(alerts),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "alerts": alerts,
+            "count": len(alerts),
+        }
+    )
 
 
 async def handle_rogue_dhcp(request: web.Request) -> web.Response:
@@ -87,22 +95,24 @@ async def handle_rogue_dhcp(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        alerts = detector.detect_rogue_dhcp(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        alerts = detector.detect_rogue_dhcp(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Rogue DHCP detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "alerts": alerts,
-        "count": len(alerts),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "alerts": alerts,
+            "count": len(alerts),
+        }
+    )
 
 
-def register_lan_security_routes(
-    app: web.Application, storage: StorageManager
-) -> None:
+def register_lan_security_routes(app: web.Application, storage: StorageManager) -> None:
     """Register LAN security API routes."""
     detector = LANAnomalyDetector(client=storage._client)
     app["lan_anomaly_detector"] = detector

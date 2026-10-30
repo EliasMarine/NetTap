@@ -182,7 +182,9 @@ class BridgeHealthMonitor:
 
         # Build issue list
         if bridge_state == "not_configured":
-            issues.append("Bridge interface has not been configured — run the setup wizard")
+            issues.append(
+                "Bridge interface has not been configured — run the setup wizard"
+            )
         elif bridge_state == "down":
             issues.append("Bridge interface is down")
         elif bridge_state == "unknown":
@@ -327,7 +329,9 @@ class BridgeHealthMonitor:
 
         # Disable promiscuous mode on both NICs — stops packet capture
         for iface in (self._wan_iface, self._lan_iface):
-            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "promisc", "off")
+            rc, _, err = await self._run_nsenter(
+                "ip", "link", "set", iface, "promisc", "off"
+            )
             if rc != 0:
                 logger.warning("Failed to disable promisc on %s: %s", iface, err)
             else:
@@ -352,7 +356,9 @@ class BridgeHealthMonitor:
 
         # Re-enable promiscuous mode on both NICs — resumes packet capture
         for iface in (self._wan_iface, self._lan_iface):
-            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "promisc", "on")
+            rc, _, err = await self._run_nsenter(
+                "ip", "link", "set", iface, "promisc", "on"
+            )
             if rc != 0:
                 logger.warning("Failed to enable promisc on %s: %s", iface, err)
             else:

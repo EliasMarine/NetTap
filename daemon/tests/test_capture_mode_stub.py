@@ -46,44 +46,44 @@ class TestCaptureManagerStubDefaults(unittest.TestCase):
 
     def test_get_health_returns_capture_health(self):
         """get_health() should return a CaptureHealth instance."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         self.assertIsInstance(health, CaptureHealth)
 
     def test_get_health_status_not_configured(self):
         """Stub health status should be 'not_configured'."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         self.assertEqual(health.status, "not_configured")
 
     def test_get_health_has_stub_flag(self):
         """Stub health extra should contain stub=True."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         d = health.to_dict()
         self.assertTrue(d.get("stub"))
 
     def test_get_health_link_down(self):
         """Stub should report link_up=False since no real interface is active."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         self.assertFalse(health.link_up)
 
     def test_get_health_promisc_disabled(self):
         """Stub should report promisc_enabled=False."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         self.assertFalse(health.promisc_enabled)
 
     def test_get_health_has_issue(self):
         """Stub health should report an issue explaining it's a stub."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         self.assertEqual(len(health.issues), 1)
         self.assertIn("stub", health.issues[0].lower())
 
     def test_get_stats_returns_capture_stats(self):
         """get_stats() should return a CaptureStats instance."""
-        stats = asyncio.get_event_loop().run_until_complete(self.stub.get_stats())
+        stats = asyncio.run(self.stub.get_stats())
         self.assertIsInstance(stats, CaptureStats)
 
     def test_get_stats_zeroed(self):
         """Stub stats should have all zero counters."""
-        stats = asyncio.get_event_loop().run_until_complete(self.stub.get_stats())
+        stats = asyncio.run(self.stub.get_stats())
         self.assertEqual(stats.rx_bytes, 0)
         self.assertEqual(stats.tx_bytes, 0)
         self.assertEqual(stats.rx_packets, 0)
@@ -92,18 +92,18 @@ class TestCaptureManagerStubDefaults(unittest.TestCase):
 
     def test_get_stats_interface_matches(self):
         """Stats capture_interface should match get_capture_interface()."""
-        stats = asyncio.get_event_loop().run_until_complete(self.stub.get_stats())
+        stats = asyncio.run(self.stub.get_stats())
         self.assertEqual(stats.capture_interface, self.stub.get_capture_interface())
 
     def test_setup_is_noop(self):
         """setup() should return success with stub=True."""
-        result = asyncio.get_event_loop().run_until_complete(self.stub.setup())
+        result = asyncio.run(self.stub.setup())
         self.assertTrue(result.get("success"))
         self.assertTrue(result.get("stub"))
 
     def test_teardown_is_noop(self):
         """teardown() should return success with stub=True."""
-        result = asyncio.get_event_loop().run_until_complete(self.stub.teardown())
+        result = asyncio.run(self.stub.teardown())
         self.assertTrue(result.get("success"))
         self.assertTrue(result.get("stub"))
 
@@ -134,12 +134,12 @@ class TestCaptureManagerStubMirrorMode(unittest.TestCase):
 
     def test_health_mode_string(self):
         """Health mode should be 'mirror'."""
-        health = asyncio.get_event_loop().run_until_complete(self.stub.get_health())
+        health = asyncio.run(self.stub.get_health())
         self.assertEqual(health.mode, "mirror")
 
     def test_stats_interface_matches(self):
         """Stats interface should match the mirror NIC."""
-        stats = asyncio.get_event_loop().run_until_complete(self.stub.get_stats())
+        stats = asyncio.run(self.stub.get_stats())
         self.assertEqual(stats.capture_interface, "enp2s0")
 
 

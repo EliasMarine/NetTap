@@ -361,7 +361,11 @@ class GeoIPService:
                             "bool": {
                                 "should": [
                                     {"exists": {"field": "source.geo.country_name"}},
-                                    {"exists": {"field": "destination.geo.country_name"}},
+                                    {
+                                        "exists": {
+                                            "field": "destination.geo.country_name"
+                                        }
+                                    },
                                 ],
                                 "minimum_should_match": 1,
                             }
@@ -369,9 +373,12 @@ class GeoIPService:
                     }
                 },
                 "_source": [
-                    "source.ip", "destination.ip",
-                    "source.geo.*", "destination.geo.*",
-                    "source.as.*", "destination.as.*",
+                    "source.ip",
+                    "destination.ip",
+                    "source.geo.*",
+                    "destination.geo.*",
+                    "source.as.*",
+                    "destination.as.*",
                 ],
             }
 

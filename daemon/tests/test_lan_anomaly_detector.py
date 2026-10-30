@@ -89,9 +89,7 @@ class TestDetectArpSpoofing:
         assert len(alerts) == 0
 
     def test_empty_results(self, detector, mock_client):
-        mock_client.search.return_value = {
-            "aggregations": {"by_ip": {"buckets": []}}
-        }
+        mock_client.search.return_value = {"aggregations": {"by_ip": {"buckets": []}}}
 
         alerts = detector.detect_arp_spoofing(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"

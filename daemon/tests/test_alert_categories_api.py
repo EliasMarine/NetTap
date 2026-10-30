@@ -32,23 +32,33 @@ class TestCategorizeSubCategory:
     """Tests for categorize_sub_category() across multiple categories."""
 
     def test_ssh_brute_in_credential_abuse(self):
-        result = categorize_sub_category("ET SCAN SSH Brute Force Attempt", "credential_abuse")
+        result = categorize_sub_category(
+            "ET SCAN SSH Brute Force Attempt", "credential_abuse"
+        )
         assert result == "ssh_brute"
 
     def test_rdp_brute_in_credential_abuse(self):
-        result = categorize_sub_category("ET SCAN RDP Brute Force Login", "credential_abuse")
+        result = categorize_sub_category(
+            "ET SCAN RDP Brute Force Login", "credential_abuse"
+        )
         assert result == "rdp_brute"
 
     def test_password_spray_in_credential_abuse(self):
-        result = categorize_sub_category("Password Spray Attack Detected", "credential_abuse")
+        result = categorize_sub_category(
+            "Password Spray Attack Detected", "credential_abuse"
+        )
         assert result == "password_spray"
 
     def test_default_login_in_credential_abuse(self):
-        result = categorize_sub_category("Default Login Attempt on Router", "credential_abuse")
+        result = categorize_sub_category(
+            "Default Login Attempt on Router", "credential_abuse"
+        )
         assert result == "default_login"
 
     def test_cleartext_creds_in_sensitive_data(self):
-        result = categorize_sub_category("ET POLICY Cleartext Password in HTTP", "sensitive_data")
+        result = categorize_sub_category(
+            "ET POLICY Cleartext Password in HTTP", "sensitive_data"
+        )
         assert result == "cleartext_creds"
 
     def test_pii_in_sensitive_data(self):
@@ -64,11 +74,15 @@ class TestCategorizeSubCategory:
         assert result == "amplification"
 
     def test_bad_cert_in_encrypted_threats(self):
-        result = categorize_sub_category("SURICATA TLS Invalid certificate", "encrypted_threats")
+        result = categorize_sub_category(
+            "SURICATA TLS Invalid certificate", "encrypted_threats"
+        )
         assert result == "bad_cert"
 
     def test_ja3_in_encrypted_threats(self):
-        result = categorize_sub_category("Known-Bad JA3 Hash Detected", "encrypted_threats")
+        result = categorize_sub_category(
+            "Known-Bad JA3 Hash Detected", "encrypted_threats"
+        )
         assert result == "known_bad_ja3"
 
     def test_trojan_in_malware_c2(self):
@@ -80,7 +94,9 @@ class TestCategorizeSubCategory:
         assert result == "threat_intel"
 
     def test_dns_tunnel_in_exfiltration(self):
-        result = categorize_sub_category("ET DNS Tunnel Suspicious Query", "exfiltration")
+        result = categorize_sub_category(
+            "ET DNS Tunnel Suspicious Query", "exfiltration"
+        )
         assert result == "dns_tunnel"
 
     def test_port_scan_in_reconnaissance(self):
@@ -100,7 +116,9 @@ class TestCategorizeSubCategory:
         assert result == "tor"
 
     def test_tls_anomaly_in_protocol(self):
-        result = categorize_sub_category("SURICATA TLS missing handshake", "protocol_anomaly")
+        result = categorize_sub_category(
+            "SURICATA TLS missing handshake", "protocol_anomaly"
+        )
         assert result == "tls_anomaly"
 
     def test_upnp_in_iot(self):
@@ -132,7 +150,14 @@ class TestMitreTechniques:
 
     def test_mitre_covers_key_categories(self):
         """MITRE mapping should exist for high-risk categories."""
-        expected = {"credential_abuse", "malware_c2", "exfiltration", "reconnaissance", "exploit", "dos"}
+        expected = {
+            "credential_abuse",
+            "malware_c2",
+            "exfiltration",
+            "reconnaissance",
+            "exploit",
+            "dos",
+        }
         for cat in expected:
             assert cat in MITRE_TECHNIQUES, f"Missing MITRE mapping for {cat}"
 
@@ -149,7 +174,9 @@ class TestMitreTechniques:
         """MITRE technique IDs always start with 'T'."""
         for cat, techniques in MITRE_TECHNIQUES.items():
             for t in techniques:
-                assert t["id"].startswith("T"), f"ID {t['id']} in {cat} should start with T"
+                assert t["id"].startswith("T"), (
+                    f"ID {t['id']} in {cat} should start with T"
+                )
 
     def test_no_duplicate_technique_ids_per_category(self):
         """No duplicate technique IDs within a single category."""

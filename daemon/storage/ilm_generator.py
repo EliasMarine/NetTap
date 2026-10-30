@@ -91,9 +91,7 @@ def generate_ilm_policies(config: RetentionConfig) -> dict[str, dict]:
                     "transitions": [
                         {
                             "state_name": "delete",
-                            "conditions": {
-                                "min_index_age": f"{config.hot_days}d"
-                            },
+                            "conditions": {"min_index_age": f"{config.hot_days}d"},
                         }
                     ],
                 },
@@ -108,9 +106,7 @@ def generate_ilm_policies(config: RetentionConfig) -> dict[str, dict]:
                     "transitions": [],
                 },
             ],
-            "ism_template": [
-                {"index_patterns": ["zeek-*"], "priority": 100}
-            ],
+            "ism_template": [{"index_patterns": ["zeek-*"], "priority": 100}],
         }
     }
 
@@ -182,9 +178,7 @@ def generate_ilm_policies(config: RetentionConfig) -> dict[str, dict]:
                     "transitions": [],
                 },
             ],
-            "ism_template": [
-                {"index_patterns": ["suricata-*"], "priority": 100}
-            ],
+            "ism_template": [{"index_patterns": ["suricata-*"], "priority": 100}],
         }
     }
 

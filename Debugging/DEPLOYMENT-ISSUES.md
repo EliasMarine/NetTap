@@ -57,7 +57,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **18 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **19 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -200,6 +200,14 @@ CHAIN 18: PCAP Search Page Redesign (phase-5/mirror-span-mode)
   9. Time range pills: quick time range selection (1h, 6h, 24h, 7d, 30d).
   10. DNS copy button CSS fix: bigger icon (1.25rem), accent-blue color.
   11. Added formatRelativeTime and PROTO_FILTER_MAP helpers to pcap.ts API client.
+
+CHAIN 19: Bundled OUI vendor database never shipped (fix/ci-baseline, PR #142)
+  Commit 2052e94
+  .gitignore's `data/` rule also matched `daemon/data/`, so `oui_database.json` was never
+  committed. Images built on the device lacked it; MacLookupService logs a warning and falls
+  back to an empty DB, so the MAC Lookup tool silently returned no vendor. Found when CI's
+  daemon tests first ran. Fix: allowlist only that file; `notifications.json` (SMTP passwords,
+  API tokens) and every other runtime file under `daemon/data/` stay ignored.
 ```
 
 ---
@@ -1649,6 +1657,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 24. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
 25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
 52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
+100. **Same trap, worse outcome: `data/` hid `daemon/data/oui_database.json` (Chain 19)** — the file existed on the dev machine, so nothing failed locally. Unanchored `.gitignore` directory rules match at every depth. Prefer an explicit allowlist (`!/daemon/data/`, `/daemon/data/*`, `!/daemon/data/<file>`) over `git add -f`, which leaves the rule in place, so the next new file in that folder is hidden too. Run tests from a clean `git archive` export to catch files that only exist locally.
 
 ---
 
@@ -1731,3 +1740,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | ddfb627 | Svelte build fix: {@const} inside <div> invalid — inline expressions instead | 2026-03-13 |
 | — | 7d44e5d | Device intelligence dashboard v2: 7 sections + TShark drill-down drawer | 2026-03-13 |
 | — | c948e8c | Svelte build fix: {@const} inside <svg> invalid — $derived arc calc instead | 2026-03-13 |
+| — | 2052e94 | Ship bundled OUI vendor DB: .gitignore `data/` also hid `daemon/data/oui_database.json` (Chain 19) | 2026-10-29 |

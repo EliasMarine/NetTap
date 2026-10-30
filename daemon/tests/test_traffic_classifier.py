@@ -245,7 +245,11 @@ class TestGetCategoryStats(unittest.TestCase):
             "aggregations": {
                 "asn_breakdown": {
                     "buckets": [
-                        {"key": name, "doc_count": count, "total_bytes": {"value": bytes_val}}
+                        {
+                            "key": name,
+                            "doc_count": count,
+                            "total_bytes": {"value": bytes_val},
+                        }
                         for name, count, bytes_val in asn_buckets
                     ]
                 }
@@ -255,11 +259,15 @@ class TestGetCategoryStats(unittest.TestCase):
     def test_category_stats_success(self):
         """Successful category stats query returns categorized data."""
         mock_client = MagicMock()
-        mock_client.search = MagicMock(return_value=self._asn_response([
-            ("AS2906 Netflix Inc", 150, 10_000_000),
-            ("AS15169 Google LLC", 100, 5_000_000),
-            ("AS13335 Cloudflare, Inc.", 80, 3_000_000),
-        ]))
+        mock_client.search = MagicMock(
+            return_value=self._asn_response(
+                [
+                    ("AS2906 Netflix Inc", 150, 10_000_000),
+                    ("AS15169 Google LLC", 100, 5_000_000),
+                    ("AS13335 Cloudflare, Inc.", 80, 3_000_000),
+                ]
+            )
+        )
 
         async def run():
             return await get_category_stats(
@@ -315,10 +323,14 @@ class TestGetCategoryStats(unittest.TestCase):
     def test_category_stats_sorted_by_bytes(self):
         """Results are sorted by total_bytes descending."""
         mock_client = MagicMock()
-        mock_client.search = MagicMock(return_value=self._asn_response([
-            ("AS32934 Meta Platforms", 200, 1_000_000),
-            ("AS2906 Netflix Inc", 500, 5_000_000),
-        ]))
+        mock_client.search = MagicMock(
+            return_value=self._asn_response(
+                [
+                    ("AS32934 Meta Platforms", 200, 1_000_000),
+                    ("AS2906 Netflix Inc", 500, 5_000_000),
+                ]
+            )
+        )
 
         async def run():
             return await get_category_stats(

@@ -127,7 +127,10 @@ class DeviceRegistry:
                 doc["manufacturer"] = metadata["manufacturer"]
 
             # Update category if provided and current is unknown
-            if metadata.get("category") and doc.get("category", CATEGORY_UNKNOWN) == CATEGORY_UNKNOWN:
+            if (
+                metadata.get("category")
+                and doc.get("category", CATEGORY_UNKNOWN) == CATEGORY_UNKNOWN
+            ):
                 cat = metadata["category"]
                 if cat in VALID_CATEGORIES:
                     doc["category"] = cat
@@ -163,7 +166,8 @@ class DeviceRegistry:
                 "ips": [ip] if ip else [],
                 "hostnames": hostnames,
                 "manufacturer": metadata.get("manufacturer"),
-                "friendly_name": metadata.get("unifi_alias") or metadata.get("friendly_name"),
+                "friendly_name": metadata.get("unifi_alias")
+                or metadata.get("friendly_name"),
                 "category": metadata.get("category", CATEGORY_UNKNOWN),
                 "first_seen": now,
                 "last_seen": now,
@@ -222,9 +226,7 @@ class DeviceRegistry:
             logger.error("Failed to list devices: %s", exc)
             return []
 
-    def get_device_traffic(
-        self, mac: str, from_ts: str, to_ts: str
-    ) -> dict:
+    def get_device_traffic(self, mac: str, from_ts: str, to_ts: str) -> dict:
         """Get traffic summary for a device by MAC address.
 
         Queries arkime_sessions3-* for connections where source.mac matches.
@@ -304,10 +306,7 @@ class DeviceRegistry:
             hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
         )
 
-        protocols = [
-            b["key"]
-            for b in aggs.get("protocols", {}).get("buckets", [])
-        ]
+        protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
         top_destinations = [
             {"ip": b["key"], "connections": b["doc_count"]}
             for b in aggs.get("top_destinations", {}).get("buckets", [])
@@ -510,7 +509,9 @@ class DeviceRegistry:
         count = 0
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
-            buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+            buckets = (
+                result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+            )
             for bucket in buckets:
                 mac = bucket["key"]
                 ip_buckets = bucket.get("ips", {}).get("buckets", [])
@@ -582,7 +583,9 @@ class DeviceRegistry:
 
                 if dns_query and dns_query.endswith(".local"):
                     # Extract friendly name from mDNS (e.g. "iPhone._tcp.local" -> "iPhone")
-                    hostname = dns_query.split(".")[0] if "." in dns_query else dns_query
+                    hostname = (
+                        dns_query.split(".")[0] if "." in dns_query else dns_query
+                    )
 
                     self.register_device(
                         mac=mac,
@@ -650,9 +653,8 @@ class DeviceRegistry:
                 seen_macs.add(mac)
 
                 ip = src.get("source.ip") or src.get("source", {}).get("ip")
-                user_agent = (
-                    src.get("http.useragent")
-                    or src.get("http", {}).get("useragent")
+                user_agent = src.get("http.useragent") or src.get("http", {}).get(
+                    "useragent"
                 )
 
                 metadata: dict[str, Any] = {}

@@ -32,39 +32,57 @@ def config_paths(tmp_path):
     }
 
     # Write sample config files
-    (tmp_path / "notifications.json").write_text(json.dumps({
-        "channels": {
-            "ch1": {"type": "email", "config": {"to": "admin@test.com"}},
-        },
-        "rules": {
-            "r1": {"event_type": "alert", "channel": "ch1"},
-        },
-    }))
+    (tmp_path / "notifications.json").write_text(
+        json.dumps(
+            {
+                "channels": {
+                    "ch1": {"type": "email", "config": {"to": "admin@test.com"}},
+                },
+                "rules": {
+                    "r1": {"event_type": "alert", "channel": "ch1"},
+                },
+            }
+        )
+    )
 
-    (tmp_path / "device_baseline.json").write_text(json.dumps({
-        "aliases": {"00:11:22:33:44:55": "My Laptop"},
-        "devices": [],
-    }))
+    (tmp_path / "device_baseline.json").write_text(
+        json.dumps(
+            {
+                "aliases": {"00:11:22:33:44:55": "My Laptop"},
+                "devices": [],
+            }
+        )
+    )
 
-    (tmp_path / "excluded_ips.json").write_text(json.dumps([
-        "192.168.1.1", "10.0.0.1"
-    ]))
+    (tmp_path / "excluded_ips.json").write_text(json.dumps(["192.168.1.1", "10.0.0.1"]))
 
-    (tmp_path / "bandwidth_cap.json").write_text(json.dumps({
-        "monthly_cap_gb": 1000,
-        "enabled": True,
-    }))
+    (tmp_path / "bandwidth_cap.json").write_text(
+        json.dumps(
+            {
+                "monthly_cap_gb": 1000,
+                "enabled": True,
+            }
+        )
+    )
 
-    (tmp_path / "capture_config.json").write_text(json.dumps({
-        "mode": "bridge",
-        "interfaces": ["eth0", "eth1"],
-    }))
+    (tmp_path / "capture_config.json").write_text(
+        json.dumps(
+            {
+                "mode": "bridge",
+                "interfaces": ["eth0", "eth1"],
+            }
+        )
+    )
 
-    (tmp_path / "retention_config.json").write_text(json.dumps({
-        "hot_days": 90,
-        "warm_days": 180,
-        "cold_days": 30,
-    }))
+    (tmp_path / "retention_config.json").write_text(
+        json.dumps(
+            {
+                "hot_days": 90,
+                "warm_days": 180,
+                "cold_days": 30,
+            }
+        )
+    )
 
     return paths
 
@@ -158,9 +176,11 @@ class TestValidateImport:
 
     def test_missing_sections_still_valid(self, backup):
         """Missing sections defaults to empty — valid with warning."""
-        result = backup.validate_import({
-            "metadata": {"schema_version": 1, "nettap_version": "0.4.0"},
-        })
+        result = backup.validate_import(
+            {
+                "metadata": {"schema_version": 1, "nettap_version": "0.4.0"},
+            }
+        )
         assert result["is_valid"] is True
 
     def test_newer_schema_version(self, backup):
@@ -253,7 +273,12 @@ class TestImport:
 
     def test_import_no_sections(self, backup):
         """Import with no sections should succeed but apply nothing."""
-        result = backup.import_config({"metadata": {"schema_version": 1, "nettap_version": "0.4.0"}, "sections": {}})
+        result = backup.import_config(
+            {
+                "metadata": {"schema_version": 1, "nettap_version": "0.4.0"},
+                "sections": {},
+            }
+        )
         assert result["success"] is True
         assert result["applied"] == []
 

@@ -56,7 +56,7 @@ jobs:
       - name: Install daemon dependencies
         run: |
           pip install -r daemon/requirements.txt
-          pip install pytest pytest-asyncio aioresponses httpx
+          pip install pytest pytest-asyncio httpx
 
       - name: Wait for OpenSearch to be ready
         run: |

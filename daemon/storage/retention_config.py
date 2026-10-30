@@ -67,35 +67,23 @@ def validate_config(values: dict) -> None:
     # --- hot_days ---
     if hot is not None:
         if not isinstance(hot, int):
-            raise ValueError(
-                f"hot_days must be an integer, got {type(hot).__name__}"
-            )
+            raise ValueError(f"hot_days must be an integer, got {type(hot).__name__}")
         if not 1 <= hot <= 365:
-            raise ValueError(
-                f"hot_days must be between 1 and 365, got {hot}"
-            )
+            raise ValueError(f"hot_days must be between 1 and 365, got {hot}")
 
     # --- warm_days ---
     if warm is not None:
         if not isinstance(warm, int):
-            raise ValueError(
-                f"warm_days must be an integer, got {type(warm).__name__}"
-            )
+            raise ValueError(f"warm_days must be an integer, got {type(warm).__name__}")
         if not 1 <= warm <= 730:
-            raise ValueError(
-                f"warm_days must be between 1 and 730, got {warm}"
-            )
+            raise ValueError(f"warm_days must be between 1 and 730, got {warm}")
 
     # --- cold_days ---
     if cold is not None:
         if not isinstance(cold, int):
-            raise ValueError(
-                f"cold_days must be an integer, got {type(cold).__name__}"
-            )
+            raise ValueError(f"cold_days must be an integer, got {type(cold).__name__}")
         if not 1 <= cold <= 365:
-            raise ValueError(
-                f"cold_days must be between 1 and 365, got {cold}"
-            )
+            raise ValueError(f"cold_days must be between 1 and 365, got {cold}")
 
     # --- disk_threshold_percent ---
     if disk_pct is not None:
@@ -322,7 +310,8 @@ class RetentionConfigManager:
             warm_days=int(retention.get("warm_days", 180)),
             cold_days=int(retention.get("cold_days", 30)),
             disk_threshold=int(thresholds.get("disk_threshold_percent", 80)) / 100.0,
-            emergency_threshold=int(thresholds.get("emergency_threshold_percent", 90)) / 100.0,
+            emergency_threshold=int(thresholds.get("emergency_threshold_percent", 90))
+            / 100.0,
         )
 
     @staticmethod
@@ -339,14 +328,18 @@ class RetentionConfigManager:
             warm_days=int(os.environ.get("RETENTION_WARM", defaults.warm_days)),
             cold_days=int(os.environ.get("RETENTION_COLD", defaults.cold_days)),
             disk_threshold=int(
-                os.environ.get("DISK_THRESHOLD_PERCENT", int(defaults.disk_threshold * 100))
-            ) / 100.0,
+                os.environ.get(
+                    "DISK_THRESHOLD_PERCENT", int(defaults.disk_threshold * 100)
+                )
+            )
+            / 100.0,
             emergency_threshold=int(
                 os.environ.get(
                     "EMERGENCY_THRESHOLD_PERCENT",
                     int(defaults.emergency_threshold * 100),
                 )
-            ) / 100.0,
+            )
+            / 100.0,
         )
 
     def _merge_config(self, new_config: dict) -> RetentionConfig:
@@ -408,7 +401,8 @@ class RetentionConfigManager:
                 "disk_threshold_percent": int(config.disk_threshold * 100),
                 "emergency_threshold_percent": int(config.emergency_threshold * 100),
             },
-            "ilm_applied": self._ilm_status or {
+            "ilm_applied": self._ilm_status
+            or {
                 "last_success": None,
                 "last_attempt": None,
                 "policies": {},

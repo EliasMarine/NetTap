@@ -56,12 +56,14 @@ async def handle_list_certificates(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     certs = monitor.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips_list)
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "certificates": certs,
-        "count": len(certs),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "certificates": certs,
+            "count": len(certs),
+        }
+    )
 
 
 async def handle_expiring_certs(request: web.Request) -> web.Response:
@@ -75,14 +77,18 @@ async def handle_expiring_certs(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         days = 30
 
-    certs = monitor.get_expiring_certs(days=days, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips_list)
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "days": days,
-        "certificates": certs,
-        "count": len(certs),
-    })
+    certs = monitor.get_expiring_certs(
+        days=days, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips_list
+    )
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "days": days,
+            "certificates": certs,
+            "count": len(certs),
+        }
+    )
 
 
 async def handle_self_signed(request: web.Request) -> web.Response:
@@ -92,12 +98,14 @@ async def handle_self_signed(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     certs = monitor.detect_self_signed(from_ts, to_ts, excluded_ips=excluded_ips_list)
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "certificates": certs,
-        "count": len(certs),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "certificates": certs,
+            "count": len(certs),
+        }
+    )
 
 
 async def handle_issuer_changes(request: web.Request) -> web.Response:
@@ -106,13 +114,17 @@ async def handle_issuer_changes(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
-    changes = monitor.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips_list)
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "changes": changes,
-        "count": len(changes),
-    })
+    changes = monitor.detect_issuer_changes(
+        from_ts, to_ts, excluded_ips=excluded_ips_list
+    )
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "changes": changes,
+            "count": len(changes),
+        }
+    )
 
 
 async def handle_cert_stats(request: web.Request) -> web.Response:

@@ -40,7 +40,9 @@ class LANAnomalyDetector:
         self._client = client
 
     def detect_arp_spoofing(
-        self, from_ts: str, to_ts: str,
+        self,
+        from_ts: str,
+        to_ts: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect ARP spoofing: multiple MAC addresses claiming the same IP.
@@ -61,9 +63,7 @@ class LANAnomalyDetector:
 
         query = {
             "size": 0,
-            "query": {
-                "bool": bool_clause
-            },
+            "query": {"bool": bool_clause},
             "aggs": {
                 "by_ip": {
                     "terms": {
@@ -99,9 +99,7 @@ class LANAnomalyDetector:
             logger.error("ARP spoofing detection failed: %s", exc)
             return []
 
-        buckets = (
-            result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-        )
+        buckets = result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
 
         alerts: list[dict[str, Any]] = []
         for b in buckets:
@@ -110,24 +108,28 @@ class LANAnomalyDetector:
             mac_count = b.get("mac_count", {}).get("value", 0)
 
             if mac_count > 1:
-                alerts.append({
-                    "type": "arp_spoofing",
-                    "ip": ip,
-                    "mac_addresses": macs,
-                    "mac_count": mac_count,
-                    "event_count": b.get("doc_count", 0),
-                    "severity": "high",
-                    "description": (
-                        f"Multiple MACs ({', '.join(macs)}) claiming IP {ip} "
-                        f"— possible ARP spoofing"
-                    ),
-                    "detected_at": datetime.now(timezone.utc).isoformat(),
-                })
+                alerts.append(
+                    {
+                        "type": "arp_spoofing",
+                        "ip": ip,
+                        "mac_addresses": macs,
+                        "mac_count": mac_count,
+                        "event_count": b.get("doc_count", 0),
+                        "severity": "high",
+                        "description": (
+                            f"Multiple MACs ({', '.join(macs)}) claiming IP {ip} "
+                            f"— possible ARP spoofing"
+                        ),
+                        "detected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
         return alerts
 
     def detect_rogue_dhcp(
-        self, from_ts: str, to_ts: str,
+        self,
+        from_ts: str,
+        to_ts: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect rogue DHCP servers: DHCP offers from unexpected sources.
@@ -148,9 +150,7 @@ class LANAnomalyDetector:
 
         query = {
             "size": 0,
-            "query": {
-                "bool": bool_clause
-            },
+            "query": {"bool": bool_clause},
             "aggs": {
                 "dhcp_servers": {
                     "terms": {
@@ -164,12 +164,8 @@ class LANAnomalyDetector:
                                 "size": 5,
                             }
                         },
-                        "first_seen": {
-                            "min": {"field": "@timestamp"}
-                        },
-                        "last_seen": {
-                            "max": {"field": "@timestamp"}
-                        },
+                        "first_seen": {"min": {"field": "@timestamp"}},
+                        "last_seen": {"max": {"field": "@timestamp"}},
                     },
                 }
             },
@@ -182,9 +178,7 @@ class LANAnomalyDetector:
             return []
 
         buckets = (
-            result.get("aggregations", {})
-            .get("dhcp_servers", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("dhcp_servers", {}).get("buckets", [])
         )
 
         alerts: list[dict[str, Any]] = []
@@ -200,28 +194,31 @@ class LANAnomalyDetector:
             for b in buckets_sorted[1:]:
                 server_ip = b["key"]
                 server_macs = [
-                    m["key"]
-                    for m in b.get("server_mac", {}).get("buckets", [])
+                    m["key"] for m in b.get("server_mac", {}).get("buckets", [])
                 ]
-                alerts.append({
-                    "type": "rogue_dhcp",
-                    "server_ip": server_ip,
-                    "server_mac": server_macs[0] if server_macs else "unknown",
-                    "offer_count": b.get("doc_count", 0),
-                    "legitimate_server": legitimate,
-                    "severity": "critical",
-                    "description": (
-                        f"Rogue DHCP server detected at {server_ip} "
-                        f"(legitimate: {legitimate}) — "
-                        f"{b.get('doc_count', 0)} offers sent"
-                    ),
-                    "detected_at": datetime.now(timezone.utc).isoformat(),
-                })
+                alerts.append(
+                    {
+                        "type": "rogue_dhcp",
+                        "server_ip": server_ip,
+                        "server_mac": server_macs[0] if server_macs else "unknown",
+                        "offer_count": b.get("doc_count", 0),
+                        "legitimate_server": legitimate,
+                        "severity": "critical",
+                        "description": (
+                            f"Rogue DHCP server detected at {server_ip} "
+                            f"(legitimate: {legitimate}) — "
+                            f"{b.get('doc_count', 0)} offers sent"
+                        ),
+                        "detected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
         return alerts
 
     def detect_ip_conflicts(
-        self, from_ts: str, to_ts: str,
+        self,
+        from_ts: str,
+        to_ts: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect IP conflicts from gratuitous ARP observations.
@@ -243,9 +240,7 @@ class LANAnomalyDetector:
         # Query for gratuitous ARP (where source and dest IP match)
         query = {
             "size": 0,
-            "query": {
-                "bool": bool_clause
-            },
+            "query": {"bool": bool_clause},
             "aggs": {
                 "by_dest_ip": {
                     "terms": {
@@ -282,9 +277,7 @@ class LANAnomalyDetector:
             return []
 
         buckets = (
-            result.get("aggregations", {})
-            .get("by_dest_ip", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_dest_ip", {}).get("buckets", [])
         )
 
         alerts: list[dict[str, Any]] = []
@@ -294,36 +287,44 @@ class LANAnomalyDetector:
             mac_count = b.get("src_mac_count", {}).get("value", 0)
 
             if mac_count > 1:
-                alerts.append({
-                    "type": "ip_conflict",
-                    "ip": ip,
-                    "mac_addresses": macs,
-                    "mac_count": mac_count,
-                    "event_count": b.get("doc_count", 0),
-                    "severity": "medium",
-                    "description": (
-                        f"IP conflict: {ip} claimed by multiple devices "
-                        f"({', '.join(macs)})"
-                    ),
-                    "detected_at": datetime.now(timezone.utc).isoformat(),
-                })
+                alerts.append(
+                    {
+                        "type": "ip_conflict",
+                        "ip": ip,
+                        "mac_addresses": macs,
+                        "mac_count": mac_count,
+                        "event_count": b.get("doc_count", 0),
+                        "severity": "medium",
+                        "description": (
+                            f"IP conflict: {ip} claimed by multiple devices "
+                            f"({', '.join(macs)})"
+                        ),
+                        "detected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
         return alerts
 
     def get_all_anomalies(
-        self, from_ts: str, to_ts: str,
+        self,
+        from_ts: str,
+        to_ts: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Run all detection methods and return combined anomaly list."""
         anomalies: list[dict[str, Any]] = []
-        anomalies.extend(self.detect_arp_spoofing(from_ts, to_ts, excluded_ips=excluded_ips))
-        anomalies.extend(self.detect_rogue_dhcp(from_ts, to_ts, excluded_ips=excluded_ips))
-        anomalies.extend(self.detect_ip_conflicts(from_ts, to_ts, excluded_ips=excluded_ips))
+        anomalies.extend(
+            self.detect_arp_spoofing(from_ts, to_ts, excluded_ips=excluded_ips)
+        )
+        anomalies.extend(
+            self.detect_rogue_dhcp(from_ts, to_ts, excluded_ips=excluded_ips)
+        )
+        anomalies.extend(
+            self.detect_ip_conflicts(from_ts, to_ts, excluded_ips=excluded_ips)
+        )
 
         # Sort by severity (critical > high > medium > low)
         severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        anomalies.sort(
-            key=lambda a: severity_order.get(a.get("severity", "low"), 4)
-        )
+        anomalies.sort(key=lambda a: severity_order.get(a.get("severity", "low"), 4))
 
         return anomalies

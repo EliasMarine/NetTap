@@ -49,20 +49,32 @@ class TestConnectionStats(AioHTTPTestCase):
                 "aggregations": {
                     "bytes_in": {"value": 1000000},
                     "bytes_out": {"value": 3000000},
-                    "protocols": {"buckets": [
-                        {"key": "tcp", "doc_count": 3000},
-                        {"key": "udp", "doc_count": 1500},
-                    ]},
-                    "top_sources": {"buckets": [
-                        {"key": "192.168.1.10", "doc_count": 200,
-                         "total_bytes": {"value": 500000}},
-                    ]},
-                    "top_destinations": {"buckets": [
-                        {"key": "8.8.8.8", "doc_count": 100,
-                         "total_bytes": {"value": 300000},
-                         "asn": {"buckets": [{"key": "AS15169 Google LLC"}]},
-                         "geo": {"buckets": [{"key": "US"}]}},
-                    ]},
+                    "protocols": {
+                        "buckets": [
+                            {"key": "tcp", "doc_count": 3000},
+                            {"key": "udp", "doc_count": 1500},
+                        ]
+                    },
+                    "top_sources": {
+                        "buckets": [
+                            {
+                                "key": "192.168.1.10",
+                                "doc_count": 200,
+                                "total_bytes": {"value": 500000},
+                            },
+                        ]
+                    },
+                    "top_destinations": {
+                        "buckets": [
+                            {
+                                "key": "8.8.8.8",
+                                "doc_count": 100,
+                                "total_bytes": {"value": 300000},
+                                "asn": {"buckets": [{"key": "AS15169 Google LLC"}]},
+                                "geo": {"buckets": [{"key": "US"}]},
+                            },
+                        ]
+                    },
                 },
             },
             # Second call: alert count
@@ -114,6 +126,7 @@ class TestConnectionStats(AioHTTPTestCase):
     async def test_stats_opensearch_error(self):
         """Should return 502 on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("connection timeout")
 
         resp = await self.client.request("GET", "/api/traffic/connections/stats")
@@ -135,41 +148,49 @@ class TestConnectionSankey(AioHTTPTestCase):
         """Should return nodes and links for Sankey visualization."""
         self.mock_client.search.return_value = {
             "aggregations": {
-                "by_source": {"buckets": [
-                    {
-                        "key": "192.168.1.10",
-                        "total_bytes": {"value": 500000},
-                        "by_proto": {"buckets": [
-                            {
-                                "key": "tcp",
-                                "proto_bytes": {"value": 400000},
-                                "by_dest": {"buckets": [
+                "by_source": {
+                    "buckets": [
+                        {
+                            "key": "192.168.1.10",
+                            "total_bytes": {"value": 500000},
+                            "by_proto": {
+                                "buckets": [
                                     {
-                                        "key": "AS15169 Google LLC",
-                                        "dest_bytes": {"value": 300000},
-                                        "geo": {"buckets": [{"key": "US"}]},
+                                        "key": "tcp",
+                                        "proto_bytes": {"value": 400000},
+                                        "by_dest": {
+                                            "buckets": [
+                                                {
+                                                    "key": "AS15169 Google LLC",
+                                                    "dest_bytes": {"value": 300000},
+                                                    "geo": {"buckets": [{"key": "US"}]},
+                                                },
+                                                {
+                                                    "key": "AS13335 Cloudflare",
+                                                    "dest_bytes": {"value": 100000},
+                                                    "geo": {"buckets": [{"key": "US"}]},
+                                                },
+                                            ]
+                                        },
                                     },
                                     {
-                                        "key": "AS13335 Cloudflare",
-                                        "dest_bytes": {"value": 100000},
-                                        "geo": {"buckets": [{"key": "US"}]},
+                                        "key": "udp",
+                                        "proto_bytes": {"value": 100000},
+                                        "by_dest": {
+                                            "buckets": [
+                                                {
+                                                    "key": "AS15169 Google LLC",
+                                                    "dest_bytes": {"value": 100000},
+                                                    "geo": {"buckets": [{"key": "US"}]},
+                                                },
+                                            ]
+                                        },
                                     },
-                                ]},
+                                ]
                             },
-                            {
-                                "key": "udp",
-                                "proto_bytes": {"value": 100000},
-                                "by_dest": {"buckets": [
-                                    {
-                                        "key": "AS15169 Google LLC",
-                                        "dest_bytes": {"value": 100000},
-                                        "geo": {"buckets": [{"key": "US"}]},
-                                    },
-                                ]},
-                            },
-                        ]},
-                    },
-                ]},
+                        },
+                    ]
+                },
             },
         }
 
@@ -187,7 +208,13 @@ class TestConnectionSankey(AioHTTPTestCase):
         # Labels should have ASN prefix stripped
         dest_labels = [d["label"] for d in data["nodes"]["destinations"]]
         self.assertTrue(any("Google" in label for label in dest_labels))
-        self.assertTrue(all(not label.startswith("AS") for label in dest_labels if label != "Unknown"))
+        self.assertTrue(
+            all(
+                not label.startswith("AS")
+                for label in dest_labels
+                if label != "Unknown"
+            )
+        )
 
     @unittest_run_loop
     async def test_sankey_empty(self):
@@ -207,41 +234,63 @@ class TestConnectionSankey(AioHTTPTestCase):
         """Links with same source→target should be aggregated."""
         self.mock_client.search.return_value = {
             "aggregations": {
-                "by_source": {"buckets": [
-                    {
-                        "key": "10.0.0.1",
-                        "total_bytes": {"value": 200},
-                        "by_proto": {"buckets": [
-                            {
-                                "key": "tcp",
-                                "proto_bytes": {"value": 200},
-                                "by_dest": {"buckets": [
-                                    {"key": "Unknown", "dest_bytes": {"value": 200}, "geo": {"buckets": []}},
-                                ]},
+                "by_source": {
+                    "buckets": [
+                        {
+                            "key": "10.0.0.1",
+                            "total_bytes": {"value": 200},
+                            "by_proto": {
+                                "buckets": [
+                                    {
+                                        "key": "tcp",
+                                        "proto_bytes": {"value": 200},
+                                        "by_dest": {
+                                            "buckets": [
+                                                {
+                                                    "key": "Unknown",
+                                                    "dest_bytes": {"value": 200},
+                                                    "geo": {"buckets": []},
+                                                },
+                                            ]
+                                        },
+                                    },
+                                ]
                             },
-                        ]},
-                    },
-                    {
-                        "key": "10.0.0.2",
-                        "total_bytes": {"value": 100},
-                        "by_proto": {"buckets": [
-                            {
-                                "key": "tcp",
-                                "proto_bytes": {"value": 100},
-                                "by_dest": {"buckets": [
-                                    {"key": "Unknown", "dest_bytes": {"value": 100}, "geo": {"buckets": []}},
-                                ]},
+                        },
+                        {
+                            "key": "10.0.0.2",
+                            "total_bytes": {"value": 100},
+                            "by_proto": {
+                                "buckets": [
+                                    {
+                                        "key": "tcp",
+                                        "proto_bytes": {"value": 100},
+                                        "by_dest": {
+                                            "buckets": [
+                                                {
+                                                    "key": "Unknown",
+                                                    "dest_bytes": {"value": 100},
+                                                    "geo": {"buckets": []},
+                                                },
+                                            ]
+                                        },
+                                    },
+                                ]
                             },
-                        ]},
-                    },
-                ]},
+                        },
+                    ]
+                },
             },
         }
 
         resp = await self.client.request("GET", "/api/traffic/connections/sankey")
         data = await resp.json()
         # tcp→Unknown should be aggregated into one link
-        tcp_to_unknown = [link for link in data["links"] if link["source"] == "tcp" and link["target"] == "Unknown"]
+        tcp_to_unknown = [
+            link
+            for link in data["links"]
+            if link["source"] == "tcp" and link["target"] == "Unknown"
+        ]
         self.assertEqual(len(tcp_to_unknown), 1)
         self.assertEqual(tcp_to_unknown[0]["value"], 300)
 
@@ -261,30 +310,38 @@ class TestConnectionTimeline(AioHTTPTestCase):
         """Should return time buckets with protocol breakdown."""
         self.mock_client.search.return_value = {
             "aggregations": {
-                "over_time": {"buckets": [
-                    {
-                        "key_as_string": "2026-03-17T00:00:00.000Z",
-                        "key": 1773984000000,
-                        "doc_count": 150,
-                        "by_proto": {"buckets": [
-                            {"key": "tcp", "doc_count": 100},
-                            {"key": "udp", "doc_count": 50},
-                        ]},
-                    },
-                    {
-                        "key_as_string": "2026-03-17T01:00:00.000Z",
-                        "key": 1773987600000,
-                        "doc_count": 200,
-                        "by_proto": {"buckets": [
-                            {"key": "tcp", "doc_count": 180},
-                            {"key": "udp", "doc_count": 20},
-                        ]},
-                    },
-                ]},
+                "over_time": {
+                    "buckets": [
+                        {
+                            "key_as_string": "2026-03-17T00:00:00.000Z",
+                            "key": 1773984000000,
+                            "doc_count": 150,
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "doc_count": 100},
+                                    {"key": "udp", "doc_count": 50},
+                                ]
+                            },
+                        },
+                        {
+                            "key_as_string": "2026-03-17T01:00:00.000Z",
+                            "key": 1773987600000,
+                            "doc_count": 200,
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "doc_count": 180},
+                                    {"key": "udp", "doc_count": 20},
+                                ]
+                            },
+                        },
+                    ]
+                },
             },
         }
 
-        resp = await self.client.request("GET", "/api/traffic/connections/timeline?interval=1h")
+        resp = await self.client.request(
+            "GET", "/api/traffic/connections/timeline?interval=1h"
+        )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
 
@@ -314,7 +371,9 @@ class TestConnectionTimeline(AioHTTPTestCase):
             "aggregations": {"over_time": {"buckets": []}},
         }
 
-        resp = await self.client.request("GET", "/api/traffic/connections/timeline?interval=42x")
+        resp = await self.client.request(
+            "GET", "/api/traffic/connections/timeline?interval=42x"
+        )
         data = await resp.json()
         self.assertEqual(data["interval"], "15m")
 
@@ -333,31 +392,32 @@ class TestConnectionRelated(AioHTTPTestCase):
     async def test_related_success(self):
         """Should return related connections between src-dst pair with summary."""
         self.mock_client.search.return_value = {
-            "hits": {"hits": [
-                {
-                    "_id": "abc123",
-                    "_source": {
-                        "@timestamp": "2026-03-17T10:00:00Z",
-                        "source": {"ip": "192.168.1.10", "bytes": 1000},
-                        "destination": {"ip": "8.8.8.8", "bytes": 2000},
-                        "network": {"transport": "tcp"},
+            "hits": {
+                "hits": [
+                    {
+                        "_id": "abc123",
+                        "_source": {
+                            "@timestamp": "2026-03-17T10:00:00Z",
+                            "source": {"ip": "192.168.1.10", "bytes": 1000},
+                            "destination": {"ip": "8.8.8.8", "bytes": 2000},
+                            "network": {"transport": "tcp"},
+                        },
                     },
-                },
-                {
-                    "_id": "def456",
-                    "_source": {
-                        "@timestamp": "2026-03-17T11:00:00Z",
-                        "source": {"ip": "192.168.1.10", "bytes": 500},
-                        "destination": {"ip": "8.8.8.8", "bytes": 1500},
-                        "network": {"transport": "udp"},
+                    {
+                        "_id": "def456",
+                        "_source": {
+                            "@timestamp": "2026-03-17T11:00:00Z",
+                            "source": {"ip": "192.168.1.10", "bytes": 500},
+                            "destination": {"ip": "8.8.8.8", "bytes": 1500},
+                            "network": {"transport": "udp"},
+                        },
                     },
-                },
-            ]},
+                ]
+            },
         }
 
         resp = await self.client.request(
-            "GET",
-            "/api/traffic/connections/related?src_ip=192.168.1.10&dst_ip=8.8.8.8"
+            "GET", "/api/traffic/connections/related?src_ip=192.168.1.10&dst_ip=8.8.8.8"
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -391,8 +451,7 @@ class TestConnectionRelated(AioHTTPTestCase):
         }
 
         resp = await self.client.request(
-            "GET",
-            "/api/traffic/connections/related?src_ip=10.0.0.1&dst_ip=10.0.0.2"
+            "GET", "/api/traffic/connections/related?src_ip=10.0.0.1&dst_ip=10.0.0.2"
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -404,11 +463,11 @@ class TestConnectionRelated(AioHTTPTestCase):
     async def test_related_opensearch_error(self):
         """Should return 502 on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
         resp = await self.client.request(
-            "GET",
-            "/api/traffic/connections/related?src_ip=10.0.0.1&dst_ip=10.0.0.2"
+            "GET", "/api/traffic/connections/related?src_ip=10.0.0.1&dst_ip=10.0.0.2"
         )
         self.assertEqual(resp.status, 502)
 

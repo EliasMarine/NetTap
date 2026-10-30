@@ -43,82 +43,194 @@ CATEGORIES = {
 
 ASN_CATEGORY_MAP: dict[str, str] = {
     # Streaming
-    "Netflix": "streaming", "Spotify": "streaming", "Hulu": "streaming",
-    "Disney": "streaming", "Twitch": "streaming", "Plex": "streaming",
-    "Roku": "streaming", "Crunchyroll": "streaming", "SoundCloud": "streaming",
-    "Pandora": "streaming", "Deezer": "streaming", "Tidal": "streaming",
-    "Vimeo": "streaming", "DailyMotion": "streaming", "Peacock": "streaming",
-    "Paramount": "streaming", "HBO": "streaming", "Discovery": "streaming",
-    "fuboTV": "streaming", "Sling": "streaming", "Apple TV": "streaming",
-    "iQIYI": "streaming", "YouTube": "streaming",
+    "Netflix": "streaming",
+    "Spotify": "streaming",
+    "Hulu": "streaming",
+    "Disney": "streaming",
+    "Twitch": "streaming",
+    "Plex": "streaming",
+    "Roku": "streaming",
+    "Crunchyroll": "streaming",
+    "SoundCloud": "streaming",
+    "Pandora": "streaming",
+    "Deezer": "streaming",
+    "Tidal": "streaming",
+    "Vimeo": "streaming",
+    "DailyMotion": "streaming",
+    "Peacock": "streaming",
+    "Paramount": "streaming",
+    "HBO": "streaming",
+    "Discovery": "streaming",
+    "fuboTV": "streaming",
+    "Sling": "streaming",
+    "Apple TV": "streaming",
+    "iQIYI": "streaming",
+    "YouTube": "streaming",
     # Gaming
-    "Valve": "gaming", "Riot Games": "gaming", "Epic Games": "gaming",
-    "Nintendo": "gaming", "Electronic Arts": "gaming", "Activision": "gaming",
-    "Blizzard": "gaming", "Ubisoft": "gaming", "Take-Two": "gaming",
-    "Roblox": "gaming", "Bungie": "gaming", "Mojang": "gaming",
-    "Unity": "gaming", "Supercell": "gaming", "miHoYo": "gaming",
+    "Valve": "gaming",
+    "Riot Games": "gaming",
+    "Epic Games": "gaming",
+    "Nintendo": "gaming",
+    "Electronic Arts": "gaming",
+    "Activision": "gaming",
+    "Blizzard": "gaming",
+    "Ubisoft": "gaming",
+    "Take-Two": "gaming",
+    "Roblox": "gaming",
+    "Bungie": "gaming",
+    "Mojang": "gaming",
+    "Unity": "gaming",
+    "Supercell": "gaming",
+    "miHoYo": "gaming",
     # Social Media
-    "Facebook": "social", "Instagram": "social", "Meta Platforms": "social",
-    "Twitter": "social", "Snap": "social", "Snapchat": "social",
-    "TikTok": "social", "ByteDance": "social", "Reddit": "social",
-    "Pinterest": "social", "LinkedIn": "social", "Tumblr": "social",
+    "Facebook": "social",
+    "Instagram": "social",
+    "Meta Platforms": "social",
+    "Twitter": "social",
+    "Snap": "social",
+    "Snapchat": "social",
+    "TikTok": "social",
+    "ByteDance": "social",
+    "Reddit": "social",
+    "Pinterest": "social",
+    "LinkedIn": "social",
+    "Tumblr": "social",
     # Communication
-    "Zoom": "communication", "Slack": "communication", "Discord": "communication",
-    "Telegram": "communication", "Signal": "communication", "Vonage": "communication",
-    "RingCentral": "communication", "Twilio": "communication",
-    "GoTo": "communication", "Webex": "communication",
+    "Zoom": "communication",
+    "Slack": "communication",
+    "Discord": "communication",
+    "Telegram": "communication",
+    "Signal": "communication",
+    "Vonage": "communication",
+    "RingCentral": "communication",
+    "Twilio": "communication",
+    "GoTo": "communication",
+    "Webex": "communication",
     # Work & Productivity
-    "Atlassian": "work", "Notion": "work", "Salesforce": "work",
-    "Dropbox": "work", "Box, Inc": "work", "DocuSign": "work",
-    "Asana": "work", "Monday.com": "work", "Hubspot": "work",
-    "Zendesk": "work", "Freshworks": "work", "Canva": "work",
-    "Figma": "work", "Adobe": "work", "Intuit": "work", "Autodesk": "work",
+    "Atlassian": "work",
+    "Notion": "work",
+    "Salesforce": "work",
+    "Dropbox": "work",
+    "Box, Inc": "work",
+    "DocuSign": "work",
+    "Asana": "work",
+    "Monday.com": "work",
+    "Hubspot": "work",
+    "Zendesk": "work",
+    "Freshworks": "work",
+    "Canva": "work",
+    "Figma": "work",
+    "Adobe": "work",
+    "Intuit": "work",
+    "Autodesk": "work",
     # Cloud & Hosting
-    "Amazon.com": "cloud", "Amazon Web Services": "cloud",
-    "Amazon Technologies": "cloud", "DigitalOcean": "cloud",
-    "Oracle": "cloud", "IBM": "cloud", "Linode": "cloud",
-    "Vultr": "cloud", "OVH": "cloud", "Hetzner": "cloud",
-    "Rackspace": "cloud", "Heroku": "cloud", "Vercel": "cloud", "Netlify": "cloud",
+    "Amazon.com": "cloud",
+    "Amazon Web Services": "cloud",
+    "Amazon Technologies": "cloud",
+    "DigitalOcean": "cloud",
+    "Oracle": "cloud",
+    "IBM": "cloud",
+    "Linode": "cloud",
+    "Vultr": "cloud",
+    "OVH": "cloud",
+    "Hetzner": "cloud",
+    "Rackspace": "cloud",
+    "Heroku": "cloud",
+    "Vercel": "cloud",
+    "Netlify": "cloud",
     # Shopping
-    "Shopify": "shopping", "eBay": "shopping", "Walmart": "shopping",
-    "Etsy": "shopping", "Target": "shopping", "Wayfair": "shopping",
-    "Best Buy": "shopping", "Alibaba": "shopping", "Wish": "shopping",
+    "Shopify": "shopping",
+    "eBay": "shopping",
+    "Walmart": "shopping",
+    "Etsy": "shopping",
+    "Target": "shopping",
+    "Wayfair": "shopping",
+    "Best Buy": "shopping",
+    "Alibaba": "shopping",
+    "Wish": "shopping",
     # News & Media
-    "CNN": "news", "New York Times": "news", "Washington Post": "news",
-    "BBC": "news", "Reuters": "news", "Associated Press": "news",
-    "NPR": "news", "Fox": "news", "NBC": "news", "CBS": "news",
-    "Vox Media": "news", "BuzzFeed": "news", "Conde Nast": "news",
-    "Hearst": "news", "Gannett": "news", "Tribune": "news",
+    "CNN": "news",
+    "New York Times": "news",
+    "Washington Post": "news",
+    "BBC": "news",
+    "Reuters": "news",
+    "Associated Press": "news",
+    "NPR": "news",
+    "Fox": "news",
+    "NBC": "news",
+    "CBS": "news",
+    "Vox Media": "news",
+    "BuzzFeed": "news",
+    "Conde Nast": "news",
+    "Hearst": "news",
+    "Gannett": "news",
+    "Tribune": "news",
     # Ads & Tracking
-    "DoubleClick": "ads", "TradeDesk": "ads", "Criteo": "ads",
-    "AppNexus": "ads", "Taboola": "ads", "Outbrain": "ads",
-    "comScore": "ads", "Nielsen": "ads",
+    "DoubleClick": "ads",
+    "TradeDesk": "ads",
+    "Criteo": "ads",
+    "AppNexus": "ads",
+    "Taboola": "ads",
+    "Outbrain": "ads",
+    "comScore": "ads",
+    "Nielsen": "ads",
     # Updates & Downloads
-    "Canonical": "updates", "Red Hat": "updates", "SUSE": "updates",
+    "Canonical": "updates",
+    "Red Hat": "updates",
+    "SUSE": "updates",
     # Security & VPN
-    "Cloudflare": "security", "Quad9": "security", "OpenDNS": "security",
-    "CrowdStrike": "security", "Palo Alto": "security", "Fortinet": "security",
-    "Zscaler": "security", "NordVPN": "security", "ExpressVPN": "security",
-    "Mullvad": "security", "Let's Encrypt": "security", "DigiCert": "security",
+    "Cloudflare": "security",
+    "Quad9": "security",
+    "OpenDNS": "security",
+    "CrowdStrike": "security",
+    "Palo Alto": "security",
+    "Fortinet": "security",
+    "Zscaler": "security",
+    "NordVPN": "security",
+    "ExpressVPN": "security",
+    "Mullvad": "security",
+    "Let's Encrypt": "security",
+    "DigiCert": "security",
     # CDN & Infrastructure
-    "Akamai": "web", "Fastly": "web", "Limelight": "web",
-    "StackPath": "web", "Edgecast": "web",
+    "Akamai": "web",
+    "Fastly": "web",
+    "Limelight": "web",
+    "StackPath": "web",
+    "Edgecast": "web",
     # IoT & Smart Home
-    "Philips": "iot", "TP-Link": "iot", "Tuya": "iot", "ecobee": "iot",
-    "Wyze": "iot", "Arlo": "iot", "iRobot": "iot", "Sonos": "iot",
-    "Nanit": "iot", "Ring": "iot", "Nest": "iot", "SimpliSafe": "iot",
-    "Honeywell": "iot", "Ubiquiti": "iot", "Netgear": "iot",
+    "Philips": "iot",
+    "TP-Link": "iot",
+    "Tuya": "iot",
+    "ecobee": "iot",
+    "Wyze": "iot",
+    "Arlo": "iot",
+    "iRobot": "iot",
+    "Sonos": "iot",
+    "Nanit": "iot",
+    "Ring": "iot",
+    "Nest": "iot",
+    "SimpliSafe": "iot",
+    "Honeywell": "iot",
+    "Ubiquiti": "iot",
+    "Netgear": "iot",
     # Big Tech (classified by primary residential use)
     "Google": "streaming",  # YouTube dominates residential bytes
     "Microsoft": "work",  # Office 365, Teams
     "Apple": "updates",  # iCloud, Software Update
-    "PayPal": "shopping", "Stripe": "shopping", "Square": "shopping",
+    "PayPal": "shopping",
+    "Stripe": "shopping",
+    "Square": "shopping",
     # Email
-    "Proton": "email", "Fastmail": "email", "Mailchimp": "email",
-    "SendGrid": "email", "Mailgun": "email",
+    "Proton": "email",
+    "Fastmail": "email",
+    "Mailchimp": "email",
+    "SendGrid": "email",
+    "Mailgun": "email",
     # File Transfer
-    "WeTransfer": "file_transfer", "Mega": "file_transfer",
-    "MediaFire": "file_transfer", "Backblaze": "file_transfer",
+    "WeTransfer": "file_transfer",
+    "Mega": "file_transfer",
+    "MediaFire": "file_transfer",
+    "Backblaze": "file_transfer",
 }
 
 
@@ -500,9 +612,7 @@ def get_category_label(key: str) -> str:
     return CATEGORIES.get(key, key.replace("_", " ").title())
 
 
-async def get_category_stats(
-    client, from_ts: str, to_ts: str
-) -> list[dict]:
+async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     """Aggregate traffic bytes by ASN organisation, map to categories."""
     query = {
         "size": 0,
@@ -545,7 +655,9 @@ async def get_category_stats(
         return []
 
     cat_data: dict[str, dict] = {}
-    for bucket in resp.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", []):
+    for bucket in (
+        resp.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", [])
+    ):
         asn_full = bucket["key"]
         cat_key = classify_asn(asn_full)
         total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
@@ -745,7 +857,11 @@ def _asn_filters_for_category(category: str) -> list[str]:
 
 
 async def get_category_devices(
-    client, category: str, from_ts: str, to_ts: str, limit: int = 50,
+    client,
+    category: str,
+    from_ts: str,
+    to_ts: str,
+    limit: int = 50,
     fingerprint=None,
 ) -> list[dict]:
     """Get per-device bandwidth breakdown for a traffic category."""
@@ -797,23 +913,31 @@ async def get_category_devices(
     try:
         resp = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
-        logger.error("get_category_devices: OpenSearch query failed for category=%s", category, exc_info=True)
+        logger.error(
+            "get_category_devices: OpenSearch query failed for category=%s",
+            category,
+            exc_info=True,
+        )
         return []
 
     devices = []
     for bucket in resp.get("aggregations", {}).get("devices", {}).get("buckets", []):
-        devices.append({
-            "ip": bucket["key"],
-            "total_bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
-            "download_bytes": int(bucket.get("download_bytes", {}).get("value", 0)),
-            "upload_bytes": int(bucket.get("upload_bytes", {}).get("value", 0)),
-            "connections": bucket.get("doc_count", 0),
-        })
+        devices.append(
+            {
+                "ip": bucket["key"],
+                "total_bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
+                "download_bytes": int(bucket.get("download_bytes", {}).get("value", 0)),
+                "upload_bytes": int(bucket.get("upload_bytes", {}).get("value", 0)),
+                "connections": bucket.get("doc_count", 0),
+            }
+        )
 
     if fingerprint:
         for d in devices:
             try:
-                hostname = fingerprint.get_hostname_for_ip(client, d["ip"], from_ts, to_ts)
+                hostname = fingerprint.get_hostname_for_ip(
+                    client, d["ip"], from_ts, to_ts
+                )
                 d["hostname"] = hostname
             except Exception:
                 d["hostname"] = None
@@ -872,7 +996,11 @@ async def get_category_services(
     try:
         resp = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
-        logger.error("get_category_services: OpenSearch query failed for category=%s", category, exc_info=True)
+        logger.error(
+            "get_category_services: OpenSearch query failed for category=%s",
+            category,
+            exc_info=True,
+        )
         return []
 
     # Merge buckets that share the same org name after stripping ASN prefix.
@@ -890,7 +1018,10 @@ async def get_category_services(
         )
         merged[service_name]["connections"] += bucket.get("doc_count", 0)
 
-    services = [{"name": name, "bytes": m["bytes"], "connections": m["connections"]} for name, m in merged.items()]
+    services = [
+        {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
+        for name, m in merged.items()
+    ]
     services.sort(key=lambda s: s["bytes"], reverse=True)
     return services
 
@@ -941,19 +1072,27 @@ async def get_category_bandwidth(
     try:
         resp = client.search(index=NETWORK_INDEX, body=query)
     except Exception:
-        logger.error("get_category_bandwidth: OpenSearch query failed for category=%s", category, exc_info=True)
+        logger.error(
+            "get_category_bandwidth: OpenSearch query failed for category=%s",
+            category,
+            exc_info=True,
+        )
         return []
 
     series = []
-    for bucket in resp.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", []):
+    for bucket in (
+        resp.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
+    ):
         dl = int(bucket.get("download_bytes", {}).get("value", 0) or 0)
         ul = int(bucket.get("upload_bytes", {}).get("value", 0) or 0)
-        series.append({
-            "timestamp": bucket.get("key_as_string", bucket.get("key")),
-            "download_bytes": dl,
-            "upload_bytes": ul,
-            "total_bytes": dl + ul,
-            "connections": bucket.get("doc_count", 0),
-        })
+        series.append(
+            {
+                "timestamp": bucket.get("key_as_string", bucket.get("key")),
+                "download_bytes": dl,
+                "upload_bytes": ul,
+                "total_bytes": dl + ul,
+                "connections": bucket.get("doc_count", 0),
+            }
+        )
 
     return series

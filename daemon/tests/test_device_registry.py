@@ -75,6 +75,7 @@ class TestRegisterDevice:
     def test_register_new_device(self, registry, mock_client):
         """Registering a new MAC should create a new document with is_new=True."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         result = registry.register_device(
@@ -148,6 +149,7 @@ class TestRegisterDevice:
     def test_register_sets_manufacturer(self, registry, mock_client):
         """Registering with manufacturer metadata should set it."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         result = registry.register_device(
@@ -211,6 +213,7 @@ class TestRegisterDevice:
     def test_mac_normalization(self, registry, mock_client):
         """MAC addresses with dashes or dots should be normalized to colons."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         result = registry.register_device(mac="aa-bb-cc-dd-ee-ff")
@@ -289,6 +292,7 @@ class TestGetDevice:
     def test_get_nonexistent_device(self, registry, mock_client):
         """Should return None for unknown MAC."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         result = registry.get_device("FF:FF:FF:FF:FF:FF")
@@ -325,6 +329,7 @@ class TestGetAllDevices:
     def test_get_all_devices_error(self, registry, mock_client):
         """Should return empty list on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         mock_client.search.side_effect = OpenSearchException("test error")
 
         result = registry.get_all_devices()
@@ -378,6 +383,7 @@ class TestGetDeviceTraffic:
             "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}
         }
         from opensearchpy import OpenSearchException
+
         mock_client.search.side_effect = OpenSearchException("test error")
 
         result = registry.get_device_traffic(
@@ -527,8 +533,15 @@ class TestDHCPEnrichment:
                 "hits": [
                     {
                         "_source": {
-                            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
-                            "dhcp": {"host": ["my-laptop"], "ip": ["192.168.1.100"], "id": "abc123"},
+                            "source": {
+                                "mac": "AA:BB:CC:DD:EE:FF",
+                                "ip": "192.168.1.100",
+                            },
+                            "dhcp": {
+                                "host": ["my-laptop"],
+                                "ip": ["192.168.1.100"],
+                                "id": "abc123",
+                            },
                         }
                     },
                 ]
@@ -548,13 +561,30 @@ class TestDHCPEnrichment:
     def test_enrich_from_dhcp_deduplicates(self, registry, mock_client):
         """Should not register the same MAC twice."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         mock_client.search.return_value = {
             "hits": {
                 "hits": [
-                    {"_source": {"source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"}, "dhcp": {"id": "a1"}}},
-                    {"_source": {"source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.101"}, "dhcp": {"id": "a2"}}},
+                    {
+                        "_source": {
+                            "source": {
+                                "mac": "AA:BB:CC:DD:EE:FF",
+                                "ip": "192.168.1.100",
+                            },
+                            "dhcp": {"id": "a1"},
+                        }
+                    },
+                    {
+                        "_source": {
+                            "source": {
+                                "mac": "AA:BB:CC:DD:EE:FF",
+                                "ip": "192.168.1.101",
+                            },
+                            "dhcp": {"id": "a2"},
+                        }
+                    },
                 ]
             }
         }
@@ -598,9 +628,7 @@ class TestARPEnrichment:
         mock_client.search.return_value = search_response
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
-        count = registry.enrich_from_arp(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        count = registry.enrich_from_arp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         assert count == 2  # Two IP-MAC pairs
 
@@ -614,6 +642,7 @@ class TestMDNSEnrichment:
     def test_enrich_from_mdns(self, registry, mock_client):
         """Should extract device names from .local DNS queries."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         mock_client.search.return_value = {
@@ -621,7 +650,10 @@ class TestMDNSEnrichment:
                 "hits": [
                     {
                         "_source": {
-                            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
+                            "source": {
+                                "mac": "AA:BB:CC:DD:EE:FF",
+                                "ip": "192.168.1.100",
+                            },
                             "dns": {"host": ["MacBook-Pro._tcp.local"]},
                         }
                     },
@@ -649,6 +681,7 @@ class TestSSDPEnrichment:
     def test_enrich_from_ssdp(self, registry, mock_client):
         """Should extract device info from SSDP/UPnP HTTP logs."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         mock_client.search.return_value = {
@@ -656,7 +689,10 @@ class TestSSDPEnrichment:
                 "hits": [
                     {
                         "_source": {
-                            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
+                            "source": {
+                                "mac": "AA:BB:CC:DD:EE:FF",
+                                "ip": "192.168.1.100",
+                            },
                             "http": {"useragent": "Google-Home/1.0"},
                         }
                     },
@@ -834,6 +870,7 @@ class TestNewDeviceDetection:
     def test_new_device_flagged(self, registry, mock_client):
         """First registration should flag device as new."""
         from opensearchpy import NotFoundError
+
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
 
         result = registry.register_device(mac="AA:BB:CC:DD:EE:FF")

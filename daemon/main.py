@@ -156,7 +156,7 @@ def _parse_curlrc_credentials(config_file: str) -> tuple[str, str] | None:
                     # Remove leading keyword and separators
                     for prefix in ("--user", "-u", "user"):
                         if line.lower().startswith(prefix):
-                            rest = line[len(prefix):].strip()
+                            rest = line[len(prefix) :].strip()
                             # Remove = or : separator
                             if rest.startswith(("=", ":")):
                                 rest = rest[1:].strip()
@@ -433,7 +433,9 @@ async def async_main() -> None:
     logger.info("=" * 60)
 
     # --- Build subsystems ---
-    storage = StorageManager(retention_config, cfg["opensearch_url"], http_auth=http_auth)
+    storage = StorageManager(
+        retention_config, cfg["opensearch_url"], http_auth=http_auth
+    )
     storage._retention_config_manager = config_manager
     smart = SmartMonitor(device=cfg["smart_device"])
 
@@ -470,7 +472,9 @@ async def async_main() -> None:
     logger.info("  Capture mode:           %s", capture_cfg.mode.value)
     if capture_cfg.mode == CaptureMode.MIRROR:
         logger.info("  Mirror interface:       %s", capture_cfg.interface)
-        logger.info("  Management interface:   %s", capture_cfg.management or "(not set)")
+        logger.info(
+            "  Management interface:   %s", capture_cfg.management or "(not set)"
+        )
     else:
         logger.info("  Bridge name:            %s", capture_cfg.bridge_name)
         logger.info("  WAN interface:          %s", capture_cfg.wan_interface)
@@ -522,9 +526,7 @@ async def async_main() -> None:
                 setup_result.get("errors", []),
             )
         if setup_result.get("warnings"):
-            logger.warning(
-                "Mirror setup warnings: %s", setup_result["warnings"]
-            )
+            logger.warning("Mirror setup warnings: %s", setup_result["warnings"])
         capture_manager = mirror_manager
         logger.info("Capture manager: MirrorManager (mirror mode)")
 

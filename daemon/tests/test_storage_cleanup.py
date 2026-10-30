@@ -51,17 +51,29 @@ class TestPreviewCleanup:
         """Only indices older than cutoff should appear in preview."""
         client = MagicMock()
         # 90 days ago and 10 days ago
-        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y.%m.%d")
-        recent_date = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y.%m.%d")
+        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
+            "%Y.%m.%d"
+        )
+        recent_date = (datetime.now(timezone.utc) - timedelta(days=10)).strftime(
+            "%Y.%m.%d"
+        )
 
         client.cat.indices.return_value = [
-            _make_index_entry(f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"),
-            _make_index_entry(f"zeek-dns-{recent_date}", "30mb", f"{recent_date}T00:00:00.000Z"),
+            _make_index_entry(
+                f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"
+            ),
+            _make_index_entry(
+                f"zeek-dns-{recent_date}", "30mb", f"{recent_date}T00:00:00.000Z"
+            ),
         ]
         client.indices.stats.return_value = {
             "indices": {
-                f"zeek-conn-{old_date}": {"total": {"store": {"size_in_bytes": 50_000_000}}},
-                f"zeek-dns-{recent_date}": {"total": {"store": {"size_in_bytes": 30_000_000}}},
+                f"zeek-conn-{old_date}": {
+                    "total": {"store": {"size_in_bytes": 50_000_000}}
+                },
+                f"zeek-dns-{recent_date}": {
+                    "total": {"store": {"size_in_bytes": 30_000_000}}
+                },
             }
         }
 
@@ -82,7 +94,9 @@ class TestPreviewCleanup:
         ]
         client.indices.stats.return_value = {
             "indices": {
-                f"zeek-conn-{today}": {"total": {"store": {"size_in_bytes": 100_000_000}}},
+                f"zeek-conn-{today}": {
+                    "total": {"store": {"size_in_bytes": 100_000_000}}
+                },
             }
         }
 
@@ -104,6 +118,7 @@ class TestPreviewCleanup:
         old_pcap.write_bytes(b"\x00" * 1000)
         # Set mtime to 60 days ago
         import os
+
         old_time = (datetime.now() - timedelta(days=60)).timestamp()
         os.utime(old_pcap, (old_time, old_time))
 
@@ -121,10 +136,14 @@ class TestPreviewCleanup:
     def test_handles_opensearch_stats_error(self):
         """Preview should still work if indices.stats fails (sizes will be 0)."""
         client = MagicMock()
-        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y.%m.%d")
+        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
+            "%Y.%m.%d"
+        )
 
         client.cat.indices.return_value = [
-            _make_index_entry(f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"),
+            _make_index_entry(
+                f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"
+            ),
         ]
         client.indices.stats.side_effect = OpenSearchException("connection refused")
 
@@ -138,10 +157,14 @@ class TestPreviewCleanup:
     def test_empty_when_no_old_data(self):
         """Preview returns empty when all data is recent."""
         client = MagicMock()
-        recent_date = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y.%m.%d")
+        recent_date = (datetime.now(timezone.utc) - timedelta(days=5)).strftime(
+            "%Y.%m.%d"
+        )
 
         client.cat.indices.return_value = [
-            _make_index_entry(f"zeek-conn-{recent_date}", "50mb", f"{recent_date}T00:00:00.000Z"),
+            _make_index_entry(
+                f"zeek-conn-{recent_date}", "50mb", f"{recent_date}T00:00:00.000Z"
+            ),
         ]
         client.indices.stats.return_value = {"indices": {}}
 
@@ -177,17 +200,29 @@ class TestExecuteCleanup:
     def test_deletes_old_indices(self):
         """Old indices should be deleted; recent ones kept."""
         client = MagicMock()
-        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y.%m.%d")
-        recent_date = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y.%m.%d")
+        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
+            "%Y.%m.%d"
+        )
+        recent_date = (datetime.now(timezone.utc) - timedelta(days=10)).strftime(
+            "%Y.%m.%d"
+        )
 
         client.cat.indices.return_value = [
-            _make_index_entry(f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"),
-            _make_index_entry(f"zeek-dns-{recent_date}", "30mb", f"{recent_date}T00:00:00.000Z"),
+            _make_index_entry(
+                f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"
+            ),
+            _make_index_entry(
+                f"zeek-dns-{recent_date}", "30mb", f"{recent_date}T00:00:00.000Z"
+            ),
         ]
         client.indices.stats.return_value = {
             "indices": {
-                f"zeek-conn-{old_date}": {"total": {"store": {"size_in_bytes": 50_000_000}}},
-                f"zeek-dns-{recent_date}": {"total": {"store": {"size_in_bytes": 30_000_000}}},
+                f"zeek-conn-{old_date}": {
+                    "total": {"store": {"size_in_bytes": 50_000_000}}
+                },
+                f"zeek-dns-{recent_date}": {
+                    "total": {"store": {"size_in_bytes": 30_000_000}}
+                },
             }
         }
         client.indices.delete.return_value = {"acknowledged": True}
@@ -212,6 +247,7 @@ class TestExecuteCleanup:
         sidecar = tmp_path / "old.pcap.xxh3"
         sidecar.write_text("abc123")
         import os
+
         old_time = (datetime.now() - timedelta(days=60)).timestamp()
         os.utime(old_pcap, (old_time, old_time))
 
@@ -236,7 +272,9 @@ class TestExecuteCleanup:
         # Hold the lock
         mgr._cleanup_lock.acquire()
         try:
-            with pytest.raises(RuntimeError, match="maintenance cycle is currently running"):
+            with pytest.raises(
+                RuntimeError, match="maintenance cycle is currently running"
+            ):
                 mgr.execute_cleanup(older_than_days=30)
         finally:
             mgr._cleanup_lock.release()
@@ -251,7 +289,9 @@ class TestExecuteCleanup:
         ]
         client.indices.stats.return_value = {
             "indices": {
-                f"zeek-conn-{today}": {"total": {"store": {"size_in_bytes": 100_000_000}}},
+                f"zeek-conn-{today}": {
+                    "total": {"store": {"size_in_bytes": 100_000_000}}
+                },
             }
         }
 
@@ -265,10 +305,14 @@ class TestExecuteCleanup:
     def test_reports_deletion_errors(self):
         """Errors during index deletion should be captured, not crash."""
         client = MagicMock()
-        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y.%m.%d")
+        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
+            "%Y.%m.%d"
+        )
 
         client.cat.indices.return_value = [
-            _make_index_entry(f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"),
+            _make_index_entry(
+                f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"
+            ),
         ]
         client.indices.stats.return_value = {"indices": {}}
         client.indices.delete.side_effect = OpenSearchException("delete failed")
@@ -309,7 +353,9 @@ class TestExecuteCleanup:
         ]
         client.indices.stats.return_value = {
             "indices": {
-                f"arkime_sessions3-{compact_date}": {"total": {"store": {"size_in_bytes": 200_000_000}}},
+                f"arkime_sessions3-{compact_date}": {
+                    "total": {"store": {"size_in_bytes": 200_000_000}}
+                },
             }
         }
         client.indices.delete.return_value = {"acknowledged": True}

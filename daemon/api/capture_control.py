@@ -67,7 +67,9 @@ async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
         Tuple of (return_code, combined_output).
     """
     proc = await asyncio.create_subprocess_exec(
-        "docker", action, container,
+        "docker",
+        action,
+        container,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -86,8 +88,10 @@ async def _get_container_status(container: str) -> dict:
         {"running": bool, "status": str}
     """
     proc = await asyncio.create_subprocess_exec(
-        "docker", "inspect",
-        "--format", "{{.State.Running}}|{{.State.Status}}",
+        "docker",
+        "inspect",
+        "--format",
+        "{{.State.Running}}|{{.State.Status}}",
         container,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -119,12 +123,14 @@ async def handle_capture_status(request: web.Request) -> web.Response:
     env_file = _get_env_file(request.app)
     config = _read_capture_config(env_file)
     container = await _get_container_status(CONTAINER_NAME)
-    return web.json_response({
-        "enabled": config["enabled"],
-        "maxFileSizeMB": config["maxFileSizeMB"],
-        "containerRunning": container["running"],
-        "containerStatus": container["status"],
-    })
+    return web.json_response(
+        {
+            "enabled": config["enabled"],
+            "maxFileSizeMB": config["maxFileSizeMB"],
+            "containerRunning": container["running"],
+            "containerStatus": container["status"],
+        }
+    )
 
 
 async def handle_capture_toggle(request: web.Request) -> web.Response:
@@ -145,9 +151,7 @@ async def handle_capture_toggle(request: web.Request) -> web.Response:
 
     enabled = body["enabled"]
     if not isinstance(enabled, bool):
-        return web.json_response(
-            {"error": "'enabled' must be a boolean"}, status=400
-        )
+        return web.json_response({"error": "'enabled' must be a boolean"}, status=400)
 
     env_file = _get_env_file(request.app)
 
@@ -160,15 +164,20 @@ async def handle_capture_toggle(request: web.Request) -> web.Response:
     if returncode != 0:
         logger.warning(
             "docker %s %s failed (rc=%d): %s",
-            action, CONTAINER_NAME, returncode, output,
+            action,
+            CONTAINER_NAME,
+            returncode,
+            output,
         )
 
     container = await _get_container_status(CONTAINER_NAME)
-    return web.json_response({
-        "enabled": enabled,
-        "containerRunning": container["running"],
-        "containerStatus": container["status"],
-    })
+    return web.json_response(
+        {
+            "enabled": enabled,
+            "containerRunning": container["running"],
+            "containerStatus": container["status"],
+        }
+    )
 
 
 async def handle_capture_settings(request: web.Request) -> web.Response:
@@ -218,14 +227,18 @@ async def handle_capture_settings(request: web.Request) -> web.Response:
         if returncode != 0:
             logger.warning(
                 "docker restart %s failed (rc=%d): %s",
-                CONTAINER_NAME, returncode, output,
+                CONTAINER_NAME,
+                returncode,
+                output,
             )
         restarted = True
 
-    return web.json_response({
-        "maxFileSizeMB": max_size,
-        "restarted": restarted,
-    })
+    return web.json_response(
+        {
+            "maxFileSizeMB": max_size,
+            "restarted": restarted,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +259,9 @@ async def enforce_capture_state(env_file: str) -> None:
         if returncode != 0:
             logger.warning(
                 "Failed to stop %s on startup (rc=%d): %s",
-                CONTAINER_NAME, returncode, output,
+                CONTAINER_NAME,
+                returncode,
+                output,
             )
 
 

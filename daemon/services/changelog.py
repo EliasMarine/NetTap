@@ -144,9 +144,7 @@ class ChangelogService:
         query = {
             "size": 0,
             "aggs": {
-                "event_types": {
-                    "terms": {"field": "event_type.keyword", "size": 50}
-                }
+                "event_types": {"terms": {"field": "event_type.keyword", "size": 50}}
             },
         }
 
@@ -155,9 +153,7 @@ class ChangelogService:
                 index=f"{CHANGELOG_INDEX_PREFIX}-*", body=query
             )
             buckets = (
-                result.get("aggregations", {})
-                .get("event_types", {})
-                .get("buckets", [])
+                result.get("aggregations", {}).get("event_types", {}).get("buckets", [])
             )
             if buckets:
                 return [b["key"] for b in buckets]

@@ -14,8 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.iot_monitor import (
     IoTMonitor,
-    IOT_OUI_ALWAYS,
-    IOT_OUI_NEVER,
     ANOMALY_NEW_DESTINATION,
     ANOMALY_NEW_COUNTRY,
     ANOMALY_NEW_PORT,
@@ -97,14 +95,10 @@ class TestBuildBaseline:
                         {"key": 80, "doc_count": 200},
                     ]
                 },
-                "protocols": {
-                    "buckets": [{"key": "tcp", "doc_count": 1000}]
-                },
+                "protocols": {"buckets": [{"key": "tcp", "doc_count": 1000}]},
                 "hourly_activity": {"buckets": []},
                 "total_bytes": {"value": 5000000},
-                "countries": {
-                    "buckets": [{"key": "United States", "doc_count": 900}]
-                },
+                "countries": {"buckets": [{"key": "United States", "doc_count": 900}]},
             },
         }
 
@@ -152,20 +146,12 @@ class TestCheckAnomalies:
         mock_client.search.return_value = {
             "hits": {"total": {"value": 1000}},
             "aggregations": {
-                "destinations": {
-                    "buckets": [{"key": "8.8.8.8", "doc_count": 100}]
-                },
-                "dest_ports": {
-                    "buckets": [{"key": 443, "doc_count": 800}]
-                },
-                "protocols": {
-                    "buckets": [{"key": "tcp", "doc_count": 1000}]
-                },
+                "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 100}]},
+                "dest_ports": {"buckets": [{"key": 443, "doc_count": 800}]},
+                "protocols": {"buckets": [{"key": "tcp", "doc_count": 1000}]},
                 "hourly_activity": {"buckets": []},
                 "total_bytes": {"value": 240000},  # ~10K/hr average
-                "countries": {
-                    "buckets": [{"key": "United States", "doc_count": 900}]
-                },
+                "countries": {"buckets": [{"key": "United States", "doc_count": 900}]},
             },
         }
         iot.build_baseline("AA:BB:CC:DD:EE:FF")
@@ -185,9 +171,7 @@ class TestCheckAnomalies:
                 "dest_ports": {"buckets": [{"key": 443, "doc_count": 15}]},
                 "protocols": {"buckets": [{"key": "tcp", "doc_count": 15}]},
                 "total_bytes": {"value": 1000},
-                "countries": {
-                    "buckets": [{"key": "United States", "doc_count": 15}]
-                },
+                "countries": {"buckets": [{"key": "United States", "doc_count": 15}]},
             }
         }
 
@@ -205,9 +189,7 @@ class TestCheckAnomalies:
                 "dest_ports": {"buckets": []},
                 "protocols": {"buckets": []},
                 "total_bytes": {"value": 100},
-                "countries": {
-                    "buckets": [{"key": "Russia", "doc_count": 5}]
-                },
+                "countries": {"buckets": [{"key": "Russia", "doc_count": 5}]},
             }
         }
 
@@ -222,9 +204,7 @@ class TestCheckAnomalies:
         mock_client.search.return_value = {
             "aggregations": {
                 "destinations": {"buckets": []},
-                "dest_ports": {
-                    "buckets": [{"key": 22, "doc_count": 3}]
-                },
+                "dest_ports": {"buckets": [{"key": 22, "doc_count": 3}]},
                 "protocols": {"buckets": []},
                 "total_bytes": {"value": 100},
                 "countries": {"buckets": []},
@@ -257,29 +237,26 @@ class TestCheckAnomalies:
 
         mock_client.search.return_value = {
             "aggregations": {
-                "destinations": {
-                    "buckets": [{"key": "8.8.8.8", "doc_count": 10}]
-                },
-                "dest_ports": {
-                    "buckets": [{"key": 443, "doc_count": 10}]
-                },
-                "protocols": {
-                    "buckets": [{"key": "tcp", "doc_count": 10}]
-                },
+                "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 10}]},
+                "dest_ports": {"buckets": [{"key": 443, "doc_count": 10}]},
+                "protocols": {"buckets": [{"key": "tcp", "doc_count": 10}]},
                 "total_bytes": {"value": 500},  # Normal volume
-                "countries": {
-                    "buckets": [{"key": "United States", "doc_count": 10}]
-                },
+                "countries": {"buckets": [{"key": "United States", "doc_count": 10}]},
             }
         }
 
         anomalies = iot.check_anomalies("AA:BB:CC:DD:EE:FF")
         # Should have no destination/port/protocol/country/volume anomalies
         typed = [
-            a for a in anomalies
-            if a["type"] in (
-                ANOMALY_NEW_DESTINATION, ANOMALY_NEW_COUNTRY,
-                ANOMALY_NEW_PORT, ANOMALY_VOLUME_SPIKE, ANOMALY_PROTOCOL_CHANGE,
+            a
+            for a in anomalies
+            if a["type"]
+            in (
+                ANOMALY_NEW_DESTINATION,
+                ANOMALY_NEW_COUNTRY,
+                ANOMALY_NEW_PORT,
+                ANOMALY_VOLUME_SPIKE,
+                ANOMALY_PROTOCOL_CHANGE,
             )
         ]
         assert len(typed) == 0
@@ -307,9 +284,7 @@ class TestIoTDeviceRegistry:
         iot.classify_as_iot("BB:BB:BB:BB:BB:BB", {"manufacturer": "Nest"})
 
         # Both have no baselines, so check_anomalies returns []
-        anomalies = iot.get_anomalies(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        anomalies = iot.get_anomalies("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
         assert anomalies == []
 
 
@@ -348,9 +323,7 @@ class TestFleetSummary:
             },
         }
 
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert "health_score" in result
         assert "health_grade" in result
         assert "device_count" in result
@@ -370,9 +343,7 @@ class TestFleetSummary:
         mock_client.search.return_value = {
             "aggregations": {"by_mac": {"buckets": []}},
         }
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert result["health_score"] == 100
         assert result["health_grade"] == "A"
         assert result["device_count"] == 0
@@ -394,9 +365,7 @@ class TestFleetSummary:
             "aggregations": {"by_mac": {"buckets": []}},
         }
 
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         dev = result["devices"][0]
         assert dev["mac"] == "AA:BB:CC:DD:EE:FF"
         assert dev["manufacturer"] == "Ring"
@@ -496,9 +465,7 @@ class TestFleetSummary:
             },
         ]
 
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
 
         assert result["device_count"] == 1
         dev = result["devices"][0]
@@ -530,9 +497,7 @@ class TestFleetSummary:
             "aggregations": {"by_mac": {"buckets": []}},
         }
 
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert result["device_count"] == 2
         assert len(result["devices"]) == 2
 
@@ -552,9 +517,7 @@ class TestFleetSummary:
             "aggregations": {"by_mac": {"buckets": []}},
         }
 
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         assert isinstance(result["subtitle"], str)
         assert len(result["subtitle"]) > 0
 
@@ -580,9 +543,7 @@ class TestFleetSummary:
         }
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_fleet_summary(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
+        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
         # Should still return a valid structure (empty stats, default scores)
         assert result["device_count"] == 1
         assert "health_score" in result
@@ -628,7 +589,9 @@ class TestPrivacyReport:
                                 "key": "AA:BB:CC:DD:EE:FF",
                                 "doc_count": 100,
                                 "total_bytes": {"value": 50000},
-                                "dest_ports": {"buckets": [{"key": 443, "doc_count": 90}]},
+                                "dest_ports": {
+                                    "buckets": [{"key": 443, "doc_count": 90}]
+                                },
                                 "encrypted": {"doc_count": 90},
                                 "third_party_orgs": {"value": 3},
                             }
@@ -649,7 +612,10 @@ class TestPrivacyReport:
                                 "queried_domains": {
                                     "buckets": [
                                         {"key": "ring.com", "doc_count": 30},
-                                        {"key": "google-analytics.com", "doc_count": 15},
+                                        {
+                                            "key": "google-analytics.com",
+                                            "doc_count": 15,
+                                        },
                                         {"key": "crashlytics.com", "doc_count": 5},
                                     ]
                                 },
@@ -714,9 +680,17 @@ class TestCommunicationMap:
                                 "ports": {"buckets": [{"key": 443, "doc_count": 234}]},
                                 "bytes_sent": {"value": 12500},
                                 "bytes_received": {"value": 45000},
-                                "country": {"buckets": [{"key": "US", "doc_count": 234}]},
-                                "first_seen": {"value": 1709251200000, "value_as_string": "2026-03-01T00:00:00Z"},
-                                "last_seen": {"value": 1712188800000, "value_as_string": "2026-04-04T00:00:00Z"},
+                                "country": {
+                                    "buckets": [{"key": "US", "doc_count": 234}]
+                                },
+                                "first_seen": {
+                                    "value": 1709251200000,
+                                    "value_as_string": "2026-03-01T00:00:00Z",
+                                },
+                                "last_seen": {
+                                    "value": 1712188800000,
+                                    "value_as_string": "2026-04-04T00:00:00Z",
+                                },
                             },
                         ]
                     }
@@ -729,7 +703,9 @@ class TestCommunicationMap:
                         "buckets": [
                             {
                                 "key": "54.239.28.85",
-                                "domain": {"buckets": [{"key": "ring.com", "doc_count": 50}]},
+                                "domain": {
+                                    "buckets": [{"key": "ring.com", "doc_count": 50}]
+                                },
                             }
                         ]
                     }
@@ -874,10 +850,12 @@ class TestProtocolAudit:
                                 "key": "AA:BB:CC:DD:EE:FF",
                                 "doc_count": 100,
                                 "total_bytes": {"value": 50000},
-                                "dest_ports": {"buckets": [
-                                    {"key": 443, "doc_count": 90},
-                                    {"key": 8888, "doc_count": 10},
-                                ]},
+                                "dest_ports": {
+                                    "buckets": [
+                                        {"key": 443, "doc_count": 90},
+                                        {"key": 8888, "doc_count": 10},
+                                    ]
+                                },
                                 "encrypted": {"doc_count": 90},
                                 "third_party_orgs": {"value": 1},
                             }
@@ -934,7 +912,9 @@ class TestProtocolAudit:
                                 "key": "AA:BB:CC:DD:EE:FF",
                                 "doc_count": 100,
                                 "total_bytes": {"value": 50000},
-                                "dest_ports": {"buckets": [{"key": 443, "doc_count": 100}]},
+                                "dest_ports": {
+                                    "buckets": [{"key": 443, "doc_count": 100}]
+                                },
                                 "encrypted": {"doc_count": 100},
                                 "third_party_orgs": {"value": 1},
                             }
@@ -996,7 +976,9 @@ class TestNetworkIsolation:
         mock_client.search.return_value = {
             "aggregations": {"by_mac": {"buckets": []}},
         }
-        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_network_isolation(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert result["segmentation_score"] == 100
         assert result["segmentation_grade"] == "A"
         assert result["pairs"] == []
@@ -1014,11 +996,17 @@ class TestNetworkIsolation:
                                     {
                                         "key": "192.168.1.10",
                                         "doc_count": 45,
-                                        "ports": {"buckets": [
-                                            {"key": 445, "doc_count": 30},
-                                            {"key": 139, "doc_count": 15},
-                                        ]},
-                                        "source_ip": {"buckets": [{"key": "192.168.1.50", "doc_count": 45}]},
+                                        "ports": {
+                                            "buckets": [
+                                                {"key": 445, "doc_count": 30},
+                                                {"key": 139, "doc_count": 15},
+                                            ]
+                                        },
+                                        "source_ip": {
+                                            "buckets": [
+                                                {"key": "192.168.1.50", "doc_count": 45}
+                                            ]
+                                        },
                                     }
                                 ]
                             },
@@ -1028,7 +1016,9 @@ class TestNetworkIsolation:
             },
         }
 
-        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_network_isolation(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert result["segmentation_score"] < 100
         assert len(result["pairs"]) == 1
         pair = result["pairs"][0]
@@ -1044,7 +1034,9 @@ class TestNetworkIsolation:
             "aggregations": {"by_source_mac": {"buckets": []}},
         }
 
-        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_network_isolation(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert result["segmentation_score"] == 100
         assert result["segmentation_grade"] == "A"
         assert result["pairs"] == []
@@ -1053,7 +1045,9 @@ class TestNetworkIsolation:
         self._setup_devices(iot)
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_network_isolation(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert result["segmentation_score"] == 100
         assert result["pairs"] == []
 
@@ -1086,7 +1080,9 @@ class TestManufacturerProfiles:
         mock_client.search.return_value = {
             "aggregations": {"by_mac": {"buckets": []}},
         }
-        result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_manufacturer_profiles(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert result == {"manufacturers": []}
 
     def test_groups_by_manufacturer(self, iot, mock_client):
@@ -1096,7 +1092,9 @@ class TestManufacturerProfiles:
             "aggregations": {"by_mac": {"buckets": []}},
         }
 
-        result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_manufacturer_profiles(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert "manufacturers" in result
         assert len(result["manufacturers"]) == 2
 
@@ -1118,7 +1116,9 @@ class TestManufacturerProfiles:
         self._setup_devices(iot)
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+        result = iot.get_manufacturer_profiles(
+            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+        )
         assert "manufacturers" in result
         assert len(result["manufacturers"]) == 2
 
@@ -1130,25 +1130,46 @@ class TestManufacturerProfiles:
 
 class TestCategorizeDevice:
     def test_ring_is_doorbell(self, iot):
-        assert iot._categorize_device({"manufacturer": "Ring", "hostname": ""}) == "doorbell"
+        assert (
+            iot._categorize_device({"manufacturer": "Ring", "hostname": ""})
+            == "doorbell"
+        )
 
     def test_roku_is_smart_tv(self, iot):
-        assert iot._categorize_device({"manufacturer": "Roku", "hostname": ""}) == "smart_tv"
+        assert (
+            iot._categorize_device({"manufacturer": "Roku", "hostname": ""})
+            == "smart_tv"
+        )
 
     def test_ecobee_is_thermostat(self, iot):
-        assert iot._categorize_device({"manufacturer": "Ecobee", "hostname": ""}) == "thermostat"
+        assert (
+            iot._categorize_device({"manufacturer": "Ecobee", "hostname": ""})
+            == "thermostat"
+        )
 
     def test_echo_is_smart_speaker(self, iot):
-        assert iot._categorize_device({"manufacturer": "Echo", "hostname": ""}) == "smart_speaker"
+        assert (
+            iot._categorize_device({"manufacturer": "Echo", "hostname": ""})
+            == "smart_speaker"
+        )
 
     def test_hue_is_light(self, iot):
-        assert iot._categorize_device({"manufacturer": "Philips Hue", "hostname": ""}) == "light"
+        assert (
+            iot._categorize_device({"manufacturer": "Philips Hue", "hostname": ""})
+            == "light"
+        )
 
     def test_unknown_is_default(self, iot):
-        assert iot._categorize_device({"manufacturer": "Unknown", "hostname": "generic"}) == "default"
+        assert (
+            iot._categorize_device({"manufacturer": "Unknown", "hostname": "generic"})
+            == "default"
+        )
 
     def test_hostname_matching(self, iot):
-        assert iot._categorize_device({"manufacturer": "", "hostname": "kasa-plug"}) == "smart_plug"
+        assert (
+            iot._categorize_device({"manufacturer": "", "hostname": "kasa-plug"})
+            == "smart_plug"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1236,7 +1257,11 @@ class TestDiscoverIotDevicesFromArkime:
                         {
                             "key": "dd:ee:ff:11:22:33",
                             "doc_count": 30,
-                            "oui": {"buckets": [{"key": "Sichuan AI-Link Technology Co., Ltd."}]},
+                            "oui": {
+                                "buckets": [
+                                    {"key": "Sichuan AI-Link Technology Co., Ltd."}
+                                ]
+                            },
                             "latest_ip": {"buckets": [{"key": "192.168.1.61"}]},
                             "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
                         },
@@ -1262,14 +1287,20 @@ class TestDiscoverIotDevicesFromArkime:
                         {
                             "key": "aa:bb:cc:dd:ee:ff",
                             "doc_count": 200,
-                            "oui": {"buckets": [{"key": "Proxmox Server Solutions GmbH"}]},
+                            "oui": {
+                                "buckets": [{"key": "Proxmox Server Solutions GmbH"}]
+                            },
                             "latest_ip": {"buckets": [{"key": "192.168.1.5"}]},
                             "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
                         },
                         {
                             "key": "11:22:33:44:55:66",
                             "doc_count": 300,
-                            "oui": {"buckets": [{"key": "Western Digital Technologies, Inc."}]},
+                            "oui": {
+                                "buckets": [
+                                    {"key": "Western Digital Technologies, Inc."}
+                                ]
+                            },
                             "latest_ip": {"buckets": [{"key": "192.168.1.10"}]},
                             "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
                         },

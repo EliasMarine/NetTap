@@ -43,9 +43,7 @@ class TestGetCaptureStatus(AioHTTPTestCase):
     """Tests for GET /api/capture/status."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            suffix=".env", delete=False, mode="w"
-        )
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         self.tmp.write('PCAP_CAPTURE_ENABLED="true"\n')
         self.tmp.write('PCAP_ROTATE_MB="250"\n')
         self.tmp.close()
@@ -99,9 +97,7 @@ class TestPutCaptureToggle(AioHTTPTestCase):
     """Tests for PUT /api/capture/toggle."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            suffix=".env", delete=False, mode="w"
-        )
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         self.tmp.write('PCAP_CAPTURE_ENABLED="true"\n')
         self.tmp.close()
         super().setUp()
@@ -181,9 +177,7 @@ class TestPutCaptureSettings(AioHTTPTestCase):
     """Tests for PUT /api/capture/settings."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            suffix=".env", delete=False, mode="w"
-        )
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         self.tmp.write('PCAP_ROTATE_MB="100"\n')
         self.tmp.close()
         super().setUp()
@@ -293,9 +287,7 @@ class TestEnforceCaptureState(unittest.TestCase):
         import asyncio
         from api.capture_control import enforce_capture_state
 
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".env", delete=False, mode="w"
-        )
+        tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         tmp.write('PCAP_CAPTURE_ENABLED="false"\n')
         tmp.close()
         try:
@@ -311,9 +303,7 @@ class TestEnforceCaptureState(unittest.TestCase):
         import asyncio
         from api.capture_control import enforce_capture_state
 
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".env", delete=False, mode="w"
-        )
+        tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         tmp.write('PCAP_CAPTURE_ENABLED="true"\n')
         tmp.close()
         try:

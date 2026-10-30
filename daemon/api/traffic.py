@@ -119,10 +119,14 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     query = {
         "size": 0,
         "track_total_hits": True,
-        "query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            *_ZEEK_CONN_FILTERS,
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                ]
+            }
+        },
         "aggs": {
             # OLD CODE START — Arkime session fields (client.bytes/server.bytes) include
             # protocol overhead and inflate values ~25x vs actual network bytes.
@@ -133,7 +137,9 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
-            "top_protocol": {"terms": {"field": "network.transport.keyword", "size": 1}},
+            "top_protocol": {
+                "terms": {"field": "network.transport.keyword", "size": 1}
+            },
         },
     }
 
@@ -332,14 +338,22 @@ async def handle_protocols(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            *_ZEEK_CONN_FILTERS,
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                ]
+            }
+        },
         "aggs": {
             "by_proto": {"terms": {"field": "network.transport.keyword", "size": 50}},
             "by_service": {
-                "terms": {"field": "network.protocol.keyword", "size": 50, "missing": "unknown"}
+                "terms": {
+                    "field": "network.protocol.keyword",
+                    "size": 50,
+                    "missing": "unknown",
+                }
             },
         },
     }
@@ -387,10 +401,14 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            *_ZEEK_CONN_FILTERS,
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                ]
+            }
+        },
         "aggs": {
             "bandwidth_over_time": {
                 "date_histogram": {
@@ -565,7 +583,9 @@ async def handle_category_detail(request: web.Request) -> web.Response:
 
     try:
         devices, services = await asyncio.gather(
-            traffic_classifier.get_category_devices(client, category, from_ts, to_ts, fingerprint=fingerprint),
+            traffic_classifier.get_category_devices(
+                client, category, from_ts, to_ts, fingerprint=fingerprint
+            ),
             traffic_classifier.get_category_services(client, category, from_ts, to_ts),
         )
     except Exception as exc:
@@ -576,17 +596,21 @@ async def handle_category_detail(request: web.Request) -> web.Response:
 
     grand_total = sum(d["total_bytes"] for d in devices)
     for d in devices:
-        d["percent"] = round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+        d["percent"] = (
+            round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+        )
 
-    return web.json_response({
-        "category": category,
-        "label": traffic_classifier.CATEGORIES[category],
-        "device_count": len(devices),
-        "total_bytes": grand_total,
-        "connection_count": sum(d["connections"] for d in devices),
-        "devices": devices,
-        "services": services,
-    })
+    return web.json_response(
+        {
+            "category": category,
+            "label": traffic_classifier.CATEGORIES[category],
+            "device_count": len(devices),
+            "total_bytes": grand_total,
+            "connection_count": sum(d["connections"] for d in devices),
+            "devices": devices,
+            "services": services,
+        }
+    )
 
 
 async def handle_category_bandwidth(request: web.Request) -> web.Response:
@@ -616,13 +640,15 @@ async def handle_category_bandwidth(request: web.Request) -> web.Response:
             {"error": f"Category bandwidth query failed: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "category": category,
-        "from": from_ts,
-        "to": to_ts,
-        "interval": interval,
-        "series": series,
-    })
+    return web.json_response(
+        {
+            "category": category,
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "series": series,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -652,13 +678,13 @@ def _sparkline_interval(from_ts: str, to_ts: str) -> str:
         span = (t1 - t0).total_seconds()
     except Exception:
         span = 3600
-    if span <= 3600:       # ≤1h
+    if span <= 3600:  # ≤1h
         return "1m"
-    if span <= 14400:      # ≤4h
+    if span <= 14400:  # ≤4h
         return "5m"
-    if span <= 86400:      # ≤24h
+    if span <= 86400:  # ≤24h
         return "15m"
-    if span <= 604800:     # ≤7d
+    if span <= 604800:  # ≤7d
         return "1h"
     return "6h"
 
@@ -677,10 +703,14 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
     conn_query = {
         "size": 0,
         "track_total_hits": True,
-        "query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            *_ZEEK_CONN_FILTERS,
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                ]
+            }
+        },
         "aggs": {
             "bytes_in": {"sum": {"field": "source.bytes", "missing": 0}},
             "bytes_out": {"sum": {"field": "destination.bytes", "missing": 0}},
@@ -688,23 +718,42 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
             "top_sources": {
                 "terms": {"field": "source.ip.keyword", "size": 10},
                 "aggs": {
-                    "total_bytes": {"sum": {"script": {
-                        "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                        "lang": "painless",
-                    }}},
-                    "bucket_sort": {"bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}},
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                    "bucket_sort": {
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    },
                 },
             },
             "top_destinations": {
                 "terms": {"field": "destination.ip.keyword", "size": 10},
                 "aggs": {
-                    "total_bytes": {"sum": {"script": {
-                        "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                        "lang": "painless",
-                    }}},
-                    "asn": {"terms": {"field": "destination.as.full.keyword", "size": 1}},
-                    "geo": {"terms": {"field": "destination.geo.country_iso_code.keyword", "size": 1}},
-                    "bucket_sort": {"bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}},
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                                "lang": "painless",
+                            }
+                        }
+                    },
+                    "asn": {
+                        "terms": {"field": "destination.as.full.keyword", "size": 1}
+                    },
+                    "geo": {
+                        "terms": {
+                            "field": "destination.geo.country_iso_code.keyword",
+                            "size": 1,
+                        }
+                    },
+                    "bucket_sort": {
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    },
                 },
             },
         },
@@ -713,13 +762,15 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
     alert_query = {
         "size": 0,
         "track_total_hits": True,
-        "query": {"bool": {
-            "filter": [
-                _time_range_filter(from_ts, to_ts),
-                *_SURICATA_ALERT_FILTERS,
-            ],
-            "must_not": _SURICATA_NOISE_EXCLUSION,
-        }},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
+            }
+        },
     }
 
     try:
@@ -737,7 +788,9 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
 
     aggs = conn_result.get("aggregations", {})
     hits_total = conn_result.get("hits", {}).get("total", {})
-    total_sessions = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    total_sessions = (
+        hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    )
 
     bytes_in = aggs.get("bytes_in", {}).get("value", 0) or 0
     bytes_out = aggs.get("bytes_out", {}).get("value", 0) or 0
@@ -760,28 +813,34 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
     for b in aggs.get("top_destinations", {}).get("buckets", []):
         asn_buckets = b.get("asn", {}).get("buckets", [])
         geo_buckets = b.get("geo", {}).get("buckets", [])
-        top_destinations.append({
-            "ip": b["key"],
-            "total_bytes": b.get("total_bytes", {}).get("value", 0),
-            "connections": b.get("doc_count", 0),
-            "asn": asn_buckets[0]["key"] if asn_buckets else "",
-            "country": geo_buckets[0]["key"] if geo_buckets else "",
-        })
+        top_destinations.append(
+            {
+                "ip": b["key"],
+                "total_bytes": b.get("total_bytes", {}).get("value", 0),
+                "connections": b.get("doc_count", 0),
+                "asn": asn_buckets[0]["key"] if asn_buckets else "",
+                "country": geo_buckets[0]["key"] if geo_buckets else "",
+            }
+        )
 
     alert_total = alert_result.get("hits", {}).get("total", {})
-    alert_sessions = alert_total.get("value", 0) if isinstance(alert_total, dict) else alert_total
+    alert_sessions = (
+        alert_total.get("value", 0) if isinstance(alert_total, dict) else alert_total
+    )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "total_sessions": total_sessions,
-        "bytes_in": bytes_in,
-        "bytes_out": bytes_out,
-        "alert_sessions": alert_sessions,
-        "protocols": protocols,
-        "top_sources": top_sources,
-        "top_destinations": top_destinations,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "total_sessions": total_sessions,
+            "bytes_in": bytes_in,
+            "bytes_out": bytes_out,
+            "alert_sessions": alert_sessions,
+            "protocols": protocols,
+            "top_sources": top_sources,
+            "top_destinations": top_destinations,
+        }
+    )
 
 
 async def handle_connection_sankey(request: web.Request) -> web.Response:
@@ -796,38 +855,65 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            *_ZEEK_CONN_FILTERS,
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                ]
+            }
+        },
         "aggs": {
             "by_source": {
                 "terms": {"field": "source.ip.keyword", "size": limit},
                 "aggs": {
-                    "total_bytes": {"sum": {"script": {
-                        "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                        "lang": "painless",
-                    }}},
+                    "total_bytes": {
+                        "sum": {
+                            "script": {
+                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                                "lang": "painless",
+                            }
+                        }
+                    },
                     "by_proto": {
                         "terms": {"field": "network.transport.keyword", "size": 10},
                         "aggs": {
-                            "proto_bytes": {"sum": {"script": {
-                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }}},
-                            "by_dest": {
-                                "terms": {"field": "destination.as.full.keyword", "size": limit, "missing": "Unknown"},
-                                "aggs": {
-                                    "dest_bytes": {"sum": {"script": {
+                            "proto_bytes": {
+                                "sum": {
+                                    "script": {
                                         "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
                                         "lang": "painless",
-                                    }}},
-                                    "geo": {"terms": {"field": "destination.geo.country_iso_code.keyword", "size": 1}},
+                                    }
+                                }
+                            },
+                            "by_dest": {
+                                "terms": {
+                                    "field": "destination.as.full.keyword",
+                                    "size": limit,
+                                    "missing": "Unknown",
+                                },
+                                "aggs": {
+                                    "dest_bytes": {
+                                        "sum": {
+                                            "script": {
+                                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                                                "lang": "painless",
+                                            }
+                                        }
+                                    },
+                                    "geo": {
+                                        "terms": {
+                                            "field": "destination.geo.country_iso_code.keyword",
+                                            "size": 1,
+                                        }
+                                    },
                                 },
                             },
                         },
                     },
-                    "bucket_sort": {"bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}},
+                    "bucket_sort": {
+                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    },
                 },
             },
         },
@@ -845,7 +931,9 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
     dest_set: dict[str, dict] = {}  # asn → {bytes, country}
     links: list[dict] = []
 
-    for src_bucket in result.get("aggregations", {}).get("by_source", {}).get("buckets", []):
+    for src_bucket in (
+        result.get("aggregations", {}).get("by_source", {}).get("buckets", [])
+    ):
         src_ip = src_bucket["key"]
         src_bytes = src_bucket.get("total_bytes", {}).get("value", 0)
         source_nodes.append({"id": src_ip, "label": src_ip, "value": src_bytes})
@@ -856,11 +944,13 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
             proto_set[proto_name] = proto_set.get(proto_name, 0) + proto_bytes
 
             # Link: source → protocol
-            links.append({
-                "source": src_ip,
-                "target": proto_name,
-                "value": proto_bytes,
-            })
+            links.append(
+                {
+                    "source": src_ip,
+                    "target": proto_name,
+                    "value": proto_bytes,
+                }
+            )
 
             for dest_bucket in proto_bucket.get("by_dest", {}).get("buckets", []):
                 dest_name = dest_bucket["key"]
@@ -873,11 +963,13 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                 dest_set[dest_name]["bytes"] += dest_bytes
 
                 # Link: protocol → destination
-                links.append({
-                    "source": proto_name,
-                    "target": dest_name,
-                    "value": dest_bytes,
-                })
+                links.append(
+                    {
+                        "source": proto_name,
+                        "target": dest_name,
+                        "value": dest_bytes,
+                    }
+                )
 
     # Aggregate duplicate links (same source→target)
     link_map: dict[str, dict] = {}
@@ -897,23 +989,31 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
     def _strip_asn_prefix(asn_full: str) -> str:
         """Strip 'AS12345 ' prefix from ASN string, keeping only the org name."""
         import re
+
         return re.sub(r"^AS\d+\s*", "", asn_full) or asn_full
 
     destination_nodes = [
-        {"id": name, "label": _strip_asn_prefix(name), "value": info["bytes"], "country": info["country"]}
+        {
+            "id": name,
+            "label": _strip_asn_prefix(name),
+            "value": info["bytes"],
+            "country": info["country"],
+        }
         for name, info in sorted(dest_set.items(), key=lambda x: -x[1]["bytes"])
     ][:limit]
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "nodes": {
-            "sources": source_nodes,
-            "protocols": protocol_nodes,
-            "destinations": destination_nodes,
-        },
-        "links": aggregated_links,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "nodes": {
+                "sources": source_nodes,
+                "protocols": protocol_nodes,
+                "destinations": destination_nodes,
+            },
+            "links": aggregated_links,
+        }
+    )
 
 
 async def handle_connection_timeline(request: web.Request) -> web.Response:
@@ -934,10 +1034,14 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
-        "query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            *_ZEEK_CONN_FILTERS,
-        ]}},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                ]
+            }
+        },
         "aggs": {
             "over_time": {
                 "date_histogram": {
@@ -947,7 +1051,9 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
                     "extended_bounds": {"min": from_ts, "max": to_ts},
                 },
                 "aggs": {
-                    "by_proto": {"terms": {"field": "network.transport.keyword", "size": 10}},
+                    "by_proto": {
+                        "terms": {"field": "network.transport.keyword", "size": 10}
+                    },
                 },
             },
         },
@@ -965,18 +1071,22 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
         proto_counts: dict[str, int] = {}
         for pb in b.get("by_proto", {}).get("buckets", []):
             proto_counts[pb["key"]] = pb["doc_count"]
-        timeline.append({
-            "timestamp": b.get("key_as_string", b.get("key")),
-            "total": b.get("doc_count", 0),
-            "protocols": proto_counts,
-        })
+        timeline.append(
+            {
+                "timestamp": b.get("key_as_string", b.get("key")),
+                "total": b.get("doc_count", 0),
+                "protocols": proto_counts,
+            }
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "interval": interval,
-        "buckets": timeline,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "buckets": timeline,
+        }
+    )
 
 
 async def handle_connection_related(request: web.Request) -> web.Response:
@@ -998,22 +1108,45 @@ async def handle_connection_related(request: web.Request) -> web.Response:
     # Match connections in either direction
     query = {
         "size": 200,
-        "query": {"bool": {
-            "filter": [
-                _time_range_filter(from_ts, to_ts),
-                *_ZEEK_CONN_FILTERS,
-                {"bool": {"should": [
-                    {"bool": {"must": [
-                        {"term": {"source.ip.keyword": src_ip}},
-                        {"term": {"destination.ip.keyword": dst_ip}},
-                    ]}},
-                    {"bool": {"must": [
-                        {"term": {"source.ip.keyword": dst_ip}},
-                        {"term": {"destination.ip.keyword": src_ip}},
-                    ]}},
-                ], "minimum_should_match": 1}},
-            ],
-        }},
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                    {
+                        "bool": {
+                            "should": [
+                                {
+                                    "bool": {
+                                        "must": [
+                                            {"term": {"source.ip.keyword": src_ip}},
+                                            {
+                                                "term": {
+                                                    "destination.ip.keyword": dst_ip
+                                                }
+                                            },
+                                        ]
+                                    }
+                                },
+                                {
+                                    "bool": {
+                                        "must": [
+                                            {"term": {"source.ip.keyword": dst_ip}},
+                                            {
+                                                "term": {
+                                                    "destination.ip.keyword": src_ip
+                                                }
+                                            },
+                                        ]
+                                    }
+                                },
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                ],
+            }
+        },
         "sort": [{"@timestamp": {"order": "asc"}}],
     }
 
@@ -1051,18 +1184,20 @@ async def handle_connection_related(request: web.Request) -> web.Response:
             if last_seen is None or ts > last_seen:
                 last_seen = ts
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "src_ip": src_ip,
-        "dst_ip": dst_ip,
-        "total_connections": len(connections),
-        "total_bytes": total_bytes,
-        "protocols": sorted(protocols_seen),
-        "first_seen": first_seen,
-        "last_seen": last_seen,
-        "connections": connections,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "src_ip": src_ip,
+            "dst_ip": dst_ip,
+            "total_connections": len(connections),
+            "total_bytes": total_bytes,
+            "protocols": sorted(protocols_seen),
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "connections": connections,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1090,5 +1225,7 @@ def register_traffic_routes(
     app.router.add_get("/api/traffic/connections/related", handle_connection_related)
     app.router.add_get("/api/traffic/categories", handle_traffic_categories)
     app.router.add_get("/api/traffic/categories/{category}", handle_category_detail)
-    app.router.add_get("/api/traffic/categories/{category}/bandwidth", handle_category_bandwidth)
+    app.router.add_get(
+        "/api/traffic/categories/{category}/bandwidth", handle_category_bandwidth
+    )
     logger.info("Traffic API routes registered (13 endpoints)")
