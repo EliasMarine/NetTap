@@ -1,4 +1,70 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import * as iotApi from '$lib/api/iot';
+import IoTPage from './+page.svelte';
+
+vi.mock('$lib/api/iot', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/api/iot')>()),
+	getFleetSummary: vi.fn(),
+	getPrivacyReport: vi.fn(),
+	getProtocolAudit: vi.fn(),
+	getNetworkIsolation: vi.fn(),
+	getManufacturerProfiles: vi.fn(),
+}));
+
+// ---------------------------------------------------------------------------
+// Rendered page: failed endpoints show their error/empty state, not fake data
+// ---------------------------------------------------------------------------
+
+describe('IoT page — failed endpoints', () => {
+	const FLEET = {
+		health_score: 82, health_grade: 'B', privacy_score: 80, security_score: 85, behavior_score: 81,
+		device_count: 0, anomaly_count: 0, privacy_concerns: 0, unencrypted_count: 0, subtitle: '', devices: [],
+	};
+
+	function mockSections(fleet: 'ok' | 'fail', isolation: 'ok' | 'fail') {
+		const fail = () => Promise.reject(new Error('Failed to load: 500'));
+		vi.mocked(iotApi.getFleetSummary).mockImplementation(() => (fleet === 'ok' ? Promise.resolve(FLEET) : fail()));
+		vi.mocked(iotApi.getNetworkIsolation).mockImplementation(() =>
+			isolation === 'ok'
+				? Promise.resolve({ segmentation_score: 70, segmentation_grade: 'C', pairs: [], recommendation: '' })
+				: fail(),
+		);
+		vi.mocked(iotApi.getPrivacyReport).mockResolvedValue({ devices: [] });
+		vi.mocked(iotApi.getProtocolAudit).mockResolvedValue({ devices: [] });
+		vi.mocked(iotApi.getManufacturerProfiles).mockResolvedValue({ manufacturers: [] });
+	}
+
+	async function flush() {
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('shows the error state, not grade F, when the fleet summary fails', async () => {
+		mockSections('fail', 'ok');
+
+		render(IoTPage);
+		await flush();
+
+		expect(screen.getByText('Failed to load IoT data.')).toBeInTheDocument();
+		expect(screen.queryByText('F')).not.toBeInTheDocument();
+	});
+
+	it('keeps the rest of the page when only network isolation fails', async () => {
+		mockSections('ok', 'fail');
+
+		render(IoTPage);
+		await flush();
+
+		expect(screen.queryByText('Failed to load IoT data.')).not.toBeInTheDocument();
+		expect(screen.getByText('Network Isolation')).toBeInTheDocument();
+		expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
+	});
+});
 
 /**
  * Tests for the IoT Trust Score page (/iot).

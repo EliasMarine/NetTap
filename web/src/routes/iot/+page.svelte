@@ -103,6 +103,28 @@
 	async function fetchAll(range: string) {
 		loading = true;
 		const params = computeTimeParams(range);
+		// The getters throw on HTTP errors, so a failed section is null (its empty
+		// state) instead of fake zeros; a failed fleet summary shows the error state.
+		const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = await Promise.allSettled([
+			getFleetSummary(params),
+			getPrivacyReport(params),
+			getProtocolAudit(params),
+			getNetworkIsolation(params),
+			getManufacturerProfiles(params),
+		]);
+		fleet = fleetRes.status === 'fulfilled' ? fleetRes.value : null;
+		privacy = privacyRes.status === 'fulfilled' ? privacyRes.value : null;
+		protocol = protocolRes.status === 'fulfilled' ? protocolRes.value : null;
+		isolation = isolationRes.status === 'fulfilled' ? isolationRes.value : null;
+		manufacturers = mfgRes.status === 'fulfilled' ? mfgRes.value : null;
+		loading = false;
+	}
+
+	// OLD CODE START — one failed endpoint blanked the whole page
+	/*
+	async function fetchAll(range: string) {
+		loading = true;
+		const params = computeTimeParams(range);
 		try {
 			const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = await Promise.all([
 				getFleetSummary(params),
@@ -126,6 +148,8 @@
 			loading = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	$effect(() => { fetchAll(selectedRange); });
 
