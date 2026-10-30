@@ -70,6 +70,18 @@
 	let smartAlertsTotal = $state(0);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
+	let suppressFailedId = $state<number | null>(null);
+
+	// Remove the row only once the daemon confirms; suppressAlert throws on failure
+	async function suppressSmartAlert(sa: SmartAlert) {
+		try {
+			await suppressAlert(sa.signature_id, deviceIp);
+			smartAlerts = smartAlerts.filter((a) => a !== sa);
+			suppressFailedId = null;
+		} catch {
+			suppressFailedId = sa.signature_id;
+		}
+	}
 	let ports = $state<DevicePort[]>([]);
 	let riskScore = $state(0);
 	let riskLevel = $state('low');
@@ -557,7 +569,13 @@
 								<div class="sa-assessment">{sa.assessment}</div>
 								<div class="sa-actions">
 									<a href="/alerts?ip={deviceIp}" class="sa-action-btn">Investigate</a>
-									<button class="sa-action-btn" onclick={() => { suppressAlert(sa.signature_id, deviceIp); smartAlerts = smartAlerts.filter(a => a !== sa); }}>Suppress</button>
+									<!-- OLD CODE START — removed the row before the daemon answered; a failed suppress was an unhandled rejection -->
+									<!-- <button class="sa-action-btn" onclick={() => { suppressAlert(sa.signature_id, deviceIp); smartAlerts = smartAlerts.filter(a => a !== sa); }}>Suppress</button> -->
+									<!-- OLD CODE END -->
+									<button class="sa-action-btn" onclick={() => suppressSmartAlert(sa)}>Suppress</button>
+									{#if suppressFailedId === sa.signature_id}
+										<span class="sa-suppress-error">Suppress failed. Try again.</span>
+									{/if}
 								</div>
 							</div>
 						{/each}
@@ -846,6 +864,7 @@
 	.sa-actions { display: flex; gap: var(--space-sm); }
 	.sa-action-btn { padding: 3px 10px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 600; cursor: pointer; transition: all var(--transition-fast); border: 1px solid var(--border-dim); background: var(--bg-tertiary); color: var(--text-secondary); text-decoration: none; font-family: var(--font-sans); }
 	.sa-action-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
+	.sa-suppress-error { align-self: center; color: var(--red); font-size: var(--text-xs); }
 	.card-expand-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: var(--space-sm) var(--space-md); border: none; border-top: 1px solid var(--border-dim); background: none; font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
 	.card-expand-btn:hover { color: var(--accent); background: var(--bg-tertiary); }
 
