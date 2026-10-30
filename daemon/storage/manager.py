@@ -141,6 +141,10 @@ class StorageManager:
     # Maximum number of disk usage samples to keep (24h at 5-min intervals)
     _USAGE_HISTORY_MAX = 288
 
+    # Most PCAP files the emergency cascade deletes per cycle: 500 x the
+    # default 100 MB rotation = 50 GB, 95% -> 90% on a 1 TB disk
+    _EMERGENCY_PCAP_DELETE_CAP = 500
+
     def __init__(
         self,
         config: RetentionConfig,
@@ -458,7 +462,8 @@ class StorageManager:
 
         Called when disk usage exceeds the emergency threshold.
         Deletes oldest-first across ALL tiers until usage drops below
-        the normal threshold or no more deletable indices remain.
+        the emergency threshold or only today's indices remain.  Indices
+        dated today (UTC) or later are never deleted: they are being written.
 
         Returns the number of indices deleted.
         """
@@ -473,8 +478,20 @@ class StorageManager:
                 logger.warning("No indices available for emergency pruning")
                 return 0
 
-            # Collect all dated indices, sort oldest first globally
-            dated = [idx for idx in indices if idx["parsed_date"] is not None]
+            # OLD CODE START — CR-002: included today's live index, so every
+            # cycle deleted the index Logstash had just recreated.
+            # # Collect all dated indices, sort oldest first globally
+            # dated = [idx for idx in indices if idx["parsed_date"] is not None]
+            # OLD CODE END
+            # Collect dated indices from before today, sort oldest first globally
+            today = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            dated = [
+                idx
+                for idx in indices
+                if idx["parsed_date"] is not None and idx["parsed_date"] < today
+            ]
             dated.sort(key=lambda x: x["parsed_date"])
 
             deleted = 0
@@ -485,7 +502,12 @@ class StorageManager:
 
                 # Re-check disk after each deletion
                 usage = self.check_disk_usage()
-                if usage < self.config.disk_threshold:
+                # OLD CODE START — CR-002: aimed for disk_threshold (80%), which
+                # index deletion can't reach when PCAP fills the disk, so it
+                # deleted every index.
+                # if usage < self.config.disk_threshold:
+                # OLD CODE END
+                if usage < self.config.emergency_threshold:
                     logger.info(
                         "Emergency prune brought disk to %.1f%%; deleted %d indices total",
                         usage * 100,
@@ -493,12 +515,24 @@ class StorageManager:
                     )
                     return deleted
 
-            logger.warning(
-                "Emergency prune exhausted all deletable indices "
-                "(deleted %d); disk still at %.1f%%",
-                deleted,
-                self.check_disk_usage() * 100,
-            )
+            # OLD CODE START — CR-002: a warning hid that index deletion could
+            # not recover the space.
+            # logger.warning(
+            #     "Emergency prune exhausted all deletable indices "
+            #     "(deleted %d); disk still at %.1f%%",
+            #     deleted,
+            #     self.check_disk_usage() * 100,
+            # )
+            # OLD CODE END
+            usage = self.check_disk_usage()
+            if usage >= self.config.emergency_threshold:
+                logger.critical(
+                    "Emergency prune deleted %d indices and only today's indices "
+                    "are left; disk still at %.1f%%. Deleting indices cannot "
+                    "recover this space: something else is filling the disk.",
+                    deleted,
+                    usage * 100,
+                )
             return deleted
 
     # ------------------------------------------------------------------
@@ -658,7 +692,7 @@ class StorageManager:
         pcap_file.unlink()
 
     def _delete_oldest_pcaps(self, max_delete: int = 10) -> int:
-        """Delete the oldest PCAP files from the PCAP directory.
+        """Delete the oldest PCAP files until usage is below the emergency threshold.
 
         Args:
             max_delete: Maximum number of PCAP files to delete per call.
@@ -704,6 +738,10 @@ class StorageManager:
                 logger.warning("Emergency deleted PCAP: %s", pcap_file.name)
             except OSError as exc:
                 logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+                continue
+            # CR-002: stop as soon as the emergency is over
+            if self.check_disk_usage() < self.config.emergency_threshold:
+                break
 
         return deleted
 
@@ -739,8 +777,8 @@ class StorageManager:
     def emergency_cascade(self) -> int:
         """Execute emergency cascade deletion based on disk usage level.
 
-        At 90%: prune oldest OpenSearch indices regardless of retention,
-                then prune oldest PCAPs.
+        At 90%: delete the oldest PCAPs until usage is below 90%, then
+                prune the oldest OpenSearch indices only if still needed.
         At 95%: additionally stop PCAP capture via flag file.
         Below 85%: resume normal operation, clear stop-capture flag.
 
@@ -755,6 +793,30 @@ class StorageManager:
 
         total_deleted = 0
 
+        # OLD CODE START — CR-002: deleted every OpenSearch index before any
+        # PCAP, though PCAP is what fills the disk.
+        # if usage >= self.config.critical_threshold:
+        #     # 95%+ — stop capture AND aggressive pruning
+        #     logger.warning(
+        #         "CRITICAL: Disk at %.1f%% >= %.1f%% — stopping capture "
+        #         "and starting aggressive pruning",
+        #         usage * 100,
+        #         self.config.critical_threshold * 100,
+        #     )
+        #     self._set_capture_stop_flag()
+        #     total_deleted += self.prune_emergency()
+        #     total_deleted += self._delete_oldest_pcaps(max_delete=20)
+        #
+        # elif usage >= self.config.emergency_threshold:
+        #     # 90%+ — aggressive pruning (indices + PCAPs)
+        #     logger.warning(
+        #         "EMERGENCY: Disk at %.1f%% >= %.1f%% — starting cascade deletion",
+        #         usage * 100,
+        #         self.config.emergency_threshold * 100,
+        #     )
+        #     total_deleted += self.prune_emergency()
+        #     total_deleted += self._delete_oldest_pcaps(max_delete=10)
+        # OLD CODE END
         if usage >= self.config.critical_threshold:
             # 95%+ — stop capture AND aggressive pruning
             logger.warning(
@@ -764,18 +826,20 @@ class StorageManager:
                 self.config.critical_threshold * 100,
             )
             self._set_capture_stop_flag()
-            total_deleted += self.prune_emergency()
-            total_deleted += self._delete_oldest_pcaps(max_delete=20)
-
         elif usage >= self.config.emergency_threshold:
-            # 90%+ — aggressive pruning (indices + PCAPs)
             logger.warning(
                 "EMERGENCY: Disk at %.1f%% >= %.1f%% — starting cascade deletion",
                 usage * 100,
                 self.config.emergency_threshold * 100,
             )
-            total_deleted += self.prune_emergency()
-            total_deleted += self._delete_oldest_pcaps(max_delete=10)
+
+        if usage >= self.config.emergency_threshold:
+            # PCAP first: it is most of the disk and the cheapest data to lose
+            total_deleted += self._delete_oldest_pcaps(
+                max_delete=self._EMERGENCY_PCAP_DELETE_CAP
+            )
+            if self.check_disk_usage() >= self.config.emergency_threshold:
+                total_deleted += self.prune_emergency()
 
         # Check if we've recovered below resume threshold
         try:

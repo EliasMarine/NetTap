@@ -132,3 +132,89 @@ class TestPcapDir:
         assert not files["arkime_old"].exists()
         assert not files["netsniff_old"].exists()
         assert files["netsniff_new"].exists()
+
+
+# =========================================================================
+# CR-002: emergency prune keeps today's indices and deletes PCAP first
+# =========================================================================
+
+
+def _index(name):
+    return {"index": name, "store.size": "1mb", "creation.date.string": None}
+
+
+def _cfg(tmp_path, **overrides):
+    values = {
+        "pcap_dir": str(tmp_path),
+        "capture_stop_flag": str(tmp_path / "stopped-capture"),
+        "disk_threshold": 0.80,
+        "emergency_threshold": 0.90,
+        "critical_threshold": 0.95,
+        "resume_threshold": 0.85,
+    }
+    values.update(overrides)
+    return RetentionConfig(**values)
+
+
+class TestPruneEmergency:
+    def test_never_deletes_today_or_later(self, tmp_path, caplog):
+        now = datetime.now(timezone.utc)
+        today = f"arkime_sessions3-{now.strftime('%y%m%d')}"
+        tomorrow = f"zeek-conn-{(now + timedelta(days=1)).strftime('%Y.%m.%d')}"
+        yesterday = f"zeek-conn-{(now - timedelta(days=1)).strftime('%Y.%m.%d')}"
+        client = MagicMock()
+        client.cat.indices.return_value = [
+            _index(today),
+            _index(tomorrow),
+            _index(yesterday),
+        ]
+        mgr = _make_manager(_cfg(tmp_path), client)
+        mgr.check_disk_usage = MagicMock(return_value=0.97)
+
+        with caplog.at_level("CRITICAL", logger="nettap.storage"):
+            deleted = mgr.prune_emergency()
+
+        assert deleted == 1
+        client.indices.delete.assert_called_once_with(index=yesterday)
+        assert any(r.levelname == "CRITICAL" for r in caplog.records)
+
+    def test_stops_below_emergency_threshold(self, tmp_path):
+        """80-90% is the tiered prune's job, not the emergency's."""
+        now = datetime.now(timezone.utc)
+        older = f"zeek-conn-{(now - timedelta(days=3)).strftime('%Y.%m.%d')}"
+        old = f"zeek-conn-{(now - timedelta(days=2)).strftime('%Y.%m.%d')}"
+        client = MagicMock()
+        client.cat.indices.return_value = [_index(older), _index(old)]
+        mgr = _make_manager(_cfg(tmp_path), client)
+        mgr.check_disk_usage = MagicMock(return_value=0.85)
+
+        assert mgr.prune_emergency() == 1
+        client.indices.delete.assert_called_once_with(index=older)
+
+
+class TestEmergencyCascadeOrder:
+    def test_pcap_deleted_first_and_indices_kept(self, tmp_path):
+        files = _pcap_tree(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path))
+
+        def usage():
+            # Each PCAP left on disk is worth 2% of the disk
+            return 0.87 + 0.02 * len(list(tmp_path.rglob("*.pcap")))
+
+        mgr.check_disk_usage = MagicMock(side_effect=usage)
+        mgr.prune_emergency = MagicMock(return_value=0)
+
+        assert mgr.emergency_cascade() == 2
+
+        mgr.prune_emergency.assert_not_called()
+        assert not files["arkime_old"].exists()
+        assert not files["netsniff_old"].exists()
+        assert files["netsniff_new"].exists()
+
+    def test_indices_pruned_when_pcap_is_not_enough(self, tmp_path):
+        mgr = _make_manager(_cfg(tmp_path))  # no PCAP on disk
+        mgr.check_disk_usage = MagicMock(return_value=0.92)
+        mgr.prune_emergency = MagicMock(return_value=4)
+
+        assert mgr.emergency_cascade() == 4
+        mgr.prune_emergency.assert_called_once()

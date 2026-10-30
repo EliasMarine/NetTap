@@ -178,7 +178,7 @@ class TestPredictiveExhaustion:
 
 class TestEmergencyCascade:
     def test_emergency_cascade_at_90_percent(self):
-        """At 90%: should prune indices and PCAPs, NOT stop capture."""
+        """At 90%: should prune PCAPs then indices, NOT stop capture."""
         mgr = _make_manager()
 
         with (
@@ -192,7 +192,9 @@ class TestEmergencyCascade:
 
         assert deleted == 5
         mock_prune.assert_called_once()
-        mock_pcap.assert_called_once_with(max_delete=10)
+        mock_pcap.assert_called_once_with(
+            max_delete=StorageManager._EMERGENCY_PCAP_DELETE_CAP
+        )
         mock_stop.assert_not_called()
 
     def test_emergency_stop_capture_at_95_percent(self):
@@ -211,7 +213,9 @@ class TestEmergencyCascade:
         assert deleted == 8
         mock_stop.assert_called_once()
         mock_prune.assert_called_once()
-        mock_pcap.assert_called_once_with(max_delete=20)
+        mock_pcap.assert_called_once_with(
+            max_delete=StorageManager._EMERGENCY_PCAP_DELETE_CAP
+        )
 
     def test_emergency_resume_below_85_percent(self, tmp_path):
         """When disk drops below 85%, capture should be resumed."""
