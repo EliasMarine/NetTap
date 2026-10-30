@@ -37,6 +37,8 @@
 	// --- Manual Cleanup state ---
 	let cleanupDays = $state(60);
 	let cleanupPreview = $state<CleanupPreview | null>(null);
+	// Days the shown preview was computed for — the delete must use these, not the live input
+	let cleanupPreviewDays = $state<number | null>(null);
 	let cleanupPreviewing = $state(false);
 	let cleanupExecuting = $state(false);
 	let showCleanupConfirm = $state(false);
@@ -631,10 +633,17 @@
 		cleanupMessage = '';
 		cleanupError = false;
 		cleanupPreview = null;
+		cleanupPreviewDays = null;
 		showCleanupConfirm = false;
 
+		const days = cleanupDays;
 		try {
-			cleanupPreview = await previewCleanup(cleanupDays);
+			// OLD CODE START — preview and execute both read the live input, so editing
+			// the days after previewing deleted a different range than the one shown
+			// cleanupPreview = await previewCleanup(cleanupDays);
+			// OLD CODE END
+			cleanupPreview = await previewCleanup(days);
+			cleanupPreviewDays = days;
 		} catch (err: unknown) {
 			cleanupMessage = err instanceof Error ? err.message : 'Failed to preview cleanup';
 			cleanupError = true;
@@ -644,12 +653,16 @@
 	}
 
 	async function handleCleanupExecute() {
+		if (cleanupPreviewDays === null) return;
 		cleanupExecuting = true;
 		cleanupMessage = '';
 		cleanupError = false;
 
 		try {
-			const result = await executeCleanup(cleanupDays);
+			// OLD CODE START — used the live input instead of the previewed days
+			// const result = await executeCleanup(cleanupDays);
+			// OLD CODE END
+			const result = await executeCleanup(cleanupPreviewDays);
 			const freedStr = formatCleanupBytes(result.freed_bytes_estimate);
 			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
 			if (result.errors.length > 0) {
@@ -657,6 +670,7 @@
 			}
 			cleanupError = false;
 			cleanupPreview = null;
+			cleanupPreviewDays = null;
 			showCleanupConfirm = false;
 
 			// Refresh disk usage
@@ -680,6 +694,7 @@
 	function cancelCleanup() {
 		showCleanupConfirm = false;
 		cleanupPreview = null;
+		cleanupPreviewDays = null;
 		cleanupMessage = '';
 	}
 
@@ -1007,6 +1022,7 @@
 			<div class="cleanup-input-row">
 				<span class="cleanup-label">Delete data older than</span>
 				<div class="input-with-unit" style="width: 120px;">
+					<!-- OLD CODE START — editing the days left the old preview (and its Delete button) on screen
 					<input
 						class="input"
 						type="number"
@@ -1014,6 +1030,17 @@
 						min={1}
 						max={3650}
 						disabled={cleanupExecuting}
+					/>
+					OLD CODE END -->
+					<input
+						class="input"
+						type="number"
+						aria-label="Delete data older than (days)"
+						bind:value={cleanupDays}
+						oninput={cancelCleanup}
+						min={1}
+						max={3650}
+						disabled={cleanupExecuting || cleanupPreviewing}
 					/>
 					<span class="input-unit">days</span>
 				</div>
@@ -1049,7 +1076,7 @@
 					</div>
 
 					{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
-						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupDays} days.</p>
+						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupPreviewDays} days.</p>
 					{:else}
 						<div class="cleanup-confirm-section">
 							{#if !showCleanupConfirm}
