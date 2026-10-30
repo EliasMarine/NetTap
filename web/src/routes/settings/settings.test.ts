@@ -97,3 +97,69 @@ describe('Settings — manual cleanup', () => {
 		expect(executeCleanup).not.toHaveBeenCalled();
 	});
 });
+
+describe('Settings — UniFi integration', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	function status(overrides: Record<string, unknown> = {}) {
+		return {
+			configured: true,
+			controller_url: 'https://192.168.1.1',
+			site_id: null,
+			connected: true,
+			last_poll_time: Date.now() / 1000 - 30,
+			cache_counts: { clients: 4, devices: 2 },
+			last_error: null,
+			...overrides,
+		};
+	}
+
+	async function openIntegrations() {
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+	}
+
+	it('shows connected state and last poll from the daemon status fields', async () => {
+		stubFetch({ '/api/integrations/unifi/status': () => ({ body: status({ site_id: 'site-a' }) }) });
+
+		await openIntegrations();
+
+		expect(screen.getByText('Connected')).toBeInTheDocument();
+		expect(screen.getByText('Last Poll')).toBeInTheDocument();
+		expect(screen.getByText(/^\d+s ago$/)).toBeInTheDocument();
+		expect(screen.getByLabelText('Site')).toHaveValue('site-a');
+	});
+
+	it('shows disconnected and no last poll before the first successful poll', async () => {
+		stubFetch({
+			'/api/integrations/unifi/status': () => ({ body: status({ connected: false, last_poll_time: 0 }) }),
+		});
+
+		await openIntegrations();
+
+		expect(screen.getByText('Disconnected')).toBeInTheDocument();
+		expect(screen.queryByText('Last Poll')).not.toBeInTheDocument();
+	});
+
+	it('does not post a blank site_id', async () => {
+		const fetchMock = stubFetch({
+			'/api/integrations/unifi/status': () => ({ body: status() }),
+			'/api/integrations/unifi/configure': () => ({ body: { status: 'configured' } }),
+			'/api/integrations/unifi/test': () => ({ body: { success: true, status: status() } }),
+		});
+
+		await openIntegrations();
+		await fireEvent.input(screen.getByLabelText('Site'), { target: { value: '   ' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }));
+		await flush();
+
+		const call = fetchMock.mock.calls.find(([url]) => url === '/api/integrations/unifi/configure');
+		expect(call).toBeDefined();
+		const body = JSON.parse(String(call?.[1]?.body));
+		expect(body).toEqual({ controller_url: 'https://192.168.1.1' });
+	});
+});

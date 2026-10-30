@@ -14,6 +14,10 @@ export interface UnifiStatus {
 	configured: boolean;
 	controller_url: string | null;
 	site_id: string | null;
+	/** True once the current configuration has polled successfully. */
+	connected: boolean;
+	/** Epoch seconds of the last successful poll; 0 = never. */
+	last_poll_time: number;
 	last_error: string | null;
 	cache_counts: Record<string, number>;
 }
@@ -107,6 +111,16 @@ export interface UnifiVpnTunnel {
 
 const DAEMON = '/api/integrations/unifi';
 
+const EMPTY_STATUS: UnifiStatus = {
+	configured: false,
+	controller_url: null,
+	site_id: null,
+	connected: false,
+	last_poll_time: 0,
+	last_error: null,
+	cache_counts: {},
+};
+
 // ---------------------------------------------------------------------------
 // API functions
 // ---------------------------------------------------------------------------
@@ -115,14 +129,33 @@ const DAEMON = '/api/integrations/unifi';
  * Get UniFi integration status (configured, controller URL, errors).
  */
 export async function getUnifiStatus(): Promise<UnifiStatus> {
+	// OLD CODE START — returned the raw payload, so fields an older daemon omits came back undefined
+	// try {
+	// 	const res = await fetch(`${DAEMON}/status`);
+	// 	if (!res.ok) {
+	// 		return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
+	// }
+	// OLD CODE END
 	try {
 		const res = await fetch(`${DAEMON}/status`);
-		if (!res.ok) {
-			return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
-		}
-		return res.json();
+		if (!res.ok) return { ...EMPTY_STATUS };
+		const raw: Partial<UnifiStatus> = await res.json();
+		// `connected` and `site_id` are absent on daemons older than this contract
+		return {
+			configured: raw.configured ?? false,
+			controller_url: raw.controller_url ?? null,
+			site_id: raw.site_id || null,
+			connected: raw.connected ?? false,
+			last_poll_time: typeof raw.last_poll_time === 'number' ? raw.last_poll_time : 0,
+			last_error: raw.last_error ?? null,
+			cache_counts: raw.cache_counts ?? {},
+		};
 	} catch {
-		return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
+		return { ...EMPTY_STATUS };
 	}
 }
 
@@ -203,7 +236,10 @@ export async function getUnifiDnsPolicies(): Promise<DnsPolicy[]> {
 		const res = await fetch(`${DAEMON}/dns-policies`);
 		if (!res.ok) return [];
 		const data = await res.json();
-		return data.dns_policies || [];
+		// OLD CODE START — the daemon sends `policies`; `dns_policies` never existed
+		// return data.dns_policies || [];
+		// OLD CODE END
+		return data.policies || [];
 	} catch {
 		return [];
 	}
@@ -231,7 +267,10 @@ export async function getUnifiVpn(): Promise<UnifiVpnTunnel[]> {
 		const res = await fetch(`${DAEMON}/vpn`);
 		if (!res.ok) return [];
 		const data = await res.json();
-		return data.vpn_tunnels || [];
+		// OLD CODE START — the daemon sends `tunnels`; `vpn_tunnels` never existed
+		// return data.vpn_tunnels || [];
+		// OLD CODE END
+		return data.tunnels || [];
 	} catch {
 		return [];
 	}

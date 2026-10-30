@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
+	import { getUnifiStatus } from '$lib/api/unifi';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -384,21 +385,46 @@
 	}
 
 	// --- UniFi functions ---
+	// OLD CODE START — read `last_poll`, which the daemon never sends (it sends
+	// `last_poll_time` in epoch seconds), so "Last Poll" never showed
+	// async function loadUnifiStatus() {
+	// 	unifiLoading = true;
+	// 	try {
+	// 		const res = await fetch('/api/integrations/unifi/status');
+	// 		if (res.ok) {
+	// 			const data = await res.json();
+	// 			unifiConfigured = data.configured ?? false;
+	// 			unifiControllerUrl = data.controller_url ?? '';
+	// 			unifiConnected = data.connected ?? false;
+	// 			unifiCacheCounts = data.cache_counts ?? null;
+	// 			unifiLastPoll = data.last_poll ?? null;
+	// 			if (data.site_id) unifiSiteId = data.site_id;
+	// 		}
+	// 	} catch {
+	// 		// Will use defaults
+	// 	} finally {
+	// 		unifiLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	function unifiPollIso(epochSeconds: unknown): string | null {
+		return typeof epochSeconds === 'number' && epochSeconds > 0
+			? new Date(epochSeconds * 1000).toISOString()
+			: null;
+	}
+
 	async function loadUnifiStatus() {
 		unifiLoading = true;
 		try {
-			const res = await fetch('/api/integrations/unifi/status');
-			if (res.ok) {
-				const data = await res.json();
-				unifiConfigured = data.configured ?? false;
-				unifiControllerUrl = data.controller_url ?? '';
-				unifiConnected = data.connected ?? false;
-				unifiCacheCounts = data.cache_counts ?? null;
-				unifiLastPoll = data.last_poll ?? null;
-				if (data.site_id) unifiSiteId = data.site_id;
-			}
-		} catch {
-			// Will use defaults
+			const status = await getUnifiStatus();
+			unifiConfigured = status.configured;
+			unifiControllerUrl = status.controller_url ?? '';
+			unifiConnected = status.connected;
+			unifiCacheCounts = status.configured
+				? { clients: status.cache_counts.clients ?? 0, devices: status.cache_counts.devices ?? 0 }
+				: null;
+			unifiLastPoll = unifiPollIso(status.last_poll_time);
+			if (status.site_id) unifiSiteId = status.site_id;
 		} finally {
 			unifiLoading = false;
 		}
@@ -445,8 +471,15 @@
 			if (unifiApiKey.trim()) {
 				payload.api_key = unifiApiKey.trim();
 			}
-			if (unifiSiteId) {
-				payload.site_id = unifiSiteId;
+			// OLD CODE START — a whitespace-only site id was posted as-is
+			// if (unifiSiteId) {
+			// 	payload.site_id = unifiSiteId;
+			// }
+			// OLD CODE END
+			// Omit site_id when blank so the daemon keeps the saved site
+			const siteId = unifiSiteId.trim();
+			if (siteId) {
+				payload.site_id = siteId;
 			}
 
 			const res = await fetch('/api/integrations/unifi/configure', {
@@ -487,9 +520,12 @@
 				if (data.status?.cache_counts) {
 					unifiCacheCounts = data.status.cache_counts;
 				}
-				if (data.status?.last_poll) {
-					unifiLastPoll = data.status.last_poll;
-				}
+				// OLD CODE START — `last_poll` is not a daemon field
+				// if (data.status?.last_poll) {
+				// 	unifiLastPoll = data.status.last_poll;
+				// }
+				// OLD CODE END
+				unifiLastPoll = unifiPollIso(data.status?.last_poll_time) ?? unifiLastPoll;
 				// Fetch available sites
 				await loadUnifiSites();
 			} else {
