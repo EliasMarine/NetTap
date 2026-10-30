@@ -128,6 +128,26 @@ describe('Settings — retention save', () => {
 	});
 });
 
+describe('Settings — capture status label', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('does not claim "capturing packets" while the container is stopped', async () => {
+		stubFetch({
+			'/api/capture/status': () => ({
+				body: { enabled: true, maxFileSizeMB: 100, containerRunning: false, containerStatus: 'exited' },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+
+		expect(screen.getByText('Enabled — capture container not running')).toBeInTheDocument();
+		expect(screen.queryByText('Enabled — capturing packets')).not.toBeInTheDocument();
+	});
+});
+
 describe('Settings — UniFi integration', () => {
 	afterEach(() => {
 		vi.clearAllMocks();

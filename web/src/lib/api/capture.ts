@@ -69,6 +69,22 @@ const DEFAULT_STATUS: CaptureStatus = {
 };
 
 // ---------------------------------------------------------------------------
+// Derived state
+// ---------------------------------------------------------------------------
+
+export type CaptureState = 'active' | 'stopped' | 'unknown';
+
+/**
+ * Capture is "active" only when it is enabled AND its container is running.
+ * `containerStatus: 'unknown'` is what both the daemon (docker inspect failed)
+ * and DEFAULT_STATUS (request failed) report when the real state is not known.
+ */
+export function captureState(status: CaptureStatus | null): CaptureState {
+	if (!status || status.containerStatus === 'unknown') return 'unknown';
+	return status.enabled && status.containerRunning ? 'active' : 'stopped';
+}
+
+// ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
 

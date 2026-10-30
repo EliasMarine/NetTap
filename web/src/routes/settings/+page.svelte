@@ -1194,7 +1194,20 @@
 							>
 								<span class="capture-toggle-knob" class:loading={captureToggling}></span>
 							</button>
+							<!-- OLD CODE START — claimed "capturing packets" even with the container stopped
 							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
+							OLD CODE END -->
+							<span class="capture-toggle-label">
+								{#if !captureEnabled}
+									Disabled — no new captures
+								{:else if captureContainerRunning}
+									Enabled — capturing packets
+								{:else if captureContainerStatus === 'unknown'}
+									Enabled — capture status unknown
+								{:else}
+									Enabled — capture container not running
+								{/if}
+							</span>
 						</div>
 						<p class="field-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
 					</div>
