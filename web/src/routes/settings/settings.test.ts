@@ -98,6 +98,36 @@ describe('Settings — manual cleanup', () => {
 	});
 });
 
+describe('Settings — retention save', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	async function saveWith(status: number, body: unknown) {
+		stubFetch({ '/api/setup/storage': (init) => (init?.method === 'POST' ? { status, body } : { body: {} }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Save Retention Config' }));
+		await flush();
+	}
+
+	it('says "Not saved" when the daemon is unreachable', async () => {
+		await saveWith(502, { saved: false, error: 'Daemon unreachable: ECONNREFUSED' });
+
+		expect(screen.getByText('Not saved: Daemon unreachable: ECONNREFUSED')).toBeInTheDocument();
+		expect(screen.queryByText(/settings saved/i)).not.toBeInTheDocument();
+	});
+
+	it('says the outcome is unknown when the daemon timed out', async () => {
+		await saveWith(504, { saved: false, outcome_unknown: true, error: 'The daemon did not answer in time.' });
+
+		expect(screen.getByText(/^Outcome unknown — check again\./)).toBeInTheDocument();
+		expect(screen.queryByText(/settings saved/i)).not.toBeInTheDocument();
+	});
+});
+
 describe('Settings — UniFi integration', () => {
 	afterEach(() => {
 		vi.clearAllMocks();

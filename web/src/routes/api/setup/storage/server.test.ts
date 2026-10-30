@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { daemonJSON } from '$lib/server/daemon.js';
+import { POST } from './+server';
 
 /**
  * Tests for the normalizeStorageStatus function in the storage API proxy.
@@ -177,5 +179,91 @@ describe('normalizeStorageStatus', () => {
 		expect(result.hot_days).toBe(60);
 		expect(result.warm_days).toBe(120);
 		expect(result.cold_days).toBe(14);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/setup/storage — the real handler, with the daemon helper mocked
+// ---------------------------------------------------------------------------
+
+vi.mock('$lib/server/daemon.js', () => ({ daemonJSON: vi.fn() }));
+
+describe('POST /api/setup/storage', () => {
+	const VALID = {
+		hot_days: 30,
+		warm_days: 90,
+		cold_days: 14,
+		disk_threshold_percent: 80,
+		emergency_threshold_percent: 90,
+	};
+
+	async function post(body: unknown = VALID) {
+		const request = new Request('http://localhost/api/setup/storage', {
+			method: 'POST',
+			body: JSON.stringify(body),
+		});
+		const res = await POST({ request } as Parameters<typeof POST>[0]);
+		return { status: res.status, body: await res.json() };
+	}
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.mocked(daemonJSON).mockReset();
+	});
+
+	it('returns the daemon result when the daemon saves', async () => {
+		vi.mocked(daemonJSON).mockResolvedValue({ data: { saved: true, ilm_applied: true }, status: 200 });
+
+		const { status, body } = await post();
+
+		expect(status).toBe(200);
+		expect(body).toEqual({ saved: true, ilm_applied: true });
+	});
+
+	it('passes a daemon error status through and never reports saved', async () => {
+		vi.mocked(daemonJSON).mockResolvedValue({ error: 'warm_days must exceed hot_days', status: 400 });
+
+		const { status, body } = await post();
+
+		expect(status).toBe(400);
+		expect(body.saved).toBe(false);
+		expect(body.error).toBe('warm_days must exceed hot_days');
+		expect(body.outcome_unknown).toBeUndefined();
+	});
+
+	it('returns 502, not saved, when the daemon is unreachable', async () => {
+		vi.mocked(daemonJSON).mockResolvedValue({ error: 'Daemon unreachable: ECONNREFUSED', status: 502 });
+
+		const { status, body } = await post();
+
+		expect(status).toBe(502);
+		expect(body).toMatchObject({ saved: false, error: 'Daemon unreachable: ECONNREFUSED' });
+		expect(body.source).toBeUndefined();
+	});
+
+	it('returns 504 with outcome unknown when the daemon times out', async () => {
+		vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());
+		vi.mocked(daemonJSON).mockResolvedValue({ error: 'Daemon unreachable: aborted due to timeout', status: 502 });
+
+		const { status, body } = await post();
+
+		expect(status).toBe(504);
+		expect(body).toMatchObject({ saved: false, outcome_unknown: true });
+	});
+
+	it('flags outcome unknown when a 2xx body cannot be parsed', async () => {
+		vi.mocked(daemonJSON).mockResolvedValue({ error: 'Failed to parse daemon response', status: 200 });
+
+		const { status, body } = await post();
+
+		expect(status).toBe(502);
+		expect(body).toMatchObject({ saved: false, outcome_unknown: true });
+	});
+
+	it('rejects invalid ranges without calling the daemon', async () => {
+		const { status } = await post({ ...VALID, hot_days: 0 });
+
+		expect(status).toBe(400);
+		expect(daemonJSON).not.toHaveBeenCalled();
 	});
 });

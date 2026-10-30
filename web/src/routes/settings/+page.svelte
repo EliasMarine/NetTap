@@ -644,12 +644,21 @@
 					retentionMessage = 'Retention settings saved. OpenSearch policies will sync shortly.';
 				}
 			} else {
-				const data = await res.json();
-				retentionMessage = data.error || 'Failed to save configuration.';
+				// OLD CODE START — didn't separate "not saved" from "may have been saved"
+				// const data = await res.json();
+				// retentionMessage = data.error || 'Failed to save configuration.';
+				// OLD CODE END
+				const data = await res.json().catch(() => ({}));
+				retentionMessage = data.outcome_unknown
+					? `Outcome unknown — check again. ${data.error ?? ''} Reload this page to see whether the settings were saved.`
+					: `Not saved: ${data.error || `HTTP ${res.status}`}`;
 				retentionError = true;
 			}
 		} catch {
-			retentionMessage = 'Failed to connect to server.';
+			// OLD CODE START
+			// retentionMessage = 'Failed to connect to server.';
+			// OLD CODE END
+			retentionMessage = 'Not saved: could not reach the NetTap server.';
 			retentionError = true;
 		} finally {
 			retentionSaving = false;
