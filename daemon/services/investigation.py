@@ -204,15 +204,22 @@ async def generate_threat_report(
         detect_lateral_movement,
         analyze_dns_anomalies,
     )
-    from services.excluded_ips import build_excluded_ips_filter
 
-    excluded = build_excluded_ips_filter(excluded_ips or [])
-
-    summary = await get_smart_alert_summary(
-        client, from_ts, to_ts, excluded_ips=excluded
-    )
+    # OLD CODE START — investigation reports must not hide alerts for excluded IPs
+    # from services.excluded_ips import build_excluded_ips_filter
+    #
+    # excluded = build_excluded_ips_filter(excluded_ips or [])
+    #
+    # summary = await get_smart_alert_summary(
+    #     client, from_ts, to_ts, excluded_ips=excluded
+    # )
+    # alerts = await get_smart_alerts(
+    #     client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded
+    # )
+    # OLD CODE END
+    summary = await get_smart_alert_summary(client, from_ts, to_ts)
     alerts = await get_smart_alerts(
-        client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded
+        client, from_ts, to_ts, include_info=False, limit=200
     )
 
     report = {

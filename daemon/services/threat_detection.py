@@ -13,7 +13,9 @@ import os
 import statistics
 from collections import Counter, defaultdict
 
-from services.excluded_ips import build_excluded_ips_filter
+# OLD CODE START — excluded IPs stay visible in threat detections
+# from services.excluded_ips import build_excluded_ips_filter
+# OLD CODE END
 
 logger = logging.getLogger("nettap.services.threat_detection")
 
@@ -113,8 +115,13 @@ def _beacon_confidence(cv: float, count: int, interval: float) -> float:
 def detect_beaconing(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
 ) -> list[dict]:
-    """Detect periodic callback patterns indicative of C2 beaconing."""
-    excluded = build_excluded_ips_filter(excluded_ips or [])
+    """Detect periodic callback patterns indicative of C2 beaconing.
+
+    ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
+    """
+    # OLD CODE START — excluded IPs stay visible in threat detections
+    # excluded = build_excluded_ips_filter(excluded_ips or [])
+    # OLD CODE END
     bool_clause: dict = {
         "filter": [
             {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
@@ -122,8 +129,10 @@ def detect_beaconing(
             {"term": {"event.dataset": "conn"}},
         ]
     }
-    if excluded:
-        bool_clause["must_not"] = excluded
+    # OLD CODE START — excluded IPs stay visible in threat detections
+    # if excluded:
+    #     bool_clause["must_not"] = excluded
+    # OLD CODE END
 
     query = {
         "size": 0,
@@ -212,9 +221,14 @@ def detect_beaconing(
 def detect_lateral_movement(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
 ) -> list[dict]:
-    """Find internal hosts connecting to other internal hosts on admin ports."""
+    """Find internal hosts connecting to other internal hosts on admin ports.
+
+    ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
+    """
     port_filters = [{"term": {"destination.port": p}} for p in LATERAL_MOVEMENT_PORTS]
-    excluded = build_excluded_ips_filter(excluded_ips or [])
+    # OLD CODE START — excluded IPs stay visible in threat detections
+    # excluded = build_excluded_ips_filter(excluded_ips or [])
+    # OLD CODE END
 
     bool_clause: dict = {
         "filter": [
@@ -224,8 +238,10 @@ def detect_lateral_movement(
             {"bool": {"should": port_filters, "minimum_should_match": 1}},
         ]
     }
-    if excluded:
-        bool_clause["must_not"] = excluded
+    # OLD CODE START — excluded IPs stay visible in threat detections
+    # if excluded:
+    #     bool_clause["must_not"] = excluded
+    # OLD CODE END
 
     query = {
         "size": 0,
@@ -310,8 +326,13 @@ def detect_lateral_movement(
 def analyze_dns_anomalies(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
 ) -> dict:
-    """Detect DNS-based threats: DGA, tunneling, NXDOMAIN spikes."""
-    excluded = build_excluded_ips_filter(excluded_ips or [])
+    """Detect DNS-based threats: DGA, tunneling, NXDOMAIN spikes.
+
+    ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
+    """
+    # OLD CODE START — excluded IPs stay visible in threat detections
+    # excluded = build_excluded_ips_filter(excluded_ips or [])
+    # OLD CODE END
     bool_clause: dict = {
         "filter": [
             {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
@@ -319,8 +340,10 @@ def analyze_dns_anomalies(
             {"term": {"event.dataset": "dns"}},
         ]
     }
-    if excluded:
-        bool_clause["must_not"] = excluded
+    # OLD CODE START — excluded IPs stay visible in threat detections
+    # if excluded:
+    #     bool_clause["must_not"] = excluded
+    # OLD CODE END
 
     query = {
         "size": 0,

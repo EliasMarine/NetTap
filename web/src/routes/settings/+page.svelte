@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
+	import { getUnifiStatus } from '$lib/api/unifi';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -33,10 +34,14 @@
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
+	// Save stays off until the real values load, so defaults can't overwrite them
+	let retentionLoad = $state<'loading' | 'ok' | 'failed'>('loading');
 
 	// --- Manual Cleanup state ---
 	let cleanupDays = $state(60);
 	let cleanupPreview = $state<CleanupPreview | null>(null);
+	// Days the shown preview was computed for — the delete must use these, not the live input
+	let cleanupPreviewDays = $state<number | null>(null);
 	let cleanupPreviewing = $state(false);
 	let cleanupExecuting = $state(false);
 	let showCleanupConfirm = $state(false);
@@ -119,17 +124,23 @@
 			const res = await fetch('/api/setup/storage');
 			if (res.ok) {
 				const data = await res.json();
-				// GET /api/setup/storage returns a FLAT StorageStatus object
-				// (hot_days, warm_days, etc. are top-level, not nested under retention)
-				retentionConfig.hot_days = data.hot_days ?? 90;
-				retentionConfig.warm_days = data.warm_days ?? 180;
-				retentionConfig.cold_days = data.cold_days ?? 30;
-				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+				// source 'mock' = the daemon didn't answer and these are built-in defaults
+				if (data.source !== 'mock') {
+					// GET /api/setup/storage returns a FLAT StorageStatus object
+					// (hot_days, warm_days, etc. are top-level, not nested under retention)
+					retentionConfig.hot_days = data.hot_days ?? 90;
+					retentionConfig.warm_days = data.warm_days ?? 180;
+					retentionConfig.cold_days = data.cold_days ?? 30;
+					retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+					retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+					retentionLoad = 'ok';
+					return;
+				}
 			}
 		} catch {
-			// Will use defaults
+			// Falls through to 'failed'
 		}
+		retentionLoad = 'failed';
 	}
 
 	async function loadDiskUsage() {
@@ -382,21 +393,46 @@
 	}
 
 	// --- UniFi functions ---
+	// OLD CODE START — read `last_poll`, which the daemon never sends (it sends
+	// `last_poll_time` in epoch seconds), so "Last Poll" never showed
+	// async function loadUnifiStatus() {
+	// 	unifiLoading = true;
+	// 	try {
+	// 		const res = await fetch('/api/integrations/unifi/status');
+	// 		if (res.ok) {
+	// 			const data = await res.json();
+	// 			unifiConfigured = data.configured ?? false;
+	// 			unifiControllerUrl = data.controller_url ?? '';
+	// 			unifiConnected = data.connected ?? false;
+	// 			unifiCacheCounts = data.cache_counts ?? null;
+	// 			unifiLastPoll = data.last_poll ?? null;
+	// 			if (data.site_id) unifiSiteId = data.site_id;
+	// 		}
+	// 	} catch {
+	// 		// Will use defaults
+	// 	} finally {
+	// 		unifiLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	function unifiPollIso(epochSeconds: unknown): string | null {
+		return typeof epochSeconds === 'number' && epochSeconds > 0
+			? new Date(epochSeconds * 1000).toISOString()
+			: null;
+	}
+
 	async function loadUnifiStatus() {
 		unifiLoading = true;
 		try {
-			const res = await fetch('/api/integrations/unifi/status');
-			if (res.ok) {
-				const data = await res.json();
-				unifiConfigured = data.configured ?? false;
-				unifiControllerUrl = data.controller_url ?? '';
-				unifiConnected = data.connected ?? false;
-				unifiCacheCounts = data.cache_counts ?? null;
-				unifiLastPoll = data.last_poll ?? null;
-				if (data.site_id) unifiSiteId = data.site_id;
-			}
-		} catch {
-			// Will use defaults
+			const status = await getUnifiStatus();
+			unifiConfigured = status.configured;
+			unifiControllerUrl = status.controller_url ?? '';
+			unifiConnected = status.connected;
+			unifiCacheCounts = status.configured
+				? { clients: status.cache_counts.clients ?? 0, devices: status.cache_counts.devices ?? 0 }
+				: null;
+			unifiLastPoll = unifiPollIso(status.last_poll_time);
+			if (status.site_id) unifiSiteId = status.site_id;
 		} finally {
 			unifiLoading = false;
 		}
@@ -443,8 +479,15 @@
 			if (unifiApiKey.trim()) {
 				payload.api_key = unifiApiKey.trim();
 			}
-			if (unifiSiteId) {
-				payload.site_id = unifiSiteId;
+			// OLD CODE START — a whitespace-only site id was posted as-is
+			// if (unifiSiteId) {
+			// 	payload.site_id = unifiSiteId;
+			// }
+			// OLD CODE END
+			// Omit site_id when blank so the daemon keeps the saved site
+			const siteId = unifiSiteId.trim();
+			if (siteId) {
+				payload.site_id = siteId;
 			}
 
 			const res = await fetch('/api/integrations/unifi/configure', {
@@ -485,9 +528,12 @@
 				if (data.status?.cache_counts) {
 					unifiCacheCounts = data.status.cache_counts;
 				}
-				if (data.status?.last_poll) {
-					unifiLastPoll = data.status.last_poll;
-				}
+				// OLD CODE START — `last_poll` is not a daemon field
+				// if (data.status?.last_poll) {
+				// 	unifiLastPoll = data.status.last_poll;
+				// }
+				// OLD CODE END
+				unifiLastPoll = unifiPollIso(data.status?.last_poll_time) ?? unifiLastPoll;
 				// Fetch available sites
 				await loadUnifiSites();
 			} else {
@@ -606,12 +652,21 @@
 					retentionMessage = 'Retention settings saved. OpenSearch policies will sync shortly.';
 				}
 			} else {
-				const data = await res.json();
-				retentionMessage = data.error || 'Failed to save configuration.';
+				// OLD CODE START — didn't separate "not saved" from "may have been saved"
+				// const data = await res.json();
+				// retentionMessage = data.error || 'Failed to save configuration.';
+				// OLD CODE END
+				const data = await res.json().catch(() => ({}));
+				retentionMessage = data.outcome_unknown
+					? `Outcome unknown — check again. ${data.error ?? ''} Reload this page to see whether the settings were saved.`
+					: `Not saved: ${data.error || `HTTP ${res.status}`}`;
 				retentionError = true;
 			}
 		} catch {
-			retentionMessage = 'Failed to connect to server.';
+			// OLD CODE START
+			// retentionMessage = 'Failed to connect to server.';
+			// OLD CODE END
+			retentionMessage = 'Not saved: could not reach the NetTap server.';
 			retentionError = true;
 		} finally {
 			retentionSaving = false;
@@ -631,10 +686,17 @@
 		cleanupMessage = '';
 		cleanupError = false;
 		cleanupPreview = null;
+		cleanupPreviewDays = null;
 		showCleanupConfirm = false;
 
+		const days = cleanupDays;
 		try {
-			cleanupPreview = await previewCleanup(cleanupDays);
+			// OLD CODE START — preview and execute both read the live input, so editing
+			// the days after previewing deleted a different range than the one shown
+			// cleanupPreview = await previewCleanup(cleanupDays);
+			// OLD CODE END
+			cleanupPreview = await previewCleanup(days);
+			cleanupPreviewDays = days;
 		} catch (err: unknown) {
 			cleanupMessage = err instanceof Error ? err.message : 'Failed to preview cleanup';
 			cleanupError = true;
@@ -644,12 +706,16 @@
 	}
 
 	async function handleCleanupExecute() {
+		if (cleanupPreviewDays === null) return;
 		cleanupExecuting = true;
 		cleanupMessage = '';
 		cleanupError = false;
 
 		try {
-			const result = await executeCleanup(cleanupDays);
+			// OLD CODE START — used the live input instead of the previewed days
+			// const result = await executeCleanup(cleanupDays);
+			// OLD CODE END
+			const result = await executeCleanup(cleanupPreviewDays);
 			const freedStr = formatCleanupBytes(result.freed_bytes_estimate);
 			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
 			if (result.errors.length > 0) {
@@ -657,6 +723,7 @@
 			}
 			cleanupError = false;
 			cleanupPreview = null;
+			cleanupPreviewDays = null;
 			showCleanupConfirm = false;
 
 			// Refresh disk usage
@@ -680,6 +747,7 @@
 	function cancelCleanup() {
 		showCleanupConfirm = false;
 		cleanupPreview = null;
+		cleanupPreviewDays = null;
 		cleanupMessage = '';
 	}
 
@@ -913,6 +981,12 @@
 					<span class="card-title">Data Retention Policy</span>
 				</div>
 
+				{#if retentionLoad === 'failed'}
+					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+						Could not load the current retention settings, so saving is off. Reload the page to try again.
+					</div>
+				{/if}
+
 				{#if retentionMessage}
 					<div class="alert {retentionError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
 						{retentionMessage}
@@ -983,7 +1057,7 @@
 					</div>
 				{/if}
 
-				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
+				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving || retentionLoad !== 'ok'}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
 			</div>
@@ -1007,6 +1081,7 @@
 			<div class="cleanup-input-row">
 				<span class="cleanup-label">Delete data older than</span>
 				<div class="input-with-unit" style="width: 120px;">
+					<!-- OLD CODE START — editing the days left the old preview (and its Delete button) on screen
 					<input
 						class="input"
 						type="number"
@@ -1014,6 +1089,17 @@
 						min={1}
 						max={3650}
 						disabled={cleanupExecuting}
+					/>
+					OLD CODE END -->
+					<input
+						class="input"
+						type="number"
+						aria-label="Delete data older than (days)"
+						bind:value={cleanupDays}
+						oninput={cancelCleanup}
+						min={1}
+						max={3650}
+						disabled={cleanupExecuting || cleanupPreviewing}
 					/>
 					<span class="input-unit">days</span>
 				</div>
@@ -1049,7 +1135,7 @@
 					</div>
 
 					{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
-						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupDays} days.</p>
+						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupPreviewDays} days.</p>
 					{:else}
 						<div class="cleanup-confirm-section">
 							{#if !showCleanupConfirm}
@@ -1122,7 +1208,20 @@
 							>
 								<span class="capture-toggle-knob" class:loading={captureToggling}></span>
 							</button>
+							<!-- OLD CODE START — claimed "capturing packets" even with the container stopped
 							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
+							OLD CODE END -->
+							<span class="capture-toggle-label">
+								{#if !captureEnabled}
+									Disabled — no new captures
+								{:else if captureContainerRunning}
+									Enabled — capturing packets
+								{:else if captureContainerStatus === 'unknown'}
+									Enabled — capture status unknown
+								{:else}
+									Enabled — capture container not running
+								{/if}
+							</span>
 						</div>
 						<p class="field-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
 					</div>

@@ -399,7 +399,14 @@ class LiveConnectionTracker:
                     "terms": {"field": "network.transport.keyword", "size": 10},
                 },
                 "top_talkers": {
-                    "terms": {"field": "source.ip.keyword", "size": 5},
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "terms": {"field": "source.ip.keyword", "size": 5},
+                    # OLD CODE END
+                    "terms": {
+                        "field": "source.ip.keyword",
+                        "size": 5,
+                        "order": {"total_bytes": "desc"},
+                    },
                     "aggs": {
                         "total_bytes": {
                             "sum": {
@@ -409,11 +416,13 @@ class LiveConnectionTracker:
                                 }
                             }
                         },
-                        "bucket_sort": {
-                            "bucket_sort": {
-                                "sort": [{"total_bytes": {"order": "desc"}}]
-                            }
-                        },
+                        # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                        # "bucket_sort": {
+                        #     "bucket_sort": {
+                        #         "sort": [{"total_bytes": {"order": "desc"}}]
+                        #     }
+                        # },
+                        # OLD CODE END
                     },
                 },
                 "geo_destinations": {
@@ -515,14 +524,29 @@ class LiveConnectionTracker:
             "aggs": {
                 "alert_pairs": {
                     "terms": {
+                        # OLD CODE START — doc['source.ip'] is a text field, so
+                        # OpenSearch 400'd this agg and alert flags never showed
+                        # "script": {
+                        #     "source": (
+                        #         "def s = doc.containsKey('source.ip') "
+                        #         "&& doc['source.ip'].size()>0 "
+                        #         "? doc['source.ip'].value : ''; "
+                        #         "def d = doc.containsKey('destination.ip') "
+                        #         "&& doc['destination.ip'].size()>0 "
+                        #         "? doc['destination.ip'].value : ''; "
+                        #         "return s + '>' + d"
+                        #     ),
+                        #     "lang": "painless",
+                        # },
+                        # OLD CODE END
                         "script": {
                             "source": (
-                                "def s = doc.containsKey('source.ip') "
-                                "&& doc['source.ip'].size()>0 "
-                                "? doc['source.ip'].value : ''; "
-                                "def d = doc.containsKey('destination.ip') "
-                                "&& doc['destination.ip'].size()>0 "
-                                "? doc['destination.ip'].value : ''; "
+                                "def s = doc.containsKey('source.ip.keyword') "
+                                "&& doc['source.ip.keyword'].size()>0 "
+                                "? doc['source.ip.keyword'].value : ''; "
+                                "def d = doc.containsKey('destination.ip.keyword') "
+                                "&& doc['destination.ip.keyword'].size()>0 "
+                                "? doc['destination.ip.keyword'].value : ''; "
                                 "return s + '>' + d"
                             ),
                             "lang": "painless",

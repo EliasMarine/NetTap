@@ -19,7 +19,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from services.excluded_ips import save_excluded_ips
+from services.excluded_ips import parse_single_ip, save_excluded_ips
 
 logger = logging.getLogger("nettap.api.settings")
 
@@ -226,12 +226,25 @@ async def handle_put_excluded_ips(request: web.Request) -> web.Response:
             {"error": "'excluded_ips' must be an array of IP strings"}, status=400
         )
 
-    # Validate and deduplicate
-    clean_ips = list(
-        dict.fromkeys(
-            ip.strip() for ip in raw_ips if isinstance(ip, str) and ip.strip()
+    # OLD CODE START — accepted CIDRs and junk; dropped non-strings silently
+    # # Validate and deduplicate
+    # clean_ips = list(
+    #     dict.fromkeys(
+    #         ip.strip() for ip in raw_ips if isinstance(ip, str) and ip.strip()
+    #     )
+    # )
+    # OLD CODE END
+    parsed = [parse_single_ip(ip) for ip in raw_ips]
+    invalid = [raw for raw, ip in zip(raw_ips, parsed) if ip is None]
+    if invalid:
+        return web.json_response(
+            {
+                "error": "Each entry must be a single IP address (no ranges): "
+                + ", ".join(str(raw) for raw in invalid[:10])
+            },
+            status=400,
         )
-    )
+    clean_ips = list(dict.fromkeys(parsed))
 
     try:
         save_excluded_ips(clean_ips, request.app.get("excluded_ips_file"))

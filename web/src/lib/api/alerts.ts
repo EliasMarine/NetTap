@@ -460,11 +460,25 @@ export async function suppressAlert(
 	deviceIp?: string,
 	reason?: string
 ): Promise<void> {
-	await fetch('/api/alerts/suppress', {
+	// OLD CODE START — ignored the response, so a failed suppress looked like it worked
+	// await fetch('/api/alerts/suppress', {
+	// 	method: 'POST',
+	// 	headers: { 'Content-Type': 'application/json' },
+	// 	body: JSON.stringify({ signature_id: signatureId, device_ip: deviceIp, reason }),
+	// });
+	// OLD CODE END
+	const res = await fetch('/api/alerts/suppress', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ signature_id: signatureId, device_ip: deviceIp, reason }),
 	});
+	if (!res.ok) await throwActionError(res, 'Suppress failed');
+}
+
+/** Throw with the daemon's error message when it sent one. */
+async function throwActionError(res: Response, fallback: string): Promise<never> {
+	const data = await res.json().catch(() => ({}));
+	throw new Error(data?.error || `${fallback}: ${res.status}`);
 }
 
 /**
@@ -474,11 +488,19 @@ export async function markFalsePositive(
 	signatureId: number,
 	reason?: string
 ): Promise<void> {
-	await fetch('/api/alerts/false-positive', {
+	// OLD CODE START — ignored the response, so a failed mark looked like it worked
+	// await fetch('/api/alerts/false-positive', {
+	// 	method: 'POST',
+	// 	headers: { 'Content-Type': 'application/json' },
+	// 	body: JSON.stringify({ signature_id: signatureId, reason }),
+	// });
+	// OLD CODE END
+	const res = await fetch('/api/alerts/false-positive', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ signature_id: signatureId, reason }),
 	});
+	if (!res.ok) await throwActionError(res, 'Mark false positive failed');
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +577,9 @@ export interface CategoryDetailResponse {
 		description: string;
 		color: string;
 		icon: string;
-		mitre_tactic: MitreTactic | null;
+		// OLD CODE START — the daemon never sends a tactic; the badge it fed was dead
+		// mitre_tactic: MitreTactic | null;
+		// OLD CODE END
 	};
 	stats: {
 		total: number;
@@ -600,10 +624,34 @@ export async function getEnhancedCategories(
 	try {
 		const res = await fetch(`/api/alerts/categories${q}`, { signal: AbortSignal.timeout(15_000) });
 		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
+		// OLD CODE START — passed the daemon payload through, but the daemon sends `trend`
+		// as a bare string and `sparkline` as [{timestamp, count}], so every card showed
+		// "stable" and the sparkline polyline was NaN
+		// return await res.json();
+		// OLD CODE END
+		const data = await res.json();
+		const categories: Record<string, unknown>[] = Array.isArray(data?.categories) ? data.categories : [];
+		return { ...data, categories: categories.map(normaliseCategory) };
 	} catch {
 		return { from: '', to: '', categories: [] };
 	}
+}
+
+const TREND_DIRECTIONS: CategoryTrend['direction'][] = ['increasing', 'decreasing', 'stable'];
+
+/**
+ * Map a daemon category (`trend: "increasing"`, `sparkline: [{timestamp, count}]`)
+ * onto AlertCategory. The daemon computes direction only, so percentage is 0.
+ */
+function normaliseCategory(raw: Record<string, unknown>): AlertCategory {
+	const direction = TREND_DIRECTIONS.find((d) => d === raw.trend) ?? 'stable';
+	const points = Array.isArray(raw.sparkline) ? (raw.sparkline as { count?: unknown }[]) : [];
+	return {
+		...(raw as unknown as AlertCategory),
+		trend: { direction, percentage: 0 },
+		sparkline: points.map((p) => (typeof p?.count === 'number' ? p.count : 0)),
+		sub_categories: Array.isArray(raw.sub_categories) ? (raw.sub_categories as SubCategory[]) : [],
+	};
 }
 
 /**
@@ -621,7 +669,10 @@ export async function getAlertCategoryDetail(
 		return await res.json();
 	} catch {
 		return {
-			category: { id: category, label: category, description: '', color: 'muted', icon: 'info', mitre_tactic: null },
+			// OLD CODE START — mitre_tactic removed from the type (never sent by the daemon)
+			// category: { id: category, label: category, description: '', color: 'muted', icon: 'info', mitre_tactic: null },
+			// OLD CODE END
+			category: { id: category, label: category, description: '', color: 'muted', icon: 'info' },
 			stats: { total: 0, unique_sources: 0, unique_targets: 0, affected_devices: 0 },
 			severity_breakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
 			sub_categories: [], affected_devices: [], top_signatures: [], mitre_techniques: [],

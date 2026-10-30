@@ -471,3 +471,26 @@ class TestIlmStatus:
         assert status["last_success"] is not None
         assert status["last_attempt"] is not None
         assert status["policies"]["nettap-hot-policy"] == "updated"
+
+
+class TestThresholdPercentRounding:
+    def test_save_keeps_57_percent_and_accepts_56_57_pair(self, tmp_path, monkeypatch):
+        """0.57 * 100 is 56.999...; truncating it rejected a valid 56/57 pair."""
+        for var in ("DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT"):
+            monkeypatch.delenv(var, raising=False)
+        config_file = tmp_path / "retention.json"
+        env_file = tmp_path / ".env"
+        mgr = RetentionConfigManager(
+            config_path=str(config_file), env_file=str(env_file)
+        )
+        mgr.load()
+
+        mgr.save({"disk_threshold_percent": 56, "emergency_threshold_percent": 57})
+        mgr.save({"hot_days": 30})  # re-merges the stored 0.57 fraction
+
+        data = json.loads(config_file.read_text())
+        assert data["thresholds"] == {
+            "disk_threshold_percent": 56,
+            "emergency_threshold_percent": 57,
+        }
+        assert "EMERGENCY_THRESHOLD_PERCENT=57" in env_file.read_text()

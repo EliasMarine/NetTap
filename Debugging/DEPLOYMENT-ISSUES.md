@@ -52,12 +52,13 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
+| NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 
 ---
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **19 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **20 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -208,6 +209,16 @@ CHAIN 19: Bundled OUI vendor database never shipped (fix/ci-baseline, PR #142)
   back to an empty DB, so the MAC Lookup tool silently returned no vendor. Found when CI's
   daemon tests first ran. Fix: allowlist only that file; `notifications.json` (SMTP passwords,
   API tokens) and every other runtime file under `daemon/data/` stay ignored.
+
+CHAIN 20: Daemon API open to the whole LAN (fix/pr110-review, into PR #110)
+  Commit 520a5b6
+  The daemon moved to `network_mode: host` to reach the UniFi controller, so its aiohttp
+  server on 0.0.0.0:8880 was reachable from any LAN device, with no auth and CORS "*"
+  (bridge teardown, retention, UniFi key, logs). Fix: every request except GET /api/health
+  needs `X-NetTap-Daemon-Token`. The daemon creates the token in the `daemon-auth` volume.
+  Only nettap-web mounts it read-only, and daemonFetch sends it. There is no loopback
+  exemption, because the host-networked Zeek/Suricata/Arkime containers share loopback.
+  Side effect: any script that curls :8880 directly now needs the token (see Known Risks).
 ```
 
 ---
@@ -1658,6 +1669,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
 52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
 100. **Same trap, worse outcome: `data/` hid `daemon/data/oui_database.json` (Chain 19)** — the file existed on the dev machine, so nothing failed locally. Unanchored `.gitignore` directory rules match at every depth. Prefer an explicit allowlist (`!/daemon/data/`, `/daemon/data/*`, `!/daemon/data/<file>`) over `git add -f`, which leaves the rule in place, so the next new file in that folder is hidden too. Run tests from a clean `git archive` export to catch files that only exist locally.
+101. **`network_mode: host` publishes every listening port to the LAN (Chain 20)** — `ports:` no longer applies, so a server bound to 0.0.0.0 is open to every device on the network. Treat a move to host networking as a new public endpoint: add auth first. Loopback is not a trust boundary either, because every other host-networked container shares it.
 
 ---
 
@@ -1675,6 +1687,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 | NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
+| Older `scripts/remote/*.sh` curl `:8880` without the token (Chain 20) | They now get 401 and look like a daemon outage | Before reusing one, read the token first: `TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)`, then `curl -H "X-NetTap-Daemon-Token: $TOKEN" ...`. Never print the token. |
+| `daemon-auth` volume mounted inside the daemon's `/var/run` tmpfs | If mount order differs on the device, the daemon can't create the token and the whole API stays locked (web shows daemon errors) | `deploy-pr110-review-fixes.sh` Step 5 checks the token exists in the daemon and web. If it fails, check `docker inspect nettap-storage-daemon` mounts. |
 | `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
@@ -1741,3 +1755,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | 7d44e5d | Device intelligence dashboard v2: 7 sections + TShark drill-down drawer | 2026-03-13 |
 | — | c948e8c | Svelte build fix: {@const} inside <svg> invalid — $derived arc calc instead | 2026-03-13 |
 | — | 2052e94 | Ship bundled OUI vendor DB: .gitignore `data/` also hid `daemon/data/oui_database.json` (Chain 19) | 2026-10-29 |
+| — | 520a5b6 | Daemon API token: host networking had left :8880 open to the LAN (Chain 20) | 2026-10-29 |

@@ -201,9 +201,12 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 export async function getIoTDevices(): Promise<{ devices: IoTDevice[]; count: number }> {
 	const res = await fetch('/api/iot/devices');
 
-	if (!res.ok) {
-		return { devices: [], count: 0 };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { devices: [], count: 0 };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load IoT devices: ${res.status}`);
 
 	return res.json();
 }
@@ -213,9 +216,12 @@ export async function getDeviceBaseline(
 ): Promise<{ mac: string; baseline: DeviceBaseline | null }> {
 	const res = await fetch(`/api/iot/devices/${encodeURIComponent(mac)}/baseline`);
 
-	if (!res.ok) {
-		return { mac, baseline: null };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { mac, baseline: null };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load device baseline: ${res.status}`);
 
 	return res.json();
 }
@@ -226,9 +232,12 @@ export async function getIoTAnomalies(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/anomalies${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', anomalies: [], count: 0 };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { from: '', to: '', anomalies: [], count: 0 };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load IoT anomalies: ${res.status}`);
 
 	return res.json();
 }
@@ -256,21 +265,24 @@ export async function getFleetSummary(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/fleet-summary${query}`);
 
-	if (!res.ok) {
-		return {
-			health_score: 0,
-			health_grade: 'F',
-			privacy_score: 0,
-			security_score: 0,
-			behavior_score: 0,
-			device_count: 0,
-			anomaly_count: 0,
-			privacy_concerns: 0,
-			unencrypted_count: 0,
-			subtitle: '',
-			devices: [],
-		};
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return {
+	// 		health_score: 0,
+	// 		health_grade: 'F',
+	// 		privacy_score: 0,
+	// 		security_score: 0,
+	// 		behavior_score: 0,
+	// 		device_count: 0,
+	// 		anomaly_count: 0,
+	// 		privacy_concerns: 0,
+	// 		unencrypted_count: 0,
+	// 		subtitle: '',
+	// 		devices: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load fleet summary: ${res.status}`);
 
 	return res.json();
 }
@@ -281,9 +293,12 @@ export async function getPrivacyReport(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/privacy-report${query}`);
 
-	if (!res.ok) {
-		return { devices: [] };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { devices: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load privacy report: ${res.status}`);
 
 	return res.json();
 }
@@ -295,9 +310,12 @@ export async function getCommunicationMap(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/devices/${encodeURIComponent(mac)}/communication-map${query}`);
 
-	if (!res.ok) {
-		return { mac, destinations: [] };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { mac, destinations: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load communication map: ${res.status}`);
 
 	return res.json();
 }
@@ -309,9 +327,12 @@ export async function getActivityTimeline(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/devices/${encodeURIComponent(mac)}/activity-timeline${query}`);
 
-	if (!res.ok) {
-		return { mac, interval: '1h', buckets: [], baseline_hours: [], baseline_avg_hourly_bytes: 0 };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { mac, interval: '1h', buckets: [], baseline_hours: [], baseline_avg_hourly_bytes: 0 };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load activity timeline: ${res.status}`);
 
 	return res.json();
 }
@@ -322,9 +343,12 @@ export async function getProtocolAudit(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/protocol-audit${query}`);
 
-	if (!res.ok) {
-		return { devices: [] };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { devices: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load protocol audit: ${res.status}`);
 
 	return res.json();
 }
@@ -335,9 +359,12 @@ export async function getNetworkIsolation(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/network-isolation${query}`);
 
-	if (!res.ok) {
-		return { segmentation_score: 0, segmentation_grade: 'F', pairs: [], recommendation: '' };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { segmentation_score: 0, segmentation_grade: 'F', pairs: [], recommendation: '' };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load network isolation: ${res.status}`);
 
 	return res.json();
 }
@@ -348,9 +375,12 @@ export async function getManufacturerProfiles(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/iot/manufacturer-profiles${query}`);
 
-	if (!res.ok) {
-		return { manufacturers: [] };
-	}
+	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)
+	// if (!res.ok) {
+	// 	return { manufacturers: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Failed to load manufacturer profiles: ${res.status}`);
 
 	return res.json();
 }

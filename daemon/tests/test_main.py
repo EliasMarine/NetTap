@@ -6,9 +6,12 @@ All environment variables are managed via monkeypatch to ensure test
 isolation and avoid leaking state between tests.
 """
 
+import asyncio
 import logging
 import sys
 import pathlib
+import threading
+from unittest.mock import MagicMock
 
 # We import the module-level functions directly. Note: main.py uses
 # relative imports like ``from storage.manager import ...`` which are
@@ -23,6 +26,7 @@ if _daemon_dir not in sys.path:
     sys.path.insert(0, _daemon_dir)
 
 from main import _env_int, _env_float, _env_str, load_config, configure_logging  # noqa: E402
+from main import storage_loop  # noqa: E402
 
 
 # =========================================================================
@@ -188,3 +192,32 @@ class TestConfigureLogging:
         root_logger = logging.getLogger()
         # getattr(logging, "NONEXISTENT_LEVEL", logging.INFO) returns INFO
         assert root_logger.level == logging.INFO
+
+
+# =========================================================================
+# storage_loop
+# =========================================================================
+
+
+class TestStorageLoop:
+    def test_run_cycle_runs_off_the_event_loop(self):
+        """A cycle blocked on _cleanup_lock must not freeze the event loop."""
+
+        async def scenario() -> list[threading.Thread]:
+            loop = asyncio.get_running_loop()
+            shutdown = asyncio.Event()
+            ran_on: list[threading.Thread] = []
+
+            def run_cycle():
+                ran_on.append(threading.current_thread())
+                loop.call_soon_threadsafe(shutdown.set)
+
+            storage = MagicMock()
+            storage.run_cycle.side_effect = run_cycle
+            await asyncio.wait_for(storage_loop(storage, 60, shutdown), timeout=5)
+            return ran_on
+
+        loop_thread = threading.current_thread()
+        ran_on = asyncio.run(scenario())
+        assert len(ran_on) == 1
+        assert ran_on[0] is not loop_thread

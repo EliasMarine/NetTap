@@ -10,6 +10,8 @@ common RFC1918 source IP subnets to automatically identify the user's
 actual LAN without any manual configuration.
 """
 
+import functools
+import ipaddress
 import json
 import logging
 import os
@@ -360,12 +362,44 @@ def _detect_interface_ip(iface: str) -> str | None:
     return None
 
 
+def parse_single_ip(value: object) -> str | None:
+    """Return the canonical form of one IPv4/IPv6 address, or None.
+
+    CIDR ranges, hostnames and anything that isn't a string are rejected.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+# lru_cache makes this warn once per distinct entry instead of on every query
+@functools.lru_cache(maxsize=256)
+def _warn_invalid_entry(entry: str) -> None:
+    logger.warning("Ignoring excluded IP entry %s: not a single IP address", entry)
+
+
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
     """Build OpenSearch must_not clauses to exclude IPs from source.ip aggregations.
 
     Returns a list suitable for insertion into a bool query's must_not array.
-    Returns an empty list if no IPs are excluded.
+    Returns an empty list if no IPs are excluded. Entries that aren't a
+    single IP (e.g. CIDRs saved before validation existed) are skipped.
     """
-    if not excluded_ips:
+    # OLD CODE START — passed stored entries through unvalidated
+    # if not excluded_ips:
+    #     return []
+    # return [{"terms": {"source.ip": excluded_ips}}]
+    # OLD CODE END
+    valid = []
+    for entry in excluded_ips or []:
+        ip = parse_single_ip(entry)
+        if ip is None:
+            _warn_invalid_entry(repr(entry))
+        else:
+            valid.append(ip)
+    if not valid:
         return []
-    return [{"terms": {"source.ip": excluded_ips}}]
+    return [{"terms": {"source.ip": valid}}]

@@ -17,7 +17,10 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from services.alert_enrichment import AlertEnrichment
-from services.excluded_ips import build_excluded_ips_filter
+
+# OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+# from services.excluded_ips import build_excluded_ips_filter
+# OLD CODE END
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.alerts")
@@ -342,10 +345,23 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             # pattern in the category.  Case-insensitive wildcard on .keyword.
             should_clauses = []
             for pattern in cat_info["patterns"]:
+                # OLD CODE START — analyzed rule.name holds single tokens, so
+                # multi-word patterns never matched; wildcard needs the keyword
+                # should_clauses.append(
+                #     {
+                #         "wildcard": {
+                #             "rule.name": {
+                #                 "value": f"*{pattern}*",
+                #                 "case_insensitive": True,
+                #             }
+                #         }
+                #     }
+                # )
+                # OLD CODE END
                 should_clauses.append(
                     {
                         "wildcard": {
-                            "rule.name": {
+                            "rule.name.keyword": {
                                 "value": f"*{pattern}*",
                                 "case_insensitive": True,
                             }
@@ -362,7 +378,9 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                     }
                 )
 
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     query = {
         "size": size,
@@ -370,7 +388,10 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         "query": {
             "bool": {
                 "filter": filter_clauses,
-                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE END
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         # OLD CODE START — Zeek-native sort field: "timestamp"
@@ -429,7 +450,9 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     query = {
         "size": 0,
@@ -440,7 +463,10 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE END
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
@@ -613,7 +639,9 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
     if interval not in _ALLOWED_INTERVALS:
         interval = "1h"
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     query = {
         "size": 0,
@@ -623,7 +651,9 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": excluded,
+                # OLD CODE END
             }
         },
         "aggs": {
@@ -691,7 +721,9 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     limit = min(_parse_int_param(request, "limit", 20), 100)
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     query = {
         "size": 0,
@@ -701,7 +733,9 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": excluded,
+                # OLD CODE END
             }
         },
         "aggs": {
@@ -767,7 +801,9 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
         direction = "dest"
     client = _get_client(request)
 
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
     field = "source.ip.keyword" if direction == "src" else "destination.ip.keyword"
 
     query = {
@@ -778,7 +814,9 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": excluded,
+                # OLD CODE END
             }
         },
         "aggs": {"top_ips": {"terms": {"field": field, "size": limit}}},
@@ -822,7 +860,9 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
     interval = _sparkline_interval(from_ts, to_ts)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     from services.alert_intelligence import (
         THREAT_CATEGORIES,
@@ -841,7 +881,10 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE END
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
@@ -1006,7 +1049,9 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     category = request.match_info.get("category", "")
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     from services.alert_intelligence import (
         THREAT_CATEGORIES,
@@ -1030,7 +1075,10 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE END
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
@@ -1198,7 +1246,9 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
     if interval not in _ALLOWED_INTERVALS:
         interval = _sparkline_interval(from_ts, to_ts)
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     from services.alert_intelligence import (
         THREAT_CATEGORIES,
@@ -1217,7 +1267,10 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_SURICATA_ALERT_FILTERS,
                 ],
-                "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+                # OLD CODE END
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
@@ -1296,7 +1349,9 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
     include_info = request.query.get("include_info", "false").lower() == "true"
     limit = _parse_int_param(request, "limit", 50)
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     from services.alert_intelligence import get_smart_alerts
 
@@ -1308,7 +1363,9 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
             device_ip,
             include_info,
             limit,
-            excluded_ips=excluded,
+            # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+            # excluded_ips=excluded,
+            # OLD CODE END
         )
     except Exception as exc:
         logger.error("Smart alerts query failed: %s", exc)
@@ -1330,13 +1387,21 @@ async def handle_smart_alert_summary(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     device_ip = request.query.get("device_ip", "").strip() or None
     client = _get_client(request)
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     from services.alert_intelligence import get_smart_alert_summary
 
     try:
         summary = await get_smart_alert_summary(
-            client, from_ts, to_ts, device_ip, excluded_ips=excluded
+            # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+            # client, from_ts, to_ts, device_ip, excluded_ips=excluded
+            # OLD CODE END
+            client,
+            from_ts,
+            to_ts,
+            device_ip,
         )
     except Exception as exc:
         logger.error("Smart alert summary failed: %s", exc)

@@ -108,6 +108,7 @@
 
 	// Auto-refresh
 	let autoRefresh = $state(false);
+	let actionError = $state('');
 	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 	// ---------------------------------------------------------------------------
@@ -366,16 +367,37 @@
 	});
 
 	// Alert table action handlers
+	// OLD CODE START — no error handling; the helpers now throw when the daemon refuses
+	// async function handleSuppress(alert: Alert) {
+	// 	if (!alert.alert?.signature_id) return;
+	// 	await suppressAlert(alert.alert.signature_id, alert.src_ip);
+	// 	fetchAlerts(currentPage);
+	// }
+	//
+	// async function handleFalsePositive(alert: Alert) {
+	// 	if (!alert.alert?.signature_id) return;
+	// 	await markFalsePositive(alert.alert.signature_id);
+	// 	fetchAlerts(currentPage);
+	// }
+	// OLD CODE END
+	async function runAlertAction(action: () => Promise<void>) {
+		actionError = '';
+		try {
+			await action();
+			fetchAlerts(currentPage);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Action failed';
+		}
+	}
+
 	async function handleSuppress(alert: Alert) {
-		if (!alert.alert?.signature_id) return;
-		await suppressAlert(alert.alert.signature_id, alert.src_ip);
-		fetchAlerts(currentPage);
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => suppressAlert(sigId, alert.src_ip));
 	}
 
 	async function handleFalsePositive(alert: Alert) {
-		if (!alert.alert?.signature_id) return;
-		await markFalsePositive(alert.alert.signature_id);
-		fetchAlerts(currentPage);
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => markFalsePositive(sigId));
 	}
 
 	function openDrawer(alert: Alert) {
@@ -409,12 +431,14 @@
 					{#if categoryData?.category?.description}
 						<p class="subtitle">{categoryData.category.description}</p>
 					{/if}
+					<!-- OLD CODE START — dead badge: the daemon never sends category.mitre_tactic
 					{#if categoryData?.category?.mitre_tactic}
 						<span class="mitre-badge">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
 							{categoryData.category.mitre_tactic.id}: {categoryData.category.mitre_tactic.name}
 						</span>
 					{/if}
+					OLD CODE END -->
 				</div>
 			</div>
 		</div>
@@ -723,6 +747,9 @@
 				<span class="card-title">Recent Alerts</span>
 				<span class="card-badge">{formatNumber(totalAlerts)} total</span>
 			</div>
+			{#if actionError}
+				<div class="alert alert-danger" role="alert">Not applied: {actionError}</div>
+			{/if}
 			<div class="alert-table-wrap">
 				<table class="alert-table">
 					<thead>
@@ -905,6 +932,7 @@
 		margin-top: 2px;
 	}
 
+	/* OLD CODE START — style for the removed mitre_tactic badge
 	.mitre-badge {
 		display: inline-flex;
 		align-items: center;
@@ -919,6 +947,7 @@
 		margin-top: var(--space-sm);
 		border: 1px solid rgba(68, 138, 255, 0.15);
 	}
+	OLD CODE END */
 
 	.header-right {
 		display: flex;

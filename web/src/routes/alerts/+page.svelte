@@ -114,6 +114,7 @@
 	];
 	let hoveredBarIndex = $state<number | null>(null);
 	let chartWidth = $state(800);
+	let actionError = $state('');
 
 	// Sort
 	type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip' | 'category';
@@ -358,7 +359,11 @@
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchAll() {
+	// OLD CODE START — always reloaded page 1, so auto-refresh threw the user back to the first page
+	// async function fetchAll() {
+	// OLD CODE END
+	/** Reload everything; the alert table stays on `pg` (the current page unless told otherwise). */
+	async function fetchAll(pg: number = currentPage) {
 		loading = true;
 		const { from, to } = getTimeRange();
 		const interval = INTERVAL_MAP[selectedTimeRange] || '1h';
@@ -374,7 +379,10 @@
 				from,
 				to,
 				severity: severityFilterToNumber(activeFilter),
-				page: 1,
+				// OLD CODE START
+				// page: 1,
+				// OLD CODE END
+				page: pg,
 				size: pageSize,
 				ip: ipFilter || undefined,
 				signature: signatureFilter || undefined,
@@ -393,7 +401,10 @@
 			alerts = r.alerts;
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
-			currentPage = 1;
+			// OLD CODE START
+			// currentPage = 1;
+			// OLD CODE END
+			currentPage = r.page;
 		}
 		if (results[7].status === 'fulfilled') {
 			smartSummary = results[7].value;
@@ -431,7 +442,8 @@
 
 	function handleTimeRangeChange(value: string) {
 		selectedTimeRange = value;
-		if (initialized) fetchAll();
+		// A new time range is a new result set: start from page 1
+		if (initialized) fetchAll(1);
 	}
 
 	function handleSeverityChange(value: SeverityFilter) {
@@ -468,7 +480,10 @@
 	function toggleAutoRefresh() {
 		autoRefresh = !autoRefresh;
 		if (autoRefresh) {
-			refreshInterval = setInterval(fetchAll, 15_000);
+			// OLD CODE START
+			// refreshInterval = setInterval(fetchAll, 15_000);
+			// OLD CODE END
+			refreshInterval = setInterval(() => fetchAll(), 15_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -499,21 +514,43 @@
 		}
 	}
 
-	async function handleSuppressAlert(alert: Alert) {
-		const sigId = alert.alert?.signature_id;
-		if (sigId) {
-			await suppressAlert(sigId);
+	// OLD CODE START — no error handling; the helpers now throw when the daemon refuses
+	// async function handleSuppressAlert(alert: Alert) {
+	// 	const sigId = alert.alert?.signature_id;
+	// 	if (sigId) {
+	// 		await suppressAlert(sigId);
+	// 		// Refresh alerts to reflect the change
+	// 		fetchAlerts(currentPage);
+	// 	}
+	// }
+	//
+	// async function handleFalsePositive(alert: Alert) {
+	// 	const sigId = alert.alert?.signature_id;
+	// 	if (sigId) {
+	// 		await markFalsePositive(sigId);
+	// 		fetchAlerts(currentPage);
+	// 	}
+	// }
+	// OLD CODE END
+	async function runAlertAction(action: () => Promise<void>) {
+		actionError = '';
+		try {
+			await action();
 			// Refresh alerts to reflect the change
 			fetchAlerts(currentPage);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Action failed';
 		}
+	}
+
+	async function handleSuppressAlert(alert: Alert) {
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => suppressAlert(sigId));
 	}
 
 	async function handleFalsePositive(alert: Alert) {
 		const sigId = alert.alert?.signature_id;
-		if (sigId) {
-			await markFalsePositive(sigId);
-			fetchAlerts(currentPage);
-		}
+		if (sigId) await runAlertAction(() => markFalsePositive(sigId));
 	}
 
 	// ---------------------------------------------------------------------------
@@ -786,7 +823,10 @@
 						<div class="cat-card-bottom">
 							<span class="cat-trend {trendClass(cat.trend.direction)}">
 								{cat.trend.direction === 'increasing' ? '\u2191' : cat.trend.direction === 'decreasing' ? '\u2193' : '\u2192'}
+								<!-- OLD CODE START — the daemon sends no percentage, so this read "↑ stable" for a rising category
 								{cat.trend.percentage > 0 ? `${cat.trend.percentage}%` : 'stable'}
+								OLD CODE END -->
+								{cat.trend.percentage > 0 ? `${cat.trend.percentage}%` : cat.trend.direction}
 							</span>
 							{#if cat.sparkline.length > 0}
 								<svg class="cat-sparkline" width="56" height="20" viewBox="0 0 56 20">
@@ -962,6 +1002,9 @@
 			<div class="card-header">
 				<h2>Alert Log <span class="text-muted text-sm">({totalAlerts.toLocaleString()} total)</span></h2>
 			</div>
+			{#if actionError}
+				<div class="alert alert-danger" role="alert">Not applied: {actionError}</div>
+			{/if}
 			<div class="table-scroll">
 				<table class="data-table">
 					<thead>

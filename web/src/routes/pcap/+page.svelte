@@ -16,7 +16,7 @@
 		PcapSearchResult,
 		PcapPacket,
 	} from '$lib/api/pcap';
-	import { getCaptureStatus, toggleCapture } from '$lib/api/capture';
+	import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	import type { CaptureStatus } from '$lib/api/capture';
 
 	// ---------------------------------------------------------------------------
@@ -70,6 +70,8 @@
 	let captureEnabled = $state(true);
 	let captureLoading = $state(false);
 	let captureStatus = $state<CaptureStatus | null>(null);
+	let captureView = $derived(captureState(captureStatus));
+	const CAPTURE_LABELS = { active: 'Capture Active', stopped: 'Capture Stopped', unknown: 'Capture Status Unknown' };
 
 	// Timeline
 	let hoveredBarIndex = $state<number | null>(null);
@@ -350,10 +352,15 @@
 		</div>
 		<div class="header-right">
 			<div class="capture-toggle">
+				<!-- OLD CODE START — showed "Active" whenever capture was enabled, even with the
+				     container down or the status request failed (DEFAULT_STATUS has enabled: true)
 				<span class="capture-status-dot" class:active={captureEnabled}></span>
 				<span class="capture-status-label">
 					{captureEnabled ? 'Capture Active' : 'Capture Stopped'}
 				</span>
+				OLD CODE END -->
+				<span class="capture-status-dot" class:active={captureView === 'active'}></span>
+				<span class="capture-status-label">{CAPTURE_LABELS[captureView]}</span>
 				<button
 					class="toggle-switch"
 					class:on={captureEnabled}

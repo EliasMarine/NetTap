@@ -203,7 +203,14 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
         "query": {"bool": bool_query},
         "aggs": {
             "top_sources": {
-                "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE END
+                "terms": {
+                    "field": "source.ip.keyword",
+                    "size": limit,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -213,9 +220,11 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             }
         },
@@ -278,7 +287,14 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
         "query": {"bool": bool_query},
         "aggs": {
             "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": limit},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "destination.ip.keyword", "size": limit},
+                # OLD CODE END
+                "terms": {
+                    "field": "destination.ip.keyword",
+                    "size": limit,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -288,9 +304,11 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             }
         },
@@ -716,7 +734,14 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
             "bytes_out": {"sum": {"field": "destination.bytes", "missing": 0}},
             "protocols": {"terms": {"field": "network.transport.keyword", "size": 20}},
             "top_sources": {
-                "terms": {"field": "source.ip.keyword", "size": 10},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "source.ip.keyword", "size": 10},
+                # OLD CODE END
+                "terms": {
+                    "field": "source.ip.keyword",
+                    "size": 10,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -726,13 +751,22 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             },
             "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": 10},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "destination.ip.keyword", "size": 10},
+                # OLD CODE END
+                "terms": {
+                    "field": "destination.ip.keyword",
+                    "size": 10,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -751,9 +785,11 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                             "size": 1,
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             },
         },
@@ -865,7 +901,14 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
         },
         "aggs": {
             "by_source": {
-                "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE END
+                "terms": {
+                    "field": "source.ip.keyword",
+                    "size": limit,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -911,9 +954,11 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                             },
                         },
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             },
         },

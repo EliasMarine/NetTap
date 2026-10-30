@@ -6,6 +6,9 @@ import {
 	getAlertTopSignatures,
 	getAlertTopIps,
 	getAlertCategories,
+	getEnhancedCategories,
+	suppressAlert,
+	markFalsePositive,
 	formatNumber,
 	severityLabel,
 	severityBadgeClass,
@@ -245,6 +248,103 @@ describe('alerts API client', () => {
 		it('returns empty on error', async () => {
 			mockFetchFailure(502);
 			const result = await getAlertCategories();
+			expect(result.categories).toEqual([]);
+		});
+	});
+
+	// -- suppressAlert / markFalsePositive ------------------------------------
+
+	describe('suppressAlert', () => {
+		it('resolves when the daemon accepts', async () => {
+			mockFetchSuccess({ status: 'suppressed', signature_id: 2001 });
+
+			await expect(suppressAlert(2001, '10.0.0.5')).resolves.toBeUndefined();
+			const [url, init] = vi.mocked(fetch).mock.calls[0];
+			expect(url).toBe('/api/alerts/suppress');
+			expect(JSON.parse(String(init?.body))).toMatchObject({ signature_id: 2001, device_ip: '10.0.0.5' });
+		});
+
+		it('throws the daemon error on a non-OK response', async () => {
+			mockFetchSuccess({ error: 'signature_id is required' }, 400);
+
+			await expect(suppressAlert(0)).rejects.toThrow('signature_id is required');
+		});
+
+		it('throws with the status when the body is unreadable', async () => {
+			mockFetchFailure(502);
+
+			await expect(suppressAlert(2001)).rejects.toThrow('Suppress failed: 502');
+		});
+	});
+
+	describe('markFalsePositive', () => {
+		it('resolves when the daemon accepts', async () => {
+			mockFetchSuccess({ status: 'marked_false_positive', signature_id: 2001 });
+
+			await expect(markFalsePositive(2001)).resolves.toBeUndefined();
+			expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/alerts/false-positive');
+		});
+
+		it('throws on a non-OK response', async () => {
+			mockFetchFailure(500);
+
+			await expect(markFalsePositive(2001)).rejects.toThrow('Mark false positive failed: 500');
+		});
+	});
+
+	// -- getEnhancedCategories -------------------------------------------------
+
+	describe('getEnhancedCategories', () => {
+		/** Shape of one entry from daemon/api/alerts.py handle_alerts_categories */
+		function daemonCategory(overrides: Record<string, unknown> = {}) {
+			return {
+				id: 'malware',
+				label: 'Malware',
+				icon: 'bug',
+				color: 'red',
+				description: 'Malware activity',
+				count: 42,
+				severity_breakdown: { critical: 2, high: 10, medium: 30, low: 0, info: 0 },
+				trend: 'increasing',
+				sparkline: [
+					{ timestamp: '2026-10-29T10:00:00.000Z', count: 3 },
+					{ timestamp: '2026-10-29T11:00:00.000Z', count: 9 },
+				],
+				sub_categories: [{ id: 'trojan', label: 'Trojan', count: 12 }],
+				mitre_techniques: [],
+				...overrides,
+			};
+		}
+
+		it('maps the trend string to { direction, percentage: 0 }', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', interval: '1h', categories: [daemonCategory()] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].trend).toEqual({ direction: 'increasing', percentage: 0 });
+		});
+
+		it('maps sparkline points to their counts', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory()] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].sparkline).toEqual([3, 9]);
+		});
+
+		it('falls back to stable for an unknown trend and keeps other fields', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory({ trend: 'sideways', sparkline: undefined })] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].trend.direction).toBe('stable');
+			expect(categories[0].sparkline).toEqual([]);
+			expect(categories[0]).toMatchObject({ id: 'malware', count: 42, sub_categories: [{ id: 'trojan' }] });
+		});
+
+		it('returns empty on HTTP error', async () => {
+			mockFetchFailure(500);
+			const result = await getEnhancedCategories();
 			expect(result.categories).toEqual([]);
 		});
 	});

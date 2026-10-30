@@ -123,6 +123,23 @@ function normaliseLogstashStats(raw: Record<string, unknown>): LogstashStats {
 	};
 }
 
+/**
+ * Flatten a daemon pipeline entry (`{ id, events: { in, out, filtered, duration_ms } }`)
+ * into the LogstashPipeline shape.
+ */
+function normalisePipeline(raw: Record<string, unknown>): LogstashPipeline {
+	const events = (raw.events ?? {}) as Record<string, unknown>;
+	const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
+	return {
+		...raw,
+		id: String(raw.id ?? ''),
+		events_in: num(events.in),
+		events_out: num(events.out),
+		events_filtered: num(events.filtered),
+		duration_in_millis: num(events.duration_ms),
+	};
+}
+
 // ---------------------------------------------------------------------------
 // OpenSearch fetch helpers
 // ---------------------------------------------------------------------------
@@ -136,7 +153,15 @@ export async function getOpenSearchCluster(): Promise<OpenSearchCluster> {
 		if (!res.ok) {
 			return { ...DEFAULT_CLUSTER };
 		}
-		return res.json();
+		// OLD CODE START — the daemon sends `total_size_bytes`, so the page's
+		// `total_data_size_bytes` was always undefined
+		// return res.json();
+		// OLD CODE END
+		const data = await res.json();
+		return {
+			...data,
+			total_data_size_bytes: typeof data.total_size_bytes === 'number' ? data.total_size_bytes : 0,
+		};
 	} catch {
 		return { ...DEFAULT_CLUSTER };
 	}
@@ -167,7 +192,10 @@ export async function getOpenSearchTemplates(): Promise<unknown[]> {
 			return [];
 		}
 		const data = await res.json();
-		return Array.isArray(data) ? data : [];
+		// OLD CODE START — the daemon wraps the list as `{ templates, count }`, never a bare array
+		// return Array.isArray(data) ? data : [];
+		// OLD CODE END
+		return Array.isArray(data?.templates) ? data.templates : [];
 	} catch {
 		return [];
 	}
@@ -195,8 +223,8 @@ export async function getLogstashStats(): Promise<LogstashStats> {
 }
 
 /**
- * Get Logstash pipeline details.
- * The daemon may return `{ pipelines: [...] }` or a bare array.
+ * Get Logstash pipeline details, flattened from the daemon's
+ * `{ pipelines: [{ id, events: { in, out, filtered, duration_ms } }] }`.
  */
 export async function getLogstashPipelines(): Promise<LogstashPipeline[]> {
 	try {
@@ -205,13 +233,18 @@ export async function getLogstashPipelines(): Promise<LogstashPipeline[]> {
 			return [];
 		}
 		const data = await res.json();
-		if (Array.isArray(data)) {
-			return data;
-		}
-		if (data && Array.isArray(data.pipelines)) {
-			return data.pipelines;
-		}
-		return [];
+		// OLD CODE START — returned the daemon's nested `events.{in,out,filtered,duration_ms}`
+		// as-is, so the flat fields the page reads were always undefined
+		// if (Array.isArray(data)) {
+		// 	return data;
+		// }
+		// if (data && Array.isArray(data.pipelines)) {
+		// 	return data.pipelines;
+		// }
+		// return [];
+		// OLD CODE END
+		const list: unknown[] = Array.isArray(data?.pipelines) ? data.pipelines : [];
+		return list.map((raw) => normalisePipeline(raw as Record<string, unknown>));
 	} catch {
 		return [];
 	}

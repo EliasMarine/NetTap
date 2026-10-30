@@ -132,13 +132,18 @@ class ThreatIntelService:
 
         This bootstraps the TI database from alerts that already fired,
         building a local blocklist from Suricata's own detections.
+        ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
         """
         import os
-        from services.excluded_ips import build_excluded_ips_filter
+        # OLD CODE START — excluded IPs stay visible in threat detections
+        # from services.excluded_ips import build_excluded_ips_filter
+        # OLD CODE END
 
         NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
-        excluded = build_excluded_ips_filter(excluded_ips or [])
+        # OLD CODE START — excluded IPs stay visible in threat detections
+        # excluded = build_excluded_ips_filter(excluded_ips or [])
+        # OLD CODE END
         bool_clause: dict = {
             "filter": [
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
@@ -157,8 +162,10 @@ class ThreatIntelService:
                 },
             ]
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — excluded IPs stay visible in threat detections
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,

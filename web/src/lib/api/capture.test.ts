@@ -6,6 +6,7 @@ import {
 	getCaptureStatus,
 	toggleCapture,
 	updateCaptureSettings,
+	captureState,
 } from './capture';
 
 // ---------------------------------------------------------------------------
@@ -197,6 +198,37 @@ describe('capture API client', () => {
 			expect(result.maxFileSizeMB).toBe(100);
 			expect(result.containerRunning).toBe(false);
 			expect(result.containerStatus).toBe('unknown');
+		});
+
+		it('maps the failure default to the unknown capture state, not active', async () => {
+			mockFetchReject();
+
+			expect(captureState(await getCaptureStatus())).toBe('unknown');
+		});
+	});
+
+	// -- captureState ---------------------------------------------------------
+
+	describe('captureState', () => {
+		const base = { enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' };
+
+		it('is active only when enabled and the container is running', () => {
+			expect(captureState(base)).toBe('active');
+		});
+
+		it('is stopped when enabled but the container is not running', () => {
+			expect(captureState({ ...base, containerRunning: false, containerStatus: 'exited' })).toBe('stopped');
+		});
+
+		it('is stopped when disabled', () => {
+			expect(captureState({ ...base, enabled: false, containerRunning: false, containerStatus: 'exited' })).toBe(
+				'stopped',
+			);
+		});
+
+		it('is unknown when the status could not be read', () => {
+			expect(captureState(null)).toBe('unknown');
+			expect(captureState({ ...base, containerRunning: false, containerStatus: 'unknown' })).toBe('unknown');
 		});
 	});
 

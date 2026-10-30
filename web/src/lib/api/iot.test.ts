@@ -54,10 +54,9 @@ describe('IoT API client', () => {
 			expect(result.count).toBe(1);
 		});
 
-		it('returns empty on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getIoTDevices();
-			expect(result.devices).toEqual([]);
+			await expect(getIoTDevices()).rejects.toThrow('500');
 		});
 	});
 
@@ -85,10 +84,9 @@ describe('IoT API client', () => {
 			expect(result.baseline?.known_destinations).toContain('8.8.8.8');
 		});
 
-		it('returns null baseline on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getDeviceBaseline('FF:FF:FF:FF:FF:FF');
-			expect(result.baseline).toBeNull();
+			await expect(getDeviceBaseline('FF:FF:FF:FF:FF:FF')).rejects.toThrow('500');
 		});
 	});
 
@@ -107,10 +105,9 @@ describe('IoT API client', () => {
 			expect(result.anomalies[0].type).toBe('NEW_DESTINATION');
 		});
 
-		it('returns empty on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getIoTAnomalies();
-			expect(result.anomalies).toEqual([]);
+			await expect(getIoTAnomalies()).rejects.toThrow('500');
 		});
 	});
 
@@ -165,12 +162,9 @@ describe('IoT API client', () => {
 			expect(fetch).toHaveBeenCalledWith(expect.stringContaining('from=now-7d'));
 		});
 
-		it('returns defaults on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getFleetSummary();
-			expect(result.health_score).toBe(0);
-			expect(result.health_grade).toBe('F');
-			expect(result.devices).toEqual([]);
+			await expect(getFleetSummary()).rejects.toThrow('500');
 		});
 	});
 
@@ -188,10 +182,9 @@ describe('IoT API client', () => {
 			expect(result.devices[0].tracker_domains).toHaveLength(1);
 		});
 
-		it('returns empty devices on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getPrivacyReport();
-			expect(result.devices).toEqual([]);
+			await expect(getPrivacyReport()).rejects.toThrow('500');
 		});
 	});
 
@@ -216,11 +209,9 @@ describe('IoT API client', () => {
 			expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/iot/devices/AA%3ABB%3ACC%3ADD%3AEE%3AFF/communication-map'));
 		});
 
-		it('returns empty destinations on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getCommunicationMap('AA:BB:CC:DD:EE:FF');
-			expect(result.mac).toBe('AA:BB:CC:DD:EE:FF');
-			expect(result.destinations).toEqual([]);
+			await expect(getCommunicationMap('AA:BB:CC:DD:EE:FF')).rejects.toThrow('500');
 		});
 	});
 
@@ -243,12 +234,9 @@ describe('IoT API client', () => {
 			expect(result.baseline_hours).toContain(8);
 		});
 
-		it('returns defaults on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getActivityTimeline('AA:BB:CC:DD:EE:FF');
-			expect(result.mac).toBe('AA:BB:CC:DD:EE:FF');
-			expect(result.buckets).toEqual([]);
-			expect(result.baseline_avg_hourly_bytes).toBe(0);
+			await expect(getActivityTimeline('AA:BB:CC:DD:EE:FF')).rejects.toThrow('500');
 		});
 	});
 
@@ -267,10 +255,9 @@ describe('IoT API client', () => {
 			expect(result.devices[0].findings[0].type).toBe('UNENCRYPTED');
 		});
 
-		it('returns empty devices on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getProtocolAudit();
-			expect(result.devices).toEqual([]);
+			await expect(getProtocolAudit()).rejects.toThrow('500');
 		});
 	});
 
@@ -293,13 +280,9 @@ describe('IoT API client', () => {
 			expect(result.recommendation).toBe('Consider VLAN segmentation');
 		});
 
-		it('returns defaults on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getNetworkIsolation();
-			expect(result.segmentation_score).toBe(0);
-			expect(result.segmentation_grade).toBe('F');
-			expect(result.pairs).toEqual([]);
-			expect(result.recommendation).toBe('');
+			await expect(getNetworkIsolation()).rejects.toThrow('500');
 		});
 	});
 
@@ -317,10 +300,9 @@ describe('IoT API client', () => {
 			expect(result.manufacturers[0].avg_trust_score).toBe(72);
 		});
 
-		it('returns empty manufacturers on failure', async () => {
+		it('throws on HTTP error instead of returning placeholder data', async () => {
 			mockFetchFailure();
-			const result = await getManufacturerProfiles();
-			expect(result.manufacturers).toEqual([]);
+			await expect(getManufacturerProfiles()).rejects.toThrow('500');
 		});
 	});
 });

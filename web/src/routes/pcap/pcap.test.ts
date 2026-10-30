@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
 import { getPcapFiles, searchPcaps, previewPcap, getDownloadUrl, formatBytes } from '$lib/api/pcap';
+import PcapPage from './+page.svelte';
 
 /**
  * Page-level tests for the PCAP search page.
@@ -97,5 +99,52 @@ describe('PCAP search page integration', () => {
 		expect(formatBytes(0)).toBe('0 B');
 		expect(formatBytes(1024)).toBe('1.0 KB');
 		expect(formatBytes(1048576)).toBe('1.0 MB');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rendered page: capture status header
+// ---------------------------------------------------------------------------
+
+describe('PCAP page — capture status', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	/** /api/capture/status gets `status` (or a network error when null); everything else 500s. */
+	async function renderWithCaptureStatus(status: Record<string, unknown> | null) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url.startsWith('/api/capture/status')) {
+					if (!status) throw new Error('network error');
+					return { ok: true, status: 200, json: async () => status };
+				}
+				return { ok: false, status: 500, json: async () => ({}) };
+			}),
+		);
+		render(PcapPage);
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('says Active when enabled and the container is running', async () => {
+		await renderWithCaptureStatus({ enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' });
+
+		expect(screen.getByText('Capture Active')).toBeInTheDocument();
+	});
+
+	it('does not say Active when enabled but the container is down', async () => {
+		await renderWithCaptureStatus({ enabled: true, maxFileSizeMB: 100, containerRunning: false, containerStatus: 'exited' });
+
+		expect(screen.getByText('Capture Stopped')).toBeInTheDocument();
+		expect(screen.queryByText('Capture Active')).not.toBeInTheDocument();
+	});
+
+	it('says the status is unknown when it cannot be read', async () => {
+		await renderWithCaptureStatus(null);
+
+		expect(screen.getByText('Capture Status Unknown')).toBeInTheDocument();
+		expect(screen.queryByText('Capture Active')).not.toBeInTheDocument();
 	});
 });
