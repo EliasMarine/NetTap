@@ -1,6 +1,6 @@
 # Code Review Fix Tracker (review of 2026-10-30)
 
-**Progress:** <!--P-->16 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->3/6<!--/CRITICAL--> · HIGH <!--HIGH-->8/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
+**Progress:** <!--P-->21 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->6/6<!--/CRITICAL--> · HIGH <!--HIGH-->10/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
 
 **Findings:** `docs/reviews/2026-10-30-code-review.md` ([PR #146](https://github.com/EliasMarine/NetTap/pull/146)). The detail and recommended fix for each ID are there.  
 **Linear:** NET-112 (umbrella).  
@@ -22,11 +22,11 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 - [x] <!--B:CR-003-->CR-003: OpenSearch Dashboards open to the LAN with all_access
 - [x] <!--B:CR-021-->CR-021: Arkime viewer on :8005 with a forgeable admin token
 - [x] <!--B:CR-022-->CR-022: Grafana without NetTap login, anonymous viewer, admin/nettap
-- [ ] <!--B:CR-002-->CR-002: Emergency prune deletes every OpenSearch index
-- [ ] <!--B:CR-001-->CR-001: PCAP cleanup never deletes anything
-- [ ] <!--B:CR-018-->CR-018: Capture stop flag at 95% has no effect
-- [ ] <!--B:CR-020-->CR-020: Two full-PCAP writers fill the disk
-- [ ] <!--B:MS-002-->MS-002: Full-time PCAP has no retention
+- [x] <!--B:CR-002-->CR-002: Emergency prune deletes every OpenSearch index
+- [x] <!--B:CR-001-->CR-001: PCAP cleanup never deletes anything
+- [x] <!--B:CR-018-->CR-018: Capture stop flag at 95% has no effect
+- [x] <!--B:CR-020-->CR-020: Two full-PCAP writers fill the disk
+- [x] <!--B:MS-002-->MS-002: Full-time PCAP has no retention
 - [x] <!--B:CR-004-->CR-004: Wizard 'Verify' builds the live bridge
 - [x] <!--B:CR-025-->CR-025: nettap.service runs compose down on stop
 - [x] <!--B:CR-034-->CR-034: Login has no effective rate limit
@@ -47,6 +47,10 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | 2026-10-30 | CR-004 | NET-118: wizard Verify calls the read-only /api/setup/bridge/preview; mock with ready:true removed; in-use ports refused | pytest +6, vitest +4 (9 fail without the fix) |
 | 2026-10-30 | CR-034 | NET-119: shared attemptLogin for form + API: 5/min per client IP via ADDRESS_HEADER x-real-ip, per-username backoff lock, dummy hash for unknown names | vitest +3 files, bats +1 (fail without the fix) |
 | 2026-10-30 | CR-017, CR-038 | NET-120: one generated nettap-hot-policy for arkime_sessions3-*/malcolm_beats_*/zeek-*, attached via _ism/add + change_policy; static file no longer applied | pytest +10, bats +3 (fail without the fix) |
+| 2026-10-30 | CR-001 | NET-121: pcap_dir = PCAP_DIR, recursive oldest-first scan, pcap-data read-write, daemon DAC_OVERRIDE | pytest + bats (fail without the fix) |
+| 2026-10-30 | CR-002 | NET-122: PCAP deleted before indices; today's indices never deleted; cascade stops below the emergency threshold | pytest (fail without the fix) |
+| 2026-10-30 | CR-018 | NET-123: docker stop/start nettap-pcap-capture with a persistent flag; resume respects PCAP_CAPTURE_ENABLED | pytest (fail without the fix) |
+| 2026-10-30 | CR-020, MS-002 | NET-124: ARKIME_PCAP_WRITE_METHOD=null (netsniff is the only writer); PCAP older than cold_days deleted every cycle | pytest + bats (fail without the fix) |
 <!--LOG-->
 
 ## Found while fixing
@@ -57,7 +61,7 @@ New problems found during the fixes. They are not in the review's 273, so they d
 |----|-------|---------|--------|
 | NEW-001 | `tests/scripts/test_malcolm_config.bats` | `_source_malcolm_config` turns `set -e` off, so a failing assertion never fails a test: nearly every test in the file passes whatever the code does. Its `generate_compose_env` tests also never create `docker/`, so the function never writes the file they check. The CR-021/CR-022 tests turn `set -e` back on; the older tests still need the same fix. | Open |
 | NEW-002 | `daemon/api/setup.py` `handle_bridge_create` (Go Live) | Go Live's bridge create has no in-use check, and Verify can be skipped: after a skip Go Live uses NICs saved by an earlier Verify or falls back to `eth0`/`eth1`. Found while fixing CR-004; reuse `_nic_in_use_problem` there. | Open |
-| NEW-003 | Storage settings UI | Since CR-017/CR-038 all OpenSearch network data follows `hot_days`; the warm and cold day settings no longer affect any OpenSearch index, but the UI still offers them. | Open |
+| NEW-003 | Storage settings UI | Since CR-017/CR-038 all OpenSearch network data follows `hot_days`. Since MS-002 `cold_days` is the PCAP age limit. `warm_days` no longer affects anything, and the UI still labels the tiers by the old index split. | Open |
 
 ## All findings
 
@@ -65,12 +69,12 @@ New problems found during the fixes. They are not in the review's 273, so they d
 
 | Done | ID | Area | Location | Finding | Status |
 |------|----|------|----------|---------|--------|
-| ☐ | CR-001 | daemon-core | `daemon/storage/manager.py:108` | PCAP cleanup never deletes anything: wrong path, read-only mount, top-level glob only | Open |
-| ☐ | CR-002 | daemon-core | `daemon/storage/manager.py:462` | Emergency prune deletes every OpenSearch index, today's live index included, and repeats every cycle | Open |
+| ✅ | CR-001 | daemon-core | `daemon/storage/manager.py:108` | PCAP cleanup never deletes anything: wrong path, read-only mount, top-level glob only | Fixed (batch 1) |
+| ✅ | CR-002 | daemon-core | `daemon/storage/manager.py:462` | Emergency prune deletes every OpenSearch index, today's live index included, and repeats every cycle | Fixed (batch 1) |
 | ✅ | CR-003 | malcolm-stack, scripts-infra, security-crosscut | `docker/nginx.conf:187` | OpenSearch Dashboards is published on :443 with no authentication and all_access backend credentials | Fixed (batch 1) |
 | ✅ | CR-004 | contracts-integration, daemon-api-A, daemon-services-A, web-pages-A, web-server | `web/src/routes/setup/+page.svelte:368 (+4)` | Wizard 'Verify Configuration' creates the live bridge, and reports success only when creation failed | Fixed (batch 1) |
 | ✅ | MS-001 | malcolm-stack | `docker/docker-compose.yml:98` | OpenSearch lacks ROLE_ADMIN, so every container start wipes the role mapping and pushes the empty one | Fixed (batch 1) |
-| ☐ | MS-002 | malcolm-stack | `docker/docker-compose.yml:694` | Full-time PCAP capture has no retention; emergency prune then deletes all OpenSearch data | Open |
+| ✅ | MS-002 | malcolm-stack | `docker/docker-compose.yml:694` | Full-time PCAP capture has no retention; emergency prune then deletes all OpenSearch data | Fixed (batch 1) |
 
 ### HIGH (37)
 
@@ -89,9 +93,9 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ☐ | CR-015 | daemon-services-C | `daemon/services/notification_hub.py:473` | Routing rules never fire: process_event has no caller | Open |
 | ☐ | CR-016 | daemon-services-C | `daemon/services/threat_detection.py:143` | Beaconing detection checks only 300 pairs and can exceed max_buckets, then silently returns no beacons | Open |
 | ✅ | CR-017 | daemon-core | `daemon/storage/ilm_generator.py:109` | Generated ISM policies never manage a real index, so age-based retention never runs | Fixed (batch 1) |
-| ☐ | CR-018 | daemon-core | `daemon/storage/manager.py:109` | Writing the capture stop flag at 95% has no effect | Open |
+| ✅ | CR-018 | daemon-core | `daemon/storage/manager.py:109` | Writing the capture stop flag at 95% has no effect | Fixed (batch 1) |
 | ☐ | CR-019 | gap-pass, malcolm-stack | `docker/docker-compose.yml:290` | Filebeat mounts the Zeek and Suricata log volumes read-only, so their logs are never pruned | Open |
-| ☐ | CR-020 | gap-pass | `docker/docker-compose.yml:509` | Two full-PCAP writers fill the disk; Arkime keeps it at 85-90% and the daemon's 'stop capture' flag is never read | Open |
+| ✅ | CR-020 | gap-pass | `docker/docker-compose.yml:509` | Two full-PCAP writers fill the disk; Arkime keeps it at 85-90% and the daemon's 'stop capture' flag is never read | Fixed (batch 1) |
 | ✅ | CR-021 | gap-pass | `docker/docker-compose.yml:513` | Arkime viewer runs on host port 8005, and its admin S2S token can be forged with the public fallback secret | Fixed (batch 1) |
 | ✅ | CR-022 | malcolm-stack, scripts-infra, security-crosscut | `docker/docker-compose.yml:824` | Grafana is reachable without NetTap login, with anonymous viewer and default admin password 'nettap' | Fixed (batch 1) |
 | ☐ | CR-023 | scripts-infra | `scripts/bridge/setup-bridge.sh:403` | --dry-run --persist writes the real netplan bridge, NetworkManager and sysctl configs | Open |
