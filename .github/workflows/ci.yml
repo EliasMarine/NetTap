@@ -106,7 +106,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r daemon/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov aioresponses
+          pip install pytest pytest-asyncio pytest-cov
 
       - name: Run pytest
         run: python3 -m pytest daemon/tests/ -v --tb=short
