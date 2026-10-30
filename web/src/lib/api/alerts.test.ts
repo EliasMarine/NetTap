@@ -7,6 +7,8 @@ import {
 	getAlertTopIps,
 	getAlertCategories,
 	getEnhancedCategories,
+	suppressAlert,
+	markFalsePositive,
 	formatNumber,
 	severityLabel,
 	severityBadgeClass,
@@ -247,6 +249,46 @@ describe('alerts API client', () => {
 			mockFetchFailure(502);
 			const result = await getAlertCategories();
 			expect(result.categories).toEqual([]);
+		});
+	});
+
+	// -- suppressAlert / markFalsePositive ------------------------------------
+
+	describe('suppressAlert', () => {
+		it('resolves when the daemon accepts', async () => {
+			mockFetchSuccess({ status: 'suppressed', signature_id: 2001 });
+
+			await expect(suppressAlert(2001, '10.0.0.5')).resolves.toBeUndefined();
+			const [url, init] = vi.mocked(fetch).mock.calls[0];
+			expect(url).toBe('/api/alerts/suppress');
+			expect(JSON.parse(String(init?.body))).toMatchObject({ signature_id: 2001, device_ip: '10.0.0.5' });
+		});
+
+		it('throws the daemon error on a non-OK response', async () => {
+			mockFetchSuccess({ error: 'signature_id is required' }, 400);
+
+			await expect(suppressAlert(0)).rejects.toThrow('signature_id is required');
+		});
+
+		it('throws with the status when the body is unreadable', async () => {
+			mockFetchFailure(502);
+
+			await expect(suppressAlert(2001)).rejects.toThrow('Suppress failed: 502');
+		});
+	});
+
+	describe('markFalsePositive', () => {
+		it('resolves when the daemon accepts', async () => {
+			mockFetchSuccess({ status: 'marked_false_positive', signature_id: 2001 });
+
+			await expect(markFalsePositive(2001)).resolves.toBeUndefined();
+			expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/alerts/false-positive');
+		});
+
+		it('throws on a non-OK response', async () => {
+			mockFetchFailure(500);
+
+			await expect(markFalsePositive(2001)).rejects.toThrow('Mark false positive failed: 500');
 		});
 	});
 

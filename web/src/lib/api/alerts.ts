@@ -460,11 +460,25 @@ export async function suppressAlert(
 	deviceIp?: string,
 	reason?: string
 ): Promise<void> {
-	await fetch('/api/alerts/suppress', {
+	// OLD CODE START — ignored the response, so a failed suppress looked like it worked
+	// await fetch('/api/alerts/suppress', {
+	// 	method: 'POST',
+	// 	headers: { 'Content-Type': 'application/json' },
+	// 	body: JSON.stringify({ signature_id: signatureId, device_ip: deviceIp, reason }),
+	// });
+	// OLD CODE END
+	const res = await fetch('/api/alerts/suppress', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ signature_id: signatureId, device_ip: deviceIp, reason }),
 	});
+	if (!res.ok) await throwActionError(res, 'Suppress failed');
+}
+
+/** Throw with the daemon's error message when it sent one. */
+async function throwActionError(res: Response, fallback: string): Promise<never> {
+	const data = await res.json().catch(() => ({}));
+	throw new Error(data?.error || `${fallback}: ${res.status}`);
 }
 
 /**
@@ -474,11 +488,19 @@ export async function markFalsePositive(
 	signatureId: number,
 	reason?: string
 ): Promise<void> {
-	await fetch('/api/alerts/false-positive', {
+	// OLD CODE START — ignored the response, so a failed mark looked like it worked
+	// await fetch('/api/alerts/false-positive', {
+	// 	method: 'POST',
+	// 	headers: { 'Content-Type': 'application/json' },
+	// 	body: JSON.stringify({ signature_id: signatureId, reason }),
+	// });
+	// OLD CODE END
+	const res = await fetch('/api/alerts/false-positive', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ signature_id: signatureId, reason }),
 	});
+	if (!res.ok) await throwActionError(res, 'Mark false positive failed');
 }
 
 // ---------------------------------------------------------------------------

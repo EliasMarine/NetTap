@@ -114,6 +114,7 @@
 	];
 	let hoveredBarIndex = $state<number | null>(null);
 	let chartWidth = $state(800);
+	let actionError = $state('');
 
 	// Sort
 	type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip' | 'category';
@@ -499,21 +500,43 @@
 		}
 	}
 
-	async function handleSuppressAlert(alert: Alert) {
-		const sigId = alert.alert?.signature_id;
-		if (sigId) {
-			await suppressAlert(sigId);
+	// OLD CODE START — no error handling; the helpers now throw when the daemon refuses
+	// async function handleSuppressAlert(alert: Alert) {
+	// 	const sigId = alert.alert?.signature_id;
+	// 	if (sigId) {
+	// 		await suppressAlert(sigId);
+	// 		// Refresh alerts to reflect the change
+	// 		fetchAlerts(currentPage);
+	// 	}
+	// }
+	//
+	// async function handleFalsePositive(alert: Alert) {
+	// 	const sigId = alert.alert?.signature_id;
+	// 	if (sigId) {
+	// 		await markFalsePositive(sigId);
+	// 		fetchAlerts(currentPage);
+	// 	}
+	// }
+	// OLD CODE END
+	async function runAlertAction(action: () => Promise<void>) {
+		actionError = '';
+		try {
+			await action();
 			// Refresh alerts to reflect the change
 			fetchAlerts(currentPage);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Action failed';
 		}
+	}
+
+	async function handleSuppressAlert(alert: Alert) {
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => suppressAlert(sigId));
 	}
 
 	async function handleFalsePositive(alert: Alert) {
 		const sigId = alert.alert?.signature_id;
-		if (sigId) {
-			await markFalsePositive(sigId);
-			fetchAlerts(currentPage);
-		}
+		if (sigId) await runAlertAction(() => markFalsePositive(sigId));
 	}
 
 	// ---------------------------------------------------------------------------
@@ -965,6 +988,9 @@
 			<div class="card-header">
 				<h2>Alert Log <span class="text-muted text-sm">({totalAlerts.toLocaleString()} total)</span></h2>
 			</div>
+			{#if actionError}
+				<div class="alert alert-danger" role="alert">Not applied: {actionError}</div>
+			{/if}
 			<div class="table-scroll">
 				<table class="data-table">
 					<thead>

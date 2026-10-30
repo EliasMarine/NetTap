@@ -108,6 +108,7 @@
 
 	// Auto-refresh
 	let autoRefresh = $state(false);
+	let actionError = $state('');
 	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 	// ---------------------------------------------------------------------------
@@ -366,16 +367,37 @@
 	});
 
 	// Alert table action handlers
+	// OLD CODE START — no error handling; the helpers now throw when the daemon refuses
+	// async function handleSuppress(alert: Alert) {
+	// 	if (!alert.alert?.signature_id) return;
+	// 	await suppressAlert(alert.alert.signature_id, alert.src_ip);
+	// 	fetchAlerts(currentPage);
+	// }
+	//
+	// async function handleFalsePositive(alert: Alert) {
+	// 	if (!alert.alert?.signature_id) return;
+	// 	await markFalsePositive(alert.alert.signature_id);
+	// 	fetchAlerts(currentPage);
+	// }
+	// OLD CODE END
+	async function runAlertAction(action: () => Promise<void>) {
+		actionError = '';
+		try {
+			await action();
+			fetchAlerts(currentPage);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Action failed';
+		}
+	}
+
 	async function handleSuppress(alert: Alert) {
-		if (!alert.alert?.signature_id) return;
-		await suppressAlert(alert.alert.signature_id, alert.src_ip);
-		fetchAlerts(currentPage);
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => suppressAlert(sigId, alert.src_ip));
 	}
 
 	async function handleFalsePositive(alert: Alert) {
-		if (!alert.alert?.signature_id) return;
-		await markFalsePositive(alert.alert.signature_id);
-		fetchAlerts(currentPage);
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => markFalsePositive(sigId));
 	}
 
 	function openDrawer(alert: Alert) {
@@ -725,6 +747,9 @@
 				<span class="card-title">Recent Alerts</span>
 				<span class="card-badge">{formatNumber(totalAlerts)} total</span>
 			</div>
+			{#if actionError}
+				<div class="alert alert-danger" role="alert">Not applied: {actionError}</div>
+			{/if}
 			<div class="alert-table-wrap">
 				<table class="alert-table">
 					<thead>
