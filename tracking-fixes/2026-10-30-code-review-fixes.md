@@ -1,6 +1,6 @@
 # Code Review Fix Tracker (review of 2026-10-30)
 
-**Progress:** <!--P-->7 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->1/6<!--/CRITICAL--> · HIGH <!--HIGH-->1/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
+**Progress:** <!--P-->8 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->1/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
 
 **Findings:** `docs/reviews/2026-10-30-code-review.md` ([PR #146](https://github.com/EliasMarine/NetTap/pull/146)). The detail and recommended fix for each ID are there.  
 **Linear:** NET-112 (umbrella).  
@@ -19,7 +19,7 @@
 Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. CR-018 belongs to the PCAP group and is listed there.
 
 - [x] <!--B:MS-001-->MS-001: OpenSearch role mapping wiped on every start (root cause of Chain 11)
-- [ ] <!--B:CR-003-->CR-003: OpenSearch Dashboards open to the LAN with all_access
+- [x] <!--B:CR-003-->CR-003: OpenSearch Dashboards open to the LAN with all_access
 - [ ] <!--B:CR-021-->CR-021: Arkime viewer on :8005 with a forgeable admin token
 - [ ] <!--B:CR-022-->CR-022: Grafana without NetTap login, anonymous viewer, admin/nettap
 - [ ] <!--B:CR-002-->CR-002: Emergency prune deletes every OpenSearch index
@@ -40,6 +40,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 |------|-------|--------------|-------|
 | 2026-10-30 | CR-007, CR-165, CR-166, CR-167, CR-212, CR-247 | Fixed as part of DHCP gateway mode (PR #145) | pytest 2315, vitest 1942 |
 | 2026-10-30 | MS-001 (NET-113) | opensearch gets Malcolm's 8 ROLE_* vars, so its own startup builds and pushes the full role mapping; deploy-malcolm.sh waits for that push instead of overwriting it; fix-opensearch.sh writes the minimal mapping only on an old container. Device check pending (Chain 21) | bats: 2 new deploy + 1 new compose test, fail without the fix |
+| 2026-10-30 | CR-003 | NET-114: /dashboards/ needs a NetTap login (nginx auth_request to /api/auth/me); nginx sets X-Forwarded-User/Roles from the session and drops the client's. Still open: direct container access to dashboards:5601 and OpenSearch :9200 with spoofed headers | vitest +2, bats +3 (new test_nginx_conf.bats), fail without the fix |
 <!--LOG-->
 
 ## All findings
@@ -50,7 +51,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 |------|----|------|----------|---------|--------|
 | ☐ | CR-001 | daemon-core | `daemon/storage/manager.py:108` | PCAP cleanup never deletes anything: wrong path, read-only mount, top-level glob only | Open |
 | ☐ | CR-002 | daemon-core | `daemon/storage/manager.py:462` | Emergency prune deletes every OpenSearch index, today's live index included, and repeats every cycle | Open |
-| ☐ | CR-003 | malcolm-stack, scripts-infra, security-crosscut | `docker/nginx.conf:187` | OpenSearch Dashboards is published on :443 with no authentication and all_access backend credentials | Open |
+| ✅ | CR-003 | malcolm-stack, scripts-infra, security-crosscut | `docker/nginx.conf:187` | OpenSearch Dashboards is published on :443 with no authentication and all_access backend credentials | Fixed (batch 1) |
 | ☐ | CR-004 | contracts-integration, daemon-api-A, daemon-services-A, web-pages-A, web-server | `web/src/routes/setup/+page.svelte:368 (+4)` | Wizard 'Verify Configuration' creates the live bridge, and reports success only when creation failed | Open |
 | ✅ | MS-001 | malcolm-stack | `docker/docker-compose.yml:98` | OpenSearch lacks ROLE_ADMIN, so every container start wipes the role mapping and pushes the empty one | Fixed (batch 1) |
 | ☐ | MS-002 | malcolm-stack | `docker/docker-compose.yml:694` | Full-time PCAP capture has no retention; emergency prune then deletes all OpenSearch data | Open |
