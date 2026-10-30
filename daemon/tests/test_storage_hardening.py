@@ -13,10 +13,8 @@ Covers:
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager

@@ -13,7 +13,6 @@ import logging
 from aiohttp import web
 
 from services.live_connections import LiveConnectionTracker
-from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.live")
 

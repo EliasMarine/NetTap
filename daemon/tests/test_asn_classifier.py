@@ -9,7 +9,6 @@ categories in ASN_CATEGORY_MAP.
 import os
 import sys
 
-import pytest
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
