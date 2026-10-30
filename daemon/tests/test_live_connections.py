@@ -255,5 +255,41 @@ class TestLiveConnectionTracker(unittest.TestCase):
         self.assertEqual(conns[1]["source_ip"], "10.0.0.1")
 
 
+class TestLiveDashboardQueries(unittest.TestCase):
+    """Query shapes for fetch_dashboard_data's two searches."""
+
+    def _run_dashboard(self, alert_keys=()):
+        client = MagicMock()
+        conn_result = {
+            "hits": {
+                "total": {"value": 1},
+                "hits": [{"_source": _make_opensearch_hit("10.0.0.5", "1.2.3.4")}],
+            },
+            "aggregations": {},
+        }
+        alert_result = {
+            "aggregations": {
+                "alert_pairs": {"buckets": [{"key": k} for k in alert_keys]}
+            }
+        }
+        client.search.side_effect = [conn_result, alert_result]
+        result = LiveConnectionTracker(client=client).fetch_dashboard_data()
+        bodies = [c.kwargs["body"] for c in client.search.call_args_list]
+        return result, bodies
+
+    def test_alert_pair_script_reads_keyword_fields(self):
+        """doc['source.ip'] is a text field; the script must use .keyword."""
+        _, (_, alert_body) = self._run_dashboard()
+        script = alert_body["aggs"]["alert_pairs"]["terms"]["script"]["source"]
+        self.assertIn("doc['source.ip.keyword']", script)
+        self.assertIn("doc['destination.ip.keyword']", script)
+        self.assertNotIn("doc['source.ip']", script)
+        self.assertNotIn("doc['destination.ip']", script)
+
+    def test_alert_pair_flags_matching_connection(self):
+        result, _ = self._run_dashboard(alert_keys=["1.2.3.4>10.0.0.5"])
+        self.assertTrue(result["connections"][0]["has_alert"])
+
+
 if __name__ == "__main__":
     unittest.main()

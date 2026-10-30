@@ -515,14 +515,29 @@ class LiveConnectionTracker:
             "aggs": {
                 "alert_pairs": {
                     "terms": {
+                        # OLD CODE START — doc['source.ip'] is a text field, so
+                        # OpenSearch 400'd this agg and alert flags never showed
+                        # "script": {
+                        #     "source": (
+                        #         "def s = doc.containsKey('source.ip') "
+                        #         "&& doc['source.ip'].size()>0 "
+                        #         "? doc['source.ip'].value : ''; "
+                        #         "def d = doc.containsKey('destination.ip') "
+                        #         "&& doc['destination.ip'].size()>0 "
+                        #         "? doc['destination.ip'].value : ''; "
+                        #         "return s + '>' + d"
+                        #     ),
+                        #     "lang": "painless",
+                        # },
+                        # OLD CODE END
                         "script": {
                             "source": (
-                                "def s = doc.containsKey('source.ip') "
-                                "&& doc['source.ip'].size()>0 "
-                                "? doc['source.ip'].value : ''; "
-                                "def d = doc.containsKey('destination.ip') "
-                                "&& doc['destination.ip'].size()>0 "
-                                "? doc['destination.ip'].value : ''; "
+                                "def s = doc.containsKey('source.ip.keyword') "
+                                "&& doc['source.ip.keyword'].size()>0 "
+                                "? doc['source.ip.keyword'].value : ''; "
+                                "def d = doc.containsKey('destination.ip.keyword') "
+                                "&& doc['destination.ip.keyword'].size()>0 "
+                                "? doc['destination.ip.keyword'].value : ''; "
                                 "return s + '>' + d"
                             ),
                             "lang": "painless",
