@@ -1,6 +1,6 @@
 # Code Review Fix Tracker (review of 2026-10-30)
 
-**Progress:** <!--P-->12 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->5/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
+**Progress:** <!--P-->16 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->3/6<!--/CRITICAL--> · HIGH <!--HIGH-->8/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
 
 **Findings:** `docs/reviews/2026-10-30-code-review.md` ([PR #146](https://github.com/EliasMarine/NetTap/pull/146)). The detail and recommended fix for each ID are there.  
 **Linear:** NET-112 (umbrella).  
@@ -27,11 +27,11 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 - [ ] <!--B:CR-018-->CR-018: Capture stop flag at 95% has no effect
 - [ ] <!--B:CR-020-->CR-020: Two full-PCAP writers fill the disk
 - [ ] <!--B:MS-002-->MS-002: Full-time PCAP has no retention
-- [ ] <!--B:CR-004-->CR-004: Wizard 'Verify' builds the live bridge
+- [x] <!--B:CR-004-->CR-004: Wizard 'Verify' builds the live bridge
 - [x] <!--B:CR-025-->CR-025: nettap.service runs compose down on stop
-- [ ] <!--B:CR-034-->CR-034: Login has no effective rate limit
-- [ ] <!--B:CR-017-->CR-017: Generated ISM policies never manage a real index
-- [ ] <!--B:CR-038-->CR-038: Static ISM policy matches no real index
+- [x] <!--B:CR-034-->CR-034: Login has no effective rate limit
+- [x] <!--B:CR-017-->CR-017: Generated ISM policies never manage a real index
+- [x] <!--B:CR-038-->CR-038: Static ISM policy matches no real index
 - [x] <!--B:LD-001-->LD-001: Daemon boot units are never enabled
 
 ## Fix log
@@ -44,6 +44,9 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | 2026-10-30 | CR-021, CR-022 | NET-115: ARKIME_SECRET and GRAFANA_ADMIN_PASSWORD required in compose (no public fallback); malcolm-config.sh adds missing secrets to an existing .env; Arkime viewer pinned to 127.0.0.1; /grafana/ behind NetTap login (anonymous Viewer kept behind the gate). Device: deploy script must add .env keys first and reset Grafana's stored admin password | bats +6 (compose 2, nginx 1, malcolm-config 3; 5 fail without the fix, 1 guards existing secrets) |
 | 2026-10-30 | CR-025 | NET-116: nettap.service ExecStop uses 'docker compose stop' instead of 'down', so reboots keep containers. Device: the deploy script rewrites the installed unit. Not done: capture containers still depend on daemon health | bats +1 (new test_install.bats), fails without the fix |
 | 2026-10-30 | LD-001 | NET-117: bridge/mirror wants/ links use the relative target ../<unit> via replace_symlink() | pytest +2 (fail without the fix), 49 passed; ruff clean |
+| 2026-10-30 | CR-004 | NET-118: wizard Verify calls the read-only /api/setup/bridge/preview; mock with ready:true removed; in-use ports refused | pytest +6, vitest +4 (9 fail without the fix) |
+| 2026-10-30 | CR-034 | NET-119: shared attemptLogin for form + API: 5/min per client IP via ADDRESS_HEADER x-real-ip, per-username backoff lock, dummy hash for unknown names | vitest +3 files, bats +1 (fail without the fix) |
+| 2026-10-30 | CR-017, CR-038 | NET-120: one generated nettap-hot-policy for arkime_sessions3-*/malcolm_beats_*/zeek-*, attached via _ism/add + change_policy; static file no longer applied | pytest +10, bats +3 (fail without the fix) |
 <!--LOG-->
 
 ## Found while fixing
@@ -53,6 +56,8 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ID | Where | Problem | Status |
 |----|-------|---------|--------|
 | NEW-001 | `tests/scripts/test_malcolm_config.bats` | `_source_malcolm_config` turns `set -e` off, so a failing assertion never fails a test: nearly every test in the file passes whatever the code does. Its `generate_compose_env` tests also never create `docker/`, so the function never writes the file they check. The CR-021/CR-022 tests turn `set -e` back on; the older tests still need the same fix. | Open |
+| NEW-002 | `daemon/api/setup.py` `handle_bridge_create` (Go Live) | Go Live's bridge create has no in-use check, and Verify can be skipped: after a skip Go Live uses NICs saved by an earlier Verify or falls back to `eth0`/`eth1`. Found while fixing CR-004; reuse `_nic_in_use_problem` there. | Open |
+| NEW-003 | Storage settings UI | Since CR-017/CR-038 all OpenSearch network data follows `hot_days`; the warm and cold day settings no longer affect any OpenSearch index, but the UI still offers them. | Open |
 
 ## All findings
 
@@ -63,7 +68,7 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ☐ | CR-001 | daemon-core | `daemon/storage/manager.py:108` | PCAP cleanup never deletes anything: wrong path, read-only mount, top-level glob only | Open |
 | ☐ | CR-002 | daemon-core | `daemon/storage/manager.py:462` | Emergency prune deletes every OpenSearch index, today's live index included, and repeats every cycle | Open |
 | ✅ | CR-003 | malcolm-stack, scripts-infra, security-crosscut | `docker/nginx.conf:187` | OpenSearch Dashboards is published on :443 with no authentication and all_access backend credentials | Fixed (batch 1) |
-| ☐ | CR-004 | contracts-integration, daemon-api-A, daemon-services-A, web-pages-A, web-server | `web/src/routes/setup/+page.svelte:368 (+4)` | Wizard 'Verify Configuration' creates the live bridge, and reports success only when creation failed | Open |
+| ✅ | CR-004 | contracts-integration, daemon-api-A, daemon-services-A, web-pages-A, web-server | `web/src/routes/setup/+page.svelte:368 (+4)` | Wizard 'Verify Configuration' creates the live bridge, and reports success only when creation failed | Fixed (batch 1) |
 | ✅ | MS-001 | malcolm-stack | `docker/docker-compose.yml:98` | OpenSearch lacks ROLE_ADMIN, so every container start wipes the role mapping and pushes the empty one | Fixed (batch 1) |
 | ☐ | MS-002 | malcolm-stack | `docker/docker-compose.yml:694` | Full-time PCAP capture has no retention; emergency prune then deletes all OpenSearch data | Open |
 
@@ -83,7 +88,7 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ☐ | CR-014 | daemon-services-B | `daemon/services/device_registry.py:395` | The nettap-devices registry is never populated: no production code calls register_device or any enrich_* method | Open |
 | ☐ | CR-015 | daemon-services-C | `daemon/services/notification_hub.py:473` | Routing rules never fire: process_event has no caller | Open |
 | ☐ | CR-016 | daemon-services-C | `daemon/services/threat_detection.py:143` | Beaconing detection checks only 300 pairs and can exceed max_buckets, then silently returns no beacons | Open |
-| ☐ | CR-017 | daemon-core | `daemon/storage/ilm_generator.py:109` | Generated ISM policies never manage a real index, so age-based retention never runs | Open |
+| ✅ | CR-017 | daemon-core | `daemon/storage/ilm_generator.py:109` | Generated ISM policies never manage a real index, so age-based retention never runs | Fixed (batch 1) |
 | ☐ | CR-018 | daemon-core | `daemon/storage/manager.py:109` | Writing the capture stop flag at 95% has no effect | Open |
 | ☐ | CR-019 | gap-pass, malcolm-stack | `docker/docker-compose.yml:290` | Filebeat mounts the Zeek and Suricata log volumes read-only, so their logs are never pruned | Open |
 | ☐ | CR-020 | gap-pass | `docker/docker-compose.yml:509` | Two full-PCAP writers fill the disk; Arkime keeps it at 85-90% and the daemon's 'stop capture' flag is never read | Open |
@@ -100,10 +105,10 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ☐ | CR-031 | web-pages-A, web-server | `web/src/routes/api/notifications/config/+server.ts:43 (+1)` | Saving notification settings reports success but discards everything | Open |
 | ☐ | CR-032 | web-pages-C | `web/src/routes/compliance/+page.svelte:431` | Security Posture shows grade A / 100% 'excellent' when its data fails to load | Open |
 | ☐ | CR-033 | web-pages-A | `web/src/routes/go-live/+page.svelte:45` | Go Live falls back to eth0/eth1, and the wizard never stores the real NIC names on success | Open |
-| ☐ | CR-034 | security-crosscut, web-pages-A, web-server | `web/src/routes/login/+page.server.ts:7` | Login form action has no rate limit; the only limiter is unused and keyed on nginx's IP | Open |
+| ✅ | CR-034 | security-crosscut, web-pages-A, web-server | `web/src/routes/login/+page.server.ts:7` | Login form action has no rate limit; the only limiter is unused and keyed on nginx's IP | Fixed (batch 1) |
 | ☐ | CR-035 | web-pages-B | `web/src/routes/system/updates/+page.svelte:282` | Apply Updates shows "Update Complete" after the 10 s proxy timeout while the update is still running | Open |
 | ☐ | CR-036 | web-pages-C | `web/src/routes/threats/+page.svelte:145` | Threats page shows a clean 'no threats' report when the threat analysis fails | Open |
-| ☐ | CR-038 | malcolm-stack, scripts-infra | `config/opensearch/ilm-policy.json:92 (+1)` | ISM policies match no real index and use rollover without an alias, so tiered retention never applies | Open |
+| ✅ | CR-038 | malcolm-stack, scripts-infra | `config/opensearch/ilm-policy.json:92 (+1)` | ISM policies match no real index and use rollover without an alias, so tiered retention never applies | Fixed (batch 1) |
 | ✅ | LD-001 | lead (DHCP design recon) | `daemon/services/bridge_manager.py:635 (+1)` | Boot units written by the daemon are never enabled: the wants/ symlinks point at the container path | Fixed (batch 1) |
 | ☐ | MS-003 | malcolm-stack | `docker/docker-compose.yml:473` | A disabled packet-capture setting is turned back on at every boot | Open |
 | ☐ | MS-004 | malcolm-stack | `docker/docker-compose.yml:518` | arkime-live has no curlrc mount, so it hangs forever and never captures or initialises the DB | Open |
