@@ -111,6 +111,18 @@ services:
       indices.query.bool.max_clause_count: "8192"
       path.repo: "/opt/opensearch/backup"
       logger.level: "WARN"
+      # Malcolm rebuilds roles_mapping.yml from these on every start and drops
+      # any entry whose role is empty. Without them only _meta survived and
+      # malcolm_internal got 403 after every restart (MS-001, Chain 11).
+      # Values from Malcolm's config/auth-common.env.example.
+      ROLE_ADMIN: "admin"
+      ROLE_CAPTURE_SERVICE: "capture_service"
+      ROLE_READ_ACCESS: "read_access"
+      ROLE_READ_WRITE_ACCESS: "read_write_access"
+      ROLE_DASHBOARDS_READ_ACCESS: "dashboards_read_access"
+      ROLE_DASHBOARDS_READ_ALL_APPS_ACCESS: "dashboards_read_all_apps_access"
+      ROLE_DASHBOARDS_READ_WRITE_ACCESS: "dashboards_read_write_access"
+      ROLE_DASHBOARDS_READ_WRITE_ALL_APPS_ACCESS: "dashboards_read_write_all_apps_access"
     ulimits:
       memlock:
         soft: -1

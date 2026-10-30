@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-16
+> **Last updated:** 2026-10-30 (Chain 21: root cause of the OpenSearch 403s found, MS-001; not yet verified on the device)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -46,7 +46,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
 | Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
-| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). |
+| Logstash startup | **FRAGILE (fix pending device check)** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). Chain 21 (MS-001) removes the cause: OpenSearch now gets `ROLE_*`. |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
@@ -58,7 +58,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **20 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **21 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -219,6 +219,21 @@ CHAIN 20: Daemon API open to the whole LAN (fix/pr110-review, into PR #110)
   Only nettap-web mounts it read-only, and daemonFetch sends it. There is no loopback
   exemption, because the host-networked Zeek/Suricata/Arkime containers share loopback.
   Side effect: any script that curls :8880 directly now needs the token (see Known Risks).
+
+CHAIN 21: Real root cause of the OpenSearch 403s (fix/code-review-batch-1, review MS-001)
+  Chains 1, 11 and 15-Fix-5 treated the symptom. Malcolm's OpenSearch image runs
+  setup-internal-users.sh on EVERY start: it envsubsts roles_mapping.yml.orig ($ROLE_ADMIN,
+  $ROLE_CAPTURE_SERVICE, ...) and deletes any entry with an empty role. NetTap's opensearch
+  service set no ROLE_*, so every entry was deleted and only `_meta` was left. setup-post-start.sh
+  then pushed that empty mapping with securityadmin.sh. So the mapping was not "reverting to
+  the image default" on recreate: it was rebuilt empty and re-pushed on every start, plain
+  restarts included, and the manual bootstrap raced that push.
+  Fix: set the eight ROLE_* the mapping uses on the opensearch service (values from Malcolm's
+  config/auth-common.env.example). deploy-malcolm.sh no longer writes roles_mapping.yml; it
+  waits up to 60 s for Malcolm's own push and only runs securityadmin.sh itself as a fallback.
+  fix-opensearch.sh writes the minimal mapping only on a container without ROLE_ADMIN.
+  Verify on the device: `sudo docker restart nettap-opensearch`, wait for healthy, then
+  CLAUDE.md bootstrap Step 4 must return cluster health with no bootstrap run.
 ```
 
 ---
@@ -1027,7 +1042,7 @@ Added missing environment variables and fixed healthcheck endpoints in `docker/d
 | Field | Value |
 |---|---|
 | **Linear** | Not yet filed (manual fix applied) |
-| **Status** | Workaround applied; needs automation |
+| **Status** | Root cause found and fixed in Chain 21 (MS-001); device check pending |
 | **Severity** | High |
 | **Date** | 2026-03-03 |
 
@@ -1061,6 +1076,8 @@ docker compose up --force-recreate
 3. Restart logstash
 
 **TODO:** Automate this — add a startup script or init container that checks if `malcolm_internal` can authenticate AND authorize, and re-runs `securityadmin.sh` if not. This should be part of `deploy-malcolm.sh` or a dedicated healthcheck.
+
+**Update 2026-10-30:** the causal chain above is wrong at its first step. The file is not reset to an image default: Malcolm rebuilds it from `ROLE_*` env on every start, and with no `ROLE_*` set it comes out empty. See Chain 21.
 
 **Key Insight:** `--force-recreate` resets container filesystems but NOT named volumes. Security config lives in TWO places: the config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These can get out of sync. The security plugin reads from the index, not the files — so the files must be pushed to the index via `securityadmin.sh` after any container recreation.
 
@@ -1538,7 +1555,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 3. **Malcolm's security plugin has 2 layers** — `internal_users.yml` (auth) + `roles_mapping.yml` (authz). Both must be configured AND pushed via `securityadmin.sh`.
 4. **Fresh deployments have circular template dependencies** — must bootstrap templates before logstash starts.
 41. **`--force-recreate` resets container filesystems but NOT volumes** — security config lives in TWO places: config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These get out of sync. Must re-run `securityadmin.sh` after any `--force-recreate` that touches OpenSearch.
-42. **`roles_mapping.yml` is dynamically generated, not in git** — `deploy-malcolm.sh` writes it at deploy time. The image default is empty (just `_meta` header). If the container is recreated without running the deploy script, all service accounts lose authorization (403 on everything).
+42. **`roles_mapping.yml` is dynamically generated, not in git** — `deploy-malcolm.sh` writes it at deploy time. The image default is empty (just `_meta` header). If the container is recreated without running the deploy script, all service accounts lose authorization (403 on everything). **Corrected by lesson 102.**
 
 ### Docker / Container Gotchas
 5. **`su` failing silently (exit 0)** is extremely hard to debug — the process simply never starts.
@@ -1670,6 +1687,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
 100. **Same trap, worse outcome: `data/` hid `daemon/data/oui_database.json` (Chain 19)** — the file existed on the dev machine, so nothing failed locally. Unanchored `.gitignore` directory rules match at every depth. Prefer an explicit allowlist (`!/daemon/data/`, `/daemon/data/*`, `!/daemon/data/<file>`) over `git add -f`, which leaves the rule in place, so the next new file in that folder is hidden too. Run tests from a clean `git archive` export to catch files that only exist locally.
 101. **`network_mode: host` publishes every listening port to the LAN (Chain 20)** — `ports:` no longer applies, so a server bound to 0.0.0.0 is open to every device on the network. Treat a move to host networking as a new public endpoint: add auth first. Loopback is not a trust boundary either, because every other host-networked container shares it.
+102. **Read the image's entrypoint before writing a workaround (Chain 21)** — Malcolm's OpenSearch builds `roles_mapping.yml` from `ROLE_*` env on every start and pushes it. The 403s came from the missing env, not from a file "reverting". Months of manual bootstraps raced that push. When a Malcolm file keeps going back, find the script that writes it and give it the env it expects.
 
 ---
 
@@ -1689,12 +1707,12 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
 | Older `scripts/remote/*.sh` curl `:8880` without the token (Chain 20) | They now get 401 and look like a daemon outage | Before reusing one, read the token first: `TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)`, then `curl -H "X-NetTap-Daemon-Token: $TOKEN" ...`. Never print the token. |
 | `daemon-auth` volume mounted inside the daemon's `/var/run` tmpfs | If mount order differs on the device, the daemon can't create the token and the whole API stays locked (web shows daemon errors) | `deploy-pr110-review-fixes.sh` Step 5 checks the token exists in the daemon and web. If it fails, check `docker inspect nettap-storage-daemon` mounts. |
-| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
+| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Fixed at the root by Chain 21 (`ROLE_*` on the opensearch service); device check pending. Until confirmed, check auth after a recreate and run `bash scripts/remote/fix-opensearch.sh` if it fails. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
 | SSL key permissions reset on cert regeneration | nettap-nginx crash-loops with "Permission denied" on key file | After regenerating SSL certs, always `chmod 644` the key file. Document in deployment guide. |
 | Malcolm image updates may add/change file capabilities on binaries | EPERM on exec if file caps exceed bounding set | After Malcolm tag bumps, run `getcap` on capture binaries inside the image. Ensure all file caps are in `cap_add`. Do NOT rely on `setcap -r` to strip caps at runtime — it silently fails on overlay2. |
-| OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | TODO: add post-start hook to `nettap.service` or create an init container that runs securityadmin.sh |
+| OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | Not needed after Chain 21: Malcolm's own post-start push now carries the full mapping. Device check pending. |
 | Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
 | TShark filter may not find packets in very old PCAPs | Arkime rotates PCAP files by size (256MB default), older sessions may span files not in the 5-file search window | The auto-analyze heuristic tries 5 closest PCAPs by modified time. For very old connections, manual PCAP search may be needed. Could increase window or improve heuristic later. |
 | Suricata alert exclusion is hardcoded in logs.py | If event.dataset naming changes in Malcolm upgrade, alerts may leak back into log stats | Check `event.dataset` values after Malcolm version bumps. The `_EXCLUDE_ALERTS_FILTER` constant uses `{"term": {"event.dataset": "alert"}}`. |

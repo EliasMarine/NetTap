@@ -612,6 +612,25 @@ print('All services use restart: unless-stopped')
     grep -q '127.0.0.1:9200:9200' "$COMPOSE_FILE"
 }
 
+@test "compose: opensearch sets every ROLE_* its role mapping uses (MS-001)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Malcolm's setup-internal-users.sh envsubsts roles_mapping.yml.orig and
+    # deletes any entry with an empty role. These are every $ROLE_* it uses.
+    run _compose_query "
+env = data['services']['opensearch']['environment']
+assert env.get('ROLE_ADMIN') == 'admin', 'ROLE_ADMIN must be admin (malcolm_internal backend role)'
+for key in ('ROLE_CAPTURE_SERVICE', 'ROLE_READ_ACCESS', 'ROLE_READ_WRITE_ACCESS',
+            'ROLE_DASHBOARDS_READ_ACCESS', 'ROLE_DASHBOARDS_READ_ALL_APPS_ACCESS',
+            'ROLE_DASHBOARDS_READ_WRITE_ACCESS', 'ROLE_DASHBOARDS_READ_WRITE_ALL_APPS_ACCESS'):
+    assert env.get(key), key + ' must be set'
+print('opensearch roles: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
 # ==========================================================================
 # Capture settings from the daemon (DHCP gateway / mirror mode)
 # ==========================================================================

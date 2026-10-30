@@ -7,8 +7,16 @@ COMPOSE="docker/docker-compose.yml"
 echo "=== Fix OpenSearch Security Bootstrap ==="
 echo ""
 
-echo "→ Step 1: Write roles_mapping.yml..."
-sudo docker exec nettap-opensearch bash -c 'cat > /usr/share/opensearch/config/opensearch-security/roles_mapping.yml <<YAMLEOF
+echo "→ Step 1: Check roles_mapping.yml..."
+# Since MS-001 the compose file sets ROLE_*, and Malcolm builds the full
+# mapping itself on every start. Only an older container needs the minimal one.
+if sudo docker exec nettap-opensearch printenv ROLE_ADMIN >/dev/null 2>&1; then
+    echo "   ✓ ROLE_ADMIN is set: OpenSearch built roles_mapping.yml itself"
+else
+    echo "   ! ROLE_ADMIN is missing: this container predates the MS-001 fix."
+    echo "     Writing the minimal mapping now. To fix it for good, recreate it once:"
+    echo "     sudo docker compose -f $COMPOSE up -d opensearch"
+    sudo docker exec nettap-opensearch bash -c 'cat > /usr/share/opensearch/config/opensearch-security/roles_mapping.yml <<YAMLEOF
 ---
 _meta:
   type: "rolesmapping"
@@ -20,7 +28,8 @@ all_access:
     - "admin"
   description: "Maps admin backend role to all_access"
 YAMLEOF'
-echo "   ✓ roles_mapping.yml written"
+    echo "   ✓ roles_mapping.yml written"
+fi
 echo ""
 
 echo "→ Step 2: Push security config to OpenSearch..."

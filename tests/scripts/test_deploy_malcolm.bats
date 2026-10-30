@@ -379,10 +379,30 @@ print('OK: all actions have retry config')
     grep -q "^bootstrap_opensearch_security()" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
 }
 
-@test "deploy: bootstrap writes roles_mapping.yml with all_access mapping" {
-    grep -q "all_access" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
-    grep -q "admin" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
-    grep -q "roles_mapping.yml" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+# OLD CODE START — replaced 2026-10-30 (MS-001): the bootstrap no longer writes
+# roles_mapping.yml; OpenSearch builds it from ROLE_* on every start.
+# @test "deploy: bootstrap writes roles_mapping.yml with all_access mapping" {
+#     grep -q "all_access" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+#     grep -q "admin" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+#     grep -q "roles_mapping.yml" "${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+# }
+# OLD CODE END
+
+@test "deploy: bootstrap never overwrites roles_mapping.yml (MS-001)" {
+    # A minimal mapping written here would race Malcolm's push of the full one.
+    run bash -c "grep -v '^[[:space:]]*#' '${REPO_ROOT}/scripts/install/deploy-malcolm.sh' | grep -q \"roles_mapping.yml','w'\""
+    [ "$status" -ne 0 ]
+}
+
+@test "deploy: bootstrap waits for OpenSearch's own security push first" {
+    local fn
+    fn=$(sed -n '/^bootstrap_opensearch_security()/,/^}/p' "${REPO_ROOT}/scripts/install/deploy-malcolm.sh")
+    local wait_line push_line
+    wait_line=$(echo "$fn" | grep -n "_opensearch_auth_ok" | head -1 | cut -d: -f1)
+    push_line=$(echo "$fn" | grep -n "securityadmin.sh" | grep -v '^[0-9]*:[[:space:]]*#' | head -1 | cut -d: -f1)
+    [ -n "$wait_line" ]
+    [ -n "$push_line" ]
+    [ "$wait_line" -lt "$push_line" ]
 }
 
 @test "deploy: bootstrap runs securityadmin.sh with admin certs" {
