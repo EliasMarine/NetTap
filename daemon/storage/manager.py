@@ -682,12 +682,12 @@ class StorageManager:
         stat'ed (capture rotation) are skipped.
         """
         pcap_dir = Path(self.config.pcap_dir)
-        if not pcap_dir.exists():
-            logger.debug("PCAP directory %s does not exist", pcap_dir)
-            return []
-
         found: list[tuple[Path, os.stat_result]] = []
         try:
+            # exists() raises on EACCES; run_cycle calls this every cycle
+            if not pcap_dir.exists():
+                logger.debug("PCAP directory %s does not exist", pcap_dir)
+                return []
             for pcap_file in pcap_dir.rglob("*.pcap"):
                 try:
                     found.append((pcap_file, pcap_file.stat()))
@@ -705,6 +705,31 @@ class StorageManager:
         for ext in (".xxh3", ".sha256"):
             (pcap_file.parent / f"{pcap_file.name}{ext}").unlink(missing_ok=True)
         pcap_file.unlink()
+
+    def prune_expired_pcaps(self) -> int:
+        """Delete PCAP older than ``cold_days``, whatever the disk usage (MS-002).
+
+        Returns the number of PCAP files deleted.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.cold_days)
+        deleted = 0
+        with self._cleanup_lock:
+            for pcap_file, stat in self._pcaps_oldest_first():
+                if stat.st_mtime >= cutoff.timestamp():
+                    break  # oldest first: the rest are newer
+                try:
+                    self._unlink_pcap(pcap_file)
+                    deleted += 1
+                except OSError as exc:
+                    logger.error("Failed to delete expired PCAP %s: %s", pcap_file, exc)
+
+        if deleted:
+            logger.info(
+                "Deleted %d PCAP files older than %d days",
+                deleted,
+                self.config.cold_days,
+            )
+        return deleted
 
     def _delete_oldest_pcaps(self, max_delete: int = 10) -> int:
         """Delete the oldest PCAP files until usage is below the emergency threshold.
@@ -1498,6 +1523,7 @@ class StorageManager:
 
         Decision flow:
           1. Verify ILM policies on first run (C3)
+          1b. Delete PCAP older than cold_days (MS-002)
           2. Check current disk usage and record for trending (C1)
           3. If above critical_threshold (95%) -> cascade with capture stop (C2)
           4. Elif above emergency_threshold (90%) -> cascade deletion (C2)
@@ -1511,6 +1537,9 @@ class StorageManager:
                 self.verify_ilm_policy()
             except Exception:
                 logger.exception("ILM policy verification failed on startup")
+
+        # MS-002: age-based PCAP retention, before usage is measured
+        self.prune_expired_pcaps()
 
         try:
             usage = self.check_disk_usage()

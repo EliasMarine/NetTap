@@ -556,6 +556,11 @@ services:
       # ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
       # OLD CODE END
       ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:?set ARKIME_SECRET in docker/.env (scripts/install/malcolm-config.sh adds it)}"
+      # CR-020/MS-002: one PCAP writer. The entrypoint seds this into
+      # pcapWriteMethod; Arkime's "null" method writes no PCAP to disk but
+      # still indexes sessions. netsniff in pcap-capture is the only writer,
+      # and it is what the UI's capture toggle and file-size setting control.
+      ARKIME_PCAP_WRITE_METHOD: "null"
       MANAGE_PCAP_FILES: "false"
       MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config

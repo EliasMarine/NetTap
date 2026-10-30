@@ -739,3 +739,17 @@ print('pcap mount: OK')
 "
     [ "$status" -eq 0 ]
 }
+
+@test "compose: netsniff is the only PCAP writer (CR-020, MS-002)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+arkime = data['services']['arkime-live']['environment']
+assert arkime.get('ARKIME_PCAP_WRITE_METHOD') == 'null', 'Arkime must not write PCAP: ' + repr(arkime.get('ARKIME_PCAP_WRITE_METHOD'))
+assert data['services']['pcap-capture']['environment']['PCAP_ENABLE_NETSNIFF'] == 'true'
+print('pcap writer: OK')
+"
+    [ "$status" -eq 0 ]
+}

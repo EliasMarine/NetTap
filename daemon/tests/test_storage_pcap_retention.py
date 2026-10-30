@@ -323,3 +323,40 @@ class TestCaptureResume:
             mgr.run_cycle()
 
         assert mgr.is_capture_stopped()
+
+
+# =========================================================================
+# MS-002: PCAP older than cold_days is deleted every cycle
+# =========================================================================
+
+
+class TestPcapAgeRetention:
+    def test_run_cycle_deletes_expired_pcap_at_low_usage(self, tmp_path):
+        files = _pcap_tree(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, cold_days=30))
+        mgr.check_disk_usage = MagicMock(return_value=0.10)
+        mgr.get_disk_prediction = MagicMock(return_value={})
+
+        mgr.run_cycle()
+
+        assert not files["arkime_old"].exists()
+        assert not files["netsniff_old"].exists()
+        assert files["netsniff_new"].exists()
+
+    def test_keeps_pcap_inside_retention(self, tmp_path):
+        files = _pcap_tree(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, cold_days=38))
+
+        assert mgr.prune_expired_pcaps() == 1
+        assert not files["arkime_old"].exists()
+        assert files["netsniff_old"].exists()
+
+    def test_unlink_failure_is_logged_not_raised(self, tmp_path, caplog):
+        _pcap_tree(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, cold_days=30))
+        mgr._unlink_pcap = MagicMock(side_effect=PermissionError("uid 1000"))
+
+        with caplog.at_level("ERROR", logger="nettap.storage"):
+            assert mgr.prune_expired_pcaps() == 0
+
+        assert sum(r.levelname == "ERROR" for r in caplog.records) == 2
