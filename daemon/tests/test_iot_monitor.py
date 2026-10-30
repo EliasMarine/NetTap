@@ -14,8 +14,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.iot_monitor import (
     IoTMonitor,
-    IOT_OUI_ALWAYS,
-    IOT_OUI_NEVER,
     ANOMALY_NEW_DESTINATION,
     ANOMALY_NEW_COUNTRY,
     ANOMALY_NEW_PORT,

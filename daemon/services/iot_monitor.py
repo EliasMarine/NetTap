@@ -763,7 +763,10 @@ class IoTMonitor:
         # Baseline-derived stats
         if baseline:
             known_dests = set(baseline.get("known_destinations", []))
-            all_dests = set()  # We don't have current destinations here individually,
+            # OLD CODE START — all_dests was assigned but never used (F841)
+            # all_dests = set()  # We don't have current destinations here individually,
+            # OLD CODE END
+            # We don't have current destinations here individually,
             # but dest_ports gives us a proxy. Use known_destinations count ratio.
             known_count = len(known_dests)
             # baseline_adherence: fraction of baseline destinations vs total seen
@@ -1959,7 +1962,9 @@ class IoTMonitor:
         macs = list(devices.keys())
 
         # Build MAC->device info lookup
-        iot_macs = set(macs)
+        # OLD CODE START — iot_macs was assigned but never used (F841)
+        # iot_macs = set(macs)
+        # OLD CODE END
         iot_ips = set()
         for dev in devices.values():
             ip = dev.get("ip")
