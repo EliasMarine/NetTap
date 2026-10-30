@@ -11,7 +11,8 @@ import os
 import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+import subprocess
+from unittest.mock import MagicMock, patch
 
 from storage.manager import RetentionConfig, StorageManager
 from storage.retention_config import RetentionConfigManager
@@ -218,3 +219,107 @@ class TestEmergencyCascadeOrder:
 
         assert mgr.emergency_cascade() == 4
         mgr.prune_emergency.assert_called_once()
+
+
+# =========================================================================
+# CR-018: critical disk really stops pcap-capture, and resumes it
+# =========================================================================
+
+_STOP = ["docker", "stop", "nettap-pcap-capture"]
+_START = ["docker", "start", "nettap-pcap-capture"]
+
+
+def _docker_ok():
+    return MagicMock(returncode=0, stdout="", stderr="")
+
+
+class TestCaptureStop:
+    def test_flag_default_is_on_persistent_storage(self):
+        assert (
+            RetentionConfig().capture_stop_flag
+            == "/opt/nettap/data/storage-stopped-capture"
+        )
+
+    def test_critical_runs_docker_stop_and_sets_flag(self, tmp_path):
+        cfg = _cfg(tmp_path)
+        mgr = _make_manager(cfg)
+        mgr.check_disk_usage = MagicMock(return_value=0.96)
+        mgr.prune_emergency = MagicMock(return_value=0)
+
+        with patch("storage.manager.subprocess.run", return_value=_docker_ok()) as run:
+            mgr.emergency_cascade()
+
+        run.assert_called_once()
+        assert run.call_args.args[0] == _STOP
+        assert run.call_args.kwargs["timeout"] > 0
+        assert not run.call_args.kwargs.get("shell")
+        assert mgr.is_capture_stopped()
+
+    def test_docker_failure_is_logged_and_not_raised(self, tmp_path, caplog):
+        mgr = _make_manager(_cfg(tmp_path))
+        mgr.check_disk_usage = MagicMock(return_value=0.96)
+        mgr.prune_emergency = MagicMock(return_value=0)
+
+        for error in (
+            FileNotFoundError("docker"),
+            subprocess.TimeoutExpired("docker", 60),
+        ):
+            with (
+                patch("storage.manager.subprocess.run", side_effect=error),
+                caplog.at_level("ERROR", logger="nettap.storage"),
+            ):
+                mgr.emergency_cascade()
+
+        failed = _docker_ok()
+        failed.returncode = 1
+        with patch("storage.manager.subprocess.run", return_value=failed):
+            mgr.emergency_cascade()
+
+        # Not recorded as stopped, so the next cycle retries the stop
+        assert not mgr.is_capture_stopped()
+        assert any("docker stop" in r.getMessage() for r in caplog.records)
+
+
+class TestCaptureResume:
+    def _stopped_manager(self, tmp_path, monkeypatch, env_text=""):
+        env = tmp_path / ".env"
+        env.write_text(env_text)
+        monkeypatch.setenv("NETTAP_ENV_FILE", str(env))
+        cfg = _cfg(tmp_path)
+        (tmp_path / "stopped-capture").write_text("stopped\n")
+        mgr = _make_manager(cfg)
+        mgr.get_disk_prediction = MagicMock(return_value={})
+        mgr.prune_oldest_indices = MagicMock(return_value=0)
+        return mgr
+
+    def test_resumes_between_disk_and_resume_threshold(self, tmp_path, monkeypatch):
+        """83% is below resume (85%) though still above the 80% prune line."""
+        mgr = self._stopped_manager(tmp_path, monkeypatch)
+        mgr.check_disk_usage = MagicMock(return_value=0.83)
+
+        with patch("storage.manager.subprocess.run", return_value=_docker_ok()) as run:
+            mgr.run_cycle()
+
+        assert run.call_args.args[0] == _START
+        assert not mgr.is_capture_stopped()
+
+    def test_does_not_start_capture_the_user_turned_off(self, tmp_path, monkeypatch):
+        mgr = self._stopped_manager(
+            tmp_path, monkeypatch, env_text="PCAP_CAPTURE_ENABLED=false\n"
+        )
+        mgr.check_disk_usage = MagicMock(return_value=0.50)
+
+        with patch("storage.manager.subprocess.run") as run:
+            mgr.run_cycle()
+
+        run.assert_not_called()
+        assert not mgr.is_capture_stopped()
+
+    def test_keeps_flag_when_docker_start_fails(self, tmp_path, monkeypatch):
+        mgr = self._stopped_manager(tmp_path, monkeypatch)
+        mgr.check_disk_usage = MagicMock(return_value=0.50)
+
+        with patch("storage.manager.subprocess.run", side_effect=OSError("socket")):
+            mgr.run_cycle()
+
+        assert mgr.is_capture_stopped()

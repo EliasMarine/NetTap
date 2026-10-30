@@ -13,6 +13,7 @@ import os
 import re
 import logging
 import shutil
+import subprocess
 import threading
 from collections import deque
 from dataclasses import dataclass, field
@@ -22,7 +23,16 @@ from typing import Optional
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from api.capture_control import (
+    CONTAINER_NAME as CAPTURE_CONTAINER,
+    DEFAULT_ENV_FILE,
+    _read_capture_config,
+)
+
 logger = logging.getLogger("nettap.storage")
+
+# docker stop waits up to 10 s for a clean exit before killing
+_DOCKER_TIMEOUT_S = 60
 
 # ---------------------------------------------------------------------------
 # OLD CODE START — Original StorageManager (Phase 1 scaffold)
@@ -125,7 +135,12 @@ class RetentionConfig:
     pcap_dir: str = field(
         default_factory=lambda: os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
     )  # Directory containing PCAP files (searched recursively)
-    capture_stop_flag: str = "/tmp/nettap-stop-capture"  # Flag file to stop capture
+    # OLD CODE START — CR-018: /tmp is the daemon's private tmpfs, so the flag
+    # was read by nothing and lost on restart.
+    # capture_stop_flag: str = "/tmp/nettap-stop-capture"  # Flag file to stop capture
+    # OLD CODE END
+    # Set while the storage manager has stopped pcap-capture (nettap-appdata volume)
+    capture_stop_flag: str = "/opt/nettap/data/storage-stopped-capture"
     ilm_policy_path: str = ""  # Path to ILM policy JSON (auto-detected if empty)
 
 
@@ -774,13 +789,68 @@ class StorageManager:
         """Check whether the capture stop flag is currently set."""
         return Path(self.config.capture_stop_flag).exists()
 
+    @staticmethod
+    def _docker_capture(action: str) -> bool:
+        """Run ``docker <action>`` on the PCAP capture container.
+
+        Synchronous because run_cycle runs in an executor thread.  Failures
+        are logged at ERROR and return False; they never raise.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", action, CAPTURE_CONTAINER],
+                capture_output=True,
+                text=True,
+                timeout=_DOCKER_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("docker %s %s failed: %s", action, CAPTURE_CONTAINER, exc)
+            return False
+        if result.returncode != 0:
+            logger.error(
+                "docker %s %s failed (rc=%d): %s",
+                action,
+                CAPTURE_CONTAINER,
+                result.returncode,
+                (result.stdout + result.stderr).strip(),
+            )
+            return False
+        return True
+
+    def _stop_capture(self) -> None:
+        """Stop pcap-capture at critical disk and record that we stopped it."""
+        if self._docker_capture("stop"):
+            self._set_capture_stop_flag()
+
+    def _resume_capture(self) -> None:
+        """Start pcap-capture again unless the user has turned capture off.
+
+        If ``docker start`` fails the flag stays, so the next cycle retries.
+        """
+        env_file = os.environ.get("NETTAP_ENV_FILE", DEFAULT_ENV_FILE)
+        try:
+            enabled = _read_capture_config(env_file)["enabled"]
+        except (OSError, ValueError) as exc:
+            logger.error("Cannot read %s, leaving capture stopped: %s", env_file, exc)
+            return
+        if not enabled:
+            logger.info(
+                "Not starting %s: PCAP capture is turned off in settings",
+                CAPTURE_CONTAINER,
+            )
+        elif not self._docker_capture("start"):
+            return
+        self._clear_capture_stop_flag()
+
     def emergency_cascade(self) -> int:
         """Execute emergency cascade deletion based on disk usage level.
 
         At 90%: delete the oldest PCAPs until usage is below 90%, then
                 prune the oldest OpenSearch indices only if still needed.
-        At 95%: additionally stop PCAP capture via flag file.
-        Below 85%: resume normal operation, clear stop-capture flag.
+        At 95%: additionally ``docker stop`` pcap-capture and set the flag.
+        Below 85%: ``docker start`` it again (if the user has capture on)
+                   and clear the flag.
 
         Returns:
             Total number of items (indices + PCAPs) deleted.
@@ -825,7 +895,10 @@ class StorageManager:
                 usage * 100,
                 self.config.critical_threshold * 100,
             )
-            self._set_capture_stop_flag()
+            # OLD CODE START — CR-018: only wrote a flag file nobody reads
+            # self._set_capture_stop_flag()
+            # OLD CODE END
+            self._stop_capture()
         elif usage >= self.config.emergency_threshold:
             logger.warning(
                 "EMERGENCY: Disk at %.1f%% >= %.1f%% — starting cascade deletion",
@@ -854,7 +927,10 @@ class StorageManager:
                     usage_after * 100,
                     self.config.resume_threshold * 100,
                 )
-                self._clear_capture_stop_flag()
+                # OLD CODE START — CR-018: only removed the flag file
+                # self._clear_capture_stop_flag()
+                # OLD CODE END
+                self._resume_capture()
 
         return total_deleted
 
@@ -1426,7 +1502,7 @@ class StorageManager:
           3. If above critical_threshold (95%) -> cascade with capture stop (C2)
           4. Elif above emergency_threshold (90%) -> cascade deletion (C2)
           5. Elif above disk_threshold (80%) -> ``prune_oldest_indices()``
-          6. Else check if capture can be resumed (C2)
+          6. Below resume_threshold (85%), restart capture we stopped (C2)
           7. Run predictive exhaustion check (C1)
         """
         # C3: Verify ILM policies on first run
@@ -1488,14 +1564,26 @@ class StorageManager:
                 usage * 100,
                 self.config.disk_threshold * 100,
             )
-            # C2: Resume capture if we're below resume threshold
-            if usage < self.config.resume_threshold and self.is_capture_stopped():
-                logger.info(
-                    "Disk at %.1f%% < resume threshold %.1f%% — resuming capture",
-                    usage * 100,
-                    self.config.resume_threshold * 100,
-                )
-                self._clear_capture_stop_flag()
+            # OLD CODE START — CR-018: only removed the flag file, and only
+            # below disk_threshold, so capture stayed off between 80% and 85%
+            # # C2: Resume capture if we're below resume threshold
+            # if usage < self.config.resume_threshold and self.is_capture_stopped():
+            #     logger.info(
+            #         "Disk at %.1f%% < resume threshold %.1f%% — resuming capture",
+            #         usage * 100,
+            #         self.config.resume_threshold * 100,
+            #     )
+            #     self._clear_capture_stop_flag()
+            # OLD CODE END
+
+        # C2: Resume capture if we stopped it and are below resume threshold
+        if usage < self.config.resume_threshold and self.is_capture_stopped():
+            logger.info(
+                "Disk at %.1f%% < resume threshold %.1f%% — resuming capture",
+                usage * 100,
+                self.config.resume_threshold * 100,
+            )
+            self._resume_capture()
 
         # C1: Predictive exhaustion check
         try:

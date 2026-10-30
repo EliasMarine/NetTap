@@ -185,7 +185,7 @@ class TestEmergencyCascade:
             patch.object(mgr, "check_disk_usage", return_value=0.91),
             patch.object(mgr, "prune_emergency", return_value=3) as mock_prune,
             patch.object(mgr, "_delete_oldest_pcaps", return_value=2) as mock_pcap,
-            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "_stop_capture") as mock_stop,
             patch.object(mgr, "is_capture_stopped", return_value=False),
         ):
             deleted = mgr.emergency_cascade()
@@ -205,7 +205,7 @@ class TestEmergencyCascade:
             patch.object(mgr, "check_disk_usage", return_value=0.96),
             patch.object(mgr, "prune_emergency", return_value=5) as mock_prune,
             patch.object(mgr, "_delete_oldest_pcaps", return_value=3) as mock_pcap,
-            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "_stop_capture") as mock_stop,
             patch.object(mgr, "is_capture_stopped", return_value=True),
         ):
             deleted = mgr.emergency_cascade()
@@ -261,8 +261,11 @@ class TestEmergencyCascade:
         assert not mgr.is_capture_stopped()
         assert not flag_file.exists()
 
-    def test_run_cycle_resumes_capture_below_resume_threshold(self, tmp_path):
-        """run_cycle should clear stop flag when disk is below resume threshold."""
+    def test_run_cycle_resumes_capture_below_resume_threshold(
+        self, tmp_path, monkeypatch
+    ):
+        """run_cycle should start capture and clear the flag below resume threshold."""
+        monkeypatch.setenv("NETTAP_ENV_FILE", str(tmp_path / ".env"))
         flag_file = tmp_path / "stop-capture"
         flag_file.write_text("stopped\n")
 
@@ -280,9 +283,12 @@ class TestEmergencyCascade:
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.70),
             patch.object(mgr, "get_disk_prediction", return_value={}),
+            patch("storage.manager.subprocess.run") as mock_run,
         ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             mgr.run_cycle()
 
+        assert mock_run.call_args.args[0] == ["docker", "start", "nettap-pcap-capture"]
         assert not flag_file.exists()
 
 
