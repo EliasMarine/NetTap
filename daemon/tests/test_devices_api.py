@@ -50,6 +50,8 @@ def _device_bucket(
     protocols=None,
     first_seen=None,
     last_seen=None,
+    orig_bytes=None,
+    resp_bytes=None,
 ):
     """Build a single device aggregation bucket."""
     if protocols is None:
@@ -61,6 +63,8 @@ def _device_bucket(
         "protocols": {"buckets": protocols},
         "first_seen": {"value_as_string": first_seen or "2026-02-25T00:00:00.000Z"},
         "last_seen": {"value_as_string": last_seen or "2026-02-25T23:59:59.000Z"},
+        "orig_bytes": {"value": orig_bytes},
+        "resp_bytes": {"value": resp_bytes},
     }
 
 
@@ -200,6 +204,53 @@ class TestDeviceListHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 502)
         data = await resp.json()
         self.assertIn("error", data)
+
+    @unittest_run_loop
+    async def test_device_list_requests_sent_and_received_sums(self):
+        """The devices agg sums source.bytes (sent) and destination.bytes (received)."""
+        self._setup_search_responses(_device_list_response([]))
+
+        resp = await self.client.request("GET", "/api/devices")
+        self.assertEqual(resp.status, 200)
+
+        call_args = self.mock_client.search.call_args_list[0]
+        body = call_args.kwargs.get("body") or call_args[1].get("body")
+        sub_aggs = body["aggs"]["devices"]["aggs"]
+        self.assertEqual(sub_aggs["orig_bytes"], {"sum": {"field": "source.bytes"}})
+        self.assertEqual(
+            sub_aggs["resp_bytes"], {"sum": {"field": "destination.bytes"}}
+        )
+
+    @unittest_run_loop
+    async def test_device_list_returns_sent_and_received_bytes(self):
+        """orig/resp bytes map through exactly; missing or null sums become 0."""
+        missing = _device_bucket("192.168.1.101")
+        del missing["orig_bytes"]
+        del missing["resp_bytes"]
+        self._setup_search_responses(
+            _device_list_response(
+                [
+                    _device_bucket(
+                        "192.168.1.100",
+                        total_bytes=99200,
+                        orig_bytes=1200.0,
+                        resp_bytes=98000.0,
+                    ),
+                    missing,
+                    _device_bucket("192.168.1.102"),  # sums present but null
+                ]
+            )
+        )
+
+        resp = await self.client.request("GET", "/api/devices")
+        self.assertEqual(resp.status, 200)
+        devices = {d["ip"]: d for d in (await resp.json())["devices"]}
+
+        self.assertEqual(devices["192.168.1.100"]["orig_bytes"], 1200)
+        self.assertEqual(devices["192.168.1.100"]["resp_bytes"], 98000)
+        for ip in ("192.168.1.101", "192.168.1.102"):
+            self.assertEqual(devices[ip]["orig_bytes"], 0)
+            self.assertEqual(devices[ip]["resp_bytes"], 0)
 
     @unittest_run_loop
     async def test_device_list_sort_by_connections(self):

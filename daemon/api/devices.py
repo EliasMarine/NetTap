@@ -257,6 +257,9 @@ async def handle_device_list(request: web.Request) -> web.Response:
                             }
                         }
                     },
+                    # Same split as handle_device_detail: sent (orig) vs received (resp)
+                    "orig_bytes": {"sum": {"field": "source.bytes"}},
+                    "resp_bytes": {"sum": {"field": "destination.bytes"}},
                     "protocols": {
                         "terms": {"field": "network.transport.keyword", "size": 10}
                     },
@@ -329,6 +332,8 @@ async def handle_device_list(request: web.Request) -> web.Response:
             continue
 
         total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
+        orig_bytes = int(b.get("orig_bytes", {}).get("value", 0) or 0)
+        resp_bytes = int(b.get("resp_bytes", {}).get("value", 0) or 0)
         connection_count = b.get("doc_count", 0)
         proto_buckets = b.get("protocols", {}).get("buckets", [])
         protocols = [pb["key"] for pb in proto_buckets]
@@ -360,6 +365,8 @@ async def handle_device_list(request: web.Request) -> web.Response:
             "first_seen": first_seen,
             "last_seen": last_seen,
             "total_bytes": total_bytes,
+            "orig_bytes": orig_bytes,
+            "resp_bytes": resp_bytes,
             "connection_count": connection_count,
             "protocols": protocols,
             "alert_count": alert_count,

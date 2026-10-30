@@ -837,8 +837,8 @@
 						{/if}
 						<div class="td-bar-row">
 							<div class="td-split-bar">
-								<div class="td-bar-dl" style="width: {device.total_bytes > 0 ? ((device.orig_bytes ?? device.total_bytes * 0.3) / device.total_bytes) * 100 : 50}%;"></div>
-								<div class="td-bar-ul" style="width: {device.total_bytes > 0 ? ((device.resp_bytes ?? device.total_bytes * 0.7) / device.total_bytes) * 100 : 50}%;"></div>
+								<div class="td-bar-dl" style="width: {device.total_bytes > 0 ? ((device.resp_bytes ?? 0) / device.total_bytes) * 100 : 50}%;"></div>
+								<div class="td-bar-ul" style="width: {device.total_bytes > 0 ? ((device.orig_bytes ?? 0) / device.total_bytes) * 100 : 50}%;"></div>
 							</div>
 						</div>
 					</a>
