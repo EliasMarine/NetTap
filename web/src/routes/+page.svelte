@@ -851,7 +851,7 @@
 		<div class="card table-card">
 			<div class="card-header">
 				<span class="card-title">Alert Summary</span>
-				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.count ?? 0)} total</span>
+				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span>
 			</div>
 			{#if smartAlerts.length > 0}
 				<!-- Severity summary bar -->
