@@ -16,7 +16,10 @@
 		ConnectionTimelineResponse,
 		ConnectionTimelineBucket,
 	} from '$api/traffic';
-	import { getLiveConnections } from '$api/live';
+	// OLD CODE START — getLiveConnections({ limit: 1 }).count is the length of a 1-item list
+	// import { getLiveConnections } from '$api/live';
+	// OLD CODE END
+	import { getLiveDashboard } from '$api/live';
 	import IPAddress from '$components/IPAddress.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type { BarItem } from '$components/HorizontalBarList.svelte';
@@ -291,13 +294,20 @@
 				getConnectionStats({ from, to }),
 				getConnectionSankey({ from, to, limit: 10 }),
 				getConnectionTimeline({ from, to, interval }),
-				getLiveConnections({ limit: 1 }),
+				// OLD CODE START — count of a 1-item list, so "Active Now" was only ever 0 or 1
+				// getLiveConnections({ limit: 1 }),
+				// OLD CODE END
+				getLiveDashboard({ limit: 1 }),
 			]);
 
 			if (statsRes.status === 'fulfilled') stats = statsRes.value;
 			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
 			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
-			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
+			// OLD CODE START
+			// if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
+			// OLD CODE END
+			// Distinct source devices seen in the live window (last 5 minutes)
+			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.stats?.active_devices ?? 0;
 		} catch { /* handled per-request */ }
 
 		await fetchConnections(1);
@@ -461,7 +471,10 @@
 				{activeNow}
 				{#if activeNow > 0}<span class="pulse-dot"></span>{/if}
 			</span>
+			<!-- OLD CODE START — the value is now active devices, not a connection count
 			<span class="stat-label">Active Now</span>
+			OLD CODE END -->
+			<span class="stat-label" title="Devices with traffic in the last 5 minutes">Active Devices</span>
 		</div>
 		<div class="stat-card">
 			<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
