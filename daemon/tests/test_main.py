@@ -110,6 +110,9 @@ class TestLoadConfig:
             "LOG_LEVEL",
         ):
             monkeypatch.delenv(var, raising=False)
+        # SMART_DEVICE falls back to auto-detect; hide host disks (CI runners have
+        # /dev/sda) so the documented /dev/nvme0n1 default is what gets asserted.
+        monkeypatch.setattr("smart.monitor.globmod.glob", lambda pattern: [])
 
         cfg = load_config()
 
