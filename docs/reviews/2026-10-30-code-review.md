@@ -24,7 +24,7 @@
 | 5 | CR-004 | Wizard "Verify Configuration" builds and persists the live bridge, can cut off the management NIC, and reports success only when creation failed. |
 | 6 | CR-025 | nettap.service runs `docker compose down` on stop, so every reboot recreates OpenSearch (and, with MS-001, breaks auth). |
 | 7 | CR-034 | Login form has no effective rate limit. |
-| 8 | CR-018, CR-038 | Age-based retention never runs: ISM policies match no real index. |
+| 8 | CR-017, CR-038 | Age-based retention never runs: ISM policies match no real index. |
 | 9 | LD-001 | Daemon-written boot units are never enabled (dangling symlink target), so bridge mode may be down after a reboot. |
 
 ### Fixed on the DHCP gateway branch
