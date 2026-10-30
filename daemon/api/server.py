@@ -64,6 +64,7 @@ from api.lan_security import register_lan_security_routes
 from api.suricata_rules import register_suricata_rules_routes
 from api.mac_correlation import register_mac_correlation_routes
 from api.pcap import register_pcap_routes
+from api.capture_control import register_capture_control_routes
 from api.backup import register_backup_routes
 from api.threats import register_threat_routes
 from services.tshark_service import TSharkService
@@ -231,6 +232,101 @@ async def handle_storage_prune(request: web.Request) -> web.Response:
         logger.exception("Error during manual prune cycle")
         return web.json_response(
             {"error": f"Prune cycle failed: {exc}"},
+            status=500,
+        )
+
+
+async def handle_cleanup_preview(request: web.Request) -> web.Response:
+    """POST /api/storage/cleanup/preview -- Preview what would be deleted."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "Invalid JSON body"}, status=400
+        )
+
+    older_than_days = body.get("older_than_days")
+    if not isinstance(older_than_days, int) or older_than_days < 1 or older_than_days > 3650:
+        return web.json_response(
+            {"error": "older_than_days must be an integer between 1 and 3650"},
+            status=400,
+        )
+
+    try:
+        storage: StorageManager = request.app["storage"]
+        loop = asyncio.get_running_loop()
+        preview = await loop.run_in_executor(
+            None, storage.preview_cleanup, older_than_days
+        )
+        return web.json_response(preview)
+    except Exception as exc:
+        logger.exception("Error previewing cleanup")
+        return web.json_response(
+            {"error": f"Failed to preview cleanup: {exc}"},
+            status=500,
+        )
+
+
+async def handle_cleanup_execute(request: web.Request) -> web.Response:
+    """POST /api/storage/cleanup/execute -- Execute manual data cleanup."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "Invalid JSON body"}, status=400
+        )
+
+    older_than_days = body.get("older_than_days")
+    if not isinstance(older_than_days, int) or older_than_days < 1 or older_than_days > 3650:
+        return web.json_response(
+            {"error": "older_than_days must be an integer between 1 and 3650"},
+            status=400,
+        )
+
+    try:
+        storage: StorageManager = request.app["storage"]
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, storage.execute_cleanup, older_than_days
+        )
+
+        # Log to changelog if available
+        try:
+            changelog: ChangelogService = request.app.get("changelog_service")
+            if changelog is None:
+                # Find it from the registered services
+                for key, val in request.app.items():
+                    if isinstance(val, ChangelogService):
+                        changelog = val
+                        break
+            if changelog:
+                await loop.run_in_executor(
+                    None,
+                    changelog.log_event,
+                    "storage_pruned",
+                    f"Manual cleanup: deleted data older than {older_than_days} days",
+                    {
+                        "older_than_days": older_than_days,
+                        "deleted_indices": result["deleted_indices"],
+                        "deleted_pcap_files": result["deleted_pcap_files"],
+                        "freed_bytes": result["freed_bytes_estimate"],
+                        "cutoff_date": result["cutoff_date"],
+                        "trigger": "manual",
+                    },
+                )
+        except Exception:
+            logger.warning("Failed to log cleanup to changelog", exc_info=True)
+
+        return web.json_response(result)
+    except RuntimeError as exc:
+        # Lock contention — auto-prune is running
+        return web.json_response(
+            {"error": str(exc)}, status=409
+        )
+    except Exception as exc:
+        logger.exception("Error executing cleanup")
+        return web.json_response(
+            {"error": f"Cleanup failed: {exc}"},
             status=500,
         )
 
@@ -426,6 +522,8 @@ def create_app(
     app.router.add_get("/api/storage/status", handle_storage_status)
     app.router.add_get("/api/storage/retention", handle_storage_retention)
     app.router.add_post("/api/storage/prune", handle_storage_prune)
+    app.router.add_post("/api/storage/cleanup/preview", handle_cleanup_preview)
+    app.router.add_post("/api/storage/cleanup/execute", handle_cleanup_execute)
     app.router.add_get("/api/smart/health", handle_smart_health)
     app.router.add_get("/api/smart/diagnostics", handle_smart_diagnostics)
     app.router.add_post("/api/smart/test", handle_smart_test)
@@ -611,6 +709,7 @@ def create_app(
 
     # Changelog (network event audit log)
     changelog_service = ChangelogService(client=storage._client)
+    app["changelog_service"] = changelog_service
     register_changelog_routes(app, changelog_service)
 
     # Certificate monitor (TLS certificate tracking from Zeek SSL logs)
@@ -647,6 +746,9 @@ def create_app(
     pcap_search_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
     pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
     register_pcap_routes(app, pcap_search_service)
+
+    # Capture control (PCAP collection on/off + file size config)
+    register_capture_control_routes(app, env_file=env_file)
 
     # Config backup/restore (export/import all settings)
     config_backup = ConfigBackup()

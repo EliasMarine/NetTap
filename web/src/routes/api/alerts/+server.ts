@@ -23,6 +23,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (ip) params.set('ip', ip);
 	const signature = url.searchParams.get('signature');
 	if (signature) params.set('signature', signature);
+	const category = url.searchParams.get('category');
+	if (category) params.set('category', category);
 
 	const query = params.toString() ? `?${params.toString()}` : '';
 	const res = await daemonFetch(`/api/alerts${query}`);
