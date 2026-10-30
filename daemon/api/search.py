@@ -10,6 +10,7 @@ import logging
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter
 from services.nl_search import NLSearchParser
 from storage.manager import StorageManager
 
@@ -45,6 +46,24 @@ async def handle_search(request: web.Request) -> web.Response:
     search_body = parsed["query"]
     search_body["size"] = parsed["size"]
     search_body["sort"] = parsed["sort"]
+
+    # Inject excluded IPs filter into the parsed query's bool clause
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    if excluded:
+        query_clause = search_body.get("query", {})
+        if "bool" in query_clause:
+            existing_must_not = query_clause["bool"].get("must_not", [])
+            if isinstance(existing_must_not, dict):
+                existing_must_not = [existing_must_not]
+            query_clause["bool"]["must_not"] = existing_must_not + excluded
+        elif "match_all" in query_clause:
+            # Replace match_all with a bool query that has must_not
+            search_body["query"] = {
+                "bool": {
+                    "must": [{"match_all": {}}],
+                    "must_not": excluded,
+                }
+            }
 
     try:
         result = client.search(

@@ -13,6 +13,8 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from services.excluded_ips import build_excluded_ips_filter
+
 logger = logging.getLogger("nettap.services.cert_monitor")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -54,6 +56,7 @@ class CertificateMonitor:
         from_ts: str | None = None,
         to_ts: str | None = None,
         limit: int = 200,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get all observed TLS certificates in the time range.
 
@@ -63,16 +66,19 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                *_SSL_FILTERS,
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
         query = {
             "size": min(limit, 1000),
-            "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_ts, to_ts),
-                        *_SSL_FILTERS,
-                    ]
-                }
-            },
+            "query": {"bool": bool_clause},
             "sort": [{"@timestamp": {"order": "desc"}}],
             "_source": [
                 "@timestamp",
@@ -119,6 +125,7 @@ class CertificateMonitor:
         days: int = 30,
         from_ts: str | None = None,
         to_ts: str | None = None,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get certificates expiring within N days.
 
@@ -132,7 +139,9 @@ class CertificateMonitor:
 
         # Query all certs then filter client-side for expiry
         # (Zeek SSL cert dates may be in various fields)
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
         expiring = []
 
         for cert in all_certs:
@@ -140,10 +149,10 @@ class CertificateMonitor:
             if not not_after:
                 continue
             try:
-                expiry_dt = datetime.fromisoformat(
-                    not_after.replace("Z", "+00:00")
-                )
-                if expiry_dt <= datetime.fromisoformat(expiry_cutoff.replace("Z", "+00:00")):
+                expiry_dt = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
+                if expiry_dt <= datetime.fromisoformat(
+                    expiry_cutoff.replace("Z", "+00:00")
+                ):
                     cert["days_until_expiry"] = max(0, (expiry_dt - now).days)
                     cert["status"] = "expired" if expiry_dt <= now else "expiring"
                     expiring.append(cert)
@@ -156,6 +165,7 @@ class CertificateMonitor:
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect self-signed certificate usage in the time range.
 
@@ -165,7 +175,9 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
         self_signed = []
 
         for cert in all_certs:
@@ -176,11 +188,18 @@ class CertificateMonitor:
             is_self_signed = False
             if subject and issuer and subject == issuer:
                 is_self_signed = True
-            if "self signed" in validation.lower() or "self_signed" in validation.lower():
+            if (
+                "self signed" in validation.lower()
+                or "self_signed" in validation.lower()
+            ):
                 is_self_signed = True
 
             if is_self_signed:
-                cert["detection_reason"] = "subject matches issuer" if subject == issuer else "validation status"
+                cert["detection_reason"] = (
+                    "subject matches issuer"
+                    if subject == issuer
+                    else "validation status"
+                )
                 self_signed.append(cert)
 
         return self_signed
@@ -189,6 +208,7 @@ class CertificateMonitor:
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
+        excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Detect domains with multiple issuers (potential MITM indicator).
 
@@ -198,7 +218,9 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
 
         # Group by domain
         domain_issuers: dict[str, set[str]] = {}
@@ -216,12 +238,14 @@ class CertificateMonitor:
         changes = []
         for domain, issuers in domain_issuers.items():
             if len(issuers) > 1:
-                changes.append({
-                    "domain": domain,
-                    "issuers": sorted(issuers),
-                    "issuer_count": len(issuers),
-                    "certificates": domain_certs[domain],
-                })
+                changes.append(
+                    {
+                        "domain": domain,
+                        "issuers": sorted(issuers),
+                        "issuer_count": len(issuers),
+                        "certificates": domain_certs[domain],
+                    }
+                )
 
         return changes
 
@@ -229,6 +253,7 @@ class CertificateMonitor:
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
+        excluded_ips: list[str] | None = None,
     ) -> dict[str, Any]:
         """Get certificate hero card statistics.
 
@@ -237,10 +262,16 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000)
-        expiring = self.get_expiring_certs(days=30, from_ts=from_ts, to_ts=to_ts)
-        self_signed = self.detect_self_signed(from_ts, to_ts)
-        issuer_changes = self.detect_issuer_changes(from_ts, to_ts)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
+        expiring = self.get_expiring_certs(
+            days=30, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips
+        )
+        self_signed = self.detect_self_signed(from_ts, to_ts, excluded_ips=excluded_ips)
+        issuer_changes = self.detect_issuer_changes(
+            from_ts, to_ts, excluded_ips=excluded_ips
+        )
 
         return {
             "total_certs": len(all_certs),
@@ -287,9 +318,8 @@ class CertificateMonitor:
             or tls_server.get("not_after", "")
             or zeek_ssl.get("not_valid_after", "")
         )
-        domain = (
-            src.get("destination", {}).get("domain", "")
-            or zeek_ssl.get("server_name", "")
+        domain = src.get("destination", {}).get("domain", "") or zeek_ssl.get(
+            "server_name", ""
         )
         validation_status = zeek_ssl.get("validation_status", "")
 

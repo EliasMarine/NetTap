@@ -113,7 +113,8 @@
 			list = list.filter((d) =>
 				d.ip.toLowerCase().includes(q) ||
 				(d.hostname && d.hostname.toLowerCase().includes(q)) ||
-				(d.manufacturer && d.manufacturer.toLowerCase().includes(q)),
+				(d.manufacturer && d.manufacturer.toLowerCase().includes(q)) ||
+				(d.unifi_name && d.unifi_name.toLowerCase().includes(q)),
 			);
 		}
 
@@ -242,7 +243,7 @@
 			<div class="stat-card">
 				<div class="stat-label">Top Consumer</div>
 				<div class="stat-value" style="font-size: var(--text-lg);">{topConsumer ? formatBytes(topConsumer.total_bytes) : '--'}</div>
-				<div class="stat-sub">{topConsumer?.hostname ?? topConsumer?.ip ?? '--'}</div>
+				<div class="stat-sub">{topConsumer?.unifi_name ?? topConsumer?.hostname ?? topConsumer?.ip ?? '--'}</div>
 			</div>
 		</div>
 
@@ -297,9 +298,14 @@
 							<span class="dc-status" class:online={isOnline(device)} class:idle={isIdle(device)}></span>
 							<span class="dc-icon">{catIcon(device)}</span>
 							<div class="dc-identity">
-								<span class="dc-ip mono">{device.ip}</span>
-								{#if device.hostname}
-									<span class="dc-hostname">{device.hostname}</span>
+								{#if device.unifi_name}
+									<span class="dc-name">{device.unifi_name} <span class="badge badge-muted" style="font-size: 10px;">UniFi</span></span>
+									<span class="dc-hostname">{device.hostname ?? device.ip}</span>
+								{:else}
+									<span class="dc-ip mono">{device.ip}</span>
+									{#if device.hostname}
+										<span class="dc-hostname">{device.hostname}</span>
+									{/if}
 								{/if}
 							</div>
 						</div>
@@ -354,7 +360,14 @@
 								<tr class="list-row" onclick={() => goto(`/devices/${encodeURIComponent(device.ip)}`)}>
 									<td><span class="dc-status" class:online={isOnline(device)} class:idle={isIdle(device)}></span></td>
 									<td class="mono" style="font-size: var(--text-sm); font-weight: 500;">{device.ip}</td>
-									<td style="font-size: var(--text-sm); color: var(--text-secondary);">{device.hostname ?? '--'}</td>
+									<td style="font-size: var(--text-sm); color: var(--text-secondary);">
+									{#if device.unifi_name}
+										<div>{device.unifi_name} <span class="badge badge-muted" style="font-size: 10px;">UniFi</span></div>
+										<div style="font-size: var(--text-xs); color: var(--text-muted);">{device.hostname ?? '--'}</div>
+									{:else}
+										{device.hostname ?? '--'}
+									{/if}
+								</td>
 									<td>
 										<span class="cat-badge" style="color: {catColor(device)}; background: color-mix(in srgb, {catColor(device)} 12%, transparent);">
 											{catIcon(device)} {(device.category ?? 'unknown').replace(/^\w/, (c: string) => c.toUpperCase())}
@@ -456,6 +469,8 @@
 	.dc-identity { min-width: 0; overflow: hidden; }
 	.dc-ip { font-size: var(--text-sm); font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color var(--transition-fast); }
 	.device-card:hover .dc-ip { color: var(--accent); }
+	.dc-name { font-size: var(--text-sm); font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color var(--transition-fast); }
+	.device-card:hover .dc-name { color: var(--accent); }
 	.dc-hostname { font-size: var(--text-xs); color: var(--text-muted); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 	.dc-meta { font-size: var(--text-xs); color: var(--text-dim); display: flex; align-items: center; gap: 4px; }

@@ -53,7 +53,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned: an unpinned ruff changes its default rules and formatter between releases
+        run: pip install ruff==0.17.3
 
       - name: Ruff check (lint)
         run: ruff check daemon/
@@ -107,7 +108,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r daemon/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov aioresponses
+          pip install pytest pytest-asyncio pytest-cov
 
       - name: Run pytest
         run: python3 -m pytest daemon/tests/ -v --tb=short

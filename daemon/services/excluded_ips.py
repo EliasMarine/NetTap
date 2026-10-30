@@ -116,7 +116,7 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                                         if (a == 192 && b == 168) return false;
                                         return true;
                                     """,
-                                    "lang": "painless"
+                                    "lang": "painless",
                                 }
                             }
                         },
@@ -134,7 +134,9 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         }
 
         result = client.search(index=NETWORK_INDEX, body=query)
-        buckets = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        buckets = (
+            result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        )
 
         if not buckets:
             logger.warning("LAN detection: no source IPs found in OpenSearch")
@@ -250,7 +252,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                         if (a == 192 && b == 168) return true;
                         return false;
                     """,
-                    "lang": "painless"
+                    "lang": "painless",
                 }
             }
         }
@@ -279,7 +281,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                     int c = Integer.parseInt(parts[2]);
                     return {condition_str};
                 """,
-                "lang": "painless"
+                "lang": "painless",
             }
         }
     }
@@ -318,6 +320,44 @@ def detect_and_build_lan_filter(client) -> dict:
 # Module-level fallback — used only until auto-detection runs in create_app()
 # After startup, devices.py and risk.py read from request.app["lan_filter"]
 RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
+
+
+def detect_appliance_ip() -> str | None:
+    """Auto-detect the appliance's management interface IPv4 address.
+
+    Priority: MGMT_IP env var > query MGMT_INTERFACE via ip command > None
+    """
+    mgmt_ip = os.environ.get("MGMT_IP", "").strip()
+    if mgmt_ip:
+        return mgmt_ip
+
+    mgmt_iface = os.environ.get("MGMT_INTERFACE", "").strip()
+    if mgmt_iface:
+        return _detect_interface_ip(mgmt_iface)
+
+    return None
+
+
+def _detect_interface_ip(iface: str) -> str | None:
+    """Get the first IPv4 address of a network interface using ip command."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show", iface],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            import json as _json
+
+            data = _json.loads(result.stdout)
+            if data and data[0].get("addr_info"):
+                return data[0]["addr_info"][0].get("local")
+    except Exception as exc:
+        logger.debug("Could not detect IP for %s: %s", iface, exc)
+    return None
 
 
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:

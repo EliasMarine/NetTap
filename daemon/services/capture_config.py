@@ -23,7 +23,7 @@ defaulting to bridge mode for backwards compatibility.
 import configparser
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from services.capture_manager import CaptureMode
 
@@ -219,10 +219,7 @@ def write_env_file(config: CaptureConfig, path: str | None = None) -> str:
     else:
         pcap_iface = config.bridge_name
 
-    contents = (
-        f"CAPTURE_MODE={config.mode.value}\n"
-        f"PCAP_IFACE={pcap_iface}\n"
-    )
+    contents = f"CAPTURE_MODE={config.mode.value}\nPCAP_IFACE={pcap_iface}\n"
 
     with open(env_path, "w") as f:
         f.write(contents)

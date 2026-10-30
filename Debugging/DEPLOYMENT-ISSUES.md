@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-12
-> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Switched NVMe SMART monitoring to nvme-cli as primary tool (direct ioctl, no SCSI translation). smartctl retained as SATA fallback. Added SYS_ADMIN capability, removed pySMART. 59 SMART tests passing. Lessons 87–91 added.
+> **Last updated:** 2026-03-16
+> **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -57,7 +57,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **18 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **19 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -200,6 +200,14 @@ CHAIN 18: PCAP Search Page Redesign (phase-5/mirror-span-mode)
   9. Time range pills: quick time range selection (1h, 6h, 24h, 7d, 30d).
   10. DNS copy button CSS fix: bigger icon (1.25rem), accent-blue color.
   11. Added formatRelativeTime and PROTO_FILTER_MAP helpers to pcap.ts API client.
+
+CHAIN 19: Bundled OUI vendor database never shipped (fix/ci-baseline, PR #142)
+  Commit 2052e94
+  .gitignore's `data/` rule also matched `daemon/data/`, so `oui_database.json` was never
+  committed. Images built on the device lacked it; MacLookupService logs a warning and falls
+  back to an empty DB, so the MAC Lookup tool silently returned no vendor. Found when CI's
+  daemon tests first ran. Fix: allowlist only that file; `notifications.json` (SMTP passwords,
+  API tokens) and every other runtime file under `daemon/data/` stay ignored.
 ```
 
 ---
@@ -1636,6 +1644,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 95. **Device hostname resolution via DNS answer records works well** — querying `zeek.dns.answers` (the IPs a domain resolves to) and aggregating by `zeek.dns.query.keyword` with `terms size=1` returns the most common hostname for any IP. This is already implemented in `DeviceFingerprint.get_hostname_for_ip()` and adds ~15 hostnames per 37 devices (depends on DNS traffic volume).
 96. **Risk scoring already returns full factor breakdown** — `GET /api/risk/scores/{ip}` returns not just the score/level but an array of `factors` with `{name, score, max, description}` for all 5 weighted factors. No new backend work needed to display the breakdown — just consume the existing API.
 
+### Daemon→Frontend Data Contracts (NEW — 2026-03-16)
+97. **Svelte 5 `{#each (device.ip)}` crashes with `each_key_duplicate` when keys are `undefined`** — if the daemon returns an array of strings (`["10.0.0.1"]`) but the component destructures objects (`device.ip`), every key evaluates to `undefined`, and ALL items share the same key. Svelte 5 throws `each_key_duplicate`, which crashes mid-render and leaves the DOM in a stale loading state (spinner never clears). The fix is always on the data source: return objects `{ip, count, severity}` not bare strings.
+98. **Timeline/chart data contract mismatches cause silent rendering failures, not crashes** — if the daemon returns `{buckets: [{count, signatures}]}` but the component expects `{series: [{total, sub_categories}]}`, the guard clause (`{#if timelineData?.series?.length}`) evaluates to falsy and the section simply never renders. No error in console. Always verify field names AND structure between daemon response and TypeScript types.
+99. **Always include `last_seen` (or equivalent timestamp) in aggregation responses** — OpenSearch `max` aggregation on `@timestamp` adds minimal query cost and prevents `formatRelativeTime(undefined)` rendering broken in the frontend. Add `"latest": {"max": {"field": "@timestamp"}}` as a sub-aggregation to any `terms` bucket that will be displayed with time context.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1644,6 +1657,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 24. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
 25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
 52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
+100. **Same trap, worse outcome: `data/` hid `daemon/data/oui_database.json` (Chain 19)** — the file existed on the dev machine, so nothing failed locally. Unanchored `.gitignore` directory rules match at every depth. Prefer an explicit allowlist (`!/daemon/data/`, `/daemon/data/*`, `!/daemon/data/<file>`) over `git add -f`, which leaves the rule in place, so the next new file in that folder is hidden too. Run tests from a clean `git archive` export to catch files that only exist locally.
 
 ---
 
@@ -1726,3 +1740,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | ddfb627 | Svelte build fix: {@const} inside <div> invalid — inline expressions instead | 2026-03-13 |
 | — | 7d44e5d | Device intelligence dashboard v2: 7 sections + TShark drill-down drawer | 2026-03-13 |
 | — | c948e8c | Svelte build fix: {@const} inside <svg> invalid — $derived arc calc instead | 2026-03-13 |
+| — | 2052e94 | Ship bundled OUI vendor DB: .gitignore `data/` also hid `daemon/data/oui_database.json` (Chain 19) | 2026-10-29 |

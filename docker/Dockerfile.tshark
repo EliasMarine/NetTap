@@ -17,13 +17,18 @@ RUN echo "TShark is part of the Wireshark project (https://www.wireshark.org)" >
     echo "Source code: https://gitlab.com/wireshark/wireshark" >> /usr/share/licenses/tshark/NOTICE && \
     echo "Licensed under GNU General Public License v2.0" >> /usr/share/licenses/tshark/NOTICE
 
-# Create non-root user for running tshark
-RUN groupadd -r tshark && useradd -r -g tshark -s /sbin/nologin tshark
+# OLD CODE START — non-root user removed. The tshark user (UID ~999) cannot
+# read PCAP files owned by UID 0 (pcap-capture runs as root) or UID 1000
+# (PUID default), causing "Permission denied" on every tshark -r call.
+# Running as root is safe: container has cap_drop: ALL, read_only: true,
+# no-new-privileges:true, and PCAP volume is mounted :ro.
+# RUN groupadd -r tshark && useradd -r -g tshark -s /sbin/nologin tshark
+# RUN mkdir -p /tmp/tshark-results && chown tshark:tshark /tmp/tshark-results
+# USER tshark
+# OLD CODE END
 
-# Create results directory
-RUN mkdir -p /tmp/tshark-results && chown tshark:tshark /tmp/tshark-results
-
-USER tshark
+# Create results directory (runs as root, no chown needed)
+RUN mkdir -p /tmp/tshark-results
 
 # Default entrypoint keeps the container alive for docker exec
 ENTRYPOINT ["tail", "-f", "/dev/null"]

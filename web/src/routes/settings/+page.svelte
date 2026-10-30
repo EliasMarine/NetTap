@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
+	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 
-	type TabId = 'notifications' | 'retention' | 'api-keys' | 'network' | 'display' | 'about';
+	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
 	let activeTab = $state<TabId>('notifications');
 
@@ -26,9 +28,20 @@
 		emergency_threshold: 90,
 	});
 	let diskUsage = $state<number | null>(null);
+	let lastPruneAt = $state<string | null>(null);
+	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
+
+	// --- Manual Cleanup state ---
+	let cleanupDays = $state(60);
+	let cleanupPreview = $state<CleanupPreview | null>(null);
+	let cleanupPreviewing = $state(false);
+	let cleanupExecuting = $state(false);
+	let showCleanupConfirm = $state(false);
+	let cleanupMessage = $state('');
+	let cleanupError = $state(false);
 
 	// --- Network state (excluded IPs) ---
 	let excludedIps = $state<string[]>([]);
@@ -47,12 +60,39 @@
 	// Track modified fields only — don't send unchanged values
 	let apiKeyValues = $state<Record<string, string>>({});
 
+	// --- Capture state ---
+	let captureEnabled = $state(true);
+	let captureMaxFileSize = $state(100);
+	let captureContainerRunning = $state(false);
+	let captureContainerStatus = $state('unknown');
+	let captureLoading = $state(true);
+	let captureToggling = $state(false);
+	let captureSaving = $state(false);
+	let captureMessage = $state('');
+	let captureError = $state(false);
+
 	// --- Display state ---
 	let autoRefresh = $state('30');
 	let timezone = $state('local');
 	let defaultTimeRange = $state('1h');
 	let displaySaving = $state(false);
 	let displayMessage = $state('');
+
+	// --- UniFi Integration state ---
+	let unifiControllerUrl = $state('');
+	let unifiApiKey = $state('');
+	let unifiSiteId = $state('');
+	let unifiSites = $state<{ id: string; name?: string; desc?: string }[]>([]);
+	let unifiConfigured = $state(false);
+	let unifiConnected = $state(false);
+	let unifiCacheCounts = $state<{ clients: number; devices: number } | null>(null);
+	let unifiLastPoll = $state<string | null>(null);
+	let unifiLoading = $state(true);
+	let unifiSaving = $state(false);
+	let unifiTesting = $state(false);
+	let unifiMessage = $state('');
+	let unifiError = $state(false);
+	let unifiSitesLoading = $state(false);
 
 	// --- About state ---
 	let version = $state('...');
@@ -79,13 +119,13 @@
 			const res = await fetch('/api/setup/storage');
 			if (res.ok) {
 				const data = await res.json();
-				if (data.retention) {
-					retentionConfig.hot_days = data.retention.hot_days ?? 90;
-					retentionConfig.warm_days = data.retention.warm_days ?? 180;
-					retentionConfig.cold_days = data.retention.cold_days ?? 30;
-					retentionConfig.disk_threshold = data.retention.disk_threshold_percent ?? 80;
-					retentionConfig.emergency_threshold = data.retention.emergency_threshold_percent ?? 90;
-				}
+				// GET /api/setup/storage returns a FLAT StorageStatus object
+				// (hot_days, warm_days, etc. are top-level, not nested under retention)
+				retentionConfig.hot_days = data.hot_days ?? 90;
+				retentionConfig.warm_days = data.warm_days ?? 180;
+				retentionConfig.cold_days = data.cold_days ?? 30;
+				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
 			}
 		} catch {
 			// Will use defaults
@@ -98,11 +138,40 @@
 			if (res.ok) {
 				const data = await res.json();
 				diskUsage = data.disk_usage_percent ?? data.usage_percent ?? null;
+				lastPruneAt = data.last_prune_at ?? null;
+				ilmStatus = data.ilm_status ?? null;
 			}
 		} catch {
 			// Will stay null
 		}
 	}
+
+	// --- Retention health helpers ---
+	function timeAgo(isoString: string): string {
+		const diff = Date.now() - new Date(isoString).getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return 'just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return `${Math.floor(hours / 24)}d ago`;
+	}
+
+	let retentionHealth = $derived.by(() => {
+		const ilmOk = ilmStatus?.synced ?? false;
+		const ilmPending = ilmStatus?.pending_retry ?? false;
+		const pruneOk = lastPruneAt ? (Date.now() - new Date(lastPruneAt).getTime()) < 600000 : false;
+		const pruneStale = lastPruneAt ? (Date.now() - new Date(lastPruneAt).getTime()) > 1800000 : true;
+		const diskPct = diskUsage ?? 0;
+		const diskHigh = diskPct >= (retentionConfig.disk_threshold ?? 80);
+		const diskCritical = diskPct >= (retentionConfig.emergency_threshold ?? 90);
+
+		let status: 'healthy' | 'attention' | 'problem' = 'healthy';
+		if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
+		else if (ilmPending || diskHigh || !pruneOk) status = 'attention';
+
+		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
+	});
 
 	async function loadAbout() {
 		try {
@@ -260,6 +329,192 @@
 		excludedIps = excludedIps.filter((i) => i !== ip);
 	}
 
+	// --- Capture functions ---
+	async function loadCaptureSettings() {
+		captureLoading = true;
+		try {
+			const status = await getCaptureStatus();
+			captureEnabled = status.enabled;
+			captureMaxFileSize = status.maxFileSizeMB;
+			captureContainerRunning = status.containerRunning;
+			captureContainerStatus = status.containerStatus;
+		} catch {
+			// Will use defaults
+		} finally {
+			captureLoading = false;
+		}
+	}
+
+	async function handleCaptureToggle() {
+		captureToggling = true;
+		captureMessage = '';
+		captureError = false;
+		try {
+			const result = await toggleCapture(!captureEnabled);
+			captureEnabled = result.enabled;
+			captureContainerRunning = result.containerRunning;
+			captureContainerStatus = result.containerStatus;
+			captureMessage = captureEnabled ? 'PCAP capture enabled' : 'PCAP capture disabled';
+		} catch (err) {
+			captureError = true;
+			captureMessage = err instanceof Error ? err.message : 'Toggle failed';
+		} finally {
+			captureToggling = false;
+		}
+	}
+
+	async function saveCaptureSettings() {
+		captureSaving = true;
+		captureMessage = '';
+		captureError = false;
+		try {
+			const result = await updateCaptureSettings({ maxFileSizeMB: captureMaxFileSize });
+			captureMaxFileSize = result.maxFileSizeMB;
+			captureMessage = result.restarted
+				? `File size updated to ${result.maxFileSizeMB} MB. Container restarted.`
+				: `File size updated to ${result.maxFileSizeMB} MB.`;
+		} catch (err) {
+			captureError = true;
+			captureMessage = err instanceof Error ? err.message : 'Save failed';
+		} finally {
+			captureSaving = false;
+		}
+	}
+
+	// --- UniFi functions ---
+	async function loadUnifiStatus() {
+		unifiLoading = true;
+		try {
+			const res = await fetch('/api/integrations/unifi/status');
+			if (res.ok) {
+				const data = await res.json();
+				unifiConfigured = data.configured ?? false;
+				unifiControllerUrl = data.controller_url ?? '';
+				unifiConnected = data.connected ?? false;
+				unifiCacheCounts = data.cache_counts ?? null;
+				unifiLastPoll = data.last_poll ?? null;
+				if (data.site_id) unifiSiteId = data.site_id;
+			}
+		} catch {
+			// Will use defaults
+		} finally {
+			unifiLoading = false;
+		}
+	}
+
+	async function loadUnifiSites() {
+		unifiSitesLoading = true;
+		try {
+			const res = await fetch('/api/integrations/unifi/sites');
+			if (res.ok) {
+				const data = await res.json();
+				unifiSites = data.sites ?? [];
+			}
+		} catch {
+			// Sites will remain empty
+		} finally {
+			unifiSitesLoading = false;
+		}
+	}
+
+	async function saveUnifiConfig() {
+		unifiSaving = true;
+		unifiMessage = '';
+		unifiError = false;
+
+		if (!unifiControllerUrl.trim()) {
+			unifiMessage = 'Controller URL is required.';
+			unifiError = true;
+			unifiSaving = false;
+			return;
+		}
+		if (!unifiApiKey.trim() && !unifiConfigured) {
+			unifiMessage = 'API Key is required.';
+			unifiError = true;
+			unifiSaving = false;
+			return;
+		}
+
+		try {
+			const payload: Record<string, string> = {
+				controller_url: unifiControllerUrl.trim(),
+			};
+			// Only send api_key if user entered one (leave blank to keep existing)
+			if (unifiApiKey.trim()) {
+				payload.api_key = unifiApiKey.trim();
+			}
+			if (unifiSiteId) {
+				payload.site_id = unifiSiteId;
+			}
+
+			const res = await fetch('/api/integrations/unifi/configure', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			const data = await res.json();
+			if (res.ok) {
+				unifiMessage = 'UniFi configuration saved successfully.';
+				unifiConfigured = true;
+				unifiApiKey = ''; // Clear after save
+				// Now test the connection
+				await testUnifiConnection();
+			} else {
+				unifiMessage = data.error || 'Failed to save UniFi configuration.';
+				unifiError = true;
+			}
+		} catch {
+			unifiMessage = 'Failed to connect to server.';
+			unifiError = true;
+		} finally {
+			unifiSaving = false;
+		}
+	}
+
+	async function testUnifiConnection() {
+		unifiTesting = true;
+		unifiMessage = '';
+		unifiError = false;
+
+		try {
+			const res = await fetch('/api/integrations/unifi/test', { method: 'POST' });
+			const data = await res.json();
+			if (res.ok && data.success) {
+				unifiConnected = true;
+				unifiMessage = 'Connection successful.';
+				if (data.status?.cache_counts) {
+					unifiCacheCounts = data.status.cache_counts;
+				}
+				if (data.status?.last_poll) {
+					unifiLastPoll = data.status.last_poll;
+				}
+				// Fetch available sites
+				await loadUnifiSites();
+			} else {
+				unifiConnected = false;
+				unifiMessage = data.error || data.message || 'Connection test failed.';
+				unifiError = true;
+			}
+		} catch {
+			unifiConnected = false;
+			unifiMessage = 'Failed to connect to server.';
+			unifiError = true;
+		} finally {
+			unifiTesting = false;
+		}
+	}
+
+	function formatUnifiPollTime(isoString: string): string {
+		const diff = Date.now() - new Date(isoString).getTime();
+		const secs = Math.floor(diff / 1000);
+		if (secs < 60) return `${secs}s ago`;
+		const mins = Math.floor(secs / 60);
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return `${Math.floor(hours / 24)}d ago`;
+	}
+
 	onMount(() => {
 		loadNotificationConfig();
 		loadRetention();
@@ -268,6 +523,8 @@
 		loadApiKeys();
 		loadAbout();
 		loadDisplaySettings();
+		loadCaptureSettings();
+		loadUnifiStatus();
 	});
 
 	async function saveNotifications() {
@@ -342,7 +599,12 @@
 				}),
 			});
 			if (res.ok) {
-				retentionMessage = 'Retention configuration saved successfully.';
+				const result = await res.json();
+				if (result.ilm_applied) {
+					retentionMessage = 'Retention settings saved and applied to OpenSearch.';
+				} else {
+					retentionMessage = 'Retention settings saved. OpenSearch policies will sync shortly.';
+				}
 			} else {
 				const data = await res.json();
 				retentionMessage = data.error || 'Failed to save configuration.';
@@ -354,6 +616,71 @@
 		} finally {
 			retentionSaving = false;
 		}
+	}
+
+	function formatCleanupBytes(bytes: number): string {
+		if (bytes === 0) return '0 B';
+		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+	}
+
+	async function handleCleanupPreview() {
+		if (cleanupDays < 1) return;
+		cleanupPreviewing = true;
+		cleanupMessage = '';
+		cleanupError = false;
+		cleanupPreview = null;
+		showCleanupConfirm = false;
+
+		try {
+			cleanupPreview = await previewCleanup(cleanupDays);
+		} catch (err: unknown) {
+			cleanupMessage = err instanceof Error ? err.message : 'Failed to preview cleanup';
+			cleanupError = true;
+		} finally {
+			cleanupPreviewing = false;
+		}
+	}
+
+	async function handleCleanupExecute() {
+		cleanupExecuting = true;
+		cleanupMessage = '';
+		cleanupError = false;
+
+		try {
+			const result = await executeCleanup(cleanupDays);
+			const freedStr = formatCleanupBytes(result.freed_bytes_estimate);
+			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
+			if (result.errors.length > 0) {
+				cleanupMessage += ` (${result.errors.length} errors)`;
+			}
+			cleanupError = false;
+			cleanupPreview = null;
+			showCleanupConfirm = false;
+
+			// Refresh disk usage
+			try {
+				const res = await fetch('/api/storage/status');
+				if (res.ok) {
+					const data = await res.json();
+					diskUsage = data.disk_usage_percent ?? diskUsage;
+				}
+			} catch {
+				// Non-critical, disk usage will update on next load
+			}
+		} catch (err: unknown) {
+			cleanupMessage = err instanceof Error ? err.message : 'Cleanup failed';
+			cleanupError = true;
+		} finally {
+			cleanupExecuting = false;
+		}
+	}
+
+	function cancelCleanup() {
+		showCleanupConfirm = false;
+		cleanupPreview = null;
+		cleanupMessage = '';
 	}
 
 	function saveDisplay() {
@@ -409,6 +736,13 @@
 		</button>
 		<button
 			class="tab"
+			class:active={activeTab === 'capture'}
+			onclick={() => (activeTab = 'capture')}
+		>
+			Capture
+		</button>
+		<button
+			class="tab"
 			class:active={activeTab === 'api-keys'}
 			onclick={() => (activeTab = 'api-keys')}
 		>
@@ -420,6 +754,13 @@
 			onclick={() => (activeTab = 'network')}
 		>
 			Network
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'integrations'}
+			onclick={() => (activeTab = 'integrations')}
+		>
+			Integrations
 		</button>
 		<button
 			class="tab"
@@ -513,6 +854,60 @@
 
 	{:else if activeTab === 'retention'}
 		<div class="settings-section">
+
+			<!-- Retention Health Status -->
+			<div class="card retention-health-card">
+				<div class="card-header">
+					<span class="card-title">Retention Health</span>
+					<span class="health-badge health-{retentionHealth.status}">
+						<span class="health-dot"></span>
+						{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
+					</span>
+				</div>
+
+				<div class="health-rows">
+					<div class="health-row">
+						<span class="health-label">ILM Policies</span>
+						<span class="health-value">
+							{#if ilmStatus === null}
+								<span class="text-muted">Loading...</span>
+							{:else if retentionHealth.ilmPending}
+								<span style="color: var(--amber);">&#x27f3; Syncing...</span>
+							{:else if retentionHealth.ilmOk}
+								<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
+							{:else}
+								<span style="color: var(--red);">&#x2717; Out of sync</span>
+							{/if}
+						</span>
+					</div>
+					<div class="health-row">
+						<span class="health-label">Disk Usage</span>
+						<span class="health-value">
+							{#if diskUsage !== null}
+								<span class="mono" style="color: {retentionHealth.diskCritical ? 'var(--red)' : retentionHealth.diskHigh ? 'var(--amber)' : 'var(--green)'}">
+									{diskUsage}%
+								</span>
+								<span class="text-muted">(threshold: {retentionConfig.disk_threshold}%)</span>
+							{:else}
+								<span class="text-muted">Unavailable</span>
+							{/if}
+						</span>
+					</div>
+					<div class="health-row">
+						<span class="health-label">Last Prune</span>
+						<span class="health-value">
+							{#if lastPruneAt}
+								<span class="mono" style="color: {retentionHealth.pruneStale ? 'var(--red)' : retentionHealth.pruneOk ? 'var(--green)' : 'var(--amber)'}">
+									{timeAgo(lastPruneAt)}
+								</span>
+							{:else}
+								<span class="text-muted">Never (daemon starting...)</span>
+							{/if}
+						</span>
+					</div>
+				</div>
+			</div>
+
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Data Retention Policy</span>
@@ -591,6 +986,168 @@
 				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
+			</div>
+
+		<!-- Manual Data Cleanup -->
+		<div class="card" style="margin-top: var(--space-lg);">
+			<div class="card-header">
+				<span class="card-title">Manual Data Cleanup</span>
+			</div>
+
+			<p class="field-help" style="margin-bottom: var(--space-md);">
+				Permanently delete OpenSearch indices and PCAP files older than a specified number of days to free up disk space.
+			</p>
+
+			{#if cleanupMessage}
+				<div class="alert {cleanupError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+					{cleanupMessage}
+				</div>
+			{/if}
+
+			<div class="cleanup-input-row">
+				<span class="cleanup-label">Delete data older than</span>
+				<div class="input-with-unit" style="width: 120px;">
+					<input
+						class="input"
+						type="number"
+						bind:value={cleanupDays}
+						min={1}
+						max={3650}
+						disabled={cleanupExecuting}
+					/>
+					<span class="input-unit">days</span>
+				</div>
+				<button
+					class="btn btn-secondary"
+					onclick={handleCleanupPreview}
+					disabled={cleanupPreviewing || cleanupExecuting || cleanupDays < 1}
+				>
+					{cleanupPreviewing ? 'Scanning...' : 'Preview Cleanup'}
+				</button>
+			</div>
+
+			{#if cleanupPreview}
+				<div class="cleanup-preview">
+					<div class="cleanup-preview-header">
+						<span class="cleanup-preview-title">Cleanup Preview</span>
+						<span class="text-muted">Data before {new Date(cleanupPreview.cutoff_date).toLocaleDateString()}</span>
+					</div>
+
+					<div class="cleanup-stats">
+						<div class="cleanup-stat">
+							<span class="cleanup-stat-value">{cleanupPreview.total_indices}</span>
+							<span class="cleanup-stat-label">Indices</span>
+						</div>
+						<div class="cleanup-stat">
+							<span class="cleanup-stat-value">{cleanupPreview.total_pcap_files}</span>
+							<span class="cleanup-stat-label">PCAP Files</span>
+						</div>
+						<div class="cleanup-stat">
+							<span class="cleanup-stat-value">{formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}</span>
+							<span class="cleanup-stat-label">Space Freed</span>
+						</div>
+					</div>
+
+					{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
+						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupDays} days.</p>
+					{:else}
+						<div class="cleanup-confirm-section">
+							{#if !showCleanupConfirm}
+								<p class="text-danger" style="font-size: var(--text-sm); margin-bottom: var(--space-sm);">
+									This action is irreversible. Deleted data cannot be recovered.
+								</p>
+								<div class="cleanup-actions">
+									<button class="btn btn-secondary" onclick={cancelCleanup}>Cancel</button>
+									<button class="btn btn-danger" onclick={() => showCleanupConfirm = true}>
+										Delete Data
+									</button>
+								</div>
+							{:else}
+								<div class="cleanup-final-confirm">
+									<p class="text-danger" style="font-weight: 600; margin-bottom: var(--space-sm);">
+										Are you sure? This will permanently delete {cleanupPreview.total_indices} indices and {cleanupPreview.total_pcap_files} PCAP files ({formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}).
+									</p>
+									<div class="cleanup-actions">
+										<button class="btn btn-secondary" onclick={cancelCleanup} disabled={cleanupExecuting}>
+											Cancel
+										</button>
+										<button class="btn btn-danger" onclick={handleCleanupExecute} disabled={cleanupExecuting}>
+											{cleanupExecuting ? 'Deleting...' : 'Confirm Delete'}
+										</button>
+									</div>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	</div>
+
+	{:else if activeTab === 'capture'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">PCAP Capture</span>
+				</div>
+
+				{#if captureMessage}
+					<div class="alert {captureError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+						{captureMessage}
+					</div>
+				{/if}
+
+				{#if captureLoading}
+					<p class="text-muted">Loading capture settings...</p>
+				{:else}
+					<!-- Status card -->
+					<div class="capture-status-card" style="margin-bottom: var(--space-lg);">
+						<div class="capture-status-row">
+							<span class="label">Container Status</span>
+							<span class="capture-badge" class:status-running={captureContainerRunning} class:status-stopped={!captureContainerRunning}>
+								{captureContainerRunning ? 'Running' : captureContainerStatus}
+							</span>
+						</div>
+					</div>
+
+					<!-- Toggle -->
+					<div class="form-group" style="margin-bottom: var(--space-lg);">
+						<label class="label">PCAP Collection</label>
+						<div class="capture-toggle-row">
+							<button
+								class="capture-toggle-switch"
+								class:on={captureEnabled}
+								onclick={handleCaptureToggle}
+								disabled={captureToggling}
+							>
+								<span class="capture-toggle-knob" class:loading={captureToggling}></span>
+							</button>
+							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
+						</div>
+						<p class="field-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
+					</div>
+
+					<!-- File size -->
+					<div class="form-group" style="margin-bottom: var(--space-lg);">
+						<label class="label" for="max-file-size">Max File Size</label>
+						<div class="input-with-unit">
+							<input
+								class="input"
+								id="max-file-size"
+								type="number"
+								bind:value={captureMaxFileSize}
+								min={10}
+								max={10000}
+							/>
+							<span class="input-unit">MB</span>
+						</div>
+						<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
+					</div>
+
+					<button class="btn btn-primary" onclick={saveCaptureSettings} disabled={captureSaving}>
+						{captureSaving ? 'Saving...' : 'Save Capture Settings'}
+					</button>
+				{/if}
 			</div>
 		</div>
 
@@ -833,6 +1390,134 @@
 					<button class="btn btn-primary" onclick={saveExcludedIps} disabled={networkSaving} style="margin-top: var(--space-md);">
 						{networkSaving ? 'Saving...' : 'Save Excluded IPs'}
 					</button>
+				{/if}
+			</div>
+		</div>
+
+	{:else if activeTab === 'integrations'}
+		<div class="settings-section">
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">UniFi Controller</span>
+					{#if unifiConfigured}
+						<span class="unifi-conn-badge" class:connected={unifiConnected} class:disconnected={!unifiConnected}>
+							<span class="unifi-conn-dot"></span>
+							{unifiConnected ? 'Connected' : 'Disconnected'}
+						</span>
+					{/if}
+				</div>
+
+				<p class="field-help" style="margin-bottom: var(--space-lg);">
+					Connect to your UniFi controller to enrich device data with friendly names, models, and network assignments. Uses API key authentication (UniFi OS 10.2.93+).
+				</p>
+
+				{#if unifiMessage}
+					<div class="alert {unifiError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
+						{unifiMessage}
+					</div>
+				{/if}
+
+				{#if unifiLoading}
+					<p class="text-muted">Loading UniFi status...</p>
+				{:else}
+					<!-- Connection Status Card (only shown when configured) -->
+					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
+						<div class="unifi-status-card">
+							<div class="unifi-status-grid">
+								{#if unifiCacheCounts}
+									<div class="unifi-status-item">
+										<span class="unifi-status-value mono">{unifiCacheCounts.clients}</span>
+										<span class="unifi-status-label">Cached Clients</span>
+									</div>
+									<div class="unifi-status-item">
+										<span class="unifi-status-value mono">{unifiCacheCounts.devices}</span>
+										<span class="unifi-status-label">Cached Devices</span>
+									</div>
+								{/if}
+								{#if unifiLastPoll}
+									<div class="unifi-status-item">
+										<span class="unifi-status-value mono">{formatUnifiPollTime(unifiLastPoll)}</span>
+										<span class="unifi-status-label">Last Poll</span>
+									</div>
+								{/if}
+							</div>
+						</div>
+					{/if}
+
+					<!-- Controller URL -->
+					<div class="form-group">
+						<label class="label" for="unifi-url">Controller URL</label>
+						<input
+							class="input"
+							id="unifi-url"
+							type="url"
+							bind:value={unifiControllerUrl}
+							placeholder="https://192.168.1.1"
+						/>
+						<p class="field-help">Full URL to your UniFi controller (e.g. https://192.168.1.1 or https://unifi.local:8443).</p>
+					</div>
+
+					<!-- API Key -->
+					<div class="form-group">
+						<div class="label-with-badge">
+							<label class="label" for="unifi-api-key">API Key</label>
+							{#if unifiConfigured}
+								<span class="badge badge-configured">Configured</span>
+							{/if}
+						</div>
+						<input
+							class="input mono"
+							id="unifi-api-key"
+							type="password"
+							bind:value={unifiApiKey}
+							placeholder={unifiConfigured ? 'Leave blank to keep current key' : 'Paste your UniFi API key'}
+							autocomplete="off"
+							spellcheck="false"
+						/>
+						<p class="field-help">
+							Generate an API key in UniFi OS: Settings &rarr; System &rarr; Advanced &rarr; API Key.
+							{#if unifiConfigured}
+								Leave blank to keep the currently saved key.
+							{/if}
+						</p>
+					</div>
+
+					<!-- Site Selector -->
+					<div class="form-group">
+						<label class="label" for="unifi-site">Site</label>
+						{#if unifiSites.length > 0}
+							<select class="select" id="unifi-site" bind:value={unifiSiteId}>
+								<option value="">Select a site...</option>
+								{#each unifiSites as site}
+									<option value={site.id}>{site.desc || site.name || site.id}</option>
+								{/each}
+							</select>
+							<p class="field-help">Select which UniFi site to poll for device data.</p>
+						{:else if unifiSitesLoading}
+							<p class="text-muted" style="font-size: var(--text-sm);">Loading sites...</p>
+						{:else}
+							<input
+								class="input"
+								id="unifi-site"
+								type="text"
+								bind:value={unifiSiteId}
+								placeholder="default"
+							/>
+							<p class="field-help">Enter a site ID manually, or save and test the connection to auto-discover sites. Most setups use "default".</p>
+						{/if}
+					</div>
+
+					<!-- Action buttons -->
+					<div class="btn-row" style="margin-top: var(--space-md);">
+						<button class="btn btn-primary" onclick={saveUnifiConfig} disabled={unifiSaving || unifiTesting}>
+							{unifiSaving ? 'Saving...' : 'Save Configuration'}
+						</button>
+						{#if unifiConfigured}
+							<button class="btn btn-secondary" onclick={testUnifiConnection} disabled={unifiTesting || unifiSaving}>
+								{unifiTesting ? 'Testing...' : 'Test Connection'}
+							</button>
+						{/if}
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -1287,6 +1972,326 @@
 
 		.smtp-grid {
 			grid-template-columns: 1fr;
+		}
+	}
+
+	/* Capture tab */
+	.capture-status-card {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md, 8px);
+		padding: var(--space-md);
+	}
+
+	.capture-status-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.capture-badge {
+		font-size: var(--text-sm);
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius-sm, 4px);
+		font-weight: 500;
+	}
+	.capture-badge.status-running {
+		background: var(--green-dim);
+		color: var(--green);
+	}
+	.capture-badge.status-stopped {
+		background: var(--red-dim);
+		color: var(--red);
+	}
+
+	.capture-toggle-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-md);
+	}
+
+	.capture-toggle-label {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+	}
+
+	.capture-toggle-switch {
+		position: relative;
+		width: 44px;
+		height: 24px;
+		border-radius: 12px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		cursor: pointer;
+		transition: background 0.2s, border-color 0.2s;
+		padding: 0;
+		flex-shrink: 0;
+		color: var(--text-primary);
+	}
+	.capture-toggle-switch.on {
+		background: var(--green-dim);
+		border-color: var(--green);
+	}
+	.capture-toggle-switch:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.capture-toggle-knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--text-secondary);
+		transition: transform 0.2s, background 0.2s;
+	}
+	.capture-toggle-switch.on .capture-toggle-knob {
+		transform: translateX(20px);
+		background: var(--green);
+	}
+	.capture-toggle-knob.loading {
+		animation: capture-pulse 0.8s ease-in-out infinite;
+	}
+
+	@keyframes capture-pulse {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+
+	/* Manual Data Cleanup */
+	.cleanup-input-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		margin-bottom: var(--space-md);
+		flex-wrap: wrap;
+	}
+
+	.cleanup-label {
+		color: var(--text-secondary);
+		font-size: var(--text-sm);
+		white-space: nowrap;
+	}
+
+	.cleanup-preview {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-top: var(--space-sm);
+	}
+
+	.cleanup-preview-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: var(--space-md);
+	}
+
+	.cleanup-preview-title {
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.cleanup-stats {
+		display: flex;
+		gap: var(--space-lg);
+		margin-bottom: var(--space-md);
+	}
+
+	.cleanup-stat {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.cleanup-stat-value {
+		font-size: var(--text-xl);
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+
+	.cleanup-stat-label {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.cleanup-confirm-section {
+		border-top: 1px solid var(--border);
+		padding-top: var(--space-md);
+		margin-top: var(--space-sm);
+	}
+
+	.cleanup-actions {
+		display: flex;
+		gap: var(--space-sm);
+	}
+
+	.cleanup-final-confirm {
+		background: var(--bg-secondary);
+		border: 1px solid var(--red);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+	}
+
+	/* Retention Health Card */
+	.retention-health-card {
+		margin-bottom: var(--space-lg);
+	}
+
+	.health-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-sm);
+		font-weight: 600;
+		padding: 2px var(--space-sm);
+		border-radius: var(--radius-full);
+	}
+
+	.health-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+	}
+
+	.health-healthy {
+		color: var(--green);
+		background: var(--green-dim);
+	}
+	.health-healthy .health-dot {
+		background: var(--green);
+		box-shadow: 0 0 6px var(--green);
+	}
+
+	.health-attention {
+		color: var(--amber);
+		background: var(--amber-dim);
+	}
+	.health-attention .health-dot {
+		background: var(--amber);
+		box-shadow: 0 0 6px var(--amber);
+	}
+
+	.health-problem {
+		color: var(--red);
+		background: var(--red-dim);
+	}
+	.health-problem .health-dot {
+		background: var(--red);
+		box-shadow: 0 0 6px var(--red);
+	}
+
+	.health-rows {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+	}
+
+	.health-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-xs) 0;
+	}
+
+	.health-row + .health-row {
+		border-top: 1px solid var(--border-dim);
+	}
+
+	.health-label {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+	}
+
+	.health-value {
+		font-size: var(--text-sm);
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+	}
+
+	/* UniFi Integration */
+	.unifi-conn-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: var(--text-sm);
+		font-weight: 600;
+		padding: 2px var(--space-sm);
+		border-radius: var(--radius-full);
+	}
+
+	.unifi-conn-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+	}
+
+	.unifi-conn-badge.connected {
+		color: var(--green);
+		background: var(--green-dim);
+	}
+	.unifi-conn-badge.connected .unifi-conn-dot {
+		background: var(--green);
+		box-shadow: 0 0 6px var(--green);
+	}
+
+	.unifi-conn-badge.disconnected {
+		color: var(--text-muted);
+		background: var(--bg-tertiary);
+	}
+	.unifi-conn-badge.disconnected .unifi-conn-dot {
+		background: var(--text-muted);
+	}
+
+	.unifi-status-card {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md);
+		padding: var(--space-md);
+		margin-bottom: var(--space-lg);
+	}
+
+	.unifi-status-grid {
+		display: flex;
+		gap: var(--space-xl);
+	}
+
+	.unifi-status-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.unifi-status-value {
+		font-size: var(--text-lg);
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+
+	.unifi-status-label {
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	@media (max-width: 768px) {
+		.unifi-status-grid {
+			flex-direction: column;
+			gap: var(--space-md);
+			align-items: flex-start;
+		}
+
+		.unifi-status-item {
+			flex-direction: row;
+			gap: var(--space-sm);
 		}
 	}
 </style>

@@ -291,6 +291,68 @@
 								<span class="info-value unavailable" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
 							{/if}
 						</div>
+						<div class="info-row">
+							<span class="info-label">Total Written</span>
+							{#if smartHealth.total_bytes_written != null}
+								<span class="info-value mono">{formatBytes(smartHealth.total_bytes_written)}</span>
+							{:else}
+								<span class="info-value text-muted">--</span>
+							{/if}
+						</div>
+						<div class="info-row">
+							<span class="info-label">Total Read</span>
+							{#if smartHealth.total_bytes_read != null}
+								<span class="info-value mono">{formatBytes(smartHealth.total_bytes_read)}</span>
+							{:else}
+								<span class="info-value text-muted">--</span>
+							{/if}
+						</div>
+						{#if smartHealth.device_type === 'nvme'}
+							<div class="info-row">
+								<span class="info-label">Media Errors</span>
+								{#if smartHealth.media_errors != null}
+									<span class="info-value mono" style="color: {smartHealth.media_errors > 0 ? 'var(--danger)' : 'var(--success)'}">
+										{smartHealth.media_errors.toLocaleString()}
+									</span>
+								{:else}
+									<span class="info-value text-muted">--</span>
+								{/if}
+							</div>
+						{/if}
+						{#if smartHealth.device_type === 'sata'}
+							<div class="info-row">
+								<span class="info-label">Reallocated Sectors</span>
+								{#if smartHealth.reallocated_sectors != null}
+									<span class="info-value mono" style="color: {smartHealth.reallocated_sectors > 0 ? 'var(--danger)' : 'var(--success)'}">
+										{smartHealth.reallocated_sectors.toLocaleString()}
+									</span>
+								{:else}
+									<span class="info-value text-muted">--</span>
+								{/if}
+							</div>
+						{/if}
+						<div class="info-row">
+							<span class="info-label">Serial</span>
+							<span class="info-value mono">{smartHealth.serial || '--'}</span>
+						</div>
+						<div class="info-row">
+							<span class="info-label">Type</span>
+							<span class="info-value">
+								{#if smartHealth.device_type === 'nvme'}
+									<span class="badge badge-info">NVMe</span>
+								{:else if smartHealth.device_type === 'sata'}
+									<span class="badge badge-info">SATA</span>
+								{:else}
+									<span class="text-muted">--</span>
+								{/if}
+							</span>
+						</div>
+						{#if smartHealth.timestamp}
+							<div class="info-row">
+								<span class="info-label">Last Updated</span>
+								<span class="info-value text-muted">{new Date(smartHealth.timestamp).toLocaleString()}</span>
+							</div>
+						{/if}
 					</div>
 					{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}
 						<div class="alert alert-info os-help">

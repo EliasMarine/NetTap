@@ -27,6 +27,7 @@ CERT_TIMEOUT = 10  # seconds
 
 class SslCertValidationError(Exception):
     """Raised when SSL certificate input validation fails."""
+
     pass
 
 
@@ -44,9 +45,7 @@ class SslCertService:
         host = host.strip()
 
         if len(host) > MAX_HOST_LENGTH:
-            raise SslCertValidationError(
-                f"Host too long (max {MAX_HOST_LENGTH} chars)"
-            )
+            raise SslCertValidationError(f"Host too long (max {MAX_HOST_LENGTH} chars)")
 
         if not HOST_PATTERN.match(host):
             raise SslCertValidationError(
@@ -106,9 +105,7 @@ class SslCertService:
 
         # Subject Alternative Names
         sans = []
-        san_match = re.search(
-            r"X509v3 Subject Alternative Name:\s*\n\s*(.+)", text
-        )
+        san_match = re.search(r"X509v3 Subject Alternative Name:\s*\n\s*(.+)", text)
         if san_match:
             san_line = san_match.group(1).strip()
             for entry in san_line.split(","):
@@ -132,11 +129,13 @@ class SslCertService:
             re.MULTILINE,
         )
         for match in chain_pattern.finditer(s_client_output):
-            chain.append({
-                "depth": int(match.group(1)),
-                "subject": match.group(2).strip(),
-                "issuer": match.group(3).strip(),
-            })
+            chain.append(
+                {
+                    "depth": int(match.group(1)),
+                    "subject": match.group(2).strip(),
+                    "issuer": match.group(3).strip(),
+                }
+            )
         return chain
 
     async def inspect(
@@ -155,9 +154,12 @@ class SslCertService:
         try:
             # Step 1: Get the PEM certificate and chain info via s_client
             s_client_proc = await asyncio.create_subprocess_exec(
-                "openssl", "s_client",
-                "-connect", f"{host}:{port}",
-                "-servername", host,
+                "openssl",
+                "s_client",
+                "-connect",
+                f"{host}:{port}",
+                "-servername",
+                host,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -188,9 +190,16 @@ class SslCertService:
 
             # Step 2: Parse the PEM certificate with openssl x509
             x509_proc = await asyncio.create_subprocess_exec(
-                "openssl", "x509",
-                "-noout", "-subject", "-issuer", "-dates",
-                "-serial", "-fingerprint", "-sha256", "-text",
+                "openssl",
+                "x509",
+                "-noout",
+                "-subject",
+                "-issuer",
+                "-dates",
+                "-serial",
+                "-fingerprint",
+                "-sha256",
+                "-text",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

@@ -8,9 +8,7 @@ schedule management, custom rules, and commercial config.
 import asyncio
 import os
 import sys
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -85,9 +83,7 @@ class TestGetEnabledSources:
         assert tgreen["enabled"] is False
 
     def test_missing_config_returns_empty(self, tmp_path):
-        mgr = SuricataRuleManager(
-            sources_config=str(tmp_path / "nonexistent.yaml")
-        )
+        mgr = SuricataRuleManager(sources_config=str(tmp_path / "nonexistent.yaml"))
         sources = mgr.get_enabled_sources()
         assert sources == []
 
@@ -230,9 +226,7 @@ class TestLastUpdate:
         assert "T" in last  # ISO format
 
     def test_missing_file_returns_none(self, tmp_path):
-        mgr = SuricataRuleManager(
-            sources_config=str(tmp_path / "nonexistent.yaml")
-        )
+        mgr = SuricataRuleManager(sources_config=str(tmp_path / "nonexistent.yaml"))
         assert mgr.get_last_update() is None
 
 
@@ -281,7 +275,7 @@ class TestSchedule:
 class TestCustomRules:
     def test_add_custom_rules(self, manager):
         content = (
-            '# My custom rules\n'
+            "# My custom rules\n"
             'alert tcp any any -> any any (msg:"Test 1"; sid:9999001; rev:1;)\n'
             'alert tcp any any -> any 443 (msg:"Test 2"; sid:9999002; rev:1;)\n'
         )

@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Network Monitor — NetTap Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+/* ============================================================
+   NetTap Design System v2 — Mission Control / SIEM Aesthetic
+   Live Network Monitor Mockup
+   ============================================================ */
+
+:root {
+  --bg-void: #06080d;
+  --bg-primary: #0a0e17;
+  --bg-secondary: #0f1319;
+  --bg-tertiary: #141920;
+  --bg-elevated: #181d27;
+  --bg-input: #0d1118;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+
+  --border-dim: #1a1f2e;
+  --border-default: #222939;
+  --border-bright: #2d3548;
+
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #555f73;
+  --text-dim: #3a4255;
+  --text-link: #00d4ff;
+
+  --accent: #00d4ff;
+  --accent-hover: #33ddff;
+  --accent-muted: rgba(0, 212, 255, 0.12);
+  --accent-glow: rgba(0, 212, 255, 0.25);
+
+  --cyan: #00d4ff;
+  --cyan-dim: rgba(0, 212, 255, 0.12);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --amber: #ffab00;
+  --amber-dim: rgba(255, 171, 0, 0.12);
+  --red: #ff4757;
+  --red-dim: rgba(255, 71, 87, 0.12);
+  --purple: #b388ff;
+  --purple-dim: rgba(179, 136, 255, 0.12);
+  --orange: #ff6d00;
+  --teal: #1de9b6;
+
+  --chart-1: #00d4ff;
+  --chart-2: #00e676;
+  --chart-3: #ffab00;
+  --chart-4: #ff4757;
+  --chart-5: #b388ff;
+  --chart-6: #ff6d00;
+  --chart-7: #448aff;
+  --chart-8: #ff4081;
+
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.375rem;
+  --text-3xl: 1.75rem;
+  --text-4xl: 2.25rem;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.1);
+
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-void);
+  -webkit-font-smoothing: antialiased;
+}
+
+body { min-height: 100vh; }
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+}
+
+/* ============ Page Header ============ */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.header-left h1 {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.header-left .subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: rgba(0, 230, 118, 0.1);
+  border: 1px solid rgba(0, 230, 118, 0.25);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--green);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(0, 230, 118, 0); }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  transition: all var(--transition-fast);
+}
+
+.btn:hover { border-color: var(--border-bright); background: var(--bg-tertiary); }
+.btn-primary { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); font-weight: 600; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn svg { width: 14px; height: 14px; }
+
+/* Pause/Play icon templates (hidden, cloned by JS) */
+.icon-template { display: none; }
+
+/* ============ Stats Ribbon ============ */
+.stats-ribbon {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-md);
+}
+
+.stat-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+
+.stat-card:hover { border-color: var(--border-bright); }
+
+.stat-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+
+.stat-card:nth-child(1)::after { background: var(--cyan); }
+.stat-card:nth-child(2)::after { background: var(--green); }
+.stat-card:nth-child(3)::after { background: var(--purple); }
+.stat-card:nth-child(4)::after { background: var(--amber); }
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.stat-value {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1.1;
+}
+
+.stat-card:nth-child(1) .stat-value { color: var(--cyan); }
+.stat-card:nth-child(2) .stat-value { color: var(--green); }
+.stat-card:nth-child(3) .stat-value { color: var(--purple); }
+.stat-card:nth-child(4) .stat-value { color: var(--amber); }
+
+.stat-unit {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* ============ Geo Map ============ */
+.map-container {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+  height: 420px;
+}
+
+.map-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  background: linear-gradient(to bottom, rgba(6, 8, 13, 0.85), transparent);
+  z-index: 10;
+}
+
+.map-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.map-legend {
+  display: flex;
+  gap: var(--space-md);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* Leaflet overrides for dark theme */
+#leafletMap { background: var(--bg-void); }
+#leafletMap .leaflet-control-attribution { display: none; }
+#leafletMap .leaflet-control-zoom { display: none; }
+
+/* ============ Charts Row ============ */
+.charts-row {
+  display: grid;
+  grid-template-columns: 30% 1fr;
+  gap: var(--space-md);
+}
+
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.card-header h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.card-body { padding: var(--space-md); }
+
+/* Donut chart */
+.donut-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.donut-svg { width: 180px; height: 180px; }
+
+.donut-segment {
+  cursor: pointer;
+  transition: opacity var(--transition-fast), filter var(--transition-fast);
+}
+
+.donut-segment:hover { opacity: 0.8; filter: brightness(1.2); }
+
+.donut-center-value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  fill: var(--text-primary);
+}
+
+.donut-center-label {
+  font-size: 9px;
+  fill: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.donut-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  justify-content: center;
+}
+
+.donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.donut-legend-item:hover { background: var(--bg-tertiary); }
+
+.donut-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.donut-legend-pct {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Top talkers */
+.talker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.talker-row {
+  display: grid;
+  grid-template-columns: 24px 140px 1fr 70px 80px;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.talker-row:hover { background: var(--bg-tertiary); }
+
+.talker-rank {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-align: center;
+}
+
+.talker-ip {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.talker-device {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: block;
+  font-family: var(--font-sans);
+}
+
+.talker-bar-track {
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.talker-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--cyan), var(--accent-hover));
+  transition: width 0.5s ease;
+}
+
+.talker-conns {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.talker-bytes {
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-weight: 500;
+  text-align: right;
+}
+
+/* ============ Active Filters ============ */
+.active-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--accent-muted);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.filter-pill:hover { background: rgba(0, 212, 255, 0.2); }
+
+/* ============ Connections Table ============ */
+.table-container {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.table-header h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.table-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.table-scroll { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; }
+
+th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+th:hover { color: var(--accent); }
+th.sorted { color: var(--accent); }
+.sort-arrow { margin-left: 4px; font-size: 10px; }
+
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+tr {
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+tr:hover { background: var(--bg-tertiary); }
+tr.selected { background: rgba(0, 212, 255, 0.06); }
+tr.has-alert { border-left: 2px solid var(--red); }
+
+.ip-cell { font-family: var(--font-mono); color: var(--text-primary); }
+.port-cell { font-family: var(--font-mono); color: var(--text-secondary); }
+.bytes-cell { font-family: var(--font-mono); color: var(--text-primary); }
+.duration-cell { font-family: var(--font-mono); color: var(--text-muted); }
+.time-cell { font-family: var(--font-mono); color: var(--text-muted); font-size: var(--text-xs); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.badge-out { background: var(--cyan-dim); color: var(--cyan); }
+.badge-in { background: var(--green-dim); color: var(--green); }
+.badge-tcp { background: var(--cyan-dim); color: var(--cyan); }
+.badge-udp { background: var(--purple-dim); color: var(--purple); }
+.badge-icmp { background: var(--amber-dim); color: var(--amber); }
+.badge-alert { background: var(--red-dim); color: var(--red); }
+
+.flag { margin-right: 4px; }
+
+/* ============ Detail Drawer ============ */
+.drawer-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg-overlay);
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-normal);
+}
+
+.drawer-overlay.open { opacity: 1; pointer-events: auto; }
+
+.drawer {
+  position: fixed;
+  top: 0; right: 0;
+  width: 480px;
+  height: 100vh;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-default);
+  z-index: 101;
+  transform: translateX(100%);
+  transition: transform var(--transition-normal);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.drawer.open { transform: translateX(0); }
+
+.drawer-header {
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.drawer-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drawer-subtitle {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.drawer-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.drawer-close:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+
+.drawer-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-dim);
+  padding: 0 var(--space-lg);
+}
+
+.drawer-tab {
+  padding: 10px 16px;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.drawer-tab:hover { color: var(--text-secondary); }
+.drawer-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+.drawer-section { margin-bottom: var(--space-lg); }
+
+.drawer-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-sm);
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(26, 31, 46, 0.5);
+}
+
+.kv-key { font-size: var(--text-sm); color: var(--text-muted); }
+.kv-value { font-size: var(--text-sm); color: var(--text-primary); font-family: var(--font-mono); }
+.kv-value.accent { color: var(--accent); }
+
+.alert-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--red-dim);
+  border: 1px solid rgba(255, 71, 87, 0.15);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.alert-icon-lg { color: var(--red); font-size: 14px; margin-top: 2px; }
+.alert-sig { font-size: var(--text-sm); color: var(--text-primary); font-weight: 500; }
+.alert-time { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+
+.sparkline-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 60px;
+  margin-top: var(--space-sm);
+}
+
+.spark-bar {
+  flex: 1;
+  background: var(--cyan);
+  border-radius: 2px 2px 0 0;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+  min-height: 2px;
+}
+
+.spark-bar:hover { opacity: 1; }
+
+.drawer-footer {
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border-default);
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.drawer-footer .btn { flex: 1; justify-content: center; font-size: var(--text-xs); }
+
+/* ============ Responsive ============ */
+@media (max-width: 1024px) {
+  .stats-ribbon { grid-template-columns: repeat(2, 1fr); }
+  .charts-row { grid-template-columns: 1fr; }
+  .map-container { height: 350px; }
+  .talker-row { grid-template-columns: 24px 120px 1fr 60px; }
+  .talker-conns { display: none; }
+}
+
+@media (max-width: 768px) {
+  .stats-ribbon { grid-template-columns: 1fr; }
+  .map-container { height: 250px; }
+  .page-header { flex-direction: column; }
+  .drawer { width: 100vw; }
+}
+
+/* ============ Animations ============ */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stats-ribbon .stat-card { animation: fade-in-up 0.4s ease both; }
+.stats-ribbon .stat-card:nth-child(1) { animation-delay: 0s; }
+.stats-ribbon .stat-card:nth-child(2) { animation-delay: 0.05s; }
+.stats-ribbon .stat-card:nth-child(3) { animation-delay: 0.1s; }
+.stats-ribbon .stat-card:nth-child(4) { animation-delay: 0.15s; }
+
+.map-container { animation: fade-in-up 0.4s ease 0.2s both; }
+.charts-row > * { animation: fade-in-up 0.4s ease 0.3s both; }
+.table-container { animation: fade-in-up 0.4s ease 0.4s both; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ============ Page Header ============ -->
+  <header class="page-header">
+    <div class="header-left">
+      <h1>
+        Live Network Monitor
+        <span class="live-indicator"><span class="live-dot"></span> LIVE</span>
+      </h1>
+      <p class="subtitle">Real-time connections from your network to the world</p>
+    </div>
+    <div class="header-right">
+      <button class="btn" id="pauseBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+        <span>Pause</span>
+      </button>
+      <button class="btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        <span>Filters</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============ Stats Ribbon ============ -->
+  <div class="stats-ribbon">
+    <div class="stat-card">
+      <span class="stat-label">Connections/sec</span>
+      <span class="stat-value" id="connRate">47.2</span>
+      <span class="stat-unit">256 in last 60s</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Bandwidth</span>
+      <span class="stat-value" id="bandwidth">12.4</span>
+      <span class="stat-unit">MB/s combined</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Active Devices</span>
+      <span class="stat-value">23</span>
+      <span class="stat-unit">unique local IPs</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Top Destination</span>
+      <span class="stat-value">US</span>
+      <span class="stat-unit">42% of traffic</span>
+    </div>
+  </div>
+
+  <!-- ============ Geo Map (Leaflet + Canvas arcs) ============ -->
+  <div class="map-container">
+    <div class="map-header">
+      <span class="map-title">Connection Geography</span>
+      <div class="map-legend">
+        <span class="legend-item"><span class="legend-dot" style="background: var(--green)"></span> Home Network</span>
+        <span class="legend-item"><span class="legend-dot" style="background: var(--cyan)"></span> Active Destination</span>
+        <span class="legend-item"><span class="legend-dot" style="background: var(--red)"></span> Alert-Flagged</span>
+      </div>
+    </div>
+    <div id="leafletMap" style="width:100%;height:100%;"></div>
+    <canvas id="arcCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:450;"></canvas>
+  </div>
+
+  <!-- ============ Charts Row ============ -->
+  <div class="charts-row">
+
+    <!-- Protocol Donut -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Protocol Distribution</h2>
+        <span class="card-badge">Last 5m</span>
+      </div>
+      <div class="card-body">
+        <div class="donut-container">
+          <svg class="donut-svg" viewBox="0 0 200 200">
+            <!-- Donut segments as individual arc paths (no overlap) -->
+            <!-- center=(100,100), outerR=80, innerR=55 -->
+            <!-- TCP 62%: 0° → 223.2° -->
+            <path class="donut-segment" fill="var(--chart-1)"
+              d="M 100,20 A 80,80 0 1 1 45.1,158.2 L 62.3,140.0 A 55,55 0 1 0 100,45 Z"/>
+            <!-- UDP 25%: 223.2° → 313.2° -->
+            <path class="donut-segment" fill="var(--chart-5)"
+              d="M 45.1,158.2 A 80,80 0 0 1 41.8,45.2 L 60.0,62.3 A 55,55 0 0 0 62.3,140.0 Z"/>
+            <!-- ICMP 8%: 313.2° → 342° -->
+            <path class="donut-segment" fill="var(--chart-3)"
+              d="M 41.8,45.2 A 80,80 0 0 1 75.3,23.9 L 83.0,41.5 A 55,55 0 0 0 60.0,62.3 Z"/>
+            <!-- Other 5%: 342° → 360° -->
+            <path class="donut-segment" fill="var(--text-dim)"
+              d="M 75.3,23.9 A 80,80 0 0 1 100,20 L 100,45 A 55,55 0 0 0 83.0,41.5 Z"/>
+            <!-- Center text -->
+            <text x="100" y="95" class="donut-center-value" text-anchor="middle" dominant-baseline="central">4</text>
+            <text x="100" y="118" class="donut-center-label" text-anchor="middle">PROTOCOLS</text>
+          </svg>
+          <div class="donut-legend">
+            <span class="donut-legend-item">
+              <span class="donut-legend-dot" style="background: var(--chart-1)"></span>
+              TCP <span class="donut-legend-pct">62%</span>
+            </span>
+            <span class="donut-legend-item">
+              <span class="donut-legend-dot" style="background: var(--chart-5)"></span>
+              UDP <span class="donut-legend-pct">25%</span>
+            </span>
+            <span class="donut-legend-item">
+              <span class="donut-legend-dot" style="background: var(--chart-3)"></span>
+              ICMP <span class="donut-legend-pct">8%</span>
+            </span>
+            <span class="donut-legend-item">
+              <span class="donut-legend-dot" style="background: var(--text-dim)"></span>
+              Other <span class="donut-legend-pct">5%</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top Talkers -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Top Talkers</h2>
+        <span class="card-badge">By bytes transferred</span>
+      </div>
+      <div class="card-body">
+        <div class="talker-list">
+          <div class="talker-row">
+            <span class="talker-rank">1</span>
+            <span class="talker-ip">192.168.1.100<span class="talker-device">MacBook Pro</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 100%"></div></div>
+            <span class="talker-conns">142 conn</span>
+            <span class="talker-bytes">4.2 MB</span>
+          </div>
+          <div class="talker-row">
+            <span class="talker-rank">2</span>
+            <span class="talker-ip">192.168.1.105<span class="talker-device">iPhone 15</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 72%"></div></div>
+            <span class="talker-conns">98 conn</span>
+            <span class="talker-bytes">3.0 MB</span>
+          </div>
+          <div class="talker-row">
+            <span class="talker-rank">3</span>
+            <span class="talker-ip">192.168.1.110<span class="talker-device">Smart TV</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 55%"></div></div>
+            <span class="talker-conns">34 conn</span>
+            <span class="talker-bytes">2.3 MB</span>
+          </div>
+          <div class="talker-row">
+            <span class="talker-rank">4</span>
+            <span class="talker-ip">192.168.1.120<span class="talker-device">Ring Doorbell</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 38%"></div></div>
+            <span class="talker-conns">22 conn</span>
+            <span class="talker-bytes">1.6 MB</span>
+          </div>
+          <div class="talker-row">
+            <span class="talker-rank">5</span>
+            <span class="talker-ip">192.168.1.115<span class="talker-device">Work Laptop</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 26%"></div></div>
+            <span class="talker-conns">18 conn</span>
+            <span class="talker-bytes">1.1 MB</span>
+          </div>
+          <div class="talker-row">
+            <span class="talker-rank">6</span>
+            <span class="talker-ip">192.168.1.130<span class="talker-device">Nest Hub</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 15%"></div></div>
+            <span class="talker-conns">11 conn</span>
+            <span class="talker-bytes">0.6 MB</span>
+          </div>
+          <div class="talker-row">
+            <span class="talker-rank">7</span>
+            <span class="talker-ip">192.168.1.140<span class="talker-device">iPad Air</span></span>
+            <div class="talker-bar-track"><div class="talker-bar-fill" style="width: 10%"></div></div>
+            <span class="talker-conns">7 conn</span>
+            <span class="talker-bytes">0.4 MB</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Connections Table ============ -->
+  <div class="table-container">
+    <div class="table-header">
+      <h2>Live Connections</h2>
+      <span class="table-count">Showing 100 of 256 connections</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="sorted">Time <span class="sort-arrow">&darr;</span></th>
+            <th>Source</th>
+            <th>Dir</th>
+            <th>Destination</th>
+            <th>Protocol</th>
+            <th>Port</th>
+            <th>Bytes</th>
+            <th>Duration</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="has-alert selected" onclick="openDrawer()">
+            <td class="time-cell">14:23:47</td>
+            <td class="ip-cell">192.168.1.100</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127470;&#127475;</span>43.225.98.12</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">15.2 KB</td>
+            <td class="duration-cell">2.4s</td>
+            <td><span class="badge badge-alert">ALERT</span></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:46</td>
+            <td class="ip-cell">192.168.1.105</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127482;&#127480;</span>142.250.80.46</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">8.4 KB</td>
+            <td class="duration-cell">1.2s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:46</td>
+            <td class="ip-cell">192.168.1.100</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127482;&#127480;</span>1.1.1.1</td>
+            <td><span class="badge badge-udp">UDP</span></td>
+            <td class="port-cell">53</td>
+            <td class="bytes-cell">124 B</td>
+            <td class="duration-cell">42ms</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:45</td>
+            <td class="ip-cell">192.168.1.110</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127482;&#127480;</span>52.94.236.248</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">342.1 KB</td>
+            <td class="duration-cell">45.3s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:44</td>
+            <td class="ip-cell">192.168.1.120</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127482;&#127480;</span>54.239.28.85</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">67.8 KB</td>
+            <td class="duration-cell">12.1s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:43</td>
+            <td class="ip-cell">192.168.1.105</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127465;&#127466;</span>35.198.166.47</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">4.2 KB</td>
+            <td class="duration-cell">0.8s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:42</td>
+            <td class="ip-cell">192.168.1.115</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127471;&#127477;</span>104.18.32.7</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">22.6 KB</td>
+            <td class="duration-cell">3.7s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:41</td>
+            <td class="ip-cell">192.168.1.130</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127482;&#127480;</span>172.217.14.99</td>
+            <td><span class="badge badge-udp">UDP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">1.8 KB</td>
+            <td class="duration-cell">0.3s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:40</td>
+            <td class="ip-cell">192.168.1.100</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127468;&#127463;</span>151.101.1.140</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">94.3 KB</td>
+            <td class="duration-cell">8.2s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:39</td>
+            <td class="ip-cell">192.168.1.140</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127480;&#127468;</span>13.228.225.19</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">443</td>
+            <td class="bytes-cell">5.1 KB</td>
+            <td class="duration-cell">1.4s</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:38</td>
+            <td class="ip-cell">192.168.1.105</td>
+            <td><span class="badge badge-in">IN</span></td>
+            <td class="ip-cell"><span class="flag">&#127482;&#127480;</span>8.8.8.8</td>
+            <td><span class="badge badge-udp">UDP</span></td>
+            <td class="port-cell">53</td>
+            <td class="bytes-cell">86 B</td>
+            <td class="duration-cell">18ms</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="time-cell">14:23:37</td>
+            <td class="ip-cell">192.168.1.100</td>
+            <td><span class="badge badge-out">OUT</span></td>
+            <td class="ip-cell"><span class="flag">&#127463;&#127479;</span>177.71.128.45</td>
+            <td><span class="badge badge-tcp">TCP</span></td>
+            <td class="port-cell">8080</td>
+            <td class="bytes-cell">2.3 KB</td>
+            <td class="duration-cell">0.6s</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ Detail Drawer ============ -->
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-header">
+    <div>
+      <div class="drawer-title">192.168.1.100 &rarr; 43.225.98.12</div>
+      <div class="drawer-subtitle">TCP : 443 &middot; HTTPS &middot; 2.4s ago</div>
+    </div>
+    <button class="drawer-close" id="drawerClose">&times;</button>
+  </div>
+
+  <div class="drawer-tabs">
+    <button class="drawer-tab active">Details</button>
+    <button class="drawer-tab">Alerts</button>
+    <button class="drawer-tab">History</button>
+  </div>
+
+  <div class="drawer-content">
+    <div class="drawer-section">
+      <div class="drawer-section-title">Connection Info</div>
+      <div class="kv-row"><span class="kv-key">Source</span><span class="kv-value accent">192.168.1.100:54321</span></div>
+      <div class="kv-row"><span class="kv-key">Destination</span><span class="kv-value accent">43.225.98.12:443</span></div>
+      <div class="kv-row"><span class="kv-key">Protocol</span><span class="kv-value">TCP / HTTPS</span></div>
+      <div class="kv-row"><span class="kv-key">Direction</span><span class="kv-value"><span class="badge badge-out">OUTBOUND</span></span></div>
+      <div class="kv-row"><span class="kv-key">Bytes Transferred</span><span class="kv-value">15.2 KB</span></div>
+      <div class="kv-row"><span class="kv-key">Duration</span><span class="kv-value">2.4s</span></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">GeoIP Intelligence</div>
+      <div class="kv-row"><span class="kv-key">Country</span><span class="kv-value">&#127470;&#127475; India</span></div>
+      <div class="kv-row"><span class="kv-key">City</span><span class="kv-value">Mumbai</span></div>
+      <div class="kv-row"><span class="kv-key">Coordinates</span><span class="kv-value">19.076, 72.878</span></div>
+      <div class="kv-row"><span class="kv-key">ASN</span><span class="kv-value">AS9498</span></div>
+      <div class="kv-row"><span class="kv-key">Organization</span><span class="kv-value">Bharti Airtel Ltd.</span></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Related Suricata Alerts <span class="badge badge-alert" style="margin-left: 8px;">2</span></div>
+      <div class="alert-item">
+        <span class="alert-icon-lg">&#9888;</span>
+        <div>
+          <div class="alert-sig">ET POLICY Outbound HTTPS Connection to Suspicious TLD</div>
+          <div class="alert-time">2 minutes ago &middot; Severity 2</div>
+        </div>
+      </div>
+      <div class="alert-item">
+        <span class="alert-icon-lg">&#9888;</span>
+        <div>
+          <div class="alert-sig">ET INFO Observed External IP Lookup Domain</div>
+          <div class="alert-time">4 minutes ago &middot; Severity 3</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">24-Hour Connection History</div>
+      <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+        <span>24h ago</span>
+        <span style="font-family: var(--font-mono)">47 connections &middot; 1.2 MB total</span>
+        <span>Now</span>
+      </div>
+      <div class="sparkline-container">
+        <div class="spark-bar" style="height: 15%"></div>
+        <div class="spark-bar" style="height: 8%"></div>
+        <div class="spark-bar" style="height: 5%"></div>
+        <div class="spark-bar" style="height: 3%"></div>
+        <div class="spark-bar" style="height: 2%"></div>
+        <div class="spark-bar" style="height: 2%"></div>
+        <div class="spark-bar" style="height: 5%"></div>
+        <div class="spark-bar" style="height: 12%"></div>
+        <div class="spark-bar" style="height: 25%"></div>
+        <div class="spark-bar" style="height: 40%"></div>
+        <div class="spark-bar" style="height: 55%"></div>
+        <div class="spark-bar" style="height: 70%"></div>
+        <div class="spark-bar" style="height: 60%"></div>
+        <div class="spark-bar" style="height: 45%"></div>
+        <div class="spark-bar" style="height: 50%"></div>
+        <div class="spark-bar" style="height: 65%"></div>
+        <div class="spark-bar" style="height: 80%"></div>
+        <div class="spark-bar" style="height: 90%"></div>
+        <div class="spark-bar" style="height: 75%"></div>
+        <div class="spark-bar" style="height: 85%"></div>
+        <div class="spark-bar" style="height: 95%"></div>
+        <div class="spark-bar" style="height: 100%"></div>
+        <div class="spark-bar" style="height: 88%"></div>
+        <div class="spark-bar" style="height: 70%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-footer">
+    <button class="btn">View Device</button>
+    <button class="btn">GeoIP Lookup</button>
+    <button class="btn">Filter</button>
+  </div>
+</div>
+
+<script>
+  // ============ Drawer interactivity ============
+  var drawer = document.getElementById('drawer');
+  var overlay = document.getElementById('drawerOverlay');
+  var pauseBtn = document.getElementById('pauseBtn');
+  var drawerClose = document.getElementById('drawerClose');
+
+  function openDrawer() { drawer.classList.add('open'); overlay.classList.add('open'); }
+  function closeDrawer() { drawer.classList.remove('open'); overlay.classList.remove('open'); }
+  overlay.addEventListener('click', closeDrawer);
+  drawerClose.addEventListener('click', closeDrawer);
+
+  var isPaused = false;
+  pauseBtn.addEventListener('click', function() {
+    isPaused = !isPaused;
+    pauseBtn.classList.toggle('btn-primary', isPaused);
+    var label = pauseBtn.querySelector('span');
+    if (label) label.textContent = isPaused ? 'Resume' : 'Pause';
+  });
+
+  // Stat counter updates
+  var connRate = 47.2, bandwidth = 12.4;
+  setInterval(function() {
+    if (isPaused) return;
+    connRate += (Math.random() - 0.5) * 3;
+    connRate = Math.max(10, Math.min(80, connRate));
+    bandwidth += (Math.random() - 0.5) * 1.5;
+    bandwidth = Math.max(2, Math.min(30, bandwidth));
+    var c = document.getElementById('connRate'), b = document.getElementById('bandwidth');
+    if (c) c.textContent = connRate.toFixed(1);
+    if (b) b.textContent = bandwidth.toFixed(1);
+  }, 3000);
+
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeDrawer(); });
+
+  // ============ Leaflet Map ============
+  var map = L.map('leafletMap', {
+    center: [20, 10],
+    zoom: 2,
+    minZoom: 2,
+    maxZoom: 6,
+    zoomControl: false,
+    attributionControl: false,
+    maxBounds: [[-85, -180], [85, 180]],
+    maxBoundsViscosity: 1.0,
+    preferCanvas: true
+  });
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd',
+    maxZoom: 19
+  }).addTo(map);
+
+  // Home marker (Los Angeles)
+  var HOME = [34.05, -118.24];
+  L.circleMarker(HOME, {
+    radius: 7, fillColor: '#00e676', fillOpacity: 1,
+    stroke: true, color: '#00e676', weight: 1, opacity: 0.6
+  }).addTo(map).bindTooltip('Home Network', {
+    permanent: true, direction: 'bottom', offset: [0, 10],
+    className: 'home-tooltip'
+  });
+  // Home glow ring
+  L.circleMarker(HOME, {
+    radius: 16, fillColor: '#00e676', fillOpacity: 0.1,
+    stroke: true, color: '#00e676', weight: 0.5, opacity: 0.3
+  }).addTo(map);
+
+  // Destination definitions: [lat, lon, label, connections, color, isAlert]
+  var destinations = [
+    [40.71, -74.01, 'New York, US', 22, '#00d4ff', false],
+    [51.51, -0.13, 'London, UK', 15, '#00d4ff', false],
+    [50.11, 8.68, 'Frankfurt, DE', 12, '#00d4ff', false],
+    [35.68, 139.69, 'Tokyo, JP', 8, '#00d4ff', false],
+    [1.35, 103.82, 'Singapore', 4, '#1de9b6', false],
+    [19.08, 72.88, 'Mumbai, IN', 5, '#ff4757', true],
+    [-23.55, -46.63, 'São Paulo, BR', 3, '#ffab00', false],
+    [-33.87, 151.21, 'Sydney, AU', 2, '#b388ff', false]
+  ];
+
+  // Add destination markers
+  destinations.forEach(function(d) {
+    var ll = [d[0], d[1]];
+    var r = Math.min(4 + Math.sqrt(d[3]) * 2, 14);
+    // Glow ring
+    L.circleMarker(ll, {
+      radius: r + 8, fillColor: d[4], fillOpacity: 0.08,
+      stroke: true, color: d[4], weight: 0.5, opacity: 0.2
+    }).addTo(map);
+    // Solid dot
+    L.circleMarker(ll, {
+      radius: r, fillColor: d[4], fillOpacity: 0.85,
+      stroke: true, color: d[4], weight: 1, opacity: 0.5
+    }).addTo(map).bindTooltip(
+      d[2] + ': ' + d[3] + ' connections' + (d[5] ? ' ⚠ ALERT' : ''), {
+        direction: 'top', offset: [0, -r - 4]
+      }
+    );
+  });
+
+  // Leaflet tooltip styles
+  var tooltipStyle = document.createElement('style');
+  tooltipStyle.textContent = [
+    '.leaflet-tooltip { background: #181d27; border: 1px solid #2d3548; color: #e8edf5;',
+    '  font-family: "JetBrains Mono", monospace; font-size: 12px; padding: 4px 8px;',
+    '  border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }',
+    '.leaflet-tooltip-top::before { border-top-color: #2d3548; }',
+    '.leaflet-tooltip-bottom::before { border-bottom-color: #2d3548; }',
+    '.home-tooltip { background: rgba(0,230,118,0.15); border-color: rgba(0,230,118,0.3);',
+    '  color: #00e676; font-weight: 600; font-size: 10px; text-transform: uppercase;',
+    '  letter-spacing: 0.06em; }'
+  ].join('\n');
+  document.head.appendChild(tooltipStyle);
+
+  // ============ Canvas Arc Animation ============
+  var canvas = document.getElementById('arcCanvas');
+  var ctx = canvas.getContext('2d');
+  var phase = 0;
+
+  function resizeCanvas() {
+    var rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * window.devicePixelRatio;
+    canvas.height = rect.height * window.devicePixelRatio;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+  }
+
+  function latLngToPixel(lat, lng) {
+    var pt = map.latLngToContainerPoint([lat, lng]);
+    return { x: pt.x, y: pt.y };
+  }
+
+  function drawArcs() {
+    if (isPaused) { requestAnimationFrame(drawArcs); return; }
+    var w = canvas.width / window.devicePixelRatio;
+    var h = canvas.height / window.devicePixelRatio;
+    ctx.clearRect(0, 0, w, h);
+
+    var home = latLngToPixel(HOME[0], HOME[1]);
+    phase = (phase + 0.003) % 1;
+
+    destinations.forEach(function(d, i) {
+      var dest = latLngToPixel(d[0], d[1]);
+      var color = d[4];
+      var midX = (home.x + dest.x) / 2;
+      var midY = Math.min(home.y, dest.y) - 40 - Math.abs(dest.x - home.x) * 0.12;
+
+      // Static arc (dim)
+      ctx.beginPath();
+      ctx.moveTo(home.x, home.y);
+      ctx.quadraticCurveTo(midX, midY, dest.x, dest.y);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.12;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Animated pulse dot(s) traveling along arc
+      var pulseCount = d[3] > 10 ? 3 : d[3] > 4 ? 2 : 1;
+      for (var p = 0; p < pulseCount; p++) {
+        var t = (phase + i * 0.11 + p * (1 / pulseCount)) % 1;
+        var inv = 1 - t;
+        var px = inv * inv * home.x + 2 * inv * t * midX + t * t * dest.x;
+        var py = inv * inv * home.y + 2 * inv * t * midY + t * t * dest.y;
+
+        // Glow
+        ctx.beginPath();
+        ctx.arc(px, py, 6, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.2;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Dot
+        ctx.beginPath();
+        ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.9;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    });
+
+    requestAnimationFrame(drawArcs);
+  }
+
+  resizeCanvas();
+  map.on('moveend zoomend resize', resizeCanvas);
+  window.addEventListener('resize', resizeCanvas);
+  drawArcs();
+</script>
+
+</body>
+</html>

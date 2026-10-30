@@ -1,0 +1,204 @@
+# NetTap IoT Tracker Domains List
+# Used for privacy scoring in the IoT Trust Score feature.
+# Format: one domain per line, suffix-matched against DNS queries.
+# Lines starting with # are comments.
+#
+# A device contacting these domains indicates tracking/telemetry behavior
+# that is not essential to the device's core function.
+
+# ============================================================
+# Google Analytics & Measurement
+# ============================================================
+google-analytics.com
+googletagmanager.com
+googletagservices.com
+googlesyndication.com
+googleadservices.com
+google-analytics.l.google.com
+analytics.google.com
+tagmanager.google.com
+firebaselogging-pa.googleapis.com
+
+# ============================================================
+# Google Ads & Doubleclick
+# ============================================================
+doubleclick.net
+googleads.g.doubleclick.net
+pagead2.googlesyndication.com
+adservice.google.com
+adc3-launch.adcolony.com
+
+# ============================================================
+# Firebase / Crashlytics (Google)
+# ============================================================
+crashlytics.com
+firebase-settings.crashlytics.com
+firebaseinstallations.googleapis.com
+fcm.googleapis.com
+app-measurement.com
+settings.crashlytics.com
+
+# ============================================================
+# Facebook / Meta Tracking
+# ============================================================
+graph.facebook.com
+pixel.facebook.com
+an.facebook.com
+ads.facebook.com
+connect.facebook.net
+analytics.facebook.com
+
+# ============================================================
+# Amazon Device Telemetry
+# ============================================================
+device-metrics-us.amazon.com
+device-metrics-us-2.amazon.com
+mads-eu.amazon.com
+mads.amazon.com
+fls-na.amazon.com
+fls-eu.amazon.com
+unagi.amazon.com
+arcus-uswest.amazon.com
+kindle-time.amazon.com
+
+# ============================================================
+# Apple Telemetry
+# ============================================================
+metrics.icloud.com
+xp.apple.com
+diagnostics.apple.com
+analytics.apple.com
+iad.apple.com
+iadsdk.apple.com
+
+# ============================================================
+# Microsoft / Xbox Telemetry
+# ============================================================
+vortex.data.microsoft.com
+settings-win.data.microsoft.com
+watson.telemetry.microsoft.com
+telemetry.microsoft.com
+choice.microsoft.com
+telemetry.appex.bing.net
+
+# ============================================================
+# Samsung SmartTV & Device Tracking
+# ============================================================
+samsungacr.com
+samsungads.com
+config.samsungads.com
+gpm.samsungapps.com
+log-config.samsungacr.com
+osb-apps.samsungdm.com
+sas.samsung.com
+samsungosp.com
+
+# ============================================================
+# Roku Tracking & Ads
+# ============================================================
+logs.roku.com
+cooper.logs.roku.com
+cloudservices.roku.com
+scribe.logs.roku.com
+
+# ============================================================
+# Smart TV Platforms (LG, Vizio, etc.)
+# ============================================================
+ngfts.lge.com
+us.lgtvsdp.com
+lgtvsdp.com
+rdx2.vizio.com
+dei-s.vizio.com
+tv.vizio.com
+analytics.vizio.com
+
+# ============================================================
+# IoT Cloud / Smart Home Telemetry
+# ============================================================
+log.tuya.com
+a1.tuyacn.com
+a2.tuyaeu.com
+mqtt.2tu.tuya.com
+dc1.diagnostics.postman.com
+mobile-analytics.tuya.com
+data.mistat.xiaomi.com
+tracking.miui.com
+sdkconfig.ad.xiaomi.com
+
+# ============================================================
+# Analytics Platforms (General)
+# ============================================================
+mixpanel.com
+api.mixpanel.com
+cdn.mxpnl.com
+amplitude.com
+api.amplitude.com
+api2.amplitude.com
+heapanalytics.com
+cdn.heapanalytics.com
+segment.io
+api.segment.io
+cdn.segment.com
+logs.datadoghq.com
+browser-intake-datadoghq.com
+braze.com
+sdk.iad-01.braze.com
+flurry.com
+data.flurry.com
+
+# ============================================================
+# Data Brokers & Audience Measurement
+# ============================================================
+scorecardresearch.com
+sb.scorecardresearch.com
+quantserve.com
+pixel.quantserve.com
+taboola.com
+trc.taboola.com
+outbrain.com
+bluekai.com
+krxd.net
+beacon.krxd.net
+demdex.net
+dpm.demdex.net
+exelator.com
+rlcdn.com
+pippio.com
+adsrvr.org
+agkn.com
+crwdcntrl.net
+moatads.com
+doubleverify.com
+
+# ============================================================
+# Ad Networks & Retargeting
+# ============================================================
+criteo.com
+bidswitch.net
+adnxs.com
+rubiconproject.com
+pubmatic.com
+openx.net
+casalemedia.com
+sharethrough.com
+contextweb.com
+smartadserver.com
+advertising.com
+turn.com
+mopub.com
+
+# ============================================================
+# Social & Attribution Trackers
+# ============================================================
+branch.io
+api2.branch.io
+bnc.lt
+adjust.com
+app.adjust.com
+appsflyer.com
+kochava.com
+apptentive.com
+localytics.com
+urbanairship.com
+onesignal.com
+leanplum.com

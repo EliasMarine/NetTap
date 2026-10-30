@@ -23,10 +23,15 @@ export interface Device {
 	first_seen: string;
 	last_seen: string;
 	total_bytes: number;
+	/** Bytes the device sent (sum of source.bytes). */
+	orig_bytes?: number;
+	/** Bytes the device received (sum of destination.bytes). */
+	resp_bytes?: number;
 	connection_count: number;
 	protocols: string[];
 	alert_count: number;
 	category?: string;
+	unifi_name?: string;
 }
 
 export interface DeviceListResponse {

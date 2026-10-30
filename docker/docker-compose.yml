@@ -465,7 +465,7 @@ services:
       # Running as root inside this sandboxed container (cap_drop:ALL + cap_add) is safe.
       PUSER: "root"
       PCAP_ENABLE_NETSNIFF: "true"
-      PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-4096}"
+      PCAP_ROTATE_MEGABYTES: "${PCAP_ROTATE_MB:-100}"
       PCAP_ROTATE_MINUTES: "${PCAP_ROTATE_MIN:-10}"
       PCAP_FILTER: ""
     volumes:
@@ -636,6 +636,12 @@ services:
     image: nettap/storage-daemon:latest
     container_name: nettap-storage-daemon
     restart: unless-stopped
+    # Host networking — daemon needs direct access to the host LAN to reach
+    # devices like the UniFi controller (192.168.1.1). Docker bridge networking
+    # isolates containers from the host subnet. The daemon already has pid:host,
+    # SYS_ADMIN, SYS_PTRACE, docker socket, and runs as root — host networking
+    # doesn't meaningfully change its security posture.
+    network_mode: host
     # NOTE: Does NOT use *security-defaults (no-new-privileges:true).
     # nsenter requires privilege escalation (setns syscall) which
     # no-new-privileges blocks. Security maintained via cap_drop: ALL +
@@ -704,6 +710,10 @@ services:
       - /etc/sysctl.d:/host/etc/sysctl.d
     environment:
       <<: *opensearch-env
+      # Override OPENSEARCH_URL for host networking — Docker DNS (opensearch:9200)
+      # doesn't resolve on the host network. OpenSearch binds 127.0.0.1:9200
+      # directly on the host. Same pattern as arkime-live.
+      OPENSEARCH_URL: "https://localhost:9200"
       RETENTION_HOT: "${RETENTION_HOT:-90}"
       RETENTION_WARM: "${RETENTION_WARM:-180}"
       RETENTION_COLD: "${RETENTION_COLD:-30}"
@@ -718,15 +728,21 @@ services:
       OPENSEARCH_NETWORK_INDEX: "${OPENSEARCH_NETWORK_INDEX:-arkime_sessions3-*}"
       CAPTURE_MODE: "${CAPTURE_MODE:-bridge}"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
-    # Daemon port is internal-only — only the web container needs it
-    expose:
-      - "8880"
+      MGMT_IP: "${MGMT_IP:-}"
+      MGMT_INTERFACE: "${MGMT_INTERFACE:-}"
+    # OLD CODE START — expose not needed with network_mode: host (port is
+    # directly on the host network, no Docker port mapping required)
+    # expose:
+    #   - "8880"
+    # OLD CODE END
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8880/api/health')\""]
       start_period: 15s
-    networks:
-      - default
+    # OLD CODE START — networks incompatible with network_mode: host
+    # networks:
+    #   - default
+    # OLD CODE END
     depends_on:
       opensearch:
         condition: service_healthy
@@ -754,13 +770,19 @@ services:
     # OLD CODE END — now nginx handles external TLS termination on 443
     expose:
       - "3000"
+    # host.docker.internal resolves to the host's bridge gateway IP, allowing
+    # this container to reach the daemon which now runs with network_mode: host.
+    # Docker DNS name "nettap-storage-daemon" no longer resolves because host-
+    # networked containers are not on the Docker bridge network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ../config:/opt/nettap/config:ro
       - web-data:/var/lib/nettap-web
     environment:
       <<: *opensearch-env
       NETTAP_HOSTNAME: "${NETTAP_HOSTNAME:-nettap.local}"
-      DAEMON_URL: "http://nettap-storage-daemon:8880"
+      DAEMON_URL: "http://host.docker.internal:8880"
       CYBERCHEF_URL: "http://nettap-cyberchef:8443"
       # SvelteKit adapter-node: trust nginx proxy headers for CSRF origin check.
       # Without this, SvelteKit sees raw HTTP (port 3000) while browser sends
@@ -870,7 +892,7 @@ services:
       - /tmp:size=100M
     volumes:
       - pcap-data:/pcap:ro
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: 0.5
     security_opt:
       - no-new-privileges:true
@@ -878,6 +900,12 @@ services:
       - ALL
     networks:
       - default
+    healthcheck:
+      test: ["CMD", "tshark", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
 
   nettap-cyberchef:
     build:

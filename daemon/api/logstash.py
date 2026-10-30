@@ -21,7 +21,9 @@ async def _fetch_logstash_api(path: str = "/_node/stats") -> dict | None:
     url = f"{LOGSTASH_API_URL}{path}"
     try:
         async with aiohttp_client.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp_client.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                url, timeout=aiohttp_client.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 logger.warning("Logstash API returned %d for %s", resp.status, path)
@@ -39,13 +41,15 @@ async def handle_logstash_stats(request: web.Request) -> web.Response:
             {"error": "Logstash monitoring API unreachable", "available": False},
             status=502,
         )
-    return web.json_response({
-        "available": True,
-        "jvm": data.get("jvm", {}),
-        "process": data.get("process", {}),
-        "pipelines": data.get("pipelines", {}),
-        "events": data.get("events", {}),
-    })
+    return web.json_response(
+        {
+            "available": True,
+            "jvm": data.get("jvm", {}),
+            "process": data.get("process", {}),
+            "pipelines": data.get("pipelines", {}),
+            "events": data.get("events", {}),
+        }
+    )
 
 
 async def handle_logstash_pipelines(request: web.Request) -> web.Response:
@@ -60,17 +64,19 @@ async def handle_logstash_pipelines(request: web.Request) -> web.Response:
     result = []
     for name, stats in pipelines.items():
         events = stats.get("events", {})
-        result.append({
-            "id": name,
-            "events": {
-                "in": events.get("in", 0),
-                "out": events.get("out", 0),
-                "filtered": events.get("filtered", 0),
-                "duration_ms": events.get("duration_in_millis", 0),
-            },
-            "plugins": stats.get("plugins", {}),
-            "reloads": stats.get("reloads", {}),
-        })
+        result.append(
+            {
+                "id": name,
+                "events": {
+                    "in": events.get("in", 0),
+                    "out": events.get("out", 0),
+                    "filtered": events.get("filtered", 0),
+                    "duration_ms": events.get("duration_in_millis", 0),
+                },
+                "plugins": stats.get("plugins", {}),
+                "reloads": stats.get("reloads", {}),
+            }
+        )
     return web.json_response({"pipelines": result, "count": len(result)})
 
 

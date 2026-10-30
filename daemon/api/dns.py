@@ -46,16 +46,17 @@ async def handle_top_domains(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     limit = int(request.query.get("limit", "50"))
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_top_domains(from_ts, to_ts, limit)
+        result = dns.get_top_domains(
+            from_ts, to_ts, limit, excluded_ips=excluded_ips_list
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/top-domains: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts, "domains": result
-    })
+    return web.json_response({"from": from_ts, "to": to_ts, "domains": result})
 
 
 async def handle_device_dns(request: web.Request) -> web.Response:
@@ -63,48 +64,51 @@ async def handle_device_dns(request: web.Request) -> web.Response:
     device_ip = request.match_info["ip"]
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_device_dns(device_ip, from_ts, to_ts)
+        result = dns.get_device_dns(
+            device_ip, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/device: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({
-        "device_ip": device_ip, "from": from_ts, "to": to_ts, "domains": result
-    })
+    return web.json_response(
+        {"device_ip": device_ip, "from": from_ts, "to": to_ts, "domains": result}
+    )
 
 
 async def handle_nxdomain(request: web.Request) -> web.Response:
     """GET /api/dns/nxdomain?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_nxdomain_errors(from_ts, to_ts)
+        result = dns.get_nxdomain_errors(from_ts, to_ts, excluded_ips=excluded_ips_list)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/nxdomain: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts, "nxdomains": result
-    })
+    return web.json_response({"from": from_ts, "to": to_ts, "nxdomains": result})
 
 
 async def handle_query_types(request: web.Request) -> web.Response:
     """GET /api/dns/types?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_query_type_distribution(from_ts, to_ts)
+        result = dns.get_query_type_distribution(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/types: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts, "types": result
-    })
+    return web.json_response({"from": from_ts, "to": to_ts, "types": result})
 
 
 async def handle_timeline(request: web.Request) -> web.Response:
@@ -112,41 +116,44 @@ async def handle_timeline(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     interval = request.query.get("interval", "1m")
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_dns_timeline(from_ts, to_ts, interval)
+        result = dns.get_dns_timeline(
+            from_ts, to_ts, interval, excluded_ips=excluded_ips_list
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/timeline: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts, "interval": interval, "series": result
-    })
+    return web.json_response(
+        {"from": from_ts, "to": to_ts, "interval": interval, "series": result}
+    )
 
 
 async def handle_suspicious(request: web.Request) -> web.Response:
     """GET /api/dns/suspicious?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_suspicious_dns(from_ts, to_ts)
+        result = dns.get_suspicious_dns(from_ts, to_ts, excluded_ips=excluded_ips_list)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/suspicious: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts, "suspicious": result
-    })
+    return web.json_response({"from": from_ts, "to": to_ts, "suspicious": result})
 
 
 async def handle_stats(request: web.Request) -> web.Response:
     """GET /api/dns/stats?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_stats(from_ts, to_ts)
+        result = dns.get_stats(from_ts, to_ts, excluded_ips=excluded_ips_list)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/stats: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)

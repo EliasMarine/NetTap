@@ -13,10 +13,8 @@ Covers:
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
-import pytest
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager
@@ -58,6 +56,10 @@ def _make_manager(
     mgr._usage_history = deque(maxlen=StorageManager._USAGE_HISTORY_MAX)
     mgr._prediction_alert_active = False
 
+    import threading
+
+    mgr._cleanup_lock = threading.Lock()
+
     if usage_history:
         for entry in usage_history:
             mgr._usage_history.append(entry)
@@ -86,8 +88,10 @@ class TestPredictiveExhaustion:
 
         mgr = _make_manager(usage_history=usage_history)
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.75), \
-             patch("storage.manager.shutil.disk_usage") as mock_disk:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.75),
+            patch("storage.manager.shutil.disk_usage") as mock_disk,
+        ):
             mock_disk.return_value = MagicMock(
                 total=1_000_000_000_000,
                 used=750_000_000_000,
@@ -113,8 +117,10 @@ class TestPredictiveExhaustion:
 
         mgr = _make_manager(usage_history=usage_history)
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.50), \
-             patch("storage.manager.shutil.disk_usage") as mock_disk:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch("storage.manager.shutil.disk_usage") as mock_disk,
+        ):
             mock_disk.return_value = MagicMock(
                 total=1_000_000_000_000,
                 used=500_000_000_000,
@@ -130,8 +136,10 @@ class TestPredictiveExhaustion:
         """When already above threshold, alert is always active."""
         mgr = _make_manager()
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.85), \
-             patch("storage.manager.shutil.disk_usage") as mock_disk:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.85),
+            patch("storage.manager.shutil.disk_usage") as mock_disk,
+        ):
             mock_disk.return_value = MagicMock(
                 total=1_000_000_000_000,
                 used=850_000_000_000,
@@ -148,8 +156,10 @@ class TestPredictiveExhaustion:
         # Only 1 data point
         mgr._usage_history.append((datetime.now(timezone.utc), 0.60))
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.60), \
-             patch("storage.manager.shutil.disk_usage") as mock_disk:
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.60),
+            patch("storage.manager.shutil.disk_usage") as mock_disk,
+        ):
             mock_disk.return_value = MagicMock(
                 total=1_000_000_000_000,
                 used=600_000_000_000,
@@ -171,11 +181,13 @@ class TestEmergencyCascade:
         """At 90%: should prune indices and PCAPs, NOT stop capture."""
         mgr = _make_manager()
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.91), \
-             patch.object(mgr, "prune_emergency", return_value=3) as mock_prune, \
-             patch.object(mgr, "_delete_oldest_pcaps", return_value=2) as mock_pcap, \
-             patch.object(mgr, "_set_capture_stop_flag") as mock_stop, \
-             patch.object(mgr, "is_capture_stopped", return_value=False):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.91),
+            patch.object(mgr, "prune_emergency", return_value=3) as mock_prune,
+            patch.object(mgr, "_delete_oldest_pcaps", return_value=2) as mock_pcap,
+            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "is_capture_stopped", return_value=False),
+        ):
             deleted = mgr.emergency_cascade()
 
         assert deleted == 5
@@ -187,11 +199,13 @@ class TestEmergencyCascade:
         """At 95%: should stop capture AND do aggressive pruning."""
         mgr = _make_manager()
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.96), \
-             patch.object(mgr, "prune_emergency", return_value=5) as mock_prune, \
-             patch.object(mgr, "_delete_oldest_pcaps", return_value=3) as mock_pcap, \
-             patch.object(mgr, "_set_capture_stop_flag") as mock_stop, \
-             patch.object(mgr, "is_capture_stopped", return_value=True):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.96),
+            patch.object(mgr, "prune_emergency", return_value=5) as mock_prune,
+            patch.object(mgr, "_delete_oldest_pcaps", return_value=3) as mock_pcap,
+            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "is_capture_stopped", return_value=True),
+        ):
             deleted = mgr.emergency_cascade()
 
         assert deleted == 8
@@ -259,8 +273,10 @@ class TestEmergencyCascade:
         mgr._ilm_verified = True  # Skip ILM check
 
         # Disk at 70% — well below all thresholds
-        with patch.object(mgr, "check_disk_usage", return_value=0.70), \
-             patch.object(mgr, "get_disk_prediction", return_value={}):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.70),
+            patch.object(mgr, "get_disk_prediction", return_value={}),
+        ):
             mgr.run_cycle()
 
         assert not flag_file.exists()
@@ -276,8 +292,7 @@ class TestIlmPolicyVerification:
         """When policies are missing, verify_ilm_policy should create them."""
         mgr = _make_manager()
 
-        with patch("storage.ilm.apply_ilm_policies") as mock_apply, \
-             patch("os.path.isfile", return_value=True):
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
             mock_apply.return_value = {
                 "nettap-hot-policy": "created",
                 "nettap-warm-policy": "created",
@@ -294,8 +309,7 @@ class TestIlmPolicyVerification:
         """When policies already exist, verify_ilm_policy reports unchanged."""
         mgr = _make_manager()
 
-        with patch("storage.ilm.apply_ilm_policies") as mock_apply, \
-             patch("os.path.isfile", return_value=True):
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
             mock_apply.return_value = {
                 "nettap-hot-policy": "unchanged",
                 "nettap-warm-policy": "unchanged",
@@ -307,11 +321,13 @@ class TestIlmPolicyVerification:
         assert mgr._ilm_verified is True
 
     def test_ilm_policy_verification_handles_missing_file(self):
-        """When policy file is not found, returns error."""
-        cfg = RetentionConfig(ilm_policy_path="/nonexistent/path.json")
-        mgr = _make_manager(config=cfg)
+        """When OpenSearch is unreachable, returns error dict."""
+        mgr = _make_manager()
 
-        with patch("os.path.isfile", return_value=False):
+        with patch(
+            "storage.ilm.apply_ilm_policies_from_config",
+            side_effect=ConnectionError("OpenSearch unreachable"),
+        ):
             result = mgr.verify_ilm_policy()
 
         assert "_error" in result
@@ -322,9 +338,11 @@ class TestIlmPolicyVerification:
         mgr = _make_manager()
         mgr._ilm_verified = False
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.50), \
-             patch.object(mgr, "verify_ilm_policy") as mock_verify, \
-             patch.object(mgr, "get_disk_prediction", return_value={}):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "verify_ilm_policy") as mock_verify,
+            patch.object(mgr, "get_disk_prediction", return_value={}),
+        ):
             mgr.run_cycle()
 
         mock_verify.assert_called_once()
@@ -334,9 +352,11 @@ class TestIlmPolicyVerification:
         mgr = _make_manager()
         mgr._ilm_verified = True
 
-        with patch.object(mgr, "check_disk_usage", return_value=0.50), \
-             patch.object(mgr, "verify_ilm_policy") as mock_verify, \
-             patch.object(mgr, "get_disk_prediction", return_value={}):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "verify_ilm_policy") as mock_verify,
+            patch.object(mgr, "get_disk_prediction", return_value={}),
+        ):
             mgr.run_cycle()
 
         mock_verify.assert_not_called()
@@ -373,8 +393,10 @@ class TestTierUsageAccounting:
 
         mgr = _make_manager(mock_client=mock_client)
 
-        with patch("storage.manager.shutil.disk_usage") as mock_disk, \
-             patch("storage.manager.Path") as mock_path_cls:
+        with (
+            patch("storage.manager.shutil.disk_usage") as mock_disk,
+            patch("storage.manager.Path") as mock_path_cls,
+        ):
             mock_disk.return_value = MagicMock(total=1_000_000_000_000)
 
             # Mock PCAP directory - no PCAP files
@@ -393,12 +415,16 @@ class TestTierUsageAccounting:
     def test_tier_usage_handles_opensearch_error(self):
         """Should return zeros when OpenSearch is unreachable."""
         mock_client = MagicMock()
-        mock_client.indices.stats.side_effect = OpenSearchException("connection refused")
+        mock_client.indices.stats.side_effect = OpenSearchException(
+            "connection refused"
+        )
 
         mgr = _make_manager(mock_client=mock_client)
 
-        with patch("storage.manager.shutil.disk_usage") as mock_disk, \
-             patch("storage.manager.Path") as mock_path_cls:
+        with (
+            patch("storage.manager.shutil.disk_usage") as mock_disk,
+            patch("storage.manager.Path") as mock_path_cls,
+        ):
             mock_disk.return_value = MagicMock(total=500_000_000_000)
             mock_path_cls.return_value.exists.return_value = False
 
@@ -526,11 +552,7 @@ class TestReindexFromLogs:
         log_dir.mkdir()
 
         log_file = log_dir / "mixed.json"
-        log_file.write_text(
-            '{"valid": true}\n'
-            'not json at all\n'
-            '{"also_valid": true}\n'
-        )
+        log_file.write_text('{"valid": true}\nnot json at all\n{"also_valid": true}\n')
 
         mock_client = MagicMock()
         mock_client.bulk.return_value = {"errors": False, "items": []}
@@ -555,7 +577,13 @@ class TestReindexFromLogs:
             "errors": True,
             "items": [
                 {"index": {"_id": "1", "status": 201}},
-                {"index": {"_id": "2", "status": 400, "error": {"type": "mapper_parsing_exception"}}},
+                {
+                    "index": {
+                        "_id": "2",
+                        "status": 400,
+                        "error": {"type": "mapper_parsing_exception"},
+                    }
+                },
             ],
         }
 

@@ -19,6 +19,11 @@ web/dashboard/dist/
 
 # Docker volumes and runtime data
 data/
+# ...but ship the bundled OUI vendor DB; the rest of daemon/data/ stays ignored
+# (e.g. notifications.json holds SMTP passwords and API tokens)
+!/daemon/data/
+/daemon/data/*
+!/daemon/data/oui_database.json
 pcap/
 logs/
 
@@ -31,9 +36,6 @@ docker/.env
 
 # Generated TLS certificates for nginx reverse proxy
 docker/ssl/
-
-# Remote scripts (generated for copy-paste to NetTap device)
-scripts/remote/
 
 # OS files
 .DS_Store

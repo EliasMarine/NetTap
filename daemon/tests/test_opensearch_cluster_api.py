@@ -46,8 +46,18 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
     async def test_indices_list(self):
         """GET /api/opensearch/indices returns index list."""
         self.mock_client.cat.indices.return_value = [
-            {"index": "arkime_sessions3-260305", "health": "green", "docs.count": "1000", "store.size": "10mb"},
-            {"index": "arkime_sessions3-260304", "health": "green", "docs.count": "800", "store.size": "8mb"},
+            {
+                "index": "arkime_sessions3-260305",
+                "health": "green",
+                "docs.count": "1000",
+                "store.size": "10mb",
+            },
+            {
+                "index": "arkime_sessions3-260304",
+                "health": "green",
+                "docs.count": "800",
+                "store.size": "8mb",
+            },
         ]
         resp = await self.client.request("GET", "/api/opensearch/indices")
         self.assertEqual(resp.status, 200)
@@ -67,7 +77,15 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
     async def test_shards(self):
         """GET /api/opensearch/shards returns shard allocation."""
         self.mock_client.cat.shards.return_value = [
-            {"index": "arkime_sessions3-260305", "shard": "0", "prirep": "p", "state": "STARTED", "docs": "1000", "store": "10mb", "node": "node1"},
+            {
+                "index": "arkime_sessions3-260305",
+                "shard": "0",
+                "prirep": "p",
+                "state": "STARTED",
+                "docs": "1000",
+                "store": "10mb",
+                "node": "node1",
+            },
         ]
         resp = await self.client.request("GET", "/api/opensearch/shards")
         self.assertEqual(resp.status, 200)
@@ -78,7 +96,11 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
     async def test_templates(self):
         """GET /api/opensearch/templates returns template list."""
         self.mock_client.cat.templates.return_value = [
-            {"name": "malcolm_template", "index_patterns": "[arkime_sessions3-*]", "order": "0"},
+            {
+                "name": "malcolm_template",
+                "index_patterns": "[arkime_sessions3-*]",
+                "order": "0",
+            },
         ]
         resp = await self.client.request("GET", "/api/opensearch/templates")
         self.assertEqual(resp.status, 200)
@@ -89,6 +111,7 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
     async def test_cluster_health_error(self):
         """OpenSearch exception returns 500."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.cluster.health.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/opensearch/cluster")
         self.assertEqual(resp.status, 500)
@@ -96,6 +119,7 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
     async def test_indices_error(self):
         """OpenSearch exception on indices returns 500."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.cat.indices.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/opensearch/indices")
         self.assertEqual(resp.status, 500)

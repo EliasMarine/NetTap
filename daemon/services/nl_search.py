@@ -476,7 +476,11 @@ class NLSearchParser:
                 "must": {
                     "query_string": {
                         "query": device,
-                        "fields": ["host.name", "zeek.dhcp.host_name", "zeek.dns.query"],
+                        "fields": [
+                            "host.name",
+                            "zeek.dhcp.host_name",
+                            "zeek.dns.query",
+                        ],
                     }
                 },
                 "description": f"device/host {device}",

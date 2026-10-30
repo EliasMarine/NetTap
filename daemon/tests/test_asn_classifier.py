@@ -9,7 +9,6 @@ categories in ASN_CATEGORY_MAP.
 import os
 import sys
 
-import pytest
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -53,6 +52,16 @@ class TestClassifyAsn:
 
     def test_all_categories_have_at_least_one_asn(self):
         mapped_categories = set(ASN_CATEGORY_MAP.values())
-        expected = {"streaming", "gaming", "social", "communication", "work",
-                    "cloud", "shopping", "news", "security", "iot"}
+        expected = {
+            "streaming",
+            "gaming",
+            "social",
+            "communication",
+            "work",
+            "cloud",
+            "shopping",
+            "news",
+            "security",
+            "iot",
+        }
         assert expected.issubset(mapped_categories)

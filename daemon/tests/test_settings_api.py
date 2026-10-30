@@ -318,9 +318,13 @@ class TestExcludedIpsPut(AioHTTPTestCase):
     """Tests for PUT /api/settings/excluded-ips."""
 
     def setUp(self):
-        self.tmp_env = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
+        self.tmp_env = tempfile.NamedTemporaryFile(
+            suffix=".env", delete=False, mode="w"
+        )
         self.tmp_env.close()
-        self.tmp_ips = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
+        self.tmp_ips = tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w"
+        )
         self.tmp_ips.close()
         super().setUp()
 
@@ -404,11 +408,13 @@ class TestExcludedIpsService(unittest.TestCase):
 
     def test_load_returns_empty_when_file_missing(self):
         from services.excluded_ips import load_excluded_ips
+
         result = load_excluded_ips("/tmp/nonexistent_excluded_ips.json")
         self.assertEqual(result, [])
 
     def test_save_and_load_roundtrip(self):
         from services.excluded_ips import load_excluded_ips, save_excluded_ips
+
         tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         tmp.close()
         try:
@@ -421,11 +427,13 @@ class TestExcludedIpsService(unittest.TestCase):
 
     def test_build_filter_empty_list(self):
         from services.excluded_ips import build_excluded_ips_filter
+
         result = build_excluded_ips_filter([])
         self.assertEqual(result, [])
 
     def test_build_filter_with_ips(self):
         from services.excluded_ips import build_excluded_ips_filter
+
         result = build_excluded_ips_filter(["10.0.0.1", "99.10.70.92"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["terms"]["source.ip"], ["10.0.0.1", "99.10.70.92"])

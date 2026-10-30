@@ -16,7 +16,9 @@ from pathlib import Path
 
 logger = logging.getLogger("nettap.services.threat_intel")
 
-_TI_CACHE_PATH = Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
+_TI_CACHE_PATH = (
+    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
+)
 
 # Known threat intel feed metadata
 TI_FEEDS = {
@@ -43,7 +45,11 @@ class ThreatIntelService:
                     self._ip_sets[feed_id] = set(ips)
                 self._loaded = True
                 total = sum(len(s) for s in self._ip_sets.values())
-                logger.info("Loaded %d threat intel indicators from %d feeds", total, len(self._ip_sets))
+                logger.info(
+                    "Loaded %d threat intel indicators from %d feeds",
+                    total,
+                    len(self._ip_sets),
+                )
         except Exception:
             logger.warning("Failed to load threat intel cache", exc_info=True)
 
@@ -71,12 +77,14 @@ class ThreatIntelService:
         for feed_id, ip_set in self._ip_sets.items():
             if ip in ip_set:
                 feed_meta = TI_FEEDS.get(feed_id, {"label": feed_id, "type": "ip"})
-                hits.append({
-                    "feed": feed_id,
-                    "label": feed_meta["label"],
-                    "indicator": ip,
-                    "type": "ip",
-                })
+                hits.append(
+                    {
+                        "feed": feed_id,
+                        "label": feed_meta["label"],
+                        "indicator": ip,
+                        "type": "ip",
+                    }
+                )
         return hits
 
     def enrich_alerts(self, alerts: list[dict]) -> list[dict]:
@@ -93,10 +101,14 @@ class ThreatIntelService:
 
             # Boost severity if destination is on a known list
             if ti_hits and alert.get("severity", 5) > 1:
-                dst_hits = [h for h in ti_hits if h["indicator"] == alert.get("destination_ip")]
+                dst_hits = [
+                    h for h in ti_hits if h["indicator"] == alert.get("destination_ip")
+                ]
                 if dst_hits:
                     alert["severity"] = max(1, alert["severity"] - 1)
-                    alert["severity_label"] = SEVERITY_LABELS.get(alert["severity"], "HIGH")
+                    alert["severity_label"] = SEVERITY_LABELS.get(
+                        alert["severity"], "HIGH"
+                    )
                     alert["assessment"] = alert.get("assessment", "") + (
                         f" Destination IP matches {dst_hits[0]['label']} — confirmed malicious infrastructure."
                     )
@@ -113,28 +125,44 @@ class ThreatIntelService:
             for feed_id, ips in self._ip_sets.items()
         }
 
-    def populate_from_suricata(self, client, from_ts: str, to_ts: str) -> int:
+    def populate_from_suricata(
+        self, client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    ) -> int:
         """Extract known-bad IPs from Suricata ET COMPROMISED/DROP alerts.
 
         This bootstraps the TI database from alerts that already fired,
         building a local blocklist from Suricata's own detections.
         """
         import os
+        from services.excluded_ips import build_excluded_ips_filter
+
         NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
-        query = {
-            "size": 0,
-            "query": {"bool": {"filter": [
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        bool_clause: dict = {
+            "filter": [
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
                 {"term": {"event.provider": "suricata"}},
                 {"term": {"event.dataset": "alert"}},
-                {"bool": {"should": [
-                    {"wildcard": {"rule.name.keyword": "*COMPROMISED*"}},
-                    {"wildcard": {"rule.name.keyword": "*DROP*"}},
-                    {"wildcard": {"rule.name.keyword": "*CINS*"}},
-                    {"wildcard": {"rule.name.keyword": "*Dshield*"}},
-                ], "minimum_should_match": 1}},
-            ]}},
+                {
+                    "bool": {
+                        "should": [
+                            {"wildcard": {"rule.name.keyword": "*COMPROMISED*"}},
+                            {"wildcard": {"rule.name.keyword": "*DROP*"}},
+                            {"wildcard": {"rule.name.keyword": "*CINS*"}},
+                            {"wildcard": {"rule.name.keyword": "*Dshield*"}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+            ]
+        }
+        if excluded:
+            bool_clause["must_not"] = excluded
+
+        query = {
+            "size": 0,
+            "query": {"bool": bool_clause},
             "aggs": {
                 "bad_ips": {"terms": {"field": "destination.ip.keyword", "size": 500}},
             },
@@ -146,7 +174,12 @@ class ThreatIntelService:
             logger.error("Failed to populate TI from Suricata", exc_info=True)
             return 0
 
-        bad_ips = [b["key"] for b in result.get("aggregations", {}).get("bad_ips", {}).get("buckets", [])]
+        bad_ips = [
+            b["key"]
+            for b in result.get("aggregations", {})
+            .get("bad_ips", {})
+            .get("buckets", [])
+        ]
         if bad_ips:
             self.add_indicators("et_compromised", bad_ips)
             self.save_cache()

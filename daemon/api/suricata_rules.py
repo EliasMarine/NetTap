@@ -28,11 +28,13 @@ async def handle_list_sources(request: web.Request) -> web.Response:
     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
     sources = manager.get_enabled_sources()
     last_update = manager.get_last_update()
-    return web.json_response({
-        "sources": sources,
-        "count": len(sources),
-        "last_update": last_update,
-    })
+    return web.json_response(
+        {
+            "sources": sources,
+            "count": len(sources),
+            "last_update": last_update,
+        }
+    )
 
 
 async def handle_enable_source(request: web.Request) -> web.Response:
@@ -214,7 +216,11 @@ def register_suricata_rules_routes(
 
     # Source listing + parameterized routes
     app.router.add_get("/api/suricata/rules/sources", handle_list_sources)
-    app.router.add_post("/api/suricata/rules/sources/{id:.+}/enable", handle_enable_source)
-    app.router.add_post("/api/suricata/rules/sources/{id:.+}/disable", handle_disable_source)
+    app.router.add_post(
+        "/api/suricata/rules/sources/{id:.+}/enable", handle_enable_source
+    )
+    app.router.add_post(
+        "/api/suricata/rules/sources/{id:.+}/disable", handle_disable_source
+    )
 
     logger.info("Suricata rules API routes registered (11 endpoints)")

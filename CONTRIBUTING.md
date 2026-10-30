@@ -180,10 +180,11 @@ chore(docker): pin Malcolm images to v26.02.0
 - Docstrings for public functions and classes (Google style).
 
 ```bash
+# Use the version CI pins (.github/workflows/ci.yml) -- formatter output differs between ruff releases
 # Check
-ruff check daemon/
+uvx ruff@0.17.3 check daemon/
 # Format
-ruff format daemon/
+uvx ruff@0.17.3 format daemon/
 ```
 
 ### TypeScript / Svelte (web UI)

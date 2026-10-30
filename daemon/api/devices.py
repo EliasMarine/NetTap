@@ -122,11 +122,27 @@ def _device_category(os_hint: str | None, hostname: str | None) -> str:
         # Fall back to hostname-based heuristics
         if hostname:
             hn = hostname.lower()
-            if any(x in hn for x in ["ring", "nest", "hue", "smart", "cam", "thermostat", "switch", "plug", "sensor"]):
+            if any(
+                x in hn
+                for x in [
+                    "ring",
+                    "nest",
+                    "hue",
+                    "smart",
+                    "cam",
+                    "thermostat",
+                    "switch",
+                    "plug",
+                    "sensor",
+                ]
+            ):
                 return "iot"
             if any(x in hn for x in ["printer", "brother", "hp-", "epson", "canon"]):
                 return "infrastructure"
-            if any(x in hn for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]):
+            if any(
+                x in hn
+                for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]
+            ):
                 return "infrastructure"
         return "unknown"
     os_lower = os_hint.lower()
@@ -139,11 +155,27 @@ def _device_category(os_hint: str | None, hostname: str | None) -> str:
     # Check hostname for IoT indicators
     if hostname:
         hn = hostname.lower()
-        if any(x in hn for x in ["ring", "nest", "hue", "smart", "cam", "thermostat", "switch", "plug", "sensor"]):
+        if any(
+            x in hn
+            for x in [
+                "ring",
+                "nest",
+                "hue",
+                "smart",
+                "cam",
+                "thermostat",
+                "switch",
+                "plug",
+                "sensor",
+            ]
+        ):
             return "iot"
         if any(x in hn for x in ["printer", "brother", "hp-", "epson", "canon"]):
             return "infrastructure"
-        if any(x in hn for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]):
+        if any(
+            x in hn
+            for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]
+        ):
             return "infrastructure"
     return "unknown"
 
@@ -225,7 +257,12 @@ async def handle_device_list(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "protocols": {"terms": {"field": "network.transport.keyword", "size": 10}},
+                    # Same split as handle_device_detail: sent (orig) vs received (resp)
+                    "orig_bytes": {"sum": {"field": "source.bytes"}},
+                    "resp_bytes": {"sum": {"field": "destination.bytes"}},
+                    "protocols": {
+                        "terms": {"field": "network.transport.keyword", "size": 10}
+                    },
                     "first_seen": {"min": {"field": "@timestamp"}},
                     "last_seen": {"max": {"field": "@timestamp"}},
                 },
@@ -269,7 +306,11 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     ]
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "source.ip.keyword", "size": len(device_ips)}}},
+            "aggs": {
+                "by_ip": {
+                    "terms": {"field": "source.ip.keyword", "size": len(device_ips)}
+                }
+            },
         }
 
         try:
@@ -291,6 +332,8 @@ async def handle_device_list(request: web.Request) -> web.Response:
             continue
 
         total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
+        orig_bytes = int(b.get("orig_bytes", {}).get("value", 0) or 0)
+        resp_bytes = int(b.get("resp_bytes", {}).get("value", 0) or 0)
         connection_count = b.get("doc_count", 0)
         proto_buckets = b.get("protocols", {}).get("buckets", [])
         protocols = [pb["key"] for pb in proto_buckets]
@@ -306,25 +349,41 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
         # Clean up mDNS service names and reverse DNS that aren't real hostnames
         if hostname:
-            if any(x in hostname for x in ['._tcp.', '._udp.', '.in-addr.arpa', '.ip6.arpa', '_asquic']):
+            if any(
+                x in hostname
+                for x in ["._tcp.", "._udp.", ".in-addr.arpa", ".ip6.arpa", "_asquic"]
+            ):
                 hostname = None
 
-        devices.append(
-            {
-                "ip": ip,
-                "mac": mac,
-                "hostname": hostname,
-                "manufacturer": manufacturer,
-                "os_hint": os_hint,
-                "category": _device_category(os_hint, hostname),
-                "first_seen": first_seen,
-                "last_seen": last_seen,
-                "total_bytes": total_bytes,
-                "connection_count": connection_count,
-                "protocols": protocols,
-                "alert_count": alert_count,
-            }
-        )
+        device = {
+            "ip": ip,
+            "mac": mac,
+            "hostname": hostname,
+            "manufacturer": manufacturer,
+            "os_hint": os_hint,
+            "category": _device_category(os_hint, hostname),
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "total_bytes": total_bytes,
+            "orig_bytes": orig_bytes,
+            "resp_bytes": resp_bytes,
+            "connection_count": connection_count,
+            "protocols": protocols,
+            "alert_count": alert_count,
+        }
+
+        # UniFi alias enrichment — merge user-assigned names from controller
+        unifi = request.app.get("unifi_integration")
+        if unifi and unifi.is_configured:
+            alias = None
+            if mac:
+                alias = unifi.get_device_alias(mac)
+            if not alias:
+                alias = unifi.get_client_name_by_ip(ip)
+            if alias:
+                device["unifi_name"] = alias
+
+        devices.append(device)
 
     # Post-query sort by alerts if requested
     if sort_field == "alerts":
@@ -379,15 +438,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     }
                 }
             },
-            "total_orig_bytes": {
-                "sum": {"field": "source.bytes"}
-            },
-            "total_resp_bytes": {
-                "sum": {"field": "destination.bytes"}
-            },
-            "unique_destinations": {
-                "cardinality": {"field": "destination.ip.keyword"}
-            },
+            "total_orig_bytes": {"sum": {"field": "source.bytes"}},
+            "total_resp_bytes": {"sum": {"field": "destination.bytes"}},
+            "unique_destinations": {"cardinality": {"field": "destination.ip.keyword"}},
             "top_services": {
                 "terms": {"field": "destination.as.full.keyword", "size": 10},
                 "aggs": {
@@ -436,12 +489,8 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "download_bytes": {
-                        "sum": {"field": "destination.bytes"}
-                    },
-                    "upload_bytes": {
-                        "sum": {"field": "source.bytes"}
-                    },
+                    "download_bytes": {"sum": {"field": "destination.bytes"}},
+                    "upload_bytes": {"sum": {"field": "source.bytes"}},
                 },
             },
         },
@@ -473,7 +522,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
         if service_name not in svc_merged:
             svc_merged[service_name] = {"bytes": 0, "connections": 0}
-        svc_merged[service_name]["bytes"] += int(sb.get("bytes", {}).get("value", 0) or 0)
+        svc_merged[service_name]["bytes"] += int(
+            sb.get("bytes", {}).get("value", 0) or 0
+        )
         svc_merged[service_name]["connections"] += sb.get("doc_count", 0)
     top_services_list = [
         {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
@@ -522,7 +573,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 ]
             }
         },
-        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": 50}}},
+        "aggs": {
+            "dns_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": 50}}
+        },
     }
 
     dns_queries = []
@@ -578,30 +631,39 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     manufacturer = fingerprint.get_manufacturer(mac) if mac else None
     os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
-    return web.json_response(
-        {
-            "device": {
-                "ip": ip,
-                "mac": mac,
-                "hostname": hostname,
-                "manufacturer": manufacturer,
-                "os_hint": os_hint,
-                "first_seen": first_seen,
-                "last_seen": last_seen,
-                "total_bytes": total_bytes,
-                "orig_bytes": orig_bytes,
-                "resp_bytes": resp_bytes,
-                "unique_destinations": unique_dest_count,
-                "top_services": top_services_list,
-                "connection_count": connection_count,
-                "protocols": protocols,
-                "alert_count": alert_count,
-                "top_destinations": top_destinations,
-                "dns_queries": dns_queries,
-                "bandwidth_series": bandwidth_series,
-            }
-        }
-    )
+    device = {
+        "ip": ip,
+        "mac": mac,
+        "hostname": hostname,
+        "manufacturer": manufacturer,
+        "os_hint": os_hint,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "total_bytes": total_bytes,
+        "orig_bytes": orig_bytes,
+        "resp_bytes": resp_bytes,
+        "unique_destinations": unique_dest_count,
+        "top_services": top_services_list,
+        "connection_count": connection_count,
+        "protocols": protocols,
+        "alert_count": alert_count,
+        "top_destinations": top_destinations,
+        "dns_queries": dns_queries,
+        "bandwidth_series": bandwidth_series,
+    }
+
+    # UniFi alias enrichment — merge user-assigned name from controller
+    unifi = request.app.get("unifi_integration")
+    if unifi and unifi.is_configured:
+        alias = None
+        if mac:
+            alias = unifi.get_device_alias(mac)
+        if not alias:
+            alias = unifi.get_client_name_by_ip(ip)
+        if alias:
+            device["unifi_name"] = alias
+
+    return web.json_response({"device": device})
 
 
 async def handle_device_connections(request: web.Request) -> web.Response:
@@ -722,7 +784,9 @@ async def handle_device_categories(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=502)
 
     cat_data: dict[str, dict] = {}
-    for bucket in result.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", []):
+    for bucket in (
+        result.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", [])
+    ):
         asn_full = bucket["key"]
         cat_key = classify_asn(asn_full)
         total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
@@ -740,7 +804,9 @@ async def handle_device_categories(request: web.Request) -> web.Response:
 
     categories = sorted(cat_data.values(), key=lambda c: c["total_bytes"], reverse=True)
 
-    return web.json_response({"ip": ip, "from": from_ts, "to": to_ts, "categories": categories})
+    return web.json_response(
+        {"ip": ip, "from": from_ts, "to": to_ts, "categories": categories}
+    )
 
 
 async def handle_device_alerts(request: web.Request) -> web.Response:
@@ -793,24 +859,37 @@ async def handle_device_alerts(request: web.Request) -> web.Response:
         # OLD CODE START — extracted from wrong path (suricata.eve.alert)
         # alert_info = src.get("suricata", {}).get("eve", {}).get("alert", {}) or src.get("alert", {})
         # OLD CODE END
-        _normalize_alert_source(src)  # Normalizes all ECS/Malcolm field paths into src["alert"]
+        _normalize_alert_source(
+            src
+        )  # Normalizes all ECS/Malcolm field paths into src["alert"]
         alert = src.get("alert", {})
-        alerts.append({
-            "timestamp": src.get("@timestamp", ""),
-            "severity": alert.get("severity", 3),
-            "signature": alert.get("signature", "Unknown alert"),
-            "category": alert.get("category", "Unknown"),
-            "signature_id": alert.get("signature_id", 0),
-            "source_ip": src.get("src_ip") or (src.get("source", {}) or {}).get("ip", ""),
-            "destination_ip": src.get("dest_ip") or (src.get("destination", {}) or {}).get("ip", ""),
-            "source_port": src.get("src_port") or (src.get("source", {}) or {}).get("port"),
-            "destination_port": src.get("dest_port") or (src.get("destination", {}) or {}).get("port"),
-        })
+        alerts.append(
+            {
+                "timestamp": src.get("@timestamp", ""),
+                "severity": alert.get("severity", 3),
+                "signature": alert.get("signature", "Unknown alert"),
+                "category": alert.get("category", "Unknown"),
+                "signature_id": alert.get("signature_id", 0),
+                "source_ip": src.get("src_ip")
+                or (src.get("source", {}) or {}).get("ip", ""),
+                "destination_ip": src.get("dest_ip")
+                or (src.get("destination", {}) or {}).get("ip", ""),
+                "source_port": src.get("src_port")
+                or (src.get("source", {}) or {}).get("port"),
+                "destination_port": src.get("dest_port")
+                or (src.get("destination", {}) or {}).get("port"),
+            }
+        )
 
-    return web.json_response({
-        "ip": ip, "from": from_ts, "to": to_ts,
-        "total": total, "alerts": alerts,
-    })
+    return web.json_response(
+        {
+            "ip": ip,
+            "from": from_ts,
+            "to": to_ts,
+            "total": total,
+            "alerts": alerts,
+        }
+    )
 
 
 async def handle_device_ports(request: web.Request) -> web.Response:
@@ -849,25 +928,49 @@ async def handle_device_ports(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=502)
 
     PORT_NAMES = {
-        20: "FTP Data", 21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP",
-        53: "DNS", 67: "DHCP", 68: "DHCP", 80: "HTTP", 110: "POP3",
-        123: "NTP", 143: "IMAP", 443: "HTTPS", 465: "SMTPS", 587: "SMTP",
-        993: "IMAPS", 995: "POP3S", 3389: "RDP", 5060: "SIP", 5222: "XMPP",
-        5353: "mDNS", 5900: "VNC", 8080: "HTTP-Alt", 8443: "HTTPS-Alt",
-        8888: "Unknown", 9999: "Unknown",
+        20: "FTP Data",
+        21: "FTP",
+        22: "SSH",
+        23: "Telnet",
+        25: "SMTP",
+        53: "DNS",
+        67: "DHCP",
+        68: "DHCP",
+        80: "HTTP",
+        110: "POP3",
+        123: "NTP",
+        143: "IMAP",
+        443: "HTTPS",
+        465: "SMTPS",
+        587: "SMTP",
+        993: "IMAPS",
+        995: "POP3S",
+        3389: "RDP",
+        5060: "SIP",
+        5222: "XMPP",
+        5353: "mDNS",
+        5900: "VNC",
+        8080: "HTTP-Alt",
+        8443: "HTTPS-Alt",
+        8888: "Unknown",
+        9999: "Unknown",
     }
 
     SUSPICIOUS_PORTS = {4444, 5555, 6666, 8888, 9999, 31337, 12345, 65535}
 
     ports = []
-    for bucket in result.get("aggregations", {}).get("top_ports", {}).get("buckets", []):
+    for bucket in (
+        result.get("aggregations", {}).get("top_ports", {}).get("buckets", [])
+    ):
         port_num = bucket["key"]
-        ports.append({
-            "port": port_num,
-            "service": PORT_NAMES.get(port_num, "Unknown"),
-            "connections": bucket["doc_count"],
-            "suspicious": port_num in SUSPICIOUS_PORTS,
-        })
+        ports.append(
+            {
+                "port": port_num,
+                "service": PORT_NAMES.get(port_num, "Unknown"),
+                "connections": bucket["doc_count"],
+                "suspicious": port_num in SUSPICIOUS_PORTS,
+            }
+        )
 
     return web.json_response({"ip": ip, "from": from_ts, "to": to_ts, "ports": ports})
 
@@ -898,11 +1001,7 @@ async def handle_device_count(request: web.Request) -> web.Response:
                 ]
             }
         },
-        "aggs": {
-            "unique_devices": {
-                "cardinality": {"field": "zeek.dhcp.assigned_ip"}
-            }
-        },
+        "aggs": {"unique_devices": {"cardinality": {"field": "zeek.dhcp.assigned_ip"}}},
     }
 
     try:
@@ -916,11 +1015,13 @@ async def handle_device_count(request: web.Request) -> web.Response:
     aggs = result.get("aggregations", {})
     count = aggs.get("unique_devices", {}).get("value", 0)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "count": count,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "count": count,
+        }
+    )
 
 
 def register_device_routes(

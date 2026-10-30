@@ -2,13 +2,48 @@ import * as argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
+import { randomBytes } from 'crypto';
 
 // ----- Constants -----
 
-const JWT_SECRET = process.env.JWT_SECRET || 'nettap-dev-secret-change-in-production';
+// OLD CODE START — hardcoded JWT secret, insecure for open-source
+// const JWT_SECRET = process.env.JWT_SECRET || 'nettap-dev-secret-change-in-production';
+// OLD CODE END
 const TOKEN_EXPIRY = '24h';
 const DATA_DIR = process.env.DATA_DIR || '/var/lib/nettap-web';
 const USERS_FILE = `${DATA_DIR}/users.json`;
+
+// ----- JWT Secret (auto-generated, file-persisted) -----
+
+let _cachedSecret: string | null = null;
+
+function getJwtSecret(): string {
+	if (_cachedSecret) return _cachedSecret;
+
+	// Environment variable takes precedence (for manual override)
+	if (process.env.JWT_SECRET) {
+		_cachedSecret = process.env.JWT_SECRET;
+		return _cachedSecret;
+	}
+
+	const secretFile = `${DATA_DIR}/jwt-secret.txt`;
+
+	// Try to read from persisted file
+	try {
+		if (existsSync(secretFile)) {
+			_cachedSecret = readFileSync(secretFile, 'utf-8').trim();
+			if (_cachedSecret) return _cachedSecret;
+		}
+	} catch {
+		/* fall through to generation */
+	}
+
+	// Generate new secret on first run
+	_cachedSecret = randomBytes(64).toString('hex');
+	ensureDataDir();
+	writeFileSync(secretFile, _cachedSecret, { mode: 0o600 });
+	return _cachedSecret;
+}
 
 // ----- Types -----
 
@@ -51,12 +86,12 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 // ----- JWT -----
 
 export function generateToken(payload: TokenPayload): string {
-	return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+	return jwt.sign(payload, getJwtSecret(), { expiresIn: TOKEN_EXPIRY });
 }
 
 export function verifyToken(token: string): TokenPayload | null {
 	try {
-		const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & TokenPayload;
+		const decoded = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload & TokenPayload;
 		return { username: decoded.username, role: decoded.role };
 	} catch {
 		return null;

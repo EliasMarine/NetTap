@@ -53,13 +53,15 @@ class TestEnrichAlerts:
         svc = ThreatIntelService()
         svc.add_indicators("abuse_ch_feodo", ["203.0.113.50"])
 
-        alerts = [{
-            "source_ip": "192.168.1.10",
-            "destination_ip": "203.0.113.50",
-            "severity": 3,
-            "severity_label": "MEDIUM",
-            "assessment": "Network scanning activity.",
-        }]
+        alerts = [
+            {
+                "source_ip": "192.168.1.10",
+                "destination_ip": "203.0.113.50",
+                "severity": 3,
+                "severity_label": "MEDIUM",
+                "assessment": "Network scanning activity.",
+            }
+        ]
 
         enriched = svc.enrich_alerts(alerts)
         assert len(enriched) == 1
@@ -74,13 +76,15 @@ class TestEnrichAlerts:
         svc = ThreatIntelService()
         svc.add_indicators("abuse_ch_feodo", ["203.0.113.50"])
 
-        alerts = [{
-            "source_ip": "192.168.1.10",
-            "destination_ip": "8.8.8.8",
-            "severity": 3,
-            "severity_label": "MEDIUM",
-            "assessment": "DNS query observed.",
-        }]
+        alerts = [
+            {
+                "source_ip": "192.168.1.10",
+                "destination_ip": "8.8.8.8",
+                "severity": 3,
+                "severity_label": "MEDIUM",
+                "assessment": "DNS query observed.",
+            }
+        ]
 
         enriched = svc.enrich_alerts(alerts)
         assert len(enriched) == 1

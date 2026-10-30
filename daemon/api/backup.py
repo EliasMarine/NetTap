@@ -26,9 +26,7 @@ async def handle_export(request: web.Request) -> web.Response:
         config = backup.export_config()
     except Exception as exc:
         logger.error("Error exporting config: %s", exc)
-        return web.json_response(
-            {"error": f"Config export failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"Config export failed: {exc}"}, status=500)
 
     return web.json_response(config)
 
@@ -41,9 +39,7 @@ async def handle_import(request: web.Request) -> web.Response:
     try:
         data = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     backup: ConfigBackup = request.app["config_backup"]
 
@@ -51,9 +47,7 @@ async def handle_import(request: web.Request) -> web.Response:
         result = backup.import_config(data)
     except Exception as exc:
         logger.error("Error importing config: %s", exc)
-        return web.json_response(
-            {"error": f"Config import failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"Config import failed: {exc}"}, status=500)
 
     status = 200 if result["success"] else 400
     return web.json_response(result, status=status)
@@ -67,9 +61,7 @@ async def handle_validate(request: web.Request) -> web.Response:
     try:
         data = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     backup: ConfigBackup = request.app["config_backup"]
 
@@ -89,9 +81,7 @@ async def handle_validate(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-def register_backup_routes(
-    app: web.Application, backup: ConfigBackup
-) -> None:
+def register_backup_routes(app: web.Application, backup: ConfigBackup) -> None:
     """Register backup API routes."""
     app["config_backup"] = backup
 

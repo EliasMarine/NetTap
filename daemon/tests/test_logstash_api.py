@@ -1,7 +1,7 @@
 """Tests for daemon/api/logstash.py — Logstash pipeline monitoring."""
 
 import unittest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 from aiohttp.test_utils import AioHTTPTestCase
 from aiohttp import web
 from api.logstash import register_logstash_routes
@@ -17,7 +17,12 @@ class TestLogstashAPI(AioHTTPTestCase):
     async def test_stats_available(self, mock_fetch):
         """GET /api/logstash/stats returns stats when Logstash is available."""
         mock_fetch.return_value = {
-            "jvm": {"mem": {"heap_used_in_bytes": 500000000, "heap_max_in_bytes": 1000000000}},
+            "jvm": {
+                "mem": {
+                    "heap_used_in_bytes": 500000000,
+                    "heap_max_in_bytes": 1000000000,
+                }
+            },
             "process": {"cpu": {"percent": 25}},
             "pipelines": {"main": {"events": {"in": 1000, "out": 990, "filtered": 10}}},
             "events": {"in": 1000, "out": 990},
@@ -46,8 +51,17 @@ class TestLogstashAPI(AioHTTPTestCase):
         mock_fetch.return_value = {
             "pipelines": {
                 "main": {
-                    "events": {"in": 1000, "out": 990, "filtered": 10, "duration_in_millis": 5000},
-                    "plugins": {"inputs": [{"id": "beats"}], "filters": [], "outputs": [{"id": "opensearch"}]},
+                    "events": {
+                        "in": 1000,
+                        "out": 990,
+                        "filtered": 10,
+                        "duration_in_millis": 5000,
+                    },
+                    "plugins": {
+                        "inputs": [{"id": "beats"}],
+                        "filters": [],
+                        "outputs": [{"id": "opensearch"}],
+                    },
                     "reloads": {"successes": 1, "failures": 0},
                 }
             }
@@ -76,12 +90,22 @@ class TestLogstashAPI(AioHTTPTestCase):
         mock_fetch.return_value = {
             "pipelines": {
                 "main": {
-                    "events": {"in": 1000, "out": 990, "filtered": 10, "duration_in_millis": 5000},
+                    "events": {
+                        "in": 1000,
+                        "out": 990,
+                        "filtered": 10,
+                        "duration_in_millis": 5000,
+                    },
                     "plugins": {},
                     "reloads": {},
                 },
                 "dead_letter_queue": {
-                    "events": {"in": 5, "out": 5, "filtered": 0, "duration_in_millis": 100},
+                    "events": {
+                        "in": 5,
+                        "out": 5,
+                        "filtered": 0,
+                        "duration_in_millis": 100,
+                    },
                     "plugins": {},
                     "reloads": {},
                 },

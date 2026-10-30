@@ -3,12 +3,14 @@
 	 * DonutChart — Pure SVG donut chart using stroke-dasharray/dashoffset.
 	 *
 	 * Props:
-	 *   segments — Array of {label, value, color} entries
-	 *   size    — Width/height of the SVG in pixels
+	 *   segments    — Array of {label, value, color} entries
+	 *   size        — Width/height of the SVG in pixels
 	 *   formatValue — Optional value formatter for the center total
+	 *   onclick     — Optional click handler for individual segments
+	 *   activeIndex — When set, dims all segments except the active one
 	 */
 
-	interface Segment {
+	export interface Segment {
 		label: string;
 		value: number;
 		color: string;
@@ -18,9 +20,17 @@
 		segments: Segment[];
 		size?: number;
 		formatValue?: (n: number) => string;
+		onclick?: (segment: Segment, index: number) => void;
+		activeIndex?: number | null;
 	}
 
-	let { segments = [], size = 200, formatValue = (n: number) => n.toLocaleString() }: Props = $props();
+	let {
+		segments = [],
+		size = 200,
+		formatValue = (n: number) => n.toLocaleString(),
+		onclick = undefined,
+		activeIndex = null,
+	}: Props = $props();
 
 	// Donut geometry
 	const CENTER = 100; // viewBox center
@@ -70,7 +80,7 @@
 			/>
 
 			<!-- Segment arcs, rotated -90deg so first segment starts at top -->
-			{#each arcs as arc}
+			{#each arcs as arc, i}
 				<circle
 					cx={CENTER}
 					cy={CENTER}
@@ -83,6 +93,9 @@
 					stroke-linecap="butt"
 					transform="rotate(-90 {CENTER} {CENTER})"
 					class="donut-segment"
+					class:donut-clickable={!!onclick}
+					class:donut-dimmed={activeIndex != null && activeIndex !== i}
+					onclick={() => onclick?.(arc, i)}
 				>
 					<title>{arc.label}: {arc.percentage}%</title>
 				</circle>
@@ -150,6 +163,18 @@
 
 	.donut-segment:hover {
 		opacity: 0.8;
+	}
+
+	.donut-clickable {
+		cursor: pointer;
+	}
+
+	.donut-dimmed {
+		opacity: 0.3;
+	}
+
+	.donut-dimmed:hover {
+		opacity: 0.5;
 	}
 
 	.center-value {

@@ -5,11 +5,10 @@ All tests use mocks -- no OpenSearch connection required.
 Tests cover tracker logic, filtering, rate calculation, and OpenSearch integration.
 """
 
-import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from services.live_connections import LiveConnectionTracker, MAX_CONNECTIONS, RATE_WINDOW_SECONDS
+from services.live_connections import LiveConnectionTracker, RATE_WINDOW_SECONDS
 
 
 def _make_connection(
@@ -109,7 +108,9 @@ class TestLiveConnectionTracker(unittest.TestCase):
         tracker = LiveConnectionTracker()
         tracker._connections.append(_make_connection(source_ip="192.168.1.100"))
         tracker._connections.append(_make_connection(source_ip="192.168.1.101"))
-        tracker._connections.append(_make_connection(source_ip="192.168.1.102", dest_ip="192.168.1.100"))
+        tracker._connections.append(
+            _make_connection(source_ip="192.168.1.102", dest_ip="192.168.1.100")
+        )
 
         conns = tracker.get_active_connections(device="192.168.1.100")
         self.assertEqual(len(conns), 2)  # matches source and dest
@@ -149,7 +150,9 @@ class TestLiveConnectionTracker(unittest.TestCase):
     def test_max_connections_rotation(self):
         """Connections should rotate when exceeding MAX_CONNECTIONS."""
         tracker = LiveConnectionTracker()
-        tracker._connections = tracker._connections.__class__(maxlen=5)  # Use small maxlen for test
+        tracker._connections = tracker._connections.__class__(
+            maxlen=5
+        )  # Use small maxlen for test
         for i in range(10):
             tracker._connections.append(_make_connection(source_ip=f"10.0.0.{i}"))
         self.assertEqual(len(tracker._connections), 5)
@@ -212,10 +215,7 @@ class TestLiveConnectionTracker(unittest.TestCase):
         body = call_args[1]["body"] if "body" in call_args[1] else call_args[0][1]
         # Should have device filter in the bool query
         filters = body["query"]["bool"]["filter"]
-        has_device_filter = any(
-            "bool" in f and "should" in f["bool"]
-            for f in filters
-        )
+        has_device_filter = any("bool" in f and "should" in f["bool"] for f in filters)
         self.assertTrue(has_device_filter)
 
     def test_fetch_from_opensearch_error(self):
@@ -242,8 +242,12 @@ class TestLiveConnectionTracker(unittest.TestCase):
     def test_connections_returned_newest_first(self):
         """get_active_connections should return newest first."""
         tracker = LiveConnectionTracker()
-        tracker._connections.append(_make_connection(timestamp="2026-03-08T10:00:00Z", source_ip="10.0.0.1"))
-        tracker._connections.append(_make_connection(timestamp="2026-03-08T11:00:00Z", source_ip="10.0.0.2"))
+        tracker._connections.append(
+            _make_connection(timestamp="2026-03-08T10:00:00Z", source_ip="10.0.0.1")
+        )
+        tracker._connections.append(
+            _make_connection(timestamp="2026-03-08T11:00:00Z", source_ip="10.0.0.2")
+        )
 
         conns = tracker.get_active_connections()
         # Newest (last added) should come first due to reversed()
