@@ -9,12 +9,13 @@ emergency pruning, and status reporting.
 """
 
 import json
+import os
 import re
 import logging
 import shutil
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -117,7 +118,13 @@ class RetentionConfig:
     critical_threshold: float = 0.95  # Stop capture at 95%
     resume_threshold: float = 0.85  # Resume normal operation below 85%
     check_path: str = "/"  # Filesystem path for disk usage checks
-    pcap_dir: str = "/data/pcap"  # Directory containing PCAP files
+    # OLD CODE START — CR-001: /data/pcap does not exist in the daemon container,
+    # so no PCAP was ever found or deleted. The volume is mounted at PCAP_DIR.
+    # pcap_dir: str = "/data/pcap"  # Directory containing PCAP files
+    # OLD CODE END
+    pcap_dir: str = field(
+        default_factory=lambda: os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
+    )  # Directory containing PCAP files (searched recursively)
     capture_stop_flag: str = "/tmp/nettap-stop-capture"  # Flag file to stop capture
     ilm_policy_path: str = ""  # Path to ILM policy JSON (auto-detected if empty)
 
@@ -618,6 +625,38 @@ class StorageManager:
     # C2: Emergency cascade deletion (90%/95% thresholds)
     # ------------------------------------------------------------------
 
+    def _pcaps_oldest_first(self) -> list[tuple[Path, os.stat_result]]:
+        """Return ``(path, stat)`` for every PCAP under ``pcap_dir``, oldest first.
+
+        Searches recursively: netsniff-ng writes to the volume root and
+        Arkime wrote to ``arkime-live/``.  Files that vanish while being
+        stat'ed (capture rotation) are skipped.
+        """
+        pcap_dir = Path(self.config.pcap_dir)
+        if not pcap_dir.exists():
+            logger.debug("PCAP directory %s does not exist", pcap_dir)
+            return []
+
+        found: list[tuple[Path, os.stat_result]] = []
+        try:
+            for pcap_file in pcap_dir.rglob("*.pcap"):
+                try:
+                    found.append((pcap_file, pcap_file.stat()))
+                except OSError:
+                    continue  # rotated or deleted while we scanned
+        except OSError as exc:
+            logger.error("Failed to scan PCAP directory %s: %s", pcap_dir, exc)
+
+        found.sort(key=lambda item: item[1].st_mtime)
+        return found
+
+    @staticmethod
+    def _unlink_pcap(pcap_file: Path) -> None:
+        """Delete a PCAP and its checksum sidecars. Raises OSError on failure."""
+        for ext in (".xxh3", ".sha256"):
+            (pcap_file.parent / f"{pcap_file.name}{ext}").unlink(missing_ok=True)
+        pcap_file.unlink()
+
     def _delete_oldest_pcaps(self, max_delete: int = 10) -> int:
         """Delete the oldest PCAP files from the PCAP directory.
 
@@ -627,27 +666,40 @@ class StorageManager:
         Returns:
             Number of PCAP files deleted.
         """
-        pcap_dir = Path(self.config.pcap_dir)
-        if not pcap_dir.exists():
-            logger.debug("PCAP directory %s does not exist", pcap_dir)
-            return 0
-
-        # Collect PCAP files sorted by modification time (oldest first)
-        pcap_files = sorted(
-            pcap_dir.glob("*.pcap"),
-            key=lambda p: p.stat().st_mtime,
-        )
-
+        # OLD CODE START — CR-001: top-level glob missed arkime-live/, and the
+        # stat() sort key raised FileNotFoundError when capture rotated a file.
+        # pcap_dir = Path(self.config.pcap_dir)
+        # if not pcap_dir.exists():
+        #     logger.debug("PCAP directory %s does not exist", pcap_dir)
+        #     return 0
+        #
+        # # Collect PCAP files sorted by modification time (oldest first)
+        # pcap_files = sorted(
+        #     pcap_dir.glob("*.pcap"),
+        #     key=lambda p: p.stat().st_mtime,
+        # )
+        #
+        # deleted = 0
+        # for pcap_file in pcap_files[:max_delete]:
+        #     try:
+        #         # Also remove the checksum sidecar if it exists
+        #         for ext in (".xxh3", ".sha256"):
+        #             sidecar = pcap_file.parent / f"{pcap_file.name}{ext}"
+        #             if sidecar.exists():
+        #                 sidecar.unlink()
+        #
+        #         pcap_file.unlink()
+        #         deleted += 1
+        #         logger.warning("Emergency deleted PCAP: %s", pcap_file.name)
+        #     except OSError as exc:
+        #         logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+        #
+        # return deleted
+        # OLD CODE END
         deleted = 0
-        for pcap_file in pcap_files[:max_delete]:
+        for pcap_file, _stat in self._pcaps_oldest_first()[:max_delete]:
             try:
-                # Also remove the checksum sidecar if it exists
-                for ext in (".xxh3", ".sha256"):
-                    sidecar = pcap_file.parent / f"{pcap_file.name}{ext}"
-                    if sidecar.exists():
-                        sidecar.unlink()
-
-                pcap_file.unlink()
+                self._unlink_pcap(pcap_file)
                 deleted += 1
                 logger.warning("Emergency deleted PCAP: %s", pcap_file.name)
             except OSError as exc:
@@ -877,16 +929,19 @@ class StorageManager:
             logger.error("Failed to query index stats for tier accounting: %s", exc)
 
         # Add PCAP file sizes to cold tier
-        pcap_dir = Path(self.config.pcap_dir)
-        if pcap_dir.exists():
-            try:
-                for pcap_file in pcap_dir.glob("*.pcap"):
-                    try:
-                        tier_bytes["cold"] += pcap_file.stat().st_size
-                    except OSError:
-                        pass
-            except OSError as exc:
-                logger.error("Failed to scan PCAP directory: %s", exc)
+        # OLD CODE START — CR-001: top-level glob missed PCAP in subdirectories
+        # pcap_dir = Path(self.config.pcap_dir)
+        # if pcap_dir.exists():
+        #     try:
+        #         for pcap_file in pcap_dir.glob("*.pcap"):
+        #             try:
+        #                 tier_bytes["cold"] += pcap_file.stat().st_size
+        #             except OSError:
+        #                 pass
+        #     except OSError as exc:
+        #         logger.error("Failed to scan PCAP directory: %s", exc)
+        # OLD CODE END
+        tier_bytes["cold"] += sum(st.st_size for _, st in self._pcaps_oldest_first())
 
         total = sum(tier_bytes.values())
 
@@ -964,28 +1019,41 @@ class StorageManager:
         # Scan PCAP files older than cutoff
         target_pcaps = []
         total_pcap_bytes = 0
-        pcap_dir = Path(self.config.pcap_dir)
-        if pcap_dir.exists():
-            try:
-                for pcap_file in pcap_dir.glob("*.pcap"):
-                    try:
-                        stat = pcap_file.stat()
-                        file_time = datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
-                        )
-                        if file_time < cutoff:
-                            target_pcaps.append(
-                                {
-                                    "name": pcap_file.name,
-                                    "size_bytes": stat.st_size,
-                                    "modified": file_time.isoformat(),
-                                }
-                            )
-                            total_pcap_bytes += stat.st_size
-                    except OSError:
-                        pass
-            except OSError as exc:
-                logger.error("Failed to scan PCAP dir for cleanup preview: %s", exc)
+        # OLD CODE START — CR-001: top-level glob missed PCAP in subdirectories
+        # pcap_dir = Path(self.config.pcap_dir)
+        # if pcap_dir.exists():
+        #     try:
+        #         for pcap_file in pcap_dir.glob("*.pcap"):
+        #             try:
+        #                 stat = pcap_file.stat()
+        #                 file_time = datetime.fromtimestamp(
+        #                     stat.st_mtime, tz=timezone.utc
+        #                 )
+        #                 if file_time < cutoff:
+        #                     target_pcaps.append(
+        #                         {
+        #                             "name": pcap_file.name,
+        #                             "size_bytes": stat.st_size,
+        #                             "modified": file_time.isoformat(),
+        #                         }
+        #                     )
+        #                     total_pcap_bytes += stat.st_size
+        #             except OSError:
+        #                 pass
+        #     except OSError as exc:
+        #         logger.error("Failed to scan PCAP dir for cleanup preview: %s", exc)
+        # OLD CODE END
+        for pcap_file, stat in self._pcaps_oldest_first():
+            file_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            if file_time < cutoff:
+                target_pcaps.append(
+                    {
+                        "name": pcap_file.name,
+                        "size_bytes": stat.st_size,
+                        "modified": file_time.isoformat(),
+                    }
+                )
+                total_pcap_bytes += stat.st_size
 
         return {
             "indices": target_indices,
@@ -1061,36 +1129,50 @@ class StorageManager:
                         errors.append(f"Failed to delete index: {idx['name']}")
 
             # Delete PCAP files older than cutoff
-            pcap_dir = Path(self.config.pcap_dir)
-            if pcap_dir.exists():
+            # OLD CODE START — CR-001: top-level glob missed PCAP in
+            # subdirectories, and the stat() sort key raised mid-sort when
+            # capture rotated a file.
+            # pcap_dir = Path(self.config.pcap_dir)
+            # if pcap_dir.exists():
+            #     try:
+            #         for pcap_file in sorted(
+            #             pcap_dir.glob("*.pcap"),
+            #             key=lambda p: p.stat().st_mtime,
+            #         ):
+            #             try:
+            #                 stat = pcap_file.stat()
+            #                 file_time = datetime.fromtimestamp(
+            #                     stat.st_mtime, tz=timezone.utc
+            #                 )
+            #                 if file_time < cutoff:
+            #                     file_size = stat.st_size
+            #                     # Remove checksum sidecars
+            #                     for ext in (".xxh3", ".sha256"):
+            #                         sidecar = (
+            #                             pcap_file.parent / f"{pcap_file.name}{ext}"
+            #                         )
+            #                         if sidecar.exists():
+            #                             sidecar.unlink()
+            #                     pcap_file.unlink()
+            #                     deleted_pcaps += 1
+            #                     freed_bytes += file_size
+            #             except OSError as exc:
+            #                 errors.append(
+            #                     f"Failed to delete PCAP {pcap_file.name}: {exc}"
+            #                 )
+            #     except OSError as exc:
+            #         errors.append(f"Failed to scan PCAP directory: {exc}")
+            # OLD CODE END
+            for pcap_file, stat in self._pcaps_oldest_first():
+                file_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+                if file_time >= cutoff:
+                    break  # oldest first: the rest are newer
                 try:
-                    for pcap_file in sorted(
-                        pcap_dir.glob("*.pcap"),
-                        key=lambda p: p.stat().st_mtime,
-                    ):
-                        try:
-                            stat = pcap_file.stat()
-                            file_time = datetime.fromtimestamp(
-                                stat.st_mtime, tz=timezone.utc
-                            )
-                            if file_time < cutoff:
-                                file_size = stat.st_size
-                                # Remove checksum sidecars
-                                for ext in (".xxh3", ".sha256"):
-                                    sidecar = (
-                                        pcap_file.parent / f"{pcap_file.name}{ext}"
-                                    )
-                                    if sidecar.exists():
-                                        sidecar.unlink()
-                                pcap_file.unlink()
-                                deleted_pcaps += 1
-                                freed_bytes += file_size
-                        except OSError as exc:
-                            errors.append(
-                                f"Failed to delete PCAP {pcap_file.name}: {exc}"
-                            )
+                    self._unlink_pcap(pcap_file)
+                    deleted_pcaps += 1
+                    freed_bytes += stat.st_size
                 except OSError as exc:
-                    errors.append(f"Failed to scan PCAP directory: {exc}")
+                    errors.append(f"Failed to delete PCAP {pcap_file.name}: {exc}")
 
             logger.info(
                 "Manual cleanup complete: deleted %d indices + %d PCAPs, "

@@ -723,3 +723,19 @@ print('viewHost: OK')
 "
     [ "$status" -eq 0 ]
 }
+
+@test "compose: daemon can delete PCAP (CR-001)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['nettap-storage-daemon']
+volumes = [str(v) for v in svc.get('volumes', [])]
+assert 'pcap-data:/opt/nettap/pcap' in volumes, 'pcap-data must be mounted read-write: ' + str(volumes)
+assert svc['environment']['PCAP_DIR'] == '/opt/nettap/pcap', 'PCAP_DIR must match the mount'
+assert 'DAC_OVERRIDE' in svc.get('cap_add', []), 'root needs DAC_OVERRIDE to unlink in uid-1000 PCAP folders'
+print('pcap mount: OK')
+"
+    [ "$status" -eq 0 ]
+}

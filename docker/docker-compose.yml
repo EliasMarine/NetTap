@@ -716,6 +716,7 @@ services:
       - SETUID # dnsmasq drops to the unprivileged nobody user
       - SETGID # dnsmasq drops to the unprivileged nogroup group
       - KILL # the daemon (root) stops dnsmasq once it runs as nobody; with pid: host it can signal any host process, a small gain over SYS_ADMIN/SYS_PTRACE/docker.sock
+      - DAC_OVERRIDE # CR-001: PCAP folders are owned by uid 1000; without it root can't unlink there to enforce PCAP retention
     # pid: host lets nsenter target PID 1 (host init) for network namespace
     pid: "host"
     # Override Dockerfile USER — capabilities only work for root in Docker.
@@ -743,7 +744,11 @@ services:
       - /dev:/dev
       - storage-data:/var/lib/nettap
       - nettap-appdata:/opt/nettap/data
-      - pcap-data:/opt/nettap/pcap:ro
+      # OLD CODE START — CR-001: read-only, so PCAP retention could never delete
+      # - pcap-data:/opt/nettap/pcap:ro
+      # OLD CODE END
+      # Read-write: the storage manager deletes old PCAP (retention + emergency)
+      - pcap-data:/opt/nettap/pcap
       # OpenSearch credentials — daemon needs Basic Auth to query OpenSearch.
       # Without this, StorageManager gets 403 on all API calls.
       - ./curlrc:/var/local/curlrc:ro
