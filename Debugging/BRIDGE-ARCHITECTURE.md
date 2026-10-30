@@ -842,8 +842,9 @@ sudo scripts/bridge/bypass-mode.sh --disable
 ### Health Check Test
 
 ```bash
-# Query health endpoint
-curl -s http://localhost:8880/api/bridge/health | jq .
+# Query health endpoint (daemon routes need the token since the PR #110 review fixes)
+TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)
+curl -s -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/bridge/health | jq .
 
 # Expected response:
 # {
