@@ -44,12 +44,13 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
     """GET /api/lan/anomalies?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     detector: LANAnomalyDetector = request.app["lan_anomaly_detector"]
-    excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE START — excluded IPs must not hide LAN detections: excluding the
+    # router would hide ARP spoofing of the router
+    # excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE END
 
     try:
-        anomalies = detector.get_all_anomalies(
-            from_ts, to_ts, excluded_ips=excluded_ips_list
-        )
+        anomalies = detector.get_all_anomalies(from_ts, to_ts)
     except Exception as exc:
         logger.error("LAN anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -68,12 +69,13 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
     """GET /api/lan/arp-spoofing?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     detector: LANAnomalyDetector = request.app["lan_anomaly_detector"]
-    excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE START — excluded IPs must not hide LAN detections: excluding the
+    # router would hide ARP spoofing of the router
+    # excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE END
 
     try:
-        alerts = detector.detect_arp_spoofing(
-            from_ts, to_ts, excluded_ips=excluded_ips_list
-        )
+        alerts = detector.detect_arp_spoofing(from_ts, to_ts)
     except Exception as exc:
         logger.error("ARP spoofing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -92,12 +94,13 @@ async def handle_rogue_dhcp(request: web.Request) -> web.Response:
     """GET /api/lan/rogue-dhcp?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     detector: LANAnomalyDetector = request.app["lan_anomaly_detector"]
-    excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE START — excluded IPs must not hide LAN detections: excluding the
+    # router would hide ARP spoofing of the router
+    # excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE END
 
     try:
-        alerts = detector.detect_rogue_dhcp(
-            from_ts, to_ts, excluded_ips=excluded_ips_list
-        )
+        alerts = detector.detect_rogue_dhcp(from_ts, to_ts)
     except Exception as exc:
         logger.error("Rogue DHCP detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
