@@ -1019,6 +1019,71 @@ A new `bridge_loop()` runs alongside `storage_loop()` and `smart_loop()` in the 
 
 ---
 
+## 16. DHCP Gateway Mode (added 2026-10-30)
+
+> Design and contract: `docs/plans/2026-10-30-dhcp-gateway-mode-design.md`. Branch `phase-4/dhcp-gateway-mode`. Not yet verified on hardware.
+
+### Why it exists
+
+The inline bridge sits between modem and router, so it only sees traffic **after** the router's NAT: every device looks like the router's public IP. DHCP gateway mode moves NetTap in front of the NAT. NetTap hands out addresses on its own subnet, names itself the gateway, and routes and masquerades to the router, so every flow carries the device's real IP and MAC. In the onboarding wizard it is now the recommended mode, Mirror/SPAN is the other primary mode, and the inline bridge moved under "Advanced".
+
+### Topology (one-armed)
+
+```
+ISP modem ── router (192.168.1.1, DHCP OFF) ── LAN / Wi-Fi ──┬── NetTap LAN NIC: 192.168.1.50/24 (static) + 10.77.0.1/24
+                                                             └── devices: 10.77.0.x, gw 10.77.0.1, dns 192.168.1.1
+```
+
+One NIC carries both legs: device ↔ NetTap (pre-NAT, captured) and NetTap ↔ router (post-NAT, filtered out of capture).
+
+### Moving parts
+
+| Piece | Where | Notes |
+|-------|-------|-------|
+| DHCP server | dnsmasq child of the daemon (`--port=0`, DHCP only, 1 h lease, unprivileged user) | Router IP handed out as DNS, so DNS still crosses NetTap and is attributed to the device. Never started without first probing for another DHCP server. |
+| Forwarding + NAT | iptables `DOCKER-USER` accept (pinned `-i lan -o lan`), `nat POSTROUTING` masquerade, `OUTPUT` ICMP-redirect drop, all tagged `nettap-dhcp-gateway` | `DOCKER-USER` because Docker's FORWARD policy is DROP. Backend (nft/legacy) detected by which one has `DOCKER-USER`. |
+| Self-heal | `DhcpGatewayManager.reconcile()` every capture-health tick (30 s) | Re-adds gateway address, upstream address, default route, rules; restarts a dead dnsmasq only after a clean probe. |
+| Boot persistence | `/etc/netplan/90-nettap-dhcp-gateway.yaml`, `/etc/sysctl.d/99-nettap-dhcp-gateway.conf`, `/etc/nettap/dhcp-gateway-firewall.sh`, `nettap-dhcp-gateway.service` (After=docker.service; wants-symlink targets the **host** path) | Routing returns at boot without waiting for OpenSearch/daemon. |
+| Capture | `PCAP_IFACE=<lan>`, `PCAP_FILTER="net <subnet> or udp port 67 or udp port 68"` | Device leg only, so each flow is recorded once. Zeek honours it via Malcolm's own `local.zeek` (`CAPTURE_FILTER`). |
+
+### Capture-mode plumbing (all modes)
+
+Before 2026-10-30 the wizard's capture choice never reached the daemon or the capture containers (review CR-007). Now:
+
+- `/etc/nettap` on the host is mounted read-write into the daemon and read-only into zeek-live, suricata-live, arkime-live and pcap-capture.
+- `/api/setup/configure` writes `/etc/nettap/capture-mode.conf` (INI, the file `load_capture_config` reads) and `/etc/nettap/capture.env` (`CAPTURE_MODE`, `PCAP_IFACE`, `PCAP_FILTER`), then restarts the four capture containers only if `capture.env` changed.
+- Each capture entrypoint first sources `config/capture/nettap-capture-env.sh`, which **parses** (never sources) `capture.env`, validates the values and exports `PCAP_IFACE`, `PCAP_FILTER`, `CAPTURE_FILTER`. No file means the compose values stay in effect, so existing installs are unchanged.
+
+### API
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/capture/dhcp/preflight` | GET | Interface, upstream, subnet conflicts, other DHCP servers (live DHCPDISCOVER probe), IPv6 RA, ip_forward, firewall backend, checks, ready |
+| `/api/capture/dhcp/enable` | POST `{"confirm": true}` | Re-runs preflight; 409 with checks if blocked; applies + persists; starts dnsmasq |
+| `/api/capture/dhcp/disable` | POST | Stops the DHCP server; routing stays so devices keep working while they move back to the router |
+| `/api/capture/dhcp/status` | GET | Routing/DHCP state, leases, issues |
+
+The web proxies enable/disable through dedicated routes with a 60 s timeout.
+
+### Recovery (NetTap down, router DHCP off)
+
+Give a laptop a fixed address in the router's network, open the router's admin page, turn its DHCP back on, then reconnect devices. Full wording lives in the go-live page and design §7.
+
+### Known issues / risks (DHCP gateway)
+
+| Issue | Impact | Status |
+|-------|--------|--------|
+| NetTap's old router lease expires after router DHCP is turned off | networkd drops the address and default route once; reconcile re-adds them within 30 s; NetTap's own DNS may fail until a reboot applies the netplan file | MITIGATED (self-heal + netplan) |
+| Reboot on installs using `nettap.service` runs `compose down` | OpenSearch recreated, auth mapping lost (review CR-025, root cause MS-001) | OPEN — run the OpenSearch bootstrap after reboot |
+| iptables run from the daemon image, not the host binary | On **legacy**-backend hosts the daemon and dockerd don't share the xtables lock; rare insert race. nft hosts (Ubuntu 22.04 default) unaffected | DOCUMENTED |
+| IPv6 via router RAs bypasses NetTap | v6 traffic invisible | WARNED in preflight / go-live |
+| Static-IP devices and device-to-device LAN traffic | Not captured | DOCUMENTED |
+| Double NAT | Router port forwards/UPnP don't reach devices | DOCUMENTED; NetTap-side port forwarding is a follow-up |
+| Switching capture mode after first run | The wizard can't save once an admin exists, so there is no in-app mode switch yet | FOLLOW-UP |
+| Bridge/mirror wants-symlinks point at the container path (LD-001) | Their boot units never run | OPEN (bridge/mirror only; DHCP unit uses the host path) |
+
+---
+
 **Document Status:** COMPLETE & VERIFIED
 **Next Review:** After Phase 2 completion (Storage Management)
 **Maintainer:** NetTap Project Team

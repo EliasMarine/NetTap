@@ -58,21 +58,31 @@ router and needs no managed switch. Firewalla's DHCP mode works the same way.
 ### 4.1 DHCP server: dnsmasq, run by the daemon
 
 - `dnsmasq-base` is added to the daemon image. The daemon already runs with
-  `network_mode: host`, NET_ADMIN and NET_RAW. Add **NET_BIND_SERVICE** to its
-  `cap_add` (UDP 67).
+  `network_mode: host`, NET_ADMIN and NET_RAW. Add **NET_BIND_SERVICE** (UDP
+  67), **SETUID** and **SETGID** (dnsmasq drops to `nobody:nogroup`) and
+  **KILL** (the root daemon can only signal the `nobody`-owned dnsmasq with it)
+  to its `cap_add`.
 - DHCP only: `--port=0` disables DNS. NetTap is **not** a DNS server.
   Option 6 (DNS) hands out the **router's IP**. DNS queries still pass through
   NetTap as the gateway, so Zeek's `dns.log` attributes them to the real
   device. This also means a daemon restart never breaks name resolution.
 - Arguments (no config file):
-  `--keep-in-foreground --port=0 --conf-file=/dev/null --user=root
-  --interface=<lan> --except-interface=lo --bind-interfaces
+  `--keep-in-foreground --port=0 --conf-file=/dev/null --pid-file
+  --user=nobody --group=nogroup --interface=<lan> --except-interface=lo --bind-interfaces
   --dhcp-authoritative --dhcp-range=<pool_start>,<pool_end>,<netmask>,1h
   --dhcp-option=option:router,<gateway_ip>
   --dhcp-option=option:dns-server,<upstream_gateway>
   --dhcp-leasefile=/var/lib/nettap/dhcp/dnsmasq.leases --log-facility=-`.
-  `--user=root` is required because `cap_drop: ALL` removes SETUID/SETGID, so
-  dnsmasq can't drop to `nobody`.
+  dnsmasq must not run as root: it opens its sockets and the lease file as
+  root, then drops to `nobody:nogroup` (uid/gid 65534 in the
+  `python:3.12-slim-bookworm` image), keeping only NET_ADMIN and NET_RAW.
+  The lease file stays **root-owned**: root in the container has no
+  DAC_OVERRIDE, so a `nobody`-owned file would stop dnsmasq opening it. The
+  already-open file is still written after the drop. `--pid-file` with no
+  value writes no pid file (the daemon supervises the child; as `nobody`,
+  dnsmasq can't chown one in `/var/run`). Verified in the image with
+  `cap_drop: ALL` and exactly the capabilities above: a client got a lease
+  and it was written to the file.
 - Pool: host offsets 10 … last-host (`10.77.0.10–10.77.0.254` for a /24).
   `.1` is the gateway, `.2–.9` are left for the user's static assignments.
 - **Lease time: 1 hour.** Rollback (router DHCP back on, NetTap DHCP off)
@@ -91,8 +101,14 @@ Runtime (daemon, host network namespace, existing `nsenter -t 1 -n` pattern):
 2. Re-assert the upstream address and default route if missing (see §4.4).
 3. Firewall rules, all tagged `-m comment --comment nettap-dhcp-gateway` and
    added only after a `-C` check (idempotent):
-   - `filter DOCKER-USER  -i <lan> -s <subnet> -j ACCEPT`
-   - `filter DOCKER-USER  -o <lan> -d <subnet> -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT`
+   - `filter DOCKER-USER  -i <lan> -o <lan> -s <subnet> -j ACCEPT`
+   - `filter DOCKER-USER  -i <lan> -o <lan> -d <subnet> -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT`
+
+   Both are pinned to `-i <lan> -o <lan>` (the one-armed path). Without `-o`,
+   the accept would end FORWARD before Docker's own chains run, and every LAN
+   device could reach unpublished container ports (Redis, OpenSearch) on the
+   Docker bridges. Published ports (nginx 80/443) still work through Docker's
+   DNAT rules. All rules are inserted with `-I`.
    - `nat    POSTROUTING  -o <lan> -s <subnet> ! -d <subnet> -j MASQUERADE`
    - `filter OUTPUT       -o <lan> -p icmp --icmp-type redirect -j DROP`
 4. `ethtool -K <lan> gro off lro off` (accurate capture; failure is only a warning).
@@ -236,7 +252,7 @@ CR-114 (the capture-mode store loads once per session).
 
 | Risk | Mitigation |
 |------|-----------|
-| Two DHCP servers on one LAN | Preflight sends a real DHCPDISCOVER (AF_PACKET, broadcast flag, 3 s listen) and lists every server that answers. Enable is **refused (409)** while any server other than NetTap answers, and the probe runs again inside `enable`. |
+| Two DHCP servers on one LAN | Preflight sends a real DHCPDISCOVER (AF_PACKET, broadcast flag, 3 s listen) and lists every server that answers. Enable is **refused (409)** while any server other than NetTap answers, and the probe runs again inside `enable`. dnsmasq is **never started without a probe**, at daemon start and in `reconcile()` alike. If another server answers, the DHCP setting is saved as off and the issue is shown. If the probe errors, NetTap holds DHCP off for that tick only and probes again on the next one, because the router's DHCP is off by design. Leaving an active gateway in the wizard is refused (409) until another DHCP server answers. |
 | Subnet collides with an existing network | Checked against every IPv4 network on every host interface (router subnet, docker0, br-*). Blocking. |
 | NetTap down ⇒ no internet | Stated plainly before enabling (explicit confirmation). Kernel forwarding and NAT survive daemon crashes. The boot unit restores routing without the daemon. The recovery steps are shown on the go-live page and in this doc (§7). |
 | IPv6 bypass | If the router advertises IPv6 (RA), devices get global IPv6 and the router as their v6 gateway, so that traffic bypasses NetTap. Detected from a `proto ra` default route or a dynamic global address on the LAN NIC. **Warning, not blocking**, with advice to turn off IPv6 on the router for full visibility. |
@@ -309,7 +325,7 @@ PCAP_FILTER=net 10.77.0.0/24 or udp port 67 or udp port 68
 | `daemon/api/setup.py` | Accepts `capture_mode: "dhcp_gateway"`; writes INI + `capture.env` to the paths the readers use; restarts capture containers when `capture.env` changes; swaps `app["capture_manager"]` (tearing down an active DHCP gateway first) |
 | `daemon/main.py` | DHCP branch at startup (calls `setup()` if routing active). The generic capture loop reads `app["capture_manager"]` each tick and calls `reconcile()` then `get_health()`, and runs in every mode. Storage and SMART tasks start before capture setup, and capture setup is guarded (CR-167) |
 
-### 6.2 HTTP API (daemon; reached through the web catch-all proxy, session required)
+### 6.2 HTTP API (daemon; session required. `preflight` and `status` go through the web catch-all proxy; `enable`, `disable` and `/api/setup/configure` have dedicated SvelteKit routes with a 60 s timeout, because enable probes for 3 s, waits for dnsmasq and may restart the capture containers)
 
 All four return `409 {"error": ...}` when the configured mode isn't
 `dhcp_gateway`.
@@ -386,11 +402,31 @@ keys `subnet`, `routing_active`, `dhcp_server_running`, `lease_count`.
 
 If NetTap is off or broken and devices have no internet:
 
-1. Open your router's admin page (from a device with a static IP, or by
-   plugging a laptop straight into the router) and **turn its DHCP server back on**.
-2. Reconnect devices (toggle Wi-Fi, or unplug and replug). They get router
-   addresses straight away; otherwise they move over within an hour.
-3. Once NetTap is healthy again, switch DHCP mode back on from Go Live.
+1. **Turn the router's DHCP server back on.** With NetTap down and the
+   router's DHCP off, nothing hands out addresses, so the user first gives a
+   laptop a fixed address on the router's network (plugged into the router or
+   on its Wi-Fi). When `status.upstream` is known the page fills in real
+   values: a free host in the router's network (host .20, skipping NetTap and
+   the router), the netmask from the upstream prefix, and the router address,
+   e.g. "IP 192.168.1.20, mask 255.255.255.0, then open http://192.168.1.1"
+   (`staticAddressHint` in `web/src/lib/utils/dhcpSubnet.ts`). Without
+   upstream it says to pick a free address in the router's range and find the
+   router's address on its sticker. Routers managed with a phone app (most
+   mesh systems) are switched back in the app instead, on mobile data if the
+   Wi-Fi has no internet.
+2. Reconnect devices (Wi-Fi off/on, or unplug and replug) and they get router
+   addresses straight away; otherwise they move over when their NetTap address
+   runs out (lease time 1 h). Set the laptop back to automatic addressing.
+3. Once NetTap is healthy again, switch the DHCP gateway back on from Go Live.
+
+Timing copy for the switch *to* NetTap: devices move over when their current
+address from the router runs out (often up to a day), or straight away if they
+reconnect (Wi-Fi off/on or replug). Never promise a fixed number of minutes.
+
+Mode changes: the setup wizard can't save after first run, so no copy sends
+users to Setup to switch modes or pick a new subnet. Where a router can't turn
+its DHCP off, the page says switching modes after setup isn't available in the
+app yet.
 
 ## 8. Tests
 
