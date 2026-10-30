@@ -34,6 +34,8 @@
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
+	// Save stays off until the real values load, so defaults can't overwrite them
+	let retentionLoad = $state<'loading' | 'ok' | 'failed'>('loading');
 
 	// --- Manual Cleanup state ---
 	let cleanupDays = $state(60);
@@ -122,17 +124,23 @@
 			const res = await fetch('/api/setup/storage');
 			if (res.ok) {
 				const data = await res.json();
-				// GET /api/setup/storage returns a FLAT StorageStatus object
-				// (hot_days, warm_days, etc. are top-level, not nested under retention)
-				retentionConfig.hot_days = data.hot_days ?? 90;
-				retentionConfig.warm_days = data.warm_days ?? 180;
-				retentionConfig.cold_days = data.cold_days ?? 30;
-				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+				// source 'mock' = the daemon didn't answer and these are built-in defaults
+				if (data.source !== 'mock') {
+					// GET /api/setup/storage returns a FLAT StorageStatus object
+					// (hot_days, warm_days, etc. are top-level, not nested under retention)
+					retentionConfig.hot_days = data.hot_days ?? 90;
+					retentionConfig.warm_days = data.warm_days ?? 180;
+					retentionConfig.cold_days = data.cold_days ?? 30;
+					retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+					retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+					retentionLoad = 'ok';
+					return;
+				}
 			}
 		} catch {
-			// Will use defaults
+			// Falls through to 'failed'
 		}
+		retentionLoad = 'failed';
 	}
 
 	async function loadDiskUsage() {
@@ -973,6 +981,12 @@
 					<span class="card-title">Data Retention Policy</span>
 				</div>
 
+				{#if retentionLoad === 'failed'}
+					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+						Could not load the current retention settings, so saving is off. Reload the page to try again.
+					</div>
+				{/if}
+
 				{#if retentionMessage}
 					<div class="alert {retentionError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
 						{retentionMessage}
@@ -1043,7 +1057,7 @@
 					</div>
 				{/if}
 
-				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
+				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving || retentionLoad !== 'ok'}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
 			</div>

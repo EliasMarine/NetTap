@@ -126,6 +126,16 @@ describe('Settings — retention save', () => {
 		expect(screen.getByText(/^Outcome unknown — check again\./)).toBeInTheDocument();
 		expect(screen.queryByText(/settings saved/i)).not.toBeInTheDocument();
 	});
+
+	it('will not save the built-in defaults when the daemon did not answer', async () => {
+		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByRole('button', { name: 'Save Retention Config' })).toBeDisabled();
+		expect(screen.getByText(/Could not load the current retention settings/)).toBeInTheDocument();
+	});
 });
 
 describe('Settings — capture status label', () => {
