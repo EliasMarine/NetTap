@@ -23,27 +23,31 @@ from storage.retention_config import RetentionConfigManager, validate_config
 class TestValidateConfigValid:
     def test_validate_config_valid(self):
         """A complete, in-range flat config passes without error."""
-        validate_config({
-            "hot_days": 90,
-            "warm_days": 180,
-            "cold_days": 30,
-            "disk_threshold_percent": 80,
-            "emergency_threshold_percent": 90,
-        })
+        validate_config(
+            {
+                "hot_days": 90,
+                "warm_days": 180,
+                "cold_days": 30,
+                "disk_threshold_percent": 80,
+                "emergency_threshold_percent": 90,
+            }
+        )
 
     def test_validate_config_nested_format(self):
         """Nested retention.json-shaped config is accepted."""
-        validate_config({
-            "retention": {
-                "hot_days": 60,
-                "warm_days": 120,
-                "cold_days": 14,
-            },
-            "thresholds": {
-                "disk_threshold_percent": 75,
-                "emergency_threshold_percent": 85,
-            },
-        })
+        validate_config(
+            {
+                "retention": {
+                    "hot_days": 60,
+                    "warm_days": 120,
+                    "cold_days": 14,
+                },
+                "thresholds": {
+                    "disk_threshold_percent": 75,
+                    "emergency_threshold_percent": 85,
+                },
+            }
+        )
 
 
 # =========================================================================
@@ -103,10 +107,12 @@ class TestValidateConfigEmergencyThreshold:
     def test_emergency_must_exceed_disk(self):
         """emergency_threshold_percent <= disk_threshold_percent raises ValueError."""
         with pytest.raises(ValueError, match="emergency_threshold_percent.*greater"):
-            validate_config({
-                "disk_threshold_percent": 80,
-                "emergency_threshold_percent": 80,
-            })
+            validate_config(
+                {
+                    "disk_threshold_percent": 80,
+                    "emergency_threshold_percent": 80,
+                }
+            )
 
     def test_emergency_max_99(self):
         """emergency_threshold_percent > 99 raises ValueError."""
@@ -135,14 +141,18 @@ class TestLoad:
     def test_load_from_json_file(self, tmp_path):
         """Load reads from an existing retention.json with correct values."""
         config_file = tmp_path / "retention.json"
-        config_file.write_text(json.dumps({
-            "version": 1,
-            "retention": {"hot_days": 60, "warm_days": 120, "cold_days": 14},
-            "thresholds": {
-                "disk_threshold_percent": 75,
-                "emergency_threshold_percent": 85,
-            },
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "retention": {"hot_days": 60, "warm_days": 120, "cold_days": 14},
+                    "thresholds": {
+                        "disk_threshold_percent": 75,
+                        "emergency_threshold_percent": 85,
+                    },
+                }
+            )
+        )
 
         mgr = RetentionConfigManager(
             config_path=str(config_file),
@@ -179,8 +189,11 @@ class TestLoad:
     def test_load_fallback_defaults(self, tmp_path, monkeypatch):
         """No JSON file, no env vars -> RetentionConfig defaults (90/180/30)."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -199,8 +212,11 @@ class TestLoad:
     def test_load_corrupt_json(self, tmp_path, monkeypatch):
         """Corrupt retention.json falls back to defaults without crashing."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -223,14 +239,18 @@ class TestLoad:
         monkeypatch.setenv("RETENTION_HOT", "999")
 
         config_file = tmp_path / "retention.json"
-        config_file.write_text(json.dumps({
-            "version": 1,
-            "retention": {"hot_days": 45, "warm_days": 120, "cold_days": 14},
-            "thresholds": {
-                "disk_threshold_percent": 75,
-                "emergency_threshold_percent": 85,
-            },
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "retention": {"hot_days": 45, "warm_days": 120, "cold_days": 14},
+                    "thresholds": {
+                        "disk_threshold_percent": 75,
+                        "emergency_threshold_percent": 85,
+                    },
+                }
+            )
+        )
 
         mgr = RetentionConfigManager(
             config_path=str(config_file),
@@ -285,8 +305,11 @@ class TestSave:
     def test_save_syncs_env(self, tmp_path, monkeypatch):
         """save() writes correct env var names (RETENTION_HOT) to .env."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -308,8 +331,11 @@ class TestSave:
     def test_save_validation_error(self, tmp_path, monkeypatch):
         """Invalid values raise ValueError, file not modified."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -332,8 +358,11 @@ class TestSave:
     def test_save_partial_update(self, tmp_path, monkeypatch):
         """Saving only some fields retains current values for the rest."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -359,8 +388,11 @@ class TestSave:
         validation because emergency must be > disk threshold.
         """
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -385,8 +417,11 @@ class TestIlmStatus:
     def test_mark_ilm_applied(self, tmp_path, monkeypatch):
         """mark_ilm_applied() writes ilm_applied section to retention.json."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -397,11 +432,13 @@ class TestIlmStatus:
         )
         mgr.load()
 
-        mgr.mark_ilm_applied({
-            "nettap-hot-policy": "created",
-            "nettap-warm-policy": "created",
-            "nettap-cold-policy": "created",
-        })
+        mgr.mark_ilm_applied(
+            {
+                "nettap-hot-policy": "created",
+                "nettap-warm-policy": "created",
+                "nettap-cold-policy": "created",
+            }
+        )
 
         # Read the file and check
         data = json.loads(config_file.read_text())
@@ -412,8 +449,11 @@ class TestIlmStatus:
     def test_get_ilm_status(self, tmp_path, monkeypatch):
         """After mark_ilm_applied(), get_ilm_status() returns the data."""
         for var in (
-            "RETENTION_HOT", "RETENTION_WARM", "RETENTION_COLD",
-            "DISK_THRESHOLD_PERCENT", "EMERGENCY_THRESHOLD_PERCENT",
+            "RETENTION_HOT",
+            "RETENTION_WARM",
+            "RETENTION_COLD",
+            "DISK_THRESHOLD_PERCENT",
+            "EMERGENCY_THRESHOLD_PERCENT",
         ):
             monkeypatch.delenv(var, raising=False)
 

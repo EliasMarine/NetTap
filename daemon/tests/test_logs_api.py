@@ -45,7 +45,11 @@ class TestLogSearchAPI(AioHTTPTestCase):
         call_args = self.mock_client.search.call_args
         call_body = call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        datasets = [f["term"]["event.dataset"] for f in filters if "event.dataset" in f.get("term", {})]
+        datasets = [
+            f["term"]["event.dataset"]
+            for f in filters
+            if "event.dataset" in f.get("term", {})
+        ]
         self.assertIn("dns", datasets)
 
     async def test_search_with_query_string(self):
@@ -86,7 +90,9 @@ class TestLogSearchAPI(AioHTTPTestCase):
     async def test_search_with_field_projection(self):
         """Fields param limits returned _source fields."""
         self.mock_client.search.return_value = self._mock_search_response()
-        resp = await self.client.request("GET", "/api/logs/search?fields=source.ip,destination.ip")
+        resp = await self.client.request(
+            "GET", "/api/logs/search?fields=source.ip,destination.ip"
+        )
         self.assertEqual(resp.status, 200)
         call_body = self.mock_client.search.call_args[1]["body"]
         self.assertEqual(call_body["_source"], ["source.ip", "destination.ip"])
@@ -139,8 +145,16 @@ class TestLogSearchAPI(AioHTTPTestCase):
 
     async def test_fields_all_log_types(self):
         """All 8 log types have field definitions."""
-        for log_type in ["zeek.conn", "zeek.dns", "zeek.http", "zeek.tls",
-                         "zeek.files", "zeek.dhcp", "zeek.smtp", "suricata"]:
+        for log_type in [
+            "zeek.conn",
+            "zeek.dns",
+            "zeek.http",
+            "zeek.tls",
+            "zeek.files",
+            "zeek.dhcp",
+            "zeek.smtp",
+            "suricata",
+        ]:
             resp = await self.client.request("GET", f"/api/logs/fields/{log_type}")
             self.assertEqual(resp.status, 200, f"Failed for {log_type}")
             data = await resp.json()
@@ -156,6 +170,7 @@ class TestLogSearchAPI(AioHTTPTestCase):
     async def test_search_opensearch_error(self):
         """OpenSearch exception returns 500."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("connection refused")
         resp = await self.client.request("GET", "/api/logs/search")
         self.assertEqual(resp.status, 500)
@@ -164,7 +179,9 @@ class TestLogSearchAPI(AioHTTPTestCase):
 
     # ── Stats endpoint tests ──────────────────────────────────────────
 
-    def _mock_stats_response(self, total=1234, unique_src=42, protocols=5, src_bytes=100000, dst_bytes=200000):
+    def _mock_stats_response(
+        self, total=1234, unique_src=42, protocols=5, src_bytes=100000, dst_bytes=200000
+    ):
         """Helper to create a mock OpenSearch stats aggregation response."""
         return {
             "hits": {"total": {"value": total}, "hits": []},
@@ -208,6 +225,7 @@ class TestLogSearchAPI(AioHTTPTestCase):
     async def test_stats_opensearch_error(self):
         """Stats endpoint returns 502 on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/logs/stats")
         self.assertEqual(resp.status, 502)
@@ -358,8 +376,16 @@ class TestLogSearchAPI(AioHTTPTestCase):
         # Verify DNS-specific filters in the query
         call_body = self.mock_client.search.call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        providers = [f["term"]["event.provider"] for f in filters if "event.provider" in f.get("term", {})]
-        datasets = [f["term"]["event.dataset"] for f in filters if "event.dataset" in f.get("term", {})]
+        providers = [
+            f["term"]["event.provider"]
+            for f in filters
+            if "event.provider" in f.get("term", {})
+        ]
+        datasets = [
+            f["term"]["event.dataset"]
+            for f in filters
+            if "event.dataset" in f.get("term", {})
+        ]
         self.assertIn("zeek", providers)
         self.assertIn("dns", datasets)
 

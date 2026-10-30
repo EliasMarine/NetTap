@@ -248,10 +248,15 @@ class TestGenerateAssessment:
         }
         for cat, keyword in categories.items():
             result = generate_assessment(
-                signature="TEST", category=cat, count=1,
-                device_count=1, trend="stable",
+                signature="TEST",
+                category=cat,
+                count=1,
+                device_count=1,
+                trend="stable",
             )
-            assert keyword in result.lower(), f"Category '{cat}' should contain '{keyword}', got: {result}"
+            assert keyword in result.lower(), (
+                f"Category '{cat}' should contain '{keyword}', got: {result}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +336,9 @@ class TestSuppressList:
         suppress_rule(sig_id, device_ip=device, reason="Second")
 
         data = load_suppress_list()
-        device_entries = [e for e in data["per_device"].get(device, []) if e["signature_id"] == sig_id]
+        device_entries = [
+            e for e in data["per_device"].get(device, []) if e["signature_id"] == sig_id
+        ]
         assert len(device_entries) == 1
 
 
@@ -345,23 +352,27 @@ class TestComputeTrend:
 
     def test_stable_few_events(self):
         from services.alert_intelligence import compute_trend
+
         result = compute_trend("2026-03-13T00:00:00Z", "2026-03-13T12:00:00Z", 3)
         assert result == "stable"
 
     def test_increasing_high_rate(self):
         from services.alert_intelligence import compute_trend
+
         # 500 events in 1 hour = rate 500/hr → increasing
         result = compute_trend("2026-03-13T00:00:00Z", "2026-03-13T01:00:00Z", 500)
         assert result == "increasing"
 
     def test_decreasing_low_rate(self):
         from services.alert_intelligence import compute_trend
+
         # 5 events over 48 hours = rate 0.1/hr → decreasing
         result = compute_trend("2026-03-11T00:00:00Z", "2026-03-13T00:00:00Z", 5)
         assert result == "decreasing"
 
     def test_invalid_timestamps(self):
         from services.alert_intelligence import compute_trend
+
         result = compute_trend("", "", 10)
         assert result == "stable"
 
@@ -371,8 +382,13 @@ class TestKillChainDetection:
 
     def test_detects_two_stage_chain(self):
         from services.alert_intelligence import detect_kill_chains
+
         alerts = [
-            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "ET SCAN"},
+            {
+                "source_ip": "10.0.0.5",
+                "category": "reconnaissance",
+                "signature": "ET SCAN",
+            },
             {"source_ip": "10.0.0.5", "category": "exploit", "signature": "ET EXPLOIT"},
         ]
         chains = detect_kill_chains(alerts)
@@ -384,8 +400,13 @@ class TestKillChainDetection:
 
     def test_full_kill_chain(self):
         from services.alert_intelligence import detect_kill_chains
+
         alerts = [
-            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan"},
+            {
+                "source_ip": "10.0.0.5",
+                "category": "reconnaissance",
+                "signature": "scan",
+            },
             {"source_ip": "10.0.0.5", "category": "exploit", "signature": "exploit"},
             {"source_ip": "10.0.0.5", "category": "malware_c2", "signature": "c2"},
             {"source_ip": "10.0.0.5", "category": "exfiltration", "signature": "exfil"},
@@ -397,17 +418,31 @@ class TestKillChainDetection:
 
     def test_no_chain_single_stage(self):
         from services.alert_intelligence import detect_kill_chains
+
         alerts = [
-            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan"},
-            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan2"},
+            {
+                "source_ip": "10.0.0.5",
+                "category": "reconnaissance",
+                "signature": "scan",
+            },
+            {
+                "source_ip": "10.0.0.5",
+                "category": "reconnaissance",
+                "signature": "scan2",
+            },
         ]
         chains = detect_kill_chains(alerts)
         assert len(chains) == 0
 
     def test_separate_ips_no_chain(self):
         from services.alert_intelligence import detect_kill_chains
+
         alerts = [
-            {"source_ip": "10.0.0.5", "category": "reconnaissance", "signature": "scan"},
+            {
+                "source_ip": "10.0.0.5",
+                "category": "reconnaissance",
+                "signature": "scan",
+            },
             {"source_ip": "10.0.0.6", "category": "exploit", "signature": "exploit"},
         ]
         chains = detect_kill_chains(alerts)
@@ -415,6 +450,7 @@ class TestKillChainDetection:
 
     def test_ignores_non_kill_chain_categories(self):
         from services.alert_intelligence import detect_kill_chains
+
         alerts = [
             {"source_ip": "10.0.0.5", "category": "policy", "signature": "policy"},
             {"source_ip": "10.0.0.5", "category": "informational", "signature": "info"},
@@ -428,23 +464,33 @@ class TestDestinationAwareBoost:
 
     def test_exploit_on_internal_ssh_boosted(self):
         from services.alert_intelligence import reclassify_severity
+
         # ET EXPLOIT = severity 1, but let's test ET SCAN (3) getting boosted
-        sev = reclassify_severity("ET SCAN portscan", 3, dst_port=22, dst_ip="192.168.1.10")
+        sev = reclassify_severity(
+            "ET SCAN portscan", 3, dst_port=22, dst_ip="192.168.1.10"
+        )
         assert sev == 2  # Boosted from 3 → 2
 
     def test_no_boost_on_external_ip(self):
         from services.alert_intelligence import reclassify_severity
+
         sev = reclassify_severity("ET SCAN portscan", 3, dst_port=22, dst_ip="8.8.8.8")
         assert sev == 3  # No boost — external IP
 
     def test_no_boost_on_safe_port(self):
         from services.alert_intelligence import reclassify_severity
-        sev = reclassify_severity("ET SCAN portscan", 3, dst_port=443, dst_ip="192.168.1.10")
+
+        sev = reclassify_severity(
+            "ET SCAN portscan", 3, dst_port=443, dst_ip="192.168.1.10"
+        )
         assert sev == 3  # 443 not in SENSITIVE_PORTS
 
     def test_critical_not_boosted_past_1(self):
         from services.alert_intelligence import reclassify_severity
-        sev = reclassify_severity("ET MALWARE bad", 1, dst_port=22, dst_ip="192.168.1.10")
+
+        sev = reclassify_severity(
+            "ET MALWARE bad", 1, dst_port=22, dst_ip="192.168.1.10"
+        )
         assert sev == 1  # Already critical, can't go higher
 
 
@@ -453,16 +499,21 @@ class TestSuppressTTL:
 
     def test_expired_suppress_not_blocked(self, monkeypatch, tmp_path):
         from services import alert_intelligence
-        monkeypatch.setattr(alert_intelligence, "_SUPPRESS_PATH", tmp_path / "suppress.json")
+
+        monkeypatch.setattr(
+            alert_intelligence, "_SUPPRESS_PATH", tmp_path / "suppress.json"
+        )
 
         # Write a suppress entry that expired yesterday
         expired_entry = {
-            "global": [{
-                "signature_id": 999,
-                "reason": "test",
-                "suppressed_at": "2026-03-01T00:00:00+00:00",
-                "expires_at": "2026-03-12T00:00:00+00:00",  # Expired
-            }],
+            "global": [
+                {
+                    "signature_id": 999,
+                    "reason": "test",
+                    "suppressed_at": "2026-03-01T00:00:00+00:00",
+                    "expires_at": "2026-03-12T00:00:00+00:00",  # Expired
+                }
+            ],
             "per_device": {},
             "false_positives": [],
         }
@@ -473,16 +524,21 @@ class TestSuppressTTL:
     def test_active_suppress_still_blocks(self, monkeypatch, tmp_path):
         import json
         from services import alert_intelligence
-        monkeypatch.setattr(alert_intelligence, "_SUPPRESS_PATH", tmp_path / "suppress.json")
+
+        monkeypatch.setattr(
+            alert_intelligence, "_SUPPRESS_PATH", tmp_path / "suppress.json"
+        )
 
         future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         active_entry = {
-            "global": [{
-                "signature_id": 888,
-                "reason": "test",
-                "suppressed_at": datetime.now(timezone.utc).isoformat(),
-                "expires_at": future,
-            }],
+            "global": [
+                {
+                    "signature_id": 888,
+                    "reason": "test",
+                    "suppressed_at": datetime.now(timezone.utc).isoformat(),
+                    "expires_at": future,
+                }
+            ],
             "per_device": {},
             "false_positives": [],
         }
@@ -496,7 +552,10 @@ class TestBaseline:
 
     def test_update_baseline_stores_history(self, monkeypatch, tmp_path):
         from services import alert_intelligence
-        monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json")
+
+        monkeypatch.setattr(
+            alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json"
+        )
 
         summary = {"total_events": 100, "threat_score": 25, "categories": {}}
         result = alert_intelligence.update_baseline(summary)
@@ -506,13 +565,23 @@ class TestBaseline:
 
     def test_baseline_detects_anomaly(self, monkeypatch, tmp_path):
         from services import alert_intelligence
-        monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json")
+
+        monkeypatch.setattr(
+            alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json"
+        )
 
         # Seed with 10 low-volume snapshots
-        baselines = {"history": [
-            {"timestamp": f"2026-03-{10+i}T00:00:00Z", "total_events": 10, "threat_score": 5, "categories": {}}
-            for i in range(10)
-        ]}
+        baselines = {
+            "history": [
+                {
+                    "timestamp": f"2026-03-{10 + i}T00:00:00Z",
+                    "total_events": 10,
+                    "threat_score": 5,
+                    "categories": {},
+                }
+                for i in range(10)
+            ]
+        }
         (tmp_path / "baselines.json").write_text(json.dumps(baselines))
 
         # Current is 10x higher → anomalous
@@ -616,7 +685,9 @@ class TestCategorizeSubCategory:
         assert result == "port_scan"
 
     def test_web_exploit_sub(self):
-        result = categorize_sub_category("ET WEB_SERVER SQL Injection Attempt", "exploit")
+        result = categorize_sub_category(
+            "ET WEB_SERVER SQL Injection Attempt", "exploit"
+        )
         assert result == "web_exploit"
 
     def test_syn_flood_sub(self):
@@ -647,8 +718,12 @@ class TestMitreTechniques:
     def test_mitre_has_major_categories(self):
         """MITRE mapping should cover major threat categories."""
         expected = [
-            "credential_abuse", "malware_c2", "exfiltration",
-            "reconnaissance", "exploit", "dos",
+            "credential_abuse",
+            "malware_c2",
+            "exfiltration",
+            "reconnaissance",
+            "exploit",
+            "dos",
         ]
         for cat in expected:
             assert cat in MITRE_TECHNIQUES, f"Missing MITRE mapping for {cat}"
@@ -660,8 +735,12 @@ class TestMitreTechniques:
             for tech in techniques:
                 assert "id" in tech, f"Technique in {cat} missing 'id'"
                 assert "name" in tech, f"Technique in {cat} missing 'name'"
-                assert "description" in tech, f"Technique in {cat} missing 'description'"
-                assert tech["id"].startswith("T"), f"MITRE ID should start with 'T': {tech['id']}"
+                assert "description" in tech, (
+                    f"Technique in {cat} missing 'description'"
+                )
+                assert tech["id"].startswith("T"), (
+                    f"MITRE ID should start with 'T': {tech['id']}"
+                )
 
     def test_mitre_credential_abuse_has_brute_force(self):
         """credential_abuse should include T1110 (Brute Force)."""
@@ -680,9 +759,18 @@ class TestThreatCategoriesStructure:
     def test_all_13_categories_present(self):
         """THREAT_CATEGORIES should have exactly 13 entries."""
         expected = {
-            "credential_abuse", "sensitive_data", "dos", "encrypted_threats",
-            "malware_c2", "exfiltration", "reconnaissance", "exploit",
-            "policy", "protocol_anomaly", "iot_anomaly", "geo_anomaly",
+            "credential_abuse",
+            "sensitive_data",
+            "dos",
+            "encrypted_threats",
+            "malware_c2",
+            "exfiltration",
+            "reconnaissance",
+            "exploit",
+            "policy",
+            "protocol_anomaly",
+            "iot_anomaly",
+            "geo_anomaly",
             "informational",
         }
         assert set(THREAT_CATEGORIES.keys()) == expected
@@ -710,4 +798,6 @@ class TestThreatCategoriesStructure:
                 assert "id" in sub, f"Sub in {parent_id} missing 'id'"
                 assert "label" in sub, f"Sub in {parent_id} missing 'label'"
                 assert "patterns" in sub, f"Sub in {parent_id} missing 'patterns'"
-                assert len(sub["patterns"]) > 0, f"Sub {sub['id']} in {parent_id} has empty patterns"
+                assert len(sub["patterns"]) > 0, (
+                    f"Sub {sub['id']} in {parent_id} has empty patterns"
+                )

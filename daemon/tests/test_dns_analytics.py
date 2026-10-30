@@ -133,15 +133,15 @@ class TestGetDeviceDns:
         assert len(result[0]["query_types"]) == 2
 
     def test_filters_by_device_ip(self, dns, mock_client):
-        mock_client.search.return_value = {
-            "aggregations": {"domains": {"buckets": []}}
-        }
-        dns.get_device_dns(
-            "10.0.0.1", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        mock_client.search.return_value = {"aggregations": {"domains": {"buckets": []}}}
+        dns.get_device_dns("10.0.0.1", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
         call_body = mock_client.search.call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        ip_filter = [f for f in filters if "term" in f and "source.ip.keyword" in f.get("term", {})]
+        ip_filter = [
+            f
+            for f in filters
+            if "term" in f and "source.ip.keyword" in f.get("term", {})
+        ]
         assert len(ip_filter) == 1
         assert ip_filter[0]["term"]["source.ip.keyword"] == "10.0.0.1"
 
@@ -161,9 +161,7 @@ class TestGetNxdomainErrors:
                             "key": "nonexistent.test",
                             "doc_count": 50,
                             "clients": {
-                                "buckets": [
-                                    {"key": "192.168.1.10", "doc_count": 50}
-                                ]
+                                "buckets": [{"key": "192.168.1.10", "doc_count": 50}]
                             },
                         }
                     ]
@@ -171,9 +169,7 @@ class TestGetNxdomainErrors:
             }
         }
 
-        result = dns.get_nxdomain_errors(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        result = dns.get_nxdomain_errors("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         assert len(result) == 1
         assert result[0]["domain"] == "nonexistent.test"
@@ -186,7 +182,11 @@ class TestGetNxdomainErrors:
         dns.get_nxdomain_errors("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
         call_body = mock_client.search.call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        nxd = [f for f in filters if "term" in f and "zeek.dns.rcode_name.keyword" in f.get("term", {})]
+        nxd = [
+            f
+            for f in filters
+            if "term" in f and "zeek.dns.rcode_name.keyword" in f.get("term", {})
+        ]
         assert len(nxd) == 1
         assert nxd[0]["term"]["zeek.dns.rcode_name.keyword"] == "NXDOMAIN"
 
@@ -278,9 +278,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = dns.get_suspicious_dns(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         long_findings = [r for r in result if r["type"] == "long_domain"]
         assert len(long_findings) >= 1
@@ -302,9 +300,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = dns.get_suspicious_dns(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         hf = [r for r in result if r["type"] == "high_frequency"]
         assert len(hf) >= 1
@@ -314,16 +310,12 @@ class TestGetSuspiciousDns:
             "aggregations": {
                 "top_domains": {"buckets": []},
                 "txt_domains": {
-                    "buckets": [
-                        {"key": "tunnel.evil.com", "doc_count": 100}
-                    ]
+                    "buckets": [{"key": "tunnel.evil.com", "doc_count": 100}]
                 },
             }
         }
 
-        result = dns.get_suspicious_dns(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
+        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         txt = [r for r in result if r["type"] == "txt_abuse"]
         assert len(txt) >= 1

@@ -96,9 +96,15 @@ class IoTTrustScorer:
         total_score = int(round(max(0, min(100, total_raw))))
 
         # Normalise each pillar to 0-100 for display
-        privacy_pct = int(round((privacy_raw / PRIVACY_MAX) * 100)) if PRIVACY_MAX else 0
-        security_pct = int(round((security_raw / SECURITY_MAX) * 100)) if SECURITY_MAX else 0
-        behavior_pct = int(round((behavior_raw / BEHAVIOR_MAX) * 100)) if BEHAVIOR_MAX else 0
+        privacy_pct = (
+            int(round((privacy_raw / PRIVACY_MAX) * 100)) if PRIVACY_MAX else 0
+        )
+        security_pct = (
+            int(round((security_raw / SECURITY_MAX) * 100)) if SECURITY_MAX else 0
+        )
+        behavior_pct = (
+            int(round((behavior_raw / BEHAVIOR_MAX) * 100)) if BEHAVIOR_MAX else 0
+        )
 
         return {
             "score": total_score,

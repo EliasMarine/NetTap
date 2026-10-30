@@ -319,41 +319,48 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
     # Optional IP filter (matches source OR destination)
     ip_filter = request.query.get("ip", "")
     if ip_filter:
-        filter_clauses.append({
-            "bool": {
-                "should": [
-                    {"term": {"source.ip.keyword": ip_filter}},
-                    {"term": {"destination.ip.keyword": ip_filter}},
-                ],
-                "minimum_should_match": 1,
+        filter_clauses.append(
+            {
+                "bool": {
+                    "should": [
+                        {"term": {"source.ip.keyword": ip_filter}},
+                        {"term": {"destination.ip.keyword": ip_filter}},
+                    ],
+                    "minimum_should_match": 1,
+                }
             }
-        })
+        )
 
     # Optional category filter — match signatures belonging to a threat category
     category_filter = request.query.get("category", "")
     if category_filter:
         from services.alert_intelligence import THREAT_CATEGORIES
+
         cat_info = THREAT_CATEGORIES.get(category_filter)
         if cat_info:
             # Build a bool/should with wildcard matches on rule.name for each
             # pattern in the category.  Case-insensitive wildcard on .keyword.
             should_clauses = []
             for pattern in cat_info["patterns"]:
-                should_clauses.append({
-                    "wildcard": {
-                        "rule.name": {
-                            "value": f"*{pattern}*",
-                            "case_insensitive": True,
+                should_clauses.append(
+                    {
+                        "wildcard": {
+                            "rule.name": {
+                                "value": f"*{pattern}*",
+                                "case_insensitive": True,
+                            }
                         }
                     }
-                })
+                )
             if should_clauses:
-                filter_clauses.append({
-                    "bool": {
-                        "should": should_clauses,
-                        "minimum_should_match": 1,
+                filter_clauses.append(
+                    {
+                        "bool": {
+                            "should": should_clauses,
+                            "minimum_should_match": 1,
+                        }
                     }
-                })
+                )
 
     excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
@@ -645,8 +652,15 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
         )
 
     buckets = []
-    for bucket in result.get("aggregations", {}).get("over_time", {}).get("buckets", []):
-        entry = {"timestamp": bucket.get("key_as_string", ""), "high": 0, "medium": 0, "low": 0}
+    for bucket in (
+        result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    ):
+        entry = {
+            "timestamp": bucket.get("key_as_string", ""),
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+        }
         for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
             key = sev_bucket.get("key")
             try:
@@ -658,12 +672,14 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                 entry[label] = sev_bucket.get("doc_count", 0)
         buckets.append(entry)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "interval": interval,
-        "buckets": buckets,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "buckets": buckets,
+        }
+    )
 
 
 async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
@@ -690,7 +706,11 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
         },
         "aggs": {
             "top_sigs": {
-                "terms": {"field": "rule.name.keyword", "size": limit, "missing": "Unknown"},
+                "terms": {
+                    "field": "rule.name.keyword",
+                    "size": limit,
+                    "missing": "Unknown",
+                },
                 "aggs": {
                     "severity": {
                         "terms": {"field": "suricata.alert.severity", "size": 3}
@@ -717,17 +737,21 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
                 primary_severity = int(sev_buckets[0].get("key", 3))
             except (ValueError, TypeError):
                 primary_severity = 3
-        signatures.append({
-            "signature": bucket.get("key", "Unknown"),
-            "count": bucket.get("doc_count", 0),
-            "severity": primary_severity,
-        })
+        signatures.append(
+            {
+                "signature": bucket.get("key", "Unknown"),
+                "count": bucket.get("doc_count", 0),
+                "severity": primary_severity,
+            }
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "signatures": signatures,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "signatures": signatures,
+        }
+    )
 
 
 async def handle_alerts_top_ips(request: web.Request) -> web.Response:
@@ -757,11 +781,7 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
                 "must_not": excluded,
             }
         },
-        "aggs": {
-            "top_ips": {
-                "terms": {"field": field, "size": limit}
-            }
-        },
+        "aggs": {"top_ips": {"terms": {"field": field, "size": limit}}},
     }
 
     try:
@@ -774,17 +794,21 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
 
     ips = []
     for bucket in result.get("aggregations", {}).get("top_ips", {}).get("buckets", []):
-        ips.append({
-            "ip": bucket.get("key", ""),
-            "count": bucket.get("doc_count", 0),
-        })
+        ips.append(
+            {
+                "ip": bucket.get("key", ""),
+                "count": bucket.get("doc_count", 0),
+            }
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "direction": direction,
-        "ips": ips,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "direction": direction,
+            "ips": ips,
+        }
+    )
 
 
 async def handle_alerts_categories(request: web.Request) -> web.Response:
@@ -801,8 +825,12 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
     excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import (
-        THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
-        categorize_alert, categorize_sub_category, reclassify_severity,
+        THREAT_CATEGORIES,
+        SUB_CATEGORIES,
+        MITRE_TECHNIQUES,
+        categorize_alert,
+        categorize_sub_category,
+        reclassify_severity,
     )
 
     query = {
@@ -818,7 +846,11 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
         },
         "aggs": {
             "by_signature": {
-                "terms": {"field": "rule.name.keyword", "size": 500, "missing": "Unknown"},
+                "terms": {
+                    "field": "rule.name.keyword",
+                    "size": 500,
+                    "missing": "Unknown",
+                },
                 "aggs": {
                     "by_severity": {
                         "terms": {"field": "suricata.alert.severity", "size": 5}
@@ -853,14 +885,22 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             "color": cat_info["color"],
             "description": cat_info["description"],
             "count": 0,
-            "severity_breakdown": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
-            "sparkline": {},      # timestamp -> count
+            "severity_breakdown": {
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "info": 0,
+            },
+            "sparkline": {},  # timestamp -> count
             "sub_categories": {},  # sub_id -> {label, count}
         }
 
     sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
 
-    for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
+    for bucket in (
+        result.get("aggregations", {}).get("by_signature", {}).get("buckets", [])
+    ):
         sig_name = bucket.get("key", "Unknown")
         doc_count = bucket.get("doc_count", 0)
 
@@ -883,7 +923,9 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             ts_key = time_bucket.get("key_as_string", "")
             ts_count = time_bucket.get("doc_count", 0)
             if ts_key:
-                entry["sparkline"][ts_key] = entry["sparkline"].get(ts_key, 0) + ts_count
+                entry["sparkline"][ts_key] = (
+                    entry["sparkline"].get(ts_key, 0) + ts_count
+                )
 
         # Sub-category classification
         sub_id = categorize_sub_category(sig_name, category)
@@ -919,35 +961,39 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
         if entry["count"] == 0:
             continue
         trend = _compute_trend_from_sparkline(entry["sparkline"])
-        categories.append({
-            "id": entry["id"],
-            "label": entry["label"],
-            "icon": entry["icon"],
-            "color": entry["color"],
-            "description": entry["description"],
-            "count": entry["count"],
-            "severity_breakdown": entry["severity_breakdown"],
-            "trend": trend,
-            "sparkline": [
-                {"timestamp": ts, "count": c}
-                for ts, c in sorted(entry["sparkline"].items())
-            ],
-            "sub_categories": sorted(
-                entry["sub_categories"].values(),
-                key=lambda s: s["count"],
-                reverse=True,
-            ),
-            "mitre_techniques": MITRE_TECHNIQUES.get(cat_id, []),
-        })
+        categories.append(
+            {
+                "id": entry["id"],
+                "label": entry["label"],
+                "icon": entry["icon"],
+                "color": entry["color"],
+                "description": entry["description"],
+                "count": entry["count"],
+                "severity_breakdown": entry["severity_breakdown"],
+                "trend": trend,
+                "sparkline": [
+                    {"timestamp": ts, "count": c}
+                    for ts, c in sorted(entry["sparkline"].items())
+                ],
+                "sub_categories": sorted(
+                    entry["sub_categories"].values(),
+                    key=lambda s: s["count"],
+                    reverse=True,
+                ),
+                "mitre_techniques": MITRE_TECHNIQUES.get(cat_id, []),
+            }
+        )
 
     categories.sort(key=lambda c: c["count"], reverse=True)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "interval": interval,
-        "categories": categories,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "categories": categories,
+        }
+    )
 
 
 async def handle_alert_category_detail(request: web.Request) -> web.Response:
@@ -963,14 +1009,16 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import (
-        THREAT_CATEGORIES, SUB_CATEGORIES, MITRE_TECHNIQUES,
-        categorize_alert, categorize_sub_category, reclassify_severity,
+        THREAT_CATEGORIES,
+        SUB_CATEGORIES,
+        MITRE_TECHNIQUES,
+        categorize_alert,
+        categorize_sub_category,
+        reclassify_severity,
     )
 
     if category not in THREAT_CATEGORIES:
-        return web.json_response(
-            {"error": f"Unknown category: {category}"}, status=404
-        )
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
 
     cat_info = THREAT_CATEGORIES[category]
 
@@ -987,20 +1035,20 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         },
         "aggs": {
             "by_signature": {
-                "terms": {"field": "rule.name.keyword", "size": 500, "missing": "Unknown"},
+                "terms": {
+                    "field": "rule.name.keyword",
+                    "size": 500,
+                    "missing": "Unknown",
+                },
                 "aggs": {
                     "by_severity": {
                         "terms": {"field": "suricata.alert.severity", "size": 5}
                     },
-                    "by_src_ip": {
-                        "terms": {"field": "source.ip.keyword", "size": 50}
-                    },
+                    "by_src_ip": {"terms": {"field": "source.ip.keyword", "size": 50}},
                     "by_dst_ip": {
                         "terms": {"field": "destination.ip.keyword", "size": 50}
                     },
-                    "latest": {
-                        "max": {"field": "@timestamp"}
-                    },
+                    "latest": {"max": {"field": "@timestamp"}},
                 },
             }
         },
@@ -1021,11 +1069,13 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     sub_cat_counts: dict[str, int] = {}
     all_sources: set[str] = set()
     all_targets: set[str] = set()
-    device_counts: dict[str, int] = {}      # ip → total alert count
-    device_severity: dict[str, int] = {}    # ip → worst severity (lowest = worst)
+    device_counts: dict[str, int] = {}  # ip → total alert count
+    device_severity: dict[str, int] = {}  # ip → worst severity (lowest = worst)
     top_signatures: list[dict] = []
 
-    for bucket in result.get("aggregations", {}).get("by_signature", {}).get("buckets", []):
+    for bucket in (
+        result.get("aggregations", {}).get("by_signature", {}).get("buckets", [])
+    ):
         sig_name = bucket.get("key", "Unknown")
         doc_count = bucket.get("doc_count", 0)
 
@@ -1045,7 +1095,9 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
 
         sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
         if sev_buckets:
-            primary_sev = reclassify_severity(sig_name, int(sev_buckets[0].get("key", 4)))
+            primary_sev = reclassify_severity(
+                sig_name, int(sev_buckets[0].get("key", 4))
+            )
 
         # Source IPs — track per-device counts
         for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
@@ -1070,13 +1122,15 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
 
         # Top signatures
         last_seen = bucket.get("latest", {}).get("value_as_string", "")
-        top_signatures.append({
-            "signature": sig_name,
-            "count": doc_count,
-            "severity": primary_sev,
-            "severity_label": sev_name_map.get(primary_sev, "info"),
-            "last_seen": last_seen,
-        })
+        top_signatures.append(
+            {
+                "signature": sig_name,
+                "count": doc_count,
+                "severity": primary_sev,
+                "severity_label": sev_name_map.get(primary_sev, "info"),
+                "last_seen": last_seen,
+            }
+        )
 
     top_signatures.sort(key=lambda s: s["count"], reverse=True)
 
@@ -1085,45 +1139,51 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     for sub_def in SUB_CATEGORIES.get(category, []):
         sub_count = sub_cat_counts.get(sub_def["id"], 0)
         if sub_count > 0:
-            sub_categories.append({
-                "id": sub_def["id"],
-                "label": sub_def["label"],
-                "count": sub_count,
-            })
+            sub_categories.append(
+                {
+                    "id": sub_def["id"],
+                    "label": sub_def["label"],
+                    "count": sub_count,
+                }
+            )
     sub_categories.sort(key=lambda s: s["count"], reverse=True)
 
     # Build affected devices list (top 20 by alert count, as objects)
     affected_devices = []
     for ip in sorted(device_counts, key=lambda x: device_counts[x], reverse=True)[:20]:
         sev = device_severity.get(ip, 4)
-        affected_devices.append({
-            "ip": ip,
-            "count": device_counts[ip],
-            "severity": sev_name_map.get(sev, "info"),
-        })
+        affected_devices.append(
+            {
+                "ip": ip,
+                "count": device_counts[ip],
+                "severity": sev_name_map.get(sev, "info"),
+            }
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "category": {
-            "id": category,
-            "label": cat_info["label"],
-            "icon": cat_info["icon"],
-            "color": cat_info["color"],
-            "description": cat_info["description"],
-        },
-        "stats": {
-            "total": total_count,
-            "unique_sources": len(all_sources),
-            "unique_targets": len(all_targets),
-            "affected_devices": len(device_counts),
-        },
-        "severity_breakdown": severity_breakdown,
-        "sub_categories": sub_categories,
-        "affected_devices": affected_devices,
-        "top_signatures": top_signatures[:20],
-        "mitre_techniques": MITRE_TECHNIQUES.get(category, []),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "category": {
+                "id": category,
+                "label": cat_info["label"],
+                "icon": cat_info["icon"],
+                "color": cat_info["color"],
+                "description": cat_info["description"],
+            },
+            "stats": {
+                "total": total_count,
+                "unique_sources": len(all_sources),
+                "unique_targets": len(all_targets),
+                "affected_devices": len(device_counts),
+            },
+            "severity_breakdown": severity_breakdown,
+            "sub_categories": sub_categories,
+            "affected_devices": affected_devices,
+            "top_signatures": top_signatures[:20],
+            "mitre_techniques": MITRE_TECHNIQUES.get(category, []),
+        }
+    )
 
 
 async def handle_alert_category_timeline(request: web.Request) -> web.Response:
@@ -1140,12 +1200,14 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
     client = _get_client(request)
     excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
-    from services.alert_intelligence import THREAT_CATEGORIES, categorize_alert, categorize_sub_category
+    from services.alert_intelligence import (
+        THREAT_CATEGORIES,
+        categorize_alert,
+        categorize_sub_category,
+    )
 
     if category not in THREAT_CATEGORIES:
-        return web.json_response(
-            {"error": f"Unknown category: {category}"}, status=404
-        )
+        return web.json_response({"error": f"Unknown category: {category}"}, status=404)
 
     query = {
         "size": 0,
@@ -1184,7 +1246,9 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
         )
 
     series = []
-    for time_bucket in result.get("aggregations", {}).get("over_time", {}).get("buckets", []):
+    for time_bucket in (
+        result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    ):
         ts = time_bucket.get("key_as_string", "")
         category_count = 0
         sub_cat_breakdown: dict[str, int] = {}
@@ -1197,21 +1261,27 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
                 category_count += sig_count
                 sub_id = categorize_sub_category(sig_name, category)
                 if sub_id:
-                    sub_cat_breakdown[sub_id] = sub_cat_breakdown.get(sub_id, 0) + sig_count
+                    sub_cat_breakdown[sub_id] = (
+                        sub_cat_breakdown.get(sub_id, 0) + sig_count
+                    )
 
-        series.append({
-            "timestamp": ts,
-            "total": category_count,
-            "sub_categories": sub_cat_breakdown,
-        })
+        series.append(
+            {
+                "timestamp": ts,
+                "total": category_count,
+                "sub_categories": sub_cat_breakdown,
+            }
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "category": category,
-        "interval": interval,
-        "series": series,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "category": category,
+            "interval": interval,
+            "series": series,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1229,18 +1299,30 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
     excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import get_smart_alerts
+
     try:
-        alerts = await get_smart_alerts(client, from_ts, to_ts, device_ip, include_info, limit, excluded_ips=excluded)
+        alerts = await get_smart_alerts(
+            client,
+            from_ts,
+            to_ts,
+            device_ip,
+            include_info,
+            limit,
+            excluded_ips=excluded,
+        )
     except Exception as exc:
         logger.error("Smart alerts query failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts,
-        "device_ip": device_ip,
-        "alerts": alerts,
-        "total": len(alerts),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "device_ip": device_ip,
+            "alerts": alerts,
+            "total": len(alerts),
+        }
+    )
 
 
 async def handle_smart_alert_summary(request: web.Request) -> web.Response:
@@ -1251,13 +1333,18 @@ async def handle_smart_alert_summary(request: web.Request) -> web.Response:
     excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
 
     from services.alert_intelligence import get_smart_alert_summary
+
     try:
-        summary = await get_smart_alert_summary(client, from_ts, to_ts, device_ip, excluded_ips=excluded)
+        summary = await get_smart_alert_summary(
+            client, from_ts, to_ts, device_ip, excluded_ips=excluded
+        )
     except Exception as exc:
         logger.error("Smart alert summary failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({"from": from_ts, "to": to_ts, "device_ip": device_ip, **summary})
+    return web.json_response(
+        {"from": from_ts, "to": to_ts, "device_ip": device_ip, **summary}
+    )
 
 
 async def handle_suppress_alert(request: web.Request) -> web.Response:
@@ -1272,6 +1359,7 @@ async def handle_suppress_alert(request: web.Request) -> web.Response:
         return web.json_response({"error": "signature_id is required"}, status=400)
 
     from services.alert_intelligence import suppress_rule
+
     suppress_rule(
         signature_id=int(sig_id),
         device_ip=body.get("device_ip"),
@@ -1292,8 +1380,11 @@ async def handle_false_positive(request: web.Request) -> web.Response:
         return web.json_response({"error": "signature_id is required"}, status=400)
 
     from services.alert_intelligence import mark_false_positive
+
     mark_false_positive(signature_id=int(sig_id), reason=body.get("reason", ""))
-    return web.json_response({"status": "marked_false_positive", "signature_id": sig_id})
+    return web.json_response(
+        {"status": "marked_false_positive", "signature_id": sig_id}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1317,8 +1408,12 @@ def register_alert_routes(
     app.router.add_get("/api/alerts/top-ips", handle_alerts_top_ips)
     app.router.add_get("/api/alerts/categories", handle_alerts_categories)
     # Category detail routes — BEFORE {id} catch-all (more specific path)
-    app.router.add_get("/api/alerts/categories/{category}/timeline", handle_alert_category_timeline)
-    app.router.add_get("/api/alerts/categories/{category}", handle_alert_category_detail)
+    app.router.add_get(
+        "/api/alerts/categories/{category}/timeline", handle_alert_category_timeline
+    )
+    app.router.add_get(
+        "/api/alerts/categories/{category}", handle_alert_category_detail
+    )
     # Smart alert routes — /smart/summary BEFORE /smart (more specific first)
     app.router.add_get("/api/alerts/smart/summary", handle_smart_alert_summary)
     app.router.add_get("/api/alerts/smart", handle_smart_alerts)

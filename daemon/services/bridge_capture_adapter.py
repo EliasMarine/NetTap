@@ -190,9 +190,7 @@ class BridgeCaptureAdapter(CaptureManager):
         ]
         counters: dict[str, int] = {}
         for name in counter_names:
-            counters[name] = self._read_sysfs_int(
-                os.path.join(stats_dir, name)
-            )
+            counters[name] = self._read_sysfs_int(os.path.join(stats_dir, name))
 
         # Link speed (in Mbps) — lives at the interface level, not statistics/
         speed_path = os.path.join(_SYSFS_NET, self._bridge_name, "speed")

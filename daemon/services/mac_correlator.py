@@ -91,9 +91,7 @@ class MACCorrelator:
     # Randomized MAC detection
     # ------------------------------------------------------------------
 
-    def detect_randomized_macs(
-        self, from_ts: str, to_ts: str
-    ) -> list[dict[str, Any]]:
+    def detect_randomized_macs(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:
         """Find MACs with the locally-administered bit set in traffic data.
 
         Returns a list of dicts with mac, connection_count, first_seen, last_seen,
@@ -160,17 +158,20 @@ class MACCorrelator:
             mac = bucket["key"]
             if is_randomized_mac(mac):
                 top_dests = [
-                    d["key"]
-                    for d in bucket.get("top_dests", {}).get("buckets", [])
+                    d["key"] for d in bucket.get("top_dests", {}).get("buckets", [])
                 ]
-                randomized.append({
-                    "mac": mac,
-                    "connection_count": bucket["doc_count"],
-                    "first_seen": bucket.get("first_seen", {}).get("value_as_string"),
-                    "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
-                    "total_bytes": bucket.get("total_bytes", {}).get("value", 0),
-                    "top_destinations": top_dests,
-                })
+                randomized.append(
+                    {
+                        "mac": mac,
+                        "connection_count": bucket["doc_count"],
+                        "first_seen": bucket.get("first_seen", {}).get(
+                            "value_as_string"
+                        ),
+                        "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
+                        "total_bytes": bucket.get("total_bytes", {}).get("value", 0),
+                        "top_destinations": top_dests,
+                    }
+                )
 
         logger.info(
             "Found %d randomized MACs out of %d total",
@@ -245,15 +246,9 @@ class MACCorrelator:
                         "calendar_interval": "hour",
                     }
                 },
-                "total_orig_bytes": {
-                    "sum": {"field": "client.bytes", "missing": 0}
-                },
-                "total_resp_bytes": {
-                    "sum": {"field": "server.bytes", "missing": 0}
-                },
-                "total_orig_pkts": {
-                    "sum": {"field": "source.packets", "missing": 0}
-                },
+                "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
                 "total_resp_pkts": {
                     "sum": {"field": "destination.packets", "missing": 0}
                 },
@@ -302,9 +297,7 @@ class MACCorrelator:
             }
 
         except OpenSearchException as exc:
-            logger.error(
-                "OpenSearch error building fingerprint for %s: %s", mac, exc
-            )
+            logger.error("OpenSearch error building fingerprint for %s: %s", mac, exc)
 
         return fingerprint
 
@@ -312,9 +305,7 @@ class MACCorrelator:
     # Merge suggestions
     # ------------------------------------------------------------------
 
-    def _compute_similarity(
-        self, fp_a: dict[str, Any], fp_b: dict[str, Any]
-    ) -> float:
+    def _compute_similarity(self, fp_a: dict[str, Any], fp_b: dict[str, Any]) -> float:
         """Compute behavioral similarity between two fingerprints (0.0-1.0).
 
         Weights:
@@ -370,9 +361,7 @@ class MACCorrelator:
             return 0.0
         return sum(s * w for s, w in scores) / total_weight
 
-    def suggest_merges(
-        self, from_ts: str, to_ts: str
-    ) -> list[dict[str, Any]]:
+    def suggest_merges(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:
         """Compare randomized MACs to known devices and suggest merges.
 
         Returns a list of merge candidates with confidence scores.
@@ -399,11 +388,7 @@ class MACCorrelator:
                     ]
                 }
             },
-            "aggs": {
-                "macs": {
-                    "terms": {"field": "source.mac.keyword", "size": 500}
-                }
-            },
+            "aggs": {"macs": {"terms": {"field": "source.mac.keyword", "size": 500}}},
         }
 
         try:
@@ -435,9 +420,7 @@ class MACCorrelator:
             best_score = 0.0
 
             for known_mac in known_macs:
-                known_fp = self.get_behavioral_fingerprint(
-                    known_mac, from_ts, to_ts
-                )
+                known_fp = self.get_behavioral_fingerprint(known_mac, from_ts, to_ts)
                 score = self._compute_similarity(rand_fp, known_fp)
 
                 if score > best_score and score >= _MEDIUM_CONFIDENCE:

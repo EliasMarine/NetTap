@@ -58,9 +58,7 @@ async def handle_whois_lookup(request: web.Request) -> web.Response:
     try:
         ipaddress.ip_address(raw_ip)
     except ValueError:
-        return web.json_response(
-            {"error": f"Invalid IP address: {raw_ip}"}, status=400
-        )
+        return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -94,9 +92,7 @@ async def handle_whois_lookup(request: web.Request) -> web.Response:
 
     except Exception as exc:
         logger.exception("WHOIS lookup failed for %s", raw_ip)
-        return web.json_response(
-            {"error": f"WHOIS lookup failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"WHOIS lookup failed: {exc}"}, status=500)
 
 
 async def handle_dns_lookup(request: web.Request) -> web.Response:
@@ -110,9 +106,7 @@ async def handle_dns_lookup(request: web.Request) -> web.Response:
     try:
         ipaddress.ip_address(raw_ip)
     except ValueError:
-        return web.json_response(
-            {"error": f"Invalid IP address: {raw_ip}"}, status=400
-        )
+        return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
     loop = asyncio.get_event_loop()
 
@@ -132,16 +126,12 @@ async def handle_dns_lookup(request: web.Request) -> web.Response:
         )
     except Exception as exc:
         logger.exception("DNS lookup failed for %s", raw_ip)
-        return web.json_response(
-            {"error": f"DNS lookup failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"DNS lookup failed: {exc}"}, status=500)
 
     # Forward lookup to get all addresses for the hostname
     forward_addrs: list[str] = []
     try:
-        addrinfo = await loop.run_in_executor(
-            None, socket.getaddrinfo, hostname, None
-        )
+        addrinfo = await loop.run_in_executor(None, socket.getaddrinfo, hostname, None)
         forward_addrs = list({ai[4][0] for ai in addrinfo})
     except socket.gaierror:
         # Forward lookup failed; return what we have from reverse

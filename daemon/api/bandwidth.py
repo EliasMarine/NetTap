@@ -79,12 +79,16 @@ async def handle_monthly(request: web.Request) -> web.Response:
         month = now.month
 
     usage = tracker.get_monthly_usage(year, month, excluded_ips=excluded_ips_list)
-    projection = tracker.get_projected_monthly(year, month, excluded_ips=excluded_ips_list)
+    projection = tracker.get_projected_monthly(
+        year, month, excluded_ips=excluded_ips_list
+    )
 
-    return web.json_response({
-        **usage,
-        "projection": projection,
-    })
+    return web.json_response(
+        {
+            **usage,
+            "projection": projection,
+        }
+    )
 
 
 async def handle_daily(request: web.Request) -> web.Response:
@@ -98,11 +102,13 @@ async def handle_daily(request: web.Request) -> web.Response:
 
     daily = tracker.get_daily_usage(from_ts, to_ts, excluded_ips=excluded_ips_list)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "daily": daily,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "daily": daily,
+        }
+    )
 
 
 async def handle_devices(request: web.Request) -> web.Response:
@@ -120,13 +126,17 @@ async def handle_devices(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         limit = 50
 
-    devices = tracker.get_per_device_usage(from_ts, to_ts, limit=limit, excluded_ips=excluded_ips_list)
+    devices = tracker.get_per_device_usage(
+        from_ts, to_ts, limit=limit, excluded_ips=excluded_ips_list
+    )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "devices": devices,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "devices": devices,
+        }
+    )
 
 
 async def handle_heatmap(request: web.Request) -> web.Response:
@@ -140,13 +150,15 @@ async def handle_heatmap(request: web.Request) -> web.Response:
 
     matrix = tracker.get_hourly_heatmap(from_ts, to_ts, excluded_ips=excluded_ips_list)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        "hours": list(range(24)),
-        "matrix": matrix,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            "hours": list(range(24)),
+            "matrix": matrix,
+        }
+    )
 
 
 async def handle_cap(request: web.Request) -> web.Response:
@@ -160,7 +172,9 @@ async def handle_cap(request: web.Request) -> web.Response:
 
     # Get current month usage for percentage
     now = datetime.now(timezone.utc)
-    usage = tracker.get_monthly_usage(now.year, now.month, excluded_ips=excluded_ips_list)
+    usage = tracker.get_monthly_usage(
+        now.year, now.month, excluded_ips=excluded_ips_list
+    )
 
     cap["current_usage_bytes"] = usage["total_bytes"]
     if cap["monthly_cap_bytes"] > 0:
@@ -204,11 +218,13 @@ async def handle_set_cap(request: web.Request) -> web.Response:
 
     tracker.save_cap(cap_bytes)
 
-    return web.json_response({
-        "result": "saved",
-        "monthly_cap_gb": round(cap_bytes / (1024**3), 1),
-        "monthly_cap_bytes": cap_bytes,
-    })
+    return web.json_response(
+        {
+            "result": "saved",
+            "monthly_cap_gb": round(cap_bytes / (1024**3), 1),
+            "monthly_cap_bytes": cap_bytes,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

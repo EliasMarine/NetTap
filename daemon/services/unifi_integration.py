@@ -42,15 +42,15 @@ logger = logging.getLogger("nettap.services.unifi_integration")
 # ---------------------------------------------------------------------------
 # Cache TTLs (seconds) — stale cache is better than no data
 # ---------------------------------------------------------------------------
-_CACHE_TTL_CLIENTS = 300      # 5 minutes — clients change frequently
-_CACHE_TTL_DEVICES = 300      # 5 minutes — infrastructure status
-_CACHE_TTL_NETWORKS = 600     # 10 minutes — network config rarely changes
-_CACHE_TTL_WIFI = 600         # 10 minutes
-_CACHE_TTL_FIREWALL = 600     # 10 minutes — policies/zones/ACLs
-_CACHE_TTL_DNS = 600          # 10 minutes
-_CACHE_TTL_DPI = 3600         # 1 hour — reference data, rarely changes
-_CACHE_TTL_WANS = 600         # 10 minutes
-_CACHE_TTL_VPN = 600          # 10 minutes
+_CACHE_TTL_CLIENTS = 300  # 5 minutes — clients change frequently
+_CACHE_TTL_DEVICES = 300  # 5 minutes — infrastructure status
+_CACHE_TTL_NETWORKS = 600  # 10 minutes — network config rarely changes
+_CACHE_TTL_WIFI = 600  # 10 minutes
+_CACHE_TTL_FIREWALL = 600  # 10 minutes — policies/zones/ACLs
+_CACHE_TTL_DNS = 600  # 10 minutes
+_CACHE_TTL_DPI = 3600  # 1 hour — reference data, rarely changes
+_CACHE_TTL_WANS = 600  # 10 minutes
+_CACHE_TTL_VPN = 600  # 10 minutes
 
 # Kept for backward compat with tests that import it
 _CACHE_TTL = _CACHE_TTL_CLIENTS
@@ -168,11 +168,15 @@ class UnifiIntegration:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
-                json.dump({
-                    "controller_url": self._base_url,
-                    "api_key": self._api_key,
-                    "site_id": self._site_id,
-                }, f, indent=2)
+                json.dump(
+                    {
+                        "controller_url": self._base_url,
+                        "api_key": self._api_key,
+                        "site_id": self._site_id,
+                    },
+                    f,
+                    indent=2,
+                )
             logger.info("Saved UniFi config to %s", path)
         except OSError as exc:
             logger.warning("Failed to save UniFi config: %s", exc)
@@ -205,8 +209,10 @@ class UnifiIntegration:
                 self._session = self._session_factory()
             else:
                 import aiohttp
+
                 # UniFi controllers often use self-signed certs
                 import ssl
+
                 ssl_ctx = ssl.create_default_context()
                 ssl_ctx.check_hostname = False
                 ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -242,7 +248,11 @@ class UnifiIntegration:
         headers = {"X-API-Key": self._api_key}
         try:
             async with session.request(
-                method, url, headers=headers, params=params, ssl=False,
+                method,
+                url,
+                headers=headers,
+                params=params,
+                ssl=False,
             ) as resp:
                 if resp.status == 401:
                     self._last_error = "Invalid API key"
@@ -483,9 +493,7 @@ class UnifiIntegration:
             # Normalize the stored MAC for comparison
             normalized = device_mac.strip().upper().replace("-", ":").replace(".", ":")
             if len(normalized) == 12 and ":" not in normalized:
-                normalized = ":".join(
-                    normalized[i : i + 2] for i in range(0, 12, 2)
-                )
+                normalized = ":".join(normalized[i : i + 2] for i in range(0, 12, 2))
             if normalized == mac:
                 return device.get("name", device.get("alias"))
 
@@ -738,10 +746,18 @@ class UnifiIntegration:
         # Aggregate cache stats across all data types
         cache_stats: dict[str, int] = {}
         for name in (
-            "clients", "devices", "networks", "wifi",
-            "firewall_policies", "firewall_zones", "acl_rules",
-            "dns_policies", "dpi_categories", "dpi_applications",
-            "wans", "vpn_tunnels",
+            "clients",
+            "devices",
+            "networks",
+            "wifi",
+            "firewall_policies",
+            "firewall_zones",
+            "acl_rules",
+            "dns_policies",
+            "dpi_categories",
+            "dpi_applications",
+            "wans",
+            "vpn_tunnels",
         ):
             cache_list: list[dict] = getattr(self, f"_cache_{name}", [])
             cache_stats[name] = len(cache_list)

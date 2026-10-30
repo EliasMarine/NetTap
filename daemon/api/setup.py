@@ -122,9 +122,7 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     capture_mode = body.get("capture_mode")
     if capture_mode not in ("mirror", "bridge"):
@@ -141,7 +139,9 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
     else:
         if not body.get("wan_interface") or not body.get("lan_interface"):
             return web.json_response(
-                {"error": "wan_interface and lan_interface are required for bridge mode"},
+                {
+                    "error": "wan_interface and lan_interface are required for bridge mode"
+                },
                 status=400,
             )
 

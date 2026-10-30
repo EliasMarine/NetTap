@@ -99,9 +99,7 @@ class ConfigBackup:
         config["sections"]["notification_rules"] = notif_data.get("rules", {})
 
         # Device aliases (from baseline file)
-        baseline = self._read_json(
-            self._paths.get("device_baseline", ""), default={}
-        )
+        baseline = self._read_json(self._paths.get("device_baseline", ""), default={})
         config["sections"]["device_aliases"] = baseline.get("aliases", {})
 
         # Excluded IPs
@@ -114,9 +112,7 @@ class ConfigBackup:
             self._paths.get("bandwidth_cap", ""), default={}
         )
 
-        logger.info(
-            "Exported config with %d sections", len(config["sections"])
-        )
+        logger.info("Exported config with %d sections", len(config["sections"]))
         return config
 
     # ------------------------------------------------------------------
@@ -184,7 +180,8 @@ class ConfigBackup:
                 result["preview"][section_name] = {
                     "type": type(section_data).__name__,
                     "size": (
-                        len(section_data) if isinstance(section_data, (dict, list))
+                        len(section_data)
+                        if isinstance(section_data, (dict, list))
                         else 1
                     ),
                 }
@@ -242,12 +239,11 @@ class ConfigBackup:
                 existing["channels"] = sections["notification_channels"]
             if "notification_rules" in sections:
                 existing["rules"] = sections["notification_rules"]
-            ok = self._write_json(
-                self._paths.get("notification_config", ""), existing
-            )
+            ok = self._write_json(self._paths.get("notification_config", ""), existing)
             if ok:
                 applied.extend(
-                    s for s in ["notification_channels", "notification_rules"]
+                    s
+                    for s in ["notification_channels", "notification_rules"]
                     if s in sections
                 )
             else:
@@ -259,9 +255,7 @@ class ConfigBackup:
                 self._paths.get("device_baseline", ""), default={}
             )
             existing["aliases"] = sections["device_aliases"]
-            ok = self._write_json(
-                self._paths.get("device_baseline", ""), existing
-            )
+            ok = self._write_json(self._paths.get("device_baseline", ""), existing)
             if ok:
                 applied.append("device_aliases")
             else:

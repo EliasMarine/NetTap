@@ -227,9 +227,11 @@ async def handle_put_excluded_ips(request: web.Request) -> web.Response:
         )
 
     # Validate and deduplicate
-    clean_ips = list(dict.fromkeys(
-        ip.strip() for ip in raw_ips if isinstance(ip, str) and ip.strip()
-    ))
+    clean_ips = list(
+        dict.fromkeys(
+            ip.strip() for ip in raw_ips if isinstance(ip, str) and ip.strip()
+        )
+    )
 
     try:
         save_excluded_ips(clean_ips, request.app.get("excluded_ips_file"))
@@ -241,11 +243,13 @@ async def handle_put_excluded_ips(request: web.Request) -> web.Response:
     # Update in-memory list so it takes effect immediately
     request.app["excluded_ips"] = clean_ips
 
-    return web.json_response({
-        "result": "saved",
-        "excluded_ips": clean_ips,
-        "count": len(clean_ips),
-    })
+    return web.json_response(
+        {
+            "result": "saved",
+            "excluded_ips": clean_ips,
+            "count": len(clean_ips),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -75,8 +75,7 @@ class TestSetup(unittest.TestCase):
         asyncio.run(mgr.setup())
 
         flush_cmds = [
-            c for c in commands
-            if "addr" in c and "flush" in c and "enp2s0" in c
+            c for c in commands if "addr" in c and "flush" in c and "enp2s0" in c
         ]
         self.assertEqual(len(flush_cmds), 1)
 
@@ -87,10 +86,7 @@ class TestSetup(unittest.TestCase):
 
         asyncio.run(mgr.setup())
 
-        promisc_cmds = [
-            c for c in commands
-            if "promisc" in c and "on" in c
-        ]
+        promisc_cmds = [c for c in commands if "promisc" in c and "on" in c]
         self.assertEqual(len(promisc_cmds), 1)
 
     def test_setup_disables_offloads(self):
@@ -100,10 +96,7 @@ class TestSetup(unittest.TestCase):
 
         asyncio.run(mgr.setup())
 
-        ethtool_k_cmds = [
-            c for c in commands
-            if "ethtool" in c and "-K" in c
-        ]
+        ethtool_k_cmds = [c for c in commands if "ethtool" in c and "-K" in c]
         self.assertEqual(len(ethtool_k_cmds), 1)
         cmd = ethtool_k_cmds[0]
         self.assertIn("tso", cmd)
@@ -118,10 +111,7 @@ class TestSetup(unittest.TestCase):
 
         asyncio.run(mgr.setup())
 
-        ethtool_g_cmds = [
-            c for c in commands
-            if "ethtool" in c and "-G" in c
-        ]
+        ethtool_g_cmds = [c for c in commands if "ethtool" in c and "-G" in c]
         self.assertEqual(len(ethtool_g_cmds), 1)
         cmd = ethtool_g_cmds[0]
         self.assertIn("rx", cmd)
@@ -135,8 +125,11 @@ class TestSetup(unittest.TestCase):
         asyncio.run(mgr.setup())
 
         up_cmds = [
-            c for c in commands
-            if "link" in c and "set" in c and "up" in c
+            c
+            for c in commands
+            if "link" in c
+            and "set" in c
+            and "up" in c
             and "promisc" not in c  # exclude promisc commands
         ]
         self.assertEqual(len(up_cmds), 1)
@@ -177,8 +170,10 @@ class TestSetup(unittest.TestCase):
         """setup() should write persistence files when dirs are configured."""
         import tempfile
 
-        with tempfile.TemporaryDirectory() as netplan_dir, \
-             tempfile.TemporaryDirectory() as systemd_dir:
+        with (
+            tempfile.TemporaryDirectory() as netplan_dir,
+            tempfile.TemporaryDirectory() as systemd_dir,
+        ):
             mgr = MirrorManager(
                 interface="enp2s0",
                 management_interface="enp3s0",
@@ -213,10 +208,7 @@ class TestTeardown(unittest.TestCase):
 
         result = asyncio.run(mgr.teardown())
 
-        promisc_off_cmds = [
-            c for c in commands
-            if "promisc" in c and "off" in c
-        ]
+        promisc_off_cmds = [c for c in commands if "promisc" in c and "off" in c]
         self.assertEqual(len(promisc_off_cmds), 1)
         self.assertTrue(result["torn_down"])
 
@@ -238,8 +230,9 @@ class TestTeardown(unittest.TestCase):
 class TestGetHealth(unittest.TestCase):
     """Tests for get_health() — checks health status mapping."""
 
-    def _setup_health_mocks(self, mgr, operstate="up", carrier="1",
-                            flags="0x1103", has_ip=False):
+    def _setup_health_mocks(
+        self, mgr, operstate="up", carrier="1", flags="0x1103", has_ip=False
+    ):
         """Set up sysfs and nsenter mocks for health checks."""
         sysfs_files = {
             "operstate": operstate,

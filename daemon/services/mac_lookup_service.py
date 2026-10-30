@@ -26,6 +26,7 @@ OUI_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "oui_databas
 
 class MacLookupValidationError(Exception):
     """Raised when MAC address validation fails."""
+
     pass
 
 
@@ -69,7 +70,7 @@ class MacLookupService:
         elif MAC_DASH_PATTERN.match(mac):
             return mac.replace("-", ":")
         elif MAC_RAW_PATTERN.match(mac):
-            pairs = [mac[i:i + 2] for i in range(0, 12, 2)]
+            pairs = [mac[i : i + 2] for i in range(0, 12, 2)]
             return ":".join(pairs)
         else:
             raise MacLookupValidationError(

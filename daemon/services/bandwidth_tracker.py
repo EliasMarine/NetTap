@@ -42,6 +42,7 @@ class BandwidthTracker:
     def _load_cap(self) -> None:
         """Load monthly cap from settings file if it exists."""
         import json
+
         try:
             with open(_CAP_FILE, "r") as f:
                 data = json.load(f)
@@ -53,6 +54,7 @@ class BandwidthTracker:
         """Save monthly bandwidth cap to settings file."""
         import json
         from pathlib import Path
+
         self._monthly_cap_bytes = max(0, cap_bytes)
         Path(_CAP_FILE).parent.mkdir(parents=True, exist_ok=True)
         with open(_CAP_FILE, "w") as f:
@@ -62,7 +64,9 @@ class BandwidthTracker:
         """Get configured monthly cap and current usage percentage."""
         return {
             "monthly_cap_bytes": self._monthly_cap_bytes,
-            "monthly_cap_gb": round(self._monthly_cap_bytes / (1024**3), 1) if self._monthly_cap_bytes else 0,
+            "monthly_cap_gb": round(self._monthly_cap_bytes / (1024**3), 1)
+            if self._monthly_cap_bytes
+            else 0,
             "enabled": self._monthly_cap_bytes > 0,
         }
 
@@ -80,7 +84,9 @@ class BandwidthTracker:
             "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
         }
 
-    def get_monthly_usage(self, year: int, month: int, excluded_ips: list[str] | None = None) -> dict[str, Any]:
+    def get_monthly_usage(
+        self, year: int, month: int, excluded_ips: list[str] | None = None
+    ) -> dict[str, Any]:
         """Get total bytes in/out for a given month.
 
         Args:
@@ -92,17 +98,25 @@ class BandwidthTracker:
             Dict with total_bytes, orig_bytes, resp_bytes, year, month.
         """
         if not self._client:
-            return {"year": year, "month": month, "total_bytes": 0, "orig_bytes": 0, "resp_bytes": 0}
+            return {
+                "year": year,
+                "month": month,
+                "total_bytes": 0,
+                "orig_bytes": 0,
+                "resp_bytes": 0,
+            }
 
         _, last_day = calendar.monthrange(year, month)
         from_ts = f"{year:04d}-{month:02d}-01T00:00:00Z"
         to_ts = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59Z"
 
         excluded = build_excluded_ips_filter(excluded_ips or [])
-        bool_clause: dict = {"filter": [
-            *self._base_filters(),
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        ]}
+        bool_clause: dict = {
+            "filter": [
+                *self._base_filters(),
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ]
+        }
         if excluded:
             bool_clause["must_not"] = excluded
 
@@ -116,7 +130,13 @@ class BandwidthTracker:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except OpenSearchException as exc:
             logger.error("OpenSearch error in get_monthly_usage: %s", exc)
-            return {"year": year, "month": month, "total_bytes": 0, "orig_bytes": 0, "resp_bytes": 0}
+            return {
+                "year": year,
+                "month": month,
+                "total_bytes": 0,
+                "orig_bytes": 0,
+                "resp_bytes": 0,
+            }
 
         aggs = result.get("aggregations", {})
         orig = aggs.get("orig_bytes", {}).get("value", 0) or 0
@@ -130,7 +150,9 @@ class BandwidthTracker:
             "resp_bytes": resp,
         }
 
-    def get_daily_usage(self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[dict[str, Any]]:
+    def get_daily_usage(
+        self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Get daily byte totals for a date range.
 
         Args:
@@ -145,10 +167,12 @@ class BandwidthTracker:
             return []
 
         excluded = build_excluded_ips_filter(excluded_ips or [])
-        bool_clause: dict = {"filter": [
-            *self._base_filters(),
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        ]}
+        bool_clause: dict = {
+            "filter": [
+                *self._base_filters(),
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ]
+        }
         if excluded:
             bool_clause["must_not"] = excluded
 
@@ -179,7 +203,7 @@ class BandwidthTracker:
             {
                 "date": b.get("key_as_string", b.get("key", "")),
                 "total_bytes": (b.get("orig_bytes", {}).get("value", 0) or 0)
-                    + (b.get("resp_bytes", {}).get("value", 0) or 0),
+                + (b.get("resp_bytes", {}).get("value", 0) or 0),
                 "orig_bytes": b.get("orig_bytes", {}).get("value", 0) or 0,
                 "resp_bytes": b.get("resp_bytes", {}).get("value", 0) or 0,
                 "connections": b.get("doc_count", 0),
@@ -187,7 +211,13 @@ class BandwidthTracker:
             for b in buckets
         ]
 
-    def get_per_device_usage(self, from_ts: str, to_ts: str, limit: int = 50, excluded_ips: list[str] | None = None) -> list[dict[str, Any]]:
+    def get_per_device_usage(
+        self,
+        from_ts: str,
+        to_ts: str,
+        limit: int = 50,
+        excluded_ips: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Get bandwidth usage per source IP device.
 
         Args:
@@ -203,10 +233,12 @@ class BandwidthTracker:
             return []
 
         excluded = build_excluded_ips_filter(excluded_ips or [])
-        bool_clause: dict = {"filter": [
-            *self._base_filters(),
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        ]}
+        bool_clause: dict = {
+            "filter": [
+                *self._base_filters(),
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ]
+        }
         if excluded:
             bool_clause["must_not"] = excluded
 
@@ -245,20 +277,28 @@ class BandwidthTracker:
             {
                 "ip": b["key"],
                 "total_bytes": (b.get("orig_bytes", {}).get("value", 0) or 0)
-                    + (b.get("resp_bytes", {}).get("value", 0) or 0),
+                + (b.get("resp_bytes", {}).get("value", 0) or 0),
                 "orig_bytes": b.get("orig_bytes", {}).get("value", 0) or 0,
                 "resp_bytes": b.get("resp_bytes", {}).get("value", 0) or 0,
                 "connection_count": b.get("doc_count", 0),
                 "percent_of_total": round(
-                    ((b.get("orig_bytes", {}).get("value", 0) or 0)
-                     + (b.get("resp_bytes", {}).get("value", 0) or 0))
-                    / total_all * 100, 1
-                ) if total_all > 0 else 0,
+                    (
+                        (b.get("orig_bytes", {}).get("value", 0) or 0)
+                        + (b.get("resp_bytes", {}).get("value", 0) or 0)
+                    )
+                    / total_all
+                    * 100,
+                    1,
+                )
+                if total_all > 0
+                else 0,
             }
             for b in buckets
         ]
 
-    def get_projected_monthly(self, year: int, month: int, excluded_ips: list[str] | None = None) -> dict[str, Any]:
+    def get_projected_monthly(
+        self, year: int, month: int, excluded_ips: list[str] | None = None
+    ) -> dict[str, Any]:
         """Get projected monthly usage based on current rate.
 
         Uses linear extrapolation: (usage_so_far / days_elapsed) * days_in_month.
@@ -300,14 +340,20 @@ class BandwidthTracker:
             "projected_bytes": projected_bytes,
             "days_elapsed": round(days_elapsed, 1),
             "days_in_month": days_in_month,
-            "daily_rate_bytes": int(current_bytes / days_elapsed) if days_elapsed > 0 else 0,
+            "daily_rate_bytes": int(current_bytes / days_elapsed)
+            if days_elapsed > 0
+            else 0,
         }
 
         # Add cap info
         if self._monthly_cap_bytes > 0:
             result["cap_bytes"] = self._monthly_cap_bytes
-            result["usage_percent"] = round(current_bytes / self._monthly_cap_bytes * 100, 1)
-            result["projected_percent"] = round(projected_bytes / self._monthly_cap_bytes * 100, 1)
+            result["usage_percent"] = round(
+                current_bytes / self._monthly_cap_bytes * 100, 1
+            )
+            result["projected_percent"] = round(
+                projected_bytes / self._monthly_cap_bytes * 100, 1
+            )
             result["exceeds_cap"] = projected_bytes > self._monthly_cap_bytes
         else:
             result["cap_bytes"] = 0
@@ -317,7 +363,9 @@ class BandwidthTracker:
 
         return result
 
-    def get_hourly_heatmap(self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None) -> list[list[int]]:
+    def get_hourly_heatmap(
+        self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    ) -> list[list[int]]:
         """Get a 7x24 hour-of-day x day-of-week bandwidth matrix.
 
         Returns a 7-element list (Mon=0..Sun=6), each with 24 hourly byte totals.
@@ -334,10 +382,12 @@ class BandwidthTracker:
             return [[0] * 24 for _ in range(7)]
 
         excluded = build_excluded_ips_filter(excluded_ips or [])
-        bool_clause: dict = {"filter": [
-            *self._base_filters(),
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-        ]}
+        bool_clause: dict = {
+            "filter": [
+                *self._base_filters(),
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ]
+        }
         if excluded:
             bool_clause["must_not"] = excluded
 
@@ -379,9 +429,7 @@ class BandwidthTracker:
         matrix = [[0] * 24 for _ in range(7)]
 
         day_buckets = (
-            result.get("aggregations", {})
-            .get("by_day_of_week", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_day_of_week", {}).get("buckets", [])
         )
 
         for day_bucket in day_buckets:

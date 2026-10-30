@@ -147,9 +147,7 @@ class TSharkService:
         if not os.path.exists(daemon_path):
             # Extract just the filename for a clear error message
             filename = PurePosixPath(pcap_path).name
-            raise TSharkValidationError(
-                f"PCAP file not found: {filename}"
-            )
+            raise TSharkValidationError(f"PCAP file not found: {filename}")
 
         return container_path
 
@@ -223,10 +221,12 @@ class TSharkService:
         if request.follow_stream:
             if request.display_filter:
                 cmd.append("-q")
-                cmd.extend([
-                    "-z",
-                    f"follow,{request.follow_stream},ascii,{request.display_filter}",
-                ])
+                cmd.extend(
+                    [
+                        "-z",
+                        f"follow,{request.follow_stream},ascii,{request.display_filter}",
+                    ]
+                )
                 return cmd
             # No display filter — cannot meaningfully follow a stream.
             # Fall through to normal packet output so the caller still
@@ -491,6 +491,7 @@ class TSharkService:
     def list_pcap_files(self) -> list[dict]:
         """List available PCAP files in the pcap base directory."""
         import os
+
         pcaps = []
         base = self.pcap_base_dir
         if not os.path.isdir(base):
@@ -502,13 +503,15 @@ class TSharkService:
                     rel = os.path.relpath(full, base)
                     try:
                         stat = os.stat(full)
-                        pcaps.append({
-                            "path": full,
-                            "relative_path": rel,
-                            "name": f,
-                            "size_bytes": stat.st_size,
-                            "modified": stat.st_mtime,
-                        })
+                        pcaps.append(
+                            {
+                                "path": full,
+                                "relative_path": rel,
+                                "name": f,
+                                "size_bytes": stat.st_size,
+                                "modified": stat.st_mtime,
+                            }
+                        )
                     except OSError:
                         continue
         pcaps.sort(key=lambda p: p["modified"], reverse=True)

@@ -79,12 +79,14 @@ async def handle_iot_anomalies(request: web.Request) -> web.Response:
         logger.error("IoT anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "anomalies": anomalies,
-        "count": len(anomalies),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "anomalies": anomalies,
+            "count": len(anomalies),
+        }
+    )
 
 
 async def handle_fleet_summary(request: web.Request) -> web.Response:
@@ -114,11 +116,13 @@ async def handle_classify_device(request: web.Request) -> web.Response:
 
     is_iot = iot.classify_as_iot(mac, body)
 
-    return web.json_response({
-        "mac": mac,
-        "is_iot": is_iot,
-        "message": f"Device {mac} {'classified as IoT' if is_iot else 'not classified as IoT'}",
-    })
+    return web.json_response(
+        {
+            "mac": mac,
+            "is_iot": is_iot,
+            "message": f"Device {mac} {'classified as IoT' if is_iot else 'not classified as IoT'}",
+        }
+    )
 
 
 async def handle_privacy_report(request: web.Request) -> web.Response:
@@ -144,7 +148,9 @@ async def handle_communication_map(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = iot.get_communication_map(mac, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        result = iot.get_communication_map(
+            mac, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Communication map failed for %s: %s", mac, exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -160,7 +166,9 @@ async def handle_activity_timeline(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = iot.get_activity_timeline(mac, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        result = iot.get_activity_timeline(
+            mac, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Activity timeline failed for %s: %s", mac, exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -190,7 +198,9 @@ async def handle_network_isolation(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = iot.get_network_isolation(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        result = iot.get_network_isolation(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Network isolation analysis failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -205,7 +215,9 @@ async def handle_manufacturer_profiles(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = iot.get_manufacturer_profiles(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        result = iot.get_manufacturer_profiles(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Manufacturer profiles failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -220,8 +232,12 @@ def register_iot_routes(app: web.Application, storage: StorageManager) -> None:
 
     app.router.add_get("/api/iot/devices", handle_iot_devices)
     app.router.add_get("/api/iot/devices/{mac}/baseline", handle_device_baseline)
-    app.router.add_get("/api/iot/devices/{mac}/communication-map", handle_communication_map)
-    app.router.add_get("/api/iot/devices/{mac}/activity-timeline", handle_activity_timeline)
+    app.router.add_get(
+        "/api/iot/devices/{mac}/communication-map", handle_communication_map
+    )
+    app.router.add_get(
+        "/api/iot/devices/{mac}/activity-timeline", handle_activity_timeline
+    )
     app.router.add_get("/api/iot/anomalies", handle_iot_anomalies)
     app.router.add_get("/api/iot/fleet-summary", handle_fleet_summary)
     app.router.add_get("/api/iot/privacy-report", handle_privacy_report)

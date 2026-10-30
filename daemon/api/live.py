@@ -49,15 +49,17 @@ async def handle_live_connections(request: web.Request) -> web.Response:
         limit=limit,
     )
 
-    return web.json_response({
-        "connections": connections,
-        "count": len(connections),
-        "filters": {
-            "device": device,
-            "proto": proto,
-            "country": country,
-        },
-    })
+    return web.json_response(
+        {
+            "connections": connections,
+            "count": len(connections),
+            "filters": {
+                "device": device,
+                "proto": proto,
+                "country": country,
+            },
+        }
+    )
 
 
 async def handle_live_rate(request: web.Request) -> web.Response:
@@ -102,7 +104,10 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
         dashboard = await loop.run_in_executor(
             None,
             lambda: tracker.fetch_dashboard_data(
-                device=device, proto=proto, country=country, limit=limit,
+                device=device,
+                proto=proto,
+                country=country,
+                limit=limit,
                 excluded_ips=excluded_ips,
             ),
         )
@@ -154,14 +159,14 @@ async def handle_live_connection_detail(request: web.Request) -> web.Response:
         detail = await loop.run_in_executor(
             None,
             lambda: tracker.fetch_connection_detail(
-                src_ip=src, dst_ip=dst, dst_port=dst_port,
+                src_ip=src,
+                dst_ip=dst,
+                dst_port=dst_port,
             ),
         )
     except Exception as exc:
         logger.error("Error fetching connection detail: %s", exc)
-        return web.json_response(
-            {"error": f"Detail query failed: {exc}"}, status=502
-        )
+        return web.json_response({"error": f"Detail query failed: {exc}"}, status=502)
 
     # GeoIP fallback: if OpenSearch had no geo data for the destination
     geo = detail.get("geo", {})

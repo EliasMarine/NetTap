@@ -78,9 +78,7 @@ class CertificateMonitor:
 
         query = {
             "size": min(limit, 1000),
-            "query": {
-                "bool": bool_clause
-            },
+            "query": {"bool": bool_clause},
             "sort": [{"@timestamp": {"order": "desc"}}],
             "_source": [
                 "@timestamp",
@@ -141,7 +139,9 @@ class CertificateMonitor:
 
         # Query all certs then filter client-side for expiry
         # (Zeek SSL cert dates may be in various fields)
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000, excluded_ips=excluded_ips)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
         expiring = []
 
         for cert in all_certs:
@@ -149,10 +149,10 @@ class CertificateMonitor:
             if not not_after:
                 continue
             try:
-                expiry_dt = datetime.fromisoformat(
-                    not_after.replace("Z", "+00:00")
-                )
-                if expiry_dt <= datetime.fromisoformat(expiry_cutoff.replace("Z", "+00:00")):
+                expiry_dt = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
+                if expiry_dt <= datetime.fromisoformat(
+                    expiry_cutoff.replace("Z", "+00:00")
+                ):
                     cert["days_until_expiry"] = max(0, (expiry_dt - now).days)
                     cert["status"] = "expired" if expiry_dt <= now else "expiring"
                     expiring.append(cert)
@@ -175,7 +175,9 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000, excluded_ips=excluded_ips)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
         self_signed = []
 
         for cert in all_certs:
@@ -186,11 +188,18 @@ class CertificateMonitor:
             is_self_signed = False
             if subject and issuer and subject == issuer:
                 is_self_signed = True
-            if "self signed" in validation.lower() or "self_signed" in validation.lower():
+            if (
+                "self signed" in validation.lower()
+                or "self_signed" in validation.lower()
+            ):
                 is_self_signed = True
 
             if is_self_signed:
-                cert["detection_reason"] = "subject matches issuer" if subject == issuer else "validation status"
+                cert["detection_reason"] = (
+                    "subject matches issuer"
+                    if subject == issuer
+                    else "validation status"
+                )
                 self_signed.append(cert)
 
         return self_signed
@@ -209,7 +218,9 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000, excluded_ips=excluded_ips)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
 
         # Group by domain
         domain_issuers: dict[str, set[str]] = {}
@@ -227,12 +238,14 @@ class CertificateMonitor:
         changes = []
         for domain, issuers in domain_issuers.items():
             if len(issuers) > 1:
-                changes.append({
-                    "domain": domain,
-                    "issuers": sorted(issuers),
-                    "issuer_count": len(issuers),
-                    "certificates": domain_certs[domain],
-                })
+                changes.append(
+                    {
+                        "domain": domain,
+                        "issuers": sorted(issuers),
+                        "issuer_count": len(issuers),
+                        "certificates": domain_certs[domain],
+                    }
+                )
 
         return changes
 
@@ -249,10 +262,16 @@ class CertificateMonitor:
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
 
-        all_certs = self.get_certificates(from_ts, to_ts, limit=1000, excluded_ips=excluded_ips)
-        expiring = self.get_expiring_certs(days=30, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips)
+        all_certs = self.get_certificates(
+            from_ts, to_ts, limit=1000, excluded_ips=excluded_ips
+        )
+        expiring = self.get_expiring_certs(
+            days=30, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips
+        )
         self_signed = self.detect_self_signed(from_ts, to_ts, excluded_ips=excluded_ips)
-        issuer_changes = self.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips)
+        issuer_changes = self.detect_issuer_changes(
+            from_ts, to_ts, excluded_ips=excluded_ips
+        )
 
         return {
             "total_certs": len(all_certs),
@@ -299,9 +318,8 @@ class CertificateMonitor:
             or tls_server.get("not_after", "")
             or zeek_ssl.get("not_valid_after", "")
         )
-        domain = (
-            src.get("destination", {}).get("domain", "")
-            or zeek_ssl.get("server_name", "")
+        domain = src.get("destination", {}).get("domain", "") or zeek_ssl.get(
+            "server_name", ""
         )
         validation_status = zeek_ssl.get("validation_status", "")
 

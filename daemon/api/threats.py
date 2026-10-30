@@ -51,8 +51,11 @@ async def handle_threat_report(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.investigation import generate_threat_report
+
     try:
-        report = await generate_threat_report(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        report = await generate_threat_report(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Threat report generation failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -67,13 +70,18 @@ async def handle_beaconing(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_detection import detect_beaconing
+
     try:
-        beacons = detect_beaconing(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        beacons = detect_beaconing(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Beaconing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({"from": from_ts, "to": to_ts, "beacons": beacons, "total": len(beacons)})
+    return web.json_response(
+        {"from": from_ts, "to": to_ts, "beacons": beacons, "total": len(beacons)}
+    )
 
 
 async def handle_lateral_movement(request: web.Request) -> web.Response:
@@ -83,13 +91,18 @@ async def handle_lateral_movement(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_detection import detect_lateral_movement
+
     try:
-        movements = detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        movements = detect_lateral_movement(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Lateral movement detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({"from": from_ts, "to": to_ts, "movements": movements, "total": len(movements)})
+    return web.json_response(
+        {"from": from_ts, "to": to_ts, "movements": movements, "total": len(movements)}
+    )
 
 
 async def handle_dns_anomalies(request: web.Request) -> web.Response:
@@ -99,8 +112,11 @@ async def handle_dns_anomalies(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_detection import analyze_dns_anomalies
+
     try:
-        anomalies = analyze_dns_anomalies(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        anomalies = analyze_dns_anomalies(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("DNS anomaly analysis failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -115,22 +131,30 @@ async def handle_threat_intel(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_intel import ThreatIntelService
+
     ti = ThreatIntelService()
     ti.load_cache()
 
     # Bootstrap from Suricata data
-    new_count = ti.populate_from_suricata(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+    new_count = ti.populate_from_suricata(
+        client, from_ts, to_ts, excluded_ips=excluded_ips_list
+    )
     feeds = ti.get_all_matches()
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts,
-        "new_indicators": new_count,
-        "feeds": feeds,
-        "total_indicators": sum(f["indicator_count"] for f in feeds.values()),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "new_indicators": new_count,
+            "feeds": feeds,
+            "total_indicators": sum(f["indicator_count"] for f in feeds.values()),
+        }
+    )
 
 
-def register_threat_routes(app: web.Application, storage_manager: StorageManager) -> None:
+def register_threat_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     app.router.add_get("/api/threats/report", handle_threat_report)
     app.router.add_get("/api/threats/beaconing", handle_beaconing)
     app.router.add_get("/api/threats/lateral", handle_lateral_movement)

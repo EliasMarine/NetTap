@@ -425,7 +425,9 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         # Alert response
         alert_resp = {"hits": {"total": {"value": 2}}}
         # Fingerprint: DHCP returns MAC
-        dhcp_resp = {"hits": {"hits": [{"_source": {"source.mac": "00:03:93:11:22:33"}}]}}
+        dhcp_resp = {
+            "hits": {"hits": [{"_source": {"source.mac": "00:03:93:11:22:33"}}]}
+        }
         # Fingerprint: DNS hostname
         hostname_resp = {
             "aggregations": {

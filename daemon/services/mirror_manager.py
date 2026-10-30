@@ -115,9 +115,7 @@ class MirrorManager(CaptureManager):
             "ip", "addr", "flush", "dev", self._interface
         )
         if rc != 0:
-            warnings.append(
-                f"Could not flush IP addresses: {err.strip()}"
-            )
+            warnings.append(f"Could not flush IP addresses: {err.strip()}")
 
         # 2. Write networkd config to prevent DHCP on mirror interface
         if self._netplan_dir:
@@ -129,15 +127,23 @@ class MirrorManager(CaptureManager):
             "ip", "link", "set", self._interface, "promisc", "on"
         )
         if rc != 0:
-            errors.append(
-                f"Failed to enable promiscuous mode: {err.strip()}"
-            )
+            errors.append(f"Failed to enable promiscuous mode: {err.strip()}")
 
         # 4. Disable NIC offloads — prevents reassembly that hides real packet sizes
         rc, _, err = await self._run_nsenter(
-            "ethtool", "-K", self._interface,
-            "tso", "off", "gso", "off", "gro", "off",
-            "lro", "off", "rx-vlan-offload", "off",
+            "ethtool",
+            "-K",
+            self._interface,
+            "tso",
+            "off",
+            "gso",
+            "off",
+            "gro",
+            "off",
+            "lro",
+            "off",
+            "rx-vlan-offload",
+            "off",
         )
         if rc != 0:
             # ethtool failures are non-critical — some NICs don't support all offloads
@@ -156,9 +162,7 @@ class MirrorManager(CaptureManager):
             )
 
         # 6. Bring interface UP
-        rc, _, err = await self._run_nsenter(
-            "ip", "link", "set", self._interface, "up"
-        )
+        rc, _, err = await self._run_nsenter("ip", "link", "set", self._interface, "up")
         if rc != 0:
             errors.append(f"Failed to bring {self._interface} up: {err.strip()}")
 
@@ -220,9 +224,13 @@ class MirrorManager(CaptureManager):
             )
 
         if not errors:
-            logger.info("Mirror interface %s torn down (promisc disabled)", self._interface)
+            logger.info(
+                "Mirror interface %s torn down (promisc disabled)", self._interface
+            )
         else:
-            logger.warning("Mirror interface %s teardown had errors: %s", self._interface, errors)
+            logger.warning(
+                "Mirror interface %s teardown had errors: %s", self._interface, errors
+            )
 
         return {
             "torn_down": len(errors) == 0,
@@ -259,20 +267,15 @@ class MirrorManager(CaptureManager):
             )
 
         # Check 2: Operational state
-        operstate = self._read_sysfs_file(
-            os.path.join(iface_dir, "operstate")
-        )
+        operstate = self._read_sysfs_file(os.path.join(iface_dir, "operstate"))
         link_up = operstate == "up"
         if not link_up:
             issues.append(
-                f"Interface {self._interface} is {operstate or 'unknown'} "
-                f"(expected up)"
+                f"Interface {self._interface} is {operstate or 'unknown'} (expected up)"
             )
 
         # Check 3: Carrier detected
-        carrier = self._read_sysfs_file(
-            os.path.join(iface_dir, "carrier")
-        )
+        carrier = self._read_sysfs_file(os.path.join(iface_dir, "carrier"))
         carrier_up = carrier == "1"
         if not carrier_up:
             issues.append(
@@ -282,9 +285,7 @@ class MirrorManager(CaptureManager):
         # Check 4: Promiscuous mode
         promisc_enabled = self._check_promisc()
         if not promisc_enabled:
-            issues.append(
-                f"Promiscuous mode not enabled on {self._interface}"
-            )
+            issues.append(f"Promiscuous mode not enabled on {self._interface}")
 
         # Check 5: No IP address (mirror NIC should be capture-only)
         has_ip = await self._check_has_ip()
@@ -359,9 +360,7 @@ class MirrorManager(CaptureManager):
 
         # Calculate drop rate
         total_rx = rx_packets + rx_dropped
-        drop_rate_pct = round(
-            (rx_dropped / total_rx) * 100, 4
-        ) if total_rx > 0 else 0.0
+        drop_rate_pct = round((rx_dropped / total_rx) * 100, 4) if total_rx > 0 else 0.0
 
         return CaptureStats(
             capture_interface=self._interface,
@@ -442,6 +441,7 @@ class MirrorManager(CaptureManager):
 
         try:
             import json
+
             iface_data = json.loads(stdout)
             if iface_data and isinstance(iface_data, list):
                 addr_info = iface_data[0].get("addr_info", [])

@@ -61,12 +61,14 @@ async def handle_randomized_macs(request: web.Request) -> web.Response:
             {"error": f"Failed to detect randomized MACs: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "count": len(macs),
-        "randomized_macs": macs,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "count": len(macs),
+            "randomized_macs": macs,
+        }
+    )
 
 
 async def handle_fingerprint(request: web.Request) -> web.Response:
@@ -83,11 +85,13 @@ async def handle_fingerprint(request: web.Request) -> web.Response:
             {"error": f"Failed to build fingerprint: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "fingerprint": fingerprint,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "fingerprint": fingerprint,
+        }
+    )
 
 
 async def handle_merge_suggestions(request: web.Request) -> web.Response:
@@ -104,12 +108,14 @@ async def handle_merge_suggestions(request: web.Request) -> web.Response:
             status=500,
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "count": len(suggestions),
-        "suggestions": suggestions,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "count": len(suggestions),
+            "suggestions": suggestions,
+        }
+    )
 
 
 async def handle_merge(request: web.Request) -> web.Response:
@@ -120,9 +126,7 @@ async def handle_merge(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     mac_randomized = body.get("mac_randomized", "").strip()
     mac_real = body.get("mac_real", "").strip()
@@ -143,10 +147,12 @@ async def handle_merge(request: web.Request) -> web.Response:
             {"error": f"Failed to merge devices: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "result": "merged",
-        "merge": record,
-    })
+    return web.json_response(
+        {
+            "result": "merged",
+            "merge": record,
+        }
+    )
 
 
 async def handle_merge_history(request: web.Request) -> web.Response:
@@ -154,10 +160,12 @@ async def handle_merge_history(request: web.Request) -> web.Response:
     correlator: MACCorrelator = request.app["mac_correlator"]
     history = correlator.get_merge_history()
 
-    return web.json_response({
-        "count": len(history),
-        "merges": history,
-    })
+    return web.json_response(
+        {
+            "count": len(history),
+            "merges": history,
+        }
+    )
 
 
 async def handle_undo_merge(request: web.Request) -> web.Response:
@@ -168,23 +176,17 @@ async def handle_undo_merge(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     merge_id = body.get("merge_id", "").strip()
     if not merge_id:
-        return web.json_response(
-            {"error": "merge_id is required"}, status=400
-        )
+        return web.json_response({"error": "merge_id is required"}, status=400)
 
     correlator: MACCorrelator = request.app["mac_correlator"]
     success = correlator.undo_merge(merge_id)
 
     if not success:
-        return web.json_response(
-            {"error": f"Merge {merge_id} not found"}, status=404
-        )
+        return web.json_response({"error": f"Merge {merge_id} not found"}, status=404)
 
     return web.json_response({"result": "undone", "merge_id": merge_id})
 

@@ -500,7 +500,9 @@ class TestGetStatus:
             patch("shutil.disk_usage") as mock_disk,
         ):
             mock_disk.return_value = type(
-                "Usage", (), {"total": 1000 * 1024**3, "used": 650 * 1024**3, "free": 350 * 1024**3}
+                "Usage",
+                (),
+                {"total": 1000 * 1024**3, "used": 650 * 1024**3, "free": 350 * 1024**3},
             )()
             status = mgr.get_status()
 

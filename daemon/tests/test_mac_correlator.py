@@ -108,9 +108,7 @@ class TestDetectRandomizedMacs:
 
     def test_empty_results(self, correlator, mock_client):
         """Should return empty list when no MACs found."""
-        mock_client.search.return_value = {
-            "aggregations": {"macs": {"buckets": []}}
-        }
+        mock_client.search.return_value = {"aggregations": {"macs": {"buckets": []}}}
 
         result = correlator.detect_randomized_macs(
             "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
@@ -280,9 +278,7 @@ class TestSimilarity:
 class TestMerge:
     def test_merge_devices(self, correlator):
         """Should create a merge record and persist it."""
-        record = correlator.merge_devices(
-            "02:aa:bb:cc:dd:ee", "00:11:22:33:44:55"
-        )
+        record = correlator.merge_devices("02:aa:bb:cc:dd:ee", "00:11:22:33:44:55")
 
         assert record["mac_randomized"] == "02:aa:bb:cc:dd:ee"
         assert record["mac_real"] == "00:11:22:33:44:55"
@@ -300,9 +296,7 @@ class TestMerge:
 
     def test_undo_merge(self, correlator):
         """Should mark a merge as undone."""
-        record = correlator.merge_devices(
-            "02:aa:bb:cc:dd:ee", "00:11:22:33:44:55"
-        )
+        record = correlator.merge_devices("02:aa:bb:cc:dd:ee", "00:11:22:33:44:55")
         merge_id = record["id"]
 
         success = correlator.undo_merge(merge_id)
@@ -348,9 +342,7 @@ class TestMerge:
 class TestMergeSuggestions:
     def test_no_randomized_macs(self, correlator, mock_client):
         """Should return empty list when no randomized MACs exist."""
-        mock_client.search.return_value = {
-            "aggregations": {"macs": {"buckets": []}}
-        }
+        mock_client.search.return_value = {"aggregations": {"macs": {"buckets": []}}}
 
         suggestions = correlator.suggest_merges(
             "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
@@ -369,8 +361,12 @@ class TestMergeSuggestions:
                             {
                                 "key": "02:aa:bb:cc:dd:ee",
                                 "doc_count": 100,
-                                "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
-                                "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
+                                "first_seen": {
+                                    "value_as_string": "2026-03-01T00:00:00Z"
+                                },
+                                "last_seen": {
+                                    "value_as_string": "2026-03-08T00:00:00Z"
+                                },
                                 "total_bytes": {"value": 5000},
                                 "top_dests": {"buckets": []},
                             }

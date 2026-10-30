@@ -5,7 +5,6 @@ Covers: BPF filter validation, file listing, preview extraction,
 search, and download.
 """
 
-
 import pytest
 
 from services.pcap_search import PcapSearchService

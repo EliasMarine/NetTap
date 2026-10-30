@@ -93,9 +93,7 @@ class BridgeManager:
 
         # Verify both interfaces exist on the host
         for iface in (wan, lan):
-            rc, stdout, _ = await self._run_nsenter(
-                "ip", "-j", "link", "show", iface
-            )
+            rc, stdout, _ = await self._run_nsenter("ip", "-j", "link", "show", iface)
             if rc != 0:
                 errors.append(f"Interface {iface} does not exist on host")
 
@@ -112,18 +110,14 @@ class BridgeManager:
             }
 
         # Check if bridge already exists
-        rc, _, _ = await self._run_nsenter(
-            "ip", "link", "show", self._bridge_name
-        )
+        rc, _, _ = await self._run_nsenter("ip", "link", "show", self._bridge_name)
         bridge_existed = rc == 0
 
         if bridge_existed:
             logger.info("Bridge %s already exists — reconfiguring", self._bridge_name)
             # Remove existing member interfaces before re-adding
             for iface in (wan, lan):
-                await self._run_nsenter(
-                    "ip", "link", "set", iface, "nomaster"
-                )
+                await self._run_nsenter("ip", "link", "set", iface, "nomaster")
         else:
             # Create bridge
             rc, _, err = await self._run_nsenter(
@@ -172,9 +166,7 @@ class BridgeManager:
                 warnings.append(f"Could not enable promisc on {iface}: {err.strip()}")
 
             # Bring interface UP
-            rc, _, err = await self._run_nsenter(
-                "ip", "link", "set", iface, "up"
-            )
+            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "up")
             if rc != 0:
                 warnings.append(f"Could not bring {iface} up: {err.strip()}")
 
@@ -204,8 +196,17 @@ class BridgeManager:
         # NIC offload tuning — disable TSO/GSO/GRO/LRO for reliable capture
         for iface in (wan, lan):
             rc, _, err = await self._run_nsenter(
-                "ethtool", "-K", iface, "tso", "off", "gso", "off",
-                "gro", "off", "lro", "off"
+                "ethtool",
+                "-K",
+                iface,
+                "tso",
+                "off",
+                "gso",
+                "off",
+                "gro",
+                "off",
+                "lro",
+                "off",
             )
             if rc != 0:
                 # ethtool failures are non-critical — some NICs don't support all offloads
@@ -267,9 +268,7 @@ class BridgeManager:
         errors: list[str] = []
 
         # Check if bridge exists
-        rc, _, _ = await self._run_nsenter(
-            "ip", "link", "show", self._bridge_name
-        )
+        rc, _, _ = await self._run_nsenter("ip", "link", "show", self._bridge_name)
         if rc != 0:
             return {
                 "torn_down": False,
@@ -284,8 +283,11 @@ class BridgeManager:
         if rc == 0 and stdout.strip():
             try:
                 import json
+
                 links = json.loads(stdout)
-                member_ifaces = [link.get("ifname", "") for link in links if link.get("ifname")]
+                member_ifaces = [
+                    link.get("ifname", "") for link in links if link.get("ifname")
+                ]
             except (ValueError, KeyError):
                 pass
 
@@ -295,9 +297,7 @@ class BridgeManager:
             await self._run_nsenter("ip", "link", "set", iface, "promisc", "off")
 
         # Delete bridge
-        rc, _, err = await self._run_nsenter(
-            "ip", "link", "del", self._bridge_name
-        )
+        rc, _, err = await self._run_nsenter("ip", "link", "del", self._bridge_name)
         if rc != 0:
             errors.append(f"Failed to delete bridge: {err.strip()}")
 
@@ -328,11 +328,13 @@ class BridgeManager:
         # 1. Bridge exists
         bridge_dir = os.path.join(_SYSFS_NET, self._bridge_name)
         bridge_exists = os.path.exists(bridge_dir)
-        checks.append({
-            "name": "bridge_exists",
-            "passed": bridge_exists,
-            "detail": f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
-        })
+        checks.append(
+            {
+                "name": "bridge_exists",
+                "passed": bridge_exists,
+                "detail": f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
+            }
+        )
 
         if not bridge_exists:
             # All remaining checks are N/A without a bridge
@@ -354,64 +356,76 @@ class BridgeManager:
             }
 
         # 2. Bridge is UP
-        bridge_up = self._read_sysfs(
-            os.path.join(bridge_dir, "operstate")
-        ) == "up"
-        checks.append({
-            "name": "bridge_up",
-            "passed": bridge_up,
-            "detail": f"Bridge {self._bridge_name} is {'UP' if bridge_up else 'DOWN'}",
-        })
+        bridge_up = self._read_sysfs(os.path.join(bridge_dir, "operstate")) == "up"
+        checks.append(
+            {
+                "name": "bridge_up",
+                "passed": bridge_up,
+                "detail": f"Bridge {self._bridge_name} is {'UP' if bridge_up else 'DOWN'}",
+            }
+        )
 
         # Discover member interfaces from bridge
         wan_iface, lan_iface = await self._discover_members()
 
         # 3. WAN carrier
-        wan_carrier = self._read_sysfs(
-            os.path.join(_SYSFS_NET, wan_iface, "carrier")
-        ) == "1" if wan_iface else False
-        checks.append({
-            "name": "wan_carrier",
-            "passed": wan_carrier,
-            "detail": f"WAN ({wan_iface or 'unknown'}) carrier {'detected' if wan_carrier else 'not detected — connect cable to WAN port'}",
-        })
+        wan_carrier = (
+            self._read_sysfs(os.path.join(_SYSFS_NET, wan_iface, "carrier")) == "1"
+            if wan_iface
+            else False
+        )
+        checks.append(
+            {
+                "name": "wan_carrier",
+                "passed": wan_carrier,
+                "detail": f"WAN ({wan_iface or 'unknown'}) carrier {'detected' if wan_carrier else 'not detected — connect cable to WAN port'}",
+            }
+        )
 
         # 4. LAN carrier
-        lan_carrier = self._read_sysfs(
-            os.path.join(_SYSFS_NET, lan_iface, "carrier")
-        ) == "1" if lan_iface else False
-        checks.append({
-            "name": "lan_carrier",
-            "passed": lan_carrier,
-            "detail": f"LAN ({lan_iface or 'unknown'}) carrier {'detected' if lan_carrier else 'not detected — connect cable to LAN port'}",
-        })
+        lan_carrier = (
+            self._read_sysfs(os.path.join(_SYSFS_NET, lan_iface, "carrier")) == "1"
+            if lan_iface
+            else False
+        )
+        checks.append(
+            {
+                "name": "lan_carrier",
+                "passed": lan_carrier,
+                "detail": f"LAN ({lan_iface or 'unknown'}) carrier {'detected' if lan_carrier else 'not detected — connect cable to LAN port'}",
+            }
+        )
 
         # 5. WAN promisc
         wan_promisc = await self._check_promisc(wan_iface) if wan_iface else False
-        checks.append({
-            "name": "wan_promisc",
-            "passed": wan_promisc,
-            "detail": f"WAN ({wan_iface or 'unknown'}) promiscuous mode {'enabled' if wan_promisc else 'disabled'}",
-        })
+        checks.append(
+            {
+                "name": "wan_promisc",
+                "passed": wan_promisc,
+                "detail": f"WAN ({wan_iface or 'unknown'}) promiscuous mode {'enabled' if wan_promisc else 'disabled'}",
+            }
+        )
 
         # 6. LAN promisc
         lan_promisc = await self._check_promisc(lan_iface) if lan_iface else False
-        checks.append({
-            "name": "lan_promisc",
-            "passed": lan_promisc,
-            "detail": f"LAN ({lan_iface or 'unknown'}) promiscuous mode {'enabled' if lan_promisc else 'disabled'}",
-        })
+        checks.append(
+            {
+                "name": "lan_promisc",
+                "passed": lan_promisc,
+                "detail": f"LAN ({lan_iface or 'unknown'}) promiscuous mode {'enabled' if lan_promisc else 'disabled'}",
+            }
+        )
 
         # 7. STP disabled
-        stp_val = self._read_sysfs(
-            os.path.join(bridge_dir, "bridge", "stp_state")
-        )
+        stp_val = self._read_sysfs(os.path.join(bridge_dir, "bridge", "stp_state"))
         stp_disabled = stp_val == "0"
-        checks.append({
-            "name": "stp_disabled",
-            "passed": stp_disabled,
-            "detail": f"STP {'disabled' if stp_disabled else 'enabled (should be disabled for inline tap)'}",
-        })
+        checks.append(
+            {
+                "name": "stp_disabled",
+                "passed": stp_disabled,
+                "detail": f"STP {'disabled' if stp_disabled else 'enabled (should be disabled for inline tap)'}",
+            }
+        )
 
         # 8. Netfilter disabled — must read from HOST namespace via nsenter.
         # /proc/sys/net/bridge/bridge-nf-call-iptables inside the container
@@ -429,11 +443,13 @@ class BridgeManager:
             # File doesn't exist → br_netfilter module not loaded → no interference
             nf_disabled = True
             nf_detail = "Bridge netfilter not loaded (br_netfilter module absent — no iptables interference)"
-        checks.append({
-            "name": "netfilter_disabled",
-            "passed": nf_disabled,
-            "detail": nf_detail,
-        })
+        checks.append(
+            {
+                "name": "netfilter_disabled",
+                "passed": nf_disabled,
+                "detail": nf_detail,
+            }
+        )
 
         # Determine overall readiness and message
         all_passed = all(c["passed"] for c in checks)
@@ -452,7 +468,9 @@ class BridgeManager:
         else:
             # Some non-carrier checks failed
             detail_list = "; ".join(c["detail"] for c in failed)
-            message = f"Bridge is operational but some checks need attention: {detail_list}"
+            message = (
+                f"Bridge is operational but some checks need attention: {detail_list}"
+            )
 
         return {
             "ready": all_passed,

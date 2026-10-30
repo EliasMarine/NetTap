@@ -31,17 +31,23 @@ class TestBandwidthTrackerNoClient(unittest.TestCase):
 
     def test_daily_usage_no_client(self):
         """Should return empty list when no client is configured."""
-        result = self.tracker.get_daily_usage("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_daily_usage(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(result, [])
 
     def test_per_device_usage_no_client(self):
         """Should return empty list when no client is configured."""
-        result = self.tracker.get_per_device_usage("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_per_device_usage(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(result, [])
 
     def test_heatmap_no_client(self):
         """Should return zero-filled 7x24 matrix when no client is configured."""
-        result = self.tracker.get_hourly_heatmap("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_hourly_heatmap(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(len(result), 7)
         self.assertTrue(all(len(row) == 24 for row in result))
         self.assertTrue(all(v == 0 for row in result for v in row))
@@ -52,7 +58,9 @@ class TestBandwidthTrackerNoClient(unittest.TestCase):
         self.assertEqual(cap["monthly_cap_bytes"], 0)
         self.assertFalse(cap["enabled"])
 
-    def test_save_and_get_cap(self, ):
+    def test_save_and_get_cap(
+        self,
+    ):
         """Saving cap should update in-memory value."""
         with patch("services.bandwidth_tracker._CAP_FILE", "/tmp/test_bw_cap.json"):
             self.tracker.save_cap(1024 * 1024 * 1024 * 1200)  # 1200 GB
@@ -98,6 +106,7 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
     def test_monthly_usage_opensearch_error(self):
         """Should return zeros on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
         result = self.tracker.get_monthly_usage(2026, 3)
@@ -126,7 +135,9 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
             }
         }
 
-        result = self.tracker.get_daily_usage("2026-03-01T00:00:00Z", "2026-03-02T23:59:59Z")
+        result = self.tracker.get_daily_usage(
+            "2026-03-01T00:00:00Z", "2026-03-02T23:59:59Z"
+        )
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["date"], "2026-03-01")
         self.assertEqual(result[0]["total_bytes"], 3000)
@@ -155,7 +166,9 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
             }
         }
 
-        result = self.tracker.get_per_device_usage("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_per_device_usage(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["ip"], "192.168.1.100")
         self.assertEqual(result[0]["total_bytes"], 30000)
@@ -167,9 +180,12 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
     def test_per_device_usage_opensearch_error(self):
         """Should return empty list on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
-        result = self.tracker.get_per_device_usage("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_per_device_usage(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(result, [])
 
     def test_projected_monthly(self):
@@ -278,7 +294,9 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
             }
         }
 
-        result = self.tracker.get_hourly_heatmap("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_hourly_heatmap(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(len(result), 7)
         # Monday (index 0), hour 9 should have data
         self.assertEqual(result[0][9], 3000)
@@ -292,9 +310,12 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
     def test_hourly_heatmap_opensearch_error(self):
         """Should return zero-filled matrix on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
-        result = self.tracker.get_hourly_heatmap("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+        result = self.tracker.get_hourly_heatmap(
+            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+        )
         self.assertEqual(len(result), 7)
         self.assertTrue(all(v == 0 for row in result for v in row))
 
@@ -305,6 +326,7 @@ class TestBandwidthCapFile(unittest.TestCase):
     def test_load_cap_from_file(self):
         """Should load cap from JSON file."""
         import tempfile
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump({"monthly_cap_bytes": 1288490188800}, f)
             cap_file = f.name
@@ -324,6 +346,7 @@ class TestBandwidthCapFile(unittest.TestCase):
     def test_load_cap_invalid_json(self):
         """Should default to 0 when file contains invalid JSON."""
         import tempfile
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("not json")
             cap_file = f.name

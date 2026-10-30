@@ -62,17 +62,18 @@ class TestPostValidConfig(AioHTTPTestCase):
 
     def setUp(self):
         import tempfile
+
         self._tmp_dir = tempfile.mkdtemp()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     async def get_application(self):
         return _make_app_with_config_route(self._tmp_dir)
-
 
     async def test_post_valid_config(self):
         """POST valid retention config returns 200 and saved=true."""
@@ -108,17 +109,18 @@ class TestPostInvalidConfig(AioHTTPTestCase):
 
     def setUp(self):
         import tempfile
+
         self._tmp_dir = tempfile.mkdtemp()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     async def get_application(self):
         return _make_app_with_config_route(self._tmp_dir)
-
 
     async def test_post_invalid_config_400(self):
         """POST with hot_days=0 returns 400 with validation error."""
@@ -138,17 +140,18 @@ class TestPostUpdatesStorageManager(AioHTTPTestCase):
 
     def setUp(self):
         import tempfile
+
         self._tmp_dir = tempfile.mkdtemp()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     async def get_application(self):
         return _make_app_with_config_route(self._tmp_dir)
-
 
     async def test_post_updates_storage_manager(self):
         """After a valid POST, storage.config reflects the new values."""
@@ -178,19 +181,18 @@ class TestPostMissingConfigManager(AioHTTPTestCase):
 
     def setUp(self):
         import tempfile
+
         self._tmp_dir = tempfile.mkdtemp()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     async def get_application(self):
-        return _make_app_with_config_route(
-            self._tmp_dir, include_config_manager=False
-        )
-
+        return _make_app_with_config_route(self._tmp_dir, include_config_manager=False)
 
     async def test_post_missing_config_manager_503(self):
         """Without retention_config_manager on the app, returns 503."""
@@ -209,17 +211,18 @@ class TestPostIlmSuccess(AioHTTPTestCase):
 
     def setUp(self):
         import tempfile
+
         self._tmp_dir = tempfile.mkdtemp()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     async def get_application(self):
         return _make_app_with_config_route(self._tmp_dir)
-
 
     async def test_post_ilm_success(self):
         """When ILM application succeeds, response has ilm_applied=true."""
@@ -248,17 +251,18 @@ class TestPostIlmFailure(AioHTTPTestCase):
 
     def setUp(self):
         import tempfile
+
         self._tmp_dir = tempfile.mkdtemp()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         import shutil
+
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     async def get_application(self):
         return _make_app_with_config_route(self._tmp_dir)
-
 
     async def test_post_ilm_failure_schedules_retry(self):
         """When ILM fails, config is still saved, retry is scheduled."""

@@ -75,7 +75,9 @@ def _classify_type(sys_path: Path, name: str) -> str:
         return "loopback"
 
     # Wireless interfaces expose a /wireless or /phy80211 subdirectory.
-    if (sys_path / name / "wireless").exists() or (sys_path / name / "phy80211").exists():
+    if (sys_path / name / "wireless").exists() or (
+        sys_path / name / "phy80211"
+    ).exists():
         return "wireless"
 
     # Physical devices have a /device symlink; virtual ones don't.
@@ -230,10 +232,12 @@ async def discover_interfaces() -> list[dict]:
 async def handle_nic_list(request: web.Request) -> web.Response:
     """GET /api/setup/nics — Return detected host network interfaces."""
     interfaces = await discover_interfaces()
-    return web.json_response({
-        "interfaces": interfaces,
-        "source": "daemon",
-    })
+    return web.json_response(
+        {
+            "interfaces": interfaces,
+            "source": "daemon",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

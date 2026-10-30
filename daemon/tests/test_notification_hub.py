@@ -31,9 +31,7 @@ class TestNotificationHubChannelCRUD(unittest.TestCase):
     """Tests for channel create/read/delete."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        self.tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         self.tmp.close()
         # Remove so it starts fresh
         os.unlink(self.tmp.name)
@@ -45,7 +43,13 @@ class TestNotificationHubChannelCRUD(unittest.TestCase):
 
     def test_configure_creates_channel(self):
         """configure() creates and returns a channel."""
-        ch = self.hub.configure("discord", {"webhook_url": "https://discord.com/api/webhooks/test", "name": "My Discord"})
+        ch = self.hub.configure(
+            "discord",
+            {
+                "webhook_url": "https://discord.com/api/webhooks/test",
+                "name": "My Discord",
+            },
+        )
         self.assertEqual(ch["type"], "discord")
         self.assertEqual(ch["name"], "My Discord")
         self.assertIn("id", ch)
@@ -64,7 +68,9 @@ class TestNotificationHubChannelCRUD(unittest.TestCase):
 
     def test_get_channel_by_id(self):
         """get_channel() returns specific channel."""
-        ch = self.hub.configure("email", {"smtp_host": "smtp.test.com", "name": "Email"})
+        ch = self.hub.configure(
+            "email", {"smtp_host": "smtp.test.com", "name": "Email"}
+        )
         result = self.hub.get_channel(ch["id"])
         self.assertIsNotNone(result)
         self.assertEqual(result["type"], "email")
@@ -85,7 +91,9 @@ class TestNotificationHubChannelCRUD(unittest.TestCase):
 
     def test_config_persists_to_file(self):
         """Channels are saved to and loaded from the config file."""
-        self.hub.configure("telegram", {"bot_token": "tok", "chat_id": "123", "name": "TG"})
+        self.hub.configure(
+            "telegram", {"bot_token": "tok", "chat_id": "123", "name": "TG"}
+        )
 
         # Create a new hub from the same file
         hub2 = NotificationHub(config_path=self.tmp.name)
@@ -105,9 +113,7 @@ class TestNotificationHubDelivery(unittest.TestCase):
     """Tests for notification delivery (mocked HTTP)."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        self.tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         self.tmp.close()
         os.unlink(self.tmp.name)
         self.hub = NotificationHub(config_path=self.tmp.name)
@@ -129,7 +135,9 @@ class TestNotificationHubDelivery(unittest.TestCase):
     @patch("services.notification_hub.aiohttp.ClientSession")
     def test_send_discord_success(self, mock_session_cls):
         """send() to Discord returns True on 204."""
-        ch = self.hub.configure("discord", {"webhook_url": "https://discord.com/api/webhooks/test"})
+        ch = self.hub.configure(
+            "discord", {"webhook_url": "https://discord.com/api/webhooks/test"}
+        )
 
         mock_resp = MagicMock()
         mock_resp.status = 204
@@ -155,7 +163,9 @@ class TestNotificationHubDelivery(unittest.TestCase):
     @patch("services.notification_hub.aiohttp.ClientSession")
     def test_send_slack_success(self, mock_session_cls):
         """send() to Slack returns True on 200."""
-        ch = self.hub.configure("slack", {"webhook_url": "https://hooks.slack.com/test"})
+        ch = self.hub.configure(
+            "slack", {"webhook_url": "https://hooks.slack.com/test"}
+        )
 
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -219,9 +229,7 @@ class TestNotificationHubRoutingRules(unittest.TestCase):
     """Tests for routing rules engine."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        self.tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         self.tmp.close()
         os.unlink(self.tmp.name)
         self.hub = NotificationHub(config_path=self.tmp.name)
@@ -273,9 +281,7 @@ class TestNotificationHubEventProcessing(unittest.TestCase):
     """Tests for process_event routing logic."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        self.tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         self.tmp.close()
         os.unlink(self.tmp.name)
         self.hub = NotificationHub(config_path=self.tmp.name)
@@ -286,9 +292,7 @@ class TestNotificationHubEventProcessing(unittest.TestCase):
 
     def test_process_event_no_matching_rules(self):
         """process_event with no rules returns 0 matched."""
-        result = run_async(
-            self.hub.process_event("alert", "Test Alert", "Body", 2)
-        )
+        result = run_async(self.hub.process_event("alert", "Test Alert", "Body", 2))
         self.assertEqual(result["matched_rules"], 0)
         self.assertEqual(result["channels_notified"], {})
 
@@ -298,15 +302,11 @@ class TestNotificationHubEventProcessing(unittest.TestCase):
         self.hub.add_rule("alert", [ch["id"]], min_severity=2)
 
         # Severity 4 (low) should NOT match rule with min_severity=2
-        result = run_async(
-            self.hub.process_event("alert", "Low Alert", "Body", 4)
-        )
+        result = run_async(self.hub.process_event("alert", "Low Alert", "Body", 4))
         self.assertEqual(result["matched_rules"], 0)
 
         # Severity 1 (critical) should match
-        result = run_async(
-            self.hub.process_event("alert", "Critical Alert", "Body", 1)
-        )
+        result = run_async(self.hub.process_event("alert", "Critical Alert", "Body", 1))
         self.assertEqual(result["matched_rules"], 1)
 
     def test_process_event_sends_to_channels(self):
@@ -327,9 +327,7 @@ class TestNotificationHubEventProcessing(unittest.TestCase):
         self.hub.add_rule("alert", [ch["id"]], min_severity=4)
         self.hub.add_rule("alert", [ch["id"]], min_severity=4)
 
-        result = run_async(
-            self.hub.process_event("alert", "Alert", "Body", 3)
-        )
+        result = run_async(self.hub.process_event("alert", "Alert", "Body", 3))
         self.assertEqual(result["matched_rules"], 2)
         # Channel should only appear once in results
         self.assertEqual(len(result["channels_notified"]), 1)
@@ -340,7 +338,9 @@ class TestNotificationHubConfigLoading(unittest.TestCase):
 
     def test_missing_config_file(self):
         """Hub works with missing config file."""
-        hub = NotificationHub(config_path="/tmp/nettap-test-nonexistent-notif-config.json")
+        hub = NotificationHub(
+            config_path="/tmp/nettap-test-nonexistent-notif-config.json"
+        )
         self.assertEqual(hub.get_channels(), [])
         self.assertEqual(hub.get_rules(), [])
 

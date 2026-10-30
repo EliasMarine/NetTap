@@ -347,12 +347,15 @@ class TestPollClients:
     def test_poll_returns_clients(self, unifi, mock_session):
         """Should fetch and return client data from the API."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [
-                    {"macAddress": "AA:BB:CC:DD:EE:FF", "name": "Laptop"},
-                    {"macAddress": "11:22:33:44:55:66", "name": "Phone"},
-                ],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [
+                        {"macAddress": "AA:BB:CC:DD:EE:FF", "name": "Laptop"},
+                        {"macAddress": "11:22:33:44:55:66", "name": "Phone"},
+                    ],
+                },
+            ),
         ]
 
         clients = _run(unifi.poll_clients())
@@ -435,11 +438,14 @@ class TestPollClients:
     def test_poll_clients_syncs_device_cache(self, unifi, mock_session):
         """poll_clients() should update _device_cache for get_device_alias()."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [
-                    {"macAddress": "AA:BB:CC:DD:EE:FF", "name": "Test Device"},
-                ],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [
+                        {"macAddress": "AA:BB:CC:DD:EE:FF", "name": "Test Device"},
+                    ],
+                },
+            ),
         ]
 
         _run(unifi.poll_clients())
@@ -455,17 +461,20 @@ class TestPollDevices:
     def test_poll_returns_devices(self, unifi, mock_session):
         """Should fetch infrastructure devices from the API."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [
-                    {
-                        "id": "device-1",
-                        "macAddress": "AA:BB:CC:DD:EE:01",
-                        "name": "Main AP",
-                        "model": "U6-LR",
-                        "state": "ONLINE",
-                    },
-                ],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "id": "device-1",
+                            "macAddress": "AA:BB:CC:DD:EE:01",
+                            "name": "Main AP",
+                            "model": "U6-LR",
+                            "state": "ONLINE",
+                        },
+                    ],
+                },
+            ),
         ]
 
         devices = _run(unifi.poll_devices())
@@ -633,9 +642,7 @@ class TestSecurityPolling:
         assert mock_session._request_call_count == 0
 
         # Expire cache
-        unifi._cache_firewall_policies_time = (
-            time.time() - _CACHE_TTL_FIREWALL - 1
-        )
+        unifi._cache_firewall_policies_time = time.time() - _CACHE_TTL_FIREWALL - 1
         mock_session.request_responses = [
             MockResponse(200, {"data": [{"id": "policy-2"}]}),
         ]
@@ -654,12 +661,15 @@ class TestDpiPolling:
     def test_get_dpi_categories(self, unifi, mock_session):
         """Should fetch DPI categories (not site-scoped)."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [
-                    {"id": 1, "name": "Social Media"},
-                    {"id": 2, "name": "Streaming"},
-                ],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [
+                        {"id": 1, "name": "Social Media"},
+                        {"id": 2, "name": "Streaming"},
+                    ],
+                },
+            ),
         ]
 
         categories = _run(unifi.get_dpi_categories())
@@ -707,9 +717,12 @@ class TestNetworkWifiPolling:
     def test_poll_networks(self, unifi, mock_session):
         """Should fetch network configurations."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [{"id": "net-1", "name": "Default"}],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [{"id": "net-1", "name": "Default"}],
+                },
+            ),
         ]
 
         networks = _run(unifi.poll_networks())
@@ -718,9 +731,12 @@ class TestNetworkWifiPolling:
     def test_poll_wifi(self, unifi, mock_session):
         """Should fetch WiFi broadcasts."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [{"id": "wifi-1", "name": "HomeNet"}],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [{"id": "wifi-1", "name": "HomeNet"}],
+                },
+            ),
         ]
 
         wifi = _run(unifi.poll_wifi())
@@ -782,12 +798,15 @@ class TestListSites:
     def test_list_sites(self, unifi, mock_session):
         """Should list sites via paginated GET /v1/sites."""
         mock_session.request_responses = [
-            MockResponse(200, {
-                "data": [
-                    {"id": "site-1", "name": "Default"},
-                    {"id": "site-2", "name": "Office"},
-                ],
-            }),
+            MockResponse(
+                200,
+                {
+                    "data": [
+                        {"id": "site-1", "name": "Default"},
+                        {"id": "site-2", "name": "Office"},
+                    ],
+                },
+            ),
         ]
 
         sites = _run(unifi.list_sites())
@@ -831,10 +850,15 @@ class TestGetStatus:
     def test_status_after_poll(self, unifi, mock_session):
         """Should report cache counts after polling."""
         mock_session.request_responses = [
-            MockResponse(200, {"data": [
-                {"macAddress": "AA:BB:CC:DD:EE:FF"},
-                {"macAddress": "11:22:33:44:55:66"},
-            ]}),
+            MockResponse(
+                200,
+                {
+                    "data": [
+                        {"macAddress": "AA:BB:CC:DD:EE:FF"},
+                        {"macAddress": "11:22:33:44:55:66"},
+                    ]
+                },
+            ),
         ]
 
         _run(unifi.poll_clients())

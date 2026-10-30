@@ -169,7 +169,9 @@ class IoTMonitor:
                 data = json.load(f)
                 return data.get("profiles", {})
         except FileNotFoundError:
-            logger.warning("Protocol profiles file not found: %s", _PROTOCOL_PROFILES_FILE)
+            logger.warning(
+                "Protocol profiles file not found: %s", _PROTOCOL_PROFILES_FILE
+            )
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load protocol profiles: %s", exc)
         return {}
@@ -232,7 +234,9 @@ class IoTMonitor:
                     "terms": {"field": "source.mac.keyword", "size": 500},
                     "aggs": {
                         "oui": {"terms": {"field": "source.oui.keyword", "size": 1}},
-                        "latest_ip": {"terms": {"field": "source.ip.keyword", "size": 1}},
+                        "latest_ip": {
+                            "terms": {"field": "source.ip.keyword", "size": 1}
+                        },
                         "last_seen": {"max": {"field": "@timestamp"}},
                     },
                 }
@@ -245,11 +249,7 @@ class IoTMonitor:
             logger.error("IoT Arkime OUI discovery query failed: %s", exc)
             return
 
-        buckets = (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
-        )
+        buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
 
         for bucket in buckets:
             mac = bucket["key"].upper()
@@ -345,12 +345,18 @@ class IoTMonitor:
 
         # ----- Batch query: per-device connection stats -----
         conn_stats = self._query_conn_stats_batch(
-            list(devices.keys()), from_ts, to_ts, excluded,
+            list(devices.keys()),
+            from_ts,
+            to_ts,
+            excluded,
         )
 
         # ----- Batch query: DNS tracker stats -----
         dns_stats = self._query_dns_tracker_batch(
-            list(devices.keys()), from_ts, to_ts, excluded,
+            list(devices.keys()),
+            from_ts,
+            to_ts,
+            excluded,
         )
 
         # ----- Score each device -----
@@ -367,7 +373,11 @@ class IoTMonitor:
 
             # Build the stats dict expected by IoTTrustScorer.score_device()
             stats = self._build_device_stats(
-                mac, cs, ds, baseline, expected_ports,
+                mac,
+                cs,
+                ds,
+                baseline,
+                expected_ports,
             )
 
             score_result = self._scorer.score_device(stats)
@@ -390,21 +400,24 @@ class IoTMonitor:
             if encryption_ratio < 0.5:
                 unencrypted_count += 1
 
-            device_results.append({
-                "mac": mac,
-                "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"),
-                "manufacturer": dev_info.get("manufacturer", "Unknown"),
-                "ip": dev_info.get("ip", ""),
-                "score": score,
-                "grade": score_result["grade"],
-                "privacy_score": score_result["privacy_score"],
-                "security_score": score_result["security_score"],
-                "behavior_score": score_result["behavior_score"],
-                "anomaly_count": anomaly_count,
-                "encryption_pct": encryption_pct,
-                "tracker_count": tracker_count,
-                "last_seen": dev_info.get("classified_at", ""),
-            })
+            device_results.append(
+                {
+                    "mac": mac,
+                    "name": dev_info.get("hostname")
+                    or dev_info.get("manufacturer", "Unknown"),
+                    "manufacturer": dev_info.get("manufacturer", "Unknown"),
+                    "ip": dev_info.get("ip", ""),
+                    "score": score,
+                    "grade": score_result["grade"],
+                    "privacy_score": score_result["privacy_score"],
+                    "security_score": score_result["security_score"],
+                    "behavior_score": score_result["behavior_score"],
+                    "anomaly_count": anomaly_count,
+                    "encryption_pct": encryption_pct,
+                    "tracker_count": tracker_count,
+                    "last_seen": dev_info.get("classified_at", ""),
+                }
+            )
 
         # ----- Fleet-level aggregation -----
         fleet_score = self._scorer.compute_fleet_score(device_scores)
@@ -417,7 +430,10 @@ class IoTMonitor:
 
         # Build subtitle
         subtitle = self._build_subtitle(
-            fleet_score, len(devices), total_anomaly_count, privacy_concern_count,
+            fleet_score,
+            len(devices),
+            total_anomaly_count,
+            privacy_concern_count,
         )
 
         # Sort devices by score ascending (worst first) for attention priority
@@ -463,7 +479,10 @@ class IoTMonitor:
 
     @staticmethod
     def _build_subtitle(
-        score: int, device_count: int, anomaly_count: int, privacy_concerns: int,
+        score: int,
+        device_count: int,
+        anomaly_count: int,
+        privacy_concerns: int,
     ) -> str:
         """Generate a human-readable fleet health subtitle."""
         if device_count == 0:
@@ -535,16 +554,12 @@ class IoTMonitor:
                 "by_mac": {
                     "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
                     "aggs": {
-                        "total_bytes": {
-                            "sum": {"field": "source.bytes", "missing": 0}
-                        },
+                        "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                         "dest_ports": {
                             "terms": {"field": "destination.port", "size": 100}
                         },
                         "encrypted": {
-                            "filter": {
-                                "terms": {"destination.port": [443, 8443, 8883]}
-                            }
+                            "filter": {"terms": {"destination.port": [443, 8443, 8883]}}
                         },
                         "third_party_orgs": {
                             "cardinality": {
@@ -563,21 +578,14 @@ class IoTMonitor:
             return {}
 
         out: dict[str, dict[str, Any]] = {}
-        buckets = (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
-        )
+        buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
 
         for bucket in buckets:
             raw_mac = bucket["key"].upper()
             total_conns = bucket.get("doc_count", 0)
             encrypted_conns = bucket.get("encrypted", {}).get("doc_count", 0)
             total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
-            ports = {
-                b["key"]
-                for b in bucket.get("dest_ports", {}).get("buckets", [])
-            }
+            ports = {b["key"] for b in bucket.get("dest_ports", {}).get("buckets", [])}
             third_party = bucket.get("third_party_orgs", {}).get("value", 0) or 0
 
             out[raw_mac] = {
@@ -641,9 +649,7 @@ class IoTMonitor:
 
         out: dict[str, int] = {}
         for bucket in (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             out[bucket["key"].upper()] = bucket.get("doc_count", 0)
         return out
@@ -703,9 +709,7 @@ class IoTMonitor:
 
         out: dict[str, dict[str, Any]] = {}
         for bucket in (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
             domains = bucket.get("queried_domains", {}).get("buckets", [])
@@ -783,9 +787,7 @@ class IoTMonitor:
             # Unusual timing: check if current hour is outside baseline hours
             active_hours = set(baseline.get("active_hours", []))
             current_hour = datetime.now(timezone.utc).hour
-            unusual_timing = (
-                bool(active_hours) and current_hour not in active_hours
-            )
+            unusual_timing = bool(active_hours) and current_hour not in active_hours
         else:
             # No baseline: use conservative defaults
             baseline_adherence = 0.5
@@ -807,9 +809,7 @@ class IoTMonitor:
             "unusual_timing": unusual_timing,
         }
 
-    def classify_as_iot(
-        self, device_mac: str, device_info: dict[str, Any]
-    ) -> bool:
+    def classify_as_iot(self, device_mac: str, device_info: dict[str, Any]) -> bool:
         """Classify a device as IoT based on manufacturer OUI matching.
 
         Args:
@@ -824,8 +824,7 @@ class IoTMonitor:
         hostname = (device_info.get("hostname") or "").lower()
 
         is_iot = any(
-            vendor in manufacturer or vendor in hostname
-            for vendor in IOT_MANUFACTURERS
+            vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
         )
 
         if is_iot:
@@ -841,7 +840,9 @@ class IoTMonitor:
         return is_iot
 
     def build_baseline(
-        self, device_mac: str, days: int = 14,
+        self,
+        device_mac: str,
+        days: int = 14,
         excluded_ips: list[str] | None = None,
     ) -> dict[str, Any]:
         """Build a behavioral baseline for a device from historical data.
@@ -853,6 +854,7 @@ class IoTMonitor:
         now = datetime.now(timezone.utc)
         # Build from_ts as N days ago
         from datetime import timedelta
+
         from_iso = (now - timedelta(days=days)).isoformat()
         to_iso = now.isoformat()
 
@@ -877,16 +879,12 @@ class IoTMonitor:
         # Query for device traffic patterns
         query = {
             "size": 0,
-            "query": {
-                "bool": bool_clause
-            },
+            "query": {"bool": bool_clause},
             "aggs": {
                 "destinations": {
                     "terms": {"field": "destination.ip.keyword", "size": 100}
                 },
-                "dest_ports": {
-                    "terms": {"field": "destination.port", "size": 50}
-                },
+                "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
                 "protocols": {
                     "terms": {"field": "network.protocol.keyword", "size": 10}
                 },
@@ -896,9 +894,7 @@ class IoTMonitor:
                         "calendar_interval": "hour",
                     }
                 },
-                "total_bytes": {
-                    "sum": {"field": "source.bytes", "missing": 0}
-                },
+                "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                 "countries": {
                     "terms": {
                         "field": "destination.geo.country_name.keyword",
@@ -919,27 +915,17 @@ class IoTMonitor:
 
         # Extract known destinations
         destinations = [
-            b["key"]
-            for b in aggs.get("destinations", {}).get("buckets", [])
+            b["key"] for b in aggs.get("destinations", {}).get("buckets", [])
         ]
 
         # Extract known ports
-        ports = [
-            b["key"]
-            for b in aggs.get("dest_ports", {}).get("buckets", [])
-        ]
+        ports = [b["key"] for b in aggs.get("dest_ports", {}).get("buckets", [])]
 
         # Extract known protocols
-        protocols = [
-            b["key"]
-            for b in aggs.get("protocols", {}).get("buckets", [])
-        ]
+        protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
 
         # Extract known countries
-        countries = [
-            b["key"]
-            for b in aggs.get("countries", {}).get("buckets", [])
-        ]
+        countries = [b["key"] for b in aggs.get("countries", {}).get("buckets", [])]
 
         # Calculate active hours from histogram
         hourly = aggs.get("hourly_activity", {}).get("buckets", [])
@@ -979,7 +965,8 @@ class IoTMonitor:
         return baseline
 
     def check_anomalies(
-        self, device_mac: str,
+        self,
+        device_mac: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Compare current (last 1h) behavior against baseline.
@@ -994,6 +981,7 @@ class IoTMonitor:
 
         now = datetime.now(timezone.utc)
         from datetime import timedelta
+
         from_iso = (now - timedelta(hours=1)).isoformat()
         to_iso = now.isoformat()
 
@@ -1017,22 +1005,16 @@ class IoTMonitor:
 
         query = {
             "size": 0,
-            "query": {
-                "bool": bool_clause
-            },
+            "query": {"bool": bool_clause},
             "aggs": {
                 "destinations": {
                     "terms": {"field": "destination.ip.keyword", "size": 100}
                 },
-                "dest_ports": {
-                    "terms": {"field": "destination.port", "size": 50}
-                },
+                "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
                 "protocols": {
                     "terms": {"field": "network.protocol.keyword", "size": 10}
                 },
-                "total_bytes": {
-                    "sum": {"field": "source.bytes", "missing": 0}
-                },
+                "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                 "countries": {
                     "terms": {
                         "field": "destination.geo.country_name.keyword",
@@ -1060,85 +1042,97 @@ class IoTMonitor:
         # Check new destinations
         for b in aggs.get("destinations", {}).get("buckets", []):
             if b["key"] not in known_dests:
-                anomalies.append({
-                    "type": ANOMALY_NEW_DESTINATION,
-                    "mac": mac,
-                    "detail": b["key"],
-                    "count": b["doc_count"],
-                    "severity": "medium",
-                    "description": f"New destination IP {b['key']} not in baseline",
-                    "detected_at": now.isoformat(),
-                })
+                anomalies.append(
+                    {
+                        "type": ANOMALY_NEW_DESTINATION,
+                        "mac": mac,
+                        "detail": b["key"],
+                        "count": b["doc_count"],
+                        "severity": "medium",
+                        "description": f"New destination IP {b['key']} not in baseline",
+                        "detected_at": now.isoformat(),
+                    }
+                )
 
         # Check new countries
         for b in aggs.get("countries", {}).get("buckets", []):
             if b["key"] not in known_countries and b["key"] != "Unknown":
-                anomalies.append({
-                    "type": ANOMALY_NEW_COUNTRY,
-                    "mac": mac,
-                    "detail": b["key"],
-                    "count": b["doc_count"],
-                    "severity": "high",
-                    "description": f"Traffic to new country: {b['key']}",
-                    "detected_at": now.isoformat(),
-                })
+                anomalies.append(
+                    {
+                        "type": ANOMALY_NEW_COUNTRY,
+                        "mac": mac,
+                        "detail": b["key"],
+                        "count": b["doc_count"],
+                        "severity": "high",
+                        "description": f"Traffic to new country: {b['key']}",
+                        "detected_at": now.isoformat(),
+                    }
+                )
 
         # Check new ports
         for b in aggs.get("dest_ports", {}).get("buckets", []):
             if b["key"] not in known_ports:
-                anomalies.append({
-                    "type": ANOMALY_NEW_PORT,
-                    "mac": mac,
-                    "detail": str(b["key"]),
-                    "count": b["doc_count"],
-                    "severity": "medium",
-                    "description": f"New destination port {b['key']}",
-                    "detected_at": now.isoformat(),
-                })
+                anomalies.append(
+                    {
+                        "type": ANOMALY_NEW_PORT,
+                        "mac": mac,
+                        "detail": str(b["key"]),
+                        "count": b["doc_count"],
+                        "severity": "medium",
+                        "description": f"New destination port {b['key']}",
+                        "detected_at": now.isoformat(),
+                    }
+                )
 
         # Check protocol changes
         for b in aggs.get("protocols", {}).get("buckets", []):
             if b["key"] not in known_protocols:
-                anomalies.append({
-                    "type": ANOMALY_PROTOCOL_CHANGE,
-                    "mac": mac,
-                    "detail": b["key"],
-                    "count": b["doc_count"],
-                    "severity": "medium",
-                    "description": f"New protocol: {b['key']}",
-                    "detected_at": now.isoformat(),
-                })
+                anomalies.append(
+                    {
+                        "type": ANOMALY_PROTOCOL_CHANGE,
+                        "mac": mac,
+                        "detail": b["key"],
+                        "count": b["doc_count"],
+                        "severity": "medium",
+                        "description": f"New protocol: {b['key']}",
+                        "detected_at": now.isoformat(),
+                    }
+                )
 
         # Check volume spike (current hourly rate vs daily average / 24)
         current_bytes = aggs.get("total_bytes", {}).get("value", 0) or 0
         hourly_avg = baseline.get("daily_avg_bytes", 0) / 24
         if hourly_avg > 0 and current_bytes > hourly_avg * 5:
-            anomalies.append({
-                "type": ANOMALY_VOLUME_SPIKE,
-                "mac": mac,
-                "detail": f"{current_bytes} bytes (avg: {hourly_avg:.0f}/hr)",
-                "severity": "high",
-                "description": (
-                    f"Volume spike: {current_bytes} bytes in last hour "
-                    f"vs {hourly_avg:.0f} hourly average"
-                ),
-                "detected_at": now.isoformat(),
-            })
+            anomalies.append(
+                {
+                    "type": ANOMALY_VOLUME_SPIKE,
+                    "mac": mac,
+                    "detail": f"{current_bytes} bytes (avg: {hourly_avg:.0f}/hr)",
+                    "severity": "high",
+                    "description": (
+                        f"Volume spike: {current_bytes} bytes in last hour "
+                        f"vs {hourly_avg:.0f} hourly average"
+                    ),
+                    "detected_at": now.isoformat(),
+                }
+            )
 
         # Check unusual time
         current_hour = now.hour
         if active_hours and current_hour not in active_hours:
-            anomalies.append({
-                "type": ANOMALY_UNUSUAL_TIME,
-                "mac": mac,
-                "detail": f"Hour {current_hour}",
-                "severity": "low",
-                "description": (
-                    f"Activity at unusual hour ({current_hour}:00) "
-                    f"outside normal schedule"
-                ),
-                "detected_at": now.isoformat(),
-            })
+            anomalies.append(
+                {
+                    "type": ANOMALY_UNUSUAL_TIME,
+                    "mac": mac,
+                    "detail": f"Hour {current_hour}",
+                    "severity": "low",
+                    "description": (
+                        f"Activity at unusual hour ({current_hour}:00) "
+                        f"outside normal schedule"
+                    ),
+                    "detected_at": now.isoformat(),
+                }
+            )
 
         return anomalies
 
@@ -1151,7 +1145,9 @@ class IoTMonitor:
         return self._baselines.get(mac.strip().upper())
 
     def get_anomalies(
-        self, from_ts: str, to_ts: str,
+        self,
+        from_ts: str,
+        to_ts: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Check all IoT devices for anomalies and return combined list."""
@@ -1190,7 +1186,9 @@ class IoTMonitor:
         conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
 
         # Batch query: DNS tracker stats with per-domain detail
-        dns_detail = self._query_dns_tracker_detail_batch(macs, from_ts, to_ts, excluded)
+        dns_detail = self._query_dns_tracker_detail_batch(
+            macs, from_ts, to_ts, excluded
+        )
 
         # Compute time window in hours for phone-home rate
         try:
@@ -1210,9 +1208,7 @@ class IoTMonitor:
             total_bytes = cs.get("total_bytes", 0)
             third_party_orgs = cs.get("third_party_orgs", 0)
 
-            encryption_ratio = (
-                encrypted_conns / total_conns if total_conns > 0 else 1.0
-            )
+            encryption_ratio = encrypted_conns / total_conns if total_conns > 0 else 1.0
 
             tracker_domains_list = dd.get("tracker_domains", [])
             tracker_count = len(tracker_domains_list)
@@ -1226,26 +1222,34 @@ class IoTMonitor:
             else:
                 telemetry_bytes = 0
 
-            phone_home_per_hour = round(total_conns / window_hours, 2) if window_hours > 0 else 0
+            phone_home_per_hour = (
+                round(total_conns / window_hours, 2) if window_hours > 0 else 0
+            )
 
             # Compute privacy score (0-100) based on metrics
             privacy_score = self._compute_privacy_score(
-                tracker_count, encryption_ratio, third_party_orgs, telemetry_bytes,
+                tracker_count,
+                encryption_ratio,
+                third_party_orgs,
+                telemetry_bytes,
             )
             privacy_grade = self._scorer.score_to_grade(privacy_score)
 
-            device_results.append({
-                "mac": mac,
-                "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"),
-                "privacy_grade": privacy_grade,
-                "privacy_score": privacy_score,
-                "tracker_domains": tracker_domains_list,
-                "tracker_count": tracker_count,
-                "telemetry_bytes": telemetry_bytes,
-                "third_party_orgs": third_party_orgs,
-                "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
-                "phone_home_per_hour": phone_home_per_hour,
-            })
+            device_results.append(
+                {
+                    "mac": mac,
+                    "name": dev_info.get("hostname")
+                    or dev_info.get("manufacturer", "Unknown"),
+                    "privacy_grade": privacy_grade,
+                    "privacy_score": privacy_score,
+                    "tracker_domains": tracker_domains_list,
+                    "tracker_count": tracker_count,
+                    "telemetry_bytes": telemetry_bytes,
+                    "third_party_orgs": third_party_orgs,
+                    "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
+                    "phone_home_per_hour": phone_home_per_hour,
+                }
+            )
 
         # Sort worst privacy first
         device_results.sort(key=lambda d: d["privacy_score"])
@@ -1325,9 +1329,7 @@ class IoTMonitor:
 
         out: dict[str, dict[str, Any]] = {}
         for bucket in (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
             domains = bucket.get("queried_domains", {}).get("buckets", [])
@@ -1335,10 +1337,12 @@ class IoTMonitor:
             for d_bucket in domains:
                 domain = d_bucket.get("key", "")
                 if self._is_tracker_domain(domain):
-                    tracker_list.append({
-                        "domain": domain,
-                        "query_count": d_bucket.get("doc_count", 0),
-                    })
+                    tracker_list.append(
+                        {
+                            "domain": domain,
+                            "query_count": d_bucket.get("doc_count", 0),
+                        }
+                    )
 
             out[raw_mac] = {
                 "tracker_domains": tracker_list,
@@ -1365,7 +1369,9 @@ class IoTMonitor:
         mac = mac.strip().upper()
         excluded = build_excluded_ips_filter(excluded_ips or [])
         baseline = self._baselines.get(mac)
-        baseline_dests = set(baseline.get("known_destinations", [])) if baseline else set()
+        baseline_dests = (
+            set(baseline.get("known_destinations", [])) if baseline else set()
+        )
 
         # Query conn logs for this device, aggregate by destination IP
         mac_filter = {
@@ -1394,12 +1400,8 @@ class IoTMonitor:
                 "by_dest": {
                     "terms": {"field": "destination.ip.keyword", "size": 200},
                     "aggs": {
-                        "ports": {
-                            "terms": {"field": "destination.port", "size": 50}
-                        },
-                        "bytes_sent": {
-                            "sum": {"field": "source.bytes", "missing": 0}
-                        },
+                        "ports": {"terms": {"field": "destination.port", "size": 50}},
+                        "bytes_sent": {"sum": {"field": "source.bytes", "missing": 0}},
                         "bytes_received": {
                             "sum": {"field": "destination.bytes", "missing": 0}
                         },
@@ -1409,12 +1411,8 @@ class IoTMonitor:
                                 "size": 1,
                             }
                         },
-                        "first_seen": {
-                            "min": {"field": "@timestamp"}
-                        },
-                        "last_seen": {
-                            "max": {"field": "@timestamp"}
-                        },
+                        "first_seen": {"min": {"field": "@timestamp"}},
+                        "last_seen": {"max": {"field": "@timestamp"}},
                     },
                 }
             },
@@ -1429,9 +1427,7 @@ class IoTMonitor:
         # Resolve hostnames via DNS logs
         dest_ips = []
         dest_buckets = (
-            result.get("aggregations", {})
-            .get("by_dest", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_dest", {}).get("buckets", [])
         )
         for b in dest_buckets:
             dest_ips.append(b["key"])
@@ -1449,25 +1445,31 @@ class IoTMonitor:
             last_seen_ms = b.get("last_seen", {}).get("value")
             first_seen = (
                 b.get("first_seen", {}).get("value_as_string")
-                if first_seen_ms is not None else None
+                if first_seen_ms is not None
+                else None
             )
             last_seen = (
                 b.get("last_seen", {}).get("value_as_string")
-                if last_seen_ms is not None else None
+                if last_seen_ms is not None
+                else None
             )
 
-            destinations.append({
-                "ip": ip,
-                "hostname": hostname_map.get(ip),
-                "country": country,
-                "ports": ports,
-                "bytes_sent": int(b.get("bytes_sent", {}).get("value", 0) or 0),
-                "bytes_received": int(b.get("bytes_received", {}).get("value", 0) or 0),
-                "connection_count": b.get("doc_count", 0),
-                "first_seen": first_seen,
-                "last_seen": last_seen,
-                "in_baseline": ip in baseline_dests,
-            })
+            destinations.append(
+                {
+                    "ip": ip,
+                    "hostname": hostname_map.get(ip),
+                    "country": country,
+                    "ports": ports,
+                    "bytes_sent": int(b.get("bytes_sent", {}).get("value", 0) or 0),
+                    "bytes_received": int(
+                        b.get("bytes_received", {}).get("value", 0) or 0
+                    ),
+                    "connection_count": b.get("doc_count", 0),
+                    "first_seen": first_seen,
+                    "last_seen": last_seen,
+                    "in_baseline": ip in baseline_dests,
+                }
+            )
 
         return {"mac": mac, "destinations": destinations}
 
@@ -1522,9 +1524,7 @@ class IoTMonitor:
 
         out: dict[str, str] = {}
         for bucket in (
-            result.get("aggregations", {})
-            .get("by_answer_ip", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_answer_ip", {}).get("buckets", [])
         ):
             ip = bucket["key"]
             domain_buckets = bucket.get("domain", {}).get("buckets", [])
@@ -1582,9 +1582,7 @@ class IoTMonitor:
                         "fixed_interval": "1h",
                     },
                     "aggs": {
-                        "bytes": {
-                            "sum": {"field": "source.bytes", "missing": 0}
-                        },
+                        "bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                         "destinations": {
                             "cardinality": {"field": "destination.ip.keyword"}
                         },
@@ -1606,19 +1604,21 @@ class IoTMonitor:
             }
 
         hourly_buckets = (
-            result.get("aggregations", {})
-            .get("hourly", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("hourly", {}).get("buckets", [])
         )
 
         buckets: list[dict[str, Any]] = []
         for hb in hourly_buckets:
-            buckets.append({
-                "time": hb.get("key_as_string", ""),
-                "connections": hb.get("doc_count", 0),
-                "bytes": int(hb.get("bytes", {}).get("value", 0) or 0),
-                "destinations": int(hb.get("destinations", {}).get("value", 0) or 0),
-            })
+            buckets.append(
+                {
+                    "time": hb.get("key_as_string", ""),
+                    "connections": hb.get("doc_count", 0),
+                    "bytes": int(hb.get("bytes", {}).get("value", 0) or 0),
+                    "destinations": int(
+                        hb.get("destinations", {}).get("value", 0) or 0
+                    ),
+                }
+            )
 
         # Baseline overlay
         baseline_hours: list[int] = []
@@ -1699,8 +1699,12 @@ class IoTMonitor:
         device_results: list[dict[str, Any]] = []
         for mac, dev_info in devices.items():
             category = self._categorize_device(dev_info)
-            profile = self._protocol_profiles.get(category, self._protocol_profiles.get("default", {}))
-            expected_ports = set(profile.get("expected_ports", [80, 443, 53, 123, 5353, 1900]))
+            profile = self._protocol_profiles.get(
+                category, self._protocol_profiles.get("default", {})
+            )
+            expected_ports = set(
+                profile.get("expected_ports", [80, 443, 53, 123, 5353, 1900])
+            )
             category_label = profile.get("label", "Unknown")
 
             cs = conn_stats.get(mac, {})
@@ -1714,17 +1718,21 @@ class IoTMonitor:
             for port in actual_ports:
                 if port not in expected_ports:
                     count = pd[port]
-                    severity = "high" if port in (22, 23, 445, 139, 3389, 5900) else "medium"
-                    findings.append({
-                        "type": "unexpected_port",
-                        "severity": severity,
-                        "port": port,
-                        "connection_count": count,
-                        "description": (
-                            f"Uses port {port} which is not expected for "
-                            f"a {category_label.lower()}"
-                        ),
-                    })
+                    severity = (
+                        "high" if port in (22, 23, 445, 139, 3389, 5900) else "medium"
+                    )
+                    findings.append(
+                        {
+                            "type": "unexpected_port",
+                            "severity": severity,
+                            "port": port,
+                            "connection_count": count,
+                            "description": (
+                                f"Uses port {port} which is not expected for "
+                                f"a {category_label.lower()}"
+                            ),
+                        }
+                    )
 
             # Check for unencrypted external connections
             total_conns = cs.get("total_connections", 0)
@@ -1733,38 +1741,45 @@ class IoTMonitor:
             if total_conns > 0 and unencrypted > 0:
                 ratio = encrypted_conns / total_conns
                 if ratio < 0.9:
-                    findings.append({
-                        "type": "unencrypted_traffic",
-                        "severity": "high" if ratio < 0.5 else "medium",
-                        "port": 0,
-                        "connection_count": unencrypted,
-                        "description": (
-                            f"{int((1 - ratio) * 100)}% of connections are unencrypted "
-                            f"({unencrypted} of {total_conns})"
-                        ),
-                    })
+                    findings.append(
+                        {
+                            "type": "unencrypted_traffic",
+                            "severity": "high" if ratio < 0.5 else "medium",
+                            "port": 0,
+                            "connection_count": unencrypted,
+                            "description": (
+                                f"{int((1 - ratio) * 100)}% of connections are unencrypted "
+                                f"({unencrypted} of {total_conns})"
+                            ),
+                        }
+                    )
 
             # Check for hardcoded DNS
             for dns_entry in hd:
-                findings.append({
-                    "type": "hardcoded_dns",
-                    "severity": "medium",
-                    "port": 53,
-                    "connection_count": dns_entry.get("count", 0),
-                    "description": (
-                        f"Sends DNS queries directly to {dns_entry['ip']} "
-                        f"instead of using network DNS"
-                    ),
-                })
+                findings.append(
+                    {
+                        "type": "hardcoded_dns",
+                        "severity": "medium",
+                        "port": 53,
+                        "connection_count": dns_entry.get("count", 0),
+                        "description": (
+                            f"Sends DNS queries directly to {dns_entry['ip']} "
+                            f"instead of using network DNS"
+                        ),
+                    }
+                )
 
-            device_results.append({
-                "mac": mac,
-                "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"),
-                "category": category,
-                "findings": findings,
-                "violation_count": len(findings),
-                "compliant": len(findings) == 0,
-            })
+            device_results.append(
+                {
+                    "mac": mac,
+                    "name": dev_info.get("hostname")
+                    or dev_info.get("manufacturer", "Unknown"),
+                    "category": category,
+                    "findings": findings,
+                    "violation_count": len(findings),
+                    "compliant": len(findings) == 0,
+                }
+            )
 
         # Sort by violation count descending (worst first)
         device_results.sort(key=lambda d: d["violation_count"], reverse=True)
@@ -1804,9 +1819,7 @@ class IoTMonitor:
                 "by_mac": {
                     "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
                     "aggs": {
-                        "ports": {
-                            "terms": {"field": "destination.port", "size": 200}
-                        },
+                        "ports": {"terms": {"field": "destination.port", "size": 200}},
                     },
                 }
             },
@@ -1820,9 +1833,7 @@ class IoTMonitor:
 
         out: dict[str, dict[int, int]] = {}
         for bucket in (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
             port_map: dict[int, int] = {}
@@ -1851,9 +1862,12 @@ class IoTMonitor:
 
         # Common hardcoded DNS servers that IoT devices phone home to
         well_known_dns = [
-            "8.8.8.8", "8.8.4.4",  # Google DNS
-            "1.1.1.1", "1.0.0.1",  # Cloudflare DNS
-            "208.67.222.222", "208.67.220.220",  # OpenDNS
+            "8.8.8.8",
+            "8.8.4.4",  # Google DNS
+            "1.1.1.1",
+            "1.0.0.1",  # Cloudflare DNS
+            "208.67.222.222",
+            "208.67.220.220",  # OpenDNS
             "9.9.9.9",  # Quad9
         ]
 
@@ -1895,17 +1909,17 @@ class IoTMonitor:
 
         out: dict[str, list[dict[str, Any]]] = {}
         for bucket in (
-            result.get("aggregations", {})
-            .get("by_mac", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
             dns_list: list[dict[str, Any]] = []
             for db in bucket.get("dns_servers", {}).get("buckets", []):
-                dns_list.append({
-                    "ip": db["key"],
-                    "count": db.get("doc_count", 0),
-                })
+                dns_list.append(
+                    {
+                        "ip": db["key"],
+                        "count": db.get("doc_count", 0),
+                    }
+                )
             if dns_list:
                 out[raw_mac] = dns_list
 
@@ -2022,13 +2036,13 @@ class IoTMonitor:
 
         pairs: list[dict[str, Any]] = []
         for mac_bucket in (
-            result.get("aggregations", {})
-            .get("by_source_mac", {})
-            .get("buckets", [])
+            result.get("aggregations", {}).get("by_source_mac", {}).get("buckets", [])
         ):
             raw_mac = mac_bucket["key"].upper()
             dev_info = devices.get(raw_mac, {})
-            dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+            dev_name = dev_info.get("hostname") or dev_info.get(
+                "manufacturer", "Unknown"
+            )
 
             for dest_bucket in mac_bucket.get("by_dest_ip", {}).get("buckets", []):
                 dest_ip = dest_bucket["key"]
@@ -2037,7 +2051,9 @@ class IoTMonitor:
                 if dest_ip in iot_ips:
                     continue
 
-                ports = [pb["key"] for pb in dest_bucket.get("ports", {}).get("buckets", [])]
+                ports = [
+                    pb["key"] for pb in dest_bucket.get("ports", {}).get("buckets", [])
+                ]
                 conn_count = dest_bucket.get("doc_count", 0)
 
                 # Get source IP
@@ -2051,21 +2067,23 @@ class IoTMonitor:
                 port_names = self._port_names(ports)
                 desc = f"{dev_name} can reach {dest_ip} via {port_names}"
 
-                pairs.append({
-                    "iot_device": {
-                        "mac": raw_mac,
-                        "name": dev_name,
-                        "ip": src_ip,
-                    },
-                    "internal_target": {
-                        "ip": dest_ip,
-                        "hostname": None,  # Would need reverse DNS
-                    },
-                    "risk": risk,
-                    "connection_count": conn_count,
-                    "ports": ports,
-                    "description": desc,
-                })
+                pairs.append(
+                    {
+                        "iot_device": {
+                            "mac": raw_mac,
+                            "name": dev_name,
+                            "ip": src_ip,
+                        },
+                        "internal_target": {
+                            "ip": dest_ip,
+                            "hostname": None,  # Would need reverse DNS
+                        },
+                        "risk": risk,
+                        "connection_count": conn_count,
+                        "ports": ports,
+                        "description": desc,
+                    }
+                )
 
         # Compute segmentation score
         score = 100
@@ -2088,9 +2106,13 @@ class IoTMonitor:
         grade = self._scorer.score_to_grade(score)
 
         # Build recommendation
-        iot_reaching_workstations = len(set(
-            p["iot_device"]["mac"] for p in pairs if p["risk"] in ("high", "critical")
-        ))
+        iot_reaching_workstations = len(
+            set(
+                p["iot_device"]["mac"]
+                for p in pairs
+                if p["risk"] in ("high", "critical")
+            )
+        )
         if not pairs:
             recommendation = "Your IoT devices are well-isolated from internal hosts."
         elif iot_reaching_workstations > 0:
@@ -2133,9 +2155,17 @@ class IoTMonitor:
     def _port_names(ports: list[int]) -> str:
         """Convert a port list to human-readable names."""
         names = {
-            22: "SSH", 23: "Telnet", 53: "DNS", 80: "HTTP", 139: "NetBIOS",
-            443: "HTTPS", 445: "SMB", 3389: "RDP", 5900: "VNC",
-            8080: "HTTP-Alt", 8443: "HTTPS-Alt",
+            22: "SSH",
+            23: "Telnet",
+            53: "DNS",
+            80: "HTTP",
+            139: "NetBIOS",
+            443: "HTTPS",
+            445: "SMB",
+            3389: "RDP",
+            5900: "VNC",
+            8080: "HTTP-Alt",
+            8443: "HTTPS-Alt",
         }
         parts = []
         for p in ports[:5]:  # Show first 5
@@ -2199,7 +2229,11 @@ class IoTMonitor:
 
                 # Build stats for trust scoring
                 stats = self._build_device_stats(
-                    mac, cs, ds, baseline, expected_ports,
+                    mac,
+                    cs,
+                    ds,
+                    baseline,
+                    expected_ports,
                 )
                 score_result = self._scorer.score_device(stats)
                 trust_scores.append(score_result["score"])
@@ -2221,27 +2255,41 @@ class IoTMonitor:
                 profile = self._protocol_profiles.get(
                     category, self._protocol_profiles.get("default", {})
                 )
-                cat_expected = set(profile.get("expected_ports", [80, 443, 53, 123, 5353, 1900]))
+                cat_expected = set(
+                    profile.get("expected_ports", [80, 443, 53, 123, 5353, 1900])
+                )
                 for port in pd:
                     if port not in cat_expected:
                         total_violations += 1
 
-            avg_trust = int(round(sum(trust_scores) / len(trust_scores))) if trust_scores else 0
+            avg_trust = (
+                int(round(sum(trust_scores) / len(trust_scores))) if trust_scores else 0
+            )
             avg_trust_grade = self._scorer.score_to_grade(avg_trust)
-            avg_privacy = int(round(sum(privacy_scores) / len(privacy_scores))) if privacy_scores else 0
+            avg_privacy = (
+                int(round(sum(privacy_scores) / len(privacy_scores)))
+                if privacy_scores
+                else 0
+            )
             avg_privacy_grade = self._scorer.score_to_grade(avg_privacy)
-            encryption_pct = int(round(total_encrypted / total_conns * 100)) if total_conns > 0 else 100
+            encryption_pct = (
+                int(round(total_encrypted / total_conns * 100))
+                if total_conns > 0
+                else 100
+            )
 
-            manufacturers.append({
-                "name": mfg_name,
-                "device_count": device_count,
-                "avg_trust_score": avg_trust,
-                "avg_trust_grade": avg_trust_grade,
-                "avg_privacy_grade": avg_privacy_grade,
-                "encryption_pct": encryption_pct,
-                "total_tracker_domains": total_tracker_domains,
-                "total_violations": total_violations,
-            })
+            manufacturers.append(
+                {
+                    "name": mfg_name,
+                    "device_count": device_count,
+                    "avg_trust_score": avg_trust,
+                    "avg_trust_grade": avg_trust_grade,
+                    "avg_privacy_grade": avg_privacy_grade,
+                    "encryption_pct": encryption_pct,
+                    "total_tracker_domains": total_tracker_domains,
+                    "total_violations": total_violations,
+                }
+            )
 
         # Sort by worst trust score first
         manufacturers.sort(key=lambda m: m["avg_trust_score"])
