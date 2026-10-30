@@ -525,6 +525,9 @@ services:
     # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
     # from /etc/nettap/capture.env when the daemon has written one (capture mode
     # set from the wizard, e.g. DHCP gateway). No file = compose env below.
+    # The viewer is pinned to loopback (CR-021): on host networking its default
+    # viewHost=0.0.0.0 put an admin service on :8005 for the whole LAN. It keeps
+    # running because it is what expires Arkime's PCAP.
     entrypoint:
       - /bin/bash
       - -c
@@ -532,6 +535,7 @@ services:
         . /usr/local/bin/nettap-capture-env.sh
         && mkdir -p /data/pcap/arkime-live
         && chown -R $${PUID:-1000}:$${PGID:-1000} /data/pcap
+        && sed -i 's/^viewHost=.*/viewHost=127.0.0.1/' /opt/arkime/etc/config*.ini
         && exec /usr/bin/tini --
         /usr/local/bin/docker-uid-gid-setup.sh
         /usr/local/bin/service_check_passthrough.sh -s arkime
@@ -547,7 +551,11 @@ services:
       ARKIME_VIEWER_PORT: "8005"
       ARKIME_ROTATE_INDEX: "daily"
       ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"
-      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      # OLD CODE START — replaced 2026-10-30 (CR-021): the public fallback let
+      # anyone forge the viewer's admin S2S token
+      # ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:-NetTap_Arkime_Secret}"
+      # OLD CODE END
+      ARKIME_PASSWORD_SECRET: "${ARKIME_SECRET:?set ARKIME_SECRET in docker/.env (scripts/install/malcolm-config.sh adds it)}"
       MANAGE_PCAP_FILES: "false"
       MALCOLM_USERNAME: "${MALCOLM_USERNAME:-admin}"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
@@ -868,9 +876,15 @@ services:
     environment:
       - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-nettap}
+      # OLD CODE START — replaced 2026-10-30 (CR-022): admin/nettap was the
+      # login on every install
+      # - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-nettap}
+      # OLD CODE END
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in docker/.env (scripts/install/malcolm-config.sh adds it)}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_INSTALL_PLUGINS=grafana-opensearch-datasource
+      # Anonymous Viewer stays on: nginx only lets logged-in NetTap users reach
+      # /grafana/ (CR-022), and with it off they'd hit Grafana's own login.
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:

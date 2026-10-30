@@ -436,6 +436,51 @@ EOF
     ! grep -q "^PUID=0$" "${TEST_TMPDIR}/docker/.env"
 }
 
+# _source_malcolm_config turns set -e off, and then a failing assertion does
+# not fail the test at all. These tests turn it back on after the call.
+@test "generate_compose_env: new .env gets random Arkime and Grafana secrets (CR-021, CR-022)" {
+    _source_malcolm_config
+    unset ARKIME_SECRET GRAFANA_ADMIN_PASSWORD
+    mkdir -p "${TEST_TMPDIR}/docker"
+
+    generate_compose_env
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    grep -Eq "^ARKIME_SECRET=[0-9a-f]{32}$" "$env_file"
+    grep -Eq "^GRAFANA_ADMIN_PASSWORD=[0-9a-f]{32}$" "$env_file"
+    # (common.sh's own run() shadows bats' run here)
+    [ "$(grep -c "NetTap_Arkime_Secret" "$env_file")" -eq 0 ]
+}
+
+@test "generate_compose_env: adds missing secrets to an existing .env, keeps the rest (CR-021)" {
+    _source_malcolm_config
+    mkdir -p "${TEST_TMPDIR}/docker"
+    printf 'PUID=1000\nREDIS_PASSWORD=keepme\nARKIME_SECRET=\n' > "${TEST_TMPDIR}/docker/.env"
+
+    generate_compose_env
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    grep -q "^PUID=1000$" "$env_file"
+    grep -q "^REDIS_PASSWORD=keepme$" "$env_file"
+    [ "$(grep -c '^ARKIME_SECRET=' "$env_file")" -eq 1 ]
+    grep -Eq "^ARKIME_SECRET=[0-9a-f]{32}$" "$env_file"
+    grep -Eq "^GRAFANA_ADMIN_PASSWORD=[0-9a-f]{32}$" "$env_file"
+}
+
+@test "generate_compose_env: never changes a secret that is already set" {
+    _source_malcolm_config
+    mkdir -p "${TEST_TMPDIR}/docker"
+    printf 'PUID=1000\nARKIME_SECRET=abc\nGRAFANA_ADMIN_PASSWORD=def\n' > "${TEST_TMPDIR}/docker/.env"
+
+    generate_compose_env
+    set -e
+
+    grep -q "^ARKIME_SECRET=abc$" "${TEST_TMPDIR}/docker/.env"
+    grep -q "^GRAFANA_ADMIN_PASSWORD=def$" "${TEST_TMPDIR}/docker/.env"
+}
+
 @test "generate_compose_env: includes heap sizes" {
     _source_malcolm_config
     export SUDO_UID=1000

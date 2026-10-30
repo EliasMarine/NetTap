@@ -1,6 +1,6 @@
 # Code Review Fix Tracker (review of 2026-10-30)
 
-**Progress:** <!--P-->8 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->1/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
+**Progress:** <!--P-->10 / 273 fixed<!--/P--> · CRITICAL <!--CRITICAL-->2/6<!--/CRITICAL--> · HIGH <!--HIGH-->3/37<!--/HIGH--> · MEDIUM <!--MEDIUM-->0/121<!--/MEDIUM--> · LOW <!--LOW-->5/109<!--/LOW-->
 
 **Findings:** `docs/reviews/2026-10-30-code-review.md` ([PR #146](https://github.com/EliasMarine/NetTap/pull/146)). The detail and recommended fix for each ID are there.  
 **Linear:** NET-112 (umbrella).  
@@ -20,8 +20,8 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 
 - [x] <!--B:MS-001-->MS-001: OpenSearch role mapping wiped on every start (root cause of Chain 11)
 - [x] <!--B:CR-003-->CR-003: OpenSearch Dashboards open to the LAN with all_access
-- [ ] <!--B:CR-021-->CR-021: Arkime viewer on :8005 with a forgeable admin token
-- [ ] <!--B:CR-022-->CR-022: Grafana without NetTap login, anonymous viewer, admin/nettap
+- [x] <!--B:CR-021-->CR-021: Arkime viewer on :8005 with a forgeable admin token
+- [x] <!--B:CR-022-->CR-022: Grafana without NetTap login, anonymous viewer, admin/nettap
 - [ ] <!--B:CR-002-->CR-002: Emergency prune deletes every OpenSearch index
 - [ ] <!--B:CR-001-->CR-001: PCAP cleanup never deletes anything
 - [ ] <!--B:CR-018-->CR-018: Capture stop flag at 95% has no effect
@@ -41,7 +41,16 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | 2026-10-30 | CR-007, CR-165, CR-166, CR-167, CR-212, CR-247 | Fixed as part of DHCP gateway mode (PR #145) | pytest 2315, vitest 1942 |
 | 2026-10-30 | MS-001 (NET-113) | opensearch gets Malcolm's 8 ROLE_* vars, so its own startup builds and pushes the full role mapping; deploy-malcolm.sh waits for that push instead of overwriting it; fix-opensearch.sh writes the minimal mapping only on an old container. Device check pending (Chain 21) | bats: 2 new deploy + 1 new compose test, fail without the fix |
 | 2026-10-30 | CR-003 | NET-114: /dashboards/ needs a NetTap login (nginx auth_request to /api/auth/me); nginx sets X-Forwarded-User/Roles from the session and drops the client's. Still open: direct container access to dashboards:5601 and OpenSearch :9200 with spoofed headers | vitest +2, bats +3 (new test_nginx_conf.bats), fail without the fix |
+| 2026-10-30 | CR-021, CR-022 | NET-115: ARKIME_SECRET and GRAFANA_ADMIN_PASSWORD required in compose (no public fallback); malcolm-config.sh adds missing secrets to an existing .env; Arkime viewer pinned to 127.0.0.1; /grafana/ behind NetTap login (anonymous Viewer kept behind the gate). Device: deploy script must add .env keys first and reset Grafana's stored admin password | bats +6 (compose 2, nginx 1, malcolm-config 3; 5 fail without the fix, 1 guards existing secrets) |
 <!--LOG-->
+
+## Found while fixing
+
+New problems found during the fixes. They are not in the review's 273, so they don't count toward the progress total.
+
+| ID | Where | Problem | Status |
+|----|-------|---------|--------|
+| NEW-001 | `tests/scripts/test_malcolm_config.bats` | `_source_malcolm_config` turns `set -e` off, so a failing assertion never fails a test: nearly every test in the file passes whatever the code does. Its `generate_compose_env` tests also never create `docker/`, so the function never writes the file they check. The CR-021/CR-022 tests turn `set -e` back on; the older tests still need the same fix. | Open |
 
 ## All findings
 
@@ -76,8 +85,8 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | ☐ | CR-018 | daemon-core | `daemon/storage/manager.py:109` | Writing the capture stop flag at 95% has no effect | Open |
 | ☐ | CR-019 | gap-pass, malcolm-stack | `docker/docker-compose.yml:290` | Filebeat mounts the Zeek and Suricata log volumes read-only, so their logs are never pruned | Open |
 | ☐ | CR-020 | gap-pass | `docker/docker-compose.yml:509` | Two full-PCAP writers fill the disk; Arkime keeps it at 85-90% and the daemon's 'stop capture' flag is never read | Open |
-| ☐ | CR-021 | gap-pass | `docker/docker-compose.yml:513` | Arkime viewer runs on host port 8005, and its admin S2S token can be forged with the public fallback secret | Open |
-| ☐ | CR-022 | malcolm-stack, scripts-infra, security-crosscut | `docker/docker-compose.yml:824` | Grafana is reachable without NetTap login, with anonymous viewer and default admin password 'nettap' | Open |
+| ✅ | CR-021 | gap-pass | `docker/docker-compose.yml:513` | Arkime viewer runs on host port 8005, and its admin S2S token can be forged with the public fallback secret | Fixed (batch 1) |
+| ✅ | CR-022 | malcolm-stack, scripts-infra, security-crosscut | `docker/docker-compose.yml:824` | Grafana is reachable without NetTap login, with anonymous viewer and default admin password 'nettap' | Fixed (batch 1) |
 | ☐ | CR-023 | scripts-infra | `scripts/bridge/setup-bridge.sh:403` | --dry-run --persist writes the real netplan bridge, NetworkManager and sysctl configs | Open |
 | ☐ | CR-024 | malcolm-stack, scripts-infra | `scripts/install/deploy-malcolm.sh:601` | (( applied++ )) under set -e kills the installer at the first ISM policy | Open |
 | ☐ | CR-025 | scripts-infra | `scripts/install/install.sh:397` | nettap.service ExecStop runs 'docker compose down', so every reboot recreates OpenSearch and breaks auth | Open |

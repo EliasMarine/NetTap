@@ -675,3 +675,34 @@ print('nettap-storage-daemon: OK')
 "
     [ "$status" -eq 0 ]
 }
+
+@test "compose: Arkime and Grafana secrets have no public fallback (CR-021, CR-022)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+arkime = data['services']['arkime-live']['environment']['ARKIME_PASSWORD_SECRET']
+assert arkime.startswith('\${ARKIME_SECRET:?'), 'ARKIME_SECRET must be required: ' + arkime
+grafana = [e for e in data['services']['nettap-grafana']['environment'] if e.startswith('GF_SECURITY_ADMIN_PASSWORD=')]
+assert grafana and grafana[0].startswith('GF_SECURITY_ADMIN_PASSWORD=\${GRAFANA_ADMIN_PASSWORD:?'), grafana
+print('secrets: OK')
+"
+    [ "$status" -eq 0 ]
+    ! grep -v '^[[:space:]]*#' "$COMPOSE_FILE" | grep -q 'NetTap_Arkime_Secret'
+}
+
+@test "compose: Arkime viewer is pinned to loopback (CR-021)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+cmd = data['services']['arkime-live']['entrypoint'][2]
+pin = \"sed -i 's/^viewHost=.*/viewHost=127.0.0.1/' /opt/arkime/etc/config*.ini\"
+assert pin in cmd, cmd
+assert cmd.index(pin) < cmd.index('exec /usr/bin/tini'), 'pin must run before Arkime starts'
+print('viewHost: OK')
+"
+    [ "$status" -eq 0 ]
+}

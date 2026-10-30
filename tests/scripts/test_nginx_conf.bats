@@ -34,3 +34,9 @@ _location() {
     echo "$output" | grep -q 'proxy_set_header X-Forwarded-User  \$nettap_user;'
     echo "$output" | grep -q 'proxy_set_header X-Forwarded-Roles \$nettap_role;'
 }
+
+@test "nginx: /grafana/ requires a NetTap login (CR-022)" {
+    run _location '/grafana/'
+    echo "$output" | grep -q 'auth_request /_nettap_auth;'
+    echo "$output" | grep -q 'error_page 401 = @nettap_login;'
+}
