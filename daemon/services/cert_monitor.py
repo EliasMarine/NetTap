@@ -23,6 +23,7 @@ from typing import Any
 from opensearchpy import OpenSearch, OpenSearchException
 
 from services.excluded_ips import build_excluded_ips_filter
+from storage.all_buckets import PAGE_SIZE, all_buckets
 
 logger = logging.getLogger("nettap.services.cert_monitor")
 
@@ -71,6 +72,14 @@ _SELF_SIGNED_FILTER = {
 
 # A row reads only the zeek.x509 object of the latest record
 _X509_SOURCE = ["zeek.x509"]
+# The issuer comparison reads only the CA and subject of a certificate
+_ISSUER_SOURCE = [
+    "zeek.x509.certificate_subject",
+    "zeek.x509.certificate_issuer",
+    "zeek.x509.certificate_issuer_full",
+]
+# (fingerprint, server name) pages carry no sub-aggregations: 10x fewer scans, far below max_buckets
+_PAIR_PAGE = 10_000
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
@@ -257,6 +266,14 @@ def _issuer_changes(certs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _leaf_cert(bucket: dict, names: dict[str, list[str]]) -> dict[str, Any]:
+    """What _issuer_changes reads of one leaf certificate: its CA, subject and server names."""
+    fp = bucket["key"]["fp"]
+    hits = (bucket.get("latest") or {}).get("hits", {}).get("hits", [])
+    x509 = hits[0].get("_source", {}).get("zeek", {}).get("x509", {}) if hits else {}
+    return {**_x509_fields(x509), "fingerprint": fp, "server_names": names.get(fp, [])}
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -279,6 +296,89 @@ class CertificateMonitor:
         except OpenSearchException as exc:
             logger.error("Failed to query %s: %s", what, exc)
             return {}
+
+    def _all_buckets(
+        self,
+        query: dict,
+        sources: list[dict],
+        aggs: dict | None,
+        what: str,
+        page_size: int = PAGE_SIZE,
+    ) -> list[dict]:
+        """Every composite bucket on the network index; [] (logged) on failure."""
+        try:
+            buckets, complete = all_buckets(
+                self._client, NETWORK_INDEX, query, sources, aggs, page_size
+            )
+        except OpenSearchException as exc:
+            logger.error("Failed to query %s: %s", what, exc)
+            return []
+        if not complete:
+            logger.warning("%s stopped at %d buckets; result is partial", what, len(buckets))
+        return buckets
+
+    def _leaf_certs(
+        self, from_ts: str, to_ts: str, excluded_ips: list[str] | None
+    ) -> list[dict[str, Any]]:
+        """Every leaf certificate in range, with every server name ssl sessions sent it for."""
+        x509_query = {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_X509_FILTERS,
+                    _LEAF_CERT_FILTER,
+                ]
+            }
+        }
+        certs = self._all_buckets(
+            x509_query,
+            [{"fp": {"terms": {"field": _FINGERPRINT}}}],
+            {"latest": {"top_hits": {"size": 1, "_source": _ISSUER_SOURCE}}},
+            "certificate issuers",
+        )
+        if not certs:
+            return []
+        ssl_query: dict = {
+            "bool": {"filter": [_time_range_filter(from_ts, to_ts), *_SSL_FILTERS]}
+        }
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        if excluded:
+            ssl_query["bool"]["must_not"] = excluded
+        # The chain also lists intermediates; their pairs match no leaf and drop out
+        pairs = self._all_buckets(
+            ssl_query,
+            [
+                {"fp": {"terms": {"field": _CHAIN_FPS}}},
+                {"name": {"terms": {"field": "zeek.ssl.server_name"}}},
+            ],
+            None,
+            "certificate server names",
+            page_size=_PAIR_PAGE,
+        )
+        names: dict[str, list[str]] = {}
+        for pair in pairs:
+            names.setdefault(pair["key"]["fp"], []).append(str(pair["key"]["name"]))
+        return [_leaf_cert(b, names) for b in certs]
+
+    def _rows(
+        self,
+        fingerprints: list[str],
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """Inventory rows for these fingerprints, _MAX_CERTS per query."""
+        chunks = [
+            fingerprints[i : i + _MAX_CERTS]
+            for i in range(0, len(fingerprints), _MAX_CERTS)
+        ]
+        return [
+            row
+            for chunk in chunks
+            for row in self._inventory(
+                from_ts, to_ts, [{"terms": {_FINGERPRINT: chunk}}], len(chunk), excluded_ips
+            )
+        ]
 
     def _inventory(
         self,
@@ -420,13 +520,28 @@ class CertificateMonitor:
         to_ts: str | None = None,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Server names served by certificates from more than one CA.
-
-        shortcut: compares the newest _MAX_CERTS certificates only; aggregate by
-        server name in OpenSearch if a network ever sees more.
-        """
-        certs = self.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips)
-        return _issuer_changes(certs)
+        """Server names served by certificates from more than one CA."""
+        # OLD CODE START — #96: compared only the newest 1,000 certificates and each one's
+        # 10 busiest server names, so a CA change on a busier network went unseen
+        # certs = self.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips)
+        # return _issuer_changes(certs)
+        # OLD CODE END
+        if not from_ts or not to_ts:
+            from_ts, to_ts = _default_range()
+        changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
+        fps = sorted({c["fingerprint"] for ch in changes for c in ch["certificates"]})
+        rows = {r["fingerprint"]: r for r in self._rows(fps, from_ts, to_ts, excluded_ips)}
+        return [
+            {
+                **ch,
+                "certificates": [
+                    rows[c["fingerprint"]]
+                    for c in ch["certificates"]
+                    if c["fingerprint"] in rows
+                ],
+            }
+            for ch in changes
+        ]
 
     def get_cert_stats(
         self,
@@ -474,7 +589,11 @@ class CertificateMonitor:
         aggs = self._search(body, "certificate stats").get("aggregations")
         if aggs is None:
             raise CertStatsUnavailable("certificate stats query failed")
-        changes = self.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips)
+        # OLD CODE START — #96: counted changes among the newest 1,000 certificates only
+        # changes = self.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips)
+        # OLD CODE END
+        # The count needs no inventory rows
+        changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
         return {
             "total_certs": _agg_count(aggs, "total"),
             "expiring_count": _agg_count(aggs, "expiring"),

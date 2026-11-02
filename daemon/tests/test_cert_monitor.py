@@ -87,11 +87,15 @@ def _session_bucket(
 def _kind(body: dict) -> str:
     aggs = body.get("aggs", {})
     # "hits": a plain document fetch, which the old session-based code made
-    return next((k for k in ("certs", "fps", "total") if k in aggs), "hits")
+    return next((k for k in ("certs", "fps", "total", "all") if k in aggs), "hits")
 
 
 class FakeOpenSearch:
-    """Answers each query kind from canned buckets and records the bodies."""
+    """Answers each query kind from canned buckets and records the bodies.
+
+    Like OpenSearch, a terms list keeps only its top `size` buckets (#96) and a
+    composite ("all") pages through every bucket.
+    """
 
     def __init__(self, certs=(), sessions=(), stats=None, fail=()) -> None:
         self.certs = list(certs)
@@ -106,12 +110,46 @@ class FakeOpenSearch:
         if kind in self.fail:
             raise OpenSearchException("boom")
         if kind == "certs":
-            return {"aggregations": {"certs": {"buckets": self.certs}}}
+            return {"aggregations": {"certs": {"buckets": self._certs(body)}}}
         if kind == "fps":
-            return {"aggregations": {"fps": {"buckets": self.sessions}}}
+            return {"aggregations": {"fps": {"buckets": self._sessions(body)}}}
+        if kind == "all":
+            return {"aggregations": {"all": self._page(body)}}
         if kind == "hits":
             return {"hits": {"hits": []}}
         return {"aggregations": self.stats}
+
+    def _certs(self, body: dict) -> list[dict]:
+        wanted = next(
+            (f["terms"]["zeek.x509.fingerprint"] for f in _filters(body)
+             if "zeek.x509.fingerprint" in f.get("terms", {})),
+            None,
+        )
+        certs = [c for c in self.certs if wanted is None or c["key"] in wanted]
+        return certs[: body["aggs"]["certs"]["terms"]["size"]]
+
+    def _sessions(self, body: dict) -> list[dict]:
+        size = body["aggs"]["fps"]["aggs"]["server_names"]["terms"]["size"]
+        return [
+            {**s, "server_names": {"buckets": s["server_names"]["buckets"][:size]}}
+            for s in self.sessions
+        ]
+
+    def _page(self, body: dict) -> dict:
+        if "after" in body["aggs"]["all"]["composite"]:
+            return {"buckets": []}
+        if {"term": {"event.dataset": "x509"}} in _filters(body):
+            buckets = [
+                {"key": {"fp": c["key"]}, "doc_count": c["doc_count"], "latest": c["latest"]}
+                for c in self.certs
+            ]
+        else:
+            buckets = [
+                {"key": {"fp": s["key"], "name": n["key"]}, "doc_count": 1}
+                for s in self.sessions
+                for n in s["server_names"]["buckets"]
+            ]
+        return {"buckets": buckets, **({"after_key": buckets[-1]["key"]} if buckets else {})}
 
     def body(self, kind: str) -> dict:
         return next(b for b in self.bodies if _kind(b) == kind)
@@ -308,6 +346,37 @@ class TestIssuerChanges(unittest.TestCase):
 
     def test_empty_index_has_no_changes(self):
         self.assertEqual(self._changes([]), [])
+
+    def test_change_beyond_the_newest_1000_certificates_is_found(self):
+        """#96: only the newest 1,000 certificates were compared; the older one went unseen."""
+        fillers = [_x509_bucket(f"f{i}", f"site{i}.com") for i in range(1000)]
+        fake = FakeOpenSearch(
+            certs=[
+                _x509_bucket("new", "bank.com", issuer_org="DigiCert Inc"),
+                *fillers,
+                _x509_bucket("old", "bank.com", issuer_org="Evil CA"),
+            ]
+        )
+        monitor = CertificateMonitor(fake)
+        changes = monitor.detect_issuer_changes()
+
+        self.assertEqual([c["domain"] for c in changes], ["bank.com"])
+        self.assertEqual(changes[0]["issuers"], ["DigiCert Inc", "Evil CA"])
+        fps = {c["fingerprint"] for c in changes[0]["certificates"]}
+        self.assertEqual(fps, {"new", "old"})
+        self.assertEqual(monitor.get_cert_stats()["issuer_changes_count"], 1)
+
+    def test_every_server_name_of_a_certificate_is_compared(self):
+        """#96: only a certificate's 10 busiest server names were compared."""
+        names = (*(f"n{i}.example.com" for i in range(10)), "shop.example.com")
+        changes = self._changes(
+            [
+                _x509_bucket("wild", "*.example.com"),
+                _x509_bucket("other", "shop.example.com", issuer_org="Evil CA"),
+            ],
+            [_session_bucket("wild", names), _session_bucket("other", ("shop.example.com",))],
+        )
+        self.assertEqual([c["domain"] for c in changes], ["shop.example.com"])
 
 
 class TestStats(unittest.TestCase):
