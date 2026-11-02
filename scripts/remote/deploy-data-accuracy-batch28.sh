@@ -28,14 +28,14 @@ check() {  # check "label" <0 pass / 1 fail> "detail"
     if [ "$2" -eq 0 ]; then echo "   ✓ $1: $3"; else echo "   ✗ $1: $3"; FAILED=1; fi
 }
 
-api() {  # api <path> <python expression on the reply `d`> → value
-    # The expression is always a literal from this script, never data read from the box
+api() {  # api <path> <python expression on the reply `d`> [value for sys.argv[3]] → value
+    # The expression is always a literal from this script; values from the box go in as sys.argv[3]
     sudo docker exec nettap-storage-daemon python3 -c "
 import json, sys, urllib.request
 token = open('/run/nettap-auth/daemon-token').read().strip()
 req = urllib.request.Request('http://localhost:8880' + sys.argv[1], headers={'X-NetTap-Daemon-Token': token})
 d = json.load(urllib.request.urlopen(req, timeout=300))
-print(eval(sys.argv[2]))" "$1" "$2" 2>&1
+print(eval(sys.argv[2]))" "$@" 2>&1
 }
 
 raw() {  # raw <filter clauses, comma-separated> <must_not clauses> → count for the window
@@ -96,6 +96,9 @@ echo "→ Step 3: Pick the busiest devices..."
 BUSIEST=$(api "/api/risk/scores?$RANGE" "max(d['devices'], key=lambda x: x['connection_count'])['ip']")
 ALERTIEST=$(api "/api/devices?$RANGE&limit=500" "max(d['devices'], key=lambda x: x.get('alert_count') or 0)['ip']")
 echo "   most connections: $BUSIEST; most alerts: $ALERTIEST"
+for ip in "$BUSIEST" "$ALERTIEST"; do  # they go into URLs and OpenSearch JSON below
+    [[ "$ip" =~ ^[0-9a-fA-F:.]+$ ]] || { echo "   ✗ not an IP address: $ip"; exit 1; }
+done
 echo ""
 
 echo "→ Step 4: Checks..."
@@ -109,7 +112,7 @@ bracket "#84 Device alerts list total ($ALERTIEST)" "$(either "$ALERTIEST"),$ALE
     "/api/devices/$ALERTIEST/alerts?$RANGE&limit=1" "d['total']"
 bracket "#83 Risk score connections, single view ($BUSIEST)" "$(src "$BUSIEST"),$CONN" "" \
     "/api/risk/scores/$BUSIEST?$RANGE" "d['connection_count']"
-LIST=$(api "/api/risk/scores?$RANGE" "next((x['score'], x['level']) for x in d['devices'] if x['ip'] == '$BUSIEST')")
+LIST=$(api "/api/risk/scores?$RANGE" "next((x['score'], x['level']) for x in d['devices'] if x['ip'] == sys.argv[3])" "$BUSIEST")
 ONE=$(api "/api/risk/scores/$BUSIEST?$RANGE" "(d['score'], d['level'])")
 if [ "$LIST" = "$ONE" ]; then rc=0; else rc=1; fi
 check "#83 Risk score is the same in the list and on Device detail ($BUSIEST)" "$rc" "list $LIST, detail $ONE"
