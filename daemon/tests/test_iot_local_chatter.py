@@ -369,3 +369,19 @@ class TestNoDuplicateEncryptionFinding:
         # The privacy report is now the single source the /iot feed reads
         privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
         assert privacy["encryption_ratio"] == 0.0
+
+
+def test_fleet_alert_counts_leave_out_suricata_engine_events():
+    """#82: engine events (rule.name "SURICATA ...") counted as IoT device alerts.
+
+    On the G11 three IoT devices showed 521, 220 and 15 alerts in 24 h, all engine events.
+    """
+    client = MagicMock()
+    client.search.return_value = _empty()
+    monitor = IoTMonitor(client=client)
+
+    monitor._query_alert_counts([HUE_MAC], FROM_TS, TO_TS, [{"terms": {"source.ip": ["10.0.0.9"]}}])
+
+    must_not = _bodies(client)[0]["query"]["bool"]["must_not"]
+    assert {"prefix": {"rule.name": "SURICATA "}} in must_not
+    assert {"terms": {"source.ip": ["10.0.0.9"]}} in must_not

@@ -17,6 +17,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
@@ -696,10 +697,16 @@ class IoTMonitor:
                 _time_range_filter(from_ts, to_ts),
                 {"exists": {"field": "suricata.alert.severity"}},
                 {"terms": {"source.mac": mac_terms}},
-            ]
+            ],
+            # #82: Suricata engine events aren't alerts (same rule as the Alerts page and the
+            # device list, #60). G11: three IoT devices showed 521, 220 and 15 "alerts", all
+            # engine events, which lowered their trust scores
+            "must_not": [*SURICATA_NOISE_EXCLUSION, *excluded],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — #82: only the excluded IPs were left out
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,
