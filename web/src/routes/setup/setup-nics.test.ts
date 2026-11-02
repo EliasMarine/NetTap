@@ -21,11 +21,11 @@ const REAL = {
 	interfaces: [{ name: 'enp1s0', mac: '00:11:22:33:44:55', state: 'up', speed: '1000Mb/s', driver: 'r8169', type: 'ethernet' }],
 };
 
-function stubNics(nics: unknown) {
+function stubNics(nics: unknown, storage: Response = new Response(JSON.stringify({ disk_free_gb: 500, source: 'daemon' }))) {
 	globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 		const url = String(input);
 		if (url === '/api/setup/nics') return new Response(JSON.stringify(nics));
-		if (url === '/api/setup/storage') return new Response(JSON.stringify({ disk_free_gb: 500, source: 'daemon' }));
+		if (url === '/api/setup/storage') return storage;
 		return new Response(JSON.stringify({ status: 'ok' }));
 	}) as typeof fetch;
 }
@@ -70,5 +70,30 @@ describe('setup wizard network cards', () => {
 		// capture and management selects both list it
 		expect(await screen.findAllByRole('option', { name: /enp1s0/ })).toHaveLength(2);
 		expect(screen.queryByText(/Couldn't detect the network cards/)).not.toBeInTheDocument();
+	});
+});
+
+// The disk check passed when /api/setup/storage failed, and on the proxy's sample reply (911 GB free).
+describe('setup wizard disk check', () => {
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it.each([
+		['the request fails', new Response('{}', { status: 502 })],
+		['the daemon did not answer (sample data)', new Response(JSON.stringify({ disk_free_gb: 911.57, source: 'mock' }))],
+	])("says it couldn't check when %s", async (_why, storage) => {
+		stubNics(REAL, storage);
+		render(SetupPage, { props: { form: null } });
+
+		expect(await screen.findByText("Disk space: couldn't check")).toBeInTheDocument();
+	});
+
+	it('still checks the real free space', async () => {
+		stubNics(REAL);
+		render(SetupPage, { props: { form: null } });
+
+		expect(await screen.findByText('Sufficient disk space (100GB+)')).toBeInTheDocument();
+		expect(screen.queryByText("Disk space: couldn't check")).not.toBeInTheDocument();
 	});
 });

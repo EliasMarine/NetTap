@@ -357,16 +357,32 @@
 		}
 
 		// Check Disk via storage
+		// OLD CODE START — a failed read passed, and so did the proxy's sample reply (911 GB free)
+		// try {
+		// 	const storageRes = await fetch('/api/setup/storage');
+		// 	const storageData = await storageRes.json();
+		// 	const freeGb = storageData.disk_free_gb || 0;
+		// 	requirements.disk = {
+		// 		...requirements.disk,
+		// 		status: freeGb >= 100 ? 'pass' : 'fail',
+		// 	};
+		// } catch {
+		// 	requirements.disk = { ...requirements.disk, status: 'pass' };
+		// }
+		// OLD CODE END
 		try {
 			const storageRes = await fetch('/api/setup/storage');
+			if (!storageRes.ok) throw new Error(`HTTP ${storageRes.status}`);
 			const storageData = await storageRes.json();
-			const freeGb = storageData.disk_free_gb || 0;
+			if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+				throw new Error('no disk reading');
+			}
 			requirements.disk = {
 				...requirements.disk,
-				status: freeGb >= 100 ? 'pass' : 'fail',
+				status: storageData.disk_free_gb >= 100 ? 'pass' : 'fail',
 			};
 		} catch {
-			requirements.disk = { ...requirements.disk, status: 'pass' };
+			requirements.disk = { ...requirements.disk, label: "Disk space: couldn't check", status: 'fail' };
 		}
 
 		requirementsChecked = true;
