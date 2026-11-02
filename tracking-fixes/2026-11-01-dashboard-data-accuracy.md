@@ -11,6 +11,7 @@
 - **Batches 18–20 (2026-11-02):** registry refresh 62 s → 0.9 s (#74) and console hostnames (#69); backup guide run on the box (#72) and DHCP gateway node (#75); LAN detection finds all three subnets, with no owner edit (#47).
 - **Batch 21 (2026-11-02):** phantom device from an 8-byte DHCP MAC (#76).
 - **Batch 22 (2026-11-02):** the OpenSearch login file is private (#77); the installer's bats tests now really check.
+- **Owner decisions (2026-11-02):** bridge mode and DHCP gateway mode are tested on hardware later, on a separate bench (the G11 stays mirror-only); the owner reviews and merges PRs #148–#152 personally.
 - **Still open:** none in this table. #75 is unit-tested only (the G11 stays in mirror mode).
 **Branch:** `fix/dashboard-data-accuracy`, off `fix/index-template-pattern`.
 **Linear:** NET-129.
@@ -180,3 +181,4 @@ Status key: ⬜ todo · 🔧 in progress · ✅ done (code) · 🟢 verified on 
 - 2026-11-02: #76 deployed with `deploy-data-accuracy-batch21.sh` (daemon only): 5 of 5.
 - 2026-11-02: owner answered the Grafana question: keep it off by default (#71). Stacked PRs #148–#152 opened.
 - 2026-11-02: #77 deployed with `deploy-data-accuracy-batch22.sh`. The first run's three ✗ were the checks (host processes under `pid: host`, a fixed 90 s wait, `401` matching a number); the second run's user list was empty (`docker top` needs a PID column) and is now fixed; the final run is 16 of 16 with real per-user read checks.
+- 2026-11-02: owner decisions: bridge/DHCP gateway hardware tests later on a separate bench; the owner merges the PR chain personally.
