@@ -334,7 +334,13 @@ class UpdateExecutor:
                         old_version = comp_info.get("current_version", "unknown")
 
                 # Create backup (save current image ID)
-                await self._create_backup(component)
+                # OLD CODE START — #96: the result was ignored and rollback_available
+                # was always True below
+                # await self._create_backup(component)
+                # OLD CODE END
+                backup_ok = self._has_restorable_backup(
+                    await self._create_backup(component)
+                )
 
                 # Pull latest image via docker compose
                 output, returncode = await self._run_command(
@@ -358,7 +364,7 @@ class UpdateExecutor:
                             started_at=started,
                             completed_at=datetime.now(timezone.utc).isoformat(),
                             error=f"Docker pull failed: {output}",
-                            rollback_available=True,
+                            rollback_available=backup_ok,  # was True (#96)
                         )
                     )
                     continue
@@ -387,7 +393,7 @@ class UpdateExecutor:
                             started_at=started,
                             completed_at=datetime.now(timezone.utc).isoformat(),
                             error=f"Container restart failed: {output}",
-                            rollback_available=True,
+                            rollback_available=backup_ok,  # was True (#96)
                         )
                     )
                     continue
@@ -409,7 +415,7 @@ class UpdateExecutor:
                         started_at=started,
                         completed_at=datetime.now(timezone.utc).isoformat(),
                         error=None,
-                        rollback_available=True,
+                        rollback_available=backup_ok,  # was True (#96)
                     )
                 )
 
@@ -457,7 +463,12 @@ class UpdateExecutor:
                     continue
 
             # Create backup
-            await self._create_backup("suricata-rules")
+            # OLD CODE START — #96: rollback_available was True even with no backup
+            # await self._create_backup("suricata-rules")
+            # OLD CODE END
+            backup_ok = self._has_restorable_backup(
+                await self._create_backup("suricata-rules")
+            )
 
             # Run suricata-update
             output, returncode = await self._run_command(
@@ -476,7 +487,7 @@ class UpdateExecutor:
                     started_at=started,
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     error=f"suricata-update failed: {output}",
-                    rollback_available=True,
+                    rollback_available=backup_ok,  # was True (#96)
                 )
 
             new_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -498,7 +509,7 @@ class UpdateExecutor:
                 started_at=started,
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 error=None,
-                rollback_available=True,
+                rollback_available=backup_ok,  # was True (#96)
             )
 
         except Exception as exc:
@@ -539,7 +550,12 @@ class UpdateExecutor:
                 )
 
             # Create backup
-            await self._create_backup("geoip-db")
+            # OLD CODE START — #96: rollback_available was True even with no backup
+            # await self._create_backup("geoip-db")
+            # OLD CODE END
+            backup_ok = self._has_restorable_backup(
+                await self._create_backup("geoip-db")
+            )
 
             # Run geoipupdate tool
             output, returncode = await self._run_command(
@@ -558,7 +574,7 @@ class UpdateExecutor:
                     started_at=started,
                     completed_at=datetime.now(timezone.utc).isoformat(),
                     error=f"geoipupdate failed: {output}",
-                    rollback_available=True,
+                    rollback_available=backup_ok,  # was True (#96)
                 )
 
             new_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -571,7 +587,7 @@ class UpdateExecutor:
                 started_at=started,
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 error=None,
-                rollback_available=True,
+                rollback_available=backup_ok,  # was True (#96)
             )
 
         except Exception as exc:
@@ -646,7 +662,12 @@ class UpdateExecutor:
             ):
                 # For Docker components, save the current image ID
                 # Uses create_subprocess_exec for safe argument passing
-                output, _ = await self._run_command(
+                # OLD CODE START — #96: docker's error text was saved as the image ID
+                # output, _ = await self._run_command(
+                # ...
+                # if output:
+                # OLD CODE END
+                output, returncode = await self._run_command(
                     [
                         "docker",
                         "inspect",
@@ -655,7 +676,7 @@ class UpdateExecutor:
                         component,
                     ]
                 )
-                if output:
+                if returncode == 0 and output.strip():
                     image_file = os.path.join(backup_path, "image_id.txt")
                     with open(image_file, "w") as f:
                         f.write(output.strip())
@@ -665,7 +686,18 @@ class UpdateExecutor:
 
         except OSError as exc:
             logger.warning("Could not create backup for %s: %s", component, exc)
+            # #96: a half-copied file must not be what a rollback restores
+            shutil.rmtree(backup_path, ignore_errors=True)
             return backup_path
+
+    @staticmethod
+    def _has_restorable_backup(backup_path: str) -> bool:
+        """True when the backup holds what a rollback restores (image ID, rules or
+        GeoIP file), not just its metadata (#96)."""
+        try:
+            return any(name != "metadata.json" for name in os.listdir(backup_path))
+        except OSError:
+            return False
 
     async def _run_command(self, cmd: list[str]) -> tuple[str, int]:
         """Run a subprocess command and return (output, returncode).

@@ -533,5 +533,61 @@ class TestSetReferences(unittest.TestCase):
         self.assertIs(ue._update_checker, mock_uc)
 
 
+class TestRollbackOnlyWithABackup(unittest.TestCase):
+    """#96: rollback_available was True whether or not the backup worked."""
+
+    def _docker_update(self, inspect_result):
+        """Update "zeek" with pull and up succeeding; docker inspect gives inspect_result."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = UpdateExecutor(backup_dir=tmp)
+
+            async def run_command(cmd):
+                return inspect_result if cmd[1] == "inspect" else ("", 0)
+
+            ue._run_command = run_command
+            (result,) = asyncio.run(ue._update_docker_images(["zeek"]))
+        return result
+
+    def test_failed_image_backup_means_no_rollback(self):
+        result = self._docker_update(("Error: No such object: zeek", 1))
+        self.assertTrue(result.success)
+        self.assertFalse(result.rollback_available)
+
+    def test_saved_image_id_means_rollback(self):
+        result = self._docker_update(("sha256:0123abcd\n", 0))
+        self.assertTrue(result.rollback_available)
+
+    def test_rules_update_without_a_rules_file_has_no_rollback(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = UpdateExecutor(backup_dir=tmp)
+
+            async def run_command(cmd):
+                return ("", 0)
+
+            ue._run_command = run_command
+            with patch("os.path.exists", return_value=False):
+                result = asyncio.run(ue._update_suricata_rules())
+        self.assertTrue(result.success)
+        self.assertFalse(result.rollback_available)
+
+    def test_half_copied_backup_is_removed(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "GeoLite2-City.mmdb")
+            with open(db, "w") as f:
+                f.write("db")
+            ue = UpdateExecutor(backup_dir=os.path.join(tmp, "backups"))
+            with (
+                patch.dict(os.environ, {"GEOIP_DB_PATH": db}),
+                patch("shutil.copy2", side_effect=OSError(28, "No space left on device")),
+            ):
+                path = asyncio.run(ue._create_backup("geoip-db"))
+            self.assertFalse(os.path.exists(path))
+            self.assertFalse(ue._has_restorable_backup(path))
+
+
 if __name__ == "__main__":
     unittest.main()
