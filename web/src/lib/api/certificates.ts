@@ -23,8 +23,28 @@ export interface Certificate {
 	destination_port: number | string;
 	validation_status: string;
 	status: 'valid' | 'expiring' | 'expired' | 'self-signed';
-	days_until_expiry?: number;
+	// OLD CODE START — 2026-11-01: now sent on every row (null when the cert has no expiry date)
+	// days_until_expiry?: number;
+	// OLD CODE END
+	days_until_expiry: number | null;
 	detection_reason?: string;
+	// One row per certificate (Zeek x509.log), joined to the TLS sessions that sent it
+	fingerprint: string;
+	subject_cn: string;
+	subject_full: string;
+	issuer_org: string;
+	issuer_full: string;
+	key_type: string;
+	key_length: number | null;
+	sig_alg: string;
+	serial: string;
+	san_dns: string[];
+	server_names: string[];
+	clients: string[];
+	first_seen: string;
+	last_seen: string;
+	times_seen: number;
+	self_signed: boolean;
 }
 
 export interface CertificatesResponse {
@@ -51,6 +71,7 @@ export interface IssuerChangesResponse {
 export interface CertStats {
 	total_certs: number;
 	expiring_count: number;
+	expired_count: number;
 	self_signed_count: number;
 	issuer_changes_count: number;
 	from: string;
@@ -134,6 +155,7 @@ export async function getCertStats(from?: string, to?: string): Promise<CertStat
 			return {
 				total_certs: 0,
 				expiring_count: 0,
+				expired_count: 0,
 				self_signed_count: 0,
 				issuer_changes_count: 0,
 				from: '',
@@ -145,6 +167,7 @@ export async function getCertStats(from?: string, to?: string): Promise<CertStat
 		return {
 			total_certs: 0,
 			expiring_count: 0,
+			expired_count: 0,
 			self_signed_count: 0,
 			issuer_changes_count: 0,
 			from: '',

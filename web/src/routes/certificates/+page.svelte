@@ -19,7 +19,10 @@
 
 	// State
 	let certificates = $state<Certificate[]>([]);
-	let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE START — 2026-11-01: stats now include expired_count
+	// let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE END
+	let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
 	let issuerChanges = $state<IssuerChange[]>([]);
 	let loading = $state(true);
 	let statusFilter = $state('all');
@@ -143,7 +146,10 @@
 <div class="certificates-page">
 	<div class="page-header">
 		<h2>TLS Certificate Inventory</h2>
+		<!-- OLD CODE START — 2026-11-01: added the TLS 1.3 visibility note
 		<p class="text-muted">Track observed certificates, detect expiry, self-signed usage, and issuer changes.</p>
+		OLD CODE END -->
+		<p class="text-muted">Track observed certificates, detect expiry, self-signed usage, and issuer changes. TLS 1.3 encrypts certificates, so only those sent in TLS 1.2 or older connections appear here.</p>
 	</div>
 
 	<!-- Hero Stats -->
@@ -155,6 +161,7 @@
 		<div class="stat-card" class:stat-warning={stats.expiring_count > 0}>
 			<span class="stat-label">Expiring (30d)</span>
 			<span class="stat-value">{stats.expiring_count}</span>
+			<span class="stat-hint">{stats.expired_count} already expired</span>
 		</div>
 		<div class="stat-card" class:stat-info={stats.self_signed_count > 0}>
 			<span class="stat-label">Self-Signed</span>
@@ -293,8 +300,32 @@
 						<span class="detail-value">{selectedCert.validation_status || '-'}</span>
 					</div>
 					<div class="detail-row">
+						<span class="detail-label">Server Names</span>
+						<span class="detail-value mono">{selectedCert.server_names?.join(', ') || '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">SAN DNS</span>
+						<span class="detail-value mono" style="word-break: break-all;">{selectedCert.san_dns?.join(', ') || '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">Clients</span>
+						<span class="detail-value mono">{selectedCert.clients?.join(', ') || '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">Key</span>
+						<span class="detail-value">{selectedCert.key_type ? `${selectedCert.key_type} ${selectedCert.key_length ?? ''}` : '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">First Seen</span>
+						<span class="detail-value">{formatDate(selectedCert.first_seen)}</span>
+					</div>
+					<div class="detail-row">
 						<span class="detail-label">Observed</span>
 						<span class="detail-value">{formatDate(selectedCert.timestamp)}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">Sessions</span>
+						<span class="detail-value">{selectedCert.times_seen ?? '-'}</span>
 					</div>
 				</div>
 			</div>
@@ -323,6 +354,13 @@
 	}
 
 	/* stat-card, stat-value, stat-label inherit from global.css */
+
+	.stat-hint {
+		display: block;
+		font-size: var(--text-xs);
+		color: var(--text-dim);
+		margin-top: var(--space-xs);
+	}
 
 	.stat-warning .stat-value { color: var(--amber); }
 	.stat-info .stat-value { color: var(--accent); }

@@ -156,6 +156,7 @@ describe('certificates API client', () => {
 			mockFetchSuccess({
 				total_certs: 42,
 				expiring_count: 3,
+				expired_count: 2,
 				self_signed_count: 1,
 				issuer_changes_count: 0,
 				from: '',
@@ -165,12 +166,14 @@ describe('certificates API client', () => {
 			const stats = await getCertStats();
 			expect(stats.total_certs).toBe(42);
 			expect(stats.expiring_count).toBe(3);
+			expect(stats.expired_count).toBe(2);
 		});
 
 		it('returns zeros on HTTP error', async () => {
 			mockFetchFailure();
 			const stats = await getCertStats();
 			expect(stats.total_certs).toBe(0);
+			expect(stats.expired_count).toBe(0);
 		});
 
 		it('returns zeros on network error', async () => {
