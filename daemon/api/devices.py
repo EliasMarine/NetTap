@@ -16,6 +16,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
@@ -177,6 +178,36 @@ def _device_bool_query(request: web.Request, from_ts: str, to_ts: str) -> dict:
 def _is_skipped_device_ip(ip: str) -> bool:
     """True for broadcast, network-address and multicast IPs, which are not devices."""
     return ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224.")
+
+
+def _lan_device_buckets(
+    client: Any,
+    app: Mapping[str, Any],
+    from_ts: str,
+    to_ts: str,
+    aggs: dict | None = None,
+    page_size: int = PAGE_SIZE,
+) -> list[dict]:
+    """Every device GET /api/devices can list, however many there are (#96).
+
+    Same filters, _MIN_CONNECTIONS threshold and skip rules as the list. Each bucket is
+    shaped like a terms bucket ("key" is the IP), with `aggs` per device.
+    """
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
+        [{"ip": {"terms": {"field": "source.ip"}}}],
+        aggs=aggs,
+        page_size=page_size,
+    )
+    if not complete:
+        logger.warning("Device buckets stopped at %d IPs; figures cover those only", len(buckets))
+    return [
+        {**b, "key": b["key"]["ip"]}
+        for b in buckets
+        if b.get("doc_count", 0) >= _MIN_CONNECTIONS and not _is_skipped_device_ip(b["key"]["ip"])
+    ]
 
 
 def _get_client(request: web.Request):
@@ -1173,23 +1204,29 @@ async def handle_device_count(request: web.Request) -> web.Response:
     #     "aggs": {"unique_devices": {"cardinality": {"field": "zeek.dhcp.assigned_ip"}}},
     # }
     # OLD CODE END
-    query = {
-        "size": 0,
-        "query": {"bool": _device_bool_query(request, from_ts, to_ts)},
-        "aggs": {
-            "devices": {
-                "terms": {
-                    "field": "source.ip",
-                    # shortcut: counts at most _MAX_DEVICE_LIMIT devices, the list's own cap; raise both if a site outgrows it
-                    "size": _MAX_DEVICE_LIMIT,
-                    "min_doc_count": _MIN_CONNECTIONS,
-                }
-            }
-        },
-    }
+    # OLD CODE START — #96: a terms list stops at 500 IPs, so 30 days of DHCP churn on a
+    # bigger network read 500 (the Home device stat)
+    # query = {
+    #     "size": 0,
+    #     "query": {"bool": _device_bool_query(request, from_ts, to_ts)},
+    #     "aggs": {
+    #         "devices": {
+    #             "terms": {
+    #                 "field": "source.ip",
+    #                 # shortcut: counts at most _MAX_DEVICE_LIMIT devices, the list's own cap; raise both if a site outgrows it
+    #                 "size": _MAX_DEVICE_LIMIT,
+    #                 "min_doc_count": _MIN_CONNECTIONS,
+    #             }
+    #         }
+    #     },
+    # }
+    # OLD CODE END
 
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — #96: the capped terms search above
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE END
+        devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices/count: %s", exc)
         return web.json_response(
@@ -1200,8 +1237,11 @@ async def handle_device_count(request: web.Request) -> web.Response:
     # aggs = result.get("aggregations", {})
     # count = aggs.get("unique_devices", {}).get("value", 0)
     # OLD CODE END
-    buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
-    count = sum(1 for b in buckets if not _is_skipped_device_ip(b["key"]))
+    # OLD CODE START — #96: counted the capped terms list
+    # buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    # count = sum(1 for b in buckets if not _is_skipped_device_ip(b["key"]))
+    # OLD CODE END
+    count = len(devices)
 
     return web.json_response(
         {

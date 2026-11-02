@@ -758,12 +758,27 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
         self.assertIn("error", data)
 
 
+def _composite_page(buckets, composite):
+    """One page of a composite aggregation over terms-style `buckets` keyed by IP, in key order."""
+    after = (composite.get("after") or {}).get("ip")
+    rest = [b for b in sorted(buckets, key=lambda b: b["key"]) if after is None or b["key"] > after]
+    page = [{**b, "key": {"ip": b["key"]}} for b in rest[: composite["size"]]]
+    return {"aggregations": {"all": {"buckets": page, **({"after_key": page[-1]["key"]} if page else {})}}}
+
+
 def _route_device_searches(device_response):
-    """search() side effect: the device terms agg gets device_response, the rest empty."""
+    """search() side effect: like OpenSearch, the device terms agg gets the top `size` buckets
+    with min_doc_count, a composite every bucket page by page; the rest empty."""
+    buckets = device_response["aggregations"]["devices"]["buckets"]
 
     def _search(index=None, body=None, **_kwargs):
-        if "devices" in (body or {}).get("aggs", {}):
-            return device_response
+        aggs = (body or {}).get("aggs", {})
+        if "devices" in aggs:
+            terms = aggs["devices"]["terms"]
+            kept = [b for b in buckets if b["doc_count"] >= terms.get("min_doc_count", 1)]
+            return {"aggregations": {"devices": {"buckets": kept[: terms["size"]]}}}
+        if "all" in aggs:
+            return _composite_page(buckets, aggs["all"]["composite"])
         return {
             "hits": {"hits": []},
             "aggregations": {
@@ -856,10 +871,38 @@ class TestDeviceCountHandler(AioHTTPTestCase):
         await self.client.request("GET", "/api/devices/count" + self._RANGE)
 
         list_body, count_body = self._bodies()
-        for body in (list_body, count_body):
-            terms = body["aggs"]["devices"]["terms"]
-            self.assertEqual(terms["field"], "source.ip")
-            self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
+        # OLD CODE START — #96: the count is a composite now and applies the threshold itself
+        # for body in (list_body, count_body):
+        #     terms = body["aggs"]["devices"]["terms"]
+        #     self.assertEqual(terms["field"], "source.ip")
+        #     self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
+        # OLD CODE END
+        terms = list_body["aggs"]["devices"]["terms"]
+        self.assertEqual(terms["field"], "source.ip")
+        self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
+        sources = count_body["aggs"]["all"]["composite"]["sources"]
+        self.assertEqual(sources, [{"ip": {"terms": {"field": "source.ip"}}}])
+
+    @unittest_run_loop
+    async def test_count_drops_ips_under_min_connections(self):
+        buckets = [_device_bucket("192.168.1.10", doc_count=3), _device_bucket("192.168.1.11", doc_count=2)]
+        self.mock_client.search.side_effect = _route_device_searches(_device_list_response(buckets))
+
+        resp = await self.client.request("GET", "/api/devices/count" + self._RANGE)
+
+        self.assertEqual((await resp.json())["count"], 1)
+
+    @unittest_run_loop
+    async def test_count_is_exact_past_500_devices(self):
+        """#96: the count kept the top 500 IPs; 30 days of DHCP churn on a bigger network passes that."""
+        buckets = [_device_bucket(f"192.168.{i // 200}.{i % 200 + 1}", doc_count=5) for i in range(1200)]
+        self.mock_client.search.side_effect = _route_device_searches(_device_list_response(buckets))
+
+        resp = await self.client.request("GET", "/api/devices/count" + self._RANGE)
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["count"], 1200)
+        self.assertEqual(self.mock_client.search.call_count, 3)  # two full pages and an empty one
 
 
 class TestDeviceTimeRange(AioHTTPTestCase):
