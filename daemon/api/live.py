@@ -15,6 +15,7 @@ import logging
 import time
 
 from aiohttp import web
+from opensearchpy import OpenSearchException
 
 from services.live_connections import LiveConnectionTracker
 
@@ -83,12 +84,15 @@ async def handle_live_connections(request: web.Request) -> web.Response:
         limit = 100
 
     # Fetch fresh data from OpenSearch and update cache
-    connections = tracker.fetch_from_opensearch(
-        device=device,
-        proto=proto,
-        country=country,
-        limit=limit,
-    )
+    try:
+        connections = tracker.fetch_from_opensearch(
+            device=device,
+            proto=proto,
+            country=country,
+            limit=limit,
+        )
+    except OpenSearchException as exc:
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
 
     return web.json_response(
         {

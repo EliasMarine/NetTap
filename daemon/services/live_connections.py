@@ -191,11 +191,18 @@ class LiveConnectionTracker:
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
 
+        # OLD CODE START — #96: a failure served the in-memory cache (old, or empty) as live
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error fetching live connections: %s", exc)
+        #     return self.get_active_connections(device, proto, country, limit=limit)
+        # OLD CODE END
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except OpenSearchException as exc:
             logger.error("OpenSearch error fetching live connections: %s", exc)
-            return self.get_active_connections(device, proto, country, limit=limit)
+            raise
 
         hits = result.get("hits", {}).get("hits", [])
         connections = []
@@ -568,18 +575,23 @@ class LiveConnectionTracker:
             },
         }
 
-        try:
-            conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in dashboard connections query: %s", exc)
-            return self._empty_dashboard_response()
-
-        try:
-            alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
-        except OpenSearchException as exc:
-            logger.warning("OpenSearch error in dashboard alert query: %s", exc)
-            # Degrade gracefully — dashboard still works without alert flags
-            alert_result = {}
+        # OLD CODE START — #96: a failed connections query showed an all-zero dashboard, and a
+        # failed alert query showed every connection as alert-free
+        # try:
+        #     conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in dashboard connections query: %s", exc)
+        #     return self._empty_dashboard_response()
+        #
+        # try:
+        #     alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
+        # except OpenSearchException as exc:
+        #     logger.warning("OpenSearch error in dashboard alert query: %s", exc)
+        #     # Degrade gracefully — dashboard still works without alert flags
+        #     alert_result = {}
+        # OLD CODE END
+        conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
+        alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
 
         # --- Post-processing ---
 
@@ -920,28 +932,29 @@ class LiveConnectionTracker:
             },
         }
 
-        # Execute queries — each with independent error handling
-        session_result = {}
-        try:
-            session_result = self._client.search(
-                index=NETWORK_INDEX, body=session_query
-            )
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in detail session query: %s", exc)
-
-        alert_result = {}
-        try:
-            alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
-        except OpenSearchException as exc:
-            logger.warning("OpenSearch error in detail alert query: %s", exc)
-
-        history_result = {}
-        try:
-            history_result = self._client.search(
-                index=NETWORK_INDEX, body=history_query
-            )
-        except OpenSearchException as exc:
-            logger.warning("OpenSearch error in detail history query: %s", exc)
+        # OLD CODE START — #96: each failure blanked its part, so the drawer read 0 alerts,
+        # 0 connections or no location for a pair it never checked
+        # session_result = {}
+        # try:
+        #     session_result = self._client.search(index=NETWORK_INDEX, body=session_query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in detail session query: %s", exc)
+        #
+        # alert_result = {}
+        # try:
+        #     alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
+        # except OpenSearchException as exc:
+        #     logger.warning("OpenSearch error in detail alert query: %s", exc)
+        #
+        # history_result = {}
+        # try:
+        #     history_result = self._client.search(index=NETWORK_INDEX, body=history_query)
+        # except OpenSearchException as exc:
+        #     logger.warning("OpenSearch error in detail history query: %s", exc)
+        # OLD CODE END
+        session_result = self._client.search(index=NETWORK_INDEX, body=session_query)
+        alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
+        history_result = self._client.search(index=NETWORK_INDEX, body=history_query)
 
         # --- Parse session geo/ASN ---
         geo_info = self._parse_session_geo(session_result, dst_ip)
