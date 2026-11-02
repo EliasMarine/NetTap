@@ -290,16 +290,22 @@ class StorageManager:
           - creation_date: ISO-8601 creation date string or None
           - tier: one of "hot", "warm", "cold", "unknown"
           - parsed_date: datetime extracted from index name or None
+
+        Raises:
+            OpenSearchException: if OpenSearch can't be asked (not "no indices").
         """
-        try:
-            raw = self._client.cat.indices(
-                format="json",
-                h="index,store.size,pri.store.size,creation.date.string",
-                s="index",
-            )
-        except OpenSearchException as exc:
-            logger.error("Failed to list indices from OpenSearch: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed request read as "no indices" (0 on the page)
+        # try:
+        #     raw = self._client.cat.indices(...)
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to list indices from OpenSearch: %s", exc)
+        #     return []
+        # OLD CODE END
+        raw = self._client.cat.indices(
+            format="json",
+            h="index,store.size,pri.store.size,creation.date.string",
+            s="index",
+        )
 
         indices: list[dict] = []
         for entry in raw:
@@ -445,7 +451,11 @@ class StorageManager:
         Returns the number of indices deleted.
         """
         with self._cleanup_lock:
-            indices = self.list_indices()
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                logger.error("Failed to list indices from OpenSearch: %s", exc)
+                return 0
             if not indices:
                 logger.debug("No indices found; nothing to prune")
                 return 0
@@ -514,7 +524,11 @@ class StorageManager:
         )
 
         with self._cleanup_lock:
-            indices = self.list_indices()
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                logger.error("Failed to list indices from OpenSearch: %s", exc)
+                return 0
             if not indices:
                 logger.warning("No indices available for emergency pruning")
                 return 0
@@ -1262,19 +1276,23 @@ class StorageManager:
         cutoff = now - timedelta(days=older_than_days)
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Get indices with date parsing
+        # Get indices with date parsing (a failed request raises: no "nothing to delete")
         indices = self.list_indices()
 
         # Get per-index byte sizes from stats API
         index_sizes: dict[str, int] = {}
-        try:
-            stats = self._client.indices.stats(metric="store")
-            for idx_name, idx_data in stats.get("indices", {}).items():
-                index_sizes[idx_name] = (
-                    idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
-                )
-        except OpenSearchException as exc:
-            logger.error("Failed to get index stats for cleanup preview: %s", exc)
+        # OLD CODE START — #96: a failed stats request previewed every index as 0 bytes
+        # try:
+        #     stats = self._client.indices.stats(metric="store")
+        #     ...
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to get index stats for cleanup preview: %s", exc)
+        # OLD CODE END
+        stats = self._client.indices.stats(metric="store")
+        for idx_name, idx_data in stats.get("indices", {}).items():
+            index_sizes[idx_name] = (
+                idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
+            )
 
         # Filter indices older than cutoff, protect today
         target_indices = []
@@ -1374,8 +1392,29 @@ class StorageManager:
             cutoff = now - timedelta(days=older_than_days)
             today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            # Get indices
-            indices = self.list_indices()
+            deleted_indices = 0
+            deleted_pcaps = 0
+            freed_bytes = 0
+            errors: list[str] = []
+
+            # OLD CODE START — #96: a failed index list read as "no indices" (deleted 0,
+            # no error) and failed stats read as 0 bytes freed, both silently
+            # # Get indices
+            # indices = self.list_indices()
+            # # Get byte sizes for reporting
+            # index_sizes: dict[str, int] = {}
+            # try:
+            #     stats = self._client.indices.stats(metric="store")
+            #     ...
+            # except OpenSearchException:
+            #     pass
+            # OLD CODE END
+            # PCAP cleanup still runs when OpenSearch is down; the errors say what didn't
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                indices = []
+                errors.append(f"Could not list indices, none deleted: {exc}")
 
             # Get byte sizes for reporting
             index_sizes: dict[str, int] = {}
@@ -1387,13 +1426,11 @@ class StorageManager:
                         .get("store", {})
                         .get("size_in_bytes", 0)
                     )
-            except OpenSearchException:
-                pass
-
-            deleted_indices = 0
-            deleted_pcaps = 0
-            freed_bytes = 0
-            errors: list[str] = []
+            except OpenSearchException as exc:
+                if indices:
+                    errors.append(
+                        f"Could not read index sizes; freed space excludes indices: {exc}"
+                    )
 
             # Delete indices older than cutoff
             for idx in indices:
@@ -1757,30 +1794,46 @@ class StorageManager:
           - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
           - estimated_daily_gb: estimated daily ingest size
           - source: "daemon"
-          - index_counts, total_indices: index metadata
-        """
-        try:
-            usage_frac = self.check_disk_usage()
-            disk = shutil.disk_usage(self.config.check_path)
-            disk_total_bytes = disk.total
-            disk_used_bytes = disk.used
-            disk_free_bytes = disk.free
-            disk_total_gb = round(disk.total / (1024**3), 2)
-            disk_used_gb = round(disk.used / (1024**3), 2)
-            disk_free_gb = round(disk.free / (1024**3), 2)
-        except OSError:
-            usage_frac = -1.0
-            disk_total_bytes = 0
-            disk_used_bytes = 0
-            disk_free_bytes = 0
-            disk_total_gb = 0
-            disk_used_gb = 0
-            disk_free_gb = 0
+          - index_counts, total_indices: index metadata, or None with
+            ``indices_error`` when OpenSearch couldn't be asked
 
+        Raises:
+            OSError: if the disk can't be read (there are no figures to show).
+        """
+        # OLD CODE START — #96: an unreadable disk showed as 0 bytes at -100% used
+        # try:
+        #     usage_frac = self.check_disk_usage()
+        #     disk = shutil.disk_usage(self.config.check_path)
+        #     ...
+        # except OSError:
+        #     usage_frac = -1.0
+        #     disk_total_bytes = 0
+        #     ... (every disk figure 0)
+        # OLD CODE END
+        usage_frac = self.check_disk_usage()
+        disk = shutil.disk_usage(self.config.check_path)
+        disk_total_bytes = disk.total
+        disk_used_bytes = disk.used
+        disk_free_bytes = disk.free
+        disk_total_gb = round(disk.total / (1024**3), 2)
+        disk_used_gb = round(disk.used / (1024**3), 2)
+        disk_free_gb = round(disk.free / (1024**3), 2)
+
+        # OLD CODE START — #96: OpenSearch down read as 0 indices in every tier
+        # try:
+        #     indices = self.list_indices()
+        # except Exception:
+        #     indices = []
+        # OLD CODE END
+        # The disk figures still matter when OpenSearch is down (often because the
+        # disk is full), so only the index counts become unknown
+        indices_error: str | None = None
         try:
             indices = self.list_indices()
-        except Exception:
+        except Exception as exc:
+            logger.error("Storage status: could not list indices: %s", exc)
             indices = []
+            indices_error = f"Could not list indices: {exc}"
 
         # Count indices per tier
         tier_counts: dict[str, int] = {
@@ -1793,6 +1846,11 @@ class StorageManager:
             tier = idx.get("tier", "unknown")
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
+        unknown_indices = (
+            {"index_counts": None, "total_indices": None, "indices_error": indices_error}
+            if indices_error
+            else {}
+        )
         return {
             # Absolute disk values (bytes) — required by frontend formatBytes()
             "disk_total_bytes": disk_total_bytes,
@@ -1832,6 +1890,7 @@ class StorageManager:
             "last_prune_at": self._last_prune_at,
             # ILM policy application status from RetentionConfigManager
             "ilm_status": self._get_ilm_status(),
+            **unknown_indices,
         }
 
     def _get_ilm_status(self) -> dict:
