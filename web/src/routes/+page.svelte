@@ -566,12 +566,18 @@
 	<!-- OLD CODE START — #96: a failed traffic request would read as "No traffic data yet"
 	{:else if !loading && systemHealth?.opensearch_reachable && !trafficSummary && bandwidthData.length === 0}
 	OLD CODE END -->
+	<!-- OLD CODE START — a loaded summary is never null, so this never showed, even with 0 connections
 	{:else if !loading && systemHealth?.opensearch_reachable && !summaryFailed && !bandwidthFailed && !trafficSummary && bandwidthData.length === 0}
+	OLD CODE END -->
+	{:else if !loading && systemHealth?.opensearch_reachable && !summaryFailed && trafficSummary?.connection_count === 0}
 		<div class="alert alert-info error-banner">
 			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
 			</svg>
+			<!-- OLD CODE START — claimed no logs were indexed at all; the summary only covers the chosen range
 			<span>No traffic data yet. OpenSearch is connected but no network logs have been indexed. Traffic will appear once Zeek and Suricata start capturing.</span>
+			OLD CODE END -->
+			<span>No traffic data yet for this time range. OpenSearch is connected but no network connections have been logged in it. Traffic will appear once Zeek and Suricata are capturing.</span>
 		</div>
 	{/if}
 
