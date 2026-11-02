@@ -644,8 +644,20 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "total_orig_bytes": {"sum": {"field": "source.bytes"}},
             "total_resp_bytes": {"sum": {"field": "destination.bytes"}},
             "unique_destinations": {"cardinality": {"field": "destination.ip"}},
+            # OLD CODE START — #96: the 10 ASNs with the most connections, then shown in bytes
+            # order, so a service with fewer but bigger flows was left out
+            # "top_services": {
+            #     "terms": {"field": "destination.as.full", "size": 10, "shard_size": _ALL_TERMS},
+            # OLD CODE END
+            # Every ASN (biggest first if a device has more), so the top 10 by bytes is exact
+            # after ASNs of one organisation are merged
             "top_services": {
-                "terms": {"field": "destination.as.full", "size": 10, "shard_size": _ALL_TERMS},
+                "terms": {
+                    "field": "destination.as.full",
+                    "size": _ALL_TERMS,
+                    "shard_size": _ALL_TERMS,
+                    "order": {"bytes": "desc"},
+                },
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -745,7 +757,10 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
         for name, m in svc_merged.items()
     ]
-    top_services_list.sort(key=lambda s: s["bytes"], reverse=True)
+    # OLD CODE START — #96: sorted the 10 ASNs with the most connections
+    # top_services_list.sort(key=lambda s: s["bytes"], reverse=True)
+    # OLD CODE END
+    top_services_list = sorted(top_services_list, key=lambda s: s["bytes"], reverse=True)[:10]
 
     first_seen = aggs.get("first_seen", {}).get("value_as_string", "")
     last_seen = aggs.get("last_seen", {}).get("value_as_string", "")

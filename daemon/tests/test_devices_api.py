@@ -1098,6 +1098,49 @@ class TestDeviceTotalsPast10000(AioHTTPTestCase):
         self.assertEqual(data["total_pages"], 200)
 
 
+class TestDeviceTopServicesByBytes(AioHTTPTestCase):
+    """#96: top_services took the 10 ASNs with the most connections, then sorted them by bytes."""
+
+    # Eleven chatty ASNs with little data, and one video service with few, huge flows
+    ASNS = [
+        *({"key": f"AS{100 + i} Chatty {i}", "doc_count": 500 - i, "bytes": {"value": 1_000 + i}} for i in range(11)),
+        {"key": "AS2906 Netflix Inc", "doc_count": 4, "bytes": {"value": 9_000_000_000}},
+    ]
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_device_routes(app, self.storage)
+        return app
+
+    def _search(self, index=None, body=None, **_kwargs):
+        """The detail search answers top_services like OpenSearch: its order, its size."""
+        terms = ((body or {}).get("aggs", {}).get("top_services") or {}).get("terms")
+        if not terms:
+            return {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        by_bytes = terms.get("order") == {"bytes": "desc"}
+        ranked = sorted(self.ASNS, key=lambda b: -(b["bytes"]["value"] if by_bytes else b["doc_count"]))
+        return {
+            "hits": {"total": {"value": 6000}, "hits": []},
+            "aggregations": {"top_services": {"buckets": ranked[: terms["size"]]}},
+        }
+
+    @unittest_run_loop
+    async def test_top_services_are_the_top_10_by_bytes(self):
+        self.mock_client.search.side_effect = self._search
+
+        resp = await self.client.request("GET", "/api/devices/192.168.1.44")
+
+        services = (await resp.json())["device"]["top_services"]
+        self.assertEqual(services[0], {"name": "Netflix Inc", "bytes": 9_000_000_000, "connections": 4})
+        self.assertEqual(len(services), 10)
+        self.assertEqual([s["name"] for s in services[1:]], [f"Chatty {i}" for i in range(10, 1, -1)])
+
+
 class TestDeviceBandwidthInterval(AioHTTPTestCase):
     """#87: Device detail's 7d/30d buttons now work; 30 days at 5 minutes was 8,640 buckets."""
 
