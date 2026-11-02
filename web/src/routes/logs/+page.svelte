@@ -7,6 +7,7 @@
 	import LogDrawerContent from '$components/drawer/content/LogDrawerContent.svelte';
 	import { goto } from '$app/navigation';
 	import { getWhois } from '$api/lookup';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import {
 		getLogStats,
 		getLogTimeline,
@@ -130,6 +131,14 @@
 	let protocols = $state<LogProtocolEntry[]>([]);
 	let topDestinations = $state<LogDestinationEntry[]>([]);
 	let topDns = $state<LogDnsEntry[]>([]);
+	// #96: a failed section keeps its last good figures and says so; it never reads as 0 or "No data"
+	let statsLoaded = $state(false);
+	let statsFailed = $state(false);
+	let timelineFailed = $state(false);
+	let talkersFailed = $state(false);
+	let protocolsFailed = $state(false);
+	let destinationsFailed = $state(false);
+	let dnsFailed = $state(false);
 
 	// Log table state
 	let logType = $state<LogType>('all');
@@ -310,12 +319,19 @@
 			uniqueSources = s.unique_sources;
 			protocolCount = s.protocol_count;
 			totalBytesVal = s.total_bytes;
+			statsLoaded = true;
 		}
 		if (results[1].status === 'fulfilled') timeline = results[1].value.buckets;
 		if (results[2].status === 'fulfilled') topTalkers = results[2].value.talkers;
 		if (results[3].status === 'fulfilled') protocols = results[3].value.protocols;
 		if (results[4].status === 'fulfilled') topDestinations = results[4].value.destinations;
 		if (results[5].status === 'fulfilled') topDns = results[5].value.queries;
+		statsFailed = results[0].status === 'rejected';
+		timelineFailed = results[1].status === 'rejected';
+		talkersFailed = results[2].status === 'rejected';
+		protocolsFailed = results[3].status === 'rejected';
+		destinationsFailed = results[4].status === 'rejected';
+		dnsFailed = results[5].status === 'rejected';
 
 		loading = false;
 	}
@@ -412,6 +428,13 @@
 
 	function handleTimeRangeChange(value: TimeRange) {
 		selectedTimeRange = value;
+		// #96: the last range's figures must not stand in for this range if its load fails
+		statsLoaded = false;
+		timeline = [];
+		topTalkers = [];
+		protocols = [];
+		topDestinations = [];
+		topDns = [];
 		if (initialized) fetchAll();
 	}
 
@@ -619,13 +642,25 @@
 	<!-- ================================================================== -->
 	<!-- Hero Stats                                                         -->
 	<!-- ================================================================== -->
+	{#if statsFailed}
+		<p class="load-note">{loadFailed('log totals', statsLoaded)}</p>
+	{/if}
+	{#if (timelineFailed && timeline.length > 0) || (talkersFailed && topTalkers.length > 0) || (protocolsFailed && protocols.length > 0) || (destinationsFailed && topDestinations.length > 0) || (dnsFailed && topDns.length > 0)}
+		<p class="load-note">Couldn't refresh some charts; they show the last figures loaded.</p>
+	{/if}
+	<!-- OLD CODE START — #96: the totals start at 0, which read as a fact before (or without) a load
+	<span class="stat-value text-white">{formatCompactNumber(totalEvents)}</span>
+	<span class="stat-value text-cyan">{formatCompactNumber(uniqueSources)}</span>
+	<span class="stat-value text-green">{protocolCount}</span>
+	<span class="stat-value text-purple">{formatBytes(totalBytesVal)}</span>
+	OLD CODE END -->
 	<div class="stats-grid">
 		<button
 			class="stat-card clickable"
 			onclick={() => document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Total Events</span>
-			<span class="stat-value text-white">{formatCompactNumber(totalEvents)}</span>
+			<span class="stat-value text-white">{statsLoaded ? formatCompactNumber(totalEvents) : '—'}</span>
 			<span class="stat-hint">All log entries in range</span>
 		</button>
 		<button
@@ -633,7 +668,7 @@
 			onclick={() => document.getElementById('top-talkers-section')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Active Sources</span>
-			<span class="stat-value text-cyan">{formatCompactNumber(uniqueSources)}</span>
+			<span class="stat-value text-cyan">{statsLoaded ? formatCompactNumber(uniqueSources) : '—'}</span>
 			<span class="stat-hint">Unique source IPs</span>
 		</button>
 		<button
@@ -641,7 +676,7 @@
 			onclick={() => document.getElementById('protocol-section')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Protocols</span>
-			<span class="stat-value text-green">{protocolCount}</span>
+			<span class="stat-value text-green">{statsLoaded ? protocolCount : '—'}</span>
 			<span class="stat-hint">Distinct log types</span>
 		</button>
 		<button
@@ -649,7 +684,7 @@
 			onclick={() => document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Data Volume</span>
-			<span class="stat-value text-purple">{formatBytes(totalBytesVal)}</span>
+			<span class="stat-value text-purple">{statsLoaded ? formatBytes(totalBytesVal) : '—'}</span>
 			<span class="stat-hint">Total bytes transferred</span>
 		</button>
 	</div>
@@ -741,6 +776,10 @@
 				<div class="chart-placeholder">
 					<div class="loading-spinner"></div>
 				</div>
+			{:else if timelineFailed}
+				<div class="chart-placeholder">
+					<p class="load-note">{loadFailed('the activity timeline')}</p>
+				</div>
 			{:else}
 				<div class="chart-placeholder">
 					<p class="text-muted">No timeline data available</p>
@@ -770,7 +809,7 @@
 				labelWidth={140}
 				barHeight={12}
 				onclick={(item) => drillByProtocol(item.key)}
-				emptyMessage="No protocol data"
+				emptyMessage={protocolsFailed ? loadFailed('protocols') : 'No protocol data'}
 			/>
 		</section>
 
@@ -795,7 +834,7 @@
 				barHeight={12}
 				activeKey={activeIpFilter}
 				onclick={(item) => drillByIp(item.key)}
-				emptyMessage="No source IP data"
+				emptyMessage={talkersFailed ? loadFailed('top sources') : 'No source IP data'}
 			/>
 		</section>
 	</div>
@@ -825,7 +864,7 @@
 				barHeight={12}
 				activeKey={activeIpFilter}
 				onclick={(item) => drillByIp(item.key)}
-				emptyMessage="No destination data"
+				emptyMessage={destinationsFailed ? loadFailed('top destinations') : 'No destination data'}
 			/>
 		</section>
 
@@ -849,7 +888,7 @@
 				barHeight={12}
 				activeKey={activeDnsFilter}
 				onclick={(item) => drillByDns(item.key)}
-				emptyMessage="No DNS data"
+				emptyMessage={dnsFailed ? loadFailed('top DNS queries') : 'No DNS data'}
 			/>
 		</section>
 	</div>
@@ -1111,6 +1150,12 @@
 	.stat-card.clickable {
 		text-align: left;
 		width: 100%;
+	}
+
+	.load-note {
+		margin: 0;
+		color: var(--amber);
+		font-size: var(--text-sm);
 	}
 
 	.stat-hint {
