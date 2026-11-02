@@ -373,7 +373,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 13: device vendors from Malcolm's source.oui (41 of 53 were Unknown), vendor/hostname
   categories, each IP filed under its most common MAC (routed inter-VLAN legs carry the
   router's MAC: the UDM's registry entry held 3 IoT IPs), Home grid categorised like Devices.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch13.sh.
+  Batch 14: TShark tool filter searched only the first N packets (tshark -c counts packets
+  read; the #50 bug in a second place) and Analyze ignored the typed filter; PCAP path
+  containment by string prefix; PCAP end to end verified (capture, preview, analysis, download).
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch14.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1852,6 +1855,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 122. **On a mirrored uplink, an IP's newest MAC can be the router's (Chain 25)** — a flow routed between VLANs crosses the uplink twice, the second leg with the router as source MAC. Map IP→MAC by the most common MAC (the device's own leg is on every flow), never the latest record.
 123. **Look for Malcolm's enrichment before bundling data (Chain 25)** — the daemon carried 208/500-prefix OUI tables while every record already had Malcolm's full IEEE vendor in `source.oui`. Check what logstash adds to the documents first.
 124. **Two pages showing the same thing must share the rule (Chain 25)** — Home (registry) and Devices (live query) categorised devices by different inputs and disagreed 29 vs 15 Unknown. Reuse the one function, and make the deploy check compare the two pages.
+125. **When a bug is a tool's semantics, grep for every caller of that tool (Chain 25)** — tshark's `-c` counts packets read, not matches. It was fixed for PCAP preview (#50), but the TShark tool built the same `-c N -Y filter` command and returned 0 DNS packets for a busy capture (#64). After such a fix, grep the repo for the same flags.
 
 ---
 
