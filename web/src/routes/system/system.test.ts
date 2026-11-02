@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import SystemPage from './+page.svelte';
 
 /** Every request fails except /api/capture/mode; returns the list of requested URLs. */
@@ -42,5 +42,18 @@ describe('System page bridge panel', () => {
 
 		await vi.waitFor(() => expect(container.querySelector('.bridge-card')).not.toBeNull());
 		await vi.waitFor(() => expect(urls.some((u) => u.startsWith('/api/bridge'))).toBe(true));
+	});
+
+	it('says the capture mode could not be read instead of assuming bridge (#96)', async () => {
+		const urls = stubFetch('unused');
+		vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+			urls.push(String(input));
+			return new Response(JSON.stringify({ error: 'down' }), { status: 503 });
+		});
+
+		const { container } = render(SystemPage);
+
+		expect(await screen.findByText("Couldn't read the capture mode, so bridge status isn't shown.")).toBeInTheDocument();
+		expect(container.querySelector('.bridge-card')).toBeNull();
 	});
 });

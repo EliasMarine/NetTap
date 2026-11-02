@@ -16,6 +16,7 @@
 	let loading = $state(true);
 	// BridgeStatus (and its /api/bridge polling) only makes sense in bridge mode
 	let captureModeName = $state<string | null>(null);
+	let captureModeFailed = $state(false);
 
 	function formatBytes(bytes: number | null | undefined): string {
 		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
@@ -73,9 +74,13 @@
 
 	$effect(() => {
 		fetchAll();
-		getCaptureMode().then((m) => {
-			captureModeName = m.mode;
-		});
+		getCaptureMode()
+			.then((m) => {
+				captureModeName = m.mode;
+			})
+			.catch(() => {
+				captureModeFailed = true; // #96: the getter no longer guesses 'bridge'
+			});
 	});
 </script>
 
@@ -194,6 +199,10 @@
 		OLD CODE END -->
 		{#if captureModeName === 'bridge'}
 			<BridgeStatus />
+		{:else if captureModeFailed}
+			<div class="card">
+				<p class="text-muted">Couldn't read the capture mode, so bridge status isn't shown.</p>
+			</div>
 		{/if}
 
 		<!-- Storage card (full width) -->
