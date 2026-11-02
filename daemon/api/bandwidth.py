@@ -127,7 +127,12 @@ async def handle_devices(request: web.Request) -> web.Response:
         limit = 50
 
     devices = tracker.get_per_device_usage(
-        from_ts, to_ts, limit=limit, excluded_ips=excluded_ips_list
+        from_ts,
+        to_ts,
+        limit=limit,
+        excluded_ips=excluded_ips_list,
+        # same LAN rule as the device list, so both pages show the same devices
+        lan_filter=request.app.get("lan_filter"),
     )
 
     return web.json_response(

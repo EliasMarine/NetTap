@@ -14,7 +14,7 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
-from services.excluded_ips import build_excluded_ips_filter
+from services.excluded_ips import RFC1918_SOURCE_FILTER, build_excluded_ips_filter
 
 logger = logging.getLogger("nettap.services.bandwidth_tracker")
 
@@ -25,6 +25,18 @@ DEFAULT_MONTHLY_CAP_BYTES = 0
 
 # Settings file for bandwidth cap
 _CAP_FILE = os.environ.get("BANDWIDTH_CAP_FILE", "/opt/nettap/data/bandwidth_cap.json")
+
+
+# Per-connection on-the-wire bytes, so terms can be ordered by device bandwidth
+_TOTAL_BYTES_SUM = {
+    "sum": {
+        "script": {
+            "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+            " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+            "lang": "painless",
+        }
+    }
+}
 
 
 class BandwidthTracker:
@@ -225,6 +237,7 @@ class BandwidthTracker:
         to_ts: str,
         limit: int = 50,
         excluded_ips: list[str] | None = None,
+        lan_filter: dict | None = None,
     ) -> list[dict[str, Any]]:
         """Get bandwidth usage per source IP device.
 
@@ -233,18 +246,31 @@ class BandwidthTracker:
             to_ts: ISO timestamp end.
             limit: Max devices to return.
             excluded_ips: Optional list of IPs to exclude from results.
+            lan_filter: Source filter for LAN devices (the device list's rule);
+                defaults to RFC1918 sources.
 
         Returns:
-            List of dicts with ip, total_bytes, orig_bytes, resp_bytes.
+            List of dicts with ip, total_bytes, orig_bytes, resp_bytes, sorted by
+            total bytes; percent_of_total is the share of all LAN traffic.
         """
         if not self._client:
             return []
 
         excluded = build_excluded_ips_filter(excluded_ips or [])
+        # OLD CODE START — replaced 2026-11-01: the top 50 sources by connection count,
+        # sorted by count, internet hosts included, and % of those 50 only. NetTap
+        # itself (6.9 MB, 26K conns) ranked above a 22.7 GB device on the G11.
+        # bool_clause: dict = {"filter": [*self._base_filters(), {"range": ...}]}
+        # "by_device": {"terms": {"field": "source.ip", "size": limit},
+        #     "aggs": {**self._bytes_aggs(), "bucket_sort": {"bucket_sort": {
+        #         "sort": [{"_count": {"order": "desc"}}]}}}}
+        # total_all = sum(orig + resp for b in buckets)
+        # OLD CODE END
         bool_clause: dict = {
             "filter": [
                 *self._base_filters(),
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                lan_filter or RFC1918_SOURCE_FILTER,
             ]
         }
         if excluded:
@@ -254,17 +280,15 @@ class BandwidthTracker:
             "size": 0,
             "query": {"bool": bool_clause},
             "aggs": {
+                **self._bytes_aggs(),
                 "by_device": {
-                    "terms": {"field": "source.ip", "size": limit},
-                    "aggs": {
-                        **self._bytes_aggs(),
-                        "bucket_sort": {
-                            "bucket_sort": {
-                                "sort": [{"_count": {"order": "desc"}}],
-                            }
-                        },
+                    "terms": {
+                        "field": "source.ip",
+                        "size": limit,
+                        "order": {"total_bytes": "desc"},
                     },
-                }
+                    "aggs": {**self._bytes_aggs(), "total_bytes": _TOTAL_BYTES_SUM},
+                },
             },
         }
 
@@ -274,11 +298,10 @@ class BandwidthTracker:
             logger.error("OpenSearch error in get_per_device_usage: %s", exc)
             return []
 
-        buckets = result.get("aggregations", {}).get("by_device", {}).get("buckets", [])
-        total_all = sum(
-            (b.get("orig_bytes", {}).get("value", 0) or 0)
-            + (b.get("resp_bytes", {}).get("value", 0) or 0)
-            for b in buckets
+        aggs = result.get("aggregations", {})
+        buckets = aggs.get("by_device", {}).get("buckets", [])
+        total_all = (aggs.get("orig_bytes", {}).get("value", 0) or 0) + (
+            aggs.get("resp_bytes", {}).get("value", 0) or 0
         )
 
         return [

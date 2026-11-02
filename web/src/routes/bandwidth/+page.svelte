@@ -54,7 +54,11 @@
 	function formatDate(dateStr: string): string {
 		try {
 			const d = new Date(dateStr);
-			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+			// OLD CODE START — 2026-11-01: local time shifted each UTC-midnight bucket back a day west of UTC
+			// return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+			// OLD CODE END
+			// Daily buckets are UTC days (as is "this month"), so label them as such
+			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 		} catch {
 			return dateStr;
 		}
