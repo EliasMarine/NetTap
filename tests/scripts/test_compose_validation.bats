@@ -322,6 +322,28 @@ print('logstash: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: dashboards-helper has PUSER_PRIV_DROP=false with supervisord user=helper (#73)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Same EACCES as logstash: with the default privilege drop, supervisord can't
+    # reopen /dev/fd/1 and idxinit/cron never run (no index pattern, no dashboards).
+    run _compose_query "
+svc = data['services']['dashboards-helper']
+assert svc.get('environment', {}).get('PUSER_PRIV_DROP') == 'false', 'dashboards-helper: PUSER_PRIV_DROP should be false'
+volumes = [str(v) for v in svc.get('volumes', [])]
+assert any('dashboards-helper/supervisord.conf:/etc/supervisord.conf' in v for v in volumes), volumes
+print('dashboards-helper: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
+"
+    [ "$status" -eq 0 ]
+    conf="${REPO_ROOT}/config/dashboards-helper/supervisord.conf"
+    programs=$(grep -c '^\[program:' "$conf")
+    users=$(grep -c '^user=helper$' "$conf")
+    [ "$programs" -gt 0 ]
+    [ "$programs" -eq "$users" ]
+}
+
 @test "compose: non-logstash Malcolm services do NOT set PUSER_PRIV_DROP=false" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
@@ -329,14 +351,14 @@ print('logstash: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
 
     # Most Malcolm services refuse to run as root. They use the entrypoint's su
     # for privilege drop (works since no-new-privileges is removed).
-    # Only logstash needs PUSER_PRIV_DROP=false (supervisord /dev/fd/1 issue).
+    # Only logstash and dashboards-helper need PUSER_PRIV_DROP=false (supervisord
+    # /dev/fd/1 issue; both run their programs as non-root via user=, tests above).
+    # nginx-proxy is gone from the compose file, so it is no longer listed.
     local malcolm_services=(
         opensearch
-        dashboards-helper
         dashboards
         filebeat
         api
-        nginx-proxy
         redis
     )
 

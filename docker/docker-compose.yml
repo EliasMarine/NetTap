@@ -169,9 +169,15 @@ services:
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
       DASHBOARDS_DARKMODE: "true"
       DASHBOARDS_TIMEPICKER_FROM: "now-24h"
+      # Same EACCES as logstash (NET-54): after the entrypoint's su, supervisord
+      # can't reopen /dev/fd/1, so idxinit and cron never ran and Dashboards had no
+      # index pattern or dashboards (#73). supervisord runs as root; the mounted
+      # config runs every program as helper.
+      PUSER_PRIV_DROP: "false"
     volumes:
       - dashboards-helper-data:/opt/dashboards-helper
       - ./curlrc:/var/local/curlrc:ro
+      - ../config/dashboards-helper/supervisord.conf:/etc/supervisord.conf:ro
     networks:
       - default
     depends_on:
