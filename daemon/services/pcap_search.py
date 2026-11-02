@@ -231,6 +231,8 @@ class PcapSearchService:
                 "files_checked": 0,
                 "files_total": len(pcaps),
                 "timed_out": 0,
+                "failed": 0,
+                "error": None,
                 "complete": not pcaps,
             }
             self._search_task = (
@@ -249,15 +251,27 @@ class PcapSearchService:
             "files_total": job["files_total"],
             "complete": job["complete"],
             "timed_out": job["timed_out"],
+            # #96: files tshark couldn't read, and the first reason, so they aren't "no match"
+            "failed": job["failed"],
+            "error": job["error"],
         }
 
     async def _run_search_job(
         self, job_id: int, pcaps: list[dict[str, Any]], bpf_filter: str
     ) -> None:
         for pcap in pcaps:
-            count = await self._count_matching_packets(
-                pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
-            )
+            # OLD CODE START — #96: a file tshark couldn't read counted as "no match"
+            # count = await self._count_matching_packets(
+            #     pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+            # )
+            # OLD CODE END
+            error = None
+            try:
+                count = await self._count_matching_packets(
+                    pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+                )
+            except Exception as exc:
+                count, error = 0, str(exc)
             job = self._search_job
             if job is None or job["id"] != job_id:
                 return  # replaced by a newer search
@@ -267,6 +281,8 @@ class PcapSearchService:
                 "results": job["results"] + found,
                 "files_checked": job["files_checked"] + 1,
                 "timed_out": job["timed_out"] + (count is None),
+                "failed": job["failed"] + (error is not None),
+                "error": job["error"] or error,
             }
         job = self._search_job
         if job is not None and job["id"] == job_id:
@@ -276,6 +292,8 @@ class PcapSearchService:
         self, pcap_file: str, bpf_filter: str, timeout: int = 45
     ) -> int | None:
         """Count packets matching BPF filter in a PCAP file; None if it timed out.
+
+        Raises RuntimeError when tshark couldn't read the file (#96).
 
         Runs tshark inside the nettap-tshark container via docker exec.
         Uses asyncio.create_subprocess_exec (argument-list form, no shell).
@@ -320,23 +338,30 @@ class PcapSearchService:
             lines = stdout.decode(errors="replace").strip().split("\n")
             count = len([line for line in lines if line.strip()])
             # a file still being written can end mid-packet: keep what tshark printed
+            # OLD CODE START — #96: a failed read (bad filter, container down) was "0 matches"
+            # if proc.returncode != 0 and not count:
+            #     logger.debug("tshark filter count failed for %s: %s", pcap_file, ...)
+            # return count
+            # OLD CODE END
             if proc.returncode != 0 and not count:
-                logger.debug(
-                    "tshark filter count failed for %s: %s",
-                    pcap_file,
-                    stderr.decode(errors="replace").strip(),
-                )
+                err = stderr.decode(errors="replace").strip()
+                logger.warning("tshark filter count failed for %s: %s", pcap_file, err)
+                raise RuntimeError(err or f"tshark exited with code {proc.returncode}")
             return count
 
         except asyncio.TimeoutError:
             logger.warning("tshark timed out counting packets in %s", pcap_file)
             return None
-        except FileNotFoundError:
-            logger.error("docker not found in PATH")
-            return 0
-        except Exception as exc:
-            logger.error("Error counting packets in %s: %s", pcap_file, exc)
-            return 0
+        # OLD CODE START — #96: docker missing or any other error read as "0 matches"
+        # except FileNotFoundError:
+        #     logger.error("docker not found in PATH")
+        #     return 0
+        # except Exception as exc:
+        #     logger.error("Error counting packets in %s: %s", pcap_file, exc)
+        #     return 0
+        # OLD CODE END
+        except FileNotFoundError as exc:
+            raise RuntimeError("docker not found in PATH") from exc
 
     # ------------------------------------------------------------------
     # Preview
@@ -442,11 +467,22 @@ class PcapSearchService:
 
             timed_out = proc.returncode in _TIMEOUT_EXIT_CODES
             # a file still being written can end mid-packet: keep what tshark printed
+            # OLD CODE START — #96: a failed preview (container down, unreadable file)
+            # came back as "no packets"
+            # if proc.returncode != 0 and not stdout.strip():
+            #     err_msg = stderr.decode(errors="replace").strip()
+            #     if not timed_out:
+            #         logger.error("tshark preview failed: %s", err_msg)
+            #     return {"packets": [], "timed_out": timed_out}
+            # OLD CODE END
             if proc.returncode != 0 and not stdout.strip():
+                if timed_out:
+                    return {"packets": [], "timed_out": True}
                 err_msg = stderr.decode(errors="replace").strip()
-                if not timed_out:
-                    logger.error("tshark preview failed: %s", err_msg)
-                return {"packets": [], "timed_out": timed_out}
+                logger.error("tshark preview failed: %s", err_msg)
+                raise RuntimeError(
+                    err_msg or f"tshark exited with code {proc.returncode}"
+                )
 
             packets = []
             for line in stdout.decode(errors="replace").strip().split("\n"):
@@ -471,9 +507,14 @@ class PcapSearchService:
         except asyncio.TimeoutError:
             logger.warning("tshark preview timed out for %s", pcap_file)
             return {"packets": [], "timed_out": True}
-        except FileNotFoundError:
-            logger.error("docker not found in PATH")
-            return {"packets": [], "timed_out": False}
+        # OLD CODE START — #96: docker missing read as "no packets"
+        # except FileNotFoundError:
+        #     logger.error("docker not found in PATH")
+        #     return {"packets": [], "timed_out": False}
+        # OLD CODE END
+        except FileNotFoundError as exc:
+            # not FileNotFoundError: the API reads that as "PCAP file not found" (404)
+            raise RuntimeError("docker not found in PATH") from exc
 
     # ------------------------------------------------------------------
     # Download (merge + filter)
@@ -494,7 +535,8 @@ class PcapSearchService:
 
         Uses asyncio.create_subprocess_exec (argument-list form, no shell).
         Returns the path to the temporary filtered PCAP file on the daemon,
-        or None on failure.  Caller is responsible for cleanup.
+        or None when there are no PCAP files; raises RuntimeError when the
+        merge or filter fails (#96).  Caller is responsible for cleanup.
         """
         valid, err = self.validate_bpf_filter(bpf_filter)
         if not valid:
@@ -546,12 +588,13 @@ class PcapSearchService:
                     )
 
                     if proc.returncode != 0:
-                        logger.error(
-                            "mergecap failed: %s",
-                            stderr_bytes.decode(errors="replace").strip(),
-                        )
+                        err = stderr_bytes.decode(errors="replace").strip()
+                        logger.error("mergecap failed: %s", err)
                         os.unlink(tmp_path)
-                        return None
+                        # OLD CODE START — #96: the API answered "No matching PCAP data"
+                        # return None
+                        # OLD CODE END
+                        raise RuntimeError(f"mergecap failed: {err}")
 
                     source_path = container_merged_path
 
@@ -582,13 +625,14 @@ class PcapSearchService:
                 )
 
                 if proc.returncode != 0:
-                    logger.error(
-                        "tshark filter failed: %s",
-                        stderr_bytes.decode(errors="replace").strip(),
-                    )
+                    err = stderr_bytes.decode(errors="replace").strip()
+                    logger.error("tshark filter failed: %s", err)
                     os.unlink(tmp_path)
                     await self._cleanup_container_tmp(container_merged_path, pcap_files)
-                    return None
+                    # OLD CODE START — #96: the API answered "No matching PCAP data"
+                    # return None
+                    # OLD CODE END
+                    raise RuntimeError(f"tshark filter failed: {err}")
 
             # Write captured binary PCAP data to daemon-side temp file
             # (outside semaphore -- no docker exec needed)
@@ -600,17 +644,27 @@ class PcapSearchService:
 
             return tmp_path
 
-        except asyncio.TimeoutError:
+        # OLD CODE START — #96: a timeout or missing docker came back as None, which
+        # the API answers with 404 "No matching PCAP data found"
+        # except asyncio.TimeoutError:
+        #     ... cleanup ...
+        #     return None
+        # except FileNotFoundError as exc:
+        #     logger.error("docker not found: %s", exc)
+        #     ... cleanup ...
+        #     return None
+        # OLD CODE END
+        except asyncio.TimeoutError as exc:
             logger.error("PCAP download operation timed out")
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             await self._cleanup_container_tmp(container_merged_path, pcap_files)
-            return None
+            raise RuntimeError("PCAP download timed out") from exc
         except FileNotFoundError as exc:
             logger.error("docker not found: %s", exc)
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            return None
+            raise RuntimeError("docker not found in PATH") from exc
 
     async def _cleanup_container_tmp(
         self, container_path: str, pcap_files: list[str]

@@ -462,6 +462,50 @@ class TestPreviewTimedOut:
         assert result["timed_out"] is False
 
 
+class TestFailuresAreErrors:
+    """#96: a tshark/docker failure is an error, never "no packets" or "no match"."""
+
+    @pytest.mark.asyncio
+    async def test_failed_preview_raises(self, service, pcap_dir, fake_tshark):
+        fake_tshark.result = (b"", 1)  # e.g. docker: container is not running
+        with pytest.raises(RuntimeError):
+            await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
+
+    @pytest.mark.asyncio
+    async def test_preview_without_docker_raises(self, service, pcap_dir, monkeypatch):
+        async def no_docker(*argv, **kwargs):
+            raise FileNotFoundError("docker")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", no_docker)
+        with pytest.raises(RuntimeError, match="docker not found"):
+            await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
+
+    @pytest.mark.asyncio
+    async def test_failed_count_raises(self, service, fake_tshark):
+        fake_tshark.result = (b"", 4)  # tshark: invalid display filter
+        with pytest.raises(RuntimeError):
+            await service._count_matching_packets("/x.pcap", "dns")
+
+    @pytest.mark.asyncio
+    async def test_background_search_reports_unreadable_files(
+        self, service, fake_tshark
+    ):
+        fake_tshark.result = (b"", 4)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["complete"] is True
+        assert done["failed"] == 3
+        assert done["error"]
+        assert done["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_failed_download_raises_not_no_match(self, service, fake_tshark):
+        fake_tshark.result = (b"", 1)
+        with pytest.raises(RuntimeError):
+            await service.download_filtered("dns")
+
+
 class TestContains:
     """The PCAP directory check resolves ".." and symlinks and rejects sibling directories."""
 
