@@ -14,7 +14,10 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from api.alerts import SURICATA_NOISE_EXCLUSION
-from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
+from api.devices import _lan_device_buckets
+# OLD CODE START — #96: the population's filters come from api.devices._lan_device_bool_query now
+# from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
+# OLD CODE END
 from services.risk_scoring import RiskScorer
 from storage.manager import StorageManager
 
@@ -35,8 +38,21 @@ _DEFAULT_RANGE_HOURS = 24
 # ---------------------------------------------------------------------------
 
 
-# Devices the network baseline (mean and stddev of connections) is taken over, in both views
-_BASELINE_DEVICES = 500
+# OLD CODE START — #96: the baseline came from the busiest 500 devices, so larger sites lost the rest
+# # Devices the network baseline (mean and stddev of connections) is taken over, in both views
+# _BASELINE_DEVICES = 500
+# OLD CODE END
+
+# Scored devices per composite page: ~55 buckets each keeps a page well under search.max_buckets
+_SCORE_PAGE_SIZE = 500
+
+
+def _baseline(counts: list[int]) -> tuple[float, float]:
+    """Mean and population stddev of per-device connection counts."""
+    if not counts:
+        return 0.0, 0.0
+    avg = sum(counts) / len(counts)
+    return avg, (sum((c - avg) ** 2 for c in counts) / len(counts)) ** 0.5
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
@@ -99,6 +115,26 @@ def _build_device_stats(
     }
 
 
+def _device_score_aggs() -> dict:
+    """Per-device aggregations the scorer reads (connection count is the bucket's doc_count)."""
+    return {
+        "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+        "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+        "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+        "external_conns": {
+            "filter": {
+                "bool": {
+                    "must_not": [
+                        {"term": {"destination.ip": "10.0.0.0/8"}},
+                        {"term": {"destination.ip": "172.16.0.0/12"}},
+                        {"term": {"destination.ip": "192.168.0.0/16"}},
+                    ]
+                }
+            }
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
@@ -110,120 +146,141 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     Returns risk scores for all devices in the given time range.
     """
     from_ts, to_ts = _parse_time_range(request)
-    limit_raw = request.query.get("limit", "100")
+    # OLD CODE START — #96: listed the top 100 by default; Compliance compared that with a different top 100
+    # limit_raw = request.query.get("limit", "100")
+    # try:
+    #     limit = max(1, min(500, int(limit_raw)))
+    # except (ValueError, TypeError):
+    #     limit = 100
+    # OLD CODE END
+    # Every device unless a limit is asked for: the list is the device list's whole population
+    limit: int | None = None
     try:
-        limit = max(1, min(500, int(limit_raw)))
-    except (ValueError, TypeError):
-        limit = 100
+        limit = max(1, min(500, int(request.query["limit"])))
+    except (KeyError, ValueError, TypeError):
+        pass
 
     client = _get_client(request)
     risk_scorer: RiskScorer = request.app["risk_scorer"]
 
-    # Query for device connection aggregations
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
-    risk_bool: dict = {
-        "filter": [
-            {
-                "range": {
-                    "@timestamp": {
-                        "gte": from_ts,
-                        "lte": to_ts,
-                        "format": "strict_date_optional_time",
-                    }
-                }
-            },
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
-        ],
-    }
-    if excluded:
-        risk_bool["must_not"] = excluded
-
-    conn_query = {
-        "size": 0,
-        "query": {"bool": risk_bool},
-        "aggs": {
-            "devices": {
-                "terms": {
-                    "field": "source.ip",
-                    # OLD CODE START — #83: the baseline came from the top `limit` devices only
-                    # "size": limit,
-                    # OLD CODE END
-                    "size": _BASELINE_DEVICES,
-                },
-                "aggs": {
-                    # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
-                    # "total_orig_bytes": {
-                    #     "sum": {
-                    #         "script": {
-                    #             "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
-                    #             "lang": "painless",
-                    #         }
-                    #     }
-                    # },
-                    # "total_resp_bytes": {
-                    #     "sum": {
-                    #         "script": {
-                    #             "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
-                    #             "lang": "painless",
-                    #         }
-                    #     }
-                    # },
-                    # OLD CODE END
-                    "total_orig_bytes": {
-                        "sum": {"field": "source.bytes", "missing": 0}
-                    },
-                    "total_resp_bytes": {
-                        "sum": {"field": "destination.bytes", "missing": 0}
-                    },
-                    "ports_used": {"terms": {"field": "destination.port", "size": 50}},
-                    "external_conns": {
-                        "filter": {
-                            "bool": {
-                                "must_not": [
-                                    {"term": {"destination.ip": "10.0.0.0/8"}},
-                                    {"term": {"destination.ip": "172.16.0.0/12"}},
-                                    {"term": {"destination.ip": "192.168.0.0/16"}},
-                                ]
-                            }
-                        }
-                    },
-                },
-            },
-            # OLD CODE START — replaced 2026-11-01: _doc_count is a metadata field, OpenSearch 400s on it (every call 502'd), and nothing read the result
-            # "conn_stats": {"extended_stats": {"field": "_doc_count"}},
-            # OLD CODE END
-        },
-    }
-
+    # OLD CODE START — #96: a terms list of the busiest 500 IPs; the baseline and the list came from it
+    # # Query for device connection aggregations
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # risk_bool: dict = {
+    #     "filter": [
+    #         {
+    #             "range": {
+    #                 "@timestamp": {
+    #                     "gte": from_ts,
+    #                     "lte": to_ts,
+    #                     "format": "strict_date_optional_time",
+    #                 }
+    #             }
+    #         },
+    #         {"term": {"event.provider": "zeek"}},
+    #         {"term": {"event.dataset": "conn"}},
+    #         request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+    #     ],
+    # }
+    # if excluded:
+    #     risk_bool["must_not"] = excluded
+    #
+    # conn_query = {
+    #     "size": 0,
+    #     "query": {"bool": risk_bool},
+    #     "aggs": {
+    #         "devices": {
+    #             "terms": {
+    #                 "field": "source.ip",
+    #                 # OLD CODE START — #83: the baseline came from the top `limit` devices only
+    #                 # "size": limit,
+    #                 # OLD CODE END
+    #                 "size": _BASELINE_DEVICES,
+    #             },
+    #             "aggs": {
+    #                 # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
+    #                 # "total_orig_bytes": {
+    #                 #     "sum": {
+    #                 #         "script": {
+    #                 #             "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
+    #                 #             "lang": "painless",
+    #                 #         }
+    #                 #     }
+    #                 # },
+    #                 # "total_resp_bytes": {
+    #                 #     "sum": {
+    #                 #         "script": {
+    #                 #             "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
+    #                 #             "lang": "painless",
+    #                 #         }
+    #                 #     }
+    #                 # },
+    #                 # OLD CODE END
+    #                 "total_orig_bytes": {
+    #                     "sum": {"field": "source.bytes", "missing": 0}
+    #                 },
+    #                 "total_resp_bytes": {
+    #                     "sum": {"field": "destination.bytes", "missing": 0}
+    #                 },
+    #                 "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+    #                 "external_conns": {
+    #                     "filter": {
+    #                         "bool": {
+    #                             "must_not": [
+    #                                 {"term": {"destination.ip": "10.0.0.0/8"}},
+    #                                 {"term": {"destination.ip": "172.16.0.0/12"}},
+    #                                 {"term": {"destination.ip": "192.168.0.0/16"}},
+    #                             ]
+    #                         }
+    #                     }
+    #                 },
+    #             },
+    #         },
+    #         # OLD CODE START — replaced 2026-11-01: _doc_count is a metadata field, OpenSearch 400s on it (every call 502'd), and nothing read the result
+    #         # "conn_stats": {"extended_stats": {"field": "_doc_count"}},
+    #         # OLD CODE END
+    #     },
+    # }
+    #
+    # try:
+    #     conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in risk scores: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    #
+    # device_buckets = (
+    #     conn_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    # )
+    #
+    # # Mean and population stddev of per-device connection counts, from the terms buckets
+    # if device_buckets:
+    #     counts = [b.get("doc_count", 0) for b in device_buckets]
+    #     network_avg = sum(counts) / len(counts)
+    #     if len(counts) > 1:
+    #         variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
+    #         network_stddev = variance**0.5
+    #     else:
+    #         network_stddev = 0.0
+    # else:
+    #     network_avg = 0.0
+    #     network_stddev = 0.0
+    #
+    # # Buckets come busiest first: the baseline used all of them, the list shows the top `limit`
+    # device_buckets = device_buckets[:limit]
+    # OLD CODE END
+    # #96: every device the device list can show, so the baseline and the ranking are complete
     try:
-        conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
+        device_buckets = _lan_device_buckets(
+            client, request.app, from_ts, to_ts, aggs=_device_score_aggs(), page_size=_SCORE_PAGE_SIZE
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in risk scores: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
-
-    device_buckets = (
-        conn_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
-    )
-
-    # Mean and population stddev of per-device connection counts, from the terms buckets
-    if device_buckets:
-        counts = [b.get("doc_count", 0) for b in device_buckets]
-        network_avg = sum(counts) / len(counts)
-        if len(counts) > 1:
-            variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
-            network_stddev = variance**0.5
-        else:
-            network_stddev = 0.0
-    else:
-        network_avg = 0.0
-        network_stddev = 0.0
-
-    # Buckets come busiest first: the baseline used all of them, the list shows the top `limit`
-    device_buckets = device_buckets[:limit]
+    network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in device_buckets])
 
     # Collect all device IPs for batch alert count query
     device_ips = [b["key"] for b in device_buckets]
@@ -287,8 +344,12 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
             }
         )
 
-    # Sort by score descending (highest risk first)
-    scored_devices.sort(key=lambda d: d["score"], reverse=True)
+    # OLD CODE START — #96: ranked only the busiest devices it had scored
+    # # Sort by score descending (highest risk first)
+    # scored_devices.sort(key=lambda d: d["score"], reverse=True)
+    # OLD CODE END
+    # Highest risk first, the busier device first on a tie; then the top `limit` if one was asked for
+    scored_devices = sorted(scored_devices, key=lambda d: (d["score"], d["connection_count"]), reverse=True)[:limit]
 
     return web.json_response(
         {
@@ -400,47 +461,57 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
         "external_conns": aggs.get("external_conns", {}),
     }
 
-    # Get network-wide stats for anomaly detection
-    net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
-    net_bool: dict = {
-        "filter": [
-            {
-                "range": {
-                    "@timestamp": {
-                        "gte": from_ts,
-                        "lte": to_ts,
-                        "format": "strict_date_optional_time",
-                    }
-                }
-            },
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-            # Same LAN population as /api/risk/scores, so the baseline matches the list view
-            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
-        ],
-    }
-    if net_excluded:
-        net_bool["must_not"] = net_excluded
-
-    network_query = {
-        "size": 0,
-        "query": {"bool": net_bool},
-        "aggs": {"devices": {"terms": {"field": "source.ip", "size": _BASELINE_DEVICES}}},
-    }
-
+    # OLD CODE START — #96: the baseline came from the busiest 500 devices
+    # # Get network-wide stats for anomaly detection
+    # net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # net_bool: dict = {
+    #     "filter": [
+    #         {
+    #             "range": {
+    #                 "@timestamp": {
+    #                     "gte": from_ts,
+    #                     "lte": to_ts,
+    #                     "format": "strict_date_optional_time",
+    #                 }
+    #             }
+    #         },
+    #         {"term": {"event.provider": "zeek"}},
+    #         {"term": {"event.dataset": "conn"}},
+    #         # Same LAN population as /api/risk/scores, so the baseline matches the list view
+    #         request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+    #     ],
+    # }
+    # if net_excluded:
+    #     net_bool["must_not"] = net_excluded
+    #
+    # network_query = {
+    #     "size": 0,
+    #     "query": {"bool": net_bool},
+    #     "aggs": {"devices": {"terms": {"field": "source.ip", "size": _BASELINE_DEVICES}}},
+    # }
+    #
+    # network_avg = 0.0
+    # network_stddev = 0.0
+    # try:
+    #     network_result = client.search(index=NETWORK_INDEX, body=network_query)
+    #     net_buckets = (
+    #         network_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    #     )
+    #     if net_buckets:
+    #         counts = [b.get("doc_count", 0) for b in net_buckets]
+    #         network_avg = sum(counts) / len(counts)
+    #         if len(counts) > 1:
+    #             variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
+    #             network_stddev = variance**0.5
+    # except OpenSearchException as exc:
+    #     logger.warning("Network stats query failed: %s", exc)
+    # OLD CODE END
+    # Network-wide baseline over the list view's population: every device the device list can show
     network_avg = 0.0
     network_stddev = 0.0
     try:
-        network_result = client.search(index=NETWORK_INDEX, body=network_query)
-        net_buckets = (
-            network_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
-        )
-        if net_buckets:
-            counts = [b.get("doc_count", 0) for b in net_buckets]
-            network_avg = sum(counts) / len(counts)
-            if len(counts) > 1:
-                variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
-                network_stddev = variance**0.5
+        devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
+        network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
     except OpenSearchException as exc:
         logger.warning("Network stats query failed: %s", exc)
 

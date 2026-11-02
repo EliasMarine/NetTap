@@ -39,13 +39,16 @@ def _make_mock_storage():
 
 
 def _make_conn_search_result(buckets=None, total=0):
-    """Build a mock OpenSearch connection search result."""
+    """Build a mock OpenSearch connection search result: the last page of the device composite."""
     if buckets is None:
         buckets = []
     return {
         "hits": {"total": {"value": total}},
         "aggregations": {
-            "devices": {"buckets": buckets},
+            # OLD CODE START — #96: the device list was a terms aggregation
+            # "devices": {"buckets": buckets},
+            # OLD CODE END
+            "all": {"buckets": [{**b, "key": {"ip": b["key"]}} for b in buckets]},
             # OLD CODE START — replaced 2026-11-01: the handler no longer asks for conn_stats (it 400'd on _doc_count)
             # "conn_stats": {"count": len(buckets), "avg": 100.0, "std_deviation": 50.0},
             # OLD CODE END
@@ -103,7 +106,10 @@ def _make_network_stats_result(buckets=None):
         ]
     return {
         "hits": {"total": {"value": 300}},
-        "aggregations": {"devices": {"buckets": buckets}},
+        # OLD CODE START — #96: the baseline was a terms aggregation
+        # "aggregations": {"devices": {"buckets": buckets}},
+        # OLD CODE END
+        "aggregations": {"all": {"buckets": [{**b, "key": {"ip": b["key"]}} for b in buckets]}},
     }
 
 
@@ -460,7 +466,10 @@ class TestRiskQueryConsistency(AioHTTPTestCase):
         self.mock_storage._client.search.return_value = _make_conn_search_result()
         resp = await self.client.request("GET", "/api/risk/scores")
         self.assertEqual(resp.status, 200)
-        self._assert_zeek_byte_fields(self._bodies()[0]["aggs"]["devices"]["aggs"])
+        # OLD CODE START — #96: the device list was a terms aggregation
+        # self._assert_zeek_byte_fields(self._bodies()[0]["aggs"]["devices"]["aggs"])
+        # OLD CODE END
+        self._assert_zeek_byte_fields(self._bodies()[0]["aggs"]["all"]["aggs"])
 
     @unittest_run_loop
     async def test_single_endpoint_byte_fields(self):
@@ -529,7 +538,105 @@ class TestRiskQueryConsistency(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.1.10"])
         self.assertEqual(data["network_avg_connections"], 300.0)
-        self.assertEqual(self._bodies()[0]["aggs"]["devices"]["terms"]["size"], 500)
+        # OLD CODE START — #96: the baseline is every device now, not a terms list of 500
+        # self.assertEqual(self._bodies()[0]["aggs"]["devices"]["terms"]["size"], 500)
+        # OLD CODE END
+
+
+def _risk_search(conns: dict[str, int], alerts: dict[str, int] | None = None):
+    """search() side effect that answers like OpenSearch over per-IP connection counts.
+
+    A terms list returns the busiest `size` IPs, a composite every IP page by page in key
+    order, the alert query each IP's alert count.
+    """
+    alerts = alerts or {}
+
+    def bucket(ip):
+        return _make_device_bucket(ip, doc_count=conns[ip])
+
+    def search(index=None, body=None, **_kwargs):
+        aggs = body.get("aggs", {})
+        if "devices" in aggs:
+            busiest = sorted(conns, key=lambda ip: -conns[ip])[: aggs["devices"]["terms"]["size"]]
+            return {"hits": {"total": {"value": 0}}, "aggregations": {"devices": {"buckets": [bucket(ip) for ip in busiest]}}}
+        if "all" in aggs:
+            composite = aggs["all"]["composite"]
+            after = (composite.get("after") or {}).get("ip")
+            page = [ip for ip in sorted(conns) if after is None or ip > after][: composite["size"]]
+            return {"aggregations": {"all": {"buckets": [{**bucket(ip), "key": {"ip": ip}} for ip in page],
+                                             **({"after_key": {"ip": page[-1]}} if page else {})}}}
+        if "by_ip" in aggs:
+            return _make_alert_search_result({ip: n for ip, n in alerts.items() if ip in conns})
+        # The single device's own connection and alert searches
+        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"]["filter"]:
+            return _make_single_alert_result(total=0)
+        return _make_single_conn_result(total=100)
+
+    return search
+
+
+class TestRiskCoversEveryDevice(AioHTTPTestCase):
+    """#96: the baseline and the list cover every device the device list can show."""
+
+    def setUp(self):
+        self.mock_storage = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.mock_storage
+        register_risk_routes(app, RiskScorer(), self.mock_storage)
+        return app
+
+    # 500 busy devices and 100 quiet ones: the busiest 500 left the quiet ones out of the baseline
+    CONNS = {
+        **{f"192.168.{i // 200 + 1}.{i % 200 + 1}": 100 for i in range(500)},
+        **{f"192.168.9.{i + 1}": 10 for i in range(100)},
+    }
+
+    @unittest_run_loop
+    async def test_list_baseline_is_every_device(self):
+        self.mock_storage._client.search.side_effect = _risk_search(self.CONNS)
+
+        data = await (await self.client.request("GET", "/api/risk/scores")).json()
+
+        # (500 * 100 + 100 * 10) / 600 = 85; the busiest 500 alone read 100 with stddev 0
+        self.assertEqual(data["network_avg_connections"], 85.0)
+        self.assertEqual(data["network_stddev_connections"], 33.54)
+
+    @unittest_run_loop
+    async def test_single_baseline_is_every_device(self):
+        self.mock_storage._client.search.side_effect = _risk_search(self.CONNS)
+
+        data = await (await self.client.request("GET", "/api/risk/scores/192.168.1.1")).json()
+
+        anomaly = next(f for f in data["factors"] if f["name"] == "connection_anomaly")
+        # 100 conns vs 85 +/- 33.5 is normal; from the busiest 500 (stddev 0) it was "insufficient data"
+        self.assertEqual(anomaly["description"], "Connection count within normal range (100 conns)")
+
+    @unittest_run_loop
+    async def test_list_has_every_device_and_only_devices(self):
+        """Compliance compares this list with /api/devices/count: same population, all of it."""
+        conns = {
+            **{f"192.168.1.{i + 1}": 50 for i in range(150)},
+            "192.168.2.1": 2,  # under _MIN_CONNECTIONS: not a device on the device list
+            "192.168.2.255": 50,  # broadcast: skipped by the device list
+        }
+        self.mock_storage._client.search.side_effect = _risk_search(conns)
+
+        data = await (await self.client.request("GET", "/api/risk/scores")).json()
+
+        self.assertEqual(data["device_count"], 150)
+        self.assertEqual({d["ip"] for d in data["devices"]}, {f"192.168.1.{i + 1}" for i in range(150)})
+
+    @unittest_run_loop
+    async def test_limit_takes_the_highest_scores_of_every_device(self):
+        """A quiet device with many alerts ranks first; the list used to score only the busiest."""
+        self.mock_storage._client.search.side_effect = _risk_search(self.CONNS, {"192.168.9.7": 20})
+
+        data = await (await self.client.request("GET", "/api/risk/scores?limit=1")).json()
+
+        self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.9.7"])
 
 
 class TestRiskRouteRegistration(AioHTTPTestCase):
