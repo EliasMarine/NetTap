@@ -18,12 +18,13 @@ from services.traffic_classifier import get_category_stats
 
 
 def _mock_os_response(asn_buckets):
+    # #96: one composite page (no after_key), as all_buckets reads it
     return {
         "aggregations": {
-            "asn_breakdown": {
+            "all": {
                 "buckets": [
                     {
-                        "key": name,
+                        "key": {"asn": name},
                         "doc_count": count,
                         "total_bytes": {"value": bytes_val},
                     }

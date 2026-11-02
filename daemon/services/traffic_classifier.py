@@ -10,6 +10,8 @@ import fnmatch
 import logging
 import os
 
+from storage.all_buckets import all_buckets
+
 logger = logging.getLogger("nettap.services.traffic_classifier")
 
 # ---------------------------------------------------------------------------
@@ -614,51 +616,90 @@ def get_category_label(key: str) -> str:
 
 async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     """Aggregate traffic bytes by ASN organisation, map to categories."""
+    # OLD CODE START — #96: the top 500 ASNs only; past 500 the rest dropped out of every category
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 {"term": {"event.provider": "zeek"}},
+    #                 {"term": {"event.dataset": "conn"}},
+    #                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+    #             ]
+    #         }
+    #     },
+    #     "aggs": {
+    #         "asn_breakdown": {
+    #             "terms": {
+    #                 "field": "destination.as.full",
+    #                 "size": 500,
+    #             },
+    #             "aggs": {
+    #                 "total_bytes": {
+    #                     "sum": {
+    #                         "script": {
+    #                             "source": (
+    #                                 "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+    #                                 " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+    #                             ),
+    #                             "lang": "painless",
+    #                         }
+    #                     }
+    #                 },
+    #             },
+    #         }
+    #     },
+    # }
+    #
+    # try:
+    #     resp = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
+    #     return []
+    # OLD CODE END
     query = {
-        "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
-                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-                ]
-            }
-        },
-        "aggs": {
-            "asn_breakdown": {
-                "terms": {
-                    "field": "destination.as.full",
-                    "size": 500,
-                },
-                "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": (
-                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
-                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                                ),
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                },
-            }
-        },
+        "bool": {
+            "filter": [
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ]
+        }
     }
-
+    bytes_sum = {
+        "sum": {
+            "script": {
+                "source": (
+                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                ),
+                "lang": "painless",
+            }
+        }
+    }
     try:
-        resp = client.search(index=NETWORK_INDEX, body=query)
+        buckets, complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            query,
+            [{"asn": {"terms": {"field": "destination.as.full"}}}],
+            aggs={"total_bytes": bytes_sum},
+        )
     except Exception:
         logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
         return []
+    if not complete:
+        logger.warning("get_category_stats: stopped at %d ASNs; totals are short", len(buckets))
 
     cat_data: dict[str, dict] = {}
-    for bucket in (
-        resp.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", [])
-    ):
-        asn_full = bucket["key"]
+    # OLD CODE START — #96: read the capped terms list
+    # for bucket in (
+    #     resp.get("aggregations", {}).get("asn_breakdown", {}).get("buckets", [])
+    # ):
+    #     asn_full = bucket["key"]
+    # OLD CODE END
+    for bucket in buckets:
+        asn_full = bucket["key"]["asn"]
         cat_key = classify_asn(asn_full)
         total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
         doc_count = bucket.get("doc_count", 0)

@@ -1,9 +1,11 @@
 """#96: traffic figures stay whole once a network passes a list's cap.
 
-A fake OpenSearch answers each search from a list of documents, honouring the body's size,
-sort and aggregations, so a figure derived from a capped list comes out short.
+A fake OpenSearch answers each search from a list of documents, honouring the body's query,
+size, sort and aggregations (terms with size/order/missing, composite paging, metrics), so a
+figure derived from a capped list comes out short exactly as it would on a real cluster.
 """
 
+import fnmatch
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -25,60 +27,152 @@ def _field(doc: dict, path: str):
     return doc
 
 
+def _matches(doc: dict, q: dict | None) -> bool:
+    if not q or "match_all" in q or "range" in q:  # every fake doc is inside the window
+        return True
+    if "bool" in q:
+        b = q["bool"]
+        required = [*b.get("filter", []), *b.get("must", [])]
+        should = b.get("should", [])
+        need = b.get("minimum_should_match", 0 if required else 1)
+        return (
+            all(_matches(doc, c) for c in required)
+            and not any(_matches(doc, c) for c in b.get("must_not", []))
+            and sum(_matches(doc, c) for c in should) >= (need if should else 0)
+        )
+    (kind, spec), = q.items()
+    (field, value), = spec.items()
+    if kind == "term":
+        return _field(doc, field) == value
+    if kind == "terms":
+        return _field(doc, field) in value
+    if kind == "wildcard":
+        return fnmatch.fnmatchcase(str(_field(doc, field) or ""), value)
+    raise ValueError(f"fake OpenSearch has no {kind!r} query")
+
+
 def _metric(docs: list[dict], agg: dict) -> dict:
     if "sum" in agg:
-        return {"value": float(sum(_field(d, agg["sum"]["field"]) or 0 for d in docs))}
+        spec = agg["sum"]
+        if "script" in spec:  # every bytes script in traffic code is source + destination bytes
+            assert "source.bytes" in spec["script"]["source"]
+            assert "destination.bytes" in spec["script"]["source"]
+            fields = ["source.bytes", "destination.bytes"]
+        else:
+            fields = [spec["field"]]
+        return {"value": float(sum(_field(d, f) or 0 for d in docs for f in fields))}
     kind = "min" if "min" in agg else "max"
-    values = [_field(d, agg[kind]["field"]) for d in docs]
-    values = [v for v in values if v is not None]
+    values = [v for v in (_field(d, agg[kind]["field"]) for d in docs) if v is not None]
     if not values:
         return {"value": None}
     return {"value": 0.0, "value_as_string": (min if kind == "min" else max)(values)}
 
 
-def _terms(docs: list[dict], agg: dict) -> dict:
-    counts: dict = {}
+def _groups(docs: list[dict], field: str, missing=None) -> dict:
+    out: dict = {}
     for d in docs:
-        key = _field(d, agg["terms"]["field"])
+        key = _field(d, field)
+        key = missing if key is None else key
         if key is not None:
-            counts[key] = counts.get(key, 0) + 1
-    ranked = sorted(counts.items(), key=lambda kv: -kv[1])
-    size = agg["terms"].get("size", 10)
+            out = {**out, key: [*out.get(key, []), d]}
+    return out
+
+
+def _bucket(key, docs: list[dict], sub: dict) -> dict:
+    return {"key": key, "doc_count": len(docs), **_aggregate(docs, sub)}
+
+
+def _terms(docs: list[dict], spec: dict, sub: dict) -> dict:
+    groups = _groups(docs, spec["field"], spec.get("missing"))
+    buckets = [_bucket(k, g, sub) for k, g in groups.items()]
+    if spec.get("order"):
+        (metric, _direction), = spec["order"].items()
+        buckets = sorted(buckets, key=lambda b: -b[metric]["value"])
+    else:
+        buckets = sorted(buckets, key=lambda b: -b["doc_count"])
+    size = spec.get("size", 10)
     return {
-        "buckets": [{"key": k, "doc_count": n} for k, n in ranked[:size]],
-        "sum_other_doc_count": sum(n for _, n in ranked[size:]),
+        "doc_count_error_upper_bound": 0,
+        "sum_other_doc_count": sum(b["doc_count"] for b in buckets[size:]),
+        "buckets": buckets[:size],
     }
 
 
-def fake_hits_search(docs: list[dict]):
-    """A search() over `docs` that honours size, @timestamp sort, track_total_hits and flat aggs."""
+def _composite(docs: list[dict], spec: dict, sub: dict) -> dict:
+    (name, source), = spec["sources"][0].items()
+    groups = _groups(docs, source["terms"]["field"])
+    after = (spec.get("after") or {}).get(name)
+    keys = [k for k in sorted(groups) if after is None or k > after][: spec["size"]]
+    page = {"buckets": [_bucket({name: k}, groups[k], sub) for k in keys]}
+    return {**page, "after_key": {name: keys[-1]}} if keys else page
+
+
+def _aggregate(docs: list[dict], aggs: dict) -> dict:
+    out = {}
+    for name, agg in aggs.items():
+        sub = agg.get("aggs", {})
+        if "terms" in agg:
+            out[name] = _terms(docs, agg["terms"], sub)
+        elif "composite" in agg:
+            out[name] = _composite(docs, agg["composite"], sub)
+        else:
+            out[name] = _metric(docs, agg)
+    return out
+
+
+def fake_search(docs: list[dict]):
+    """A search() over `docs`, for MagicMock.side_effect."""
 
     def search(index: str, body: dict) -> dict:
+        matched = [d for d in docs if _matches(d, body.get("query"))]
         sort = (body.get("sort") or [{"@timestamp": {"order": "asc"}}])[0]["@timestamp"]["order"]
-        rows = sorted(docs, key=lambda d: d["@timestamp"], reverse=sort == "desc")
-        total = len(docs) if body.get("track_total_hits") else min(len(docs), 10_000)
-        aggs = {
-            name: _terms(docs, agg) if "terms" in agg else _metric(docs, agg)
-            for name, agg in body.get("aggs", {}).items()
-        }
+        rows = sorted(matched, key=lambda d: d.get("@timestamp", ""), reverse=sort == "desc")
+        total = len(matched) if body.get("track_total_hits") else min(len(matched), 10_000)
         return {
             "hits": {
                 "total": {"value": total},
                 "hits": [{"_id": str(i), "_source": d} for i, d in enumerate(rows[: body.get("size", 10)])],
             },
-            "aggregations": aggs,
+            "aggregations": _aggregate(matched, body.get("aggs", {})),
         }
 
     return search
 
 
-def _app(client: MagicMock) -> web.Application:
-    with patch.object(StorageManager, "_create_client", return_value=client):
-        storage = StorageManager(RetentionConfig(), "http://localhost:9200")
-    app = web.Application()
-    app["storage"] = storage
-    register_traffic_routes(app, storage)
-    return app
+def _conn(src: str, dst: str, asn: str | None, src_bytes: int, dst_bytes: int, **extra) -> dict:
+    doc = {
+        "@timestamp": "2026-11-01T12:00:00.000Z",
+        "event": {"provider": "zeek", "dataset": "conn"},
+        "source": {"ip": src, "bytes": src_bytes},
+        "destination": {"ip": dst, "bytes": dst_bytes},
+        "network": {"transport": "tcp"},
+    }
+    if asn:
+        doc["destination"]["as"] = {"full": asn}
+    return {**doc, **extra}
+
+
+class _FakeOpenSearchCase(AioHTTPTestCase):
+    """Traffic routes over a fake OpenSearch holding DOCS."""
+
+    DOCS: list[dict] = []
+
+    async def get_application(self):
+        self.mock_client = MagicMock()
+        self.mock_client.search.side_effect = fake_search(self.DOCS)
+        with patch.object(StorageManager, "_create_client", return_value=self.mock_client):
+            storage = StorageManager(RetentionConfig(), "http://localhost:9200")
+        app = web.Application()
+        app["storage"] = storage
+        register_traffic_routes(app, storage)
+        return app
+
+    async def _get(self, path: str) -> dict:
+        resp = await self.client.request(
+            "GET", f"{path}{'&' if '?' in path else '?'}from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z"
+        )
+        self.assertEqual(resp.status, 200, path)
+        return await resp.json()
 
 
 def _pair_history(count: int) -> list[dict]:
@@ -86,6 +180,7 @@ def _pair_history(count: int) -> list[dict]:
     return [
         {
             "@timestamp": f"2026-11-01T{i // 60:02d}:{i % 60:02d}:00.000Z",
+            "event": {"provider": "zeek", "dataset": "conn"},
             "source": {"ip": "192.168.1.50", "bytes": 100},
             "destination": {"ip": "192.168.1.1", "bytes": 300},
             "network": {"transport": "udp" if i == count - 1 else "tcp"},
@@ -94,23 +189,14 @@ def _pair_history(count: int) -> list[dict]:
     ]
 
 
-class TestRelatedConnectionsWholeWindow(AioHTTPTestCase):
+class TestRelatedConnectionsWholeWindow(_FakeOpenSearchCase):
     """The Connection drawer's pair summary counts every connection, not the 200 rows listed."""
 
-    async def get_application(self):
-        self.mock_client = MagicMock()
-        self.mock_client.search.side_effect = fake_hits_search(_pair_history(250))
-        return _app(self.mock_client)
+    DOCS = _pair_history(250)
 
     @unittest_run_loop
     async def test_summary_covers_all_250_connections(self):
-        resp = await self.client.request(
-            "GET",
-            "/api/traffic/connections/related?src_ip=192.168.1.50&dst_ip=192.168.1.1"
-            "&from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z",
-        )
-        self.assertEqual(resp.status, 200)
-        data = await resp.json()
+        data = await self._get("/api/traffic/connections/related?src_ip=192.168.1.50&dst_ip=192.168.1.1")
 
         self.assertEqual(data["total_connections"], 250)  # was 200
         self.assertEqual(data["total_bytes"], 250 * 400)  # was 80,000
@@ -120,3 +206,29 @@ class TestRelatedConnectionsWholeWindow(AioHTTPTestCase):
         # the listed rows stay capped, newest first
         self.assertEqual(len(data["connections"]), 200)
         self.assertEqual(data["connections"][0]["@timestamp"], "2026-11-01T04:09:00.000Z")
+
+
+def _past_500_asns() -> list[dict]:
+    """600 busy unclassified ASNs (2 connections each) and one quiet Netflix ASN (1 connection)."""
+    busy = [
+        _conn("192.168.1.10", f"203.0.113.{n % 250}", f"AS{64_000 + n} Hosting Org {n}", 400, 600)
+        for n in range(600)
+        for _ in range(2)
+    ]
+    return [*busy, _conn("192.168.1.11", "198.51.100.7", "AS2906 Netflix Inc", 400, 600)]
+
+
+class TestCategoriesPast500Asns(_FakeOpenSearchCase):
+    """Home's category bars count every ASN, not the 500 with the most connections."""
+
+    DOCS = _past_500_asns()
+
+    @unittest_run_loop
+    async def test_every_asn_reaches_its_category(self):
+        cats = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+
+        self.assertIn("streaming", cats)  # the 601st ASN was dropped
+        self.assertEqual(cats["streaming"]["total_bytes"], 1_000)
+        self.assertEqual(cats["streaming"]["connection_count"], 1)
+        self.assertEqual(cats["other"]["connection_count"], 1_200)  # was 1,000
+        self.assertEqual(sum(c["total_bytes"] for c in cats.values()), 1_201_000)

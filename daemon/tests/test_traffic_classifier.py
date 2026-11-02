@@ -241,12 +241,13 @@ class TestGetCategoryStats(unittest.TestCase):
     @staticmethod
     def _asn_response(asn_buckets):
         """Helper to build a mock OpenSearch ASN aggregation response."""
+        # #96: one composite page (no after_key), as all_buckets reads it
         return {
             "aggregations": {
-                "asn_breakdown": {
+                "all": {
                     "buckets": [
                         {
-                            "key": name,
+                            "key": {"asn": name},
                             "doc_count": count,
                             "total_bytes": {"value": bytes_val},
                         }
