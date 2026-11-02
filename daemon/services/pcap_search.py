@@ -269,6 +269,11 @@ class PcapSearchService:
             "docker",
             "exec",
             _TSHARK_CONTAINER,
+            # background searches share the container's 0.5 CPU with previews and
+            # analysis; lowest priority keeps those inside the web proxy's timeout
+            "nice",
+            "-n",
+            "19",
             "tshark",
             "-r",
             container_path,

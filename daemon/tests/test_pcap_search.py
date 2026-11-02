@@ -419,3 +419,12 @@ class TestFilteredPreview:
         await service.preview(str(pcap_dir / "capture_001.pcap"), limit=100)
         (argv,) = fake_tshark.calls
         assert argv[argv.index("-c") + 1] == "100"
+
+
+@pytest.mark.asyncio
+async def test_search_reads_run_at_lowest_priority(service, fake_tshark):
+    """A background search must not starve previews of the container's 0.5 CPU."""
+    await service.search_progress("dns")
+    await service._search_task
+    for argv in fake_tshark.calls:
+        assert argv[7:10] == ["nice", "-n", "19"], argv
