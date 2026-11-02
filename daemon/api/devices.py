@@ -16,6 +16,7 @@ from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
+from services.dns_analytics import DNS_NOISE_EXCLUSION
 from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.traffic_classifier import classify_asn, CATEGORIES
 from api.alerts import _normalize_alert_source
@@ -37,6 +38,9 @@ _MAX_DEVICE_LIMIT = 500
 
 # Allowed sort fields for device listing
 _ALLOWED_SORT_FIELDS = {"bytes", "connections", "alerts", "last_seen", "first_seen"}
+
+# Fewest conn records an IP needs to be a device; 3 keeps quiet phones/IoT but drops stray packets
+_MIN_CONNECTIONS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +102,30 @@ def _time_range_filter(from_ts: str, to_ts: str) -> dict:
             }
         }
     }
+
+
+def _device_bool_query(request: web.Request, from_ts: str, to_ts: str) -> dict:
+    """Bool query for LAN-source Zeek conn records, minus excluded IPs.
+
+    Shared by the device list and the device count so the two always agree.
+    """
+    bool_query: dict = {
+        "filter": [
+            _time_range_filter(from_ts, to_ts),
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "conn"}},
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+        ],
+    }
+    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    if excluded:
+        bool_query["must_not"] = excluded
+    return bool_query
+
+
+def _is_skipped_device_ip(ip: str) -> bool:
+    """True for broadcast, network-address and multicast IPs, which are not devices."""
+    return ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224.")
 
 
 def _get_client(request: web.Request):
@@ -204,9 +232,11 @@ async def handle_device_list(request: web.Request) -> web.Response:
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)
 
-    # Minimum connection threshold — IPs with fewer connections are noise
-    # (ARP probes, broadcast replies, one-off scans)
-    _MIN_CONNECTIONS = 20
+    # OLD CODE START — replaced 2026-11-01: 20 hid quiet phones/IoT; now module-level _MIN_CONNECTIONS = 3, shared with the count
+    # # Minimum connection threshold — IPs with fewer connections are noise
+    # # (ARP probes, broadcast replies, one-off scans)
+    # _MIN_CONNECTIONS = 20
+    # OLD CODE END
 
     # Map user-facing sort names to aggregation sort keys
     sort_map = {
@@ -221,17 +251,20 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # Fetch more than needed if sorting by alerts (post-query sort)
     fetch_size = limit * 2 if sort_field == "alerts" else limit
 
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
-    bool_query: dict = {
-        "filter": [
-            _time_range_filter(from_ts, to_ts),
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
-            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
-        ],
-    }
-    if excluded:
-        bool_query["must_not"] = excluded
+    # OLD CODE START — replaced 2026-11-01: moved into _device_bool_query so the count uses the same filters
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # bool_query: dict = {
+    #     "filter": [
+    #         _time_range_filter(from_ts, to_ts),
+    #         {"term": {"event.provider": "zeek"}},
+    #         {"term": {"event.dataset": "conn"}},
+    #         request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+    #     ],
+    # }
+    # if excluded:
+    #     bool_query["must_not"] = excluded
+    # OLD CODE END
+    bool_query = _device_bool_query(request, from_ts, to_ts)
 
     # No DHCP pre-filter — DHCP data may not be available (NetTap captures
     # between modem and router, DHCP happens on the LAN side). Instead, use
@@ -324,7 +357,11 @@ async def handle_device_list(request: web.Request) -> web.Response:
         ip = b["key"]
 
         # Skip broadcast, multicast, and gateway-pattern IPs
-        if ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224."):
+        # OLD CODE START — replaced 2026-11-01: moved into _is_skipped_device_ip, shared with the count
+        # if ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224."):
+        #     continue
+        # OLD CODE END
+        if _is_skipped_device_ip(ip):
             continue
 
         total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
@@ -566,7 +603,8 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "dns"}},
-                ]
+                ],
+                "must_not": DNS_NOISE_EXCLUSION,
             }
         },
         "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50}}},
@@ -977,25 +1015,40 @@ async def handle_device_ports(request: web.Request) -> web.Response:
 async def handle_device_count(request: web.Request) -> web.Response:
     """GET /api/devices/count?from=&to=
 
-    Returns the count of unique DHCP-leased devices (unique client IPs
-    seen in Zeek DHCP logs). This is more accurate than counting all
-    unique source IPs from conn logs, which includes stale/unleased IPs.
+    Returns how many devices GET /api/devices would list for the same range:
+    same filters, same _MIN_CONNECTIONS threshold, same skip rules.
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
 
+    # OLD CODE START — replaced 2026-11-01: a mirror on the uplink sees almost no DHCP, so this said 3 while the list showed 27
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 _time_range_filter(from_ts, to_ts),
+    #                 {"term": {"event.provider": "zeek"}},
+    #                 {"term": {"event.dataset": "dhcp"}},
+    #             ]
+    #         }
+    #     },
+    #     "aggs": {"unique_devices": {"cardinality": {"field": "zeek.dhcp.assigned_ip"}}},
+    # }
+    # OLD CODE END
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "dhcp"}},
-                ]
+        "query": {"bool": _device_bool_query(request, from_ts, to_ts)},
+        "aggs": {
+            "devices": {
+                "terms": {
+                    "field": "source.ip",
+                    # shortcut: counts at most _MAX_DEVICE_LIMIT devices, the list's own cap; raise both if a site outgrows it
+                    "size": _MAX_DEVICE_LIMIT,
+                    "min_doc_count": _MIN_CONNECTIONS,
+                }
             }
         },
-        "aggs": {"unique_devices": {"cardinality": {"field": "zeek.dhcp.assigned_ip"}}},
     }
 
     try:
@@ -1006,8 +1059,12 @@ async def handle_device_count(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    aggs = result.get("aggregations", {})
-    count = aggs.get("unique_devices", {}).get("value", 0)
+    # OLD CODE START — replaced 2026-11-01: DHCP cardinality, see the query above
+    # aggs = result.get("aggregations", {})
+    # count = aggs.get("unique_devices", {}).get("value", 0)
+    # OLD CODE END
+    buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    count = sum(1 for b in buckets if not _is_skipped_device_ip(b["key"]))
 
     return web.json_response(
         {

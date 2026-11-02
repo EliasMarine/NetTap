@@ -41,6 +41,15 @@ _OS_PATTERNS = [
 ]
 
 
+def _mac_from_hit(hit: dict) -> str | None:
+    """Read source.mac from a search hit's nested _source (Malcolm may store a list)."""
+    source = hit.get("_source", {}).get("source")
+    mac = source.get("mac") if isinstance(source, dict) else None
+    if isinstance(mac, list):
+        mac = next((m for m in mac if m), None)
+    return mac or None
+
+
 class DeviceFingerprint:
     """Passive device fingerprinting from Arkime session data."""
 
@@ -181,7 +190,10 @@ class DeviceFingerprint:
             result = client.search(index=NETWORK_INDEX, body=dhcp_query)
             hits = result.get("hits", {}).get("hits", [])
             if hits:
-                mac = hits[0].get("_source", {}).get("source.mac")
+                # OLD CODE START — replaced 2026-11-01: _source is nested, the flat "source.mac" key never exists
+                # mac = hits[0].get("_source", {}).get("source.mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hits[0])
                 if mac:
                     return mac
         except Exception as exc:
@@ -215,7 +227,10 @@ class DeviceFingerprint:
             result = client.search(index=NETWORK_INDEX, body=conn_query)
             hits = result.get("hits", {}).get("hits", [])
             if hits:
-                mac = hits[0].get("_source", {}).get("source.mac")
+                # OLD CODE START — replaced 2026-11-01: _source is nested, the flat "source.mac" key never exists
+                # mac = hits[0].get("_source", {}).get("source.mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hits[0])
                 if mac:
                     return mac
         except Exception as exc:

@@ -477,7 +477,7 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         alert_resp = {"hits": {"total": {"value": 2}}}
         # Fingerprint: DHCP returns MAC
         dhcp_resp = {
-            "hits": {"hits": [{"_source": {"source.mac": "00:03:93:11:22:33"}}]}
+            "hits": {"hits": [{"_source": {"source": {"mac": "00:03:93:11:22:33"}}}]}
         }
         # Fingerprint: DNS hostname
         hostname_resp = {
@@ -525,6 +525,17 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         self.assertEqual(device["alert_count"], 2)
         self.assertEqual(len(device["dns_queries"]), 1)
         self.assertEqual(device["dns_queries"][0]["domain"], "example.com")
+        # Malcolm's own pcap-monitor lookups are not the device's DNS
+        dns_bodies = [
+            c.kwargs["body"]
+            for c in self.mock_client.search.call_args_list
+            if "dns_queries" in c.kwargs["body"].get("aggs", {})
+        ]
+        self.assertEqual(len(dns_bodies), 1)
+        self.assertIn(
+            {"term": {"zeek.dns.query": "pcap-monitor"}},
+            dns_bodies[0]["query"]["bool"]["must_not"],
+        )
 
     @unittest_run_loop
     async def test_device_detail_not_found_returns_empty(self):
@@ -721,6 +732,110 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 502)
         data = await resp.json()
         self.assertIn("error", data)
+
+
+def _route_device_searches(device_response):
+    """search() side effect: the device terms agg gets device_response, the rest empty."""
+
+    def _search(index=None, body=None, **_kwargs):
+        if "devices" in (body or {}).get("aggs", {}):
+            return device_response
+        return {
+            "hits": {"hits": []},
+            "aggregations": {
+                "by_ip": {"buckets": []},
+                "top_hostname": {"buckets": []},
+                "top_ua": {"buckets": []},
+            },
+        }
+
+    return _search
+
+
+class TestDeviceCountHandler(AioHTTPTestCase):
+    """Tests for GET /api/devices/count agreeing with GET /api/devices."""
+
+    _RANGE = "?from=2026-02-25T00:00:00Z&to=2026-02-26T00:00:00Z"
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        app["lan_filter"] = {"terms": {"source.ip": ["192.168.1.0/24"]}}
+        app["excluded_ips"] = ["192.168.1.77"]
+        register_device_routes(app, self.storage)
+        return app
+
+    def _bodies(self):
+        return [c.kwargs["body"] for c in self.mock_client.search.call_args_list]
+
+    @unittest_run_loop
+    async def test_count_equals_device_list_length(self):
+        """Count returns exactly as many devices as the list for the same buckets."""
+        buckets = [
+            _device_bucket("192.168.1.10", doc_count=40),
+            _device_bucket("192.168.1.11", doc_count=3),
+            _device_bucket("192.168.1.255", doc_count=50),
+            _device_bucket("192.168.1.0", doc_count=50),
+            _device_bucket("224.0.0.251", doc_count=50),
+        ]
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response(buckets)
+        )
+
+        list_resp = await self.client.request("GET", "/api/devices" + self._RANGE)
+        count_resp = await self.client.request(
+            "GET", "/api/devices/count" + self._RANGE
+        )
+
+        devices = (await list_resp.json())["devices"]
+        data = await count_resp.json()
+        self.assertEqual(len(devices), 2)
+        self.assertEqual(data["count"], len(devices))
+        self.assertEqual(set(data), {"from", "to", "count"})
+
+    @unittest_run_loop
+    async def test_count_uses_same_filters_as_list(self):
+        """Count and list send the identical bool query (range, conn, LAN, excluded)."""
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response([])
+        )
+
+        await self.client.request("GET", "/api/devices" + self._RANGE)
+        await self.client.request("GET", "/api/devices/count" + self._RANGE)
+
+        list_body, count_body = self._bodies()
+        self.assertEqual(count_body["query"], list_body["query"])
+        bool_query = count_body["query"]["bool"]
+        self.assertIn({"term": {"event.dataset": "conn"}}, bool_query["filter"])
+        self.assertIn(
+            {"terms": {"source.ip": ["192.168.1.0/24"]}}, bool_query["filter"]
+        )
+        self.assertIn(
+            {"terms": {"source.ip": ["192.168.1.77"]}}, bool_query["must_not"]
+        )
+
+    @unittest_run_loop
+    async def test_list_and_count_share_min_connections(self):
+        """Both endpoints use the module _MIN_CONNECTIONS threshold, now 3."""
+        from api import devices
+
+        self.assertEqual(devices._MIN_CONNECTIONS, 3)
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response([])
+        )
+
+        await self.client.request("GET", "/api/devices" + self._RANGE)
+        await self.client.request("GET", "/api/devices/count" + self._RANGE)
+
+        list_body, count_body = self._bodies()
+        for body in (list_body, count_body):
+            terms = body["aggs"]["devices"]["terms"]
+            self.assertEqual(terms["field"], "source.ip")
+            self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
 
 
 class TestDeviceTimeRange(AioHTTPTestCase):

@@ -206,10 +206,10 @@ class TestGetMacForIP(unittest.TestCase):
         os.unlink(self._tmp_path)
 
     def test_mac_from_dhcp(self):
-        """Returns MAC from DHCP logs when available."""
+        """Returns MAC from DHCP logs, read from the nested _source."""
         mock_client = MagicMock()
         mock_client.search.return_value = {
-            "hits": {"hits": [{"_source": {"source.mac": "AA:BB:CC:DD:EE:FF"}}]}
+            "hits": {"hits": [{"_source": {"source": {"mac": "AA:BB:CC:DD:EE:FF"}}}]}
         }
 
         result = self.fp.get_mac_for_ip(
@@ -223,7 +223,7 @@ class TestGetMacForIP(unittest.TestCase):
         # First call (DHCP) returns empty, second call (conn) returns MAC
         mock_client.search.side_effect = [
             {"hits": {"hits": []}},
-            {"hits": {"hits": [{"_source": {"source.mac": "11:22:33:44:55:66"}}]}},
+            {"hits": {"hits": [{"_source": {"source": {"mac": "11:22:33:44:55:66"}}}]}},
         ]
 
         result = self.fp.get_mac_for_ip(
@@ -231,6 +231,60 @@ class TestGetMacForIP(unittest.TestCase):
         )
         self.assertEqual(result, "11:22:33:44:55:66")
         self.assertEqual(mock_client.search.call_count, 2)
+
+    def test_mac_from_real_malcolm_conn_source(self):
+        """Reads the MAC from a real Zeek conn _source shape (nested, string)."""
+        mock_client = MagicMock()
+        real_source = {
+            "source": {"ip": "192.168.1.10", "mac": "fc:9d:05:98:2a:be"},
+            "event": {"provider": "zeek", "dataset": "conn"},
+        }
+        mock_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            {"hits": {"hits": [{"_source": real_source}]}},
+        ]
+
+        result = self.fp.get_mac_for_ip(
+            mock_client, "192.168.1.10", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+        )
+        self.assertEqual(result, "fc:9d:05:98:2a:be")
+
+    def test_mac_from_list_takes_first_non_empty(self):
+        """Malcolm can store source.mac as a list; the first non-empty value wins."""
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "source": {"mac": ["", None, "fc:9d:05:98:2a:be", "x"]}
+                        }
+                    }
+                ]
+            }
+        }
+
+        result = self.fp.get_mac_for_ip(
+            mock_client, "192.168.1.10", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+        )
+        self.assertEqual(result, "fc:9d:05:98:2a:be")
+
+    def test_empty_mac_list_falls_back_to_conn(self):
+        """An all-empty MAC list in DHCP counts as no MAC, so conn is tried next."""
+        mock_client = MagicMock()
+        mock_client.search.side_effect = [
+            {"hits": {"hits": [{"_source": {"source": {"mac": ["", None]}}}]}},
+            {
+                "hits": {
+                    "hits": [{"_source": {"source": {"mac": ["11:22:33:44:55:66"]}}}]
+                }
+            },
+        ]
+
+        result = self.fp.get_mac_for_ip(
+            mock_client, "192.168.1.50", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+        )
+        self.assertEqual(result, "11:22:33:44:55:66")
 
     def test_mac_not_found(self):
         """Returns None when neither DHCP nor conn logs have a MAC."""
