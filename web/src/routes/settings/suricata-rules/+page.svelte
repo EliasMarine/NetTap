@@ -454,7 +454,9 @@
 	}
 
 	.page-container {
-		max-width: 960px;
+		/* OLD CODE START — design system: page containers are always full width */
+		/* max-width: 960px; */
+		/* OLD CODE END */
 		margin: 0 auto;
 		padding: 2rem;
 	}

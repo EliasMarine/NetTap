@@ -398,7 +398,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
-		max-width: 800px;
+		/* OLD CODE START — design system: page containers are always full width */
+		/* max-width: 800px; */
+		/* OLD CODE END */
 	}
 
 	.settings-header h2 {
