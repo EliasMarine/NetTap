@@ -49,6 +49,16 @@ export interface DeviceTraffic {
 /**
  * Get all devices from the registry.
  */
+/**
+ * How many devices NetTap saw for the first time since `since` (ISO). The device list's
+ * first_seen is the first record in its time window, so it can't tell new devices from old.
+ */
+export async function getNewDeviceCount(since: string): Promise<{ count: number; since: string }> {
+	const res = await fetch(`/api/devices/registry/new-count?${new URLSearchParams({ since })}`);
+	if (!res.ok) throw new Error(`New device count failed: HTTP ${res.status}`);
+	return res.json();
+}
+
 export async function getRegistryDevices(
 	opts: { limit?: number; offset?: number } = {}
 ): Promise<RegistryListResponse> {

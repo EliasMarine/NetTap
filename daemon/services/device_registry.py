@@ -371,6 +371,13 @@ class DeviceRegistry:
         result = self._client.search(index=DEVICES_INDEX, body=query)
         return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
+    def count_first_seen_since(self, since: str) -> int:
+        """How many devices NetTap first saw at or after `since` (an ISO timestamp)."""
+        result = self._client.count(
+            index=DEVICES_INDEX, body={"query": {"range": {"first_seen": {"gte": since}}}}
+        )
+        return int(result.get("count", 0))
+
     def get_device_traffic(self, mac: str, from_ts: str, to_ts: str) -> dict:
         """Get traffic summary for a device by MAC address.
 

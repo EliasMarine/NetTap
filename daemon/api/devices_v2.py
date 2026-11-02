@@ -373,6 +373,33 @@ async def handle_registry_traffic(request: web.Request) -> web.Response:
     )
 
 
+async def handle_registry_new_count(request: web.Request) -> web.Response:
+    """GET /api/devices/registry/new-count?since=ISO (default: 24 h ago)
+
+    Devices NetTap saw for the first time since then. The device list's first_seen is the
+    first record in the page's time window, so it can't tell a new device from an old one.
+    """
+    registry = _get_registry(request)
+    raw = request.query.get("since", "")
+    try:
+        since = (
+            datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if raw
+            else datetime.now(timezone.utc) - timedelta(hours=24)
+        )
+    except ValueError:
+        return web.json_response({"error": "since must be an ISO timestamp"}, status=400)
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    since_iso = since.astimezone(timezone.utc).isoformat()
+    try:
+        count = registry.count_first_seen_since(since_iso)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error counting new devices: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+    return web.json_response({"count": count, "since": since_iso})
+
+
 async def handle_registry_search(request: web.Request) -> web.Response:
     """GET /api/devices/registry/search?q="""
     registry = _get_registry(request)
@@ -688,6 +715,7 @@ def register_devices_v2_routes(
     # Device registry endpoints
     # Note: search must be registered BEFORE {mac} to avoid routing conflicts
     app.router.add_get("/api/devices/registry/search", handle_registry_search)
+    app.router.add_get("/api/devices/registry/new-count", handle_registry_new_count)
     app.router.add_get("/api/devices/registry", handle_registry_list)
     app.router.add_get("/api/devices/registry/{mac}", handle_registry_detail)
     app.router.add_get("/api/devices/registry/{mac}/traffic", handle_registry_traffic)
