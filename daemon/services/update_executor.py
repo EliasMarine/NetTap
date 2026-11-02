@@ -17,6 +17,29 @@ from typing import Any
 
 logger = logging.getLogger("nettap.services.update_executor")
 
+# Malcolm's containers, by the names VersionManager gives them. NetTap pins their images
+# to a tested release, and a pull from here could never work anyway: these names aren't
+# the compose services and the compose file isn't inside the daemon container.
+_MALCOLM_COMPONENTS = frozenset(
+    {
+        "zeek",
+        "suricata",
+        "arkime",
+        "opensearch",
+        "dashboards",
+        "logstash",
+        "file-monitor",
+        "pcap-capture",
+        "freq",
+        "htadmin",
+        "nginx-proxy",
+    }
+)
+PINNED_REASON = (
+    "NetTap pins Malcolm's container images to a tested release, so they can't be "
+    "updated from here: update NetTap to get a newer Malcolm."
+)
+
 
 @dataclass
 class UpdateResult:
@@ -121,26 +144,46 @@ class UpdateExecutor:
 
         try:
             # Categorize components by update type
-            docker_components = []
+            # OLD CODE START — Malcolm's images are pinned: the pull below could never
+            # work (wrong service names, no compose file in the container)
+            # docker_components = []
+            # OLD CODE END
             rule_components = []
             geoip_components = []
             other_components = []
 
             for comp in components:
-                if comp in (
-                    "zeek",
-                    "suricata",
-                    "arkime",
-                    "opensearch",
-                    "dashboards",
-                    "logstash",
-                    "file-monitor",
-                    "pcap-capture",
-                    "freq",
-                    "htadmin",
-                    "nginx-proxy",
-                ):
-                    docker_components.append(comp)
+                # OLD CODE START — Malcolm's images are pinned (see PINNED_REASON)
+                # if comp in (
+                #     "zeek",
+                #     "suricata",
+                #     "arkime",
+                #     "opensearch",
+                #     "dashboards",
+                #     "logstash",
+                #     "file-monitor",
+                #     "pcap-capture",
+                #     "freq",
+                #     "htadmin",
+                #     "nginx-proxy",
+                # ):
+                #     docker_components.append(comp)
+                # elif comp == "suricata-rules":
+                # OLD CODE END
+                reason = await self._not_applicable_reason(comp)
+                if reason:
+                    results.append(
+                        UpdateResult(
+                            component=comp,
+                            success=False,
+                            old_version="unknown",
+                            new_version="unknown",
+                            started_at=now,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            error=reason,
+                            rollback_available=False,
+                        )
+                    )
                 elif comp == "suricata-rules":
                     rule_components.append(comp)
                 elif comp == "geoip-db":
@@ -149,9 +192,11 @@ class UpdateExecutor:
                     other_components.append(comp)
 
             # Apply updates by category
-            if docker_components:
-                docker_results = await self._update_docker_images(docker_components)
-                results.extend(docker_results)
+            # OLD CODE START — Malcolm's images are pinned (see PINNED_REASON)
+            # if docker_components:
+            #     docker_results = await self._update_docker_images(docker_components)
+            #     results.extend(docker_results)
+            # OLD CODE END
 
             if rule_components:
                 rule_result = await self._update_suricata_rules()
@@ -255,6 +300,9 @@ class UpdateExecutor:
             Dict with "success" (bool), "component" (str), and
             "message" (str).
         """
+        if component in _MALCOLM_COMPONENTS:  # nothing was pulled, so nothing to restore
+            return {"success": False, "component": component, "message": PINNED_REASON}
+
         backup_path = os.path.join(self._backup_dir, component)
 
         if not os.path.exists(backup_path):
@@ -266,18 +314,22 @@ class UpdateExecutor:
 
         try:
             # Rollback strategy depends on component type
-            if component in (
-                "zeek",
-                "suricata",
-                "arkime",
-                "opensearch",
-                "dashboards",
-                "logstash",
-                "file-monitor",
-                "pcap-capture",
-            ):
-                result = await self._rollback_docker(component, backup_path)
-            elif component == "suricata-rules":
+            # OLD CODE START — Malcolm's images are pinned (answered above), and
+            # _rollback_docker never used the saved image ID, so it restored nothing
+            # if component in (
+            #     "zeek",
+            #     "suricata",
+            #     "arkime",
+            #     "opensearch",
+            #     "dashboards",
+            #     "logstash",
+            #     "file-monitor",
+            #     "pcap-capture",
+            # ):
+            #     result = await self._rollback_docker(component, backup_path)
+            # elif component == "suricata-rules":
+            # OLD CODE END
+            if component == "suricata-rules":
                 result = await self._rollback_files(
                     component, backup_path, "/var/lib/suricata/rules/suricata.rules"
                 )
@@ -307,6 +359,20 @@ class UpdateExecutor:
     # Internal update methods
     # -------------------------------------------------------------------
 
+    async def _not_applicable_reason(self, component: str) -> str | None:
+        """Why NetTap can't apply this component's update itself, or None if it can.
+
+        Malcolm's containers are pinned; anything else the update checker listed with
+        applies_with (e.g. Logstash's bundled GeoIP database) arrives the same way.
+        """
+        if component in _MALCOLM_COMPONENTS:
+            return PINNED_REASON
+        if self._update_checker is None:
+            return None
+        update = await self._update_checker.get_update_for(component)
+        return (update or {}).get("applies_with")
+
+    # Unreachable while Malcolm's images are pinned (apply_update answers PINNED_REASON)
     async def _update_docker_images(self, components: list[str]) -> list[UpdateResult]:
         """Update Docker images for specified components.
 
@@ -740,6 +806,7 @@ class UpdateExecutor:
     # Rollback helpers
     # -------------------------------------------------------------------
 
+    # Unreachable while Malcolm's images are pinned; it also never used the saved image ID
     async def _rollback_docker(self, component: str, backup_path: str) -> dict:
         """Rollback a Docker component to its backed-up image.
 

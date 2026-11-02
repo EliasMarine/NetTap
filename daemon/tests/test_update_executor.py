@@ -175,15 +175,19 @@ class TestApplyUpdate(unittest.TestCase):
         self.assertIn("succeeded", result)
         self.assertIn("failed", result)
 
+    # OLD CODE START — Malcolm's images are pinned: zeek and suricata are no longer pulled
+    # def test_apply_update_docker_component(self):
+    #     ... apply_update(["zeek", "suricata"]) -> total 2, succeeded 2, success True
+    # OLD CODE END
     def test_apply_update_docker_component(self):
-        """apply_update() should handle Docker components."""
+        """Malcolm containers are pinned: both fail with the reason, nothing is pulled."""
         ue = self._make_executor_with_mocks()
         result = asyncio.run(ue.apply_update(["zeek", "suricata"]))
 
         self.assertEqual(result["total"], 2)
-        self.assertEqual(result["succeeded"], 2)
-        self.assertEqual(result["failed"], 0)
-        self.assertTrue(result["success"])
+        self.assertEqual(result["succeeded"], 0)
+        self.assertEqual(result["failed"], 2)
+        self.assertFalse(result["success"])
 
     def test_apply_update_rules_component(self):
         """apply_update() should handle suricata-rules component."""
@@ -235,7 +239,13 @@ class TestApplyUpdate(unittest.TestCase):
         result = asyncio.run(ue.apply_update(["zeek", "suricata-rules", "geoip-db"]))
 
         self.assertEqual(result["total"], 3)
-        self.assertEqual(result["succeeded"], 3)
+        # OLD CODE START — zeek is a pinned Malcolm container now
+        # self.assertEqual(result["succeeded"], 3)
+        # OLD CODE END
+        self.assertEqual(result["succeeded"], 2)
+        self.assertEqual(
+            [r["component"] for r in result["results"] if not r["success"]], ["zeek"]
+        )
 
     def test_apply_update_with_failures(self):
         """apply_update() should report failures correctly."""
@@ -291,13 +301,22 @@ class TestConcurrentUpdatePrevention(unittest.TestCase):
         """_current_update should be cleared even if update raises."""
         ue = UpdateExecutor()
 
-        async def mock_update_docker(components):
+        # OLD CODE START — zeek no longer reaches _update_docker_images (pinned)
+        # async def mock_update_docker(components):
+        #     raise RuntimeError("test error")
+        #
+        # ue._update_docker_images = mock_update_docker
+        #
+        # with self.assertRaises(RuntimeError):
+        #     asyncio.run(ue.apply_update(["zeek"]))
+        # OLD CODE END
+        async def mock_update_rules():
             raise RuntimeError("test error")
 
-        ue._update_docker_images = mock_update_docker
+        ue._update_suricata_rules = mock_update_rules
 
         with self.assertRaises(RuntimeError):
-            asyncio.run(ue.apply_update(["zeek"]))
+            asyncio.run(ue.apply_update(["suricata-rules"]))
 
         self.assertIsNone(ue._current_update)
 
@@ -419,10 +438,14 @@ class TestRollback(unittest.TestCase):
     def test_rollback_unknown_component_returns_error(self):
         """rollback() should return error for component with no backup."""
         ue = UpdateExecutor(backup_dir="/nonexistent/path")
-        result = asyncio.run(ue.rollback("zeek"))
+        # OLD CODE START — zeek is a pinned Malcolm container now (answered before backups)
+        # result = asyncio.run(ue.rollback("zeek"))
+        # self.assertEqual(result["component"], "zeek")
+        # OLD CODE END
+        result = asyncio.run(ue.rollback("suricata-rules"))
 
         self.assertFalse(result["success"])
-        self.assertEqual(result["component"], "zeek")
+        self.assertEqual(result["component"], "suricata-rules")
         self.assertIn("No backup", result["message"])
 
     def test_rollback_unsupported_component(self):
@@ -587,6 +610,83 @@ class TestRollbackOnlyWithABackup(unittest.TestCase):
                 path = asyncio.run(ue._create_backup("geoip-db"))
             self.assertFalse(os.path.exists(path))
             self.assertFalse(ue._has_restorable_backup(path))
+
+
+class TestPinnedMalcolmContainers(unittest.TestCase):
+    """NetTap pins Malcolm's images. The old pull used names that aren't compose services
+    and a compose file the daemon container doesn't have, and the rollback never used the
+    saved image ID, so apply and rollback answer with the reason and run nothing."""
+
+    REASON = (
+        "NetTap pins Malcolm's container images to a tested release, so they can't be "
+        "updated from here: update NetTap to get a newer Malcolm."
+    )
+
+    def _executor(self, tmp):
+        ue = UpdateExecutor(backup_dir=tmp)
+        ue.ran = []
+
+        async def run_command(cmd):
+            ue.ran.append(cmd)
+            return ("sha256:0123abcd", 0)
+
+        ue._run_command = run_command
+        return ue
+
+    def test_apply_runs_no_docker_and_says_why(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = self._executor(tmp)
+            result = asyncio.run(ue.apply_update(["suricata", "arkime", "pcap-capture"]))
+
+        self.assertEqual(ue.ran, [])
+        self.assertEqual(result["failed"], 3)
+        for r in result["results"]:
+            self.assertFalse(r["success"])
+            self.assertEqual(r["error"], self.REASON)
+            self.assertFalse(r["rollback_available"])
+
+    def test_rollback_runs_no_docker_and_says_why(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = os.path.join(tmp, "suricata", "20260101_000000")
+            os.makedirs(saved)
+            with open(os.path.join(saved, "image_id.txt"), "w") as f:
+                f.write("sha256:0123abcd")
+            ue = self._executor(tmp)
+            result = asyncio.run(ue.rollback("suricata"))
+
+        self.assertEqual(ue.ran, [])
+        self.assertFalse(result["success"])
+        self.assertEqual(result["message"], self.REASON)
+
+    def test_update_the_checker_says_comes_with_nettap_is_not_applied(self):
+        """e.g. Logstash's bundled GeoIP database, or a Malcolm container with no short name."""
+        sentence = "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+
+        class Checker:
+            async def get_update_for(self, component):
+                return {"component": component, "applies_with": sentence}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = self._executor(tmp)
+            ue.set_update_checker(Checker())
+            result = asyncio.run(ue.apply_update(["geoip-db", "nettap-filebeat"]))
+
+        self.assertEqual(ue.ran, [])
+        self.assertEqual([r["error"] for r in result["results"]], [sentence, sentence])
+        self.assertFalse(any(r["rollback_available"] for r in result["results"]))
+
+    def test_rules_update_is_still_applied(self):
+        class Checker:
+            async def get_update_for(self, component):
+                return {"component": component, "applies_with": None}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = self._executor(tmp)
+            ue.set_update_checker(Checker())
+            result = asyncio.run(ue.apply_update(["suricata-rules"]))
+
+        self.assertEqual(ue.ran[0], ["suricata-update", "update"])
+        self.assertTrue(result["success"])
 
 
 if __name__ == "__main__":
