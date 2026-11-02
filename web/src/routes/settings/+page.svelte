@@ -1034,20 +1034,33 @@
 
 				<div class="retention-grid">
 					<div class="form-group">
+						<!-- OLD CODE START — 2026-11-02: Malcolm writes Zeek and Suricata to one daily
+						     arkime_sessions3 index, so this setting governs alerts too
 						<label class="label" for="hot-days">Hot Tier (Zeek metadata)</label>
+						OLD CODE END -->
+						<label class="label" for="hot-days">Hot Tier (Zeek metadata and Suricata alerts)</label>
 						<div class="input-with-unit">
 							<input class="input" id="hot-days" type="number" bind:value={retentionConfig.hot_days} min={7} max={365} />
 							<span class="input-unit">days</span>
 						</div>
+						<!-- OLD CODE START
 						<p class="field-help">Structured metadata logs from Zeek.</p>
+						OLD CODE END -->
+						<p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days.</p>
 					</div>
 					<div class="form-group">
+						<!-- OLD CODE START — 2026-11-02: no Malcolm index is warm; alerts follow the Hot tier
 						<label class="label" for="warm-days">Warm Tier (Suricata alerts)</label>
+						OLD CODE END -->
+						<label class="label" for="warm-days">Warm Tier (separate Suricata indices)</label>
 						<div class="input-with-unit">
 							<input class="input" id="warm-days" type="number" bind:value={retentionConfig.warm_days} min={7} max={730} />
 							<span class="input-unit">days</span>
 						</div>
+						<!-- OLD CODE START
 						<p class="field-help">IDS alerts and rule matches.</p>
+						OLD CODE END -->
+						<p class="field-help">Applies only to separate <code>suricata-*</code> indices, which this install doesn't create. Alerts follow the Hot tier.</p>
 					</div>
 					<div class="form-group">
 						<label class="label" for="cold-days">Cold Tier (PCAP files)</label>

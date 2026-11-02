@@ -1454,7 +1454,10 @@
 									<span class="tier-dot hot"></span>
 									<h4>Hot Tier</h4>
 								</div>
+								<!-- OLD CODE START — 2026-11-02: alerts share the Zeek index (see Settings → Retention)
 								<p class="text-muted tier-desc">Zeek metadata logs (conn, DNS, HTTP, TLS, etc.)</p>
+								OLD CODE END -->
+								<p class="text-muted tier-desc">Zeek logs (conn, DNS, HTTP, TLS, etc.) and Suricata alerts, kept in one daily index</p>
 								<div class="form-group">
 									<label for="hot-days" class="label">Retention (days)</label>
 									<input
@@ -1474,7 +1477,10 @@
 									<span class="tier-dot warm"></span>
 									<h4>Warm Tier</h4>
 								</div>
+								<!-- OLD CODE START
 								<p class="text-muted tier-desc">Suricata IDS alerts and signatures</p>
+								OLD CODE END -->
+								<p class="text-muted tier-desc">Separate <code>suricata-*</code> indices only. This install doesn't create them; alerts follow the Hot tier</p>
 								<div class="form-group">
 									<label for="warm-days" class="label">Retention (days)</label>
 									<input
@@ -1494,7 +1500,10 @@
 									<span class="tier-dot cold"></span>
 									<h4>Cold Tier</h4>
 								</div>
+								<!-- OLD CODE START — 2026-11-02: capture is continuous (owner decision, #37)
 								<p class="text-muted tier-desc">Raw PCAP files (alert-triggered only)</p>
+								OLD CODE END -->
+								<p class="text-muted tier-desc">Raw PCAP files of all traffic, also capped by disk share</p>
 								<div class="form-group">
 									<label for="cold-days" class="label">Retention (days)</label>
 									<input

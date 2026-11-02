@@ -137,6 +137,17 @@ describe('Settings — retention save', () => {
 		expect(screen.queryByText(/alert-triggered/)).not.toBeInTheDocument();
 	});
 
+	it('says Suricata alerts follow the Hot tier, not the Warm tier', async () => {
+		stubFetch({});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByLabelText('Hot Tier (Zeek metadata and Suricata alerts)')).toBeInTheDocument();
+		expect(screen.getByLabelText('Warm Tier (separate Suricata indices)')).toBeInTheDocument();
+		expect(screen.getByText(/Alerts follow the Hot tier/)).toBeInTheDocument();
+	});
+
 	it('will not save the built-in defaults when the daemon did not answer', async () => {
 		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
 		render(Page);
