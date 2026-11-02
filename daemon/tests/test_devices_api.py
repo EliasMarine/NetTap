@@ -907,7 +907,7 @@ class TestDeviceCountHandler(AioHTTPTestCase):
 
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["count"], 1200)
-        self.assertEqual(self.mock_client.search.call_count, 3)  # two full pages and an empty one
+        self.assertEqual(self.mock_client.search.call_count, 2)  # a full page of 1,000 and the short last one
 
 
 class TestDeviceListAlertSort(AioHTTPTestCase):
