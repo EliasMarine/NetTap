@@ -6,6 +6,7 @@
 #   #65 TShark tool: Analyze uses the filter typed in the box (unit-tested; browser pass)
 #   #63 PCAP page: "Top Protocol in Preview" label (browser pass)
 #   #23 PCAP end to end: newest file current, filtered analysis, file download intact
+#   #66 PCAP preview/download refuse paths outside the PCAP directory (".." or a sibling dir)
 #
 # The daemon and web restart. Capture (netsniff, Zeek, Suricata) is not touched.
 #
@@ -70,7 +71,7 @@ echo ""
 echo "→ Step 4: PCAP and TShark checks..."
 # All API calls run inside the daemon container; replies stay there (they can be large)
 OUT=$(sudo docker exec nettap-storage-daemon python3 -c "
-import json, time, urllib.parse, urllib.request
+import json, time, urllib.error, urllib.parse, urllib.request
 token = open('/run/nettap-auth/daemon-token').read().strip()
 def call(path, body=None, timeout=90):
     req = urllib.request.Request('http://localhost:8880' + path, headers={'X-NetTap-Daemon-Token': token, 'Content-Type': 'application/json'},
@@ -88,9 +89,19 @@ print('DNS', r.get('packet_count'), dns, round(time.time() - t0, 1), r.get('trun
 t0 = time.time()
 r = json.load(call('/api/tshark/analyze', {'pcap_path': target['path'], 'display_filter': 'dns && tcp.port == 1', 'max_packets': 50, 'output_format': 'json'}))
 print('NONE', r.get('packet_count'), round(time.time() - t0, 1), r.get('error'))
-resp = call('/api/pcap/download-file?' + urllib.parse.urlencode({'file': target['name']}), timeout=300)
+# The page downloads by the full path the PCAP listing gives
+listed = json.load(call('/api/pcap/files'))['files']
+full = next(f['file'] for f in listed if f['file'].endswith('/' + target['name']))
+resp = call('/api/pcap/download-file?' + urllib.parse.urlencode({'file': full}), timeout=300)
 head = resp.read(4); total = 4 + sum(len(c) for c in iter(lambda: resp.read(1 << 20), b''))
 print('DOWNLOAD', head.hex(), total)
+codes = []
+for bad in (full.rsplit('/', 1)[0] + '/../../../etc/passwd', full.rsplit('/', 1)[0] + '-old/x.pcap'):
+    try:
+        codes.append(str(call('/api/pcap/download-file?' + urllib.parse.urlencode({'file': bad})).status))
+    except urllib.error.HTTPError as e:
+        codes.append(str(e.code))
+print('OUTSIDE', ','.join(codes))
 " 2>&1)
 while IFS= read -r line; do echo "   $line"; done <<<"$OUT"
 read -r _ NEWEST AGE <<<"$(echo "$OUT" | grep '^NEWEST')"
@@ -98,6 +109,7 @@ read -r _ FILE SIZE <<<"$(echo "$OUT" | grep '^FILE')"
 read -r _ COUNT DNS SECS TRUNC _ <<<"$(echo "$OUT" | grep '^DNS')"
 read -r _ NONE NONESECS _ <<<"$(echo "$OUT" | grep '^NONE')"
 read -r _ MAGIC GOT <<<"$(echo "$OUT" | grep '^DOWNLOAD')"
+read -r _ OUTSIDE <<<"$(echo "$OUT" | grep '^OUTSIDE')"
 # Ground truth: the first 50 DNS packets, straight from tshark in its container
 TRUTH=$(sudo docker exec nettap-tshark sh -c 'tshark -r "$1" -Y dns -T fields -e frame.number 2>/dev/null | head -n 50 | wc -l' _ "/pcap/${FILE:-none}" 2>/dev/null | tr -d ' ')
 
@@ -110,6 +122,8 @@ check "#64 a filter with no matches answers 0 without error" "$rc" "${NONE:-?} p
 case "${MAGIC:-}" in d4c3b2a1|a1b2c3d4|4d3cb2a1|a1b23c4d|0a0d0d0a) MOK=0 ;; *) MOK=1 ;; esac
 if [ "$MOK" -eq 0 ] && [ "${GOT:-0}" = "${SIZE:-x}" ]; then rc=0; else rc=1; fi
 check "#23 PCAP download is a whole pcap file" "$rc" "magic ${MAGIC:-?}, ${GOT:-?} of ${SIZE:-?} bytes"
+if [ "${OUTSIDE:-}" = "400,400" ]; then rc=0; else rc=1; fi
+check "#66 download refuses '..' and a sibling directory" "$rc" "HTTP ${OUTSIDE:-?}"
 echo ""
 
 echo "→ Step 5: Container status..."
