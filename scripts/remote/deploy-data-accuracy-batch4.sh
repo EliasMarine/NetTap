@@ -89,6 +89,7 @@ check "#34 IoT protocol audit has no port-0 or duplicate encryption findings" "$
 ICMP_PORTS=$(api_eval /api/iot/network-isolation "sum(1 for p in d.get('pairs', []) if set(p.get('ports', [])) & {0, 3, 8, 11})")
 if [ "$ICMP_PORTS" = "0" ]; then rc=0; else rc=1; fi
 check "#34 IoT isolation shows no ICMP codes as ports" "$rc" "pairs with ICMP-code ports=$ICMP_PORTS"
+echo "     encryption per IoT device: $(api_eval /api/iot/fleet-summary "', '.join('%s=%s' % (x['ip'], 'N/A' if x.get('encryption_applicable') is False else str(x['encryption_pct']) + '%') for x in d.get('devices', []))")"
 echo "     isolation: $(api_eval /api/iot/network-isolation "'score %s, pairs by risk %s' % (d.get('segmentation_score'), {r: sum(1 for p in d.get('pairs', []) if p['risk'] == r) for r in ('critical', 'high', 'medium', 'low')})")"
 
 CERT_TOTAL=$(api_eval /api/certificates/stats "d.get('total_certs')")
