@@ -116,6 +116,24 @@ _TIER_PREFIXES = {
 }
 
 
+_DEFAULT_PCAP_MAX_DISK_PCT = 25.0
+
+
+def _pcap_cap_fraction() -> float:
+    """PCAP_MAX_DISK_PCT (0-100, 0 = no cap) as a fraction of the disk."""
+    raw = os.environ.get("PCAP_MAX_DISK_PCT", "")
+    try:
+        pct = float(raw) if raw.strip() else _DEFAULT_PCAP_MAX_DISK_PCT
+    except ValueError:
+        pct = -1.0
+    if not 0 <= pct <= 100:
+        logger.warning(
+            "Ignoring PCAP_MAX_DISK_PCT=%r; using %s%%", raw, _DEFAULT_PCAP_MAX_DISK_PCT
+        )
+        pct = _DEFAULT_PCAP_MAX_DISK_PCT
+    return pct / 100
+
+
 @dataclass
 class RetentionConfig:
     """Configuration for tiered retention policies and disk thresholds."""
@@ -123,6 +141,9 @@ class RetentionConfig:
     hot_days: int = 90  # Zeek metadata retention (days)
     warm_days: int = 180  # Suricata alert retention (days)
     cold_days: int = 30  # Raw PCAP / Arkime retention (days)
+    # Owner decision 2026-11-02: full capture, but PCAP may use at most this share
+    # of the disk; the oldest files go first (tracking #37). 0 = no cap.
+    pcap_max_disk_fraction: float = field(default_factory=_pcap_cap_fraction)
     disk_threshold: float = 0.80  # Trigger pruning at 80%
     emergency_threshold: float = 0.90  # Aggressive pruning at 90%
     critical_threshold: float = 0.95  # Stop capture at 95%
@@ -728,6 +749,46 @@ class StorageManager:
                 "Deleted %d PCAP files older than %d days",
                 deleted,
                 self.config.cold_days,
+            )
+        return deleted
+
+    def prune_pcaps_over_cap(self) -> int:
+        """Delete the oldest PCAP until all PCAP fits in its share of the disk.
+
+        The newest file is never deleted: netsniff may still be writing it.
+        Returns the number of PCAP files deleted.
+        """
+        fraction = self.config.pcap_max_disk_fraction
+        if fraction <= 0:
+            return 0
+        try:
+            cap = int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
+        except OSError as exc:
+            logger.error(
+                "Cannot size the PCAP disk at %s: %s", self.config.pcap_dir, exc
+            )
+            return 0
+
+        deleted = 0
+        with self._cleanup_lock:
+            pcaps = self._pcaps_oldest_first()
+            total = sum(st.st_size for _, st in pcaps)
+            for pcap_file, stat in pcaps[:-1]:
+                if total <= cap:
+                    break
+                try:
+                    self._unlink_pcap(pcap_file)
+                except OSError as exc:
+                    logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+                    continue
+                total -= stat.st_size
+                deleted += 1
+
+        if deleted:
+            logger.info(
+                "Deleted %d oldest PCAP files to keep PCAP under %.0f%% of the disk",
+                deleted,
+                fraction * 100,
             )
         return deleted
 
@@ -1549,6 +1610,7 @@ class StorageManager:
         Decision flow:
           1. Verify ILM policies on first run (C3)
           1b. Delete PCAP older than cold_days (MS-002)
+          1c. Delete the oldest PCAP while PCAP exceeds its disk share (#37)
           2. Check current disk usage and record for trending (C1)
           3. If above critical_threshold (95%) -> cascade with capture stop (C2)
           4. Elif above emergency_threshold (90%) -> cascade deletion (C2)
@@ -1565,6 +1627,8 @@ class StorageManager:
 
         # MS-002: age-based PCAP retention, before usage is measured
         self.prune_expired_pcaps()
+        # #37: size cap, so full capture can't take more than its share of the disk
+        self.prune_pcaps_over_cap()
 
         try:
             usage = self.check_disk_usage()

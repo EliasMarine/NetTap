@@ -830,6 +830,8 @@ services:
       RETENTION_COLD: "${RETENTION_COLD:-30}"
       DISK_THRESHOLD_PERCENT: "${DISK_THRESHOLD_PERCENT:-80}"
       PCAP_DIR: "/opt/nettap/pcap"
+      # Most of the disk PCAP may use (percent, 0 = no cap); oldest files go first (#37)
+      PCAP_MAX_DISK_PCT: "${PCAP_MAX_DISK_PCT:-25}"
       HOST_SYS_NET: "/host/sys/class/net"
       HOST_SYS_LEDS: "/host/sys/class/leds"
       HOST_NETPLAN_DIR: "/host/etc/netplan"
