@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-01 (Chain 23: AMD RDRAND bug gave every Zeek process the same Broker ID, so Zeek wrote no logs; fix pending device check. Chain 22 verified on the G11)
+> **Last updated:** 2026-11-01 (Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -53,7 +53,8 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
 | Mirror capture setup (daemon host commands) | OK | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verified on the G11 2026-11-01: `verify-mirror-mode.sh` all checks pass after a reboot (~3,800 pps on enp4s0). |
-| Zeek live cluster | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 23: on AMD CPUs with a broken RDRAND every Zeek process got the same Broker ID, the cluster never connected and Zeek wrote no logs. zeek-live is now built locally with a /dev/urandom shim. Verify with `bash scripts/remote/deploy-zeek-rdrand-fix.sh`. |
+| Zeek live cluster | OK | Chain 23: on AMD CPUs with a broken RDRAND every Zeek process got the same Broker ID, the cluster never connected and Zeek wrote no logs. zeek-live is now built locally with a /dev/urandom shim. Verified on the G11 2026-11-01: unique IDs, 9 cluster connections, ~25 Zeek log types written. |
+| OpenSearch index mapping | OK (G11; PR pending) | Chain 24: malcolm_template's index pattern was a placeholder, so every daily index guessed its field types; Zeek records were rejected (event.id as long) and the daemon's queries were built on the guessed `.keyword` fields. Existing boxes: `bash scripts/remote/fix-index-template.sh --delete-today`, then `bash scripts/remote/deploy-malcolm-field-names.sh`. |
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 
 ---
@@ -295,6 +296,28 @@ CHAIN 23: AMD RDRAND bug gave every Zeek process the same Broker ID, so Zeek wro
   build stage; the compose bats suite checks zeek-live is built with the fix.
   Verify: `bash scripts/remote/deploy-zeek-rdrand-fix.sh` (Step 4 different IDs, Step 5 cluster
   connections, Step 6 conn.log lines, Step 7 new Zeek records in OpenSearch).
+
+CHAIN 24: malcolm_template's index pattern was never filled in, so indices guessed field types (fix/index-template-pattern, NET-128)
+  Found 2026-11-01 on the G11 right after Chain 23: Zeek wrote ~25 log types, but Logstash got
+  HTTP 400 "failed to parse field [event.id] of type [long]" for every Zeek conn/dns/ssl/http record
+  (Zeek uids like CT5Rak1Hppryc3RFd6), ~1,800 per 10 min. Devices page empty.
+  Root cause: deploy-malcolm.sh bootstrap_index_templates pushed /opt/templates/malcolm_template.json
+  raw, so index_patterns stayed "MALCOLM_NETWORK_INDEX_PATTERN_REPLACER" and matched no index.
+  Malcolm's own shared-object-creation.sh fills that in, but a malcolm_template already existed, so
+  Logstash's wait passed and nothing replaced it. Every daily arkime_sessions3-* index then guessed
+  its types from its first records: event.id a number (Zeek's text uids rejected), IPs and keywords
+  text + .keyword. This was true on the N100 too: Chain 13 read it as Malcolm's normal mapping and
+  added .keyword to every daemon query, which matches nothing once the template applies.
+  Fix: the installer fills in the pattern (arkime_sessions3-*) before pushing. fix-index-template.sh
+  pushes the corrected template on existing boxes (with --delete-today it also drops today's index so
+  the fix applies now, not at 00:00 UTC). The daemon drops .keyword from every query and Painless
+  script (197 lines, 20 files), log search no longer adds .keyword to sort fields, and the web alert
+  drawer's related-logs query is fixed the same way. test_query_field_names.py fails if a .keyword
+  field name comes back.
+  On the G11 (owner approved deleting today's index, 15,457 records): template pattern now
+  arkime_sessions3-*, new index has source.ip=ip and event.id=keyword, Zeek conn/dns/ssl/http/files
+  indexed with 0 rejections, traffic summary 205 connections. Then deploy-malcolm-field-names.sh
+  rebuilds the daemon and web and checks the devices and traffic APIs.
 ```
 
 ---
@@ -1252,7 +1275,7 @@ Browser sends Origin: https://192.168.x.x (TLS terminated by nginx)
 **Symptoms:**
 Every dashboard page (traffic summary, devices, protocols, top talkers, categories) returned empty data or 400 errors. OpenSearch returned: `"Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default."` on all `terms` aggregation queries.
 
-**Root Cause:**
+**Root Cause:** *(Superseded by Chain 24: the mapping below was dynamic because malcolm_template's index pattern was never filled in. With Malcolm's real mapping these fields have no `.keyword`, and the suffixes were removed.)*
 Malcolm maps all text fields (source.ip, network.transport, destination.ip, network.protocol, zeek.dns.query, etc.) as **text+keyword multi-fields** in OpenSearch. The `text` type supports full-text search but NOT aggregations. Any `terms` aggregation must use the `.keyword` subfield (e.g., `source.ip.keyword`, `network.transport.keyword`). Without the `.keyword` suffix, OpenSearch refuses the aggregation with a 400 error.
 
 **Causal Chain:**
@@ -1752,6 +1775,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 102. **Read the image's entrypoint before writing a workaround (Chain 21)** — Malcolm's OpenSearch builds `roles_mapping.yml` from `ROLE_*` env on every start and pushes it. The 403s came from the missing env, not from a file "reverting". Months of manual bootstraps raced that push. When a Malcolm file keeps going back, find the script that writes it and give it the env it expects.
 103. **AppArmor blocks `nsenter -t 1` from a container on Ubuntu, whatever its capabilities (Chain 22)** — docker-default only allows ptrace between docker-default peers, and host PID 1 is unconfined. If the container already has `network_mode: host`, `nsenter -n` was never needed: run the command directly. Check the kernel log (`journalctl -k | grep DENIED`, readable by the `adm` group) before assuming a capability is missing. Also: a helper that returns `[]` on failure turns every safety check built on it into "looks fine". Make the check fail closed.
 104. **The kernel's "RDRAND is not reliable" warning doesn't protect userspace (Chain 23)** — the kernel stops using RDRAND itself, but CPUID still advertises it, so `std::random_device` in every C++ program on that box returns a constant. In a Broker/zeekctl cluster, "all nodes running, zero connections" means checking `Broker::node_id()` across two runs before suspecting the network or seccomp. A binary with file capabilities ignores LD_PRELOAD; use `/etc/ld.so.preload` inside the image.
+105. **Check the live template before changing queries (Chain 24)** — `GET _index_template/malcolm_template` showed `index_patterns: ["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"]`: the template matched nothing, so indices were dynamically mapped. Chain 13 had "fixed" the symptom (text fields can't be aggregated) by adding `.keyword` to ~200 field references, which baked the broken mapping into the code. When a Malcolm file has a `*_REPLACER` token, Malcolm's scripts fill it in before use; anything NetTap pushes itself must do the same.
 
 ---
 
@@ -1761,6 +1785,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 |---|---|---|
 | Mirror setup now really runs at every daemon start (Chain 22) | `MirrorManager.setup()` flushes the capture NIC's addresses on each start; before Chain 22 it never ran on Ubuntu | CR-076 guard in `main.py` skips setup when the NIC has the default route or an IPv4 address, and logs `Mirror setup skipped`. If capture stops after a NIC rename, check the daemon log and `/etc/nettap/capture-mode.conf`. |
 | `sysctl -w` from the daemon always fails (Chain 22) | `/proc/sys` is read-only in the container, so mirror setup can't turn IPv6 off on the capture NIC at runtime; a mirrored router advert can then give that NIC an IPv6 address | The host boot unit `nettap-mirror.service` applies it at boot. After a wizard change, run `sudo systemctl restart nettap-mirror.service` or reboot. |
+| Boxes with older, dynamically mapped indices (Chain 24) | The daemon now queries Malcolm's field names (no `.keyword`); on an index from before the template fix those fields are text, so aggregations on it fail and that day's data drops out of dashboard ranges | Run `fix-index-template.sh` (plus `--delete-today` if acceptable). Older daily indices age out with retention; delete them early if their data isn't needed. |
 | zeek-live is a local build on top of the Malcolm Zeek image (Chain 23) | A Malcolm tag bump needs `docker compose build zeek-live`, not just a pull; if the new Zeek stops importing `std::random_device::_M_init`, affected AMD boxes go silent again | The Dockerfile's final-stage checks fail the build in that case. After a tag bump, rebuild zeek-live and read the build log for `random_device shim: ok`. |
 | Every process in zeek-live preloads libnettap_urandom.so (Chain 23) | bash, supervisord and Python also load libstdc++ (shared pages, a few MB) | Accepted. If a process in that container ever misbehaves at start, check it without the preload: `docker run --rm --entrypoint bash nettap/zeek-live:<tag> -c 'mv /etc/ld.so.preload /tmp; <cmd>'`. |
 | Malcolm upgrade may change entrypoint behavior | Supervisord.conf override and PUSER_PRIV_DROP could break | Pin Malcolm image tags; test upgrades in staging |

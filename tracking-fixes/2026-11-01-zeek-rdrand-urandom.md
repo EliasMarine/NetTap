@@ -1,6 +1,6 @@
 # 2026-11-01 — Zeek wrote no logs: AMD RDRAND bug gave every process the same Broker ID
 
-**Status:** Fixed in code; device run pending.
+**Status:** Fixed and verified on the G11; PR pending.
 **Linear:** NET-127.
 **Branch:** `fix/zeek-rdrand-urandom`, off `fix/daemon-drop-nsenter`.
 **Chain:** DEPLOYMENT-ISSUES.md Chain 23.
