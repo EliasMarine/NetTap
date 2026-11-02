@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from aiohttp import web
+from aiohttp.test_utils import AioHTTPTestCase
+
 from services.bandwidth_tracker import BandwidthTracker
 
 
@@ -103,14 +106,23 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
         self.assertEqual(result["resp_bytes"], 300_000_000)
         self.mock_client.search.assert_called_once()
 
-    def test_monthly_usage_opensearch_error(self):
-        """Should return zeros on OpenSearch error."""
+    def test_monthly_usage_opensearch_error_raises(self):
+        """A failed query raises (#96): 0 bytes would read as an idle month."""
         from opensearchpy import OpenSearchException
 
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
-        result = self.tracker.get_monthly_usage(2026, 3)
-        self.assertEqual(result["total_bytes"], 0)
+        with self.assertRaises(OpenSearchException):
+            self.tracker.get_monthly_usage(2026, 3)
+
+    def test_daily_usage_opensearch_error_raises(self):
+        """A failed query raises (#96): [] would read as no traffic on any day."""
+        from opensearchpy import OpenSearchException
+
+        self.mock_client.search.side_effect = OpenSearchException("timeout")
+
+        with self.assertRaises(OpenSearchException):
+            self.tracker.get_daily_usage("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
 
     def test_daily_usage(self):
         """Should parse daily buckets from OpenSearch."""
@@ -220,16 +232,16 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
         body = self.mock_client.search.call_args.kwargs["body"]
         self.assertIn(RFC1918_SOURCE_FILTER, body["query"]["bool"]["filter"])
 
-    def test_per_device_usage_opensearch_error(self):
-        """Should return empty list on OpenSearch error."""
+    def test_per_device_usage_opensearch_error_raises(self):
+        """A failed query raises (#96): [] would read as no device using bandwidth."""
         from opensearchpy import OpenSearchException
 
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
-        result = self.tracker.get_per_device_usage(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-        )
-        self.assertEqual(result, [])
+        with self.assertRaises(OpenSearchException):
+            self.tracker.get_per_device_usage(
+                "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+            )
 
     def test_projected_monthly(self):
         """Projection should extrapolate based on current usage and days elapsed."""
@@ -350,17 +362,16 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
         # All other cells should be 0
         self.assertEqual(result[2][0], 0)  # Wednesday midnight
 
-    def test_hourly_heatmap_opensearch_error(self):
-        """Should return zero-filled matrix on OpenSearch error."""
+    def test_hourly_heatmap_opensearch_error_raises(self):
+        """A failed query raises (#96): an all-zero matrix would read as a quiet week."""
         from opensearchpy import OpenSearchException
 
         self.mock_client.search.side_effect = OpenSearchException("timeout")
 
-        result = self.tracker.get_hourly_heatmap(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-        )
-        self.assertEqual(len(result), 7)
-        self.assertTrue(all(v == 0 for row in result for v in row))
+        with self.assertRaises(OpenSearchException):
+            self.tracker.get_hourly_heatmap(
+                "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+            )
 
 
 class TestBandwidthCapFile(unittest.TestCase):
@@ -399,6 +410,29 @@ class TestBandwidthCapFile(unittest.TestCase):
             self.assertEqual(tracker._monthly_cap_bytes, 0)
 
         Path(cap_file).unlink(missing_ok=True)
+
+
+class TestBandwidthApiQueryFailure(AioHTTPTestCase):
+    """#96: every /api/bandwidth reader answers 502 when its query fails, never zeros."""
+
+    async def get_application(self):
+        from opensearchpy import OpenSearchException
+
+        from api.bandwidth import register_bandwidth_routes
+
+        self.mock_client = MagicMock()
+        self.mock_client.search.side_effect = OpenSearchException("timeout")
+        with patch("services.bandwidth_tracker._CAP_FILE", "/nonexistent/path"):
+            tracker = BandwidthTracker(client=self.mock_client)
+        app = web.Application()
+        register_bandwidth_routes(app, tracker)
+        return app
+
+    async def test_every_reader_answers_502(self):
+        for path in ("monthly", "daily", "devices", "heatmap", "cap"):
+            resp = await self.client.request("GET", f"/api/bandwidth/{path}")
+            self.assertEqual(resp.status, 502, path)
+            self.assertIn("error", await resp.json())
 
 
 if __name__ == "__main__":

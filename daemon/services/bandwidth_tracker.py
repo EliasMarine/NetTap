@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from opensearchpy import OpenSearch, OpenSearchException
+from opensearchpy import OpenSearch
 
 from services.excluded_ips import RFC1918_SOURCE_FILTER, build_excluded_ips_filter
 
@@ -146,17 +146,14 @@ class BandwidthTracker:
             "aggs": self._bytes_aggs(),
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_monthly_usage: %s", exc)
-            return {
-                "year": year,
-                "month": month,
-                "total_bytes": 0,
-                "orig_bytes": 0,
-                "resp_bytes": 0,
-            }
+        # OLD CODE START — #96: a failed query read as 0 bytes used this month
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_monthly_usage: %s", exc)
+        #     return {"year": year, "month": month, "total_bytes": 0, "orig_bytes": 0, "resp_bytes": 0}
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         aggs = result.get("aggregations", {})
         orig = aggs.get("orig_bytes", {}).get("value", 0) or 0
@@ -212,11 +209,14 @@ class BandwidthTracker:
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_daily_usage: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as no traffic on any day
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_daily_usage: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         buckets = result.get("aggregations", {}).get("daily", {}).get("buckets", [])
         return [
@@ -292,11 +292,14 @@ class BandwidthTracker:
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_per_device_usage: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as no device using bandwidth
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_per_device_usage: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         aggs = result.get("aggregations", {})
         buckets = aggs.get("by_device", {}).get("buckets", [])
@@ -450,11 +453,14 @@ class BandwidthTracker:
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_hourly_heatmap: %s", exc)
-            return [[0] * 24 for _ in range(7)]
+        # OLD CODE START — #96: a failed query read as an all-zero heatmap
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_hourly_heatmap: %s", exc)
+        #     return [[0] * 24 for _ in range(7)]
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         # Initialize 7x24 matrix
         matrix = [[0] * 24 for _ in range(7)]
