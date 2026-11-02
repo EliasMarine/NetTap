@@ -359,7 +359,15 @@
 			<!-- Display filter -->
 			<div class="form-group filter-group">
 				<span class="label">Display Filter</span>
+				<!-- OLD CODE START — Analyze ignored a filter typed but not yet applied, and showed unfiltered packets (#65)
 				<FilterInput onsubmit={handleFilterSubmit} disabled={loading} value={displayFilter} />
+				OLD CODE END -->
+				<FilterInput
+					onsubmit={handleFilterSubmit}
+					onchange={(f) => (displayFilter = f)}
+					disabled={loading}
+					value={displayFilter}
+				/>
 			</div>
 		</div>
 	</div>
