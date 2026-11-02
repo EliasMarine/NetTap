@@ -45,6 +45,30 @@ class TestLogSearchAPI(AioHTTPTestCase):
         body = self.mock_client.search.call_args[1]["body"]
         self.assertIs(body["track_total_hits"], True)
 
+    async def _must_not(self, path: str) -> list:
+        self.mock_client.search.return_value = {
+            **self._mock_search_response(),
+            "aggregations": {},
+        }
+        resp = await self.client.request("GET", path)
+        self.assertEqual(resp.status, 200)
+        return self.mock_client.search.call_args[1]["body"]["query"]["bool"]["must_not"]
+
+    async def test_stat_cards_and_results_use_the_same_exclusions(self):
+        """On the G11, Total Events said 127.1K while the results said 107,320."""
+        alert = {"term": {"event.dataset": "alert"}}
+        noise = {"term": {"zeek.dns.query": "pcap-monitor"}}
+        search = await self._must_not("/api/logs/search")
+        stats = await self._must_not("/api/logs/stats")
+        timeline = await self._must_not("/api/logs/timeline")
+        for clauses in (search, stats, timeline):
+            self.assertIn(alert, clauses)
+            self.assertIn(noise, clauses)
+
+    async def test_search_suricata_type_still_shows_alerts(self):
+        must_not = await self._must_not("/api/logs/search?log_type=suricata")
+        self.assertNotIn({"term": {"event.dataset": "alert"}}, must_not)
+
     async def test_search_by_log_type(self):
         """GET /api/logs/search?log_type=zeek.dns filters correctly."""
         self.mock_client.search.return_value = self._mock_search_response()

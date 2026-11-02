@@ -571,7 +571,15 @@ async def handle_log_search(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": _EXCLUDE_DNS_NOISE + excluded,
                 # OLD CODE END
-                "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE START — 2026-11-01: unfiltered search included Suricata alerts while
+                # the stat cards left them out, so "Total Events" never matched the results
+                # "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE END
+                # Alerts have their own page; they show here only when "suricata" is chosen
+                "must_not": _EXCLUDE_DNS_NOISE
+                + (
+                    [] if log_type == "suricata" else _EXCLUDE_ALERTS_FILTER["must_not"]
+                ),
             }
         },
         "size": size,
@@ -687,7 +695,8 @@ async def handle_log_stats(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
@@ -746,7 +755,8 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
@@ -817,7 +827,8 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
@@ -865,7 +876,8 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
@@ -922,7 +934,8 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
