@@ -8,7 +8,7 @@
 
 	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { getDevices } from '$api/devices';
+	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device } from '$api/devices';
 	import { loadFailed } from '$lib/utils/load-failed';
 
@@ -20,6 +20,9 @@
 	let devices = $state<Device[]>([]);
 	// #96: a failed load keeps the last list and says so; it never reads as "No devices seen yet"
 	let devicesFailed = $state(false);
+	// the list stops at 200 rows; Total Devices is the exact count, '—' until one loads
+	let deviceCount = $state<number | null>(null);
+	let deviceCountFailed = $state(false);
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
 	let viewMode = $state<'grid' | 'list'>('grid');
@@ -75,19 +78,34 @@
 
 	async function fetchDevices() {
 		loading = true;
-		try {
-			const res = await getDevices({ sort: 'bytes', order: 'desc', limit: 200 });
-			devices = res.devices;
+		// OLD CODE START — Total Devices was the length of this 200-row list, so bigger networks read 200
+		// try {
+		// 	const res = await getDevices({ sort: 'bytes', order: 'desc', limit: 200 });
+		// 	devices = res.devices;
+		// 	lastUpdated = new Date().toLocaleTimeString();
+		// 	devicesFailed = false;
+		// } catch {
+		// 	// OLD CODE START — #96: a failure read as "0 devices" and "No devices seen yet"
+		// 	// devices = [];
+		// 	// OLD CODE END
+		// 	devicesFailed = true;
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		// same (default 24 h) range for both: the page sends no from/to
+		const [listRes, countRes] = await Promise.allSettled([
+			getDevices({ sort: 'bytes', order: 'desc', limit: 200 }),
+			getDeviceCount(),
+		]);
+		if (listRes.status === 'fulfilled') {
+			devices = listRes.value.devices;
 			lastUpdated = new Date().toLocaleTimeString();
-			devicesFailed = false;
-		} catch {
-			// OLD CODE START — #96: a failure read as "0 devices" and "No devices seen yet"
-			// devices = [];
-			// OLD CODE END
-			devicesFailed = true;
-		} finally {
-			loading = false;
 		}
+		devicesFailed = listRes.status === 'rejected';
+		if (countRes.status === 'fulfilled') deviceCount = countRes.value.count;
+		deviceCountFailed = countRes.status === 'rejected';
+		loading = false;
 	}
 
 	$effect(() => { fetchDevices(); });
@@ -223,7 +241,12 @@
 				<!-- with nothing loaded the empty state below says it couldn't load -->
 				{#if devices.length > 0}<p class="subtitle">{loadFailed('devices', true)}</p>{/if}
 			{:else}
+				<!-- OLD CODE START — the list length, which stops at 200
 				<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+				OLD CODE END -->
+				<p class="subtitle">
+					{deviceCount !== null ? `${deviceCount} devices seen on the network` : `Showing ${devices.length} devices`}{deviceCount !== null && devices.length < deviceCount ? ` \u00b7 showing the ${devices.length} busiest` : ''}{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}
+				</p>
 			{/if}
 		</div>
 		<div class="header-controls">
@@ -249,8 +272,18 @@
 		<div class="stats-grid">
 			<div class="stat-card stat-accent">
 				<div class="stat-label">Total Devices</div>
+				<!-- OLD CODE START — the 200-row list length, not the device count
 				<div class="stat-value accent">{devices.length}</div>
 				<div class="stat-sub">Seen on the network</div>
+				OLD CODE END -->
+				<div class="stat-value accent">{deviceCount ?? '\u2014'}</div>
+				<div class="stat-sub">
+					{#if deviceCountFailed}
+						<span class="text-warning">{loadFailed('the device count', deviceCount !== null)}</span>
+					{:else}
+						Seen on the network
+					{/if}
+				</div>
 			</div>
 			<div class="stat-card">
 				<div class="stat-label">Online Now</div>

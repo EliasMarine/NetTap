@@ -87,9 +87,44 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 		render(UpdatesPage);
 
-		expect(await screen.findByText("Couldn't check nettap-daemon: those sources didn't answer.")).toBeInTheDocument();
+		expect(await screen.findByText("Couldn't check nettap-daemon for updates.")).toBeInTheDocument();
 		// Zeek was checked and is current; the daemon's own release check failed
 		expect(screen.getAllByText('Up to Date')).toHaveLength(1);
+		expect(screen.getAllByText('Unknown')).toHaveLength(1);
+	});
+
+	// "component-versions" means the daemon couldn't read what's installed, so nothing was checked
+	it('says no component could be checked when the installed versions could not be read', async () => {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '', failed_checks: ['component-versions'] },
+		});
+
+		render(UpdatesPage);
+
+		expect(
+			await screen.findByText("Couldn't read the installed versions, so no component could be checked for updates."),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/component-versions/)).not.toBeInTheDocument();
+		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+	});
+
+	it('names container and docker checks the daemon could not make', async () => {
+		const versions = {
+			versions: {
+				...VERSIONS.versions,
+				grafana: { name: 'grafana', category: 'docker', current_version: '10.4.2', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			},
+			last_scan: '',
+		};
+		stubFetch({
+			'/api/system/versions': versions,
+			'/api/system/updates/available': { updates: [], last_check: '', failed_checks: ['grafana', 'docker'] },
+		});
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText("Couldn't check grafana, docker for updates.")).toBeInTheDocument();
 		expect(screen.getAllByText('Unknown')).toHaveLength(1);
 	});
 
@@ -109,11 +144,99 @@ describe('Software Updates page when a request fails (#96)', () => {
 	});
 
 	it('still reads Up to Date when the update list loads and is empty', async () => {
-		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [], last_check: '' } });
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
 
 		render(UpdatesPage);
 
 		expect(await screen.findByText('Up to Date')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+});
+
+// The daemon now sends size_mb: null when nobody measured the update's size.
+describe('Software Updates page — update size', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const update = (size_mb: number | null) => ({
+		component: 'zeek', current_version: '6.0.4', latest_version: '6.0.5', update_type: 'patch',
+		release_url: '', release_date: '', changelog: '', size_mb, requires_restart: false,
+	});
+
+	async function openUpdatePanel(size_mb: number | null) {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [update(size_mb)], last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+	}
+
+	it('says the size is unknown when it was not measured', async () => {
+		await openUpdatePanel(null);
+
+		expect(await screen.findByText('size unknown')).toBeInTheDocument();
+		expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/0\.0 MB/)).not.toBeInTheDocument();
+	});
+
+	it('still shows a measured size', async () => {
+		await openUpdatePanel(120);
+
+		expect(await screen.findByText('120.0 MB')).toBeInTheDocument();
+		expect(screen.queryByText('size unknown')).not.toBeInTheDocument();
+	});
+});
+
+// The daemon replies {history, count}; the client treated that object as the list, so no history ever showed.
+describe('Software Updates page — update history', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const PAST = {
+		component: 'suricata', success: false, old_version: '7.0.2', new_version: '7.0.3',
+		started_at: '2026-02-20T10:00:00Z', completed_at: '2026-02-20T10:01:30Z', error: 'pull failed', rollback_available: false,
+	};
+
+	it('shows past updates from the daemon reply', async () => {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [PAST], count: 1 },
+		});
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText('Update History')).toBeInTheDocument();
+		expect(screen.getByText('1 past update')).toBeInTheDocument();
+	});
+
+	it('shows no history section and no error when there are no past updates', async () => {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+
+		render(UpdatesPage);
+
+		await screen.findByText('Zeek');
+		expect(screen.queryByText('Update History')).not.toBeInTheDocument();
+		expect(screen.queryByText(/update history/)).not.toBeInTheDocument();
+	});
+
+	it('says the history failed to load', async () => {
+		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [], last_check: '' } });
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText("Couldn't load the update history: the request failed.")).toBeInTheDocument();
 	});
 });

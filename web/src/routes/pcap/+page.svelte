@@ -16,7 +16,10 @@
 		PcapSearchResult,
 		PcapPacket,
 	} from '$lib/api/pcap';
-	import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
+	// OLD CODE START — getCaptureStatus fakes enabled: true when the request fails
+	// import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
+	// OLD CODE END
+	import { fetchCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	import type { CaptureStatus } from '$lib/api/capture';
 
 	// ---------------------------------------------------------------------------
@@ -76,7 +79,10 @@
 	let resultSortDir = $state<'asc' | 'desc'>('desc');
 
 	// Capture control
-	let captureEnabled = $state(true);
+	// OLD CODE START — assumed on, so an unread state showed the toggle on and a click turned capture off
+	// let captureEnabled = $state(true);
+	// OLD CODE END
+	let captureEnabled = $state<boolean | null>(null); // null until the daemon says
 	let captureLoading = $state(false);
 	let captureStatus = $state<CaptureStatus | null>(null);
 	let captureView = $derived(captureState(captureStatus));
@@ -368,15 +374,24 @@
 	// ---------------------------------------------------------------------------
 
 	async function loadCaptureStatus() {
+		// OLD CODE START — a failed read came back as enabled: true and set the toggle on
+		// try {
+		// 	captureStatus = await getCaptureStatus();
+		// 	captureEnabled = captureStatus.enabled;
+		// } catch {
+		// 	// Default to enabled if API unreachable
+		// }
+		// OLD CODE END
 		try {
-			captureStatus = await getCaptureStatus();
+			captureStatus = await fetchCaptureStatus();
 			captureEnabled = captureStatus.enabled;
 		} catch {
-			// Default to enabled if API unreachable
+			// state unknown: the label says so and the toggle stays disabled
 		}
 	}
 
 	async function handleCaptureToggle() {
+		if (captureEnabled === null) return;
 		captureLoading = true;
 		try {
 			const result = await toggleCapture(!captureEnabled);
@@ -387,7 +402,10 @@
 				captureStatus.containerStatus = result.containerStatus;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Toggle failed';
+			// OLD CODE START — showed the bare daemon/HTTP message
+			// error = err instanceof Error ? err.message : 'Toggle failed';
+			// OLD CODE END
+			error = `Couldn't turn capture ${captureEnabled ? 'off' : 'on'}: ${err instanceof Error ? err.message : 'the request failed'}`;
 		} finally {
 			captureLoading = false;
 		}
@@ -426,12 +444,21 @@
 				OLD CODE END -->
 				<span class="capture-status-dot" class:active={captureView === 'active'}></span>
 				<span class="capture-status-label">{CAPTURE_LABELS[captureView]}</span>
+				<!-- OLD CODE START — read "on" and stayed clickable when the state was unknown
 				<button
 					class="toggle-switch"
 					class:on={captureEnabled}
 					onclick={handleCaptureToggle}
 					disabled={captureLoading}
 					aria-label={captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
+				>
+				OLD CODE END -->
+				<button
+					class="toggle-switch"
+					class:on={captureEnabled === true}
+					onclick={handleCaptureToggle}
+					disabled={captureLoading || captureEnabled === null}
+					aria-label={captureEnabled === null ? "PCAP capture state unknown: can't change it" : captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
 				>
 					<span class="toggle-knob" class:loading={captureLoading}></span>
 				</button>

@@ -201,6 +201,36 @@ describe('Settings — retention health', () => {
 		expect(screen.getByText(/Policy synced/)).toBeInTheDocument();
 		expect(screen.queryByText(/All 1 synced/)).not.toBeInTheDocument();
 	});
+
+	// a failed /api/storage/status read showed "Loading..." forever, "Never (daemon starting...)" and a Problem badge
+	it('says the storage status could not be read instead of guessing', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText("Couldn't load the storage status: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText('Unknown', { selector: '.health-badge' })).toBeInTheDocument();
+		expect(screen.queryByText('Problem')).not.toBeInTheDocument();
+		expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+		expect(screen.queryByText('Never (daemon starting...)')).not.toBeInTheDocument();
+	});
+
+	it('still reads Healthy when the storage status loads in sync', async () => {
+		stubFetch({
+			'/api/storage/status': () => ({
+				body: { disk_usage_percent: 6.8, last_prune_at: new Date().toISOString(),
+					ilm_status: { synced: true, last_applied: 'x', pending_retry: false, policies: { a: 'updated', b: 'updated' } } },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText('Healthy', { selector: '.health-badge' })).toBeInTheDocument();
+		expect(screen.getByText(/2 policies synced/)).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load the storage status/)).not.toBeInTheDocument();
+	});
 });
 
 describe('Settings — capture status label', () => {

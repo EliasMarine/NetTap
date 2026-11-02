@@ -14,7 +14,13 @@ export interface BridgeHealth {
 	lan_link: boolean;
 	bypass_active: boolean;
 	watchdog_active: boolean;
-	latency_us: number;
+	// OLD CODE START — the daemon sends null now that it no longer makes up a 50 µs figure
+	// latency_us: number;
+	// OLD CODE END
+	/** null = not measured (NetTap can't time packets through the bridge); see latency_note */
+	latency_us: number | null;
+	/** Why latency_us is null. */
+	latency_note?: string;
 	rx_bytes_delta: number;
 	tx_bytes_delta: number;
 	rx_packets_delta: number;

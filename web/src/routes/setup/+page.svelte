@@ -73,6 +73,7 @@
 	let nicsLoading = $state(false);
 	let nicsError = $state('');
 	let nicsSource = $state('');
+	const NICS_UNREACHABLE = "Couldn't detect the network cards: NetTap's service didn't answer.";
 
 	// Bridge mode NIC selection
 	let selectedWan = $state('');
@@ -228,6 +229,7 @@
 	// ----- Saving config on completion -----
 	let configSaving = $state(false);
 	let configSaveError = $state('');
+	let configSaveWarnings = $state<string[]>([]);
 
 	// ----- Helper: get the logical step name for the current step number -----
 	function getStepName(step: number): string {
@@ -314,6 +316,8 @@
 			} catch {
 				throw new Error('Server returned invalid data');
 			}
+			// the proxy answers built-in sample cards when the daemon doesn't; they passed this check
+			if (nicData.source === 'mock') throw new Error(NICS_UNREACHABLE);
 			// Count non-loopback, non-virtual interfaces available
 			const bridgeableNics = (nicData.interfaces || []).filter(
 				(iface: NetworkInterface) => iface.type === 'ethernet'
@@ -333,7 +337,10 @@
 			interfaces = nicData.interfaces || [];
 			nicsSource = nicData.source || '';
 		} catch {
-			requirements.nics = { ...requirements.nics, status: 'fail' };
+			// OLD CODE START — a failed check read as "you don't have the network cards"
+			// requirements.nics = { ...requirements.nics, status: 'fail' };
+			// OLD CODE END
+			requirements.nics = { ...requirements.nics, label: "Network interfaces: couldn't check", status: 'fail' };
 		}
 
 		// Check Docker — use the health endpoint
@@ -351,16 +358,32 @@
 		}
 
 		// Check Disk via storage
+		// OLD CODE START — a failed read passed, and so did the proxy's sample reply (911 GB free)
+		// try {
+		// 	const storageRes = await fetch('/api/setup/storage');
+		// 	const storageData = await storageRes.json();
+		// 	const freeGb = storageData.disk_free_gb || 0;
+		// 	requirements.disk = {
+		// 		...requirements.disk,
+		// 		status: freeGb >= 100 ? 'pass' : 'fail',
+		// 	};
+		// } catch {
+		// 	requirements.disk = { ...requirements.disk, status: 'pass' };
+		// }
+		// OLD CODE END
 		try {
 			const storageRes = await fetch('/api/setup/storage');
+			if (!storageRes.ok) throw new Error(`HTTP ${storageRes.status}`);
 			const storageData = await storageRes.json();
-			const freeGb = storageData.disk_free_gb || 0;
+			if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+				throw new Error('no disk reading');
+			}
 			requirements.disk = {
 				...requirements.disk,
-				status: freeGb >= 100 ? 'pass' : 'fail',
+				status: storageData.disk_free_gb >= 100 ? 'pass' : 'fail',
 			};
 		} catch {
-			requirements.disk = { ...requirements.disk, status: 'pass' };
+			requirements.disk = { ...requirements.disk, label: "Disk space: couldn't check", status: 'fail' };
 		}
 
 		requirementsChecked = true;
@@ -381,6 +404,11 @@
 			} catch {
 				throw new Error('Server returned invalid data — daemon may need restart');
 			}
+			// OLD CODE START — offered the proxy's sample cards (eth0/eth1/wlan0) for selection when the daemon didn't answer
+			// interfaces = data.interfaces || [];
+			// nicsSource = data.source || '';
+			// OLD CODE END
+			if (data.source === 'mock') throw new Error(NICS_UNREACHABLE);
 			interfaces = data.interfaces || [];
 			nicsSource = data.source || '';
 		} catch (err) {
@@ -624,6 +652,7 @@
 	async function saveSetupConfig(): Promise<void> {
 		configSaving = true;
 		configSaveError = '';
+		configSaveWarnings = [];
 		try {
 			const payload: Record<string, unknown> = {
 				capture_mode: selectedMode,
@@ -666,6 +695,11 @@
 			if (!res.ok) {
 				const data = await res.json();
 				throw new Error(data.error || `HTTP ${res.status}`);
+			}
+			// res.ok alone isn't "all saved": the daemon answers "partial" when e.g. retention wasn't written
+			const saved: { status?: string; warnings?: string[] } = await res.json();
+			if (saved.status === 'partial') {
+				configSaveWarnings = saved.warnings?.length ? saved.warnings : ['Some settings were not saved.'];
 			}
 		} catch (err) {
 			configSaveError = err instanceof Error ? err.message : 'Failed to save configuration';
@@ -1852,6 +1886,21 @@
 						Checking that all services are running correctly...
 					</p>
 
+					{#if configSaveWarnings.length > 0}
+						<div class="alert alert-warning" role="alert">
+							<strong>Setup is only partly done.</strong>
+							Your capture settings were saved, but not everything else was:
+							<ul class="config-warnings">
+								{#each configSaveWarnings as warning}
+									<li>{warning}</li>
+								{/each}
+							</ul>
+							<button class="btn btn-secondary btn-sm" type="button" onclick={saveSetupConfig} disabled={configSaving}>
+								{configSaving ? 'Saving...' : 'Try saving again'}
+							</button>
+						</div>
+					{/if}
+
 					{#if configSaveError}
 						<div class="alert alert-danger" role="alert">
 							<strong>Your capture settings were not saved.</strong>
@@ -2124,6 +2173,11 @@
 		list-style: none;
 		padding: 0;
 		margin-bottom: var(--space-md);
+	}
+
+	.config-warnings {
+		margin: var(--space-sm) 0;
+		padding-left: var(--space-lg);
 	}
 
 	.requirement-item {

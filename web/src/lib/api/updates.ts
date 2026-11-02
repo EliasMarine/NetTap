@@ -26,7 +26,11 @@ export interface AvailableUpdate {
 	release_url: string;
 	release_date: string;
 	changelog: string;
-	size_mb: number;
+	// OLD CODE START — the daemon sends null when nobody measured the size
+	// size_mb: number;
+	// OLD CODE END
+	/** null = not measured: show "size unknown", never 0 MB */
+	size_mb: number | null;
 	requires_restart: boolean;
 }
 
@@ -189,11 +193,20 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
 export async function getUpdateHistory(): Promise<UpdateResult[]> {
 	const res = await fetch('/api/system/updates/history');
 
+	// OLD CODE START — the daemon replies {history, count}, so this object never read as a list and
+	// the history never showed; a failure also read as "no past updates"
+	// if (!res.ok) {
+	// 	return [];
+	// }
+	//
+	// return res.json();
+	// OLD CODE END
 	if (!res.ok) {
-		return [];
+		throw new Error(`Update history request failed: HTTP ${res.status}`);
 	}
 
-	return res.json();
+	const body: { history: UpdateResult[]; count: number } = await res.json();
+	return body.history;
 }
 
 /**

@@ -153,6 +153,69 @@ describe('PCAP page — capture status', () => {
 	});
 });
 
+// The toggle read "on" when the state couldn't be read, so a click turned capture off on a guess.
+describe('PCAP page — capture toggle', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const RUNNING = { enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' };
+
+	/** Status replies `status` (HTTP 503 when null); the toggle replies `toggle` (HTTP 500 when null). */
+	function stubCapture(status: Record<string, unknown> | null, toggle: Record<string, unknown> | null = null) {
+		const fetchMock = vi.fn(async (url: string) => {
+			if (url.startsWith('/api/capture/status')) {
+				return status
+					? { ok: true, status: 200, json: async () => status }
+					: { ok: false, status: 503, json: async () => ({}) };
+			}
+			if (url.startsWith('/api/capture/toggle')) {
+				return toggle
+					? { ok: true, status: 200, json: async () => toggle }
+					: { ok: false, status: 500, json: async () => ({ error: 'docker did not answer' }) };
+			}
+			return { ok: false, status: 500, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		return fetchMock;
+	}
+
+	const toggleCalls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.filter(([u]) => String(u).startsWith('/api/capture/toggle'));
+
+	it('is not shown on and cannot be clicked while the state is unknown', async () => {
+		const fetchMock = stubCapture(null);
+		render(PcapPage);
+
+		const toggle = await screen.findByRole('button', { name: "PCAP capture state unknown: can't change it" });
+		expect(toggle).toBeDisabled();
+		expect(toggle).not.toHaveClass('on');
+		await fireEvent.click(toggle);
+		expect(toggleCalls(fetchMock)).toHaveLength(0);
+	});
+
+	it('turns capture off when it is known to be on', async () => {
+		const fetchMock = stubCapture(RUNNING, { enabled: false, containerRunning: false, containerStatus: 'exited' });
+		render(PcapPage);
+
+		const toggle = await screen.findByRole('button', { name: 'Disable PCAP capture' });
+		expect(toggle).toHaveClass('on');
+		await fireEvent.click(toggle);
+
+		expect(await screen.findByText('Capture Stopped')).toBeInTheDocument();
+		expect(toggleCalls(fetchMock)[0][1]).toMatchObject({ body: JSON.stringify({ enabled: false }) });
+	});
+
+	it('says so when the toggle fails', async () => {
+		stubCapture(RUNNING);
+		render(PcapPage);
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Disable PCAP capture' }));
+
+		expect(await screen.findByText("Couldn't turn capture off: docker did not answer")).toBeInTheDocument();
+		expect(screen.getByText('Capture Active')).toBeInTheDocument();
+	});
+});
+
 // ---------------------------------------------------------------------------
 // Rendered page: background search polling
 // ---------------------------------------------------------------------------

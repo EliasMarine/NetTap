@@ -34,6 +34,7 @@
 	});
 	let diskUsage = $state<number | null>(null);
 	let lastPruneAt = $state<string | null>(null);
+	let storageStatusFailed = $state(false);
 	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
@@ -163,10 +164,15 @@
 				diskUsage = data.disk_usage_percent ?? data.usage_percent ?? null;
 				lastPruneAt = data.last_prune_at ?? null;
 				ilmStatus = data.ilm_status ?? null;
+				storageStatusFailed = false;
+				return;
 			}
 		} catch {
-			// Will stay null
+			// OLD CODE START — a failure left "Loading...", "Never (daemon starting...)" and a Problem badge
+			// // Will stay null
+			// OLD CODE END
 		}
+		storageStatusFailed = true;
 	}
 
 	// --- Retention health helpers ---
@@ -189,8 +195,12 @@
 		const diskHigh = diskPct >= (retentionConfig.disk_threshold ?? 80);
 		const diskCritical = diskPct >= (retentionConfig.emergency_threshold ?? 90);
 
-		let status: 'healthy' | 'attention' | 'problem' = 'healthy';
-		if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
+		// OLD CODE START — a failed status read scored as a Problem
+		// let status: 'healthy' | 'attention' | 'problem' = 'healthy';
+		// OLD CODE END
+		let status: 'healthy' | 'attention' | 'problem' | 'unknown' = 'healthy';
+		if (storageStatusFailed) status = 'unknown';
+		else if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
 		else if (ilmPending || diskHigh || !pruneOk) status = 'attention';
 
 		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
@@ -970,15 +980,23 @@
 					<span class="card-title">Retention Health</span>
 					<span class="health-badge health-{retentionHealth.status}">
 						<span class="health-dot"></span>
+						<!-- OLD CODE START — no unknown state
 						{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
+						OLD CODE END -->
+						{{ healthy: 'Healthy', attention: 'Attention', problem: 'Problem', unknown: 'Unknown' }[retentionHealth.status]}
 					</span>
 				</div>
 
+				{#if storageStatusFailed}
+					<p class="text-warning">{loadFailed('the storage status', ilmStatus !== null || lastPruneAt !== null)}</p>
+				{/if}
 				<div class="health-rows">
 					<div class="health-row">
 						<span class="health-label">ILM Policies</span>
 						<span class="health-value">
-							{#if ilmStatus === null}
+							{#if ilmStatus === null && storageStatusFailed}
+								<span class="text-muted">Unknown</span>
+							{:else if ilmStatus === null}
 								<span class="text-muted">Loading...</span>
 							{:else if retentionHealth.ilmPending}
 								<span style="color: var(--amber);">&#x27f3; Syncing...</span>
@@ -1013,6 +1031,8 @@
 								<span class="mono" style="color: {retentionHealth.pruneStale ? 'var(--red)' : retentionHealth.pruneOk ? 'var(--green)' : 'var(--amber)'}">
 									{timeAgo(lastPruneAt)}
 								</span>
+							{:else if storageStatusFailed}
+								<span class="text-muted">Unknown</span>
 							{:else}
 								<span class="text-muted">Never (daemon starting...)</span>
 							{/if}
@@ -2363,6 +2383,13 @@
 	.health-problem .health-dot {
 		background: var(--red);
 		box-shadow: 0 0 6px var(--red);
+	}
+	.health-unknown {
+		color: var(--text-muted);
+		background: var(--bg-elevated);
+	}
+	.health-unknown .health-dot {
+		background: var(--text-dim);
 	}
 
 	.health-rows {

@@ -269,8 +269,9 @@ describe('updates API client', () => {
 	// -- getUpdateHistory -----------------------------------------------------
 
 	describe('getUpdateHistory', () => {
-		it('returns history array on success', async () => {
-			mockFetchSuccess(sampleHistory);
+		// the daemon replies {history, count}; the old client returned that object as the list
+		it('returns the history list from the daemon reply', async () => {
+			mockFetchSuccess({ history: sampleHistory, count: 1 });
 
 			const result = await getUpdateHistory();
 
@@ -280,12 +281,16 @@ describe('updates API client', () => {
 			expect(result[0].success).toBe(true);
 		});
 
-		it('returns empty array on HTTP error', async () => {
+		it('returns an empty list when there are no past updates', async () => {
+			mockFetchSuccess({ history: [], count: 0 });
+
+			expect(await getUpdateHistory()).toEqual([]);
+		});
+
+		it('throws on HTTP error instead of reporting no past updates', async () => {
 			mockFetchFailure(500);
 
-			const result = await getUpdateHistory();
-
-			expect(result).toEqual([]);
+			await expect(getUpdateHistory()).rejects.toThrow('HTTP 500');
 		});
 	});
 

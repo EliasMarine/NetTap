@@ -15,6 +15,7 @@
 		UpdateResult,
 	} from '$api/updates.js';
 	import Collapsible from '$lib/components/Collapsible.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -32,9 +33,17 @@
 	// #96: a failed request never reads as "Up to Date" or a finished update
 	let versionsFailed = $state(false);
 	let updatesFailed = $state(false);
+	let historyFailed = $state(false);
 	let actionError = $state('');
 	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
 	let failedChecks = $state<string[]>([]);
+
+	// names a reader can follow; anything else is a component name, as in the table below
+	let failedChecksNote = $derived(
+		failedChecks.includes('component-versions')
+			? "Couldn't read the installed versions, so no component could be checked for updates."
+			: `Couldn't check ${failedChecks.join(', ')} for updates.`,
+	);
 
 	function checkFailed(key: string, name: string): boolean {
 		return updatesFailed || failedChecks.some((c) => c === key || c === name || c === 'component-versions');
@@ -245,6 +254,7 @@
 			failedChecks = updatesRes.value.failed_checks ?? [];
 		}
 		if (historyRes.status === 'fulfilled') updateHistory = historyRes.value;
+		historyFailed = historyRes.status === 'rejected';
 		versionsFailed = versionsRes.status === 'rejected';
 		updatesFailed = updatesRes.status === 'rejected';
 		loading = false;
@@ -422,7 +432,10 @@
 				{/if}
 			</p>
 			{#if failedChecks.length > 0}
+				<!-- OLD CODE START — showed "component-versions" as is, and blamed every failure on a source not answering
 				<p class="text-warning">Couldn't check {failedChecks.join(', ')}: those sources didn't answer.</p>
+				OLD CODE END -->
+				<p class="text-warning">{failedChecksNote}</p>
 			{/if}
 		</div>
 		<div class="header-actions">
@@ -641,7 +654,14 @@
 												<span class="check-version mono">
 													{update.current_version} &rarr; {update.latest_version}
 												</span>
+												<!-- OLD CODE START — an unmeasured (null) size showed nothing; now it says so
 												{#if update.size_mb > 0}
+													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
+												{/if}
+												OLD CODE END -->
+												{#if update.size_mb == null}
+													<span class="check-size text-muted">size unknown</span>
+												{:else if update.size_mb > 0}
 													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
 												{/if}
 											</div>
@@ -814,6 +834,9 @@
 					{/each}
 				</div>
 			</Collapsible>
+		{/if}
+		{#if historyFailed}
+			<p class="text-warning">{loadFailed('the update history', updateHistory.length > 0)}</p>
 		{/if}
 	{/if}
 </div>
