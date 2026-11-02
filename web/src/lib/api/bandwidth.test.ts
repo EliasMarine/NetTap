@@ -168,6 +168,29 @@ describe('bandwidth API client', () => {
 			expect(result.matrix[0][9]).toBe(3000);
 		});
 
+		it("asks for the hours in the viewer's time zone", async () => {
+			vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+				timeZone: 'America/Los_Angeles',
+			} as Intl.ResolvedDateTimeFormatOptions);
+			mockFetchSuccess({ from: '', to: '', days: [], hours: [], matrix: [] });
+
+			await getHeatmap({ from: 'a', to: 'b' });
+
+			const url = vi.mocked(fetch).mock.calls[0][0] as string;
+			expect(new URL(url, 'http://x').searchParams.get('tz')).toBe('America/Los_Angeles');
+		});
+
+		it('leaves tz off when the browser reports no zone', async () => {
+			vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+				timeZone: '',
+			} as Intl.ResolvedDateTimeFormatOptions);
+			mockFetchSuccess({ from: '', to: '', days: [], hours: [], matrix: [] });
+
+			await getHeatmap();
+
+			expect(vi.mocked(fetch).mock.calls[0][0]).not.toContain('tz=');
+		});
+
 		// #96: a fake-empty result on failure read as a real "none" or 0
 		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);

@@ -32,6 +32,11 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		expect(timeout).toBeUndefined(); // daemonFetch's 10 s default
 	});
 
+	it("forwards the heatmap's time zone to the daemon", async () => {
+		await GET(event('/api/bandwidth/heatmap?from=a&to=b&tz=America%2FLos_Angeles') as never);
+		expect(daemonFetch.mock.calls[0][0]).toBe('/api/bandwidth/heatmap?from=a&to=b&tz=America%2FLos_Angeles');
+	});
+
 	it('gives tshark previews 60 s', async () => {
 		await GET(event('/api/pcap/preview?file=a.pcap') as never);
 		expect(daemonFetch.mock.calls[0][2]).toBe(60_000);

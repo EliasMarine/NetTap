@@ -357,6 +357,8 @@
 		{#if heatmap && heatmap.matrix}
 			<div class="card">
 				<h3 class="card-title">Time-of-Day Heatmap (Last 7 Days)</h3>
+				<!-- a daemon that doesn't echo tz ignored it and bucketed in UTC -->
+				<p class="heatmap-tz text-muted">Hours in {heatmap.tz || 'UTC'}</p>
 				<div class="heatmap-container">
 					<div class="heatmap-grid">
 						<!-- Hour labels -->
@@ -545,6 +547,12 @@
 		margin: 0;
 		color: var(--amber);
 		font-size: var(--text-sm);
+	}
+
+	.heatmap-tz {
+		margin: 0;
+		padding: var(--space-sm) var(--space-lg) 0;
+		font-size: var(--text-xs);
 	}
 
 	.heatmap-container {

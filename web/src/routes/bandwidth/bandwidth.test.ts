@@ -50,6 +50,20 @@ describe('Bandwidth — failed requests', () => {
 		expect(screen.queryByText(/Time-of-Day Heatmap/)).not.toBeInTheDocument();
 	});
 
+	it('says which time zone the heatmap hours are in', async () => {
+		const heatmap = { from: '', to: '', days: [], hours: [], matrix: Array.from({ length: 7 }, () => Array(24).fill(0)) };
+		stubDaemon({ '/api/bandwidth/heatmap': { ...heatmap, tz: 'America/Los_Angeles' } });
+		render(Page);
+		expect(await screen.findByText('Hours in America/Los_Angeles')).toBeInTheDocument();
+	});
+
+	it('labels the hours UTC when the daemon does not say it bucketed in another zone', async () => {
+		const heatmap = { from: '', to: '', days: [], hours: [], matrix: Array.from({ length: 7 }, () => Array(24).fill(0)) };
+		stubDaemon({ '/api/bandwidth/heatmap': heatmap });
+		render(Page);
+		expect(await screen.findByText('Hours in UTC')).toBeInTheDocument();
+	});
+
 	it('shows the sections that loaded when others fail', async () => {
 		stubDaemon({ '/api/bandwidth/monthly': MONTHLY });
 		render(Page);

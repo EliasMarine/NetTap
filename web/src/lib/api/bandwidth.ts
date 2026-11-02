@@ -62,6 +62,8 @@ export interface HeatmapResponse {
 	days: string[];
 	hours: number[];
 	matrix: number[][];
+	/** IANA zone the hours and weekdays are in; absent from daemons that only bucket in UTC */
+	tz?: string;
 }
 
 export interface BandwidthCap {
@@ -174,7 +176,12 @@ export async function getDeviceUsage(
 export async function getHeatmap(
 	opts: { from?: string; to?: string } = {}
 ): Promise<HeatmapResponse> {
-	const query = buildQuery({ from: opts.from, to: opts.to });
+	// OLD CODE START — the daemon bucketed hours and weekdays in UTC, so a Pacific evening showed after midnight
+	// const query = buildQuery({ from: opts.from, to: opts.to });
+	// OLD CODE END
+	// Bucket in the viewer's zone; with no zone the daemon keeps UTC
+	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+	const query = buildQuery({ from: opts.from, to: opts.to, tz });
 	const res = await fetch(`/api/bandwidth/heatmap${query}`);
 
 	// OLD CODE START — #96: a failed request read as an all-zero heatmap
