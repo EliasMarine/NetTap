@@ -124,7 +124,7 @@ api_certs() { api "/api/certificates/stats?$Q" 'r["total_certs"]'; }
 compare "certificates" raw_certs api_certs
 echo ""
 
-echo "→ Security Posture (Encryption, DNS Security): the IoT encryption rule, network-wide (#86)"
+echo "→ Security Posture (Encryption, DNS Security): the IoT encryption rule, network-wide (#86), excluded IPs hidden (#103)"
 # The rule's clauses come from the daemon's own constants, so this checks the counting, not the rule
 RULES=$(sudo docker exec nettap-storage-daemon python3 -c "
 import json
@@ -134,16 +134,16 @@ print(json.dumps([[*LOCAL_CHATTER_EXCLUSION, {'terms': {'network.protocol': NO_P
 ELIG_OUT=$(json_get "$RULES" 'json.dumps(r[0])')
 ENC_RULE=$(json_get "$RULES" 'json.dumps(r[1])')
 NAME_PORTS=$(json_get "$RULES" 'json.dumps(r[2])')
-raw_elig() { raw "{\"filter\":[$T,$CONN],\"must_not\":$ELIG_OUT}" '{}' "$TOTAL"; }
+raw_elig() { raw "{\"filter\":[$T,$CONN],\"must_not\":[${ELIG_OUT:1:${#ELIG_OUT}-2},$SRC_EXCL]}" '{}' "$TOTAL"; }
 api_elig() { api "/api/traffic/protocols?$Q" 'r["encryption"]["eligible"]'; }
 compare "connections that can be encrypted" raw_elig api_elig
-raw_enc() { raw "{\"filter\":[$T,$CONN,$ENC_RULE],\"must_not\":$ELIG_OUT}" '{}' "$TOTAL"; }
+raw_enc() { raw "{\"filter\":[$T,$CONN,$ENC_RULE],\"must_not\":[${ELIG_OUT:1:${#ELIG_OUT}-2},$SRC_EXCL]}" '{}' "$TOTAL"; }
 api_enc() { api "/api/traffic/protocols?$Q" 'r["encryption"]["encrypted"]'; }
 compare "encrypted connections" raw_enc api_enc
-raw_pdns() { raw "{\"filter\":[$T,$CONN,{\"term\":{\"network.protocol\":\"dns\"}}],\"must_not\":[{\"terms\":{\"destination.port\":$NAME_PORTS}}]}" '{}' "$TOTAL"; }
+raw_pdns() { raw "{\"filter\":[$T,$CONN,{\"term\":{\"network.protocol\":\"dns\"}}],\"must_not\":[{\"terms\":{\"destination.port\":$NAME_PORTS}},$SRC_EXCL]}" '{}' "$TOTAL"; }
 api_pdns() { api "/api/traffic/protocols?$Q" 'r["dns"]["plain"]'; }
 compare "plain DNS lookups" raw_pdns api_pdns
-raw_dot() { raw "{\"filter\":[$T,$CONN,{\"term\":{\"destination.port\":853}}]}" '{}' "$TOTAL"; }
+raw_dot() { raw "{\"filter\":[$T,$CONN,{\"term\":{\"destination.port\":853}}],\"must_not\":[$SRC_EXCL]}" '{}' "$TOTAL"; }
 api_dot() { api "/api/traffic/protocols?$Q" 'r["dns"]["over_tls"]'; }
 compare "DNS-over-TLS connections" raw_dot api_dot
 echo ""
