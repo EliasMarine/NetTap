@@ -46,6 +46,45 @@ describe('DNS page suspicious patterns', () => {
 		await vi.waitFor(() => expect(screen.getByText('No suspicious DNS patterns detected.')).toBeInTheDocument());
 	});
 
+	// #96: the other DNS sections read "No NXDOMAIN errors detected. That's a good sign." and 0 queries
+	it('says the other sections failed instead of "none" or 0', async () => {
+		stubDaemon(null);
+		render(DnsPage);
+		await vi.waitFor(() => expect(screen.getByText("Couldn't load NXDOMAIN errors: the request failed.")).toBeInTheDocument());
+		expect(screen.queryByText(/No NXDOMAIN errors detected/)).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't load top domains: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText(/No domains recorded/)).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't load DNS totals: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText('Total Queries').closest('.stat-card')).not.toHaveTextContent('0');
+		expect(screen.getByText("Couldn't load the query timeline: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load query types: the request failed.")).toBeInTheDocument();
+	});
+
+	it('says a failed device lookup failed instead of "No DNS records"', async () => {
+		stubDaemon([]);
+		render(DnsPage);
+		await fireEvent.input(screen.getByPlaceholderText(/192\.168/), { target: { value: '192.168.1.20' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Lookup' }));
+		await vi.waitFor(() =>
+			expect(screen.getByText("Couldn't load DNS records for 192.168.1.20: the request failed.")).toBeInTheDocument(),
+		);
+		expect(screen.queryByText(/No DNS records for/)).not.toBeInTheDocument();
+	});
+
+	it('still says no NXDOMAIN errors when the request succeeds with none', async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.startsWith('/api/dns/nxdomain')
+					? { ok: true, status: 200, json: async () => ({ from: '', to: '', nxdomains: [] }) }
+					: { ok: false, status: 503, json: async () => ({}) },
+			),
+		);
+		render(DnsPage);
+		await vi.waitFor(() => expect(screen.getByText(/No NXDOMAIN errors detected/)).toBeInTheDocument());
+	});
+
 	it('shows the first 50 of a long list with the true total, and all on request', async () => {
 		stubDaemon(Array.from({ length: 60 }, (_, i) => entry(i)));
 		render(DnsPage);
