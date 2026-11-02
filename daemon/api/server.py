@@ -215,6 +215,15 @@ async def handle_storage_status(request: web.Request) -> web.Response:
     try:
         storage: StorageManager = request.app["storage"]
         status = storage.get_status()
+        # #96: the saved retention isn't in OpenSearch yet, so ILM isn't in sync,
+        # however long ago an earlier apply succeeded
+        if "ilm_sync" in request.app and not _ilm_in_sync(request.app):
+            task = request.app.get("_ilm_retry_task")
+            status["ilm_status"] = {
+                **status["ilm_status"],
+                "synced": False,
+                "pending_retry": task is not None and not task.done(),
+            }
         return web.json_response(status)
     except Exception as exc:
         logger.exception("Error fetching storage status")
