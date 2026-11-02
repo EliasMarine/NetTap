@@ -580,7 +580,10 @@
 			{/if}
 			<p class="card-description">
 				{#if trafficSummary}
-					{formatBytesShort(trafficSummary.orig_bytes)} in / {formatBytesShort(trafficSummary.resp_bytes)} out
+					<!-- OLD CODE START — 2026-11-01: orig_bytes (sent by the side that opened the connection, usually a LAN device) was labelled "in" -->
+					<!-- {formatBytesShort(trafficSummary.orig_bytes)} in / {formatBytesShort(trafficSummary.resp_bytes)} out -->
+					<!-- OLD CODE END -->
+					{formatBytesShort(trafficSummary.resp_bytes)} down / {formatBytesShort(trafficSummary.orig_bytes)} up
 				{:else}
 					Inbound + outbound traffic
 				{/if}
@@ -857,7 +860,7 @@
 				<!-- OLD CODE START — 2026-11-01: "394 total" beside "2.2K alerts" read as a contradiction; the summary hides informational alerts -->
 				<!-- <span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span> -->
 				<!-- OLD CODE END -->
-				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review{#if smartAlertSummary?.informational_events} · {formatNumber(smartAlertSummary.informational_events)} informational{/if}</span>
+				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review{#if smartAlertSummary?.informational_events}{` · ${formatNumber(smartAlertSummary.informational_events)} informational`}{/if}</span>
 			</div>
 			{#if smartAlerts.length > 0}
 				<!-- Severity summary bar -->
