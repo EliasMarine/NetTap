@@ -79,7 +79,8 @@ EVENTS=$(printf '%s' "$SMART" | json_num total_events)
 INFO=$(printf '%s' "$SMART" | json_num informational_events)
 SHOWN=$(( ${EVENTS:-0} + ${INFO:-0} ))
 # to review + informational should account for the Alerts card total (suppressed rules aside)
-if [ -n "$INFO" ] && [ -n "$ALERTS" ] && [ $(( SHOWN * 100 )) -ge $(( ALERTS * 90 )) ]; then rc=0; else rc=1; fi
+DIFF=$(( SHOWN > ${ALERTS:-0} ? SHOWN - ${ALERTS:-0} : ${ALERTS:-0} - SHOWN ))
+if [ -n "$INFO" ] && [ -n "$ALERTS" ] && [ $(( DIFF * 10 )) -le "$ALERTS" ]; then rc=0; else rc=1; fi
 check "#19 Alert Summary accounts for every alert" "$rc" "to review=${EVENTS:-?} + informational=${INFO:-?} = $SHOWN vs Alerts card ${ALERTS:-?}"
 echo ""
 
