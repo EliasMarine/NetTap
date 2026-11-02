@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-10-30 (Chain 21: root cause of the OpenSearch 403s found, MS-001; not yet verified on the device)
+> **Last updated:** 2026-11-01 (Chain 22: AppArmor blocked the daemon's nsenter on Ubuntu, so mirror setup never ran; fix pending device check)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -52,13 +52,14 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
+| Mirror capture setup (daemon host commands) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verify with `bash scripts/remote/deploy-drop-nsenter.sh`. |
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 
 ---
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **21 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **22 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -234,6 +235,34 @@ CHAIN 21: Real root cause of the OpenSearch 403s (fix/code-review-batch-1, revie
   fix-opensearch.sh writes the minimal mapping only on a container without ROLE_ADMIN.
   Verify on the device: `sudo docker restart nettap-opensearch`, wait for healthy, then
   CLAUDE.md bootstrap Step 4 must return cluster health with no bootstrap run.
+
+CHAIN 22: Ubuntu AppArmor blocked every daemon nsenter, so mirror setup never ran (fix/daemon-drop-nsenter)
+  Found 2026-11-01 on the GMKtec G11 (Ubuntu 24.04.5) mirror trial by verify-mirror-mode.sh.
+  Symptom: the wizard saved mirror mode on enp4s0 and the capture containers listened on it,
+  but the port stayed admin DOWN (state DOWN, no UP flag), so it got no packets. There was no
+  /etc/netplan/10-nettap-mirror-enp4s0.yaml and no nettap-mirror.service, so nothing would
+  survive a reboot either. PROMISC and TSO/GSO/GRO off came from the capture containers'
+  own PCAP_IFACE_TWEAK, which never brings a port up or touches rx-vlan-offload.
+  Root cause: every host network command ran as `nsenter -t 1 -n -- <cmd>`. Ubuntu's
+  docker-default AppArmor profile denies the ptrace read nsenter needs on PID 1 (kernel log:
+  apparmor="DENIED" operation="ptrace" comm="nsenter" peer="unconfined", every 30 s).
+  SYS_ADMIN + SYS_PTRACE + pid: host don't help; AppArmor is checked on top of capabilities.
+  MirrorManager.setup() stopped at its first check (`ip -j link show`) and changed nothing.
+  The same failure hit BridgeManager, BridgeHealthMonitor, HostNetOps (DHCP gateway mode)
+  and nic_discovery (which fell through to a direct `ip` call, so it hid the problem).
+  Second bug it exposed: the wizard's "is this NIC in use" guard (_nic_in_use_problem) read
+  the failed `ip` calls as "no default route, no address" and passed ANY NIC, the management
+  port included. It only stayed safe because setup() failed too.
+  Fix: the daemon already runs with network_mode: host, so _run_nsenter (4 copies) now runs
+  the command directly. The guard fails closed when `ip -j link show dev X` returns nothing.
+  Because setup()'s address flush now really runs at every daemon start, the CR-076 guard
+  went in too: main.py skips mirror setup when the NIC carries the default route or has an
+  IPv4 address (a NIC rename could otherwise point the config at the management port).
+  Still true after the fix: /proc/sys is read-only in the container, so setup()'s
+  `sysctl -w ...disable_ipv6=1` only logs a warning. The host boot unit
+  nettap-mirror.service applies it; deploy-drop-nsenter.sh starts that unit once so no
+  reboot is needed. Verify: `bash scripts/remote/deploy-drop-nsenter.sh` (Step 6 must show
+  0 nsenter refusals, Step 8 no ✗ lines), then reboot and run verify-mirror-mode.sh again.
 ```
 
 ---
@@ -1562,7 +1591,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 6. **Docker creates missing file bind-mount sources as directories** — always pre-create files before container start.
 7. **`docker compose up -d` blocks on `service_healthy`** — bootstrap logic that runs after `up -d` will deadlock if the healthcheck depends on that bootstrap.
 8. **`id -u` under sudo returns 0** — use `SUDO_UID` or `stat` for real user detection.
-35. **`no-new-privileges` blocks `nsenter`** — the `setns` syscall used by nsenter requires privilege escalation. If a container needs nsenter (e.g., to access host network namespace), it must override `security_opt: [no-new-privileges:false]`. Maintain security via other mechanisms (cap_drop, read_only).
+35. **`no-new-privileges` blocks `nsenter`** — *(Moot since Chain 22: the daemon no longer uses nsenter.)* the `setns` syscall used by nsenter requires privilege escalation. If a container needs nsenter (e.g., to access host network namespace), it must override `security_opt: [no-new-privileges:false]`. Maintain security via other mechanisms (cap_drop, read_only).
 
 ### JVM / Logstash Specifics
 9. **Logstash 9.x filters `-Xss` from `LS_JAVA_OPTS`** — env vars are unreliable for non-heap JVM flags.
@@ -1688,6 +1717,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 100. **Same trap, worse outcome: `data/` hid `daemon/data/oui_database.json` (Chain 19)** — the file existed on the dev machine, so nothing failed locally. Unanchored `.gitignore` directory rules match at every depth. Prefer an explicit allowlist (`!/daemon/data/`, `/daemon/data/*`, `!/daemon/data/<file>`) over `git add -f`, which leaves the rule in place, so the next new file in that folder is hidden too. Run tests from a clean `git archive` export to catch files that only exist locally.
 101. **`network_mode: host` publishes every listening port to the LAN (Chain 20)** — `ports:` no longer applies, so a server bound to 0.0.0.0 is open to every device on the network. Treat a move to host networking as a new public endpoint: add auth first. Loopback is not a trust boundary either, because every other host-networked container shares it.
 102. **Read the image's entrypoint before writing a workaround (Chain 21)** — Malcolm's OpenSearch builds `roles_mapping.yml` from `ROLE_*` env on every start and pushes it. The 403s came from the missing env, not from a file "reverting". Months of manual bootstraps raced that push. When a Malcolm file keeps going back, find the script that writes it and give it the env it expects.
+103. **AppArmor blocks `nsenter -t 1` from a container on Ubuntu, whatever its capabilities (Chain 22)** — docker-default only allows ptrace between docker-default peers, and host PID 1 is unconfined. If the container already has `network_mode: host`, `nsenter -n` was never needed: run the command directly. Check the kernel log (`journalctl -k | grep DENIED`, readable by the `adm` group) before assuming a capability is missing. Also: a helper that returns `[]` on failure turns every safety check built on it into "looks fine". Make the check fail closed.
 
 ---
 
@@ -1695,6 +1725,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | Risk | Impact | Mitigation |
 |---|---|---|
+| Mirror setup now really runs at every daemon start (Chain 22) | `MirrorManager.setup()` flushes the capture NIC's addresses on each start; before Chain 22 it never ran on Ubuntu | CR-076 guard in `main.py` skips setup when the NIC has the default route or an IPv4 address, and logs `Mirror setup skipped`. If capture stops after a NIC rename, check the daemon log and `/etc/nettap/capture-mode.conf`. |
+| `sysctl -w` from the daemon always fails (Chain 22) | `/proc/sys` is read-only in the container, so mirror setup can't turn IPv6 off on the capture NIC at runtime; a mirrored router advert can then give that NIC an IPv6 address | The host boot unit `nettap-mirror.service` applies it at boot. After a wizard change, run `sudo systemctl restart nettap-mirror.service` or reboot. |
 | Malcolm upgrade may change entrypoint behavior | Supervisord.conf override and PUSER_PRIV_DROP could break | Pin Malcolm image tags; test upgrades in staging |
 | `-Xss8m` may not be enough for future zeek plugins | StackOverflowError returns | Monitor pipeline startup; increase to 16m if needed |
 | `fix-perms` runs chown on every container restart | Slow startup on large data dirs | Consider conditional check (`stat -c %U`) |

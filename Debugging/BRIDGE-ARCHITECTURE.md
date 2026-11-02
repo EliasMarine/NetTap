@@ -366,6 +366,8 @@ Docker Container (nettap-storage-daemon)
     └─ Solution: nsenter -t 1 -n -- <command> (enter host network namespace)
 ```
 
+> **Update 2026-11-01 (Chain 22):** the daemon now runs with `network_mode: host`, so it already is in the host network namespace and runs `ip`/`ethtool`/`iptables` directly. `nsenter -t 1 -n` was dropped: Ubuntu's docker-default AppArmor profile denies its ptrace read of PID 1 (`apparmor="DENIED" ... comm="nsenter"`), so every host command failed on the G11. `/proc/sys` is still read-only in the container, so `sysctl -w` from the daemon fails; host boot units apply sysctls.
+
 ### Sysfs Mounting
 
 **docker-compose.yml volumes:**
@@ -647,6 +649,10 @@ Verifies:
 | **No readiness check** | User had no guidance on cable migration | Added 8-point readiness check at `/api/bridge/readiness` | **FIXED** (PR #83) |
 | **No Go Live page** | Wizard redirected to `/login` with no guidance | Added `/go-live` page with 3-phase workflow | **FIXED** (PR #83) |
 | **Boot units never enabled** (review LD-001) | `nettap-bridge.service` / `nettap-mirror.service` wants/ links pointed at the container path `/host/etc/...`, which doesn't exist on the host, so the oneshot never ran at boot; re-creating the dangling link also raised FileExistsError | Links now use the relative target `../<unit>` via `replace_symlink()` (lexists-aware). Existing devices get the fixed link the next time the bridge or mirror persistence is written | **FIXED** (fix/code-review-batch-1), device check pending |
+| **AppArmor blocked every daemon `nsenter`** (Chain 22) | On Ubuntu, mirror setup stopped at its first check: capture port left admin DOWN, no netplan file, no `nettap-mirror.service`. Bridge, bridge health and DHCP gateway host commands failed the same way | The daemon (`network_mode: host`) runs host commands directly; `_run_nsenter` no longer wraps them | **FIXED** (fix/daemon-drop-nsenter), device check pending |
+| **In-use guard passed any NIC when `ip` failed** (Chain 22) | `_nic_in_use_problem` read failed `ip` calls as "no route, no address", so the wizard would have accepted the management port for mirror mode | Fails closed when `ip -j link show dev X` returns nothing | **FIXED** (fix/daemon-drop-nsenter) |
+| **Mirror setup flushed the configured NIC at every daemon start** (review CR-076) | After a NIC rename the saved capture NIC could be the management port; setup() would strip its address | `main.py` skips mirror setup (logs `Mirror setup skipped`) when the NIC carries the default route or has an IPv4 address | **FIXED** (fix/daemon-drop-nsenter), device check pending |
+| **Daemon can't turn IPv6 off on the capture NIC at runtime** | `/proc/sys` is read-only in the container; a mirrored router advert can give the capture NIC an IPv6 address until reboot | `nettap-mirror.service` sets `disable_ipv6=1` on the host at boot; `deploy-drop-nsenter.sh` starts it once | OPEN (workaround) |
 | **Wizard Verify built the bridge** (review CR-004) | The bridge step's Verify called the daemon's bridge create, so it enslaved both NICs and persisted br0 mid-wizard; a daemon error fell back to a mock that showed as verified | Verify calls the read-only `POST /api/setup/bridge/preview`, which also refuses a port the machine still uses (an address, the default route, the live DHCP gateway NIC). Go Live still builds br0. Go Live's create has no in-use check yet | **FIXED** (fix/code-review-batch-1), device check pending |
 
 ### Design Gaps
@@ -685,7 +691,7 @@ Verifies:
 
 1. **Docker-isolated daemon can't directly interact with host network**
    - All sysfs reads must go through mounted volumes
-   - All bridge commands use `nsenter -t 1 -n --` to enter host namespace
+   - All bridge commands use `nsenter -t 1 -n --` to enter host namespace *(until 2026-11-01; now run directly under `network_mode: host`, see Chain 22)*
    - **Trade-off:** Security (container isolation) vs. simplicity
 
 2. **Capture containers isolated from storage daemon**
@@ -965,7 +971,7 @@ The Go Live workflow bridges the gap between the setup wizard (which configures 
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Bridge creation method | `nsenter -t 1 -n` for `ip link` commands | Already proven in nic_discovery.py; works with existing caps (NET_ADMIN, SYS_PTRACE, pid: host) |
+| Bridge creation method | `ip link` run directly (daemon has `network_mode: host`); was `nsenter -t 1 -n` until 2026-11-01 | nsenter is blocked by Ubuntu's AppArmor (Chain 22); host networking makes it unnecessary |
 | Bridge persistence | Mount host `/etc/netplan`, `/etc/systemd/system`, `/etc/sysctl.d` as writable volumes | Daemon writes config files directly; host picks them up on next boot |
 | Bypass mode | "Soft bypass" — toggle promiscuous mode via nsenter | No Docker socket needed; containers stay running but receive no packets |
 | Bypass state file | `/tmp/nettap-bypass-active` | `/tmp` has writable tmpfs; `/var/run` was on read-only root fs |
@@ -976,8 +982,9 @@ The Go Live workflow bridges the gap between the setup wizard (which configures 
 The `nettap-storage-daemon` container has these capabilities for bridge management:
 
 - **NET_ADMIN**: Required for `ip link add/set` bridge commands and ethtool NIC tuning
-- **SYS_PTRACE**: Required for `nsenter -t 1 -n` to enter host network namespace
-- **pid: host**: Required for nsenter to target PID 1 (host init process)
+- **SYS_PTRACE**: Was for `nsenter -t 1 -n` (dropped 2026-11-01, Chain 22); kept until a device run shows nothing else needs it
+- **pid: host**: Was for nsenter to target PID 1 (dropped 2026-11-01); kept for the same reason
+- **network_mode: host**: Host network commands run directly in the shared namespace
 - **No Docker socket**: Bridge management uses nsenter, not the Docker API — reduces attack surface
 
 Host filesystem mounts for persistence:

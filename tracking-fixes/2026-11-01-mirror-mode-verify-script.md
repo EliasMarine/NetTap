@@ -27,11 +27,15 @@ The owner is trialing mirror mode on a GMKtec G11 (dual Realtek RTL8125BG). The 
 ## Test results
 - `bash -n`: OK. `shellcheck -S warning`: clean.
 - The awk parsers were checked against sample `ethtool -g` / `ip -s link` output.
-- Device run: pending (`bash scripts/remote/verify-mirror-mode.sh`).
+- **First device run (G11, 2026-11-01): 5 problems.** The port was admin DOWN because the daemon's nsenter was blocked by AppArmor (Chain 22, NET-126), so there were no packets. The netplan file and boot unit were missing, and rx-vlan-offload was on.
+- **After a manual `sudo ip link set enp4s0 up`:** the mirror works: a 2.5 Gb/s link, about 800 packets/s, and 500 unicast frames in 10 s.
+- **Script fixes from that run (NET-126):**
+  - an admin-DOWN port is now reported as such, instead of "check the cable";
+  - the unit state no longer prints `not-found` and `missing` on two lines.
 
 ## Lessons
 - On a two-NIC box, `install.sh` must run with `--skip-bridge`. Otherwise `preflight.sh` assigns both NICs to WAN/LAN and `setup-bridge.sh` enslaves the management NIC.
 
 ## Next steps
 - Run it on the G11 after the wizard and switch config, then again after a reboot.
-- CR-076 (unguarded flush at `mirror_manager.py:115` on daemon start) is still open.
+- CR-076 is fixed in NET-126. Re-run this script through `scripts/remote/deploy-drop-nsenter.sh`.
