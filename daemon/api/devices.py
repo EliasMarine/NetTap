@@ -19,6 +19,7 @@ from opensearchpy import OpenSearchException
 from api.time_range import parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
@@ -712,18 +713,18 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 },
             },
             "bandwidth_series": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    # OLD CODE START — #87: 5 minutes for every range
-                    # "fixed_interval": "5m",
-                    # OLD CODE END
-                    "fixed_interval": _bandwidth_interval(from_ts, to_ts),
-                    "min_doc_count": 0,
-                    "extended_bounds": {
-                        "min": from_ts,
-                        "max": to_ts,
-                    },
-                },
+                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                # "date_histogram": {
+                #     "field": "@timestamp",
+                #     # OLD CODE START — #87: 5 minutes for every range
+                #     # "fixed_interval": "5m",
+                #     # OLD CODE END
+                #     "fixed_interval": _bandwidth_interval(from_ts, to_ts),
+                #     "min_doc_count": 0,
+                #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                # },
+                # OLD CODE END
+                **time_slots(from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)),  # at most ~720 slots
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -799,7 +800,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     ]
 
     # Bandwidth series
-    bw_buckets = aggs.get("bandwidth_series", {}).get("buckets", [])
+    bw_buckets = histogram_buckets(aggs.get("bandwidth_series"))  # date_histogram before #120
     bandwidth_series = [
         {
             "timestamp": bwb.get("key_as_string", bwb.get("key")),

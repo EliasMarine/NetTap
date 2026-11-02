@@ -197,6 +197,9 @@ def _batch_slots(client, filters: list[dict], batch: list[dict]) -> dict[str, li
     The query keeps only the batch's pairs and a multi_terms splits them in one pass: on the
     G11 the same slots in 6.4 s instead of 45 s for a `filters` aggregation of 500 pairs.
     """
+    # a date_histogram under multi_terms (and the composite one in _paged_slots) is exact on
+    # OpenSearch 3.5: the skip-list collector that misplaces records (#120) is top-level only;
+    # 0 of 10,966 slots differed from date_range slots on the G11
     histogram = {"field": "@timestamp", "fixed_interval": f"{BEACON_SLOT_SECONDS}s", "min_doc_count": 1}
     pair_clauses = [{"bool": {"filter": _pair_filter(p["key"])}} for p in batch]
     body = {

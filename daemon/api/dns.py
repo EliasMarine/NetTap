@@ -131,6 +131,8 @@ async def handle_timeline(request: web.Request) -> web.Response:
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/timeline: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
+    except ValueError:  # more time slots than time_slots allows (#120)
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
 
     return web.json_response(
         {"from": from_ts, "to": to_ts, "interval": interval, "series": result}

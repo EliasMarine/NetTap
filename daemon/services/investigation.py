@@ -8,7 +8,9 @@ DNS context, and actionable recommendations.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.investigation")
 
@@ -100,6 +102,7 @@ def _get_host_profile(client, ip: str) -> dict:
 
 def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
     """Get connection history between two IPs over last 7 days."""
+    now = datetime.now(timezone.utc)
     query = {
         "size": 0,
         # hits.total is shown as a count; without this OpenSearch stops at 10,000
@@ -126,13 +129,12 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
             },
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
-            "by_day": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "calendar_interval": "day",
-                    "min_doc_count": 0,
-                },
-            },
+            # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+            # "by_day": {
+            #     "date_histogram": {"field": "@timestamp", "calendar_interval": "day", "min_doc_count": 0},
+            # },
+            # OLD CODE END
+            "by_day": time_slots(now - timedelta(days=7), now, "1d"),  # the query's now-7d, UTC days
         },
     }
 
@@ -152,7 +154,7 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
 
     daily = [
         {"date": b.get("key_as_string", ""), "count": b["doc_count"]}
-        for b in aggs.get("by_day", {}).get("buckets", [])
+        for b in histogram_buckets(aggs.get("by_day"))  # date_histogram before #120
     ]
 
     return {

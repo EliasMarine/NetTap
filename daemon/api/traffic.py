@@ -26,6 +26,7 @@ from services.iot_monitor import (
 from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.traffic")
 
@@ -506,6 +507,11 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     if interval not in valid_intervals:
         interval = "5m"
 
+    try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
+        slots = time_slots(from_ts, to_ts, interval)
+    except ValueError:
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+
     query = {
         "size": 0,
         # OLD CODE START — replaced 2026-11-01: the series counted the appliance's own
@@ -532,15 +538,15 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
         },
         "aggs": {
             "bandwidth_over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {
-                        "min": from_ts,
-                        "max": to_ts,
-                    },
-                },
+                # OLD CODE START — #120
+                # "date_histogram": {
+                #     "field": "@timestamp",
+                #     "fixed_interval": interval,
+                #     "min_doc_count": 0,
+                #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                # },
+                # OLD CODE END
+                **slots,
                 # OLD CODE START — replaced 2026-11-01: client/server.bytes are Zeek
                 # orig_bytes/resp_bytes (payload); the summary sums source/destination.bytes
                 # "aggs": {
@@ -564,9 +570,12 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    buckets = (
-        result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
-    )
+    # OLD CODE START — #120: date_histogram buckets
+    # buckets = (
+    #     result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
+    # )
+    # OLD CODE END
+    buckets = histogram_buckets(result.get("aggregations", {}).get("bandwidth_over_time"))
 
     series = [
         {
@@ -789,6 +798,8 @@ async def handle_category_bandwidth(request: web.Request) -> web.Response:
         series = await traffic_classifier.get_category_bandwidth(
             client, category, from_ts, to_ts, interval
         )
+    except ValueError:  # more time slots than time_slots allows (#120)
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
     except Exception as exc:
         logger.error("Error in category bandwidth for %s: %s", category, exc)
         return web.json_response(
@@ -1302,6 +1313,11 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
     if interval not in valid_intervals:
         interval = "15m"
 
+    try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
+        slots = time_slots(from_ts, to_ts, interval)
+    except ValueError:
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+
     query = {
         "size": 0,
         "query": {
@@ -1314,12 +1330,15 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
         },
         "aggs": {
             "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {"min": from_ts, "max": to_ts},
-                },
+                # OLD CODE START — #120
+                # "date_histogram": {
+                #     "field": "@timestamp",
+                #     "fixed_interval": interval,
+                #     "min_doc_count": 0,
+                #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                # },
+                # OLD CODE END
+                **slots,
                 "aggs": {
                     "by_proto": {"terms": {"field": "network.transport", "size": 10}},
                 },
@@ -1333,7 +1352,8 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
         logger.error("OpenSearch error in connections/timeline: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    buckets = result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    # was result["aggregations"]["over_time"]["buckets"] (date_histogram, #120)
+    buckets = histogram_buckets(result.get("aggregations", {}).get("over_time"))
     timeline = []
     for b in buckets:
         proto_counts: dict[str, int] = {}

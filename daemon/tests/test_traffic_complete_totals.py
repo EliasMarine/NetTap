@@ -6,6 +6,7 @@ figure derived from a capped list comes out short exactly as it would on a real 
 """
 
 import fnmatch
+from datetime import datetime
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -115,6 +116,14 @@ def _aggregate(docs: list[dict], aggs: dict) -> dict:
             out[name] = _terms(docs, agg["terms"], sub)
         elif "composite" in agg:
             out[name] = _composite(docs, agg["composite"], sub)
+        elif "date_range" in agg:  # time_slots (#120): from <= @timestamp < to
+            def ms(t: str) -> float:
+                return datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp() * 1000
+
+            out[name] = {"buckets": [
+                {**_bucket(r["from"], [d for d in docs if ms(r["from"]) <= ms(d["@timestamp"]) < ms(r["to"])], sub), "from": ms(r["from"])}
+                for r in agg["date_range"]["ranges"]
+            ]}
         elif "date_histogram" in agg:  # one bucket per distinct @timestamp
             groups = _groups(docs, "@timestamp")
             out[name] = {"buckets": [{**_bucket(k, groups[k], sub), "key_as_string": k} for k in sorted(groups)]}

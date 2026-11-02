@@ -15,6 +15,7 @@ from typing import Any
 from opensearchpy import OpenSearch
 
 from services.excluded_ips import RFC1918_SOURCE_FILTER, build_excluded_ips_filter
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.bandwidth_tracker")
 
@@ -198,12 +199,15 @@ class BandwidthTracker:
             "query": {"bool": bool_clause},
             "aggs": {
                 "daily": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "calendar_interval": "1d",
-                        "min_doc_count": 0,
-                        "extended_bounds": {"min": from_ts, "max": to_ts},
-                    },
+                    # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                    # "date_histogram": {
+                    #     "field": "@timestamp",
+                    #     "calendar_interval": "1d",
+                    #     "min_doc_count": 0,
+                    #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                    # },
+                    # OLD CODE END
+                    **time_slots(from_ts, to_ts, "1d"),  # UTC days, like calendar_interval 1d
                     "aggs": self._bytes_aggs(),
                 }
             },
@@ -218,7 +222,7 @@ class BandwidthTracker:
         # OLD CODE END
         result = self._client.search(index=NETWORK_INDEX, body=query)
 
-        buckets = result.get("aggregations", {}).get("daily", {}).get("buckets", [])
+        buckets = histogram_buckets(result.get("aggregations", {}).get("daily"))  # date_histogram before #120
         return [
             {
                 "date": b.get("key_as_string", b.get("key", "")),

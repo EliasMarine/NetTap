@@ -25,6 +25,7 @@ from services.alert_enrichment import AlertEnrichment
 # OLD CODE END
 from storage.all_buckets import all_buckets
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.alerts")
 
@@ -679,22 +680,28 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                 "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
-        "aggs": {
-            "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {"min": from_ts, "max": to_ts},
-                },
-                "aggs": {
-                    "by_severity": {
-                        "terms": {"field": "suricata.alert.severity", "size": 5}
-                    }
-                },
-            }
-        },
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+        # "aggs": {
+        #     "over_time": {
+        #         "date_histogram": {
+        #             "field": "@timestamp",
+        #             "fixed_interval": interval,
+        #             "min_doc_count": 0,
+        #             "extended_bounds": {"min": from_ts, "max": to_ts},
+        #         },
+        #         "aggs": {"by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}}},
+        #     }
+        # },
+        # OLD CODE END
     }
+    try:
+        query["aggs"] = {
+            "over_time": time_slots(
+                from_ts, to_ts, interval, aggs={"by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}}}
+            )
+        }
+    except ValueError:
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
 
     try:
         result = client.search(index=NETWORK_INDEX, body=query)
@@ -705,9 +712,12 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
         )
 
     buckets = []
-    for bucket in (
-        result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
-    ):
+    # OLD CODE START — #120: date_histogram buckets
+    # for bucket in (
+    #     result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    # ):
+    # OLD CODE END
+    for bucket in histogram_buckets(result.get("aggregations", {}).get("over_time")):
         entry = {
             "timestamp": bucket.get("key_as_string", ""),
             "high": 0,
@@ -1011,13 +1021,16 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
     }
     per_signature = {
         "by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}},
-        "over_time": {
-            "date_histogram": {
-                "field": "@timestamp",
-                "fixed_interval": interval,
-                "min_doc_count": 0,
-            }
-        },
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+        # "over_time": {
+        #     "date_histogram": {
+        #         "field": "@timestamp",
+        #         "fixed_interval": interval,
+        #         "min_doc_count": 0,
+        #     }
+        # },
+        # OLD CODE END
+        "over_time": time_slots(from_ts, to_ts, interval),  # the sparkline interval fits any range
     }
 
     try:
@@ -1080,7 +1093,8 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             entry["severity_breakdown"][sev_label] += sev_bucket.get("doc_count", 0)
 
         # Sparkline sub-agg
-        for time_bucket in bucket.get("over_time", {}).get("buckets", []):
+        # was bucket.get("over_time", {}).get("buckets", []) (date_histogram, #120)
+        for time_bucket in histogram_buckets(bucket.get("over_time")):
             ts_key = time_bucket.get("key_as_string", "")
             ts_count = time_bucket.get("doc_count", 0)
             if ts_key:
@@ -1466,14 +1480,17 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
             sub_id = categorize_sub_category(name, category)
             if sub_id:
                 by_sub[sub_id].append(name)
-        over_time: dict = {
-            "date_histogram": {
-                "field": "@timestamp",
-                "fixed_interval": interval,
-                "min_doc_count": 0,
-                "extended_bounds": {"min": from_ts, "max": to_ts},
-            }
-        }
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+        # over_time: dict = {
+        #     "date_histogram": {
+        #         "field": "@timestamp",
+        #         "fixed_interval": interval,
+        #         "min_doc_count": 0,
+        #         "extended_bounds": {"min": from_ts, "max": to_ts},
+        #     }
+        # }
+        # OLD CODE END
+        over_time: dict = time_slots(from_ts, to_ts, interval)
         if by_sub:
             per_sub = {sub: _signature_filter(n) for sub, n in by_sub.items()}
             over_time["aggs"] = {"by_sub": {"filters": {"filters": per_sub}}}
@@ -1488,11 +1505,12 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except ValueError:  # more slots than time_slots allows
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
 
     series = []
-    for time_bucket in (
-        result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
-    ):
+    # was result["aggregations"]["over_time"]["buckets"] (date_histogram, #120)
+    for time_bucket in histogram_buckets(result.get("aggregations", {}).get("over_time")):
         ts = time_bucket.get("key_as_string", "")
         # OLD CODE START — #96: 50 signatures per time bucket; a busier hour's total lost the rest
         # category_count = 0

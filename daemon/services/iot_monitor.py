@@ -22,6 +22,7 @@ from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
 from storage.all_buckets import all_buckets, complete_terms
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.iot_monitor")
 
@@ -1069,12 +1070,12 @@ class IoTMonitor:
                 # "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
                 # "protocols": {"terms": {"field": "network.protocol", "size": 10}},
                 # OLD CODE END
-                "hourly_activity": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "calendar_interval": "hour",
-                    }
-                },
+                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                # "hourly_activity": {
+                #     "date_histogram": {"field": "@timestamp", "calendar_interval": "hour"}
+                # },
+                # OLD CODE END
+                "hourly_activity": time_slots(from_iso, to_iso, "1h"),
                 "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                 # OLD CODE START — #96: see above
                 # "countries": {
@@ -1117,7 +1118,7 @@ class IoTMonitor:
         # OLD CODE END
 
         # Calculate active hours from histogram
-        hourly = aggs.get("hourly_activity", {}).get("buckets", [])
+        hourly = histogram_buckets(aggs.get("hourly_activity"))  # date_histogram before #120
         active_hours: set[int] = set()
         for bucket in hourly:
             if bucket.get("doc_count", 0) > 0:
@@ -1829,10 +1830,10 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "hourly": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": "1h",
-                    },
+                    # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                    # "date_histogram": {"field": "@timestamp", "fixed_interval": "1h"},
+                    # OLD CODE END
+                    **time_slots(from_ts, to_ts, "1h"),
                     "aggs": {
                         "bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                         "destinations": {"cardinality": {"field": "destination.ip"}},
@@ -1856,9 +1857,7 @@ class IoTMonitor:
             # OLD CODE END
             raise
 
-        hourly_buckets = (
-            result.get("aggregations", {}).get("hourly", {}).get("buckets", [])
-        )
+        hourly_buckets = histogram_buckets(result.get("aggregations", {}).get("hourly"))  # date_histogram before #120
 
         buckets: list[dict[str, Any]] = []
         for hb in hourly_buckets:

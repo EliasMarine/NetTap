@@ -254,7 +254,12 @@ class TestGetDnsTimeline:
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", interval="99x"
         )
         call_body = mock_client.search.call_args[1]["body"]
-        assert call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"] == "5m"
+        # OLD CODE START — #120: the timeline was a date_histogram
+        # assert call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"] == "5m"
+        # OLD CODE END
+        ranges = call_body["aggs"]["timeline"]["date_range"]["ranges"]
+        assert (ranges[0]["from"], ranges[0]["to"]) == ("2026-01-01T00:00:00.000Z", "2026-01-01T00:05:00.000Z")
+        assert len(ranges) == 289  # 24 h of 5 min slots, plus the slot holding the end
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ enrichment, and error handling.
 import os
 import sys
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
@@ -1220,7 +1221,12 @@ class TestDeviceBandwidthInterval(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 200)
         body = self.mock_client.search.call_args_list[0].kwargs["body"]
-        return body["aggs"]["bandwidth_series"]["date_histogram"]["fixed_interval"]
+        # OLD CODE START — #120: the series was a date_histogram
+        # return body["aggs"]["bandwidth_series"]["date_histogram"]["fixed_interval"]
+        # OLD CODE END
+        first = body["aggs"]["bandwidth_series"]["date_range"]["ranges"][0]
+        span = datetime.fromisoformat(first["to"].replace("Z", "+00:00")) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
+        return {300: "5m", 3600: "1h", 10800: "3h"}[int(span.total_seconds())]
 
     @unittest_run_loop
     async def test_interval_scales_with_the_range(self):

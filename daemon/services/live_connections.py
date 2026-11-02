@@ -15,12 +15,13 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
 from services.excluded_ips import RFC1918_SOURCE_FILTER
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
 
@@ -895,6 +896,7 @@ class LiveConnectionTracker:
         if port_filter:
             history_filters.append(port_filter)
 
+        now = datetime.now(timezone.utc)  # the query's now-24h..now, as hourly slots
         history_query = {
             "size": 0,
             "track_total_hits": True,
@@ -909,15 +911,15 @@ class LiveConnectionTracker:
                     }
                 },
                 "over_time": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": "1h",
-                        "min_doc_count": 0,
-                        "extended_bounds": {
-                            "min": "now-24h",
-                            "max": "now",
-                        },
-                    },
+                    # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                    # "date_histogram": {
+                    #     "field": "@timestamp",
+                    #     "fixed_interval": "1h",
+                    #     "min_doc_count": 0,
+                    #     "extended_bounds": {"min": "now-24h", "max": "now"},
+                    # },
+                    # OLD CODE END
+                    **time_slots(now - timedelta(hours=24), now, "1h"),
                     "aggs": {
                         "bytes": {
                             "sum": {
@@ -978,7 +980,7 @@ class LiveConnectionTracker:
         )
         total_bytes = history_aggs.get("total_bytes", {}).get("value", 0) or 0
 
-        timeline_buckets = history_aggs.get("over_time", {}).get("buckets", [])
+        timeline_buckets = histogram_buckets(history_aggs.get("over_time"))  # date_histogram before #120
         timeline = [
             {
                 "timestamp": b.get("key_as_string", b.get("key")),

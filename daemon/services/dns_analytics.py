@@ -14,6 +14,7 @@ from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
 from storage.all_buckets import all_buckets
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.dns_analytics")
 
@@ -332,23 +333,24 @@ class DNSAnalytics:
         query = {
             "size": 0,
             "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
-            "aggs": {
-                "timeline": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": interval,
-                        "min_doc_count": 0,
-                        "extended_bounds": {
-                            "min": from_ts,
-                            "max": to_ts,
-                        },
-                    }
-                }
-            },
+            # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+            # "aggs": {
+            #     "timeline": {
+            #         "date_histogram": {
+            #             "field": "@timestamp",
+            #             "fixed_interval": interval,
+            #             "min_doc_count": 0,
+            #             "extended_bounds": {"min": from_ts, "max": to_ts},
+            #         }
+            #     }
+            # },
+            # OLD CODE END
+            "aggs": {"timeline": time_slots(from_ts, to_ts, interval)},
         }
 
         result = self._client.search(index=NETWORK_INDEX, body=query)
-        buckets = result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        # was result["aggregations"]["timeline"]["buckets"] (date_histogram)
+        buckets = histogram_buckets(result.get("aggregations", {}).get("timeline"))
 
         return [
             {

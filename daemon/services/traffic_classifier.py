@@ -11,6 +11,7 @@ import logging
 import os
 
 from storage.all_buckets import all_buckets
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.traffic_classifier")
 
@@ -1244,12 +1245,15 @@ async def get_category_bandwidth(
         "query": _category_conn_query(asns, from_ts, to_ts),
         "aggs": {
             "bandwidth_over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {"min": from_ts, "max": to_ts},
-                },
+                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                # "date_histogram": {
+                #     "field": "@timestamp",
+                #     "fixed_interval": interval,
+                #     "min_doc_count": 0,
+                #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                # },
+                # OLD CODE END
+                **time_slots(from_ts, to_ts, interval),
                 "aggs": {
                     "download_bytes": {"sum": {"field": "destination.bytes"}},
                     "upload_bytes": {"sum": {"field": "source.bytes"}},
@@ -1272,9 +1276,8 @@ async def get_category_bandwidth(
     resp = client.search(index=NETWORK_INDEX, body=query)
 
     series = []
-    for bucket in (
-        resp.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
-    ):
+    # was resp["aggregations"]["bandwidth_over_time"]["buckets"] (date_histogram, #120)
+    for bucket in histogram_buckets(resp.get("aggregations", {}).get("bandwidth_over_time")):
         dl = int(bucket.get("download_bytes", {}).get("value", 0) or 0)
         ul = int(bucket.get("upload_bytes", {}).get("value", 0) or 0)
         series.append(

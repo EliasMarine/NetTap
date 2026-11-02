@@ -21,6 +21,7 @@ from opensearchpy import OpenSearchException
 from api.time_range import parse_time_range
 from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.logs")
 
@@ -765,18 +766,24 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
                 "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
-        "aggs": {
-            "timeline": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                },
-                "aggs": {
-                    "by_type": {"terms": {"field": "event.dataset", "size": 20}},
-                },
-            }
-        },
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram put up to ~970 records
+        # an hour in the wrong slot on the G11
+        # "aggs": {
+        #     "timeline": {
+        #         "date_histogram": {"field": "@timestamp", "fixed_interval": interval},
+        #         "aggs": {"by_type": {"terms": {"field": "event.dataset", "size": 20}}},
+        #     }
+        # },
+        # OLD CODE END
     }
+    try:
+        body["aggs"] = {
+            "timeline": time_slots(
+                from_ts, to_ts, interval, aggs={"by_type": {"terms": {"field": "event.dataset", "size": 20}}}
+            )
+        }
+    except ValueError:
+        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
 
     try:
         loop = asyncio.get_running_loop()
@@ -784,9 +791,12 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
             None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
-        raw_buckets = (
-            result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
-        )
+        # OLD CODE START — #120: date_histogram buckets (see above)
+        # raw_buckets = (
+        #     result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        # )
+        # OLD CODE END
+        raw_buckets = histogram_buckets(result.get("aggregations", {}).get("timeline"))
         buckets = []
         for b in raw_buckets:
             entry: dict = {

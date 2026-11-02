@@ -20,6 +20,7 @@ from typing import Any
 from opensearchpy import OpenSearchException
 
 from storage.all_buckets import all_buckets
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.mac_correlator")
 
@@ -337,12 +338,12 @@ class MACCorrelator:
                         "size": 10,
                     }
                 },
-                "hourly_activity": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "calendar_interval": "hour",
-                    }
-                },
+                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                # "hourly_activity": {
+                #     "date_histogram": {"field": "@timestamp", "calendar_interval": "hour"}
+                # },
+                # OLD CODE END
+                "hourly_activity": time_slots(from_ts, to_ts, "1h"),
                 # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
                 # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
                 # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
@@ -379,7 +380,7 @@ class MACCorrelator:
                     "hour": b.get("key_as_string", b.get("key")),
                     "connections": b["doc_count"],
                 }
-                for b in aggs.get("hourly_activity", {}).get("buckets", [])
+                for b in histogram_buckets(aggs.get("hourly_activity"))  # date_histogram before #120
             ]
 
             orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
