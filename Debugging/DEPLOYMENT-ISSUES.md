@@ -379,7 +379,11 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 15: device list made 4 OpenSearch queries per device (N+1) -> one _msearch
   (1,335 -> 107 ms, identical fields); Windows/console categories; full-width settings pages;
   README/docs still described Arkime. A 1.7 GB download through the web proxy arrived whole.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch15.sh.
+  Batch 16: Grafana never loaded (nginx stripped /grafana/, Grafana serves from that sub-path)
+  and its datasources could never connect (http to HTTPS OpenSearch, no login, wrong indices,
+  raw Zeek field names): off by default, nginx resolves it per request. Retention labels: alerts
+  live in the hot index. Backup docs snapshotted indices that don't exist.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch16.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1860,6 +1864,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 124. **Two pages showing the same thing must share the rule (Chain 25)** — Home (registry) and Devices (live query) categorised devices by different inputs and disagreed 29 vs 15 Unknown. Reuse the one function, and make the deploy check compare the two pages.
 125. **When a bug is a tool's semantics, grep for every caller of that tool (Chain 25)** — tshark's `-c` counts packets read, not matches. It was fixed for PCAP preview (#50), but the TShark tool built the same `-c N -Y filter` command and returned 0 DNS packets for a busy capture (#64). After such a fix, grep the repo for the same flags.
 126. **Prove a performance refactor changed nothing but speed (Chain 25)** — before batching the device list's per-device queries into `_msearch`, the deploy saved `/api/devices` from the old daemon and compared it with the new one over one fixed `from`/`to` window (a relative "last 24 h" moves between the two calls). 53 of 53 devices matched field for field; only then does the 12× speed-up count.
+127. **A proxied tool's link is not working until a page loads through it (Chain 25)** — Grafana passed its container health check and `/grafana/api/*` answered through nginx, yet every page 301-looped: `proxy_pass http://grafana/;` strips the prefix while `GF_SERVER_SERVE_FROM_SUB_PATH=true` requires it. Check an HTML page through the proxy, and for an app with a datasource, its own datasource health endpoint.
+128. **nginx `upstream` blocks must resolve at start (Chain 25)** — a static `upstream` naming a container that a compose profile may leave out stops nginx, and with it the whole UI. For optional services use `resolver 127.0.0.11` and `set $u http://name:port; proxy_pass $u;`, and test the config with `docker compose run --rm --no-deps --entrypoint nginx <svc> -t` before recreating the front door.
 
 ---
 
