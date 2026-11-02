@@ -79,17 +79,10 @@ describe('geoip API client', () => {
 			expect(result.country).toBe('Private Network');
 		});
 
-		it('returns fallback result on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await lookupGeoIP('8.8.8.8');
-
-			expect(result.ip).toBe('8.8.8.8');
-			expect(result.country).toBe('Unknown');
-			expect(result.country_code).toBe('XX');
-			expect(result.is_private).toBe(false);
-			expect(result.city).toBeNull();
-			expect(result.organization).toBeNull();
+			await expect(lookupGeoIP('8.8.8.8')).rejects.toThrow('HTTP 500');
 		});
 
 		it('URL-encodes the IP address', async () => {
@@ -110,13 +103,10 @@ describe('geoip API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/geoip/%3A%3A1');
 		});
 
-		it('returns fallback result on 400 error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(400);
-
-			const result = await lookupGeoIP('invalid');
-
-			expect(result.country).toBe('Unknown');
-			expect(result.ip).toBe('invalid');
+			await expect(lookupGeoIP('invalid')).rejects.toThrow('HTTP 400');
 		});
 	});
 
@@ -180,12 +170,10 @@ describe('geoip API client', () => {
 			expect(sentIps).toHaveLength(50);
 		});
 
-		it('returns empty results on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await lookupGeoIPBatch(['8.8.8.8']);
-
-			expect(result.results).toEqual([]);
+			await expect(lookupGeoIPBatch(['8.8.8.8'])).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes invalid IPs in response when present', async () => {
