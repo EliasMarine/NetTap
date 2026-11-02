@@ -263,6 +263,15 @@ describe('bridge API client', () => {
 			expect(result.activated_at).toBe('2026-02-26T10:00:00Z');
 		});
 
+		it('reads the daemon\'s bypass_active field', async () => {
+			mockFetchSuccess({ bypass_active: true });
+
+			const result = await getBypassStatus();
+
+			expect(result.active).toBe(true);
+			expect(result.activated_at).toBeNull();
+		});
+
 		it('throws on HTTP error instead of reporting bypass inactive', async () => {
 			mockFetchFailure(502);
 

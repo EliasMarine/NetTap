@@ -175,7 +175,11 @@ export async function getBypassStatus(): Promise<BypassStatus> {
 		throw new Error(`Bypass status request failed: HTTP ${res.status}`);
 	}
 
-	return res.json();
+	// OLD CODE START — the daemon sends `bypass_active`, so `active` was always undefined ("Inactive")
+	// return res.json();
+	// OLD CODE END
+	const data = await res.json();
+	return { active: data.active ?? data.bypass_active === true, activated_at: data.activated_at ?? null };
 }
 
 // ---------------------------------------------------------------------------

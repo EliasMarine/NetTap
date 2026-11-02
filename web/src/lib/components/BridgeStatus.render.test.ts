@@ -58,6 +58,15 @@ describe('BridgeStatus when a request fails (#96)', () => {
 		expect(screen.getByRole('button', { name: 'Enable Bypass' })).toBeDisabled();
 	});
 
+	it('reads bypass as active when the daemon says bypass_active', async () => {
+		stubFetch({ '/api/bridge/health': HEALTH, '/api/bridge/bypass/status': { bypass_active: true } });
+
+		render(BridgeStatus);
+
+		expect(await screen.findByRole('button', { name: 'Disable Bypass' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Enable Bypass' })).not.toBeInTheDocument();
+	});
+
 	it('still reads Normal and Inactive when both requests succeed', async () => {
 		stubFetch({ '/api/bridge/health': HEALTH, '/api/bridge/bypass/status': { bypass_active: false } });
 
