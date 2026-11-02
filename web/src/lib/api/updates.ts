@@ -32,6 +32,8 @@ export interface AvailableUpdate {
 	/** null = not measured: show "size unknown", never 0 MB */
 	size_mb: number | null;
 	requires_restart: boolean;
+	/** Set when NetTap can't apply this update itself: how it does arrive (one sentence) */
+	applies_with?: string | null;
 }
 
 export interface UpdateStatus {

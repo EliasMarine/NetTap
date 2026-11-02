@@ -285,7 +285,12 @@
 		updateCompleted = false;
 		updateStatus = null;
 		if (selectAll) {
-			selectedComponents = new Set(availableUpdates.map((u) => u.component));
+			// OLD CODE START — selected updates NetTap can't apply (applies_with)
+			// selectedComponents = new Set(availableUpdates.map((u) => u.component));
+			// OLD CODE END
+			selectedComponents = new Set(
+				availableUpdates.filter((u) => !u.applies_with).map((u) => u.component),
+			);
 		}
 	}
 
@@ -636,9 +641,11 @@
 								{#each availableUpdates as update}
 									<div class="component-check-item">
 										<label class="check-label">
+											<!-- applies_with: NetTap can't apply it, so it can't be picked -->
 											<input
 												type="checkbox"
-												checked={selectedComponents.has(update.component)}
+												checked={!update.applies_with && selectedComponents.has(update.component)}
+												disabled={!!update.applies_with}
 												onchange={() => toggleComponent(update.component)}
 											/>
 											<div class="check-info">
@@ -647,7 +654,7 @@
 													<span class={updateTypeBadgeClass(update.update_type)}>
 														{update.update_type}
 													</span>
-													{#if update.requires_restart}
+													{#if update.requires_restart && !update.applies_with}
 														<span class="badge badge-warning">Restart required</span>
 													{/if}
 												</div>
@@ -659,7 +666,9 @@
 													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
 												{/if}
 												OLD CODE END -->
-												{#if update.size_mb == null}
+												{#if update.applies_with}
+													<span class="check-size text-muted">{update.applies_with}</span>
+												{:else if update.size_mb == null}
 													<span class="check-size text-muted">size unknown</span>
 												{:else if update.size_mb > 0}
 													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
@@ -776,7 +785,10 @@
 										{/if}
 									</span>
 									<span class="vtcol-action">
+										<!-- OLD CODE START — offered Update for updates NetTap can't apply
 										{#if update}
+										OLD CODE END -->
+										{#if update && !update.applies_with}
 											<button
 												class="btn btn-secondary btn-xs"
 												onclick={() => openSingleUpdate(entry.key)}
@@ -1026,6 +1038,10 @@
 		align-items: flex-start;
 		gap: var(--space-sm);
 		cursor: pointer;
+	}
+
+	.check-label:has(input:disabled) {
+		cursor: default;
 	}
 
 	.check-label input[type='checkbox'] {

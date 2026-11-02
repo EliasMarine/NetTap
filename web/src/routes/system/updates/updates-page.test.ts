@@ -240,3 +240,66 @@ describe('Software Updates page — update history', () => {
 		expect(await screen.findByText("Couldn't load the update history: the request failed.")).toBeInTheDocument();
 	});
 });
+
+// Malcolm's images are pinned: their updates come with a NetTap release, not from this page.
+describe('Software Updates page — updates NetTap cannot apply', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const MALCOLM = "Comes with NetTap's pinned Malcolm release: update NetTap to get it.";
+	const UPDATES = [
+		{
+			component: 'arkime', current_version: '26.02.0', latest_version: '26.03.0', update_type: 'minor',
+			release_url: '', release_date: '', changelog: '', size_mb: null, requires_restart: true,
+			applies_with: MALCOLM,
+		},
+		{
+			component: 'suricata-rules', current_version: '2026-10-01', latest_version: '2026-11-02', update_type: 'patch',
+			release_url: '', release_date: '', changelog: '', size_mb: null, requires_restart: true,
+			applies_with: null,
+		},
+	];
+	const versions = {
+		versions: {
+			arkime: { name: 'arkime', category: 'docker', current_version: '26.02.0', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			'suricata-rules': { name: 'suricata-rules', category: 'database', current_version: '2026-10-01', install_type: 'file', last_checked: '', status: 'ok', details: {} },
+		},
+		last_scan: '',
+	};
+
+	function stub() {
+		stubFetch({
+			'/api/system/versions': versions,
+			'/api/system/updates/available': { updates: UPDATES, last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+	}
+
+	it('leaves it out of Update All, disables its checkbox and says how it arrives', async () => {
+		stub();
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+
+		const pinned = screen.getByRole('checkbox', { name: /^arkime/ });
+		expect(pinned).toBeDisabled();
+		expect(pinned).not.toBeChecked();
+		expect(screen.getByText(MALCOLM)).toBeInTheDocument();
+		// the sentence replaces its size/restart detail; the rules row keeps both
+		expect(screen.getAllByText('size unknown')).toHaveLength(1);
+		expect(screen.getAllByText('Restart required')).toHaveLength(1);
+
+		const rules = screen.getByRole('checkbox', { name: /^suricata-rules/ });
+		expect(rules).toBeEnabled();
+		expect(rules).toBeChecked();
+		expect(screen.getByRole('button', { name: 'Update 1 Component' })).toBeEnabled();
+	});
+
+	it('offers no per-row Update button for it', async () => {
+		stub();
+		render(UpdatesPage);
+
+		await screen.findByText('arkime');
+		expect(await screen.findAllByRole('button', { name: 'Update' })).toHaveLength(1);
+	});
+});
