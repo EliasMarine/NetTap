@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import shlex
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -32,6 +32,15 @@ MAX_PACKETS = 1000
 DEFAULT_MAX_PACKETS = 100
 EXECUTION_TIMEOUT = 30  # seconds
 MAX_OUTPUT_BYTES = 5 * 1024 * 1024  # 5MB
+# A filtered analysis first scans for its matches (#64); the scan stops here and keeps
+# what it found, leaving the rest of the web proxy's 60 s for the JSON and Info passes.
+MATCH_SCAN_SECONDS = 15
+# Frame number of the Nth match (fewer if the file or the time runs out). Filter and
+# path are positional args, never parsed by the shell.
+_LAST_MATCH_SCRIPT = (
+    'timeout -k 2 "$4" tshark -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
+    ' | head -n "$3" | tail -n 1'
+)
 ALLOWED_FIELD_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 # Shell metacharacters that must NOT appear in display filters.
 # Note: & and | are allowed because TShark uses && (AND) and || (OR)
@@ -371,6 +380,25 @@ class TSharkService:
 
     # --- Public API ---
 
+    async def _last_match_frame(self, request: TSharkRequest) -> tuple[int, bool]:
+        """(frame number of the request's Nth filter match or 0 for none, scan timed out).
+
+        -c counts packets read, not matches, so "-c 100 -Y dns" only searched the first
+        100 packets of a file (#64). Reading up to this frame returns the first N matches.
+        """
+        cmd = [
+            "docker", "exec", TSHARK_CONTAINER, "sh", "-c", _LAST_MATCH_SCRIPT, "_",
+            request.pcap_path, request.display_filter, str(request.max_packets), str(MATCH_SCAN_SECONDS),
+        ]
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        stdout, _, _ = await self._exec_tshark(cmd)
+        last = stdout.strip()
+        # shortcut: a scan that used its whole budget is taken as cut short; a file that
+        # really ends right at 15 s is reported the same way
+        timed_out = loop.time() - started >= MATCH_SCAN_SECONDS
+        return (int(last) if last.isdigit() else 0), timed_out
+
     async def analyze(self, request: TSharkRequest) -> TSharkResult:
         """Run TShark analysis on a PCAP file.
 
@@ -382,8 +410,12 @@ class TSharkService:
         # Validate (before acquiring semaphore -- fast, no I/O)
         request = self.validate_request(request)
 
-        # Build command
-        cmd = self._build_tshark_command(request)
+        # OLD CODE START — #64: the command is built after the match scan below, which may
+        # raise the -c limit to the frame number of the Nth match
+        # # Build command
+        # cmd = self._build_tshark_command(request)
+        # OLD CODE END
+        scan_timed_out = False
 
         # Acquire semaphore to limit concurrent docker exec processes.
         # Queued requests still respect the overall EXECUTION_TIMEOUT
@@ -394,6 +426,17 @@ class TSharkService:
                 MAX_CONCURRENT_ANALYSES - self._semaphore._value,
                 MAX_CONCURRENT_ANALYSES,
             )
+            if request.display_filter and not request.follow_stream:
+                last_frame, scan_timed_out = await self._last_match_frame(request)
+                if not last_frame:
+                    return TSharkResult(
+                        packets=[],
+                        packet_count=0,
+                        truncated=scan_timed_out,  # more of the file was left unsearched
+                        tshark_version=await self.get_version(),
+                    )
+                request = replace(request, max_packets=last_frame)
+            cmd = self._build_tshark_command(request)
             stdout, stderr, returncode = await self._exec_tshark(cmd)
             # -T json has no column data, so the Info column comes from a second,
             # fields-only pass over the same packets
@@ -431,7 +474,10 @@ class TSharkService:
         else:
             packets = self._parse_text_output(stdout)
 
-        truncated = len(stdout.encode()) >= MAX_OUTPUT_BYTES
+        # OLD CODE START — #64: a filter scan cut short by time also means more matches may exist
+        # truncated = len(stdout.encode()) >= MAX_OUTPUT_BYTES
+        # OLD CODE END
+        truncated = len(stdout.encode()) >= MAX_OUTPUT_BYTES or scan_timed_out
 
         return TSharkResult(
             packets=packets,
