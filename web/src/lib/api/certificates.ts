@@ -145,33 +145,48 @@ export async function getIssuerChanges(from?: string, to?: string): Promise<Issu
 	}
 }
 
+// OLD CODE START — 2026-11-02: zeros on failure showed "0 certificates" as fact
+// /**
+//  * Get certificate hero card stats.
+//  */
+// export async function getCertStats(from?: string, to?: string): Promise<CertStats> {
+// 	try {
+// 		const res = await fetch(`/api/certificates/stats?${buildTimeQuery(from, to)}`);
+// 		if (!res.ok) {
+// 			return {
+// 				total_certs: 0,
+// 				expiring_count: 0,
+// 				expired_count: 0,
+// 				self_signed_count: 0,
+// 				issuer_changes_count: 0,
+// 				from: '',
+// 				to: '',
+// 			};
+// 		}
+// 		return res.json();
+// 	} catch {
+// 		return {
+// 			total_certs: 0,
+// 			expiring_count: 0,
+// 			expired_count: 0,
+// 			self_signed_count: 0,
+// 			issuer_changes_count: 0,
+// 			from: '',
+// 			to: '',
+// 		};
+// 	}
+// }
+// OLD CODE END
+
 /**
- * Get certificate hero card stats.
+ * Get certificate hero card stats; null when they couldn't be loaded, so the page
+ * shows a dash instead of zeros that look like real counts.
  */
-export async function getCertStats(from?: string, to?: string): Promise<CertStats> {
+export async function getCertStats(from?: string, to?: string): Promise<CertStats | null> {
 	try {
 		const res = await fetch(`/api/certificates/stats?${buildTimeQuery(from, to)}`);
-		if (!res.ok) {
-			return {
-				total_certs: 0,
-				expiring_count: 0,
-				expired_count: 0,
-				self_signed_count: 0,
-				issuer_changes_count: 0,
-				from: '',
-				to: '',
-			};
-		}
-		return res.json();
+		return res.ok ? await res.json() : null;
 	} catch {
-		return {
-			total_certs: 0,
-			expiring_count: 0,
-			expired_count: 0,
-			self_signed_count: 0,
-			issuer_changes_count: 0,
-			from: '',
-			to: '',
-		};
+		return null;
 	}
 }

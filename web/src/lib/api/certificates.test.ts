@@ -164,22 +164,20 @@ describe('certificates API client', () => {
 			});
 
 			const stats = await getCertStats();
-			expect(stats.total_certs).toBe(42);
-			expect(stats.expiring_count).toBe(3);
-			expect(stats.expired_count).toBe(2);
+			expect(stats?.total_certs).toBe(42);
+			expect(stats?.expiring_count).toBe(3);
+			expect(stats?.expired_count).toBe(2);
 		});
 
-		it('returns zeros on HTTP error', async () => {
+		// A failed query must not read as "0 certificates" (G11, 2026-11-02)
+		it('returns null on HTTP error', async () => {
 			mockFetchFailure();
-			const stats = await getCertStats();
-			expect(stats.total_certs).toBe(0);
-			expect(stats.expired_count).toBe(0);
+			expect(await getCertStats()).toBeNull();
 		});
 
-		it('returns zeros on network error', async () => {
+		it('returns null on network error', async () => {
 			mockFetchReject();
-			const stats = await getCertStats();
-			expect(stats.total_certs).toBe(0);
+			expect(await getCertStats()).toBeNull();
 		});
 	});
 });

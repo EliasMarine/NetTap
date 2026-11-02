@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 
-from services.cert_monitor import CertificateMonitor
+from services.cert_monitor import CertificateMonitor, CertStatsUnavailable
 
 logger = logging.getLogger("nettap.api.certificates")
 
@@ -133,7 +133,13 @@ async def handle_cert_stats(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
-    stats = monitor.get_cert_stats(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    try:
+        stats = monitor.get_cert_stats(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    except CertStatsUnavailable:
+        # the service already logged the OpenSearch error; zeros would read as real counts
+        return web.json_response(
+            {"error": "Certificate statistics are unavailable right now."}, status=503
+        )
     return web.json_response(stats)
 
 

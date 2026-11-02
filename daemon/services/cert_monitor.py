@@ -262,6 +262,10 @@ def _issuer_changes(certs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+class CertStatsUnavailable(Exception):
+    """The stats query failed; callers must not show zeros as if they were counts."""
+
+
 class CertificateMonitor:
     """TLS certificate inventory from Zeek x509 logs joined to ssl sessions."""
 
@@ -433,7 +437,13 @@ class CertificateMonitor:
         """Hero card counts of distinct certificates (not capped by the list)."""
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
-        within_warning = {"gte": "now", "lte": f"now+{_EXPIRY_WARN_DAYS}d"}
+        # Absolute times: a "now" range inside a filter aggregation intermittently fails
+        # on OpenSearch 2.x ("DateRangeIncludingNowQuery does not implement createWeight")
+        now = datetime.now(timezone.utc)
+        within_warning = {
+            "gte": now.isoformat(),
+            "lte": (now + timedelta(days=_EXPIRY_WARN_DAYS)).isoformat(),
+        }
         body = {
             "size": 0,
             "query": {
@@ -452,7 +462,7 @@ class CertificateMonitor:
                     "aggs": {"n": _DISTINCT_CERTS},
                 },
                 "expired": {
-                    "filter": {"range": {_NOT_AFTER: {"lt": "now"}}},
+                    "filter": {"range": {_NOT_AFTER: {"lt": now.isoformat()}}},
                     "aggs": {"n": _DISTINCT_CERTS},
                 },
                 "self_signed": {
@@ -461,7 +471,9 @@ class CertificateMonitor:
                 },
             },
         }
-        aggs = self._search(body, "certificate stats").get("aggregations") or {}
+        aggs = self._search(body, "certificate stats").get("aggregations")
+        if aggs is None:
+            raise CertStatsUnavailable("certificate stats query failed")
         changes = self.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips)
         return {
             "total_certs": _agg_count(aggs, "total"),

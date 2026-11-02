@@ -22,7 +22,10 @@
 	// OLD CODE START — 2026-11-01: stats now include expired_count
 	// let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
 	// OLD CODE END
-	let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE START — 2026-11-02: null now means the stats couldn't be loaded (cards show a dash)
+	// let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE END
+	let stats = $state<CertStats | null>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
 	let issuerChanges = $state<IssuerChange[]>([]);
 	let loading = $state(true);
 	let statusFilter = $state('all');
@@ -156,20 +159,20 @@
 	<div class="stats-grid">
 		<div class="stat-card">
 			<span class="stat-label">Total Certificates</span>
-			<span class="stat-value">{stats.total_certs}</span>
+			<span class="stat-value">{stats?.total_certs ?? '—'}</span>
 		</div>
-		<div class="stat-card" class:stat-warning={stats.expiring_count > 0}>
+		<div class="stat-card" class:stat-warning={(stats?.expiring_count ?? 0) > 0}>
 			<span class="stat-label">Expiring (30d)</span>
-			<span class="stat-value">{stats.expiring_count}</span>
-			<span class="stat-hint">{stats.expired_count} already expired</span>
+			<span class="stat-value">{stats?.expiring_count ?? '—'}</span>
+			<span class="stat-hint">{stats ? `${stats.expired_count} already expired` : 'Counts unavailable'}</span>
 		</div>
-		<div class="stat-card" class:stat-info={stats.self_signed_count > 0}>
+		<div class="stat-card" class:stat-info={(stats?.self_signed_count ?? 0) > 0}>
 			<span class="stat-label">Self-Signed</span>
-			<span class="stat-value">{stats.self_signed_count}</span>
+			<span class="stat-value">{stats?.self_signed_count ?? '—'}</span>
 		</div>
-		<div class="stat-card" class:stat-critical={stats.issuer_changes_count > 0}>
+		<div class="stat-card" class:stat-critical={(stats?.issuer_changes_count ?? 0) > 0}>
 			<span class="stat-label">Issuer Changes</span>
-			<span class="stat-value">{stats.issuer_changes_count}</span>
+			<span class="stat-value">{stats?.issuer_changes_count ?? '—'}</span>
 		</div>
 	</div>
 

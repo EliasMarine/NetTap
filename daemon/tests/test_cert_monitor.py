@@ -16,7 +16,7 @@ from opensearchpy import OpenSearchException
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.cert_monitor import CertificateMonitor
+from services.cert_monitor import CertificateMonitor, CertStatsUnavailable
 
 
 def _iso(days: int) -> str:
@@ -334,17 +334,35 @@ class TestStats(unittest.TestCase):
         )
         self.assertIn({"term": {"event.dataset": "x509"}}, _filters(body))
 
-    def test_opensearch_error_returns_zero_counts(self):
+    # OLD CODE START — 2026-11-02: zeros on failure showed "0 certificates" as fact
+    # def test_opensearch_error_returns_zero_counts(self):
+    #     fake = FakeOpenSearch(fail={"total", "certs"})
+    #     with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
+    #         result = CertificateMonitor(fake).get_cert_stats()
+    #     for key in (
+    #         "total_certs",
+    #         "expiring_count",
+    #         "expired_count",
+    #         "self_signed_count",
+    #     ):
+    #         self.assertEqual(result[key], 0)
+
+    # OLD CODE END
+
+    def test_opensearch_error_raises_instead_of_zero_counts(self):
+        """The G11 card read 0 while 85 certificates existed (query failed, logged)."""
         fake = FakeOpenSearch(fail={"total", "certs"})
         with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
-            result = CertificateMonitor(fake).get_cert_stats()
-        for key in (
-            "total_certs",
-            "expiring_count",
-            "expired_count",
-            "self_signed_count",
-        ):
-            self.assertEqual(result[key], 0)
+            with self.assertRaises(CertStatsUnavailable):
+                CertificateMonitor(fake).get_cert_stats()
+
+    def test_stats_aggregations_use_absolute_times(self):
+        """A "now" range in a filter agg trips an OpenSearch 2.x createWeight bug."""
+        fake = FakeOpenSearch(certs=[_x509_bucket("aa")], stats={"total": {"value": 1}})
+        CertificateMonitor(fake).get_cert_stats()
+        aggs = json.dumps(fake.body("total")["aggs"])
+        self.assertNotIn('"now', aggs)
+        self.assertIn("certificate_not_valid_after", aggs)
 
 
 if __name__ == "__main__":
