@@ -417,9 +417,13 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   proxies dropped from/to/limit.
   Batch 32: the device-by-MAC page never left its loader (the client returned the daemon's
   {device} / {traffic} wrappers); traffic now has in/out and per-destination bytes, ranked by bytes.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch32.sh.
+  Batch 33: OpenSearch 3.5's concurrent segment search made every terms top-N approximate
+  (device top lists read low); the daemon sets it to none. Categories read every ASN;
+  unique destinations is an exact count.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch33.sh.
   Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
-  page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (16 checks).
+  page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (16 checks);
+  every device's own pages: bash scripts/remote/verify-device-figures.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1921,6 +1925,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 145. **One definition per figure, computed in one place (Chain 25, #86)** — "encrypted" was defined twice. The IoT pages used ports plus Zeek protocols, with local chatter left out; Security Posture used service-name substrings on the client. The two disagreed by 43 points (19% vs 62%). Put the rule in a shared constant (`ENCRYPTED_CONN_FILTER`) and have the daemon return the figure. Also check that a score can reach its full range on real data: DNS Security looked for service names Zeek never emits, so it was 0% by construction.
 146. **Check that a control does something, not just that the page renders (Chain 25, #87)** — Device detail's range pills had no handlers, and no figure check could notice, because every figure was correct for 24 h. Click each control in the browser and confirm the requests it sends (here: `from=` changes). A same-end rule applies to range checks too: compare windows that end at the same moment, or the newest minutes skew the result.
 147. **Parse OpenSearch replies as JSON; never grep the numbers (Chain 25, #89)** — batch 32's raw byte check grepped `"value":[0-9]*`. It also caught `hits.total.value` (exactly +10,000 when capped), and sums past ~10^7 come back as `3.7E9`, so the grep kept `3`. Both looked like data errors until the reply was read whole. Pipe the reply into `python3 -c 'json.load(...)'` inside a container (the device has no host Python packages) and pass it as an argument, not stdin, when the harness uses `sudo -S`.
+148. **OpenSearch 3.x terms aggregations are approximate even on one shard (Chain 25, #90)** — `search.concurrent_segment_search.mode` defaults to `auto`, which slices each shard for aggregation searches, so a terms top-N carries a count error (`doc_count_error_upper_bound`) like a multi-shard search. NetTap sets it to `none`. To check a top list, compare it with an exact list (`size` larger than the number of terms), not with the same query shape, and pass `request_cache=false` when probing a settings change: the shard request cache answers repeated size-0 searches.
 
 ---
 
