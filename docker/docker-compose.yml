@@ -184,6 +184,11 @@ services:
       # Keep OpenSearch's 1 s default (what indices have today) so new data and alerts
       # show up within seconds, not a minute.
       ARKIME_INIT_REFRESH_SEC: "1"
+      # Read unguarded as ${VAR%?} near the end ("create initial indices"), so every
+      # run stopped there before the anomaly detectors and alerting objects. Values are
+      # the script's own defaults.
+      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+      MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
     volumes:
       - dashboards-helper-data:/opt/dashboards-helper
       - ./curlrc:/var/local/curlrc:ro

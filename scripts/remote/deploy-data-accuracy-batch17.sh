@@ -98,6 +98,17 @@ if [ "${DB:-0}" -gt 0 ]; then rc=0; else rc=1; fi
 check "#73 Dashboards has Malcolm's dashboards" "$rc" "${DB:-0}"
 PATTERNS=$(os_get "/.kibana*/_search?q=type:%22index-pattern%22&size=20&_source=index-pattern.title" | grep -o '"title":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' ')
 echo "   index patterns: ${PATTERNS:-none}"
+# The loader must also finish a whole run (detectors, alerting) without an error
+OK_RUN=""
+for i in $(seq 1 30); do
+    RUNS=$(sudo docker logs --since 10m nettap-dashboards-helper 2>&1 | grep 'shared-object-creation' | grep -E 'job succeeded|exit status' | tail -1)
+    case "$RUNS" in *"job succeeded"*) OK_RUN=yes; break ;; esac
+    [ $((i % 6)) -eq 0 ] && echo "   waiting for a clean loader run... ($i/30)"
+    sleep 10
+done
+LAST_ERR=$(sudo docker logs --since 10m nettap-dashboards-helper 2>&1 | grep -o 'line [0-9]*: [A-Z_]*: unbound variable' | tail -1)
+if [ "$OK_RUN" = "yes" ]; then rc=0; else rc=1; fi
+check "#73 the object loader completes a run" "$rc" "${OK_RUN:+job succeeded}${OK_RUN:-${LAST_ERR:-no clean run yet}}"
 echo ""
 
 echo "→ Step 6: Nothing else changed..."
