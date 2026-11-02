@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-01 (Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
+> **Last updated:** 2026-11-01 (Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -55,6 +55,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Mirror capture setup (daemon host commands) | OK | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verified on the G11 2026-11-01: `verify-mirror-mode.sh` all checks pass after a reboot (~3,800 pps on enp4s0). |
 | Zeek live cluster | OK | Chain 23: on AMD CPUs with a broken RDRAND every Zeek process got the same Broker ID, the cluster never connected and Zeek wrote no logs. zeek-live is now built locally with a /dev/urandom shim. Verified on the G11 2026-11-01: unique IDs, 9 cluster connections, ~25 Zeek log types written. |
 | OpenSearch index mapping | OK (G11; PR pending) | Chain 24: malcolm_template's index pattern was a placeholder, so every daily index guessed its field types; Zeek records were rejected (event.id as long) and the daemon's queries were built on the guessed `.keyword` fields. Existing boxes: `bash scripts/remote/fix-index-template.sh --delete-today`, then `bash scripts/remote/deploy-malcolm-field-names.sh`. |
+| Dashboard data accuracy | IN PROGRESS (G11) | Chain 25: dashboard figures disagreed with OpenSearch. Batches 1–2 are deployed and verified on the G11; batch 3 (device registry, bandwidth ranking, Log Explorer totals, pcap-monitor DNS storm) is deploying. Remaining: certificates (x509), IoT heuristics, Tools/PCAP/System pages. Tracking: `tracking-fixes/2026-11-01-dashboard-data-accuracy.md`. |
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 
 ---
@@ -318,6 +319,40 @@ CHAIN 24: malcolm_template's index pattern was never filled in, so indices guess
   arkime_sessions3-*, new index has source.ip=ip and event.id=keyword, Zeek conn/dns/ssl/http/files
   indexed with 0 rejections, traffic summary 205 connections. Then deploy-malcolm-field-names.sh
   rebuilds the daemon and web and checks the devices and traffic APIs.
+
+CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accuracy, NET-129)
+  Found 2026-11-01 on the G11 once Chains 23-24 made data flow. All 121 daemon GET endpoints and
+  every page were compared with direct OpenSearch queries over the same 24 h.
+  Deployment-level causes (the rest are query bugs, see the tracking doc):
+  - The daemon runs with network_mode: host, so the Docker names logstash and nettap-cyberchef don't
+    resolve. The Logstash panels returned 502 and CyberChef read unreachable. Logstash (9600) and
+    CyberChef (8443) are now published on 127.0.0.1 only, and the daemon points at loopback.
+  - zeek-live, suricata-live and arkime-live ran Malcolm's offline PCAP processor (image default
+    *_PCAP_PROCESSOR=true). It polls a pcap-monitor service NetTap doesn't run. On host networking
+    every retry was a DNS lookup sent to the LAN resolver: thousands an hour, about half of all DNS.
+    Now *_PCAP_PROCESSOR: "false", as in Malcolm's own live containers.
+  - zeekctl's hourly conn-summary report landed in the logger spool, and Filebeat shipped it as a
+    record dated 1970 (index arkime_sessions3-700101). zeek-live now sets TraceSummary to empty.
+  - The ISM history index asked for 1 replica on a single node, so the cluster was yellow. The daemon
+    sets history replicas to 0.
+  - arkime-live never started (found 2026-11-02). It has no ./curlrc:/var/local/curlrc:ro mount, so
+    opensearch_status.sh curls https://localhost:9200 with no credentials and no --insecure, fails
+    TLS (unknown_ca, ~58 times a minute in the OpenSearch log) and loops on "Giving opensearch-local
+    time to start...". No Arkime session was ever indexed. Owner decision: turn Arkime off (no page
+    uses it; PCAP Search and TShark read netsniff's files). Tracking #44.
+  - OpenSearch 2.x intermittently fails a "now" date range inside a filter aggregation
+    ("DateRangeIncludingNowQuery does not implement createWeight"). The certificate stats hit it
+    right after a daemon restart and showed 0 of 85. Stats now use absolute times. Tracking #43.
+  Query-level fixes: the device count came from DHCP; MACs were read from a flat _source;
+  pcap-monitor and mDNS were counted as DNS lookups; totals capped at 10,000; byte fields were
+  mixed (client/server.bytes vs source/destination.bytes); risk scores always 502; the smart alerts
+  composite agg read only one page; Alerts panels skipped the engine-event filter; the threat level
+  went "critical" with no critical alerts; the device registry never had a writer.
+  Full list with causes: tracking-fixes/2026-11-01-dashboard-data-accuracy.md.
+  Also: IoT counted Suricata alerts and Zeek dns/ssl/files logs as connections (CONN_RECORDS now
+  limits connection queries to Zeek conn); certificates read ssl sessions instead of x509.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh, -batch3.sh, -batch4.sh.
+  Each checks its fixes against the live APIs.
 ```
 
 ---
@@ -1776,6 +1811,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 103. **AppArmor blocks `nsenter -t 1` from a container on Ubuntu, whatever its capabilities (Chain 22)** — docker-default only allows ptrace between docker-default peers, and host PID 1 is unconfined. If the container already has `network_mode: host`, `nsenter -n` was never needed: run the command directly. Check the kernel log (`journalctl -k | grep DENIED`, readable by the `adm` group) before assuming a capability is missing. Also: a helper that returns `[]` on failure turns every safety check built on it into "looks fine". Make the check fail closed.
 104. **The kernel's "RDRAND is not reliable" warning doesn't protect userspace (Chain 23)** — the kernel stops using RDRAND itself, but CPUID still advertises it, so `std::random_device` in every C++ program on that box returns a constant. In a Broker/zeekctl cluster, "all nodes running, zero connections" means checking `Broker::node_id()` across two runs before suspecting the network or seccomp. A binary with file capabilities ignores LD_PRELOAD; use `/etc/ld.so.preload` inside the image.
 105. **Check the live template before changing queries (Chain 24)** — `GET _index_template/malcolm_template` showed `index_patterns: ["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"]`: the template matched nothing, so indices were dynamically mapped. Chain 13 had "fixed" the symptom (text fields can't be aggregated) by adding `.keyword` to ~200 field references, which baked the broken mapping into the code. When a Malcolm file has a `*_REPLACER` token, Malcolm's scripts fill it in before use; anything NetTap pushes itself must do the same.
+106. **A host-network container can't use Docker DNS names, and its failed lookups leak (Chain 25)** — `logstash:9600` and `nettap-cyberchef:8443` never resolved from the daemon. Anything it calls needs a loopback-published port. Any Malcolm program in a host-network container that polls a missing service (pcap-monitor) sends a DNS query to the LAN resolver on every retry. Check `env | grep _PROCESSOR` in each live container.
+107. **Compare every dashboard number with a direct OpenSearch query (Chain 25)** — unit tests passed for months while the device count read DHCP leases, DNS counted mDNS, and two byte-field pairs were mixed. An endpoint-by-endpoint comparison over the same 24 h, plus checking that numbers shown on two pages agree, found 30+ errors in one pass.
+108. **"Connections" must be filtered to `event.dataset: conn` (Chain 25)** — `arkime_sessions3-*` holds Zeek conn, dns, ssl, files, http and x509 logs plus Suricata alerts, all with `source.mac`. A query without a dataset filter counts all of them: an ESP device read 1% encrypted from 162 alerts + 2 TLS connections. The April "Arkime compatibility" commits that removed these filters were wrong for a Zeek deployment. Use the shared `CONN_RECORDS`.
+109. **A failed query must never render as 0 (Chain 25)** — the certificate service logged an OpenSearch error and returned zeros, and the web client also mapped HTTP errors to zeros, so the card said "0 certificates" with 85 present. Raise in the service, return 503, show "—". Also avoid `now` ranges inside filter aggregations on OpenSearch 2.x.
+110. **Read a container's logs for a retry loop before trusting it is running (Chain 25)** — arkime-live sat "Up" for its whole life while looping on `opensearch_status.sh` (missing curlrc mount). `docker ps` showed it healthy enough; only its log and 58 TLS errors a minute in OpenSearch gave it away.
 
 ---
 
