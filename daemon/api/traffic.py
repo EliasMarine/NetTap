@@ -994,10 +994,64 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
     )
 
 
+_SANKEY_BYTES_SUM = {
+    "sum": {
+        "script": {
+            "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+            "lang": "painless",
+        }
+    }
+}
+
+
+def _sankey_destinations_query(
+    from_ts: str, to_ts: str, source_ips: list[str], limit: int
+) -> dict:
+    """The top `limit` destinations by bytes from the Sankey's sources, each split by protocol (#96).
+
+    A destination node counts every byte the shown sources sent it, so the third column
+    stays a breakdown of the first.
+    """
+    return {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                    {"terms": {"source.ip": source_ips}},
+                ]
+            }
+        },
+        "aggs": {
+            "by_dest": {
+                "terms": {
+                    "field": "destination.as.full",
+                    "size": limit,
+                    "missing": "Unknown",
+                    "order": {"dest_bytes": "desc"},
+                },
+                "aggs": {
+                    "dest_bytes": _SANKEY_BYTES_SUM,
+                    "geo": {
+                        "terms": {"field": "destination.geo.country_iso_code", "size": 1}
+                    },
+                    # transport values are a handful, so 10 holds every protocol
+                    "by_proto": {
+                        "terms": {"field": "network.transport", "size": 10},
+                        "aggs": {"proto_bytes": _SANKEY_BYTES_SUM},
+                    },
+                },
+            }
+        },
+    }
+
+
 async def handle_connection_sankey(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/sankey?from=&to=&limit=10
 
-    Nested terms aggregation: source.ip → network.transport → destination.as.full.
+    Top sources by bytes → network.transport, then (second search) those sources'
+    top destination.as.full by bytes → network.transport.
     Flattened into {nodes, links} for Sankey visualization.
     """
     from_ts, to_ts = _parse_time_range(request)
@@ -1044,29 +1098,32 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                                     }
                                 }
                             },
-                            "by_dest": {
-                                "terms": {
-                                    "field": "destination.as.full",
-                                    "size": limit,
-                                    "missing": "Unknown",
-                                },
-                                "aggs": {
-                                    "dest_bytes": {
-                                        "sum": {
-                                            "script": {
-                                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                                                "lang": "painless",
-                                            }
-                                        }
-                                    },
-                                    "geo": {
-                                        "terms": {
-                                            "field": "destination.geo.country_iso_code",
-                                            "size": 1,
-                                        }
-                                    },
-                                },
-                            },
+                            # OLD CODE START — #96: each source's top-N destinations by connections were summed
+                            # into the destination nodes, so a node missed every source where it ranked lower
+                            # "by_dest": {
+                            #     "terms": {
+                            #         "field": "destination.as.full",
+                            #         "size": limit,
+                            #         "missing": "Unknown",
+                            #     },
+                            #     "aggs": {
+                            #         "dest_bytes": {
+                            #             "sum": {
+                            #                 "script": {
+                            #                     "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                            #                     "lang": "painless",
+                            #                 }
+                            #             }
+                            #         },
+                            #         "geo": {
+                            #             "terms": {
+                            #                 "field": "destination.geo.country_iso_code",
+                            #                 "size": 1,
+                            #             }
+                            #         },
+                            #     },
+                            # },
+                            # OLD CODE END
                         },
                     },
                     # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
@@ -1112,24 +1169,57 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                 }
             )
 
-            for dest_bucket in proto_bucket.get("by_dest", {}).get("buckets", []):
-                dest_name = dest_bucket["key"]
-                dest_bytes = dest_bucket.get("dest_bytes", {}).get("value", 0)
-                geo_buckets = dest_bucket.get("geo", {}).get("buckets", [])
-                country = geo_buckets[0]["key"] if geo_buckets else ""
+            # OLD CODE START — #96: partial per-source destination lists, see the query
+            # for dest_bucket in proto_bucket.get("by_dest", {}).get("buckets", []):
+            #     dest_name = dest_bucket["key"]
+            #     dest_bytes = dest_bucket.get("dest_bytes", {}).get("value", 0)
+            #     geo_buckets = dest_bucket.get("geo", {}).get("buckets", [])
+            #     country = geo_buckets[0]["key"] if geo_buckets else ""
+            #
+            #     if dest_name not in dest_set:
+            #         dest_set[dest_name] = {"bytes": 0, "country": country}
+            #     dest_set[dest_name]["bytes"] += dest_bytes
+            #
+            #     # Link: protocol → destination
+            #     links.append(
+            #         {
+            #             "source": proto_name,
+            #             "target": dest_name,
+            #             "value": dest_bytes,
+            #         }
+            #     )
+            # OLD CODE END
 
-                if dest_name not in dest_set:
-                    dest_set[dest_name] = {"bytes": 0, "country": country}
-                dest_set[dest_name]["bytes"] += dest_bytes
+    if source_nodes:
+        try:
+            dest_result = client.search(
+                index=NETWORK_INDEX,
+                body=_sankey_destinations_query(
+                    from_ts, to_ts, [s["id"] for s in source_nodes], limit
+                ),
+            )
+        except OpenSearchException as exc:
+            logger.error("OpenSearch error in connections/sankey destinations: %s", exc)
+            return web.json_response({"error": str(exc)}, status=502)
 
-                # Link: protocol → destination
-                links.append(
-                    {
-                        "source": proto_name,
-                        "target": dest_name,
-                        "value": dest_bytes,
-                    }
-                )
+        for dest_bucket in (
+            dest_result.get("aggregations", {}).get("by_dest", {}).get("buckets", [])
+        ):
+            dest_name = dest_bucket["key"]
+            geo_buckets = dest_bucket.get("geo", {}).get("buckets", [])
+            dest_set[dest_name] = {
+                "bytes": dest_bucket.get("dest_bytes", {}).get("value", 0),
+                "country": geo_buckets[0]["key"] if geo_buckets else "",
+            }
+            # Link: protocol → destination
+            links.extend(
+                {
+                    "source": proto_bucket["key"],
+                    "target": dest_name,
+                    "value": proto_bucket.get("proto_bytes", {}).get("value", 0),
+                }
+                for proto_bucket in dest_bucket.get("by_proto", {}).get("buckets", [])
+            )
 
     # Aggregate duplicate links (same source→target)
     link_map: dict[str, dict] = {}

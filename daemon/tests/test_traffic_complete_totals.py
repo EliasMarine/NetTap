@@ -261,3 +261,37 @@ class TestCategoryDetailPast50Devices(_FakeOpenSearchCase):
         self.assertEqual(data["devices"][0]["total_bytes"], 10_000)  # heavy devices were missing
         self.assertEqual(data["devices"][0]["percent"], 5.0)
         self.assertEqual(data["devices"][-1]["percent"], 1.0)  # was 2.0
+
+
+def _sankey_flows() -> list[dict]:
+    """Two busy devices: many small connections to two ASNs, one 1 kB download from a third."""
+    per_device = [
+        *[("AS2 Many Small", 10)] * 5,
+        *[("AS3 Spread Org", 10)] * 3,
+        ("AS1 Big Transfer", 1_000),
+    ]
+    busy = [
+        _conn(src, "198.51.100.1", asn, 0, size)
+        for src in ("10.0.0.1", "10.0.0.2")
+        for asn, size in per_device
+    ]
+    return [*busy, _conn("10.0.0.3", "198.51.100.1", "AS2 Many Small", 0, 5)]
+
+
+class TestSankeyDestinationTotals(_FakeOpenSearchCase):
+    """Sankey destination nodes are the shown sources' full bytes to each destination."""
+
+    DOCS = _sankey_flows()
+
+    @unittest_run_loop
+    async def test_destination_nodes_rank_and_sum_by_bytes(self):
+        data = await self._get("/api/traffic/connections/sankey?limit=2")
+
+        self.assertEqual([s["id"] for s in data["nodes"]["sources"]], ["10.0.0.1", "10.0.0.2"])
+        dests = [(d["id"], d["value"]) for d in data["nodes"]["destinations"]]
+        # was [("AS2 Many Small", 100), ("AS3 Spread Org", 60)]: each device's top 2 by connections
+        self.assertEqual(dests, [("AS1 Big Transfer", 2_000), ("AS2 Many Small", 100)])
+        links = {(link["source"], link["target"]): link["value"] for link in data["links"]}
+        self.assertEqual(links[("tcp", "AS1 Big Transfer")], 2_000)
+        self.assertEqual(links[("tcp", "AS2 Many Small")], 100)  # the 3rd device is not shown
+        self.assertNotIn(("tcp", "AS3 Spread Org"), links)

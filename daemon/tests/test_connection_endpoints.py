@@ -146,7 +146,7 @@ class TestConnectionSankey(AioHTTPTestCase):
     @unittest_run_loop
     async def test_sankey_success(self):
         """Should return nodes and links for Sankey visualization."""
-        self.mock_client.search.return_value = {
+        sources = {
             "aggregations": {
                 "by_source": {
                     "buckets": [
@@ -155,37 +155,8 @@ class TestConnectionSankey(AioHTTPTestCase):
                             "total_bytes": {"value": 500000},
                             "by_proto": {
                                 "buckets": [
-                                    {
-                                        "key": "tcp",
-                                        "proto_bytes": {"value": 400000},
-                                        "by_dest": {
-                                            "buckets": [
-                                                {
-                                                    "key": "AS15169 Google LLC",
-                                                    "dest_bytes": {"value": 300000},
-                                                    "geo": {"buckets": [{"key": "US"}]},
-                                                },
-                                                {
-                                                    "key": "AS13335 Cloudflare",
-                                                    "dest_bytes": {"value": 100000},
-                                                    "geo": {"buckets": [{"key": "US"}]},
-                                                },
-                                            ]
-                                        },
-                                    },
-                                    {
-                                        "key": "udp",
-                                        "proto_bytes": {"value": 100000},
-                                        "by_dest": {
-                                            "buckets": [
-                                                {
-                                                    "key": "AS15169 Google LLC",
-                                                    "dest_bytes": {"value": 100000},
-                                                    "geo": {"buckets": [{"key": "US"}]},
-                                                },
-                                            ]
-                                        },
-                                    },
+                                    {"key": "tcp", "proto_bytes": {"value": 400000}},
+                                    {"key": "udp", "proto_bytes": {"value": 100000}},
                                 ]
                             },
                         },
@@ -193,6 +164,37 @@ class TestConnectionSankey(AioHTTPTestCase):
                 },
             },
         }
+        # #96: destinations come from a second search over the shown sources
+        dests = {
+            "aggregations": {
+                "by_dest": {
+                    "buckets": [
+                        {
+                            "key": "AS15169 Google LLC",
+                            "dest_bytes": {"value": 400000},
+                            "geo": {"buckets": [{"key": "US"}]},
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "proto_bytes": {"value": 300000}},
+                                    {"key": "udp", "proto_bytes": {"value": 100000}},
+                                ]
+                            },
+                        },
+                        {
+                            "key": "AS13335 Cloudflare",
+                            "dest_bytes": {"value": 100000},
+                            "geo": {"buckets": [{"key": "US"}]},
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "proto_bytes": {"value": 100000}},
+                                ]
+                            },
+                        },
+                    ]
+                },
+            },
+        }
+        self.mock_client.search.side_effect = [sources, dests]
 
         resp = await self.client.request("GET", "/api/traffic/connections/sankey")
         self.assertEqual(resp.status, 200)
@@ -231,57 +233,41 @@ class TestConnectionSankey(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_sankey_link_aggregation(self):
-        """Links with same source→target should be aggregated."""
-        self.mock_client.search.return_value = {
+        """tcp→Unknown is one link carrying every shown source's bytes."""
+        sources = {
             "aggregations": {
                 "by_source": {
                     "buckets": [
                         {
                             "key": "10.0.0.1",
                             "total_bytes": {"value": 200},
-                            "by_proto": {
-                                "buckets": [
-                                    {
-                                        "key": "tcp",
-                                        "proto_bytes": {"value": 200},
-                                        "by_dest": {
-                                            "buckets": [
-                                                {
-                                                    "key": "Unknown",
-                                                    "dest_bytes": {"value": 200},
-                                                    "geo": {"buckets": []},
-                                                },
-                                            ]
-                                        },
-                                    },
-                                ]
-                            },
+                            "by_proto": {"buckets": [{"key": "tcp", "proto_bytes": {"value": 200}}]},
                         },
                         {
                             "key": "10.0.0.2",
                             "total_bytes": {"value": 100},
-                            "by_proto": {
-                                "buckets": [
-                                    {
-                                        "key": "tcp",
-                                        "proto_bytes": {"value": 100},
-                                        "by_dest": {
-                                            "buckets": [
-                                                {
-                                                    "key": "Unknown",
-                                                    "dest_bytes": {"value": 100},
-                                                    "geo": {"buckets": []},
-                                                },
-                                            ]
-                                        },
-                                    },
-                                ]
-                            },
+                            "by_proto": {"buckets": [{"key": "tcp", "proto_bytes": {"value": 100}}]},
                         },
                     ]
                 },
             },
         }
+        # #96: destinations come from a second search over the shown sources
+        dests = {
+            "aggregations": {
+                "by_dest": {
+                    "buckets": [
+                        {
+                            "key": "Unknown",
+                            "dest_bytes": {"value": 300},
+                            "geo": {"buckets": []},
+                            "by_proto": {"buckets": [{"key": "tcp", "proto_bytes": {"value": 300}}]},
+                        },
+                    ]
+                },
+            },
+        }
+        self.mock_client.search.side_effect = [sources, dests]
 
         resp = await self.client.request("GET", "/api/traffic/connections/sankey")
         data = await resp.json()
@@ -293,6 +279,8 @@ class TestConnectionSankey(AioHTTPTestCase):
         ]
         self.assertEqual(len(tcp_to_unknown), 1)
         self.assertEqual(tcp_to_unknown[0]["value"], 300)
+        dest_filters = self.mock_client.search.call_args_list[1].kwargs["body"]["query"]["bool"]["filter"]
+        self.assertIn({"terms": {"source.ip": ["10.0.0.1", "10.0.0.2"]}}, dest_filters)
 
 
 class TestConnectionTimeline(AioHTTPTestCase):
