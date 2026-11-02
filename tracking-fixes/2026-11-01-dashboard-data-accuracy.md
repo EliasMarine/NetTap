@@ -1,10 +1,11 @@
 # 2026-11-01 — Dashboard data accuracy audit (G11)
 
 **Status:** In progress.
-- **Batches 1–6:** deployed and verified on the G11 (`deploy-data-accuracy-batch{1..6}.sh`, every check ✓).
+- **Batches 1–7:** deployed and verified on the G11 (`deploy-data-accuracy-batch{1..7}.sh`, every check ✓). Every route has now had a browser pass.
+- **Batch 7 (2026-11-02):** Settings — capture file size (#53), ILM health card (#54), About version/uptime (#55), PCAP copy (#56).
 - **Batch 6 (2026-11-02):** PCAP Search — orphaned tshark (#48), search as a background job (#49), filtered preview (#50), downloads cut off at 10 s (#51).
 - **Batch 5 (2026-11-02):** PCAP capped by size (#37), Arkime off (#44), Live Monitor map and figures (#45), CyberChef quick recipes (#46).
-- **Still open:** #20, #21, #26, #27, #35, #38, #39, #47 (owner: which VLANs count as LAN), #52, and the Settings page.
+- **Still open:** #20, #21, #26, #27, #35, #38, #39, #47 (owner: which VLANs count as LAN), #52.
 **Branch:** `fix/dashboard-data-accuracy`, off `fix/index-template-pattern`.
 **Linear:** NET-129.
 
@@ -97,6 +98,10 @@ Status key: ⬜ todo · 🔧 in progress · ✅ done (code) · 🟢 verified on 
 | 50 | 🟢 | PCAP | Previewing a search result showed few or no packets | `-c 100` counts packets read, not matches, so only matches among the first 100 packets appeared; output from a file still being written was dropped on a non-zero exit | Filtered preview pipes tshark through `head` (user values as positional args only); keeps partial output (`69e38b3`). G11: 100 DNS packets in 2.4 s; browser shows frames 79–439 |
 | 51 | ✅ | PCAP | PCAP downloads longer than 10 s arrived truncated; filtered downloads never started | The catch-all proxy's 10 s `AbortSignal` also aborts a body already streaming (shown locally: cut at 9 KB of 30 KB) | Downloads follow the browser request's signal; previews get 60 s (`d8c41f1`). Unit-tested with the real handler; not exercised on the box (a download needs the owner's login and a file save) |
 | 52 | ⬜ | PCAP | A filtered preview of a very busy file can time out with no matches and the page just says "No packets to display" | 0.5 CPU reads ~3,300 packets/s; one 3.5 GB file held 3.1 M packets of a single TLS download and no DNS in the first 200 k | Planned: return `timed_out` from the preview and say "stopped after 45 s; no matches in the part read" |
+| 53 | 🟢 | Settings | Capture tab showed "Max file size 100 MB" while netsniff rotated at 4096 MiB; Save changed nothing | The tab read and wrote `PCAP_ROTATE_MB` in the daemon's own `.env`, which pcap-capture never reads (it gets `docker/.env` via compose; a restart never re-reads compose vars) | Size saved in capture-mode.conf → `PCAP_ROTATE_MEGABYTES` in capture.env → exported by the capture-env loader (digits, 10–10000) on restart; with nothing saved the page shows the compose value; help text names the 10-minute time rotation (`4c8ecd6`). G11: 4096/10 shown = netsniff `-F 4096MiB`; saving 1024 → netsniff `-F 1024MiB`; 4096 restored |
+| 54 | 🟢 | Settings | Retention card: "Problem — ILM Policies ✗ Out of sync" | The card reads the ILM record in retention.json, written only by a retention save; startup applies the policies (0 errors) but never recorded it | A clean startup apply is recorded; a failed record never fails the apply (`e814d42`); "All 1 synced" reworded (`e7c22ab`, lands with the next deploy). G11: `ilm_status.synced=True`; browser shows synced |
+| 55 | 🟢 | Settings | About: version "0.3.0" (daemon is 0.4.0); uptime "21970.08" | `/api/system/versions` returns `{versions: [...]}`, so the page fell back to a hardcoded '0.3.0'; uptime was raw seconds | Version from the `nettap-daemon` entry; uptime via the shared `formatDuration` (`a02f4b4`). Browser: 0.4.0, "6h 18m" |
+| 56 | 🟢 | Settings | Cold tier help said PCAP is "alert-triggered" | Capture records all traffic (owner decision 2026-11-02: full capture, capped by disk share) | Copy fixed (`e5860d4`) |
 
 ## Verified correct
 - **Traffic totals:** after #13 the summary, bandwidth and devices all sum `source/destination.bytes`. On the G11 the 24 h bytes equal the raw OpenSearch sum of Zeek conn records (26.47 GB).
@@ -110,6 +115,7 @@ Status key: ⬜ todo · 🔧 in progress · ✅ done (code) · 🟢 verified on 
 - **Batch 4 on the G11 (2026-11-02 ~04:10 UTC):** IoT protocol audit has no port-0 or duplicate encryption findings; isolation 100 with no false DNS/DHCP pairs; encryption 192.168.1.174 = 100% (DoT), 192.168.1.149 = N/A (STUN), ESP devices 100%; certificates card = list = OpenSearch distinct x509 (71 → 77 → 85 → 87 as new certs arrive); TShark returns `frame_raw` and real Info text; browser shows the hex dump, Info column, certificate rows and IoT N/A cards.
 - **Batch 5 on the G11 (2026-11-02 ~06:10 UTC):** arkime-live gone and not in `docker compose config --services`; OpenSearch TLS handshake errors 0 in 50 s; PCAP 5.2% of disk (cap 25%); `/geo/countries-110m.geojson` 200 (167,904 bytes); Live active devices = OpenSearch LAN sources (30 = 30); Live bandwidth 402,632 vs NIC 384,686 B/s; CyberChef link `/cyberchef/#recipe=From_Base64(...)&input=YUdWc2JHOGdibVYwZEdGdw`. Browser: map draws country outlines with arcs; bandwidth card 254.7 KB/s with the NIC at 252 KB/s; CyberChef decodes to `hello nettap`.
 - **Batch 6 on the G11 (2026-11-02 ~06:55 UTC):** preview of the newest file 100 packets in 0.8 s (was 18 s and a proxy timeout); filtered DNS preview 100/100 DNS in 2.4 s; search answers in 0.01 s and checks files in the background; one tshark, under `timeout`; tshark container 93 MiB (was 909 MiB). Browser: a 1 h DNS search shows progress and a match, and its preview lists DNS frames 79–439.
+- **Batch 7 on the G11 (2026-11-02 ~07:10 UTC):** Capture tab 4096 MB / 10 min = netsniff `-F 4096MiB` and compose; Save 1024 → netsniff restarted with `-F 1024MiB`; 4096 restored; capture.env keeps `PCAP_IFACE=enp4s0`; `ilm_status.synced=True`; capture kept writing. Browser: Retention synced, Capture help names the 10-minute rotation, About 0.4.0 / 6h 18m.
 - **pcap-monitor lookups:** none since ~03:35 UTC (the batch 3 deploy); before that ~650 a minute.
 
 ## Log
@@ -126,3 +132,4 @@ Status key: ⬜ todo · 🔧 in progress · ✅ done (code) · 🟢 verified on 
 - 2026-11-02: owner decisions — PCAP: cap by size (#37); Arkime: turn off (#44). Batch 5 implements both.
 - 2026-11-02: batch 5 (#37, #44, #45, #46) deployed with `deploy-data-accuracy-batch5.sh`; every check ✓. The first run flagged Live devices 30 vs 38: the check counted every private range, the daemon counts its detected LAN (192.168.1.0/24), same as the Devices page. Check fixed (`ac1c536`); the other-VLAN question is #47.
 - 2026-11-02: browser pass of PCAP Search found #48–#51. Batch 6 deployed with `deploy-data-accuracy-batch6.sh`; every check ✓ after two check fixes (docker top needs a pid column; the filtered-preview check now uses a typical file, because the busiest file legitimately has no DNS in the part 0.5 CPU reads in 45 s). The web half of #49 (polling, progress) was built by a teammate agent and reviewed; the Search button was then re-enabled during a run so a new search can replace a long one.
+- 2026-11-02: browser pass of Settings (the last unchecked route) found #53–#56. Batch 7 deployed with `deploy-data-accuracy-batch7.sh`; every check ✓, including a real save of a different file size and its restore (two pcap-capture restarts of a few seconds; Zeek and Suricata unaffected).
