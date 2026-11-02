@@ -359,7 +359,9 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   downloads at 10 s.
   Batch 7 (Settings): PCAP file size read/written where pcap-capture never looked (now
   capture.env + loader), ILM card never marked synced at startup, About version/uptime.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch7.sh.
+  Batch 8: a filtered preview that runs out of time says so (timed_out) instead of
+  "No packets to display".
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch8.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1829,6 +1831,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 113. **A timeout on `docker exec` does not stop the process in the container (Chain 25)** — `asyncio.wait_for` (or killing the docker CLI) leaves the exec'd process running. Seven orphaned full-file tshark reads pinned the tshark container at its memory limit and made every preview time out. Run the command under `timeout -k 5 N` inside the container.
 114. **A fetch `AbortSignal.timeout` also kills a response body that is already streaming (Chain 25)** — the web proxy's 10 s timeout silently truncated every PCAP download longer than 10 s. Streaming downloads must use the browser request's signal, not a fixed timer.
 115. **Compose variables are resolved at container creation; `docker restart` never re-reads them (Chain 25)** — a setting the daemon saves for another container must reach it through something that container reads at start (capture.env + the loader), and the page must show the value the process actually runs with (`docker top` the real command line when in doubt).
+116. **Test a time limit with a filter that can never match (Chain 25)** — `frame.len == 1` makes tshark read the whole file, so a 4.4 GB file reliably hits the 45 s limit and a 1 MB one reliably finishes. A real filter like `dns` gives a different answer on every file, which makes it useless for checking the limit itself.
 
 ---
 
