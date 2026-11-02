@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy dashboard data-accuracy batch 2 (daemon only) and check each fix.
+# Deploy dashboard data-accuracy batch 2 (daemon and web) and check each fix.
 # Tracking: tracking-fixes/2026-11-01-dashboard-data-accuracy.md
 #
 # Run as the normal user (NOT with sudo):
@@ -37,28 +37,30 @@ fi
 echo "   ✓ Code: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
 echo ""
 
-echo "→ Step 2: Build the daemon image..."
-if ! "${COMPOSE[@]}" build nettap-storage-daemon; then
+echo "→ Step 2: Build the daemon and web images..."
+if ! "${COMPOSE[@]}" build nettap-storage-daemon nettap-web; then
     echo "   ✗ Build failed — nothing was restarted"
     exit 1
 fi
-echo "   ✓ Image built"
+echo "   ✓ Images built"
 echo ""
 
-echo "→ Step 3: Recreate the daemon..."
-"${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon
+echo "→ Step 3: Recreate the daemon and web..."
+"${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web
 echo ""
 
-echo "→ Step 4: Wait for the daemon to become healthy..."
-STATUS="unknown"
-for i in $(seq 1 30); do
-    STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' nettap-storage-daemon 2>/dev/null || echo "unknown")
-    [ "$STATUS" = "healthy" ] && break
-    echo "   waiting... daemon=$STATUS ($i/30)"
-    sleep 5
+echo "→ Step 4: Wait for the daemon and web to become healthy..."
+for name in nettap-storage-daemon nettap-web; do
+    STATUS="unknown"
+    for i in $(seq 1 30); do
+        STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' "$name" 2>/dev/null || echo "unknown")
+        [ "$STATUS" = "healthy" ] && break
+        echo "   waiting... $name=$STATUS ($i/30)"
+        sleep 5
+    done
+    if [ "$STATUS" = "healthy" ]; then rc=0; else rc=1; fi
+    check "$name health" "$rc" "$STATUS"
 done
-if [ "$STATUS" = "healthy" ]; then rc=0; else rc=1; fi
-check "daemon health" "$rc" "$STATUS"
 echo ""
 
 echo "→ Step 5: Check each fix..."
@@ -74,13 +76,15 @@ check "#24 DNS average resolution is lookups only" "$rc" "avg=${AVG:-?} ms media
 ALERTS=$(api /api/alerts/count | json_num total)
 SMART=$(api /api/alerts/smart/summary)
 EVENTS=$(printf '%s' "$SMART" | json_num total_events)
-GROUP_COUNT=$(printf '%s' "$SMART" | json_num total_groups)
-if [ -n "$EVENTS" ] && [ "${GROUP_COUNT:-0}" -gt 200 ] || [ "${EVENTS:-0}" -gt 394 ]; then rc=0; else rc=1; fi
-check "#19 smart summary reads every group" "$rc" "groups=${GROUP_COUNT:-?} events=${EVENTS:-?} (alerts card total=${ALERTS:-?}; the summary leaves out informational alerts)"
+INFO=$(printf '%s' "$SMART" | json_num informational_events)
+SHOWN=$(( ${EVENTS:-0} + ${INFO:-0} ))
+# to review + informational should account for the Alerts card total (suppressed rules aside)
+if [ -n "$INFO" ] && [ -n "$ALERTS" ] && [ $(( SHOWN * 100 )) -ge $(( ALERTS * 90 )) ]; then rc=0; else rc=1; fi
+check "#19 Alert Summary accounts for every alert" "$rc" "to review=${EVENTS:-?} + informational=${INFO:-?} = $SHOWN vs Alerts card ${ALERTS:-?}"
 echo ""
 
 echo "→ Step 6: Container status..."
-sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAMES|storage-daemon"
+sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAMES|storage-daemon|nettap-web"
 echo ""
 
 if [ "$FAILED" -eq 0 ]; then
