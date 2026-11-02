@@ -657,42 +657,23 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     #     logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
     #     return []
     # OLD CODE END
-    query = {
-        "bool": {
-            "filter": [
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            ]
-        }
-    }
-    bytes_sum = {
-        "sum": {
-            "script": {
-                "source": (
-                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
-                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                ),
-                "lang": "painless",
-            }
-        }
-    }
-    # OLD CODE START — #96: a failed query read as "no traffic in any category"
+    # OLD CODE START — #96: a failed query read as "no traffic in any category"; the query
+    # moved to _asn_buckets so the category detail pages read the same ASNs
+    # query = {"bool": {"filter": [zeek conn, @timestamp range]}}
+    # bytes_sum = {"sum": {"script": source.bytes + destination.bytes}}
     # try:
-    #     buckets, complete = all_buckets(...)
+    #     buckets, complete = all_buckets(
+    #         client, NETWORK_INDEX, query,
+    #         [{"asn": {"terms": {"field": "destination.as.full"}}}],
+    #         aggs={"total_bytes": bytes_sum},
+    #     )
     # except Exception:
     #     logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
     #     return []
+    # if not complete:
+    #     logger.warning("get_category_stats: stopped at %d ASNs; totals are short", len(buckets))
     # OLD CODE END
-    buckets, complete = all_buckets(
-        client,
-        NETWORK_INDEX,
-        query,
-        [{"asn": {"terms": {"field": "destination.as.full"}}}],
-        aggs={"total_bytes": bytes_sum},
-    )
-    if not complete:
-        logger.warning("get_category_stats: stopped at %d ASNs; totals are short", len(buckets))
+    buckets = _asn_buckets(client, from_ts, to_ts)
 
     cat_data: dict[str, dict] = {}
     # OLD CODE START — #96: read the capped terms list
@@ -900,6 +881,68 @@ def _asn_filters_for_category(category: str) -> list[str]:
     return [substr for substr, cat in ASN_CATEGORY_MAP.items() if cat == category]
 
 
+# Connection bytes on the wire, both directions
+_CONN_BYTES_SUM = {
+    "sum": {
+        "script": {
+            "source": (
+                "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+            ),
+            "lang": "painless",
+        }
+    }
+}
+# ASN values per terms clause: under index.max_terms_count (65,536)
+_ASN_TERMS_CHUNK = 10_000
+
+
+def _conn_query(from_ts: str, to_ts: str) -> dict:
+    return {
+        "bool": {
+            "filter": [
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ]
+        }
+    }
+
+
+def _asn_buckets(client, from_ts: str, to_ts: str) -> list[dict]:
+    """Every destination ASN in the window with its bytes and connections. A failure raises (#96)."""
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        _conn_query(from_ts, to_ts),
+        [{"asn": {"terms": {"field": "destination.as.full"}}}],
+        aggs={"total_bytes": _CONN_BYTES_SUM},
+    )
+    if not complete:
+        logger.warning("traffic categories: stopped at %d ASNs; totals are short", len(buckets))
+    return buckets
+
+
+def _category_asn_buckets(client, category: str, from_ts: str, to_ts: str) -> list[dict]:
+    """The ASN buckets Home's bar counts for `category`: classify_asn() decides, so a detail
+    page holds exactly what its Home bar holds (#96)."""
+    return [b for b in _asn_buckets(client, from_ts, to_ts) if classify_asn(b["key"]["asn"]) == category]
+
+
+def _category_conn_query(asns: list[str], from_ts: str, to_ts: str) -> dict:
+    """Connections to exactly these ASNs, in terms clauses short of index.max_terms_count."""
+    by_asn = {
+        "bool": {
+            "should": [
+                {"terms": {"destination.as.full": asns[i : i + _ASN_TERMS_CHUNK]}}
+                for i in range(0, len(asns), _ASN_TERMS_CHUNK)
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+    return {"bool": {"filter": [*_conn_query(from_ts, to_ts)["bool"]["filter"], by_asn]}}
+
+
 _NO_CATEGORY_DEVICES = {"devices": [], "device_count": 0, "total_bytes": 0, "connection_count": 0}
 
 
@@ -926,14 +969,21 @@ async def get_category_devices(
     {"devices": the top `limit` devices by bytes, "device_count", "total_bytes",
     "connection_count": over every device in the category}.
     """
-    asn_substrings = _asn_filters_for_category(category)
-    if not asn_substrings:
+    # OLD CODE START — #96: case-sensitive wildcards on every map substring disagreed with Home's
+    # classify_asn(): a differently-cased ASN was missed, one matching two categories counted in both
+    # asn_substrings = _asn_filters_for_category(category)
+    # if not asn_substrings:
+    #     return {**_NO_CATEGORY_DEVICES}
+    # should_clauses = [
+    #     {"wildcard": {"destination.as.full": f"*{substr}*"}}
+    #     for substr in asn_substrings
+    # ]
+    # OLD CODE END
+    if category not in CATEGORIES:
         return {**_NO_CATEGORY_DEVICES}
-
-    should_clauses = [
-        {"wildcard": {"destination.as.full": f"*{substr}*"}}
-        for substr in asn_substrings
-    ]
+    asns = [b["key"]["asn"] for b in _category_asn_buckets(client, category, from_ts, to_ts)]
+    if not asns:
+        return {**_NO_CATEGORY_DEVICES}
 
     # OLD CODE START — #96: the top `limit` devices by connections were the only ones counted,
     # so totals, device_count and every share covered those 50 instead of the category
@@ -995,18 +1045,11 @@ async def get_category_devices(
     #         }
     #     )
     # OLD CODE END
-    query = {
-        "bool": {
-            "filter": [
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
-                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-            ],
-            "must": [
-                {"bool": {"should": should_clauses, "minimum_should_match": 1}},
-            ],
-        }
-    }
+    # OLD CODE START — #96: wildcard ASN match, see above
+    # query = {"bool": {"filter": [zeek conn, @timestamp range],
+    #                   "must": [{"bool": {"should": should_clauses, "minimum_should_match": 1}}]}}
+    # OLD CODE END
+    query = _category_conn_query(asns, from_ts, to_ts)
     per_device = {
         "total_bytes": {
             "sum": {
@@ -1070,50 +1113,52 @@ async def get_category_services(
     client, category: str, from_ts: str, to_ts: str, limit: int = 10
 ) -> list[dict]:
     """Get top services (ASN orgs) within a traffic category, sorted by bytes."""
-    asn_substrings = _asn_filters_for_category(category)
-    if not asn_substrings:
-        return []
-
-    should_clauses = [
-        {"wildcard": {"destination.as.full": f"*{substr}*"}}
-        for substr in asn_substrings
-    ]
-
-    query = {
-        "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
-                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-                ],
-                "must": [
-                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
-                ],
-            }
-        },
-        "aggs": {
-            "services": {
-                "terms": {"field": "destination.as.full", "size": limit},
-                "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": (
-                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
-                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                                ),
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                },
-            }
-        },
-    }
-
-    # OLD CODE START — #96: a failed query read as "no services in this category"
+    # OLD CODE START — #96: case-sensitive wildcards disagreed with Home's classify_asn(), a failed
+    # query read as "no services", and the top `limit` ASNs by connections were sorted by bytes,
+    # so a high-byte service with few connections was missing
+    # asn_substrings = _asn_filters_for_category(category)
+    # if not asn_substrings:
+    #     return []
+    #
+    # should_clauses = [
+    #     {"wildcard": {"destination.as.full": f"*{substr}*"}}
+    #     for substr in asn_substrings
+    # ]
+    #
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 {"term": {"event.provider": "zeek"}},
+    #                 {"term": {"event.dataset": "conn"}},
+    #                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+    #             ],
+    #             "must": [
+    #                 {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+    #             ],
+    #         }
+    #     },
+    #     "aggs": {
+    #         "services": {
+    #             "terms": {"field": "destination.as.full", "size": limit},
+    #             "aggs": {
+    #                 "total_bytes": {
+    #                     "sum": {
+    #                         "script": {
+    #                             "source": (
+    #                                 "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+    #                                 " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+    #                             ),
+    #                             "lang": "painless",
+    #                         }
+    #                     }
+    #                 },
+    #             },
+    #         }
+    #     },
+    # }
+    #
     # try:
     #     resp = client.search(index=NETWORK_INDEX, body=query)
     # except Exception:
@@ -1123,59 +1168,80 @@ async def get_category_services(
     #         exc_info=True,
     #     )
     #     return []
+    #
+    # # Merge buckets that share the same org name after stripping ASN prefix.
+    # # e.g. "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." both
+    # # become "Amazon.com, Inc." — their bytes and connections must be summed.
+    # merged: dict[str, dict] = {}
+    # for bucket in resp.get("aggregations", {}).get("services", {}).get("buckets", []):
+    #     asn_full = bucket["key"]
+    #     # Strip ASN number prefix (e.g., "AS2906 Netflix Inc" → "Netflix Inc")
+    #     service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+    #     if service_name not in merged:
+    #         merged[service_name] = {"bytes": 0, "connections": 0}
+    #     merged[service_name]["bytes"] += int(
+    #         bucket.get("total_bytes", {}).get("value", 0)
+    #     )
+    #     merged[service_name]["connections"] += bucket.get("doc_count", 0)
+    #
+    # services = [
+    #     {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
+    #     for name, m in merged.items()
+    # ]
+    # services.sort(key=lambda s: s["bytes"], reverse=True)
+    # return services
     # OLD CODE END
-    resp = client.search(index=NETWORK_INDEX, body=query)
-
-    # Merge buckets that share the same org name after stripping ASN prefix.
-    # e.g. "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." both
-    # become "Amazon.com, Inc." — their bytes and connections must be summed.
+    if category not in CATEGORIES:
+        return []
+    # Merge ASNs that share an org name after the ASN prefix, as Home's top_services does:
+    # "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." are one service.
     merged: dict[str, dict] = {}
-    for bucket in resp.get("aggregations", {}).get("services", {}).get("buckets", []):
-        asn_full = bucket["key"]
-        # Strip ASN number prefix (e.g., "AS2906 Netflix Inc" → "Netflix Inc")
-        service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
-        if service_name not in merged:
-            merged[service_name] = {"bytes": 0, "connections": 0}
-        merged[service_name]["bytes"] += int(
-            bucket.get("total_bytes", {}).get("value", 0)
-        )
-        merged[service_name]["connections"] += bucket.get("doc_count", 0)
-
-    services = [
-        {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
-        for name, m in merged.items()
-    ]
-    services.sort(key=lambda s: s["bytes"], reverse=True)
-    return services
+    for bucket in _category_asn_buckets(client, category, from_ts, to_ts):
+        asn_full = bucket["key"]["asn"]
+        name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+        m = merged.get(name, {"bytes": 0, "connections": 0})
+        merged[name] = {
+            "bytes": m["bytes"] + int(bucket.get("total_bytes", {}).get("value", 0)),
+            "connections": m["connections"] + bucket.get("doc_count", 0),
+        }
+    services = [{"name": name, **m} for name, m in merged.items()]
+    return sorted(services, key=lambda s: s["bytes"], reverse=True)[:limit]
 
 
 async def get_category_bandwidth(
     client, category: str, from_ts: str, to_ts: str, interval: str = "15m"
 ) -> list[dict]:
     """Get bandwidth time-series for a traffic category, broken into download/upload."""
-    asn_substrings = _asn_filters_for_category(category)
-    if not asn_substrings:
+    # OLD CODE START — #96: case-sensitive wildcards disagreed with Home's classify_asn()
+    # asn_substrings = _asn_filters_for_category(category)
+    # if not asn_substrings:
+    #     return []
+    #
+    # should_clauses = [
+    #     {"wildcard": {"destination.as.full": f"*{substr}*"}}
+    #     for substr in asn_substrings
+    # ]
+    #
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [zeek conn, @timestamp range],
+    #             "must": [
+    #                 {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+    #             ],
+    #         }
+    #     },
+    # OLD CODE END
+    if category not in CATEGORIES:
         return []
-
-    should_clauses = [
-        {"wildcard": {"destination.as.full": f"*{substr}*"}}
-        for substr in asn_substrings
-    ]
+    asns = [b["key"]["asn"] for b in _category_asn_buckets(client, category, from_ts, to_ts)]
+    if not asns:
+        return []
 
     query = {
         "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
-                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-                ],
-                "must": [
-                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
-                ],
-            }
-        },
+        "query": _category_conn_query(asns, from_ts, to_ts),
         "aggs": {
             "bandwidth_over_time": {
                 "date_histogram": {

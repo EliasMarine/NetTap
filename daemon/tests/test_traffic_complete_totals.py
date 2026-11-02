@@ -115,6 +115,9 @@ def _aggregate(docs: list[dict], aggs: dict) -> dict:
             out[name] = _terms(docs, agg["terms"], sub)
         elif "composite" in agg:
             out[name] = _composite(docs, agg["composite"], sub)
+        elif "date_histogram" in agg:  # one bucket per distinct @timestamp
+            groups = _groups(docs, "@timestamp")
+            out[name] = {"buckets": [{**_bucket(k, groups[k], sub), "key_as_string": k} for k in sorted(groups)]}
         else:
             out[name] = _metric(docs, agg)
     return out
@@ -295,3 +298,74 @@ class TestSankeyDestinationTotals(_FakeOpenSearchCase):
         self.assertEqual(links[("tcp", "AS1 Big Transfer")], 2_000)
         self.assertEqual(links[("tcp", "AS2 Many Small")], 100)  # the 3rd device is not shown
         self.assertNotIn(("tcp", "AS3 Spread Org"), links)
+
+
+def _home_vs_detail() -> list[dict]:
+    """A Netflix ASN spelled in capitals, a RingCentral ASN that also holds the IoT substring
+    "Ring", and a real IoT ASN: each must sit in exactly the category Home's bar puts it in."""
+    return [
+        _conn("10.0.0.1", "198.51.100.1", "AS2906 NETFLIX INC", 100, 900),  # Home: streaming
+        _conn("10.0.0.2", "198.51.100.2", "AS2906 Netflix Inc", 300, 2_700),  # streaming
+        _conn("10.0.0.3", "198.51.100.3", "AS19700 RingCentral, Inc.", 200, 1_800),  # communication
+        _conn("10.0.0.4", "198.51.100.4", "AS64600 Ring LLC", 50, 450),  # iot
+    ]
+
+
+class TestCategoryDetailMatchesHome(_FakeOpenSearchCase):
+    """A category's detail page and bandwidth chart hold exactly its Home bar (#96)."""
+
+    DOCS = _home_vs_detail()
+
+    @unittest_run_loop
+    async def test_detail_and_chart_totals_equal_the_home_bar(self):
+        home = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        self.assertEqual(home["streaming"]["total_bytes"], 4_000)
+        self.assertEqual(home["communication"]["total_bytes"], 2_000)
+        self.assertEqual(home["iot"]["total_bytes"], 500)
+
+        for name in ("streaming", "communication", "iot"):
+            detail = await self._get(f"/api/traffic/categories/{name}")
+            # was streaming 3,000 (capitals missed) and iot 2,500 (RingCentral counted twice)
+            self.assertEqual(detail["total_bytes"], home[name]["total_bytes"], name)
+            self.assertEqual(detail["connection_count"], home[name]["connection_count"], name)
+            chart = await self._get(f"/api/traffic/categories/{name}/bandwidth")
+            self.assertEqual(sum(b["total_bytes"] for b in chart["series"]), home[name]["total_bytes"], name)
+
+    @unittest_run_loop
+    async def test_services_are_the_home_bars_services(self):
+        home = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        detail = await self._get("/api/traffic/categories/streaming")
+        self.assertEqual(
+            [(s["name"], s["bytes"]) for s in detail["services"]],
+            [(s["name"], s["bytes"]) for s in home["streaming"]["top_services"]],
+        )
+        iot = await self._get("/api/traffic/categories/iot")
+        self.assertEqual([s["name"] for s in iot["services"]], ["Ring LLC"])  # not RingCentral
+
+
+def _many_small_streams() -> list[dict]:
+    """Ten streaming ASNs with 2 small connections each, and one ASN with 1 large download."""
+    small = [
+        _conn("10.0.0.1", f"198.51.100.{n}", f"AS{65_000 + n} Spotify Edge {n}", 10, 90)
+        for n in range(10)
+        for _ in range(2)
+    ]
+    return [*small, _conn("10.0.0.2", "198.51.100.99", "AS2906 Netflix Inc", 1_000, 49_000)]
+
+
+class TestCategoryTopServicesByBytes(_FakeOpenSearchCase):
+    """Top services are ranked by bytes over every ASN, not the 10 with most connections."""
+
+    DOCS = _many_small_streams()
+
+    @unittest_run_loop
+    async def test_high_byte_service_with_few_connections_is_listed(self):
+        detail = await self._get("/api/traffic/categories/streaming")
+
+        self.assertEqual(detail["services"][0], {"name": "Netflix Inc", "bytes": 50_000, "connections": 1})
+        self.assertEqual(len(detail["services"]), 10)
+        home = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        self.assertEqual(
+            [(s["name"], s["bytes"]) for s in detail["services"]],
+            [(s["name"], s["bytes"]) for s in home["streaming"]["top_services"]],
+        )
