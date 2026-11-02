@@ -23,8 +23,8 @@
 	import {
 		getDeviceDetail,
 		getDeviceConnections,
-		getDeviceCategories,
-		getDevicePorts,
+		getDeviceCategories as fetchDeviceCategories,
+		getDevicePorts as fetchDevicePorts,
 		getDeviceRiskScore,
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
@@ -88,10 +88,9 @@
 	let riskLevel = $state('low');
 	let riskFactors = $state<RiskFactor[]>([]);
 
-	// #96: a failed section says so instead of "No ... data" or a risk of 0 LOW
+	// #96: a failed section says so instead of "No ... data", a risk of 0 LOW, or "Device not found"
 	let deviceFailed = $state(false);
 	let categoriesFailed = $state(false);
-	let smartFailed = $state(false);
 	let portsFailed = $state(false);
 	let riskFailed = $state(false);
 	/** a risk score has loaded for this device and range (riskScore 0 is otherwise a placeholder) */
@@ -99,6 +98,31 @@
 	let connectionsFailed = $state(false);
 	/** ip|range of the figures on screen (not reactive: only fetchAll reads it) */
 	let loadedView = '';
+
+	// #96: these mark their own card and keep its last good list when the request fails, instead of
+	// rejecting fetchAll's Promise.all and blanking the page. They take the API names so fetchAll
+	// still reads the same.
+	async function getDeviceCategories(ip: string, s: { from: string; to: string }): Promise<{ categories: DeviceCategory[] }> {
+		try {
+			const res = await fetchDeviceCategories(ip, s);
+			categoriesFailed = false;
+			return res;
+		} catch {
+			categoriesFailed = true;
+			return { categories };
+		}
+	}
+
+	async function getDevicePorts(ip: string, s: { from: string; to: string }): Promise<{ ports: DevicePort[] }> {
+		try {
+			const res = await fetchDevicePorts(ip, s);
+			portsFailed = false;
+			return res;
+		} catch {
+			portsFailed = true;
+			return { ports };
+		}
+	}
 
 	// Connections
 	let connections = $state<DeviceConnection[]>([]);
@@ -191,6 +215,14 @@
 	async function fetchAll() {
 		loading = true;
 		span = rangeSpan(range);
+		// A refresh of the same view keeps its last good figures; another view must not show them
+		const view = `${deviceIp}|${range}`;
+		if (view !== loadedView) {
+			device = null;
+			categories = [];
+			ports = [];
+			riskLoaded = false;
+		}
 		try {
 			// OLD CODE START — #87: no time range, so the pills changed nothing
 			// const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
@@ -201,64 +233,49 @@
 			// 	getDeviceRiskScore(deviceIp),
 			// ]);
 			// OLD CODE END
-			// OLD CODE START — #96: one failure blanked the page as "Device not found", and the getters
-			// faked zeros (risk 0 LOW, no ports) on failure
-			// const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
-			// 	getDeviceDetail(deviceIp, span),
-			// 	getDeviceCategories(deviceIp, span),
-			// 	getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }),
-			// 	getDevicePorts(deviceIp, span),
-			// 	getDeviceRiskScore(deviceIp, span),
-			// ]);
+			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
+				// OLD CODE START — #96: a failure rejected the whole Promise.all, so the page said "Device not found"
+				// getDeviceDetail(deviceIp, span),
+				// OLD CODE END
+				getDeviceDetail(deviceIp, span).catch(() => null),
+				getDeviceCategories(deviceIp, span),
+				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }),
+				getDevicePorts(deviceIp, span),
+				// OLD CODE START — #96: see getDeviceDetail
+				// getDeviceRiskScore(deviceIp, span),
+				// OLD CODE END
+				getDeviceRiskScore(deviceIp, span).catch(() => null),
+			]);
+			// OLD CODE START — #96: a failed detail is not "Device not found"; a refresh keeps the last one
 			// device = deviceRes.device;
-			// categories = catRes.categories;
-			// smartAlerts = smartRes.alerts;
-			// smartAlertsTotal = smartRes.total;
-			// ports = portRes.ports;
+			// OLD CODE END
+			if (deviceRes) {
+				device = deviceRes.device;
+				loadedView = view;
+			}
+			deviceFailed = deviceRes === null;
+			categories = catRes.categories;
+			smartAlerts = smartRes.alerts;
+			smartAlertsTotal = smartRes.total;
+			ports = portRes.ports;
+			// OLD CODE START — #96: a failed risk score read as 0, LOW
 			// riskScore = riskRes.score;
 			// riskLevel = riskRes.level;
 			// riskFactors = riskRes.factors;
 			// lastUpdated = new Date();
 			// OLD CODE END
-			// A refresh of the same view keeps its last good figures; another view must not show them
-			const view = `${deviceIp}|${range}`;
-			if (view !== loadedView) {
-				device = null;
-				categories = [];
-				smartAlerts = [];
-				smartAlertsTotal = 0;
-				ports = [];
-				riskLoaded = false;
-			}
-			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.allSettled([
-				getDeviceDetail(deviceIp, span),
-				getDeviceCategories(deviceIp, span),
-				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }),
-				getDevicePorts(deviceIp, span),
-				getDeviceRiskScore(deviceIp, span),
-			]);
-			if (deviceRes.status === 'fulfilled') {
-				device = deviceRes.value.device;
-				loadedView = view;
-				lastUpdated = new Date();
-			}
-			if (catRes.status === 'fulfilled') categories = catRes.value.categories;
-			if (smartRes.status === 'fulfilled') {
-				smartAlerts = smartRes.value.alerts;
-				smartAlertsTotal = smartRes.value.total;
-			}
-			if (portRes.status === 'fulfilled') ports = portRes.value.ports;
-			if (riskRes.status === 'fulfilled') {
-				riskScore = riskRes.value.score;
-				riskLevel = riskRes.value.level;
-				riskFactors = riskRes.value.factors;
+			if (riskRes) {
+				riskScore = riskRes.score;
+				riskLevel = riskRes.level;
+				riskFactors = riskRes.factors;
 				riskLoaded = true;
 			}
-			deviceFailed = deviceRes.status === 'rejected';
-			categoriesFailed = catRes.status === 'rejected';
-			smartFailed = smartRes.status === 'rejected';
-			portsFailed = portRes.status === 'rejected';
-			riskFailed = riskRes.status === 'rejected';
+			riskFailed = riskRes === null;
+			if (deviceRes) lastUpdated = new Date();
+		} catch {
+			// only a network error on the alerts lookup reaches here; it is not "Device not found"
+			device = null;
+			deviceFailed = true;
 		} finally {
 			loading = false;
 		}
@@ -701,8 +718,6 @@
 						</button>
 					{/if}
 					<a href="/alerts?ip={deviceIp}" class="card-link">View all alerts &rarr;</a>
-				{:else if smartFailed}
-					<p class="empty-msg">{loadFailed('alerts for this device')}</p>
 				{:else}
 					<p class="empty-msg">No actionable alerts for this device.</p>
 				{/if}
