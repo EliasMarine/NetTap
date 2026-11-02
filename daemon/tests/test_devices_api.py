@@ -218,6 +218,20 @@ class TestDeviceListHandler(AioHTTPTestCase):
         self.assertIn("error", data)
 
     @unittest_run_loop
+    async def test_failed_alert_count_is_502_not_zero_alerts(self):
+        """#96: a failed alert-count query listed every device with 0 alerts."""
+        from opensearchpy import OpenSearchException
+
+        self._setup_search_responses(
+            _device_list_response([_device_bucket("192.168.1.100")]),
+            alert_response=OpenSearchException("timeout"),
+        )
+
+        resp = await self.client.request("GET", "/api/devices")
+        self.assertEqual(resp.status, 502)
+        self.assertIn("error", await resp.json())
+
+    @unittest_run_loop
     async def test_device_list_requests_sent_and_received_sums(self):
         """The devices agg sums source.bytes (sent) and destination.bytes (received)."""
         self._setup_search_responses(_device_list_response([]))
@@ -603,6 +617,25 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         data = await resp.json()
         self.assertIn("error", data)
 
+    @unittest_run_loop
+    async def test_failed_dns_or_alert_lookup_is_502_not_none(self):
+        """#96: a failed DNS or alert lookup showed no DNS queries or 0 alerts."""
+        from opensearchpy import OpenSearchException
+
+        conn = {
+            "hits": {"total": {"value": 5}},
+            "aggregations": {"total_bytes": {"value": 100}},
+        }
+        for failing in ("dns", "alerts"):
+            self._setup_detail_responses(conn)
+            responses = list(self.mock_client.search.side_effect)
+            responses[1 if failing == "dns" else 2] = OpenSearchException("timeout")
+            self.mock_client.search.side_effect = responses
+
+            resp = await self.client.request("GET", "/api/devices/192.168.1.1")
+            self.assertEqual(resp.status, 502, failing)
+            self.assertIn("error", await resp.json())
+
 
 class TestDeviceConnectionsHandler(AioHTTPTestCase):
     """Tests for GET /api/devices/{ip}/connections."""
@@ -943,6 +976,18 @@ class TestDeviceListAlertSort(AioHTTPTestCase):
         # The top 4 by bytes left 192.168.1.50 out
         listed = await self._listed("?sort=alerts&limit=2")
         self.assertEqual(listed, [("192.168.1.50", 7), ("192.168.1.11", 2)])
+
+    @unittest_run_loop
+    async def test_alert_counts_are_asked_in_chunks_of_ips(self):
+        """Past index.max_terms_count (65,536) IPs one terms filter fails; chunks don't."""
+        with patch("api.devices._ALERT_IP_CHUNK", 4):
+            listed = await self._listed("?sort=alerts&limit=2")
+        self.assertEqual(listed, [("192.168.1.50", 7), ("192.168.1.11", 2)])
+        chunks = [
+            next(f["terms"]["source.ip"] for f in b["query"]["bool"]["filter"] if "terms" in f)
+            for b in _alert_bodies(self.mock_client.search)
+        ]
+        self.assertEqual([len(c) for c in chunks], [4, 4, 3])
 
     @unittest_run_loop
     async def test_fewest_alerts_first_bytes_breaks_ties(self):

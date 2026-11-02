@@ -88,6 +88,8 @@ _RESULT_WINDOW = 10_000
 # #90: one device's terms lists are short, so asking each shard for all of them (instead of
 # OpenSearch's size * 1.5 + 10) makes the counts exact once a window spans several daily indices
 _ALL_TERMS = 10_000
+# Device IPs per alert-count search: under index.max_terms_count (65,536) and search.max_buckets
+_ALERT_IP_CHUNK = 10_000
 
 
 def _parse_int_param(request: web.Request, name: str, default: int) -> int:
@@ -467,8 +469,21 @@ async def handle_device_list(request: web.Request) -> web.Response:
     device_ips = [b["key"] for b in buckets]
 
     # Batch query: alert counts per device IP from suricata-*
+    # OLD CODE START — #96: one terms filter of every IP failed past 65,536 devices
+    # (index.max_terms_count) on the alert sort, and any failure listed every device with 0 alerts
+    # alert_counts: dict[str, int] = {}
+    # if device_ips:
+    #     alert_query = {... {"terms": {"source.ip": device_ips}} ... size len(device_ips)}
+    #     try:
+    #         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+    #         for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+    #             alert_counts[ab["key"]] = ab["doc_count"]
+    #     except OpenSearchException as exc:
+    #         logger.warning("Alert count query failed: %s", exc)
+    # OLD CODE END
     alert_counts: dict[str, int] = {}
-    if device_ips:
+    for start in range(0, len(device_ips), _ALERT_IP_CHUNK):
+        chunk = device_ips[start : start + _ALERT_IP_CHUNK]
         alert_query = {
             "size": 0,
             "query": {
@@ -483,7 +498,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                                 }
                             }
                         },
-                        {"terms": {"source.ip": device_ips}},
+                        {"terms": {"source.ip": chunk}},
                         {"term": {"event.provider": "suricata"}},
                         {"term": {"event.dataset": "alert"}},
                     ],
@@ -491,18 +506,17 @@ async def handle_device_list(request: web.Request) -> web.Response:
                 }
             },
             "aggs": {
-                "by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}
+                "by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}
             },
         }
 
         try:
             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-            for ab in (
-                alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-            ):
-                alert_counts[ab["key"]] = ab["doc_count"]
         except OpenSearchException as exc:
-            logger.warning("Alert count query failed: %s", exc)
+            logger.error("Alert count query failed in devices list: %s", exc)
+            return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+            alert_counts[ab["key"]] = ab["doc_count"]
 
     if sort_field == "alerts":
         # Bytes (largest first) breaks ties, as the bytes-ordered list did before
@@ -807,17 +821,24 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50, "shard_size": _ALL_TERMS}}},
     }
 
-    dns_queries = []
+    # OLD CODE START — #96: a failure showed the device as having made no DNS queries
+    # dns_queries = []
+    # try:
+    #     ...
+    # except OpenSearchException as exc:
+    #     logger.warning("DNS query lookup failed for %s: %s", ip, exc)
+    # OLD CODE END
     try:
         dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
-        dns_buckets = (
-            dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
-        )
-        dns_queries = [
-            {"domain": db["key"], "count": db["doc_count"]} for db in dns_buckets
-        ]
     except OpenSearchException as exc:
-        logger.warning("DNS query lookup failed for %s: %s", ip, exc)
+        logger.error("DNS query lookup failed for %s: %s", ip, exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+    dns_buckets = (
+        dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
+    )
+    dns_queries = [
+        {"domain": db["key"], "count": db["doc_count"]} for db in dns_buckets
+    ]
 
     # Alert count from unified index (suricata alert events)
     alert_query = {
@@ -844,17 +865,24 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         },
     }
 
-    alert_count = 0
+    # OLD CODE START — #96: a failure showed the device with 0 alerts
+    # alert_count = 0
+    # try:
+    #     ...
+    # except OpenSearchException as exc:
+    #     logger.warning("Alert count lookup failed for %s: %s", ip, exc)
+    # OLD CODE END
     try:
         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-        alert_total = alert_result.get("hits", {}).get("total", {})
-        alert_count = (
-            alert_total.get("value", 0)
-            if isinstance(alert_total, dict)
-            else alert_total
-        )
     except OpenSearchException as exc:
-        logger.warning("Alert count lookup failed for %s: %s", ip, exc)
+        logger.error("Alert count lookup failed for %s: %s", ip, exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+    alert_total = alert_result.get("hits", {}).get("total", {})
+    alert_count = (
+        alert_total.get("value", 0)
+        if isinstance(alert_total, dict)
+        else alert_total
+    )
 
     # Passive fingerprinting enrichment
     mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
