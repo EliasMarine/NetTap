@@ -144,19 +144,9 @@ The `workers` runmode is the most efficient for multi-core systems. Each worker 
 
 ---
 
-## Arkime Packet Threads
+## Arkime
 
-Arkime's packet processing threads:
-
-```ini title=".env"
-ARKIME_PACKET_THREADS=2    # Default: 2 threads
-```
-
-| CPU Cores | Recommended Threads |
-|---|---|
-| 2 | 1 |
-| 4 | 2 |
-| 8+ | 4 |
+Arkime is off by default (compose profile `arkime`), so no packet-thread tuning applies to a standard install.
 
 ---
 

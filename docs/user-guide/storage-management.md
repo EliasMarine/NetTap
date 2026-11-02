@@ -10,7 +10,7 @@ NetTap uses a three-tier storage architecture to balance retention needs with di
 |---|---|---|---|---|
 | **Hot** | Zeek metadata logs | 90 days | 300--800 MB | ~8:1 (zstd) |
 | **Warm** | Suricata IDS alerts | 180 days | 10--50 MB | ~6:1 (zstd) |
-| **Cold** | PCAP captures (alert-triggered) | 30 days | Variable | ~3:1 (zstd) |
+| **Cold** | PCAP captures (all traffic) | 30 days | Variable | ~3:1 (zstd) |
 
 ### Hot Tier (Zeek Metadata)
 
@@ -38,6 +38,7 @@ Raw packet captures are stored for forensic analysis but consume significant dis
 - **Index pattern:** `arkime-*`, `pcap-*`
 - **Rollover:** At 20 GB or 1 day
 - **Retention:** 30 days by default (configurable via `RETENTION_COLD`)
+- **Disk cap:** PCAP files are capped at `PCAP_MAX_DISK_PCT` percent of the disk (default 25; 0 disables the cap). The storage daemon deletes the oldest files first.
 - **Action at expiry:** Automatic deletion
 
 ---

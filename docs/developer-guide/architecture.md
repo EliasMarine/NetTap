@@ -18,7 +18,7 @@ Router ─────────────────┤  └────�
                         │    ┌────────────┼────────────┐             │
                         │    │            │            │             │
                         │    ▼            ▼            ▼             │
-                        │  Zeek       Suricata      Arkime           │
+                        │  Zeek       Suricata      netsniff-ng      │
                         │  (metadata)  (IDS)       (PCAP)           │
                         │    │            │            │             │
                         │    ▼            ▼            ▼             │
@@ -79,7 +79,6 @@ Three capture engines run simultaneously with `network_mode: host` to directly a
 | **Zeek** | `nettap-zeek-live` | Generates structured metadata logs for every connection |
 | **Suricata** | `nettap-suricata-live` | IDS alerting using Emerging Threats ruleset |
 | **netsniff-ng** | `nettap-pcap-capture` | Raw PCAP file capture |
-| **Arkime** | `nettap-arkime-live` | Full packet capture with session indexing |
 
 ### 2. Log Collection
 
@@ -107,7 +106,7 @@ Enriched events are indexed into OpenSearch.
 
 - `zeek-*` indices --- connection metadata
 - `suricata-*` indices --- IDS alerts and protocol logs
-- `arkime-*` / `pcap-*` indices --- packet capture session metadata
+- `arkime-*` / `pcap-*` --- cold-tier index patterns (`arkime_sessions3-*` is the Malcolm name for the index that holds Zeek and Suricata records)
 
 ### 5. Visualization
 
@@ -141,7 +140,6 @@ Two visualization layers:
 │  ├── zeek-live           (Zeek metadata analysis)           │
 │  ├── suricata-live       (Suricata IDS)                     │
 │  ├── pcap-capture        (netsniff-ng raw capture)          │
-│  ├── arkime-live         (Arkime session indexer)           │
 │                                                              │
 │  INFRASTRUCTURE                                              │
 │  ├── redis               (Caching and queues)               │
@@ -172,7 +170,7 @@ opensearch (must be healthy first)
   └── nettap-web
 ```
 
-Capture containers (Zeek, Suricata, Arkime, pcap-capture) have no service dependencies --- they start immediately and write to shared volumes.
+Capture containers (Zeek, Suricata, pcap-capture) have no service dependencies --- they start immediately and write to shared volumes.
 
 ---
 

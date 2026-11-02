@@ -12,7 +12,7 @@ NetTap creates a transparent Layer 2 bridge between two network interfaces. All 
 
 - **Zeek** generates structured metadata logs for every connection (DNS, HTTP, TLS, DHCP, SMTP, and more)
 - **Suricata** performs signature-based intrusion detection using the Emerging Threats ruleset
-- **Arkime** captures full packets for alert-triggered forensic analysis
+- **netsniff-ng** records all traffic to rotating PCAP files for forensic packet analysis
 - **OpenSearch** indexes everything for fast search and visualization
 
 The result: you see exactly what every device on your network is doing, which external servers they talk to, and whether any of that traffic is suspicious.
@@ -55,7 +55,7 @@ ISP Modem ─── [ eth0 (WAN) ]──╮
                                ├── br0 (transparent bridge) ── capture
 Router ─────── [ eth1 (LAN) ]──╯         │
                                           ▼
-                                   Zeek + Suricata + Arkime
+                                   Zeek + Suricata + netsniff-ng
                                           │
                                           ▼
                                      OpenSearch
@@ -78,7 +78,7 @@ NetTap is invisible on the data path. Your ISP modem and router communicate exac
 | Malcolm (CISA) | Network analysis platform | 26.02.0 |
 | Zeek | Network metadata analysis | 6.x |
 | Suricata | Intrusion detection (IDS) | 7.x |
-| Arkime | Full packet capture | 5.x |
+| netsniff-ng | Full packet capture (`pcap-capture`) | Malcolm 26.02.0 |
 | OpenSearch | Search and analytics engine | 2.x |
 | Grafana | Enhanced visualizations | 10.4.x |
 | SvelteKit | Web dashboard framework | 2.x |
