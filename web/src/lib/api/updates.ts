@@ -26,7 +26,11 @@ export interface AvailableUpdate {
 	release_url: string;
 	release_date: string;
 	changelog: string;
-	size_mb: number;
+	// OLD CODE START — the daemon sends null when nobody measured the size
+	// size_mb: number;
+	// OLD CODE END
+	/** null = not measured: show "size unknown", never 0 MB */
+	size_mb: number | null;
 	requires_restart: boolean;
 }
 
