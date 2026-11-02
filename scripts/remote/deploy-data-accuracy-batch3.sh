@@ -67,11 +67,17 @@ echo ""
 
 echo "→ Step 3: Recreate daemon, web and the live capture containers..."
 "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web zeek-live suricata-live arkime-live
+# nginx bind-mounts nginx.conf as a single file; git replaced the file, so a reload
+# would keep the old copy. A restart re-reads it (CSP worker-src for CyberChef).
+sudo docker restart nettap-nginx >/dev/null
 echo ""
 
 echo "→ Step 4: Wait for health..."
 wait_healthy nettap-storage-daemon
 wait_healthy nettap-web
+CSP=$(curl -skI https://localhost/cyberchef/ | grep -i '^content-security-policy')
+if printf '%s' "$CSP" | grep -q "worker-src 'self' blob:"; then rc=0; else rc=1; fi
+check "#36 CSP lets CyberChef start its workers" "$rc" "$(printf '%s' "$CSP" | grep -o "worker-src[^;]*" || echo 'worker-src missing')"
 for c in nettap-zeek-live nettap-suricata-live nettap-arkime-live; do
     state=$(sudo docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
     if [ "$state" = "running" ]; then rc=0; else rc=1; fi
