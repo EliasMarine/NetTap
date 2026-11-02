@@ -7,6 +7,7 @@
 #   #37 PCAP capped at PCAP_MAX_DISK_PCT of the disk (default 25%), oldest first
 #   #45 Live Monitor: bundled world map, LAN-only device count, NIC line-rate
 #       bandwidth, connection total in the protocol donut
+#   #46 CyberChef quick recipes: "recipe_fragment is required", internal-URL links
 # Capture (netsniff, Zeek, Suricata) is not restarted.
 #
 # Run as the normal user (NOT with sudo):
@@ -22,15 +23,17 @@ OS_CURL=(sudo docker exec nettap-opensearch curl -s
     -H "Content-Type: application/json")
 FAILED=0
 
-api_eval() {  # api_eval <path> '<python expression over d>'
+api_eval() {  # api_eval <path> '<python expression over d>' [json body to POST]
     # Fetches and parses inside the daemon container: no host python3, and nothing
     # is piped into sudo (its stdin may carry the password). eval is safe here: every
     # expression is a literal written in this script, never data from the API.
     sudo docker exec nettap-storage-daemon python3 -c "
 import json, sys, urllib.request
 path, expr = sys.argv[1], sys.argv[2]
+body = sys.argv[3].encode() if len(sys.argv) > 3 else None
 token = open('/run/nettap-auth/daemon-token').read().strip()
-req = urllib.request.Request('http://localhost:8880' + path, headers={'X-NetTap-Daemon-Token': token})
+req = urllib.request.Request('http://localhost:8880' + path, data=body,
+    headers={'X-NetTap-Daemon-Token': token, 'Content-Type': 'application/json'})
 try:
     d = json.load(urllib.request.urlopen(req, timeout=120))
     print(eval(expr))
@@ -153,6 +156,25 @@ LIVE_BW=$(api_eval /api/live/dashboard "int(d['stats']['bandwidth_bytes_per_seco
 NIC_BW=$(( (${B:-0} - ${A:-0}) / ( (T1 - T0) > 0 ? (T1 - T0) : 1 ) ))
 if [ "${NIC_BW:-0}" -gt 0 ] && awk -v l="${LIVE_BW:-0}" -v n="$NIC_BW" 'BEGIN { r = l / n; exit !(r > 0.7 && r < 1.3) }'; then rc=0; else rc=1; fi
 check "#45 Live bandwidth = capture NIC line rate" "$rc" "live=${LIVE_BW:-?} B/s NIC($IFACE)=$NIC_BW B/s"
+
+CC_URL=$(sudo docker exec nettap-storage-daemon python3 -c "
+import json, urllib.request
+token = open('/run/nettap-auth/daemon-token').read().strip()
+h = {'X-NetTap-Daemon-Token': token, 'Content-Type': 'application/json'}
+def call(path, body=None):
+    req = urllib.request.Request('http://localhost:8880' + path, data=body, headers=h)
+    return json.load(urllib.request.urlopen(req, timeout=30))
+try:
+    frag = [r for r in call('/api/cyberchef/recipes')['recipes'] if r['name'] == 'Base64 Decode'][0]['recipe_fragment']
+    print(call('/api/cyberchef/url', json.dumps({'recipe_fragment': frag, 'input_data': 'aGVsbG8gbmV0dGFw'}).encode())['url'])
+except Exception as e:
+    print('ERR', e)
+")
+case "$CC_URL" in /cyberchef/\#recipe=*\&input=YUdWc2JHOGdibVYwZEdGdw) rc=0 ;; *) rc=1 ;; esac
+check "#46 CyberChef quick recipe builds a browser link" "$rc" "$CC_URL"
+CC_HTTP=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/cyberchef/)
+if [ "$CC_HTTP" = "200" ]; then rc=0; else rc=1; fi
+check "#46 CyberChef is served at /cyberchef/" "$rc" "HTTP $CC_HTTP"
 echo ""
 
 echo "→ Step 6: Container status..."
