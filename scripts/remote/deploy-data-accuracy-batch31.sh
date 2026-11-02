@@ -104,7 +104,9 @@ bracket "#87 Risk score connections, 7 days ($IP)" "$(src "$IP"),$CONN" "" \
 POINTS=$(api "/api/devices/$IP?$RANGE" "len(d['device'].get('bandwidth_series') or [])")
 if [[ "${POINTS:-x}" =~ ^[0-9]+$ ]] && [ "$POINTS" -ge 160 ] && [ "$POINTS" -le 175 ]; then rc=0; else rc=1; fi
 check "#87 7-day bandwidth chart uses hourly points" "$rc" "$POINTS points (5-minute points would be 2,016)"
-DAY=$(api "/api/devices/$IP" "d['device']['connection_count']")
+# Same end as the 7-day window: the box holds under 2 days, so 15 minutes matter
+DAY_FROM=$(date -u -d "$TO_TS 24 hours ago" +%Y-%m-%dT%H:%M:%SZ)
+DAY=$(api "/api/devices/$IP?from=$DAY_FROM&to=$TO_TS" "d['device']['connection_count']")
 WEEK=$(api "/api/devices/$IP?$RANGE" "d['device']['connection_count']")
 if [[ "${DAY:-x}" =~ ^[0-9]+$ && "${WEEK:-x}" =~ ^[0-9]+$ ]] && [ "$WEEK" -ge "$DAY" ]; then rc=0; else rc=1; fi
 check "#87 7 days covers at least the last day" "$rc" "24 h $DAY, 7 d $WEEK"
