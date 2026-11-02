@@ -73,6 +73,7 @@
 	let nicsLoading = $state(false);
 	let nicsError = $state('');
 	let nicsSource = $state('');
+	const NICS_UNREACHABLE = "Couldn't detect the network cards: NetTap's service didn't answer.";
 
 	// Bridge mode NIC selection
 	let selectedWan = $state('');
@@ -314,6 +315,8 @@
 			} catch {
 				throw new Error('Server returned invalid data');
 			}
+			// the proxy answers built-in sample cards when the daemon doesn't; they passed this check
+			if (nicData.source === 'mock') throw new Error(NICS_UNREACHABLE);
 			// Count non-loopback, non-virtual interfaces available
 			const bridgeableNics = (nicData.interfaces || []).filter(
 				(iface: NetworkInterface) => iface.type === 'ethernet'
@@ -333,7 +336,10 @@
 			interfaces = nicData.interfaces || [];
 			nicsSource = nicData.source || '';
 		} catch {
-			requirements.nics = { ...requirements.nics, status: 'fail' };
+			// OLD CODE START — a failed check read as "you don't have the network cards"
+			// requirements.nics = { ...requirements.nics, status: 'fail' };
+			// OLD CODE END
+			requirements.nics = { ...requirements.nics, label: "Network interfaces: couldn't check", status: 'fail' };
 		}
 
 		// Check Docker — use the health endpoint
@@ -381,6 +387,11 @@
 			} catch {
 				throw new Error('Server returned invalid data — daemon may need restart');
 			}
+			// OLD CODE START — offered the proxy's sample cards (eth0/eth1/wlan0) for selection when the daemon didn't answer
+			// interfaces = data.interfaces || [];
+			// nicsSource = data.source || '';
+			// OLD CODE END
+			if (data.source === 'mock') throw new Error(NICS_UNREACHABLE);
 			interfaces = data.interfaces || [];
 			nicsSource = data.source || '';
 		} catch (err) {
