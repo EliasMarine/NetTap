@@ -20,6 +20,8 @@ logger = logging.getLogger("nettap.services.update_checker")
 _MALCOLM_REGISTRY = "ghcr.io/idaholab/malcolm/"
 _MALCOLM_RELEASE_URL = "https://api.github.com/repos/idaholab/Malcolm/releases/latest"
 _NETTAP_IMAGE_PREFIX = "nettap/"  # built by NetTap; the NetTap release check covers them
+# NetTap pins Malcolm's images to a tested release, so it can't apply a newer one itself
+MALCOLM_APPLIES_WITH = "Comes with NetTap's pinned Malcolm release: update NetTap to get it."
 
 
 @dataclass
@@ -35,6 +37,8 @@ class AvailableUpdate:
     changelog: str  # Brief changelog/description
     size_mb: float | None  # Download size in MB; None = not known
     requires_restart: bool  # Whether component restart is needed
+    # Set when NetTap can't apply this update itself: one sentence on how it does arrive
+    applies_with: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -338,6 +342,7 @@ class UpdateChecker:
                         changelog=f"Malcolm {latest}: {images[component].split(':')[0]}",
                         size_mb=None,  # the image size isn't known from the release
                         requires_restart=True,
+                        applies_with=MALCOLM_APPLIES_WITH,
                     )
                 )
         return results

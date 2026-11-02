@@ -45,8 +45,10 @@ class TestAvailableUpdateDataclass(unittest.TestCase):
             "changelog",
             "size_mb",
             "requires_restart",
+            "applies_with",
         }
         self.assertEqual(set(d.keys()), expected_keys)
+        self.assertIsNone(d["applies_with"])  # applicable unless a check says otherwise
 
     def test_to_dict_preserves_values(self):
         """to_dict() should preserve exact values."""
@@ -545,6 +547,44 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         )
         self.assertEqual(result["failed_checks"], ["arkime"])
         self.assertEqual(result["updates"], [])
+
+    def test_malcolm_update_comes_with_nettap_release(self):
+        """Malcolm's images are pinned: NetTap can't apply a newer release itself."""
+        result, _ = self._run(
+            {"tag_name": "v26.03.0"},
+            [("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0")],
+        )
+        (update,) = result["updates"]
+        self.assertEqual(
+            update["applies_with"],
+            "Comes with NetTap's pinned Malcolm release: update NetTap to get it.",
+        )
+
+
+class TestNetTapUpdatesStayApplicable(unittest.TestCase):
+    """Updates NetTap applies itself carry no applies_with sentence."""
+
+    def test_nettap_release_is_applicable(self):
+        async def fetch(url):
+            return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
+
+        uc = UpdateChecker()
+        uc._fetch_json = fetch
+        (update,) = asyncio.run(uc._check_github_releases())
+        self.assertEqual(update.component, "nettap-daemon")
+        self.assertIsNone(update.applies_with)
+
+    def test_stale_suricata_rules_are_applicable(self):
+        from unittest.mock import patch
+
+        month_old = datetime.now(timezone.utc).timestamp() - 30 * 86400
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getmtime", return_value=month_old),
+        ):
+            update = asyncio.run(UpdateChecker()._check_suricata_rules())
+        self.assertEqual(update.component, "suricata-rules")
+        self.assertIsNone(update.applies_with)
 
 
 class TestEstimateReleaseSize(unittest.TestCase):
