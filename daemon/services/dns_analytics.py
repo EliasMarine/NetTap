@@ -35,6 +35,9 @@ DNS_NOISE_EXCLUSION = [
 # Only local destinations are left out: those ports to an internet host stay counted,
 # so DNS tunneled over 5353 still reaches the tunneling detector.
 LOCAL_NAME_SERVICE_PORTS = [5353, 5355, 137]
+# Names that are long or queried constantly by design, so the long-name and beaconing
+# rules skip them: reverse lookups, and Plex's per-server <ip>.<hex id>.plex.direct names
+_BENIGN_DNS_SUFFIXES = (".in-addr.arpa", ".ip6.arpa", ".plex.direct")
 LOCAL_DESTINATIONS = [
     "224.0.0.0/4",  # IPv4 multicast (mDNS 224.0.0.251, LLMNR 224.0.0.252)
     "ff00::/8",  # IPv6 multicast (ff02::fb, ff02::1:3)
@@ -337,6 +340,11 @@ class DNSAnalytics:
 
         # 1. Long domain names (potential DGA/tunneling)
         top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE START — every name was scored, so reverse lookups and Plex's per-server
+        # hostnames (long and hex by design) were flagged as exfiltration or beaconing (#35)
+        # (the loops below iterated `top`)
+        # OLD CODE END
+        top = [e for e in top if not e["domain"].lower().rstrip(".").endswith(_BENIGN_DNS_SUFFIXES)]
         for entry in top:
             domain = entry["domain"]
             if len(domain) > 50:

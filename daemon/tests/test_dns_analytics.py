@@ -306,6 +306,29 @@ class TestGetSuspiciousDns:
         hf = [r for r in result if r["type"] == "high_frequency"]
         assert len(hf) >= 1
 
+    def test_reverse_lookups_and_plex_names_not_flagged(self, dns, mock_client):
+        """#35: long or constantly-queried by design, not exfiltration or beaconing."""
+        names = [
+            "192-168-1-10.7c0e0efa9cb649e8a8937830d7fe6f23.plex.direct",
+            "1.0.17.172.in-addr.arpa",
+            "b.a.9.8.7.6.5.0.4.0.0.0.3.0.0.0.2.0.0.0.1.0.0.0.0.0.0.0.1.2.3.4.ip6.arpa",
+        ]
+        mock_client.search.return_value = {
+            "aggregations": {
+                "top_domains": {
+                    "buckets": [
+                        {"key": n, "doc_count": 1000, "unique_clients": {"value": 1}} for n in names
+                    ]
+                    + [{"key": "beacon.evil.com", "doc_count": 1000, "unique_clients": {"value": 1}}]
+                },
+                "txt_domains": {"buckets": []},
+            }
+        }
+
+        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+        assert [(r["type"], r["domain"]) for r in result] == [("high_frequency", "beacon.evil.com")]
+
     def test_detects_txt_abuse(self, dns, mock_client):
         mock_client.search.return_value = {
             "aggregations": {
