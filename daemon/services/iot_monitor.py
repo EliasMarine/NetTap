@@ -45,6 +45,16 @@ ENCRYPTED_PORTS = [443, 853, 8443, 8883]
 ENCRYPTED_PROTOCOLS = ["ssl", "ssh", "quic", "dtls", "ipsec", "wireguard", "openvpn"]
 # NAT discovery carries no user data, so it is left out of the encryption share
 NO_PAYLOAD_PROTOCOLS = ["stun"]
+# One rule for "encrypted", shared with the Security Posture page (/api/traffic/protocols)
+ENCRYPTED_CONN_FILTER: dict = {
+    "bool": {
+        "should": [
+            {"terms": {"destination.port": ENCRYPTED_PORTS}},
+            {"terms": {"network.protocol": ENCRYPTED_PROTOCOLS}},
+        ],
+        "minimum_should_match": 1,
+    }
+}
 # Isolation is a security check, so it drops only UDP DNS/DHCP/NTP/discovery and
 # multicast/broadcast. TCP on those ports and pings to LAN hosts stay visible.
 ISOLATION_NOISE_EXCLUSION: list[dict] = [
@@ -606,25 +616,20 @@ class IoTMonitor:
                         #     "filter": {"terms": {"destination.port": [443, 8443, 8883]}}
                         # },
                         # OLD CODE END
-                        "encrypted": {
-                            "filter": {
-                                "bool": {
-                                    "should": [
-                                        {
-                                            "terms": {
-                                                "destination.port": ENCRYPTED_PORTS
-                                            }
-                                        },
-                                        {
-                                            "terms": {
-                                                "network.protocol": ENCRYPTED_PROTOCOLS
-                                            }
-                                        },
-                                    ],
-                                    "minimum_should_match": 1,
-                                }
-                            }
-                        },
+                        # OLD CODE START — the same filter, now the shared ENCRYPTED_CONN_FILTER
+                        # "encrypted": {
+                        #     "filter": {
+                        #         "bool": {
+                        #             "should": [
+                        #                 {"terms": {"destination.port": ENCRYPTED_PORTS}},
+                        #                 {"terms": {"network.protocol": ENCRYPTED_PROTOCOLS}},
+                        #             ],
+                        #             "minimum_should_match": 1,
+                        #         }
+                        #     }
+                        # },
+                        # OLD CODE END
+                        "encrypted": {"filter": ENCRYPTED_CONN_FILTER},
                         "no_payload": {
                             "filter": {
                                 "terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}

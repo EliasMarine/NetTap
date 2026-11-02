@@ -369,6 +369,33 @@ class TestProtocolsHandler(AioHTTPTestCase):
         self.assertEqual(len(data["services"]), 2)
         self.assertEqual(data["services"][0]["name"], "dns")
 
+    @unittest_run_loop
+    async def test_protocols_encryption_and_dns_use_the_iot_rule(self):
+        """#86: Security Posture's cards used service names only: QUIC and unparsed TLS on 443
+        counted as plaintext, pings and discovery sat in the denominator (G11: 19%), and DNS
+        could never rise above 0% (Zeek has no dns_over_tls service; DoT is ssl on 853)."""
+        from services.iot_monitor import ENCRYPTED_CONN_FILTER, LOCAL_CHATTER_EXCLUSION
+
+        self.mock_client.search.return_value = {
+            "aggregations": {
+                "encryption": {"doc_count": 200, "encrypted": {"doc_count": 120}},
+                "dns_plain": {"doc_count": 90},
+                "dns_over_tls": {"doc_count": 10},
+            }
+        }
+        resp = await self.client.request("GET", "/api/traffic/protocols")
+        data = await resp.json()
+        self.assertEqual(data["encryption"], {"eligible": 200, "encrypted": 120})
+        self.assertEqual(data["dns"], {"plain": 90, "over_tls": 10})
+
+        aggs = self.mock_client.search.call_args.kwargs["body"]["aggs"]
+        must_not = aggs["encryption"]["filter"]["bool"]["must_not"]
+        for clause in LOCAL_CHATTER_EXCLUSION:
+            self.assertIn(clause, must_not)
+        self.assertIn({"terms": {"network.protocol": ["stun"]}}, must_not)
+        self.assertEqual(aggs["encryption"]["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER)
+        self.assertEqual(aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}})
+
 
 class TestBandwidthHandler(AioHTTPTestCase):
     """Tests for GET /api/traffic/bandwidth."""

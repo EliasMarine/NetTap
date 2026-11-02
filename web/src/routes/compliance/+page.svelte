@@ -53,36 +53,46 @@
 	// Computed scores
 	// ---------------------------------------------------------------------------
 
-	let encryptionScore = $derived.by(() => {
-		const services = protocols.services;
-		if (services.length === 0) return 100;
+	// OLD CODE START — #86: Zeek service names only. QUIC and TLS Zeek didn't parse (G11: ~44k
+	// connections on port 443) counted as plaintext, pings and discovery sat in the denominator
+	// (G11: 19%), and DNS could never pass 0% (Zeek has no dns_over_tls service; DoT is ssl on 853)
+	// let encryptionScore = $derived.by(() => {
+	// 	const services = protocols.services;
+	// 	if (services.length === 0) return 100;
+	// 	const totalConnections = services.reduce((sum, s) => sum + s.count, 0);
+	// 	if (totalConnections === 0) return 100;
+	// 	const encryptedNames = ['ssl', 'tls', 'https', 'imaps', 'smtps', 'ldaps', 'ftps', 'ssh', 'dns_over_tls', 'dns_over_https'];
+	// 	const encryptedCount = services
+	// 		.filter((s) => encryptedNames.some((n) => s.name.toLowerCase().includes(n)))
+	// 		.reduce((sum, s) => sum + s.count, 0);
+	// 	return Math.round((encryptedCount / totalConnections) * 100);
+	// });
+	// let dnsScore = $derived.by(() => {
+	// 	const services = protocols.services;
+	// 	if (services.length === 0) return 100;
+	// 	const totalDns = services
+	// 		.filter((s) => s.name.toLowerCase().includes('dns'))
+	// 		.reduce((sum, s) => sum + s.count, 0);
+	// 	if (totalDns === 0) return 100;
+	// 	const plainDns = services
+	// 		.filter((s) => s.name.toLowerCase() === 'dns')
+	// 		.reduce((sum, s) => sum + s.count, 0);
+	// 	return Math.round(100 - (plainDns / totalDns) * 100);
+	// });
+	// OLD CODE END
 
-		const totalConnections = services.reduce((sum, s) => sum + s.count, 0);
-		if (totalConnections === 0) return 100;
+	// The daemon applies the IoT pages' encryption rule (#42) to the whole network
+	let encrypted = $derived(protocols.encryption?.encrypted ?? 0);
+	let encryptionEligible = $derived(protocols.encryption?.eligible ?? 0);
+	let encryptionScore = $derived(
+		encryptionEligible === 0 ? 100 : Math.round((encrypted / encryptionEligible) * 100),
+	);
 
-		const encryptedNames = ['ssl', 'tls', 'https', 'imaps', 'smtps', 'ldaps', 'ftps', 'ssh', 'dns_over_tls', 'dns_over_https'];
-		const encryptedCount = services
-			.filter((s) => encryptedNames.some((n) => s.name.toLowerCase().includes(n)))
-			.reduce((sum, s) => sum + s.count, 0);
-
-		return Math.round((encryptedCount / totalConnections) * 100);
-	});
-
-	let dnsScore = $derived.by(() => {
-		const services = protocols.services;
-		if (services.length === 0) return 100;
-
-		const totalDns = services
-			.filter((s) => s.name.toLowerCase().includes('dns'))
-			.reduce((sum, s) => sum + s.count, 0);
-		if (totalDns === 0) return 100;
-
-		const plainDns = services
-			.filter((s) => s.name.toLowerCase() === 'dns')
-			.reduce((sum, s) => sum + s.count, 0);
-
-		return Math.round(100 - (plainDns / totalDns) * 100);
-	});
+	let plainDns = $derived(protocols.dns?.plain ?? 0);
+	let dnsOverTls = $derived(protocols.dns?.over_tls ?? 0);
+	let dnsScore = $derived(
+		plainDns + dnsOverTls === 0 ? 100 : Math.round((dnsOverTls / (plainDns + dnsOverTls)) * 100),
+	);
 
 	// Devices on the list that have a score. OLD CODE: each figure used riskScores.scores.length,
 	// which counts per IP: a second address of one device (G11: an AP's VLAN 40 IP) gave
@@ -189,18 +199,25 @@
 		const httpCount = services
 			.filter((s) => s.name.toLowerCase() === 'http')
 			.reduce((sum, s) => sum + s.count, 0);
-		const httpsCount = services
-			.filter((s) => s.name.toLowerCase() === 'ssl' || s.name.toLowerCase() === 'https')
-			.reduce((sum, s) => sum + s.count, 0);
+		// OLD CODE START — #86: TLS by service name only, and "% of total traffic" was a share of connections
+		// const httpsCount = services
+		// 	.filter((s) => s.name.toLowerCase() === 'ssl' || s.name.toLowerCase() === 'https')
+		// 	.reduce((sum, s) => sum + s.count, 0);
+		// if (httpsCount > 0) {
+		// 	findings.push(`${httpsCount.toLocaleString()} encrypted HTTPS/TLS connections`);
+		// }
+		// if (totalConnections > 0) {
+		// 	findings.push(`${encryptionScore}% of total traffic is encrypted`);
+		// }
+		// OLD CODE END
 
 		if (httpCount > 0) {
 			findings.push(`${httpCount.toLocaleString()} unencrypted HTTP connections detected`);
 		}
-		if (httpsCount > 0) {
-			findings.push(`${httpsCount.toLocaleString()} encrypted HTTPS/TLS connections`);
-		}
-		if (totalConnections > 0) {
-			findings.push(`${encryptionScore}% of total traffic is encrypted`);
+		if (totalConnections > 0 && encryptionEligible > 0) {
+			findings.push(
+				`${encrypted.toLocaleString()} of ${encryptionEligible.toLocaleString()} connections encrypted (${encryptionScore}%)`,
+			);
 		} else {
 			findings.push('No traffic data available yet');
 		}
@@ -209,20 +226,22 @@
 
 	function getDnsFindings(): string[] {
 		const findings: string[] = [];
-		const services = protocols.services;
 
-		const plainDns = services
-			.filter((s) => s.name.toLowerCase() === 'dns')
-			.reduce((sum, s) => sum + s.count, 0);
-		const encryptedDns = services
-			.filter((s) => ['dns_over_tls', 'dns_over_https', 'doh', 'dot'].some((n) => s.name.toLowerCase().includes(n)))
-			.reduce((sum, s) => sum + s.count, 0);
+		// OLD CODE START — #86: looked for service names Zeek never emits, so encrypted DNS was always 0
+		// const plainDns = services
+		// 	.filter((s) => s.name.toLowerCase() === 'dns')
+		// 	.reduce((sum, s) => sum + s.count, 0);
+		// const encryptedDns = services
+		// 	.filter((s) => ['dns_over_tls', 'dns_over_https', 'doh', 'dot'].some((n) => s.name.toLowerCase().includes(n)))
+		// 	.reduce((sum, s) => sum + s.count, 0);
+		// OLD CODE END
+		const encryptedDns = dnsOverTls;
 
 		if (plainDns > 0) {
-			findings.push(`${plainDns.toLocaleString()} plain-text DNS queries observed`);
+			findings.push(`${plainDns.toLocaleString()} plain-text DNS lookups observed`);
 		}
 		if (encryptedDns > 0) {
-			findings.push(`${encryptedDns.toLocaleString()} encrypted DNS queries (DoH/DoT)`);
+			findings.push(`${encryptedDns.toLocaleString()} DNS-over-TLS connections`);
 		}
 		if (plainDns === 0 && encryptedDns === 0) {
 			findings.push('No DNS traffic data available yet');
@@ -312,7 +331,7 @@
 			score: encryptionScore,
 			status: getStatus(encryptionScore),
 			statusClass: getStatusClass(encryptionScore),
-			description: 'Percentage of network traffic using TLS/HTTPS encryption vs unencrypted protocols.',
+			description: 'Share of connections that use encryption (TLS/HTTPS, QUIC, SSH, VPN). Local chatter that is never encrypted (DNS, DHCP, NTP, discovery, pings) is left out.',
 			findings: getEncryptionFindings(),
 		},
 		{
@@ -321,7 +340,7 @@
 			score: dnsScore,
 			status: getStatus(dnsScore),
 			statusClass: getStatusClass(dnsScore),
-			description: 'How much of your DNS traffic uses encrypted transports like DNS-over-HTTPS or DNS-over-TLS.',
+			description: 'Share of DNS lookups sent over DNS-over-TLS instead of plain text. DNS-over-HTTPS looks like any other HTTPS, so it is not counted.',
 			findings: getDnsFindings(),
 		},
 		{

@@ -61,6 +61,10 @@ export interface ProtocolsResponse {
 	to: string;
 	protocols: ProtocolEntry[];
 	services: ProtocolEntry[];
+	/** Connections that can carry encrypted traffic (local chatter and STUN left out), and how many did (#86) */
+	encryption?: { eligible: number; encrypted: number };
+	/** Plain DNS lookups (mDNS/LLMNR left out) and DNS-over-TLS connections (#86) */
+	dns?: { plain: number; over_tls: number };
 }
 
 export interface BandwidthPoint {

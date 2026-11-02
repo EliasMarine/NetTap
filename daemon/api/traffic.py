@@ -16,6 +16,12 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from services.excluded_ips import build_excluded_ips_filter
+from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
+from services.iot_monitor import (
+    ENCRYPTED_CONN_FILTER,
+    LOCAL_CHATTER_EXCLUSION,
+    NO_PAYLOAD_PROTOCOLS,
+)
 from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
@@ -399,6 +405,33 @@ async def handle_protocols(request: web.Request) -> web.Response:
                     "missing": "unknown",
                 }
             },
+            # #86: Security Posture's Encryption and DNS cards, with the IoT encryption rule (#42).
+            # Local chatter (pings, DNS/DHCP/NTP, discovery, multicast) and STUN can't be encrypted
+            # traffic, so they are left out of the share
+            "encryption": {
+                "filter": {
+                    "bool": {
+                        "must_not": [
+                            *LOCAL_CHATTER_EXCLUSION,
+                            {"terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}},
+                        ]
+                    }
+                },
+                "aggs": {"encrypted": {"filter": ENCRYPTED_CONN_FILTER}},
+            },
+            # Plain DNS lookups (mDNS/LLMNR are local name services, as on the DNS page) and
+            # DNS-over-TLS; DNS-over-HTTPS looks like any HTTPS and can't be told apart
+            "dns_plain": {
+                "filter": {
+                    "bool": {
+                        "filter": [{"term": {"network.protocol": "dns"}}],
+                        "must_not": [
+                            {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}
+                        ],
+                    }
+                }
+            },
+            "dns_over_tls": {"filter": {"term": {"destination.port": 853}}},
         },
     }
 
@@ -424,6 +457,16 @@ async def handle_protocols(request: web.Request) -> web.Response:
             "to": to_ts,
             "protocols": protocols,
             "services": services,
+            "encryption": {
+                "eligible": aggs.get("encryption", {}).get("doc_count", 0),
+                "encrypted": aggs.get("encryption", {})
+                .get("encrypted", {})
+                .get("doc_count", 0),
+            },
+            "dns": {
+                "plain": aggs.get("dns_plain", {}).get("doc_count", 0),
+                "over_tls": aggs.get("dns_over_tls", {}).get("doc_count", 0),
+            },
         }
     )
 
