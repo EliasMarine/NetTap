@@ -452,14 +452,18 @@
 							</svg>
 							<div>
 								<span class="service-name">TShark</span>
-								{#if tsharkStatus?.version}
+								{#if failed.tshark}
+									<span class="service-version">couldn't check</span>
+								{:else if tsharkStatus?.version}
 									<span class="service-version mono">{tsharkStatus.version}</span>
 								{:else if tsharkStatus && !tsharkStatus.available}
 									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
-						{#if tsharkStatus}
+						{#if failed.tshark}
+							<span class="badge" title="The status request failed">Unknown</span>
+						{:else if tsharkStatus}
 							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
 								{tsharkStatus.available ? 'Available' : 'Not Deployed'}
 							</span>
@@ -478,14 +482,18 @@
 							</svg>
 							<div>
 								<span class="service-name">CyberChef</span>
-								{#if cyberchefStatus?.version}
+								{#if failed.cyberchef}
+									<span class="service-version">couldn't check</span>
+								{:else if cyberchefStatus?.version}
 									<span class="service-version mono">{cyberchefStatus.version}</span>
 								{:else if cyberchefStatus && !cyberchefStatus.available}
 									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
-						{#if cyberchefStatus}
+						{#if failed.cyberchef}
+							<span class="badge" title="The status request failed">Unknown</span>
+						{:else if cyberchefStatus}
 							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
 								{cyberchefStatus.available ? 'Available' : 'Not Deployed'}
 							</span>

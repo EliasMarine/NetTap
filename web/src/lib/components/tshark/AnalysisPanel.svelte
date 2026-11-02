@@ -36,6 +36,7 @@
 	let outputFormat = $state<'json' | 'text'>('json');
 	let pcapFiles = $state<PcapFile[]>([]);
 	let pcapFilesLoading = $state(false);
+	let pcapFilesFailed = $state(false); // #96: a failed listing is not "no PCAP files"
 	let showPcapPicker = $state(false);
 
 	let loading = $state(false);
@@ -49,6 +50,7 @@
 
 	let status = $state<TSharkStatus | null>(null);
 	let statusLoading = $state(true);
+	let statusFailed = $state(false); // #96: a failed check is not "TShark Unavailable"
 
 	// ---- Read URL query params + auto-analyze on mount ----
 	let autoAnalyzeDone = false;
@@ -71,13 +73,20 @@
 	async function autoAnalyze(connTimestamp: string | null) {
 		// Load PCAP files, pick best match, run analysis
 		pcapFilesLoading = true;
+		pcapFilesFailed = false;
 		try {
 			const res = await getPcapFiles();
 			pcapFiles = res.pcaps;
 		} catch {
 			pcapFiles = [];
+			pcapFilesFailed = true;
 		} finally {
 			pcapFilesLoading = false;
+		}
+
+		if (pcapFilesFailed) {
+			errorMessage = "Couldn't load the PCAP file list: the request failed.";
+			return;
 		}
 
 		if (pcapFiles.length === 0) {
@@ -121,10 +130,12 @@
 
 	async function fetchStatus() {
 		statusLoading = true;
+		statusFailed = false;
 		try {
 			status = await getTSharkStatus();
 		} catch {
 			status = null;
+			statusFailed = true;
 		} finally {
 			statusLoading = false;
 		}
@@ -188,12 +199,14 @@
 			return;
 		}
 		pcapFilesLoading = true;
+		pcapFilesFailed = false;
 		showPcapPicker = true;
 		try {
 			const res = await getPcapFiles();
 			pcapFiles = res.pcaps;
 		} catch {
 			pcapFiles = [];
+			pcapFilesFailed = true;
 		} finally {
 			pcapFilesLoading = false;
 		}
@@ -230,6 +243,11 @@
 				<span class="badge badge-success">
 					<span class="status-dot online"></span>
 					TShark {status.version}
+				</span>
+			{:else if statusFailed}
+				<span class="badge" title="The status request failed">
+					<span class="status-dot checking"></span>
+					TShark status unknown
 				</span>
 			{:else}
 				<span class="badge badge-danger">
@@ -282,6 +300,8 @@
 					<div class="pcap-picker">
 						{#if pcapFilesLoading}
 							<div class="pcap-picker-loading">Loading PCAP files...</div>
+						{:else if pcapFilesFailed}
+							<div class="pcap-picker-empty">Couldn't load the PCAP file list: the request failed.</div>
 						{:else if pcapFiles.length === 0}
 							<div class="pcap-picker-empty">No PCAP files found in /opt/nettap/pcap</div>
 						{:else}

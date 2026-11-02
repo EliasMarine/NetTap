@@ -63,15 +63,10 @@ describe('cyberchef API client', () => {
 			expect(result).toEqual(expected);
 		});
 
-		it('returns offline defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting CyberChef offline', async () => {
 			mockFetchFailure(503);
 
-			const result = await getCyberChefStatus();
-
-			expect(result.available).toBe(false);
-			expect(result.version).toBe('');
-			expect(result.container_running).toBe(false);
-			expect(result.container_name).toBe('');
+			await expect(getCyberChefStatus()).rejects.toThrow('HTTP 503');
 		});
 
 		it('handles network failure gracefully', async () => {

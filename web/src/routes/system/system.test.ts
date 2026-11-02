@@ -75,6 +75,9 @@ describe('System page when status requests fail (#96)', () => {
 		expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
 		expect(screen.queryByText(/requires smartmontools/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/% used/)).not.toBeInTheDocument();
+		// TShark and CyberChef: a failed status check is not "Not Deployed"
+		expect(screen.getAllByText("couldn't check")).toHaveLength(2);
+		expect(screen.queryByText('Not Deployed')).not.toBeInTheDocument();
 	});
 
 	it('still shows Healthy and the disk usage when the requests succeed', async () => {

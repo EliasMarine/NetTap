@@ -221,7 +221,10 @@
 				const status = await getTSharkStatus();
 				tsharkAvailable = status.available;
 			} catch {
-				tsharkAvailable = false;
+				// OLD CODE START — #96: a failed check read as "TShark is not available"
+				// tsharkAvailable = false;
+				// OLD CODE END
+				tsharkError = "Couldn't check whether TShark is available: the request failed.";
 			}
 		}
 		if (tsharkAvailable) {
@@ -479,6 +482,10 @@
 			<div class="empty-state">
 				<p class="text-muted">TShark is not available</p>
 				<p class="text-dim">The TShark container is not running or not configured.</p>
+			</div>
+		{:else if tsharkAvailable === null && tsharkError}
+			<div class="empty-state">
+				<p class="text-muted">{tsharkError}</p>
 			</div>
 		{:else if tsharkAvailable === null}
 			<div class="loading-state">
