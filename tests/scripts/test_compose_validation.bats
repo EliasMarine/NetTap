@@ -788,6 +788,19 @@ print('pcap mount: OK')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: daemon gets the LAN_SUBNETS override (#47)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+env = data['services']['nettap-storage-daemon']['environment']
+assert env.get('LAN_SUBNETS') == '\${LAN_SUBNETS:-}', 'LAN_SUBNETS must reach the daemon: ' + repr(env.get('LAN_SUBNETS'))
+print('LAN_SUBNETS: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
 @test "compose: netsniff is the only PCAP writer (CR-020, MS-002)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"

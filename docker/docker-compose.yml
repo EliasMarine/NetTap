@@ -880,6 +880,8 @@ services:
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       MGMT_IP: "${MGMT_IP:-}"
       MGMT_INTERFACE: "${MGMT_INTERFACE:-}"
+      # Optional LAN override, e.g. 192.168.1.0/24,10.10.0.0/24; empty = detect from traffic (#47)
+      LAN_SUBNETS: "${LAN_SUBNETS:-}"
     # OLD CODE START — expose not needed with network_mode: host (port is
     # directly on the host network, no Docker port mapping required)
     # expose:

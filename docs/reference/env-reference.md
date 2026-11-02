@@ -56,6 +56,7 @@ Complete reference for all environment variables used by NetTap. Set these in `/
 | `SMART_CHECK_INTERVAL` | `3600` | Seconds between SMART health checks |
 | `SMART_DEVICE` | `/dev/nvme0n1` | Block device to monitor for SMART health |
 | `LOG_LEVEL` | `INFO` | Daemon log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LAN_SUBNETS` | *(empty)* | Your LAN subnets, comma-separated (`/8`, `/16` or `/24`), e.g. `192.168.1.0/24,10.10.0.0/24`. Empty: the daemon detects them at start from outbound traffic, keeping every private `/24` with at least 1% of it. Devices, Live Monitor, risk and bandwidth count only devices in these subnets |
 
 ---
 
