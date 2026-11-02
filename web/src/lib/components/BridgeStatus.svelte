@@ -7,6 +7,10 @@
 	let loading = $state(true);
 	let bypassLoading = $state(false);
 	let showBypassConfirm = $state(false);
+	// #96: a failed request must read "unknown", never "Down" or "Inactive"
+	let healthFailed = $state(false);
+	let bypassFailed = $state(false);
+	let bypassError = $state('');
 
 	// ---------------------------------------------------------------------------
 	// Formatting helpers (exported for testing via bridge-status-utils)
@@ -101,15 +105,24 @@
 
 	async function fetchBridgeData() {
 		loading = true;
-		try {
-			const [h, bp] = await Promise.all([getBridgeHealth(), getBypassStatus()]);
-			health = h;
-			bypassStatus = bp;
-		} catch {
-			// Keep existing state on error
-		} finally {
-			loading = false;
-		}
+		// OLD CODE START — #96: the getters faked "down"/"inactive" on failure; they now throw
+		// try {
+		// 	const [h, bp] = await Promise.all([getBridgeHealth(), getBypassStatus()]);
+		// 	health = h;
+		// 	bypassStatus = bp;
+		// } catch {
+		// 	// Keep existing state on error
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		// keep the last good reading on a failed refresh, but say it failed
+		const [h, bp] = await Promise.allSettled([getBridgeHealth(), getBypassStatus()]);
+		if (h.status === 'fulfilled') health = h.value;
+		if (bp.status === 'fulfilled') bypassStatus = bp.value;
+		healthFailed = h.status === 'rejected';
+		bypassFailed = bp.status === 'rejected';
+		loading = false;
 	}
 
 	async function handleBypassToggle() {
@@ -120,16 +133,27 @@
 
 		bypassLoading = true;
 		showBypassConfirm = false;
+		bypassError = '';
 		try {
-			if (bypassStatus?.active) {
-				await disableBypass();
-			} else {
-				await enableBypass();
+			// OLD CODE START — #96: a failed toggle ({ result: 'error' }) was ignored
+			// if (bypassStatus?.active) {
+			// 	await disableBypass();
+			// } else {
+			// 	await enableBypass();
+			// }
+			// OLD CODE END
+			const wasActive = bypassStatus?.active;
+			const res = wasActive ? await disableBypass() : await enableBypass();
+			if (res.result === 'error') {
+				bypassError = `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`;
 			}
 			// Refresh data after toggle
 			await fetchBridgeData();
 		} catch {
-			// Keep existing state on error
+			// OLD CODE START — #96: a network error was swallowed
+			// // Keep existing state on error
+			// OLD CODE END
+			bypassError = "Couldn't change bypass mode: the request failed.";
 		} finally {
 			bypassLoading = false;
 		}
@@ -150,7 +174,9 @@
 <div class="bridge-card card">
 	<div class="card-header">
 		<span class="card-title">Bridge & Failover</span>
-		{#if health}
+		{#if healthFailed}
+			<span class="badge badge-muted">Unknown</span>
+		{:else if health}
 			<span class={healthBadgeClass(health.health_status)}>
 				{healthBadgeLabel(health.health_status)}
 			</span>
@@ -166,6 +192,8 @@
 			<div class="spinner"></div>
 			<p class="text-muted">Checking bridge status...</p>
 		</div>
+	{:else if healthFailed && !health}
+		<p class="empty-state">Couldn't check bridge health: the request failed.</p>
 	{:else if health && health.health_status === 'not_configured'}
 		<!-- Not configured info state -->
 		<div class="not-configured-state">
@@ -188,6 +216,9 @@
 			</div>
 		{/if}
 	{:else if health}
+		{#if healthFailed}
+			<div class="alert alert-warning">Couldn't refresh bridge health: showing the last reading.</div>
+		{/if}
 		<!-- Network diagram -->
 		<div class="bridge-diagram">
 			<div class="nic-box" style="border-color: {linkColor(health.wan_link)}">
@@ -262,7 +293,9 @@
 		<div class="bypass-section">
 			<div class="bypass-header">
 				<span class="bypass-title">Bypass Mode</span>
-				{#if bypassStatus?.active}
+				{#if bypassFailed}
+					<span class="badge badge-muted">Unknown</span>
+				{:else if bypassStatus?.active}
 					<span class="badge badge-warning">Active</span>
 				{:else}
 					<span class="badge badge-success">Inactive</span>
@@ -278,6 +311,10 @@
 						Since: {new Date(bypassStatus.activated_at).toLocaleString()}
 					</p>
 				{/if}
+			{/if}
+
+			{#if bypassError}
+				<div class="alert alert-danger">{bypassError}</div>
 			{/if}
 
 			<div class="bypass-actions">
@@ -300,10 +337,11 @@
 						Cancel
 					</button>
 				{:else}
+					<!-- #96: no toggle while the current bypass state is unknown -->
 					<button
 						class="btn btn-sm {bypassStatus?.active ? 'btn-primary' : 'btn-warning'}"
 						onclick={handleBypassToggle}
-						disabled={bypassLoading}
+						disabled={bypassLoading || !bypassStatus}
 					>
 						{#if bypassLoading}
 							Updating...

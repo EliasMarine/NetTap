@@ -282,6 +282,8 @@ describe('Infrastructure when requests fail', () => {
 		expect(screen.getByText(/Couldn't load .*Logstash stats/)).toBeInTheDocument();
 		expect(screen.queryByText('Red')).not.toBeInTheDocument();
 		expect(screen.queryByText('Idle')).not.toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load .*bridge health/)).toBeInTheDocument();
+		expect(screen.queryByText('Promiscuous')).not.toBeInTheDocument();
 
 		await fireEvent.click(document.querySelector('[data-node="opensearch"]') as HTMLElement);
 		expect(screen.getByText('Cluster status unknown')).toBeInTheDocument();
