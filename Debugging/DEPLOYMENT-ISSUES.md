@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-01 (Chain 22: AppArmor blocked the daemon's nsenter on Ubuntu, so mirror setup never ran; fix pending device check)
+> **Last updated:** 2026-11-01 (Chain 23: AMD RDRAND bug gave every Zeek process the same Broker ID, so Zeek wrote no logs; fix pending device check. Chain 22 verified on the G11)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -52,7 +52,8 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
-| Mirror capture setup (daemon host commands) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verify with `bash scripts/remote/deploy-drop-nsenter.sh`. |
+| Mirror capture setup (daemon host commands) | OK | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verified on the G11 2026-11-01: `verify-mirror-mode.sh` all checks pass after a reboot (~3,800 pps on enp4s0). |
+| Zeek live cluster | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 23: on AMD CPUs with a broken RDRAND every Zeek process got the same Broker ID, the cluster never connected and Zeek wrote no logs. zeek-live is now built locally with a /dev/urandom shim. Verify with `bash scripts/remote/deploy-zeek-rdrand-fix.sh`. |
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 
 ---
@@ -269,6 +270,31 @@ CHAIN 22: Ubuntu AppArmor blocked every daemon nsenter, so mirror setup never ra
   nettap-mirror.service applies it; deploy-drop-nsenter.sh starts that unit once so no
   reboot is needed. Verify: `bash scripts/remote/deploy-drop-nsenter.sh` (Step 6 must show
   0 nsenter refusals, Step 8 no ✗ lines), then reboot and run verify-mirror-mode.sh again.
+
+CHAIN 23: AMD RDRAND bug gave every Zeek process the same Broker ID, so Zeek wrote no logs (fix/zeek-rdrand-urandom, NET-127)
+  Found 2026-11-01 on the GMKtec G11 (AMD Ryzen Embedded R2514) right after Chain 22 was verified.
+  Symptom: dashboard empty. Mirror capture worked (~3,800 pps) and Suricata records reached
+  OpenSearch (5,120), but `event.provider:zeek` returned 0. Every zeekctl node said running and
+  listened on 127.0.0.1:27760-27765, yet there were zero connections between them, only
+  cluster.log was written, and zeekdeploy.sh redeployed the cluster every 60-80 s.
+  Root cause: this CPU's RDRAND returns a constant. The kernel logs "RDRAND is not reliable on
+  this platform; disabling" but only stops using it itself; CPUID still advertises it. libstdc++'s
+  std::random_device("default") uses RDSEED/RDRAND, and Broker makes endpoint IDs from it, so
+  every process got 001599e4-f730-5365-83be-168f95cf9782 and Broker refused to peer with
+  "itself". A two-process Broker peering test failed under default seccomp, seccomp=unconfined
+  and bridge networking alike; Python uuid4 (getrandom) was fine.
+  Fix (owner chose the Zeek-only route: no BIOS, kernel or host change): zeek-live is built from
+  docker/Dockerfile.zeek-live = pinned Malcolm Zeek image + libnettap_urandom.so. The library
+  replaces libstdc++'s std::random_device::_M_init and sends "default"/"rdrand"/"rdseed" to
+  /dev/urandom; explicit device files pass through. It loads via /etc/ld.so.preload because zeek
+  has file capabilities, so ld.so runs in secure mode and ignores LD_PRELOAD. It applies to all
+  boxes; /dev/urandom is just as good on healthy CPUs.
+  Build-time guards: a self-test runs in the build stage and again inside the final image (a
+  negative control without the library fails on all three CPU sources), and the build fails if
+  zeek or libbroker stop importing the replaced symbol after a Malcolm tag bump. CI builds the
+  build stage; the compose bats suite checks zeek-live is built with the fix.
+  Verify: `bash scripts/remote/deploy-zeek-rdrand-fix.sh` (Step 4 different IDs, Step 5 cluster
+  connections, Step 6 conn.log lines, Step 7 new Zeek records in OpenSearch).
 ```
 
 ---
@@ -1515,6 +1541,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | File | PRs | Current State |
 |---|---|---|
 | `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SYS_ADMIN cap_add (covers netsniff-ng file caps — setcap -r unreliable on overlay2)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/Dockerfile.zeek-live` + `docker/zeek-live/` | NET-127 | NEW (Chain 23): Malcolm Zeek image + /dev/urandom shim for std::random_device, loaded via /etc/ld.so.preload. Self-test runs in the build stage and the final image. |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1724,6 +1751,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 101. **`network_mode: host` publishes every listening port to the LAN (Chain 20)** — `ports:` no longer applies, so a server bound to 0.0.0.0 is open to every device on the network. Treat a move to host networking as a new public endpoint: add auth first. Loopback is not a trust boundary either, because every other host-networked container shares it.
 102. **Read the image's entrypoint before writing a workaround (Chain 21)** — Malcolm's OpenSearch builds `roles_mapping.yml` from `ROLE_*` env on every start and pushes it. The 403s came from the missing env, not from a file "reverting". Months of manual bootstraps raced that push. When a Malcolm file keeps going back, find the script that writes it and give it the env it expects.
 103. **AppArmor blocks `nsenter -t 1` from a container on Ubuntu, whatever its capabilities (Chain 22)** — docker-default only allows ptrace between docker-default peers, and host PID 1 is unconfined. If the container already has `network_mode: host`, `nsenter -n` was never needed: run the command directly. Check the kernel log (`journalctl -k | grep DENIED`, readable by the `adm` group) before assuming a capability is missing. Also: a helper that returns `[]` on failure turns every safety check built on it into "looks fine". Make the check fail closed.
+104. **The kernel's "RDRAND is not reliable" warning doesn't protect userspace (Chain 23)** — the kernel stops using RDRAND itself, but CPUID still advertises it, so `std::random_device` in every C++ program on that box returns a constant. In a Broker/zeekctl cluster, "all nodes running, zero connections" means checking `Broker::node_id()` across two runs before suspecting the network or seccomp. A binary with file capabilities ignores LD_PRELOAD; use `/etc/ld.so.preload` inside the image.
 
 ---
 
@@ -1733,6 +1761,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 |---|---|---|
 | Mirror setup now really runs at every daemon start (Chain 22) | `MirrorManager.setup()` flushes the capture NIC's addresses on each start; before Chain 22 it never ran on Ubuntu | CR-076 guard in `main.py` skips setup when the NIC has the default route or an IPv4 address, and logs `Mirror setup skipped`. If capture stops after a NIC rename, check the daemon log and `/etc/nettap/capture-mode.conf`. |
 | `sysctl -w` from the daemon always fails (Chain 22) | `/proc/sys` is read-only in the container, so mirror setup can't turn IPv6 off on the capture NIC at runtime; a mirrored router advert can then give that NIC an IPv6 address | The host boot unit `nettap-mirror.service` applies it at boot. After a wizard change, run `sudo systemctl restart nettap-mirror.service` or reboot. |
+| zeek-live is a local build on top of the Malcolm Zeek image (Chain 23) | A Malcolm tag bump needs `docker compose build zeek-live`, not just a pull; if the new Zeek stops importing `std::random_device::_M_init`, affected AMD boxes go silent again | The Dockerfile's final-stage checks fail the build in that case. After a tag bump, rebuild zeek-live and read the build log for `random_device shim: ok`. |
+| Every process in zeek-live preloads libnettap_urandom.so (Chain 23) | bash, supervisord and Python also load libstdc++ (shared pages, a few MB) | Accepted. If a process in that container ever misbehaves at start, check it without the preload: `docker run --rm --entrypoint bash nettap/zeek-live:<tag> -c 'mv /etc/ld.so.preload /tmp; <cmd>'`. |
 | Malcolm upgrade may change entrypoint behavior | Supervisord.conf override and PUSER_PRIV_DROP could break | Pin Malcolm image tags; test upgrades in staging |
 | `-Xss8m` may not be enough for future zeek plugins | StackOverflowError returns | Monitor pipeline startup; increase to 16m if needed |
 | `fix-perms` runs chown on every container restart | Slow startup on large data dirs | Consider conditional check (`stat -c %U`) |
