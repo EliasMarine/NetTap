@@ -57,3 +57,44 @@ describe('System page bridge panel', () => {
 		expect(container.querySelector('.bridge-card')).toBeNull();
 	});
 });
+
+describe('System page when status requests fail (#96)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('says each card could not be loaded instead of "Degraded" or "requires smartmontools"', async () => {
+		stubFetch('mirror');
+
+		render(SystemPage);
+
+		expect(await screen.findByText("Couldn't load system health: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load storage status: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load drive health: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
+		expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+		expect(screen.queryByText(/requires smartmontools/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/% used/)).not.toBeInTheDocument();
+	});
+
+	it('still shows Healthy and the disk usage when the requests succeed', async () => {
+		const replies: Record<string, unknown> = {
+			'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
+			'/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', healthy: true, opensearch_reachable: true },
+			'/api/storage/status': { disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, retention: null },
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL) => {
+				const body = replies[String(input)];
+				return body ? new Response(JSON.stringify(body), { status: 200 }) : new Response('{}', { status: 503 });
+			}),
+		);
+
+		render(SystemPage);
+
+		expect(await screen.findByText('Healthy')).toBeInTheDocument();
+		expect(screen.getByText('42.0% used')).toBeInTheDocument();
+		expect(screen.queryByText("Couldn't load system health: the request failed.")).not.toBeInTheDocument();
+	});
+});

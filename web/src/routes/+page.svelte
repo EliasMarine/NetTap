@@ -59,6 +59,7 @@
 	let alertCount = $state<AlertCountResponse | null>(null);
 	let recentAlerts = $state<Alert[]>([]);
 	let systemHealth = $state<SystemHealth | null>(null);
+	let systemHealthFailed = $state(false); // #96: "Unknown", never "Degraded"
 	let categories = $state<TrafficCategory[]>([]);
 	let deviceCount = $state(0);
 	let smartAlerts = $state<SmartAlert[]>([]);
@@ -173,6 +174,7 @@
 			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
+			systemHealthFailed = healthRes.status === 'rejected';
 			categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
 			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
@@ -298,7 +300,7 @@
 
 	// Health status
 	let healthStatus = $derived.by(() => {
-		if (!systemHealth) return { label: '--', class: 'badge', healthy: false };
+		if (!systemHealth) return { label: systemHealthFailed ? 'Unknown' : '--', class: 'badge', healthy: false };
 		if (systemHealth.healthy) return { label: 'Healthy', class: 'badge badge-success', healthy: true };
 		return { label: 'Degraded', class: 'badge badge-warning', healthy: false };
 	});
@@ -666,6 +668,8 @@
 			<p class="card-description">
 				{#if systemHealth}
 					OpenSearch {systemHealth.opensearch_reachable ? 'connected' : 'unreachable'}
+				{:else if systemHealthFailed}
+					Couldn't check: the request failed
 				{:else}
 					Daemon + OpenSearch status
 				{/if}

@@ -76,15 +76,20 @@ export interface SmartTestResult {
 export async function getSystemHealth(): Promise<SystemHealth> {
 	const res = await fetch('/api/system/health');
 
+	// OLD CODE START — #96: a failed request read as "Degraded", OpenSearch unreachable
+	// if (!res.ok) {
+	// 	return {
+	// 		uptime: 0,
+	// 		timestamp: new Date().toISOString(),
+	// 		storage: null,
+	// 		smart: null,
+	// 		opensearch_reachable: false,
+	// 		healthy: false,
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			uptime: 0,
-			timestamp: new Date().toISOString(),
-			storage: null,
-			smart: null,
-			opensearch_reachable: false,
-			healthy: false,
-		};
+		throw new Error(`System health request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -96,15 +101,20 @@ export async function getSystemHealth(): Promise<SystemHealth> {
 export async function getStorageStatus(): Promise<StorageStatus> {
 	const res = await fetch('/api/storage/status');
 
+	// OLD CODE START — #96: a failed request read as "0.0% used"
+	// if (!res.ok) {
+	// 	return {
+	// 		disk_usage_percent: 0,
+	// 		disk_total_bytes: 0,
+	// 		disk_used_bytes: 0,
+	// 		disk_free_bytes: 0,
+	// 		retention: null,
+	// 		index_summary: null,
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			disk_usage_percent: 0,
-			disk_total_bytes: 0,
-			disk_used_bytes: 0,
-			disk_free_bytes: 0,
-			retention: null,
-			index_summary: null,
-		};
+		throw new Error(`Storage status request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -116,23 +126,28 @@ export async function getStorageStatus(): Promise<StorageStatus> {
 export async function getSmartHealth(): Promise<SmartHealth> {
 	const res = await fetch('/api/smart/health');
 
+	// OLD CODE START — #96: a failed request read as drive "Degraded", smartmontools missing
+	// if (!res.ok) {
+	// 	return {
+	// 		device: '',
+	// 		device_type: '',
+	// 		model: '',
+	// 		serial: '',
+	// 		temperature_c: null,
+	// 		percentage_used: null,
+	// 		power_on_hours: null,
+	// 		total_bytes_written: null,
+	// 		total_bytes_read: null,
+	// 		media_errors: null,
+	// 		reallocated_sectors: null,
+	// 		healthy: false,
+	// 		warnings: [],
+	// 		timestamp: new Date().toISOString(),
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			device: '',
-			device_type: '',
-			model: '',
-			serial: '',
-			temperature_c: null,
-			percentage_used: null,
-			power_on_hours: null,
-			total_bytes_written: null,
-			total_bytes_read: null,
-			media_errors: null,
-			reallocated_sectors: null,
-			healthy: false,
-			warnings: [],
-			timestamp: new Date().toISOString(),
-		};
+		throw new Error(`Drive health request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
