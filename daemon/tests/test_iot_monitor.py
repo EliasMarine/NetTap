@@ -60,11 +60,11 @@ def _baseline_search(reply: dict):
     return search
 
 
-def _port_page(mac: str, ports: dict[int, int]) -> dict:
-    """The last page of the paged per-device port counts (#96)."""
+def _per_mac_page(mac: str, counts: dict) -> dict:
+    """The last page of a paged per-device count, e.g. ports or domains (#96)."""
     buckets = [
-        {"key": {"mac": mac, "value": port}, "doc_count": count}
-        for port, count in ports.items()
+        {"key": {"mac": mac, "value": value}, "doc_count": count}
+        for value, count in counts.items()
     ]
     return {"aggregations": {"all": {"buckets": buckets}}}
 
@@ -468,7 +468,7 @@ class TestFleetSummary:
                 },
             },
             # Every destination port per device (#96), one page
-            _port_page("AA:BB:CC:DD:EE:FF", {443: 45, 80: 5}),
+            _per_mac_page("AA:BB:CC:DD:EE:FF", {443: 45, 80: 5}),
             # Alert counts
             {
                 "hits": {"total": {"value": 0}},
@@ -494,6 +494,10 @@ class TestFleetSummary:
                     }
                 },
             },
+            # Every looked-up domain per device (#96), one page
+            _per_mac_page(
+                "AA:BB:CC:DD:EE:FF", {"ring.com": 5, "google-analytics.com": 3}
+            ),
             # check_anomalies call for the device
             {
                 "aggregations": {
@@ -641,7 +645,7 @@ class TestPrivacyReport:
                 },
             },
             # Every destination port per device (#96), one page
-            _port_page("AA:BB:CC:DD:EE:FF", {443: 90}),
+            _per_mac_page("AA:BB:CC:DD:EE:FF", {443: 90}),
             # Alert counts
             {"aggregations": {"by_mac": {"buckets": []}}},
             # DNS tracker detail
@@ -667,6 +671,11 @@ class TestPrivacyReport:
                     }
                 },
             },
+            # Every looked-up domain per device (#96), one page
+            _per_mac_page(
+                "AA:BB:CC:DD:EE:FF",
+                {"ring.com": 30, "google-analytics.com": 15, "crashlytics.com": 5},
+            ),
         ]
 
         result = iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
@@ -885,7 +894,7 @@ class TestProtocolAudit:
             # OUI discovery (devices already registered)
             {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch, every port (#96), one page
-            _port_page("AA:BB:CC:DD:EE:FF", {443: 90, 8888: 5}),
+            _per_mac_page("AA:BB:CC:DD:EE:FF", {443: 90, 8888: 5}),
             # Hardcoded DNS batch
             {"aggregations": {"by_mac": {"buckets": []}}},
         ]
@@ -907,7 +916,7 @@ class TestProtocolAudit:
             # OUI discovery (devices already registered)
             {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch - only port 443
-            _port_page("AA:BB:CC:DD:EE:FF", {443: 100}),
+            _per_mac_page("AA:BB:CC:DD:EE:FF", {443: 100}),
             # Hardcoded DNS batch
             {"aggregations": {"by_mac": {"buckets": []}}},
         ]

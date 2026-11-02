@@ -812,20 +812,24 @@ class IoTMonitor:
             "aggs": {
                 "by_mac": {
                     "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "queried_domains": {
-                            "terms": {
-                                "field": "dns.host",
-                                "size": 500,
-                            }
-                        },
-                    },
+                    # OLD CODE START — #96: the 500 most-queried domains only; trackers
+                    # are usually in the quiet tail, so the count fell short
+                    # "aggs": {
+                    #     "queried_domains": {
+                    #         "terms": {
+                    #             "field": "dns.host",
+                    #             "size": 500,
+                    #         }
+                    #     },
+                    # },
+                    # OLD CODE END
                 }
             },
         }
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            domains_by_mac = self._counts_by_mac({"bool": bool_clause}, "dns.host")
         except Exception as exc:
             logger.error("Fleet DNS tracker query failed: %s", exc)
             return {}
@@ -835,12 +839,17 @@ class IoTMonitor:
             result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
-            domains = bucket.get("queried_domains", {}).get("buckets", [])
-            tracker_count = 0
-            for d_bucket in domains:
-                domain = d_bucket.get("key", "")
-                if self._is_tracker_domain(domain):
-                    tracker_count += 1
+            # OLD CODE START — #96: counted from the top-500 list
+            # domains = bucket.get("queried_domains", {}).get("buckets", [])
+            # tracker_count = 0
+            # for d_bucket in domains:
+            #     domain = d_bucket.get("key", "")
+            #     if self._is_tracker_domain(domain):
+            #         tracker_count += 1
+            # OLD CODE END
+            tracker_count = sum(
+                1 for d in domains_by_mac.get(raw_mac, {}) if self._is_tracker_domain(d)
+            )
 
             out[raw_mac] = {
                 "tracker_domain_count": tracker_count,
@@ -1465,20 +1474,23 @@ class IoTMonitor:
             "aggs": {
                 "by_mac": {
                     "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "queried_domains": {
-                            "terms": {
-                                "field": "dns.host",
-                                "size": 500,
-                            }
-                        },
-                    },
+                    # OLD CODE START — #96: the 500 most-queried domains only
+                    # "aggs": {
+                    #     "queried_domains": {
+                    #         "terms": {
+                    #             "field": "dns.host",
+                    #             "size": 500,
+                    #         }
+                    #     },
+                    # },
+                    # OLD CODE END
                 }
             },
         }
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            domains_by_mac = self._counts_by_mac({"bool": bool_clause}, "dns.host")
         except Exception as exc:
             logger.error("DNS tracker detail query failed: %s", exc)
             return {}
@@ -1488,17 +1500,24 @@ class IoTMonitor:
             result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
-            domains = bucket.get("queried_domains", {}).get("buckets", [])
-            tracker_list: list[dict[str, Any]] = []
-            for d_bucket in domains:
-                domain = d_bucket.get("key", "")
-                if self._is_tracker_domain(domain):
-                    tracker_list.append(
-                        {
-                            "domain": domain,
-                            "query_count": d_bucket.get("doc_count", 0),
-                        }
-                    )
+            # OLD CODE START — #96: listed from the top-500 list
+            # domains = bucket.get("queried_domains", {}).get("buckets", [])
+            # tracker_list: list[dict[str, Any]] = []
+            # for d_bucket in domains:
+            #     domain = d_bucket.get("key", "")
+            #     if self._is_tracker_domain(domain):
+            #         tracker_list.append(
+            #             {
+            #                 "domain": domain,
+            #                 "query_count": d_bucket.get("doc_count", 0),
+            #             }
+            #         )
+            # OLD CODE END
+            tracker_list = [
+                {"domain": domain, "query_count": count}
+                for domain, count in domains_by_mac.get(raw_mac, {}).items()
+                if self._is_tracker_domain(domain)
+            ]
 
             out[raw_mac] = {
                 "tracker_domains": tracker_list,

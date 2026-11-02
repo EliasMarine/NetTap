@@ -273,3 +273,56 @@ class TestDiscoverySeesEveryMac:
 
         assert fleet["device_count"] == 1  # was 0
         assert [d["mac"] for d in fleet["devices"]] == ["D8:1F:12:00:00:01"]
+
+
+# ---------------------------------------------------------------------------
+# 4. Tracker counts come from every domain a device looked up
+# ---------------------------------------------------------------------------
+
+TRACKERS = [
+    "google-analytics.com",
+    "googletagmanager.com",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "analytics.google.com",
+    "tagmanager.google.com",
+]
+# 500 busier lookups ahead of the trackers: the old top-500 list ended before them
+LOOKUPS = [*(f"cdn-{i}.example.net" for i in range(500)), *TRACKERS]
+
+
+def _dns_search(index: str, body: dict) -> dict[str, Any]:
+    if _composite_fields(body) == ["source.mac", "dns.host"]:
+        rows = [
+            {"key": {"source.mac": MAC.lower(), "dns.host": d}, "doc_count": 1}
+            for d in LOOKUPS
+        ]
+        return _composite_reply(body, rows)
+    if _composite_fields(body):
+        return _composite_reply(body, [])
+    if {"term": {"network.protocol": "dns"}} in body["query"]["bool"]["filter"]:
+        bucket = {"key": MAC.lower(), "doc_count": 5000}
+        sub = body["aggs"]["by_mac"].get("aggs", {})
+        if "queried_domains" in sub:
+            top = _top(LOOKUPS, sub["queried_domains"]["terms"]["size"])
+            bucket = {**bucket, "queried_domains": {"buckets": top}}
+        return _by_mac([bucket])
+    return _by_mac([])
+
+
+class TestEveryTrackerCounts:
+    def test_fleet_counts_trackers_past_the_500_busiest_lookups(self):
+        client = MagicMock()
+        client.search.side_effect = _dns_search
+        fleet = _monitor_with_device(client).get_fleet_summary(FROM_TS, TO_TS)
+
+        assert fleet["devices"][0]["tracker_count"] == 6  # was 0
+        assert fleet["privacy_concerns"] == 1  # more than 5 trackers; was 0
+
+    def test_privacy_report_lists_every_tracker(self):
+        client = MagicMock()
+        client.search.side_effect = _dns_search
+        [device] = _monitor_with_device(client).get_privacy_report(FROM_TS, TO_TS)["devices"]
+
+        assert device["tracker_count"] == 6  # was 0
+        assert {t["domain"] for t in device["tracker_domains"]} == set(TRACKERS)
