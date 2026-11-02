@@ -68,21 +68,39 @@ class TestParseTimeRange(unittest.TestCase):
         self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
         self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
 
-    def test_invalid_from_falls_back_to_default(self):
-        """Invalid from param should fall back to default."""
+    # OLD CODE START — 2026-11-02: an unreadable bound is now a 400, not the default window
+    # def test_invalid_from_falls_back_to_default(self):
+    #     """Invalid from param should fall back to default."""
+    #     req = self._make_request(
+    #         {"from": "not-a-date", "to": "2026-02-26T00:00:00+00:00"}
+    #     )
+    #     from_ts, to_ts = _parse_time_range(req)
+    #     self.assertNotEqual(from_ts, "not-a-date")
+    #     self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
+    #
+    # def test_invalid_to_falls_back_to_default(self):
+    #     """Invalid to param should fall back to default."""
+    #     req = self._make_request({"from": "2026-02-25T00:00:00+00:00", "to": "garbage"})
+    #     from_ts, to_ts = _parse_time_range(req)
+    #     self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
+    #     self.assertNotEqual(to_ts, "garbage")
+    # OLD CODE END
+
+    def test_invalid_from_is_rejected(self):
+        """An unreadable from is a 400, not the last 24 hours."""
         req = self._make_request(
             {"from": "not-a-date", "to": "2026-02-26T00:00:00+00:00"}
         )
-        from_ts, to_ts = _parse_time_range(req)
-        self.assertNotEqual(from_ts, "not-a-date")
-        self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
+        with self.assertRaises(web.HTTPBadRequest) as ctx:
+            _parse_time_range(req)
+        self.assertIn("from must be an ISO 8601 time", ctx.exception.text)
 
-    def test_invalid_to_falls_back_to_default(self):
-        """Invalid to param should fall back to default."""
+    def test_invalid_to_is_rejected(self):
+        """An unreadable to is a 400, not now."""
         req = self._make_request({"from": "2026-02-25T00:00:00+00:00", "to": "garbage"})
-        from_ts, to_ts = _parse_time_range(req)
-        self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
-        self.assertNotEqual(to_ts, "garbage")
+        with self.assertRaises(web.HTTPBadRequest) as ctx:
+            _parse_time_range(req)
+        self.assertIn("to must be an ISO 8601 time", ctx.exception.text)
 
 
 class TestParseIntParam(unittest.TestCase):

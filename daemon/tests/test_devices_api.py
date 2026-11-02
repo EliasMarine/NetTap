@@ -1025,21 +1025,34 @@ class TestDeviceTimeRange(AioHTTPTestCase):
         self.assertEqual(data["from"], "2026-02-25T00:00:00Z")
         self.assertEqual(data["to"], "2026-02-26T00:00:00Z")
 
-    @unittest_run_loop
-    async def test_invalid_time_range_falls_back(self):
-        """Invalid time range parameters fall back to defaults."""
-        self.mock_client.search.return_value = {
-            "hits": {"total": {"value": 0}, "hits": []}
-        }
+    # OLD CODE START — 2026-11-02: an unreadable bound is now a 400, not the default window
+    # @unittest_run_loop
+    # async def test_invalid_time_range_falls_back(self):
+    #     """Invalid time range parameters fall back to defaults."""
+    #     self.mock_client.search.return_value = {
+    #         "hits": {"total": {"value": 0}, "hits": []}
+    #     }
+    #
+    #     resp = await self.client.request(
+    #         "GET", "/api/devices/192.168.1.1/connections?from=bad-date&to=also-bad"
+    #     )
+    #     self.assertEqual(resp.status, 200)
+    #     data = await resp.json()
+    #     # Should have defaulted to valid ISO timestamps
+    #     self.assertNotEqual(data["from"], "bad-date")
+    #     self.assertNotEqual(data["to"], "also-bad")
+    # OLD CODE END
 
+    @unittest_run_loop
+    async def test_invalid_time_range_is_rejected(self):
+        """Unreadable from/to is a 400 and nothing is queried."""
         resp = await self.client.request(
             "GET", "/api/devices/192.168.1.1/connections?from=bad-date&to=also-bad"
         )
-        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.status, 400)
         data = await resp.json()
-        # Should have defaulted to valid ISO timestamps
-        self.assertNotEqual(data["from"], "bad-date")
-        self.assertNotEqual(data["to"], "also-bad")
+        self.assertIn("from must be an ISO 8601 time", data["error"])
+        self.mock_client.search.assert_not_called()
 
 
 if __name__ == "__main__":

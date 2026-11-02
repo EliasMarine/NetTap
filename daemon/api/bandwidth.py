@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.time_range import parse_time_range
 from services.bandwidth_tracker import BandwidthTracker
 
 logger = logging.getLogger("nettap.api.bandwidth")
@@ -31,29 +32,34 @@ logger = logging.getLogger("nettap.api.bandwidth")
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Extract 'from' and 'to' query parameters as ISO timestamps.
-
-    Defaults to the last 30 days if not provided.
-    """
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(days=30)).isoformat()
-    default_to = now.isoformat()
-
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 30 days; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Extract 'from' and 'to' query parameters as ISO timestamps.
+    #
+    # Defaults to the last 30 days if not provided.
+    # """
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(days=30)).isoformat()
+    # default_to = now.isoformat()
+    #
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    #
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    #
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(days=30))
 
 
 # ---------------------------------------------------------------------------

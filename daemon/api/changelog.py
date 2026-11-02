@@ -9,6 +9,7 @@ import logging
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.time_range import iso_param
 from services.changelog import ChangelogService
 
 logger = logging.getLogger("nettap.api.changelog")
@@ -20,8 +21,11 @@ logger = logging.getLogger("nettap.api.changelog")
 
 
 def _parse_time_range(request: web.Request) -> tuple[str | None, str | None]:
-    """Extract optional 'from' and 'to' query parameters."""
-    return request.query.get("from"), request.query.get("to")
+    """Extract optional 'from' and 'to' query parameters; an unreadable one is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to went into the range query unchecked
+    # return request.query.get("from"), request.query.get("to")
+    # OLD CODE END
+    return iso_param(request, "from"), iso_param(request, "to")
 
 
 # ---------------------------------------------------------------------------

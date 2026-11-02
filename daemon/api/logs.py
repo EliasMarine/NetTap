@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
@@ -18,6 +18,7 @@ from opensearchpy import OpenSearchException
 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
+from api.time_range import parse_time_range
 from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
 
@@ -518,23 +519,28 @@ _EXCLUDE_ALERTS_FILTER = {"must_not": [{"term": {"event.dataset": "alert"}}]}
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Parse and validate from/to time range from query params."""
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Parse and validate from/to time range from query params."""
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
 async def handle_log_search(request: web.Request) -> web.Response:
