@@ -54,6 +54,8 @@ def _get_host_profile(client, ip: str) -> dict:
     """Get basic host profile from connection data."""
     query = {
         "size": 0,
+        # hits.total is shown as a count; without this OpenSearch stops at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
@@ -97,6 +99,8 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
     """Get connection history between two IPs over last 7 days."""
     query = {
         "size": 0,
+        # hits.total is shown as a count; without this OpenSearch stops at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [

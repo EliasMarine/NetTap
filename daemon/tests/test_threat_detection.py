@@ -117,3 +117,22 @@ class TestIsInternal:
     def test_is_internal_172_outside_range(self):
         """172.32.x.x is outside the RFC1918 range and should be external."""
         assert _is_internal("172.32.0.1") is False
+
+
+# ---------------------------------------------------------------------------
+# DNS anomalies skip pcap-monitor (2026-11-01)
+# ---------------------------------------------------------------------------
+
+
+class TestDnsAnomalyNoise:
+    def test_pcap_monitor_excluded(self):
+        """Malcolm's own NXDOMAIN-heavy health check showed up as an NXDOMAIN spike."""
+        from unittest.mock import MagicMock
+
+        from services.threat_detection import analyze_dns_anomalies
+
+        client = MagicMock()
+        client.search.return_value = {}
+        analyze_dns_anomalies(client, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        must_not = client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
+        assert {"term": {"zeek.dns.query": "pcap-monitor"}} in must_not

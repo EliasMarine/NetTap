@@ -880,6 +880,8 @@ class IoTMonitor:
         # Query for device traffic patterns
         query = {
             "size": 0,
+            # hits.total is shown as a count; without this OpenSearch stops at 10,000
+            "track_total_hits": True,
             "query": {"bool": bool_clause},
             "aggs": {
                 "destinations": {"terms": {"field": "destination.ip", "size": 100}},

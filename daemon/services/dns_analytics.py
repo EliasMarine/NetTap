@@ -24,6 +24,11 @@ _ZEEK_DNS_FILTERS = [
     {"term": {"event.dataset": "dns"}},
 ]
 
+# Malcolm's capture health check looks up "pcap-monitor" ~5,000 times a day; it is not user DNS
+DNS_NOISE_EXCLUSION = [
+    {"term": {"zeek.dns.query": "pcap-monitor"}},
+]
+
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
     """Build an OpenSearch range filter on '@timestamp'."""
@@ -60,11 +65,18 @@ class DNSAnalytics:
         filters = _base_bool_filter(from_ts, to_ts)
         if extra_filters:
             filters = filters + extra_filters
-        clause: dict = {"filter": filters}
-        excluded = build_excluded_ips_filter(excluded_ips or [])
-        if excluded:
-            clause["must_not"] = excluded
-        return clause
+        # OLD CODE START — replaced 2026-11-01: pcap-monitor lookups were counted as about half of all DNS
+        # clause: dict = {"filter": filters}
+        # excluded = build_excluded_ips_filter(excluded_ips or [])
+        # if excluded:
+        #     clause["must_not"] = excluded
+        # return clause
+        # OLD CODE END
+        return {
+            "filter": filters,
+            "must_not": DNS_NOISE_EXCLUSION
+            + build_excluded_ips_filter(excluded_ips or []),
+        }
 
     def get_top_domains(
         self,
@@ -423,13 +435,21 @@ class DNSAnalytics:
         """Return hero card stats: total queries, unique domains, NXDOMAIN count."""
         query = {
             "size": 0,
+            # hits.total stops at 10,000 unless OpenSearch is told to count exactly
+            "track_total_hits": True,
             "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
                 "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
                 "nxdomain_count": {
                     "filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}
                 },
-                "avg_rtt": {"avg": {"field": "zeek.dns.rtt", "missing": 0}},
+                # OLD CODE START — replaced 2026-11-01: missing=0 counted unanswered queries as 0 ms
+                # "avg_rtt": {"avg": {"field": "zeek.dns.rtt", "missing": 0}},
+                # OLD CODE END
+                "avg_rtt": {"avg": {"field": "zeek.dns.rtt"}},
+                "median_rtt": {
+                    "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
+                },
             },
         }
 
@@ -446,6 +466,11 @@ class DNSAnalytics:
             "nxdomain_count": aggs.get("nxdomain_count", {}).get("doc_count", 0),
             "avg_resolution_ms": round(
                 (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
+            ),
+            # zeek.dns.rtt is in seconds; a few 20 s retries skew the average, so show the median too
+            "median_resolution_ms": round(
+                (aggs.get("median_rtt", {}).get("values", {}).get("50.0") or 0) * 1000,
+                2,
             ),
         }
 

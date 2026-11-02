@@ -18,6 +18,7 @@ from opensearchpy import OpenSearchException
 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
+from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.logs")
@@ -508,10 +509,12 @@ _LOG_TYPE_LABELS = {
 # Exclude Suricata alerts from log explorer aggregations (they have their own page)
 _EXCLUDE_ALERTS_FILTER = {"must_not": [{"term": {"event.dataset": "alert"}}]}
 
-# Exclude Zeek internal noise from DNS aggregations
-_EXCLUDE_DNS_NOISE = [
-    {"term": {"zeek.dns.query": "pcap-monitor"}},
-]
+# OLD CODE START — replaced 2026-11-01: one shared constant so log search and DNS analytics agree
+# # Exclude Zeek internal noise from DNS aggregations
+# _EXCLUDE_DNS_NOISE = [
+#     {"term": {"zeek.dns.query": "pcap-monitor"}},
+# ]
+# OLD CODE END
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
@@ -572,6 +575,8 @@ async def handle_log_search(request: web.Request) -> web.Response:
             }
         },
         "size": size,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "sort": [],
     }
 

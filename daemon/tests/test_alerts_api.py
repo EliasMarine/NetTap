@@ -169,6 +169,17 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertEqual(alert["rule"]["name"], "ET TROJAN Test")
 
     @unittest_run_loop
+    async def test_alerts_list_total_counts_past_10000(self):
+        """The UI shows total and total_pages; OpenSearch stops at 10,000 unless asked."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/alerts")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertIs(body["track_total_hits"], True)
+
+    @unittest_run_loop
     async def test_alerts_list_with_severity_filter(self):
         """Severity filter is included in query."""
         self.mock_client.search.return_value = {

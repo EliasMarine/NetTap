@@ -37,6 +37,14 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(data["total"], 0)
         self.assertEqual(data["log_type"], "all")
 
+    async def test_search_total_counts_past_10000(self):
+        """The UI shows this total; OpenSearch stops at 10,000 unless asked."""
+        self.mock_client.search.return_value = self._mock_search_response()
+        resp = await self.client.request("GET", "/api/logs/search")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args[1]["body"]
+        self.assertIs(body["track_total_hits"], True)
+
     async def test_search_by_log_type(self):
         """GET /api/logs/search?log_type=zeek.dns filters correctly."""
         self.mock_client.search.return_value = self._mock_search_response()

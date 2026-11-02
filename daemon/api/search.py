@@ -48,6 +48,8 @@ async def handle_search(request: web.Request) -> web.Response:
     search_body = parsed["query"]
     search_body["size"] = parsed["size"]
     search_body["sort"] = parsed["sort"]
+    # hits.total is shown as a count; without this OpenSearch stops at 10,000
+    search_body["track_total_hits"] = True
 
     # OLD CODE START — log search must show excluded IPs too (the Settings copy
     # promises they stay visible in raw search); the filter is for device views only

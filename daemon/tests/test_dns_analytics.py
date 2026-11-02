@@ -404,3 +404,98 @@ class TestGetStats:
 
         assert result["total_queries"] == 0
         assert result["unique_domains"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Data accuracy (2026-11-01): pcap-monitor noise, exact totals, rtt average
+# ---------------------------------------------------------------------------
+
+_FROM, _TO = "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+_NOISE = {"term": {"zeek.dns.query": "pcap-monitor"}}
+
+
+class TestDnsNoiseExclusion:
+    """Malcolm's pcap-monitor lookups were about half of all DNS on the G11."""
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda d: d.get_top_domains(_FROM, _TO),
+            lambda d: d.get_device_dns("192.168.1.10", _FROM, _TO),
+            lambda d: d.get_nxdomain_errors(_FROM, _TO),
+            lambda d: d.get_query_type_distribution(_FROM, _TO),
+            lambda d: d.get_dns_timeline(_FROM, _TO),
+            lambda d: d.get_suspicious_dns(_FROM, _TO),
+            lambda d: d.detect_dns_tunneling(_FROM, _TO),
+            lambda d: d.get_stats(_FROM, _TO),
+        ],
+        ids=[
+            "top_domains",
+            "device_dns",
+            "nxdomains",
+            "query_types",
+            "timeline",
+            "suspicious",
+            "tunneling",
+            "stats",
+        ],
+    )
+    def test_every_query_excludes_pcap_monitor(self, dns, mock_client, call):
+        mock_client.search.return_value = {}
+        call(dns)
+        assert mock_client.search.call_args_list
+        for c in mock_client.search.call_args_list:
+            assert _NOISE in c.kwargs["body"]["query"]["bool"]["must_not"]
+
+    def test_excluded_ips_still_applied(self, dns, mock_client):
+        mock_client.search.return_value = {}
+        dns.get_stats(_FROM, _TO, excluded_ips=["192.168.1.2"])
+        must_not = mock_client.search.call_args.kwargs["body"]["query"]["bool"][
+            "must_not"
+        ]
+        assert must_not == [_NOISE, {"terms": {"source.ip": ["192.168.1.2"]}}]
+
+    def test_log_search_uses_the_same_constant(self):
+        import api.logs
+        from services.dns_analytics import DNS_NOISE_EXCLUSION
+
+        assert api.logs._EXCLUDE_DNS_NOISE is DNS_NOISE_EXCLUSION
+
+
+class TestStatsAccuracy:
+    def test_total_counts_past_10000(self, dns, mock_client):
+        mock_client.search.return_value = {}
+        dns.get_stats(_FROM, _TO)
+        assert mock_client.search.call_args.kwargs["body"]["track_total_hits"] is True
+
+    def test_avg_ignores_unanswered_and_median_is_requested(self, dns, mock_client):
+        mock_client.search.return_value = {}
+        dns.get_stats(_FROM, _TO)
+        aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
+        assert aggs["avg_rtt"] == {"avg": {"field": "zeek.dns.rtt"}}
+        assert aggs["median_rtt"] == {
+            "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
+        }
+
+    def test_median_resolution_ms(self, dns, mock_client):
+        mock_client.search.return_value = {
+            "hits": {"total": {"value": 5433}},
+            "aggregations": {
+                "avg_rtt": {"value": 1.25},
+                "median_rtt": {"values": {"50.0": 0.2}},
+            },
+        }
+        result = dns.get_stats(_FROM, _TO)
+        assert result["avg_resolution_ms"] == 1250.0
+        assert result["median_resolution_ms"] == 200.0
+
+    def test_no_answered_queries_gives_zero(self, dns, mock_client):
+        mock_client.search.return_value = {
+            "aggregations": {
+                "avg_rtt": {"value": None},
+                "median_rtt": {"values": {"50.0": None}},
+            }
+        }
+        result = dns.get_stats(_FROM, _TO)
+        assert result["avg_resolution_ms"] == 0
+        assert result["median_resolution_ms"] == 0

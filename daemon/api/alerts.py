@@ -385,6 +385,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
     query = {
         "size": size,
         "from": offset,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": filter_clauses,

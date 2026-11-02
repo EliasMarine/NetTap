@@ -250,6 +250,8 @@ class DeviceRegistry:
 
         query = {
             "size": 0,
+            # hits.total is shown as a count; without this OpenSearch stops at 10,000
+            "track_total_hits": True,
             "query": {
                 "bool": {
                     "filter": [
