@@ -411,7 +411,9 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 28: Device detail, its lists and its risk score stopped counting at 10,000 (no
   track_total_hits); the risk list and detail now share one 500-device baseline.
   Batch 29: list pages stop at OpenSearch's 10,000-result window (later pages were empty).
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch29.sh.
+  Batch 30: Security Posture's Encryption and DNS Security cards judged by Zeek service names
+  (19%, and DNS stuck at 0%); now the IoT encryption rule computed by the daemon (62%, 18%).
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch30.sh.
   Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
   page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (11 checks).
   Each checks its fixes against the live APIs.
@@ -1912,6 +1914,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 142. **`sudo -S` eats stdin (Chain 25)** — piping JSON into `sudo docker exec -i` under a password-on-stdin wrapper delivers nothing. Pass data as an argument; it also works with a cached sudo.
 143. **When you fix a filter, grep for every query over the same records (Chain 25, #82)** — batch 11 put the Suricata engine-event exclusion on the per-device alert counts and risk scores. The IoT fleet summary has its own alert-count query, and it never got the exclusion. `grep -rn 'suricata.alert.severity' daemon/` would have found it. The same check also showed that a test must use the scale the API reports: the IoT pillars are percentages of 40 points, so 10 points read as +25, not +10.
 144. **`hits.total` is a lower bound unless the query sets `track_total_hits` (Chain 25, #83–#85)** — OpenSearch stops counting at 10,000 and reports `relation: gte`, so a busy device read exactly 10,000. Find these with `grep -rn 'get("total"' daemon/` and compare with `grep -c track_total_hits`. Once a total is exact, a page count built from it must also stop at `index.max_result_window` (10,000), because `from + size` past it returns nothing.
+145. **One definition per figure, computed in one place (Chain 25, #86)** — "encrypted" was defined twice. The IoT pages used ports plus Zeek protocols, with local chatter left out; Security Posture used service-name substrings on the client. The two disagreed by 43 points (19% vs 62%). Put the rule in a shared constant (`ENCRYPTED_CONN_FILTER`) and have the daemon return the figure. Also check that a score can reach its full range on real data: DNS Security looked for service names Zeek never emits, so it was 0% by construction.
 
 ---
 
