@@ -70,10 +70,27 @@ def _must_not(body: dict) -> list[dict]:
 
 def _excluded_ports(body: dict) -> set[int]:
     for clause in _must_not(body):
-        ports = clause.get("terms", {}).get("destination.port")
-        if ports:
-            return set(ports)
+        # a bare port clause, or one scoped by transport inside bool.filter
+        for part in [clause, *clause.get("bool", {}).get("filter", [])]:
+            ports = part.get("terms", {}).get("destination.port")
+            if ports:
+                return set(ports)
     return set()
+
+
+def _dest_bucket(ip: str, total: int, ports: dict[int, int]) -> dict:
+    """A by_dest_ip bucket; flows not counted in ports are ICMP."""
+    return {
+        "key": ip,
+        "doc_count": total,
+        "not_icmp": {
+            "doc_count": sum(ports.values()),
+            "ports": {
+                "buckets": [{"key": k, "doc_count": v} for k, v in ports.items()]
+            },
+        },
+        "source_ip": {"buckets": [{"key": "192.168.1.40"}]},
+    }
 
 
 @pytest.fixture
@@ -140,7 +157,49 @@ class TestIsolationIgnoresLanServices:
         body = _body_with_agg(client, "by_source_mac")
         excluded = _excluded_ports(body)
         assert {53, 67, 68, 123, 137, 138, 1900, 5353, 5355} <= excluded
-        assert ICMP_CLAUSE in _must_not(body)
+        assert MULTICAST_CLAUSE in _must_not(body)
+
+    def test_only_udp_on_service_ports_is_dropped(self, iot, client):
+        # TCP 53/123 to a LAN host and ICMP sweeps are lateral-movement signals
+        client.search.side_effect = _fake_search()
+        iot.get_network_isolation(FROM_TS, TO_TS)
+        must_not = _must_not(_body_with_agg(client, "by_source_mac"))
+        assert ICMP_CLAUSE not in must_not
+        assert not any(c.get("terms", {}).get("destination.port") for c in must_not)
+        scoped = [c["bool"]["filter"] for c in must_not if "bool" in c]
+        assert [{"term": {"network.transport": "udp"}}] == [f[0] for f in scoped]
+
+    def test_ping_only_pair_is_low_risk(self, iot, client):
+        client.search.side_effect = _fake_search(
+            isolation=[
+                {
+                    "key": HUE_MAC,
+                    "by_dest_ip": {"buckets": [_dest_bucket("192.168.1.1", 6, {})]},
+                }
+            ]
+        )
+        result = iot.get_network_isolation(FROM_TS, TO_TS)
+        [pair] = result["pairs"]
+        assert (pair["risk"], pair["ports"]) == ("low", [])
+        assert pair["description"].endswith("via ping (ICMP)")
+        assert result["segmentation_score"] == 100
+        assert result["recommendation"].startswith("Only pings")
+
+    def test_icmp_codes_never_appear_as_ports(self, iot, client):
+        client.search.side_effect = _fake_search(
+            isolation=[
+                {
+                    "key": HUE_MAC,
+                    "by_dest_ip": {
+                        "buckets": [_dest_bucket("192.168.1.20", 9, {445: 5})]
+                    },
+                }
+            ]
+        )
+        [pair] = iot.get_network_isolation(FROM_TS, TO_TS)["pairs"]
+        assert pair["ports"] == [445]
+        assert pair["risk"] == "critical"
+        assert pair["description"].endswith("via SMB, ping")
 
     def test_lateral_movement_ports_stay_in(self, iot, client):
         client.search.side_effect = _fake_search()
@@ -154,14 +213,7 @@ class TestIsolationIgnoresLanServices:
                 {
                     "key": HUE_MAC,
                     "by_dest_ip": {
-                        "buckets": [
-                            {
-                                "key": "192.168.1.20",
-                                "doc_count": 4,
-                                "ports": {"buckets": [{"key": 22, "doc_count": 4}]},
-                                "source_ip": {"buckets": [{"key": "192.168.1.40"}]},
-                            }
-                        ]
+                        "buckets": [_dest_bucket("192.168.1.20", 4, {22: 4})]
                     },
                 }
             ]

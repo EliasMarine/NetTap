@@ -31,11 +31,24 @@ ICMP_TRANSPORTS = ["icmp", "icmp6", "ipv6-icmp"]
 LOCAL_SERVICE_PORTS = sorted({53, 67, 68, 123, 138, 1900, *LOCAL_NAME_SERVICE_PORTS})
 MULTICAST_BROADCAST = ["224.0.0.0/4", "ff00::/8", "255.255.255.255"]
 # Plumbing every device does (G11 false findings 2026-11-01): never an unexpected
-# port, an isolation risk, or part of the encryption share. Dedicated checks such
-# as hardcoded DNS query port 53 themselves, so they still see it.
+# port or part of the encryption share. Dedicated checks such as hardcoded DNS
+# query port 53 themselves, so they still see it.
 LOCAL_CHATTER_EXCLUSION: list[dict] = [
     {"terms": {"network.transport": ICMP_TRANSPORTS}},
     {"terms": {"destination.port": LOCAL_SERVICE_PORTS}},
+    {"terms": {"destination.ip": MULTICAST_BROADCAST}},
+]
+# Isolation is a security check, so it drops only UDP DNS/DHCP/NTP/discovery and
+# multicast/broadcast. TCP on those ports and pings to LAN hosts stay visible.
+ISOLATION_NOISE_EXCLUSION: list[dict] = [
+    {
+        "bool": {
+            "filter": [
+                {"term": {"network.transport": "udp"}},
+                {"terms": {"destination.port": LOCAL_SERVICE_PORTS}},
+            ]
+        }
+    },
     {"terms": {"destination.ip": MULTICAST_BROADCAST}},
 ]
 
@@ -2029,8 +2042,12 @@ class IoTMonitor:
                     }
                 },
             ],
-            # DNS/DHCP/NTP/discovery to a LAN server and pings are expected, not lateral movement
-            "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
+            # OLD CODE START — 2026-11-01: port-only exclusion also hid TCP 53/123 and ICMP
+            # sweeps to LAN hosts (security review); pings are now a low-risk signal
+            # "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
+            # OLD CODE END
+            # UDP DNS/DHCP/NTP/discovery to a LAN server is expected, not lateral movement
+            "must_not": [*excluded, *ISOLATION_NOISE_EXCLUSION],
         }
         # OLD CODE START — 2026-11-01: flagged DNS/DHCP to the gateway as an isolation risk
         # if excluded:
@@ -2047,8 +2064,27 @@ class IoTMonitor:
                         "by_dest_ip": {
                             "terms": {"field": "destination.ip", "size": 50},
                             "aggs": {
-                                "ports": {
-                                    "terms": {"field": "destination.port", "size": 20}
+                                # Zeek stores the ICMP code in destination.port; keep it out
+                                "not_icmp": {
+                                    "filter": {
+                                        "bool": {
+                                            "must_not": [
+                                                {
+                                                    "terms": {
+                                                        "network.transport": ICMP_TRANSPORTS
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "aggs": {
+                                        "ports": {
+                                            "terms": {
+                                                "field": "destination.port",
+                                                "size": 20,
+                                            }
+                                        }
+                                    },
                                 },
                                 "source_ip": {
                                     "terms": {"field": "source.ip", "size": 1}
@@ -2088,10 +2124,12 @@ class IoTMonitor:
                 if dest_ip in iot_ips:
                     continue
 
+                not_icmp = dest_bucket.get("not_icmp", {})
                 ports = [
-                    pb["key"] for pb in dest_bucket.get("ports", {}).get("buckets", [])
+                    pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])
                 ]
                 conn_count = dest_bucket.get("doc_count", 0)
+                pinged = conn_count > not_icmp.get("doc_count", 0)
 
                 # Get source IP
                 src_ip_buckets = dest_bucket.get("source_ip", {}).get("buckets", [])
@@ -2101,7 +2139,10 @@ class IoTMonitor:
                 risk = self._classify_isolation_risk(ports)
 
                 # Build description
-                port_names = self._port_names(ports)
+                port_names = self._port_names(ports) if ports else ""
+                if pinged:
+                    # ping-only pairs get no ports, so they classify as low risk
+                    port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
                 desc = f"{dev_name} can reach {dest_ip} via {port_names}"
 
                 pairs.append(
@@ -2152,6 +2193,11 @@ class IoTMonitor:
         )
         if not pairs:
             recommendation = "Your IoT devices are well-isolated from internal hosts."
+        elif all(p["risk"] == "low" for p in pairs):
+            recommendation = (
+                "Only pings from IoT devices to internal hosts were seen. "
+                "That is usually a connectivity check, not a risk."
+            )
         elif iot_reaching_workstations > 0:
             recommendation = (
                 f"Consider creating a separate VLAN for your IoT devices -- "

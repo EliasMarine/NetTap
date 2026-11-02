@@ -951,11 +951,14 @@ class TestNetworkIsolation:
                                     {
                                         "key": "192.168.1.10",
                                         "doc_count": 45,
-                                        "ports": {
-                                            "buckets": [
-                                                {"key": 445, "doc_count": 30},
-                                                {"key": 139, "doc_count": 15},
-                                            ]
+                                        "not_icmp": {
+                                            "doc_count": 45,
+                                            "ports": {
+                                                "buckets": [
+                                                    {"key": 445, "doc_count": 30},
+                                                    {"key": 139, "doc_count": 15},
+                                                ]
+                                            },
                                         },
                                         "source_ip": {
                                             "buckets": [
