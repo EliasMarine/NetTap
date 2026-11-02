@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getBridgeHealth } from '$api/bridge.js';
-	import { getCaptureStats, getCaptureMode } from '$api/capture';
+	import { getCaptureStats, getCaptureMode, getCaptureHealth } from '$api/capture';
 	import { getSystemHealth, getStorageStatus } from '$api/system.js';
 	import {
 		getOpenSearchCluster,
@@ -12,7 +12,7 @@
 	} from '$api/infrastructure';
 	import type { OpenSearchCluster, OpenSearchIndex, LogstashStats, LogstashPipeline } from '$api/infrastructure';
 	import type { BridgeHealth } from '$api/bridge.js';
-	import type { CaptureMode, CaptureStatsResponse } from '$api/capture';
+	import type { CaptureMode, CaptureStatsResponse, CaptureHealthResponse } from '$api/capture';
 	import type { SystemHealth, StorageStatus } from '$api/system.js';
 	import {
 		getUnifiStatus,
@@ -46,6 +46,9 @@
 	let bridgeHealth = $state<BridgeHealth | null>(null);
 	let captureStats = $state<CaptureStatsResponse | null>(null);
 	let captureMode = $state<CaptureMode | null>(null);
+	let captureHealth = $state<CaptureHealthResponse | null>(null);
+	// a mirror box has no bridge: the first pipeline node is the mirror (SPAN) port instead
+	const isMirror = $derived(captureMode?.mode === 'mirror');
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
 	let cluster = $state<OpenSearchCluster | null>(null);
@@ -116,14 +119,16 @@
 	// ─── Data fetching ──────────────────────────────────────────
 	async function fetchBridgeAndCapture() {
 		try {
-			const [bh, cs, cm] = await Promise.all([
+			const [bh, cs, cm, ch] = await Promise.all([
 				getBridgeHealth(),
 				getCaptureStats(),
 				getCaptureMode().catch(() => null),
+				getCaptureHealth(),
 			]);
 			bridgeHealth = bh;
 			captureStats = cs;
 			if (cm) captureMode = cm;
+			captureHealth = ch;
 		} catch { /* swallow — individual calls have their own fallbacks */ }
 	}
 
@@ -566,15 +571,27 @@
 								<line x1="12" y1="6" x2="12" y2="18"/>
 							</svg>
 						</div>
-						<div class="node-name">Bridge</div>
-						<div class="node-health">
-							<span class="health-dot {bridgeHealth ? healthDotClass(bridgeHealth.bridge_state) : ''}"></span>
-							{bridgeHealth?.bridge_state === 'up' ? 'br0 UP' : bridgeHealth?.bridge_state ?? '--'}
-						</div>
-						<div class="node-metric">
-							WAN <span class="value">{bridgeHealth?.wan_link ? '\u25CF' : '\u25CB'}</span>
-							LAN <span class="value">{bridgeHealth?.lan_link ? '\u25CF' : '\u25CB'}</span>
-						</div>
+						{#if isMirror}
+							<div class="node-name">Mirror Port</div>
+							<div class="node-health">
+								<span class="health-dot {captureHealth ? (captureHealth.link_up ? healthDotClass(captureHealth.status) : 'red') : ''}"></span>
+								{captureHealth ? `${captureHealth.capture_interface || captureMode?.interface} ${captureHealth.link_up ? 'UP' : 'DOWN'}` : '--'}
+							</div>
+							<div class="node-metric">
+								Link <span class="value">{captureHealth?.link_up ? '\u25CF' : '\u25CB'}</span>
+								Promisc <span class="value">{captureHealth?.promisc_enabled ? '\u25CF' : '\u25CB'}</span>
+							</div>
+						{:else}
+							<div class="node-name">Bridge</div>
+							<div class="node-health">
+								<span class="health-dot {bridgeHealth ? healthDotClass(bridgeHealth.bridge_state) : ''}"></span>
+								{bridgeHealth?.bridge_state === 'up' ? 'br0 UP' : bridgeHealth?.bridge_state ?? '--'}
+							</div>
+							<div class="node-metric">
+								WAN <span class="value">{bridgeHealth?.wan_link ? '\u25CF' : '\u25CB'}</span>
+								LAN <span class="value">{bridgeHealth?.lan_link ? '\u25CF' : '\u25CB'}</span>
+							</div>
+						{/if}
 					</div>
 				</div>
 
@@ -593,8 +610,13 @@
 						</div>
 						<div class="node-name">Capture</div>
 						<div class="node-health">
-							<span class="health-dot {bridgeHealth && !bridgeHealth.bypass_active ? 'green' : 'yellow'}"></span>
-							{bridgeHealth?.bypass_active ? 'Bypass' : 'Promiscuous'}
+							{#if isMirror}
+								<span class="health-dot {captureHealth?.promisc_enabled ? 'green' : 'yellow'}"></span>
+								{captureHealth?.promisc_enabled ? 'Promiscuous' : 'Not promiscuous'}
+							{:else}
+								<span class="health-dot {bridgeHealth && !bridgeHealth.bypass_active ? 'green' : 'yellow'}"></span>
+								{bridgeHealth?.bypass_active ? 'Bypass' : 'Promiscuous'}
+							{/if}
 						</div>
 						<div class="node-metric">Drop <span class="value">{captureStats ? captureStats.drop_rate_pct.toFixed(2) + '%' : '--'}</span></div>
 					</div>
@@ -699,8 +721,65 @@
 	     DETAIL PANELS
 	     ═══════════════════════════════════════════════════════════ -->
 
+	<!-- Mirror Port Detail (takes the bridge node's place on a mirror box) -->
+	{#if selectedNode === 'bridge' && isMirror}
+		<div class="detail-panel open">
+			<div class="detail-header">
+				<div class="detail-header-left">
+					<div class="node-icon bridge" style="width:32px;height:32px;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="12" y1="6" x2="12" y2="18"/></svg>
+					</div>
+					<div>
+						<div class="detail-title">Mirror Port &mdash; {captureHealth?.capture_interface || captureMode?.interface || '--'}</div>
+						<div class="detail-subtitle">Receives a copy of the switch port's traffic (SPAN); NetTap is not in the traffic path</div>
+					</div>
+				</div>
+				<button class="btn-close-detail" onclick={closeDetail}>&#10005;</button>
+			</div>
+			<div class="detail-body">
+				<div class="detail-grid">
+					<div class="detail-stat">
+						<div class="detail-stat-label">Link</div>
+						<div class="detail-stat-value {captureHealth?.link_up ? 'green' : 'red'}">
+							{captureHealth?.link_up ? '\u25CF Connected' : '\u25CB Disconnected'}
+						</div>
+					</div>
+					<div class="detail-stat">
+						<div class="detail-stat-label">Promisc Mode</div>
+						<div class="detail-stat-value {captureHealth?.promisc_enabled ? 'green' : 'red'}">
+							{captureHealth?.promisc_enabled ? 'Yes' : 'No'}
+						</div>
+					</div>
+					<div class="detail-stat">
+						<div class="detail-stat-label">IP on Mirror Port</div>
+						<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : 'green'}">
+							{captureHealth?.has_ip === true ? 'Yes (should have none)' : 'None'}
+						</div>
+					</div>
+					<div class="detail-stat">
+						<div class="detail-stat-label">Status</div>
+						<div class="detail-stat-value {captureHealth?.status === 'normal' ? 'green' : captureHealth?.status === 'degraded' ? 'amber' : 'red'}">
+							{captureHealth?.status?.toUpperCase() ?? '--'}
+						</div>
+					</div>
+					<div class="detail-stat">
+						<div class="detail-stat-label">Management Port</div>
+						<div class="detail-stat-value">{captureHealth?.management_interface ?? '--'}</div>
+					</div>
+				</div>
+				{#if captureHealth?.issues?.length}
+					<ul class="detail-issues">
+						{#each captureHealth.issues as issue}
+							<li>{issue}</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	<!-- Bridge Detail -->
-	{#if selectedNode === 'bridge'}
+	{#if selectedNode === 'bridge' && !isMirror}
 		<div class="detail-panel open">
 			<div class="detail-header">
 				<div class="detail-header-left">
@@ -2078,6 +2157,13 @@
 	.detail-stat-value.cyan { color: var(--cyan); }
 	.detail-stat-value.amber { color: var(--amber); }
 	.detail-stat-value.red { color: var(--red); }
+
+	.detail-issues {
+		margin: 0;
+		padding-left: var(--space-lg);
+		color: var(--amber);
+		font-size: var(--text-sm);
+	}
 
 	/* ═══════════════════════════════════════════════════════════
 	   DETAIL TABLES
