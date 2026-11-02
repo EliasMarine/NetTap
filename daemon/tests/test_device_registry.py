@@ -395,7 +395,7 @@ class TestGetDeviceTraffic:
                 "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
                 "top_destinations": {
                     "buckets": [
-                        {"key": "8.8.8.8", "doc_count": 10, "out": {"value": 100}, "in": {"value": 900}},
+                        {"key": "8.8.8.8", "doc_count": 10, "bytes": {"value": 1000}},
                     ]
                 },
             },
@@ -410,6 +410,8 @@ class TestGetDeviceTraffic:
         aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
         assert aggs["outbound_bytes"] == {"sum": {"field": "source.bytes", "missing": 0}}
         assert aggs["inbound_bytes"] == {"sum": {"field": "destination.bytes", "missing": 0}}
+        # ranked by the bytes the page draws, not by connection count
+        assert aggs["top_destinations"]["terms"]["order"] == {"bytes": "desc"}
 
     def test_get_device_traffic_error(self, registry, mock_client):
         """Should return empty summary on OpenSearch error."""

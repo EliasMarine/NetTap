@@ -114,6 +114,9 @@ raw_bytes() {  # sums the two "value" fields; track_total_hits false keeps hits.
 R1=$(raw_bytes); V=$(api "$MAC_PATH" "d['traffic']['top_destinations'][0]['bytes']"); R2=$(raw_bytes)
 if [[ "${R1:-x}" =~ ^[0-9]+$ && "${V:-x}" =~ ^[0-9]+$ && "${R2:-x}" =~ ^[0-9]+$ ]] && [ "$R1" -le "$V" ] && [ "$V" -le "$R2" ]; then rc=0; else rc=1; fi
 check "#89 top destination bytes ($TOP)" "$rc" "API $V, OpenSearch $R1 / $R2"
+RANKED=$(api "$MAC_PATH" "(lambda b: b == sorted(b, reverse=True) and len(b) > 0)([x['bytes'] for x in d['traffic']['top_destinations']])")
+if [ "$RANKED" = "True" ]; then rc=0; else rc=1; fi
+check "#89 top destinations ranked by the bytes the page draws" "$rc" "$RANKED"
 CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost/devices/mac/$MAC")
 case "$CODE" in 200|302|303) rc=0 ;; *) rc=1 ;; esac
 check "/devices/mac/$MAC answers" "$rc" "HTTP $CODE"

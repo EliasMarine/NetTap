@@ -424,11 +424,22 @@ class DeviceRegistry:
                 # OLD CODE START — #89: connection counts only
                 # "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
                 # OLD CODE END
+                # Ranked by bytes: the MAC page draws byte bars with ranks (by connection count
+                # its #1 read 673 KB and its #8 507 MB)
                 "top_destinations": {
-                    "terms": {"field": "destination.ip", "size": 20},
+                    "terms": {"field": "destination.ip", "size": 20, "order": {"bytes": "desc"}},
                     "aggs": {
-                        "out": {"sum": {"field": "source.bytes", "missing": 0}},
-                        "in": {"sum": {"field": "destination.bytes", "missing": 0}},
+                        "bytes": {
+                            "sum": {
+                                "script": {
+                                    "source": (
+                                        "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                        " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                                    ),
+                                    "lang": "painless",
+                                }
+                            }
+                        },
                     },
                 },
             },
@@ -467,7 +478,7 @@ class DeviceRegistry:
             {
                 "ip": b["key"],
                 "connections": b["doc_count"],
-                "bytes": int((b.get("out", {}).get("value") or 0) + (b.get("in", {}).get("value") or 0)),
+                "bytes": int(b.get("bytes", {}).get("value") or 0),
             }
             for b in aggs.get("top_destinations", {}).get("buckets", [])
         ]
