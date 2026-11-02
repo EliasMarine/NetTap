@@ -80,6 +80,35 @@ describe('System page when status requests fail (#96)', () => {
 		expect(screen.queryByText('Not Deployed')).not.toBeInTheDocument();
 	});
 
+	it('shows the daemon\'s unknown drive health and unreadable index count, not Healthy or 0', async () => {
+		const replies: Record<string, unknown> = {
+			'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
+			'/api/smart/health': {
+				device: '/dev/nvme0', device_type: 'nvme', model: 'X', serial: 'S', temperature_c: null, percentage_used: null,
+				power_on_hours: null, total_bytes_written: null, total_bytes_read: null, media_errors: null, reallocated_sectors: null,
+				healthy: null, error: 'SMART health could not be read from /dev/nvme0', warnings: [], timestamp: '2026-11-02T00:00:00Z',
+			},
+			'/api/storage/status': {
+				disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, retention: null,
+				index_counts: null, total_indices: null, indices_error: 'Could not list indices: timeout',
+			},
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL) => {
+				const body = replies[String(input)];
+				return body ? new Response(JSON.stringify(body), { status: 200 }) : new Response('{}', { status: 503 });
+			}),
+		);
+
+		render(SystemPage);
+
+		expect(await screen.findByText('Drive health unknown: SMART health could not be read from /dev/nvme0')).toBeInTheDocument();
+		expect(screen.queryByText('Healthy')).not.toBeInTheDocument();
+		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't read indices")).toBeInTheDocument();
+	});
+
 	it('still shows Healthy and the disk usage when the requests succeed', async () => {
 		const replies: Record<string, unknown> = {
 			'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },

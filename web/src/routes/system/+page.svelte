@@ -206,9 +206,14 @@
 					<div class="info-row">
 						<!-- data indices only: the storage manager skips OpenSearch's own "." indices (#39) -->
 						<span class="info-label">Data Indices</span>
-						<span class="info-value mono">
-							{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
-						</span>
+						<!-- #96: the daemon sends indices_error (and null counts) when OpenSearch couldn't be asked -->
+						{#if storageStatus?.indices_error}
+							<span class="info-value text-muted" title={storageStatus.indices_error}>Couldn't read indices</span>
+						{:else}
+							<span class="info-value mono">
+								{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
+							</span>
+						{/if}
 					</div>
 				</div>
 				{#if systemHealth && !systemHealth.opensearch_reachable}
@@ -301,7 +306,7 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Drive Health</span>
-					{#if failed.smart}
+					{#if failed.smart || smartHealth?.healthy === null}
 						<span class="badge">Unknown</span>
 					{:else if smartHealth}
 						<span class={smartHealth.healthy ? 'badge badge-success' : 'badge badge-danger'}>
@@ -313,6 +318,9 @@
 				</div>
 				{#if failed.smart}
 					<p class="text-muted">Couldn't load drive health: the request failed.</p>
+				{:else if smartHealth?.healthy === null}
+					<!-- #96: the daemon reports healthy: null (with error) when the drive can't be read -->
+					<p class="text-muted">Drive health unknown: {smartHealth.error || 'the drive could not be read.'}</p>
 				{/if}
 				{#if smartHealth && smartHealth.device}
 					<div class="info-grid">
@@ -431,7 +439,7 @@
 							{/each}
 						</div>
 					{/if}
-				{:else if !failed.smart}
+				{:else if !failed.smart && smartHealth?.healthy !== null}
 					<p class="text-muted">SMART data unavailable. Drive health monitoring requires smartmontools.</p>
 				{/if}
 			</div>

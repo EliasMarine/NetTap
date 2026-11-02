@@ -29,8 +29,10 @@ export interface StorageStatus {
 	retention: any;
 	index_summary?: any;
 	// Daemon returns index_counts (object) + total_indices (number) instead
-	index_counts?: Record<string, number>;
-	total_indices?: number;
+	// null, with indices_error, when OpenSearch couldn't be asked (#96)
+	index_counts?: Record<string, number> | null;
+	total_indices?: number | null;
+	indices_error?: string;
 }
 
 export interface SmartHealth {
@@ -45,7 +47,9 @@ export interface SmartHealth {
 	total_bytes_read: number | null;
 	media_errors: number | null;
 	reallocated_sectors: number | null;
-	healthy: boolean;
+	/** null, with `error`, when the drive's health couldn't be read (#96) */
+	healthy: boolean | null;
+	error?: string;
 	warnings: string[];
 	timestamp: string;
 }
