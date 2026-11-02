@@ -125,8 +125,19 @@ GEO=$(curl -sk -o /dev/null -w '%{http_code} %{size_download}' https://localhost
 if [ "${GEO%% *}" = "200" ] && [ "${GEO##* }" -gt 100000 ]; then rc=0; else rc=1; fi
 check "#45 Live map serves its bundled world outline" "$rc" "HTTP ${GEO%% *}, ${GEO##* } bytes"
 
-LAN_Q='{"size":0,"query":{"bool":{"filter":[{"term":{"event.dataset":"conn"}},{"range":{"@timestamp":{"gte":"now-5m"}}},{"terms":{"source.ip":["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"]}}]}},"aggs":{"n":{"cardinality":{"field":"source.ip"}}}}'
-LAN_TRUTH=$("${OS_CURL[@]}" "https://localhost:9200/arkime_sessions3-*/_search" -d "$LAN_Q" | grep -o '"n":{"value":[0-9]*' | grep -o '[0-9]*$')
+# The daemon counts devices in the LAN subnets it detected at startup (or LAN_SUBNETS),
+# not every private range, so the ground truth uses the same subnets.
+DETECTED=$(sudo docker logs nettap-storage-daemon 2>&1 | grep "LAN detection: found" | tail -1 | grep -o '[0-9.]*/24' | sed 's/.*/"&"/' | paste -sd, -)
+LAN_CIDRS=${DETECTED:-'"10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"'}
+if [ -n "$(sudo docker exec nettap-storage-daemon printenv LAN_SUBNETS 2>/dev/null)" ]; then
+    LAN_CIDRS='"10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"'  # shortcut: manual LAN_SUBNETS not parsed here, so the check widens
+fi
+lan_count() {  # lan_count '<json list of CIDRs>' -> distinct conn sources in 5 min
+    "${OS_CURL[@]}" "https://localhost:9200/arkime_sessions3-*/_search" -d '{"size":0,"query":{"bool":{"filter":[{"term":{"event.dataset":"conn"}},{"range":{"@timestamp":{"gte":"now-5m"}}},{"terms":{"source.ip":['"$1"']}}]}},"aggs":{"n":{"cardinality":{"field":"source.ip"}}}}' | grep -o '"n":{"value":[0-9]*' | grep -o '[0-9]*$'
+}
+LAN_TRUTH=$(lan_count "$LAN_CIDRS")
+ALL_PRIVATE=$(lan_count '"10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"')
+echo "   (LAN subnets in use: ${LAN_CIDRS//\"/}; private sources outside them: $(( ${ALL_PRIVATE:-0} - ${LAN_TRUTH:-0} )))"
 ACTIVE=$(api_eval /api/live/dashboard "d['stats']['active_devices']")
 WINDOW=$(api_eval /api/live/dashboard "d['stats'].get('connections_in_window')")
 # both are 5-minute windows taken seconds apart
