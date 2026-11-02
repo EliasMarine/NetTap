@@ -175,4 +175,24 @@ describe('Security Posture page when an input fails', () => {
 		// the overall figure plus all six categories
 		expect(screen.getAllByText(/^\d+%$/)).toHaveLength(7);
 	});
+
+	it('needs investigation stats for Alert Response only when there are alerts', async () => {
+		stubDaemon({ '/api/investigations/stats': 'http' });
+		const { unmount } = render(CompliancePage);
+		// no alerts: the score is 100 whatever the investigations
+		await vi.waitFor(() => expect(screen.getByText('Alert Response')).toBeInTheDocument());
+		expect(within(categoryCard('Alert Response')).getByText('100%')).toBeInTheDocument();
+		unmount();
+
+		DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } };
+		try {
+			render(CompliancePage);
+			await vi.waitFor(() => expect(screen.getByText('Alert Response')).toBeInTheDocument());
+			const card = categoryCard('Alert Response');
+			expect(within(card).getAllByText("Couldn't load investigation stats: the request failed.").length).toBeGreaterThan(0);
+			expect(within(card).queryByText('0%')).not.toBeInTheDocument();
+		} finally {
+			DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } };
+		}
+	});
 });

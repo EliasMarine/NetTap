@@ -25,6 +25,9 @@
 	let investigations = $state<Investigation[]>([]);
 	let stats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
 	let loading = $state(false);
+	// #96: a failed request must not read as "No Investigations" or zero counts
+	let listFailed = $state(false);
+	let statsFailed = $state(false);
 	let activeFilter = $state<StatusFilter>('all');
 
 	// Expanded investigation (keep accordion for cards)
@@ -167,8 +170,10 @@
 			const statusParam = activeFilter === 'all' ? undefined : activeFilter;
 			const response = await getInvestigations({ status: statusParam });
 			investigations = response.investigations;
+			listFailed = false;
 		} catch {
 			investigations = [];
+			listFailed = true;
 		} finally {
 			loading = false;
 		}
@@ -177,8 +182,10 @@
 	async function fetchStats() {
 		try {
 			stats = await getInvestigationStats();
+			statsFailed = false;
 		} catch {
 			stats = { total: 0, by_status: {}, by_severity: {} };
+			statsFailed = true;
 		}
 	}
 
@@ -361,7 +368,10 @@
 			>
 				{filter.label}
 				<span class="filter-count">
+					<!-- OLD CODE START — #96: a failed stats request showed 0 in every tab
 					{filterCount(filter.value)}
+					OLD CODE END -->
+					{statsFailed ? '—' : filterCount(filter.value)}
 				</span>
 			</button>
 		{/each}
@@ -372,6 +382,11 @@
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Loading investigations...</p>
+		</div>
+	{:else if listFailed}
+		<div class="empty-state">
+			<h3>Couldn't load investigations</h3>
+			<p class="text-muted">The request failed. Reload the page to try again.</p>
 		</div>
 	{:else if investigations.length === 0}
 		<div class="empty-state">
