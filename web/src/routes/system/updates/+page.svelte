@@ -780,6 +780,9 @@
 											<span class="badge badge-warning">Update Available</span>
 										{:else if checkFailed(entry.key, entry.name)}
 											<span class="badge badge-muted">Unknown</span>
+										<!-- no check since the daemon started: no update listed doesn't mean none exists -->
+										{:else if !lastCheck}
+											<span class="badge badge-muted">Not checked</span>
 										{:else}
 											<span class="badge badge-success">Up to Date</span>
 										{/if}

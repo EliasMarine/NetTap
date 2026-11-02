@@ -37,6 +37,18 @@ describe('Software Updates page when a request fails (#96)', () => {
 		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
 	});
 
+	it('says "Not checked", not "Up to Date", before the first update check since a restart', async () => {
+		// the daemon's update list is empty until its first check; on the G11 that lasted minutes after a restart
+		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [], last_check: null } });
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText('Zeek')).toBeInTheDocument();
+		expect(screen.getByText('Updates have not been checked yet')).toBeInTheDocument();
+		expect(screen.getByText('Not checked')).toBeInTheDocument();
+		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+	});
+
 	it('says the installed versions failed instead of "No version information available"', async () => {
 		stubFetch({ '/api/system/updates/available': { updates: [], last_check: '' } });
 
@@ -82,7 +94,11 @@ describe('Software Updates page when a request fails (#96)', () => {
 		};
 		stubFetch({
 			'/api/system/versions': versions,
-			'/api/system/updates/available': { updates: [], last_check: '', failed_checks: ['nettap-daemon'] },
+			// OLD CODE START — no check had run (last_check ''), which now reads "Not checked"
+			// '/api/system/updates/available': { updates: [], last_check: '', failed_checks: ['nettap-daemon'] },
+			// OLD CODE END
+			// a check ran (last_check set): only then can an empty list read "Up to Date"
+			'/api/system/updates/available': { updates: [], last_check: '2026-11-02T21:00:00Z', failed_checks: ['nettap-daemon'] },
 		});
 
 		render(UpdatesPage);
@@ -146,7 +162,10 @@ describe('Software Updates page when a request fails (#96)', () => {
 	it('still reads Up to Date when the update list loads and is empty', async () => {
 		stubFetch({
 			'/api/system/versions': VERSIONS,
-			'/api/system/updates/available': { updates: [], last_check: '' },
+			// OLD CODE START — no check had run (last_check ''), which now reads "Not checked"
+			// '/api/system/updates/available': { updates: [], last_check: '' },
+			// OLD CODE END
+			'/api/system/updates/available': { updates: [], last_check: '2026-11-02T21:00:00Z' },
 			'/api/system/updates/history': { history: [], count: 0 },
 		});
 
