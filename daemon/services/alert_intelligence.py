@@ -1130,6 +1130,17 @@ def enrich_device_context(client, ip: str) -> dict | None:
 # reclassify_severity() gives this to alerts that are context, not threats (STUN, DoH, ...)
 _INFO_SEVERITY = 5
 
+_THREAT_LEVELS = ["none", "low", "medium", "high", "critical"]
+# Highest threat level each alert severity can justify (1 = critical ... 4 = low)
+_LEVEL_FOR_SEVERITY = {1: "critical", 2: "high", 3: "medium", 4: "low"}
+
+
+def _cap_level(level: str, worst_severity: int) -> str:
+    """Lower `level` to what the worst (lowest-numbered) alert severity justifies."""
+    ceiling = _LEVEL_FOR_SEVERITY.get(worst_severity, "low")
+    return min(level, ceiling, key=_THREAT_LEVELS.index)
+
+
 # shortcut: stops at 25 pages (5,000 alert groups) per range; raise it if a box ever has more
 _MAX_GROUP_PAGES = 25
 
@@ -1467,6 +1478,10 @@ async def get_smart_alert_summary(
             threat_level = "critical"
         elif threat_score >= 50:
             threat_level = "high"
+
+    # The level never exceeds the worst alert present: on the G11, 48 groups of
+    # high/medium alerts summed to 100 and the Alerts page read "CRITICAL" with 0 critical
+    threat_level = _cap_level(threat_level, min(a["severity"] for a in alerts))
 
     return {
         "threat_score": threat_score,

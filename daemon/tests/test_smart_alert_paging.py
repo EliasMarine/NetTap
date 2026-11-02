@@ -145,3 +145,26 @@ def test_engine_events_are_left_out_like_the_alerts_page():
     must_not = client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
     for clause in _SURICATA_NOISE_EXCLUSION:
         assert clause in must_not
+
+
+def test_threat_level_never_exceeds_the_worst_alert():
+    """Many medium alerts can push the score to 100, but that is not 'critical'."""
+    from services.alert_intelligence import _cap_level
+
+    assert _cap_level("critical", 3) == "medium"
+    assert _cap_level("critical", 2) == "high"
+    assert _cap_level("critical", 1) == "critical"
+    assert _cap_level("low", 1) == "low"
+
+
+def test_summary_level_capped_for_medium_only_alerts():
+    client = _two_page_client()
+    with (
+        patch.object(alert_intelligence, "is_suppressed", return_value=False),
+        patch.object(alert_intelligence, "update_baseline", return_value=None),
+        patch.object(alert_intelligence, "reclassify_severity", return_value=3),
+    ):
+        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
+
+    assert summary["threat_score"] == 100  # 203 medium groups
+    assert summary["threat_level"] == "medium"
