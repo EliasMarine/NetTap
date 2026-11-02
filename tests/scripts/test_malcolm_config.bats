@@ -262,16 +262,48 @@ _source_malcolm_config() {
     grep -q '^insecure$' "$curlrc_file"
 }
 
-@test "generate_curlrc: file has 644 permissions (not 600 — container user must read)" {
+# OLD CODE START — the file used to be world-readable (644); now PUID-owned 600
+# @test "generate_curlrc: file has 644 permissions (not 600 — container user must read)" {
+#     ... asserted perms = 644
+# }
+# OLD CODE END
+
+_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+
+@test "generate_curlrc: owned by the compose PUID, readable by nobody else" {
     _source_malcolm_config
+    chown() { echo "$*" > "${TEST_TMPDIR}/chown.args"; }
+    mkdir -p "${TEST_TMPDIR}/docker"
+    printf 'PUID=1234\nPGID=5678\n' > "${TEST_TMPDIR}/docker/.env"
 
     generate_curlrc
 
-    local perms
-    perms=$(stat -f '%Lp' "${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc" 2>/dev/null || \
-            stat -c '%a' "${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc" 2>/dev/null)
+    local file="${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc"
+    [ "$(_mode "$file")" = "600" ]
+    [ "$(cat "${TEST_TMPDIR}/chown.args")" = "1234:5678 ${file}" ]
+}
 
-    [ "$perms" = "644" ]
+@test "generate_curlrc: locks a world-readable file from an earlier install" {
+    _source_malcolm_config
+    chown() { return 0; }
+    local file="${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc"
+    mkdir -p "$(dirname "$file")"
+    printf 'user: "malcolm_internal:x"\n' > "$file"
+    chmod 644 "$file"
+
+    generate_curlrc
+
+    [ "$(_mode "$file")" = "600" ]
+    grep -q 'malcolm_internal:x' "$file"  # credentials kept
+}
+
+@test "generate_curlrc: stays 644 if the owner can't be changed (OpenSearch must still read it)" {
+    _source_malcolm_config
+    chown() { return 1; }
+
+    generate_curlrc
+
+    [ "$(_mode "${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc")" = "644" ]
 }
 
 @test "generate_curlrc: generates a non-empty password" {
