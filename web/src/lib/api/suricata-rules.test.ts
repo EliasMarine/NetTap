@@ -244,12 +244,11 @@ describe('suricata-rules API client', () => {
 			expect(result).toContain('alert tcp');
 		});
 
-		it('returns empty string on error', async () => {
+		// #96: an empty editor read as "no custom rules saved"
+		it('throws on error', async () => {
 			mockFetchFailure(500);
 
-			const result = await getCustomRules();
-
-			expect(result).toBe('');
+			await expect(getCustomRules()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -284,12 +283,11 @@ describe('suricata-rules API client', () => {
 			expect(result.source_type).toBe('etpro');
 		});
 
-		it('returns unconfigured on error', async () => {
+		// #96: "unconfigured" read as "no commercial license"
+		it('throws on error', async () => {
 			mockFetchFailure(500);
 
-			const result = await getCommercialConfig();
-
-			expect(result.configured).toBe(false);
+			await expect(getCommercialConfig()).rejects.toThrow('HTTP 500');
 		});
 	});
 });

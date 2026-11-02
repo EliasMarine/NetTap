@@ -88,6 +88,35 @@
 		return 'No automatic refresh is scheduled. Use Update Rules Now.';
 	}
 
+	// #96: custom rules and the commercial key load on their own; a failure says so in its section
+	let customFailed = $state(false);
+	let commercialFailed = $state(false);
+
+	async function loadData() {
+		loading = true;
+		await loadLive();
+		const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.allSettled([
+			getRuleSources(),
+			getRuleStats(),
+			getUpdateSchedule(),
+			getCustomRules(),
+			getCommercialConfig(),
+		]);
+		if (sourcesRes.status === 'fulfilled') {
+			sources = sourcesRes.value.sources;
+			lastUpdate = sourcesRes.value.last_update;
+		}
+		if (statsRes.status === 'fulfilled') stats = statsRes.value;
+		if (scheduleRes.status === 'fulfilled') schedule = scheduleRes.value;
+		if (customRes.status === 'fulfilled') customRulesContent = customRes.value;
+		customFailed = customRes.status === 'rejected';
+		if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
+		commercialFailed = commRes.status === 'rejected';
+		loading = false;
+	}
+
+	// OLD CODE START — #96: one failed request left every section on its defaults
+	/*
 	async function loadData() {
 		loading = true;
 		await loadLive();
@@ -111,6 +140,8 @@
 			loading = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	async function toggleSource(source: RuleSource) {
 		togglingSource = source.id;
@@ -360,6 +391,9 @@
 				Add your own Suricata rules. One rule per line. Lines starting with # are comments.
 			</p>
 			<p class="not-wired">Not connected to Suricata yet: rules saved here are not loaded, so saving is off.</p>
+			{#if customFailed}
+				<p class="section-desc">Couldn't load the saved custom rules: the request failed.</p>
+			{/if}
 			<textarea
 				class="custom-rules-editor"
 				readonly
@@ -383,6 +417,9 @@
 				Configure ET Pro or Snort Subscriber license keys for premium rule feeds.
 			</p>
 			<p class="not-wired">Not connected to Suricata yet: a key saved here would not add any rules, so this is off.</p>
+			{#if commercialFailed}
+				<p class="section-desc">Couldn't load the commercial license status: the request failed.</p>
+			{/if}
 			{#if commercialConfig.configured}
 				<div class="commercial-status">
 					<span>Active: <strong>{commercialConfig.source_type === 'etpro' ? 'ET Pro' : 'Snort Subscriber'}</strong></span>

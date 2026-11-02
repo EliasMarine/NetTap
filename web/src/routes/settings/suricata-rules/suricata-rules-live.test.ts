@@ -66,4 +66,34 @@ describe('Suricata rules page — live status', () => {
 		expect(screen.getByRole('button', { name: 'Add Commercial License' })).toBeDisabled();
 		expect(screen.queryByRole('combobox', { name: /Auto-update interval/ })).not.toBeInTheDocument();
 	});
+
+	// #96: a failure showed an empty editor and "no license", as if nothing were saved
+	it('says the custom rules and license status could not be loaded', async () => {
+		stubFetch({ status: 200, body: LIVE });
+		render(Page);
+		await screen.findByText('64,307');
+
+		expect(screen.getByText("Couldn't load the saved custom rules: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the commercial license status: the request failed.")).toBeInTheDocument();
+	});
+
+	it('shows the saved custom rules and license without a failure note when they load', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const replies: Record<string, unknown> = {
+					'/api/suricata/rules/live': LIVE,
+					'/api/suricata/rules/custom': { content: 'alert tcp any any -> any any (sid:9999001;)' },
+					'/api/suricata/rules/commercial': { configured: false },
+				};
+				const body = replies[url];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+			}),
+		);
+		render(Page);
+		await screen.findByText('64,307');
+
+		expect(screen.getByDisplayValue('alert tcp any any -> any any (sid:9999001;)')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
+	});
 });

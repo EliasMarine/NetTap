@@ -183,9 +183,12 @@ export async function uploadCustomRules(content: string): Promise<CustomRulesRes
 export async function getCustomRules(): Promise<string> {
 	const res = await fetch('/api/suricata/rules/custom');
 
-	if (!res.ok) {
-		return '';
-	}
+	// OLD CODE START — #96: a failure showed an empty editor, as if no custom rules were saved
+	// if (!res.ok) {
+	// 	return '';
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Custom rules failed: HTTP ${res.status}`);
 
 	const data = await res.json();
 	return data.content || '';
@@ -217,9 +220,12 @@ export async function configureCommercial(
 export async function getCommercialConfig(): Promise<CommercialConfig> {
 	const res = await fetch('/api/suricata/rules/commercial');
 
-	if (!res.ok) {
-		return { configured: false };
-	}
+	// OLD CODE START — #96: a failure read as "no commercial license configured"
+	// if (!res.ok) {
+	// 	return { configured: false };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Commercial config failed: HTTP ${res.status}`);
 
 	return res.json();
 }
