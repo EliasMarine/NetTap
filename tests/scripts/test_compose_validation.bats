@@ -791,6 +791,14 @@ print('pcap writer: OK')
     ! echo "$section" | grep -q '^ *SURICATA_RUNMODE:'
 }
 
+@test "compose: suricata-live disables the decoder rules that fire on normal switch traffic" {
+    # STP/LLDP "Ethertype unknown" and "QUIC error on data" were two-thirds of all alerts (#57)
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    sids=$(echo "$section" | awk -F'"' '/SURICATA_DISABLE_SIDS:/ { print $2 }')
+    [[ ",$sids," == *",2200121,"* ]]
+    [[ ",$sids," == *",2231001,"* ]]
+}
+
 @test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"

@@ -454,6 +454,12 @@ services:
       # datagram to the same capture thread, then autofp hands the packet to its flow's worker.
       # (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #27)
       SURICATA_AF_PACKET_DEFRAG: "false"
+      # Decoder rules that fire on ordinary switch traffic seen on a mirror port: ~13k alerts a
+      # day each, two-thirds of all alerts on the G11 (dashboard data accuracy #57).
+      #   2200121 "SURICATA Ethertype unknown": STP BPDUs (802.3/LLC frames) and LLDP
+      #   2231001 "SURICATA QUIC error on data": QUIC packets Suricata's parser cannot read
+      # Malcolm's entrypoint writes these to disable.conf and regenerates the rules at start.
+      SURICATA_DISABLE_SIDS: "2200121,2231001"
       SURICATA_UPDATE_RULES: "true"
       SURICATA_UPDATE_ETOPEN: "true"
       SURICATA_ROTATED_PCAP: "false"
