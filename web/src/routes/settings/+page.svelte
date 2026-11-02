@@ -68,6 +68,7 @@
 	// --- Capture state ---
 	let captureEnabled = $state(true);
 	let captureMaxFileSize = $state(100);
+	let captureRotateMinutes = $state<number | null>(null);
 	let captureContainerRunning = $state(false);
 	let captureContainerStatus = $state('unknown');
 	let captureLoading = $state(true);
@@ -347,6 +348,7 @@
 			const status = await getCaptureStatus();
 			captureEnabled = status.enabled;
 			captureMaxFileSize = status.maxFileSizeMB;
+			captureRotateMinutes = status.rotateMinutes ?? null;
 			captureContainerRunning = status.containerRunning;
 			captureContainerStatus = status.containerStatus;
 		} catch {
@@ -1240,7 +1242,12 @@
 							/>
 							<span class="input-unit">MB</span>
 						</div>
+						<!-- OLD CODE START — 2026-11-02: the 100 MB default was never what netsniff used
 						<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
+						OLD CODE END -->
+						<p class="field-help">
+							A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MB.
+						</p>
 					</div>
 
 					<button class="btn btn-primary" onclick={saveCaptureSettings} disabled={captureSaving}>

@@ -38,6 +38,8 @@ export interface CaptureStatsResponse {
 export interface CaptureStatus {
 	enabled: boolean;
 	maxFileSizeMB: number;
+	/** netsniff also starts a new file after this many minutes */
+	rotateMinutes?: number;
 	containerRunning: boolean;
 	containerStatus: string;
 }

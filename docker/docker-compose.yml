@@ -832,6 +832,9 @@ services:
       PCAP_DIR: "/opt/nettap/pcap"
       # Most of the disk PCAP may use (percent, 0 = no cap); oldest files go first (#37)
       PCAP_MAX_DISK_PCT: "${PCAP_MAX_DISK_PCT:-25}"
+      # same values pcap-capture gets, so the Settings page shows what netsniff uses
+      PCAP_ROTATE_MB: "${PCAP_ROTATE_MB:-100}"
+      PCAP_ROTATE_MIN: "${PCAP_ROTATE_MIN:-10}"
       HOST_SYS_NET: "/host/sys/class/net"
       HOST_SYS_LEDS: "/host/sys/class/leds"
       HOST_NETPLAN_DIR: "/host/etc/netplan"

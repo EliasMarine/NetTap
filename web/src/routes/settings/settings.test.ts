@@ -156,6 +156,21 @@ describe('Settings — capture status label', () => {
 		expect(screen.getByText('Enabled — capture container not running')).toBeInTheDocument();
 		expect(screen.queryByText('Enabled — capturing packets')).not.toBeInTheDocument();
 	});
+
+	it('shows the size netsniff really rotates at, and the time limit', async () => {
+		stubFetch({
+			'/api/capture/status': () => ({
+				body: { enabled: true, maxFileSizeMB: 4096, rotateMinutes: 10, containerRunning: true, containerStatus: 'running' },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+
+		expect(screen.getByDisplayValue('4096')).toBeInTheDocument();
+		expect(screen.getByText(/or every 10 minutes, whichever comes first/)).toBeInTheDocument();
+		expect(screen.queryByText(/Default: 100 MB/)).not.toBeInTheDocument();
+	});
 });
 
 describe('Settings — UniFi integration', () => {

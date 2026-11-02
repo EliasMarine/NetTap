@@ -20,6 +20,12 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.capture_control import register_capture_control_routes
 from api.settings import _load_env_file
+from services.capture_config import (
+    CaptureConfig,
+    CaptureMode,
+    load_capture_config,
+    save_capture_config,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +33,23 @@ from api.settings import _load_env_file
 # ---------------------------------------------------------------------------
 
 MODULE = "api.capture_control"
+
+
+def _capture_paths(test: unittest.TestCase, environ: dict | None = None) -> str:
+    """Point capture-mode.conf / capture.env at a temp dir for this test."""
+    tmpdir = tempfile.mkdtemp()
+    env = {
+        "CAPTURE_CONFIG_PATH": os.path.join(tmpdir, "capture-mode.conf"),
+        "CAPTURE_ENV_PATH": os.path.join(tmpdir, "capture.env"),
+        **(environ or {}),
+    }
+    patcher = patch.dict(os.environ, env)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    for name in ("PCAP_ROTATE_MB", "PCAP_ROTATE_MIN"):
+        if name not in env:
+            os.environ.pop(name, None)
+    return tmpdir
 
 
 def _mock_container_status(running: bool, status: str = "running"):
@@ -45,8 +68,11 @@ class TestGetCaptureStatus(AioHTTPTestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         self.tmp.write('PCAP_CAPTURE_ENABLED="true"\n')
-        self.tmp.write('PCAP_ROTATE_MB="250"\n')
+        self.tmp.write(
+            'PCAP_ROTATE_MB="250"\n'
+        )  # legacy store: pcap-capture never reads it
         self.tmp.close()
+        _capture_paths(self, {"PCAP_ROTATE_MB": "4096", "PCAP_ROTATE_MIN": "10"})
         super().setUp()
 
     def tearDown(self):
@@ -67,7 +93,9 @@ class TestGetCaptureStatus(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         data = await resp.json()
         self.assertTrue(data["enabled"])
-        self.assertEqual(data["maxFileSizeMB"], 250)
+        # what netsniff runs with: the compose value, not the legacy 250 (G11, 2026-11-02)
+        self.assertEqual(data["maxFileSizeMB"], 4096)
+        self.assertEqual(data["rotateMinutes"], 10)
         self.assertTrue(data["containerRunning"])
         self.assertEqual(data["containerStatus"], "running")
 
@@ -77,6 +105,7 @@ class TestGetCaptureStatus(AioHTTPTestCase):
         # Overwrite env file to be empty
         with open(self.tmp.name, "w") as f:
             f.write("")
+        os.environ.pop("PCAP_ROTATE_MB", None)
         mock_status.return_value = _mock_container_status(False, "exited")
         resp = await self.client.request("GET", "/api/capture/status")
         self.assertEqual(resp.status, 200)
@@ -86,6 +115,18 @@ class TestGetCaptureStatus(AioHTTPTestCase):
         self.assertEqual(data["maxFileSizeMB"], 100)
         self.assertFalse(data["containerRunning"])
         self.assertEqual(data["containerStatus"], "exited")
+
+    @unittest_run_loop
+    @patch(f"{MODULE}._get_container_status", new_callable=AsyncMock)
+    async def test_saved_setting_wins_over_compose_value(self, mock_status):
+        mock_status.return_value = _mock_container_status(True)
+        save_capture_config(
+            CaptureConfig(
+                mode=CaptureMode.MIRROR, interface="enp4s0", pcap_rotate_mb=250
+            )
+        )
+        data = await (await self.client.request("GET", "/api/capture/status")).json()
+        self.assertEqual(data["maxFileSizeMB"], 250)
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +221,8 @@ class TestPutCaptureSettings(AioHTTPTestCase):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
         self.tmp.write('PCAP_ROTATE_MB="100"\n')
         self.tmp.close()
+        self.capture_dir = _capture_paths(self)
+        save_capture_config(CaptureConfig(mode=CaptureMode.MIRROR, interface="enp4s0"))
         super().setUp()
 
     def tearDown(self):
@@ -245,13 +288,29 @@ class TestPutCaptureSettings(AioHTTPTestCase):
     @patch(f"{MODULE}._get_container_status", new_callable=AsyncMock)
     @patch(f"{MODULE}._docker_cmd", new_callable=AsyncMock)
     async def test_settings_persists_to_env_file(self, mock_cmd, mock_status):
+        """Saved where pcap-capture's loader reads it: capture.env (+ capture-mode.conf)."""
         mock_status.return_value = _mock_container_status(False, "exited")
         resp = await self.client.request(
             "PUT", "/api/capture/settings", json={"maxFileSizeMB": 750}
         )
         self.assertEqual(resp.status, 200)
-        env = _load_env_file(self.tmp.name)
-        self.assertEqual(env["PCAP_ROTATE_MB"], "750")
+        capture_env = _load_env_file(os.path.join(self.capture_dir, "capture.env"))
+        self.assertEqual(capture_env["PCAP_ROTATE_MEGABYTES"], "750")
+        self.assertEqual(capture_env["PCAP_IFACE"], "enp4s0")  # mode untouched
+        saved = load_capture_config()
+        self.assertEqual(saved.pcap_rotate_mb, 750)
+        self.assertEqual(saved.mode, CaptureMode.MIRROR)
+
+    @unittest_run_loop
+    @patch(f"{MODULE}._docker_cmd", new_callable=AsyncMock)
+    async def test_settings_before_setup_is_409(self, mock_cmd):
+        os.unlink(os.path.join(self.capture_dir, "capture-mode.conf"))
+        resp = await self.client.request(
+            "PUT", "/api/capture/settings", json={"maxFileSizeMB": 750}
+        )
+        self.assertEqual(resp.status, 409)
+        self.assertFalse(os.path.exists(os.path.join(self.capture_dir, "capture.env")))
+        mock_cmd.assert_not_called()
 
     @unittest_run_loop
     async def test_settings_missing_field_returns_400(self):
