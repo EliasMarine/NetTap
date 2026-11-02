@@ -79,9 +79,17 @@ class BandwidthTracker:
 
     def _bytes_aggs(self) -> dict:
         """Return standard byte aggregation fields."""
+        # OLD CODE START — replaced 2026-11-01: client/server.bytes are Zeek orig_bytes/
+        # resp_bytes (payload only), so monthly usage read lower than the 24 h summary
+        # return {
+        #     "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+        #     "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+        # }
+        # OLD CODE END
+        # source/destination.bytes are Zeek orig_ip_bytes/resp_ip_bytes: bytes on the wire
         return {
-            "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-            "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
         }
 
     def get_monthly_usage(

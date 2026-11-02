@@ -494,6 +494,17 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertTrue(any("query_string" in clause for clause in must))
 
     @unittest_run_loop
+    async def test_connections_total_counts_past_10000(self):
+        """total and total_pages are shown; OpenSearch stops at 10,000 unless asked."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/traffic/connections")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertIs(body["track_total_hits"], True)
+
+    @unittest_run_loop
     async def test_connections_size_capped(self):
         """Page size is capped at 200."""
         self.mock_client.search.return_value = {
@@ -560,6 +571,83 @@ class TestTopByBytesOrdering(AioHTTPTestCase):
             self.assertEqual(agg["terms"].get("order"), {"total_bytes": "desc"}, path)
             self.assertIn("total_bytes", agg["aggs"], path)
             self.assertNotIn("bucket_sort", agg["aggs"], path)
+
+
+def _byte_fields(aggs: dict) -> set[str]:
+    """Collect every *.bytes field summed anywhere in an aggs tree."""
+    found: set[str] = set()
+    for value in aggs.values():
+        if not isinstance(value, dict):
+            continue
+        field = value.get("sum", {}).get("field", "")
+        if field.endswith(".bytes"):
+            found.add(field)
+        found |= _byte_fields(value.get("aggs", {}))
+    return found
+
+
+class TestBandwidthFiltersMatch(AioHTTPTestCase):
+    """Summary, bandwidth series and /api/bandwidth/* must count the same bytes.
+
+    On the G11 the monthly total (1.004 GB) and the 24 h summary (1.077 GB)
+    disagreed with all data from the same day.
+    """
+
+    EXCLUDED = ["192.168.1.2"]
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []},
+            "aggregations": {},
+        }
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        app["excluded_ips"] = self.EXCLUDED
+        register_traffic_routes(app, self.storage)
+        return app
+
+    async def _api_body(self, path: str) -> dict:
+        self.mock_client.search.reset_mock()
+        resp = await self.client.request("GET", path)
+        self.assertEqual(resp.status, 200, path)
+        return self.mock_client.search.call_args.kwargs["body"]
+
+    def _tracker_bodies(self) -> list[dict]:
+        from services.bandwidth_tracker import BandwidthTracker
+
+        client = MagicMock()
+        client.search.return_value = {"aggregations": {}}
+        tracker = BandwidthTracker(client)
+        tracker.get_monthly_usage(2026, 11, excluded_ips=self.EXCLUDED)
+        tracker.get_daily_usage(
+            "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z", excluded_ips=self.EXCLUDED
+        )
+        return [c.kwargs["body"] for c in client.search.call_args_list]
+
+    @unittest_run_loop
+    async def test_same_exclusions_and_byte_fields(self):
+        bodies = {
+            "summary": await self._api_body("/api/traffic/summary"),
+            "series": await self._api_body("/api/traffic/bandwidth"),
+        }
+        monthly, daily = self._tracker_bodies()
+        bodies["monthly"] = monthly
+        bodies["daily"] = daily
+
+        expected_must_not = [{"terms": {"source.ip": self.EXCLUDED}}]
+        for name, body in bodies.items():
+            self.assertEqual(
+                body["query"]["bool"].get("must_not"), expected_must_not, name
+            )
+            self.assertEqual(
+                _byte_fields(body["aggs"]),
+                {"source.bytes", "destination.bytes"},
+                name,
+            )
 
 
 if __name__ == "__main__":

@@ -126,9 +126,12 @@ class MACCorrelator:
                         "total_bytes": {
                             "sum": {
                                 "script": {
+                                    # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                                    # "source": ("(doc['client.bytes']...) " "+ (doc['server.bytes']...)"),
+                                    # OLD CODE END
                                     "source": (
-                                        "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) "
-                                        "+ (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
+                                        "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) "
+                                        "+ (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
                                     ),
                                     "lang": "painless",
                                 }
@@ -246,8 +249,14 @@ class MACCorrelator:
                         "calendar_interval": "hour",
                     }
                 },
-                "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-                "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                # OLD CODE END
+                "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+                "total_resp_bytes": {
+                    "sum": {"field": "destination.bytes", "missing": 0}
+                },
                 "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
                 "total_resp_pkts": {
                     "sum": {"field": "destination.packets", "missing": 0}

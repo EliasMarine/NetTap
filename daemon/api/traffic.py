@@ -119,12 +119,26 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     query = {
         "size": 0,
         "track_total_hits": True,
+        # OLD CODE START — replaced 2026-11-01: summary counted the appliance's own
+        # traffic while /api/bandwidth/* excluded it, so the two totals disagreed
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_ZEEK_CONN_FILTERS,
+        #         ]
+        #     }
+        # },
+        # OLD CODE END
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
-                ]
+                ],
+                "must_not": build_excluded_ips_filter(
+                    request.app.get("excluded_ips", [])
+                ),
             }
         },
         "aggs": {
@@ -180,7 +194,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 async def handle_top_talkers(request: web.Request) -> web.Response:
     """GET /api/traffic/top-talkers?from=&to=&limit=20
 
-    Returns top source IPs by total bytes (client.bytes + server.bytes).
+    Returns top source IPs by total bytes (source.bytes + destination.bytes).
     """
     from_ts, to_ts = _parse_time_range(request)
     limit = _parse_int_param(request, "limit", 20)
@@ -213,7 +227,10 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                                # "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE END
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -297,7 +314,10 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                                # "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE END
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
@@ -404,7 +424,7 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     """GET /api/traffic/bandwidth?from=&to=&interval=5m
 
     Returns time-series bandwidth data using a date_histogram on '@timestamp'
-    with sum of client.bytes + server.bytes per bucket.
+    with sum of source.bytes + destination.bytes per bucket.
     """
     from_ts, to_ts = _parse_time_range(request)
     interval = request.query.get("interval", "5m")
@@ -417,12 +437,26 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        # OLD CODE START — replaced 2026-11-01: the series counted the appliance's own
+        # traffic while the summary and /api/bandwidth/* now exclude it
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_ZEEK_CONN_FILTERS,
+        #         ]
+        #     }
+        # },
+        # OLD CODE END
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
-                ]
+                ],
+                "must_not": build_excluded_ips_filter(
+                    request.app.get("excluded_ips", [])
+                ),
             }
         },
         "aggs": {
@@ -436,9 +470,16 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
                         "max": to_ts,
                     },
                 },
+                # OLD CODE START — replaced 2026-11-01: client/server.bytes are Zeek
+                # orig_bytes/resp_bytes (payload); the summary sums source/destination.bytes
+                # "aggs": {
+                #     "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                #     "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                # },
+                # OLD CODE END
                 "aggs": {
-                    "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-                    "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                    "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+                    "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
                 },
             }
         },
@@ -513,6 +554,8 @@ async def handle_connections(request: web.Request) -> web.Response:
     query = {
         "size": size,
         "from": offset,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "must": must_clauses if must_clauses else [{"match_all": {}}],
