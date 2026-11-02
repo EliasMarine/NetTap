@@ -48,6 +48,15 @@ async def handle_cyberchef_url(request: web.Request) -> web.Response:
 
     if not recipe_fragment:
         return web.json_response({"error": "recipe_fragment is required"}, status=400)
+    # the result becomes an iframe src: keep it a CyberChef hash under /cyberchef/
+    if not isinstance(recipe_fragment, str) or not recipe_fragment.startswith(
+        "#recipe="
+    ):
+        return web.json_response(
+            {"error": "recipe_fragment must start with #recipe="}, status=400
+        )
+    if not isinstance(input_data, str):
+        return web.json_response({"error": "input_data must be text"}, status=400)
 
     try:
         url = cyberchef.build_recipe_url(recipe_fragment, input_data)
