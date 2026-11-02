@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aiohttp import web
+from opensearchpy import OpenSearchException
 
 from api.devices import (
     _device_category,
@@ -312,7 +313,11 @@ async def handle_registry_list(request: web.Request) -> web.Response:
     offset = _parse_int_param(request, "offset", 0) - 1  # Convert 1-based to 0-based
     offset = max(0, offset)
 
-    devices = registry.get_all_devices(limit=limit, offset=offset)
+    try:
+        devices = registry.get_all_devices(limit=limit, offset=offset)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device registry: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
 
     # Add display_name to each device
     for device in devices:
@@ -333,7 +338,11 @@ async def handle_registry_detail(request: web.Request) -> web.Response:
     registry = _get_registry(request)
     mac = request.match_info["mac"]
 
-    device = registry.get_device(mac)
+    try:
+        device = registry.get_device(mac)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device registry: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
     if device is None:
         return web.json_response({"error": f"Device not found: {mac}"}, status=404)
 
@@ -347,11 +356,14 @@ async def handle_registry_traffic(request: web.Request) -> web.Response:
     mac = request.match_info["mac"]
     from_ts, to_ts = _parse_time_range(request)
 
-    device = registry.get_device(mac)
-    if device is None:
-        return web.json_response({"error": f"Device not found: {mac}"}, status=404)
-
-    traffic = registry.get_device_traffic(mac, from_ts, to_ts)
+    try:
+        device = registry.get_device(mac)
+        if device is None:
+            return web.json_response({"error": f"Device not found: {mac}"}, status=404)
+        traffic = registry.get_device_traffic(mac, from_ts, to_ts)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device registry: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
     return web.json_response(
         {
             "from": from_ts,
@@ -371,7 +383,11 @@ async def handle_registry_search(request: web.Request) -> web.Response:
             {"error": "Query parameter 'q' is required"}, status=400
         )
 
-    devices = registry.search_devices(query_str)
+    try:
+        devices = registry.search_devices(query_str)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device registry: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
     for device in devices:
         device["display_name"] = registry.get_display_name(device)
 

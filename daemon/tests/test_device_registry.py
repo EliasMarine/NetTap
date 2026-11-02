@@ -298,6 +298,15 @@ class TestGetDevice:
         result = registry.get_device("FF:FF:FF:FF:FF:FF")
         assert result is None
 
+    def test_get_device_error_raises_not_none(self, registry, mock_client):
+        """#96: a failed lookup answered "Device not found" (404)."""
+        from opensearchpy import ConnectionTimeout
+
+        mock_client.get.side_effect = ConnectionTimeout("TIMEOUT", "timed out", None)
+
+        with pytest.raises(ConnectionTimeout):
+            registry.get_device("AA:BB:CC:DD:EE:FF")
+
 
 # ---------------------------------------------------------------------------
 # Get all devices
@@ -326,14 +335,14 @@ class TestGetAllDevices:
         result = registry.get_all_devices()
         assert result == []
 
-    def test_get_all_devices_error(self, registry, mock_client):
-        """Should return empty list on OpenSearch error."""
+    def test_get_all_devices_error_raises(self, registry, mock_client):
+        """#96: a failed list raises; [] read as "no devices known"."""
         from opensearchpy import OpenSearchException
 
         mock_client.search.side_effect = OpenSearchException("test error")
 
-        result = registry.get_all_devices()
-        assert result == []
+        with pytest.raises(OpenSearchException):
+            registry.get_all_devices()
 
 
 # ---------------------------------------------------------------------------
@@ -415,8 +424,8 @@ class TestGetDeviceTraffic:
         # #90: ranking by a sum is only exact when each shard returns every destination
         assert aggs["top_destinations"]["terms"]["shard_size"] >= 10_000
 
-    def test_get_device_traffic_error(self, registry, mock_client):
-        """Should return empty summary on OpenSearch error."""
+    def test_get_device_traffic_error_raises(self, registry, mock_client):
+        """#96: a failed query raises; zeros read as a device with no traffic."""
         mock_client.get.return_value = {
             "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}
         }
@@ -424,14 +433,12 @@ class TestGetDeviceTraffic:
 
         mock_client.search.side_effect = OpenSearchException("test error")
 
-        result = registry.get_device_traffic(
-            "AA:BB:CC:DD:EE:FF",
-            "2026-01-01T00:00:00Z",
-            "2026-01-02T00:00:00Z",
-        )
-
-        assert result["total_bytes"] == 0
-        assert result["connection_count"] == 0
+        with pytest.raises(OpenSearchException):
+            registry.get_device_traffic(
+                "AA:BB:CC:DD:EE:FF",
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +466,15 @@ class TestSearchDevices:
 
         result = registry.search_devices("nonexistent")
         assert result == []
+
+    def test_search_error_raises(self, registry, mock_client):
+        """#96: [] read as "no device matches"."""
+        from opensearchpy import OpenSearchException
+
+        mock_client.search.side_effect = OpenSearchException("test error")
+
+        with pytest.raises(OpenSearchException):
+            registry.search_devices("192.168.1")
 
 
 # ---------------------------------------------------------------------------
@@ -1002,3 +1018,32 @@ class TestIPTracking:
 
         result = registry.register_device(mac="AA:BB:CC:DD:EE:FF", ip="192.168.1.100")
         assert result["ips"].count("192.168.1.100") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/devices/registry",
+        "/api/devices/registry/AA:BB:CC:DD:EE:FF",
+        "/api/devices/registry/AA:BB:CC:DD:EE:FF/traffic",
+        "/api/devices/registry/search?q=192.168",
+    ],
+)
+async def test_registry_endpoints_answer_502_when_opensearch_fails(registry, mock_client, path):
+    """#96: a failed query listed no devices, a known device as "not found", or zero traffic."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from opensearchpy import ConnectionTimeout
+
+    from api.devices_v2 import register_devices_v2_routes
+
+    mock_client.get.side_effect = ConnectionTimeout("TIMEOUT", "timed out", None)
+    mock_client.search.side_effect = ConnectionTimeout("TIMEOUT", "timed out", None)
+    app = web.Application()
+    register_devices_v2_routes(app, registry, MagicMock())
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get(path)
+        assert resp.status == 502
+        assert "error" in await resp.json()

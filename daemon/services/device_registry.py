@@ -331,14 +331,21 @@ class DeviceRegistry:
         """Retrieve a device by MAC address.
 
         Returns:
-            Device document dict, or None if not found.
+            Device document dict, or None if not found. Any other error raises (#96).
         """
         mac = self._normalize_mac(mac)
+        # OLD CODE START — #96: any failure read as "Device not found" (404)
+        # try:
+        #     result = self._client.get(index=DEVICES_INDEX, id=mac)
+        #     return result.get("_source")
+        # except OpenSearchException:
+        #     return None
+        # OLD CODE END
         try:
             result = self._client.get(index=DEVICES_INDEX, id=mac)
-            return result.get("_source")
-        except OpenSearchException:
+        except NotFoundError:
             return None
+        return result.get("_source")
 
     def get_all_devices(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """List all known devices with pagination.
@@ -353,12 +360,16 @@ class DeviceRegistry:
             "sort": [{"last_seen": {"order": "desc"}}],
         }
 
-        try:
-            result = self._client.search(index=DEVICES_INDEX, body=query)
-            return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
-        except OpenSearchException as exc:
-            logger.error("Failed to list devices: %s", exc)
-            return []
+        # OLD CODE START — #96: [] read as "no devices known"
+        # try:
+        #     result = self._client.search(index=DEVICES_INDEX, body=query)
+        #     return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to list devices: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=DEVICES_INDEX, body=query)
+        return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
     def get_device_traffic(self, mac: str, from_ts: str, to_ts: str) -> dict:
         """Get traffic summary for a device by MAC address.
@@ -446,20 +457,15 @@ class DeviceRegistry:
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("Failed to get traffic for device %s: %s", mac, exc)
-            return {
-                "mac": mac,
-                "total_bytes": 0,
-                "inbound_bytes": 0,
-                "outbound_bytes": 0,
-                "connection_count": 0,
-                "protocols": [],
-                "top_protocols": [],
-                "top_destinations": [],
-            }
+        # OLD CODE START — #96: a failure read as a device with no traffic
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to get traffic for device %s: %s", mac, exc)
+        #     return {"mac": mac, "total_bytes": 0, "inbound_bytes": 0, "outbound_bytes": 0,
+        #             "connection_count": 0, "protocols": [], "top_protocols": [], "top_destinations": []}
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         aggs = result.get("aggregations", {})
         hits_total = result.get("hits", {}).get("total", {})
@@ -520,12 +526,16 @@ class DeviceRegistry:
             },
         }
 
-        try:
-            result = self._client.search(index=DEVICES_INDEX, body=query)
-            return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
-        except OpenSearchException as exc:
-            logger.error("Device search failed for '%s': %s", query_str, exc)
-            return []
+        # OLD CODE START — #96: [] read as "no device matches"
+        # try:
+        #     result = self._client.search(index=DEVICES_INDEX, body=query)
+        #     return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
+        # except OpenSearchException as exc:
+        #     logger.error("Device search failed for '%s': %s", query_str, exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=DEVICES_INDEX, body=query)
+        return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
     def get_display_name(self, device: dict) -> str:
         """Resolve the best display name for a device using priority rules.
