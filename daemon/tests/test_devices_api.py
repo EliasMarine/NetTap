@@ -536,6 +536,11 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
             {"term": {"zeek.dns.query": "pcap-monitor"}},
             dns_bodies[0]["query"]["bool"]["must_not"],
         )
+        # nor are its mDNS announcements
+        self.assertIn(
+            {"terms": {"destination.port": [5353, 5355, 137]}},
+            dns_bodies[0]["query"]["bool"]["must_not"],
+        )
 
     @unittest_run_loop
     async def test_device_detail_not_found_returns_empty(self):

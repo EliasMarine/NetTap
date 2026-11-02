@@ -29,6 +29,15 @@ DNS_NOISE_EXCLUSION = [
     {"term": {"zeek.dns.query": "pcap-monitor"}},
 ]
 
+# DNS analytics count lookups, not local discovery: mDNS (5353), LLMNR (5355) and
+# NetBIOS (137) were ~76% of dns.log on the G11 and pushed the average RTT to ~2 s.
+# Log search keeps showing them (it uses DNS_NOISE_EXCLUSION only).
+LOCAL_NAME_SERVICE_PORTS = [5353, 5355, 137]
+DNS_LOOKUP_EXCLUSION = [
+    *DNS_NOISE_EXCLUSION,
+    {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}},
+]
+
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
     """Build an OpenSearch range filter on '@timestamp'."""
@@ -74,7 +83,7 @@ class DNSAnalytics:
         # OLD CODE END
         return {
             "filter": filters,
-            "must_not": DNS_NOISE_EXCLUSION
+            "must_not": DNS_LOOKUP_EXCLUSION
             + build_excluded_ips_filter(excluded_ips or []),
         }
 

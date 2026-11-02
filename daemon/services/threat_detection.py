@@ -13,7 +13,7 @@ import os
 import statistics
 from collections import Counter, defaultdict
 
-from services.dns_analytics import DNS_NOISE_EXCLUSION
+from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 
 # OLD CODE START — excluded IPs stay visible in threat detections
 # from services.excluded_ips import build_excluded_ips_filter
@@ -341,8 +341,8 @@ def analyze_dns_anomalies(
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "dns"}},
         ],
-        # pcap-monitor is Malcolm's own NXDOMAIN-heavy health check; it would read as an NXDOMAIN spike
-        "must_not": DNS_NOISE_EXCLUSION,
+        # pcap-monitor would read as an NXDOMAIN spike; long mDNS service names would read as tunneling
+        "must_not": DNS_LOOKUP_EXCLUSION,
     }
     # OLD CODE START — excluded IPs stay visible in threat detections
     # if excluded:

@@ -412,6 +412,7 @@ class TestGetStats:
 
 _FROM, _TO = "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
 _NOISE = {"term": {"zeek.dns.query": "pcap-monitor"}}
+_LOCAL_DISCOVERY = {"terms": {"destination.port": [5353, 5355, 137]}}
 
 
 class TestDnsNoiseExclusion:
@@ -445,7 +446,10 @@ class TestDnsNoiseExclusion:
         call(dns)
         assert mock_client.search.call_args_list
         for c in mock_client.search.call_args_list:
-            assert _NOISE in c.kwargs["body"]["query"]["bool"]["must_not"]
+            must_not = c.kwargs["body"]["query"]["bool"]["must_not"]
+            assert _NOISE in must_not
+            # mDNS/LLMNR/NetBIOS were ~76% of dns.log on the G11 and are not lookups
+            assert _LOCAL_DISCOVERY in must_not
 
     def test_excluded_ips_still_applied(self, dns, mock_client):
         mock_client.search.return_value = {}
@@ -453,13 +457,19 @@ class TestDnsNoiseExclusion:
         must_not = mock_client.search.call_args.kwargs["body"]["query"]["bool"][
             "must_not"
         ]
-        assert must_not == [_NOISE, {"terms": {"source.ip": ["192.168.1.2"]}}]
+        assert must_not == [
+            _NOISE,
+            _LOCAL_DISCOVERY,
+            {"terms": {"source.ip": ["192.168.1.2"]}},
+        ]
 
     def test_log_search_uses_the_same_constant(self):
         import api.logs
         from services.dns_analytics import DNS_NOISE_EXCLUSION
 
         assert api.logs._EXCLUDE_DNS_NOISE is DNS_NOISE_EXCLUSION
+        # Log Explorer still shows mDNS records; only analytics leave them out
+        assert _LOCAL_DISCOVERY not in api.logs._EXCLUDE_DNS_NOISE
 
 
 class TestStatsAccuracy:

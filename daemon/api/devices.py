@@ -16,7 +16,7 @@ from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
 from services.device_fingerprint import DeviceFingerprint
-from services.dns_analytics import DNS_NOISE_EXCLUSION
+from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.traffic_classifier import classify_asn, CATEGORIES
 from api.alerts import _normalize_alert_source
@@ -604,7 +604,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "dns"}},
                 ],
-                "must_not": DNS_NOISE_EXCLUSION,
+                "must_not": DNS_LOOKUP_EXCLUSION,
             }
         },
         "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50}}},

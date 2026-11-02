@@ -136,3 +136,5 @@ class TestDnsAnomalyNoise:
         analyze_dns_anomalies(client, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
         must_not = client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
         assert {"term": {"zeek.dns.query": "pcap-monitor"}} in must_not
+        # long mDNS service names would otherwise read as DNS tunneling
+        assert {"terms": {"destination.port": [5353, 5355, 137]}} in must_not
