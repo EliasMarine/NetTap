@@ -19,6 +19,7 @@ Endpoints:
 """
 
 import asyncio
+import functools
 import logging
 import os
 import threading
@@ -329,19 +330,26 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
                         changelog = val
                         break
             if changelog:
+                # OLD CODE START — 2026-11-01: the dict went in as the third positional
+                # argument, which is log_event's description string, not its metadata
+                # await loop.run_in_executor(None, changelog.log_event, "storage_pruned",
+                #     f"Manual cleanup: ...", {...})
+                # OLD CODE END
                 await loop.run_in_executor(
                     None,
-                    changelog.log_event,
-                    "storage_pruned",
-                    f"Manual cleanup: deleted data older than {older_than_days} days",
-                    {
-                        "older_than_days": older_than_days,
-                        "deleted_indices": result["deleted_indices"],
-                        "deleted_pcap_files": result["deleted_pcap_files"],
-                        "freed_bytes": result["freed_bytes_estimate"],
-                        "cutoff_date": result["cutoff_date"],
-                        "trigger": "manual",
-                    },
+                    functools.partial(
+                        changelog.log_event,
+                        "storage_pruned",
+                        f"Manual cleanup: deleted data older than {older_than_days} days",
+                        metadata={
+                            "older_than_days": older_than_days,
+                            "deleted_indices": result["deleted_indices"],
+                            "deleted_pcap_files": result["deleted_pcap_files"],
+                            "freed_bytes": result["freed_bytes_estimate"],
+                            "cutoff_date": result["cutoff_date"],
+                            "trigger": "manual",
+                        },
+                    ),
                 )
         except Exception:
             logger.warning("Failed to log cleanup to changelog", exc_info=True)
