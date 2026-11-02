@@ -174,6 +174,16 @@ services:
       # index pattern or dashboards (#73). supervisord runs as root; the mounted
       # config runs every program as helper.
       PUSER_PRIV_DROP: "false"
+      # shared-object-creation.sh runs under `set -u` and reads these unguarded (Malcolm
+      # passes them from arkime.env). Empty = its own defaults: shards and replicas from
+      # the node count (#73).
+      ARKIME_INIT_SHARDS: ""
+      ARKIME_INIT_REPLICAS: ""
+      ARKIME_INIT_SHARDS_PER_NODE: ""
+      # It also stamps malcolm_template with refresh_interval=${ARKIME_INIT_REFRESH_SEC:-60}s.
+      # Keep OpenSearch's 1 s default (what indices have today) so new data and alerts
+      # show up within seconds, not a minute.
+      ARKIME_INIT_REFRESH_SEC: "1"
     volumes:
       - dashboards-helper-data:/opt/dashboards-helper
       - ./curlrc:/var/local/curlrc:ro

@@ -334,6 +334,10 @@ svc = data['services']['dashboards-helper']
 assert svc.get('environment', {}).get('PUSER_PRIV_DROP') == 'false', 'dashboards-helper: PUSER_PRIV_DROP should be false'
 volumes = [str(v) for v in svc.get('volumes', [])]
 assert any('dashboards-helper/supervisord.conf:/etc/supervisord.conf' in v for v in volumes), volumes
+env = svc.get('environment', {})
+missing = [k for k in ('ARKIME_INIT_SHARDS', 'ARKIME_INIT_REPLICAS', 'ARKIME_INIT_SHARDS_PER_NODE') if k not in env]
+assert not missing, 'shared-object-creation.sh (set -u) needs these defined: ' + str(missing)
+assert str(env.get('ARKIME_INIT_REFRESH_SEC')) == '1', 'keep a 1 s index refresh, not the helper default of 60 s'
 print('dashboards-helper: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
 "
     [ "$status" -eq 0 ]

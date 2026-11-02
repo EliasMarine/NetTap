@@ -108,6 +108,9 @@ check "#73 no data index was deleted" "$rc" "${GONE:-none gone}; $(echo "$INDICE
 TEMPLATE=$(os_get "/_index_template/malcolm_template" | grep -o '"index_patterns":\[[^]]*\]')
 case "$TEMPLATE" in *arkime_sessions3-*) rc=0 ;; *) rc=1 ;; esac
 check "Chain 24 malcolm_template still targets arkime_sessions3-*" "$rc" "${TEMPLATE:-missing}"
+REFRESH=$(os_get "/_index_template/malcolm_template" | grep -o '"refresh_interval":"[^"]*"')
+case "${REFRESH:-none}" in none|*'"1s"') rc=0 ;; *) rc=1 ;; esac
+check "#73 new indices still refresh every second" "$rc" "${REFRESH:-not set (OpenSearch default 1s)}"
 POLICY=$(os_get "/_plugins/_ism/policies/nettap-hot-policy" | grep -o '"min_index_age":"[^"]*"' | head -1)
 if [ -n "$POLICY" ]; then rc=0; else rc=1; fi
 check "nettap-hot-policy untouched" "$rc" "${POLICY:-missing}"
