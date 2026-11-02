@@ -397,7 +397,9 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   device VLAN dropped); now 1% of all private-source traffic. Compose never passed LAN_SUBNETS.
   Batch 21: Zeek printed a UniFi AP's DHCP chaddr as 8 bytes, so the registry held a phantom
   second device; MACs keep 6 octets and long entries merge into the real one.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch21.sh.
+  Batch 22: the OpenSearch login (docker/curlrc) was 644 for every local account; now PUID-owned
+  600, and every service still logs in. The installer's bats file had errexit off (fake passes).
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch22.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1887,6 +1889,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 133. **A "top N%" threshold relative to the biggest item flips for items near the line (Chain 25)** — LAN detection kept /24s at ≥10% of the busiest subnet; the IoT VLAN sat at 12.6% and moved in and out between restarts, and a real one-device VLAN at 4.7% never counted. Pull the real distribution first, then pick a cut (here 1% of the total) with wide margins on both sides.
 134. **An override env var documented in code is not an override until compose passes it (Chain 25)** — the daemon read `LAN_SUBNETS`, and the plan was "owner sets it in docker/.env", but the compose `environment:` block never listed it. Add a compose bats check for every env var the code treats as configuration.
 135. **Don't trust a protocol field's length to be the hardware's (Chain 25)** — Zeek formats a DHCP chaddr using the client's `hlen`; a UniFi AP sent 8 bytes on one VLAN and the registry grew a phantom device keyed `F4:E2:C6:FF:98:21:62:72`. Normalize identifiers to their real shape (6 octets for Ethernet) at the one place every source passes through.
+136. **A file a dropped-privilege process must read: give it to that user, don't open it to everyone (Chain 25)** — the installer made the OpenSearch login 644 because root:root 600 broke Malcolm (its entrypoints read it as PUID). PUID-owned 600 works for PUID and root and shuts out every other account. Check by reading the file as each process user in each consuming container (`docker exec -u <uid> c test -r f`).
+137. **A bats test that turns off `-e` can't fail on a middle line (Chain 25)** — `set +euo pipefail` in a helper made `test_malcolm_config.bats` pass with failing checks; restoring `-e` exposed 11. Also: a sourced script that defines `run()` replaces bats' `run`; keep a copy (`bats_run`). Prove a new test fails on the old code before trusting it.
+138. **`docker top` needs a PID column** — `docker top c -o uid` fails ("Couldn't find PID field"); use `-o pid,uid`. And an empty list must fail a check, not pass it vacuously.
 
 ---
 
