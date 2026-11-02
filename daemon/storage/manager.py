@@ -205,6 +205,8 @@ class StorageManager:
 
         # C3: Track whether ILM policy has been verified this session
         self._ilm_verified: bool = False
+        # #96: whether OpenSearch took the exact-counts setting (#90); retried each cycle
+        self._exact_counts: bool = False
 
         # Track last prune cycle timestamp for health status reporting
         self._last_prune_at: str | None = None
@@ -1117,7 +1119,9 @@ class StorageManager:
                 http_auth=self._http_auth,
             )
             self._ilm_verified = True
-            self._exact_aggregation_counts()
+            # OLD CODE START — #96: tried once; a failure was only logged and never retried
+            # self._exact_aggregation_counts()
+            # OLD CODE END
             self._keep_ism_history_single_copy()
 
             # Log summary
@@ -1154,11 +1158,13 @@ class StorageManager:
         for aggregations, and a terms top-N then counts like 4 shards: on the G11 a
         device's top destinations read 106 for 112 and a top destination could go missing.
         Every page's top lists come from terms aggregations, so they must count exactly.
+        Sets ``_exact_counts`` once OpenSearch takes it; run_cycle retries until then.
         """
         try:
             self._client.cluster.put_settings(
                 body={"persistent": {"search.concurrent_segment_search.mode": "none"}}
             )
+            self._exact_counts = True
         except Exception as exc:
             logger.warning("Could not turn off concurrent segment search: %s", exc)
 
@@ -1692,6 +1698,9 @@ class StorageManager:
                 self.verify_ilm_policy()
             except Exception:
                 logger.exception("ILM policy verification failed on startup")
+        # #96: until OpenSearch takes it, top lists can undercount (#90)
+        if not getattr(self, "_exact_counts", False):
+            self._exact_aggregation_counts()
 
         # MS-002: age-based PCAP retention, before usage is measured
         self.prune_expired_pcaps()
@@ -1886,6 +1895,8 @@ class StorageManager:
             },
             # ILM sync status (populated when verify_ilm_policy() has run)
             "ilm_synced": getattr(self, "_ilm_verified", False),
+            # #96: false while top-N counts may be approximate (concurrent segment search on)
+            "exact_counts": getattr(self, "_exact_counts", False),
             # Last prune cycle timestamp for health reporting
             "last_prune_at": self._last_prune_at,
             # ILM policy application status from RetentionConfigManager

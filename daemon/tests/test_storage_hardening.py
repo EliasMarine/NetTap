@@ -336,17 +336,20 @@ class TestIlmPolicyVerification:
         assert index_call["body"] == {"index": {"number_of_replicas": 0}}
         assert index_call["expand_wildcards"] == "all"
 
-    def test_ilm_verification_turns_off_concurrent_segment_search(self):
-        """#90: OpenSearch 3.x slices each shard for aggregations, so terms top-N counts read low."""
-        mgr = _make_manager()
-        mgr._client = MagicMock()
-
-        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
-            mock_apply.return_value = {"nettap-hot-policy": "unchanged"}
-            mgr.verify_ilm_policy()
-
-        bodies = [c.kwargs["body"] for c in mgr._client.cluster.put_settings.call_args_list]
-        assert {"persistent": {"search.concurrent_segment_search.mode": "none"}} in bodies
+    # OLD CODE START — #96: the setting moved from the one-time ILM check to every cycle
+    # until it takes (TestExactCountsRetried below)
+    # def test_ilm_verification_turns_off_concurrent_segment_search(self):
+    #     """#90: OpenSearch 3.x slices each shard for aggregations, so terms top-N counts read low."""
+    #     mgr = _make_manager()
+    #     mgr._client = MagicMock()
+    #
+    #     with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+    #         mock_apply.return_value = {"nettap-hot-policy": "unchanged"}
+    #         mgr.verify_ilm_policy()
+    #
+    #     bodies = [c.kwargs["body"] for c in mgr._client.cluster.put_settings.call_args_list]
+    #     assert {"persistent": {"search.concurrent_segment_search.mode": "none"}} in bodies
+    # OLD CODE END
 
     def test_ilm_policy_verification_passes_when_exists(self):
         """When policies already exist, verify_ilm_policy reports unchanged."""
@@ -665,3 +668,54 @@ class TestReindexFromLogs:
         assert result["files_processed"] == 1
         assert result["documents_indexed"] == 1
         assert result["errors"] == 1
+
+
+_EXACT = {"persistent": {"search.concurrent_segment_search.mode": "none"}}
+
+
+class TestExactCountsRetried:
+    """#96: turning off concurrent segment search (#90) was tried once at startup; a
+    failure was only logged, and top-N counts stayed approximate with nothing saying so."""
+
+    def _cycle(self, mgr):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "get_disk_prediction", return_value={}),
+            patch.object(mgr, "prune_expired_pcaps"),
+            patch.object(mgr, "prune_pcaps_over_cap"),
+        ):
+            mgr.run_cycle()
+
+    def _exact_calls(self, mgr):
+        return [
+            c for c in mgr._client.cluster.put_settings.call_args_list
+            if c.kwargs.get("body") == _EXACT
+        ]
+
+    def _status(self, mgr):
+        mgr._last_prune_at = None
+        mgr._retention_config_manager = None
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "list_indices", return_value=[]),
+        ):
+            return mgr.get_status()
+
+    def test_failure_is_retried_next_cycle_and_shown(self):
+        mgr = _make_manager()
+        mgr._ilm_verified = True
+        mgr._client.cluster.put_settings.side_effect = OpenSearchException("503")
+        self._cycle(mgr)
+        assert self._status(mgr)["exact_counts"] is False
+
+        mgr._client.cluster.put_settings.side_effect = None
+        self._cycle(mgr)
+        assert len(self._exact_calls(mgr)) == 2
+        assert self._status(mgr)["exact_counts"] is True
+
+    def test_not_resent_once_taken(self):
+        mgr = _make_manager()
+        mgr._ilm_verified = True
+        self._cycle(mgr)
+        self._cycle(mgr)
+        assert len(self._exact_calls(mgr)) == 1
