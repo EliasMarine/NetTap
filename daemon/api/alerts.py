@@ -907,6 +907,40 @@ def _signature_filter(names) -> dict:
     return {"bool": {"should": should, "minimum_should_match": 1}}
 
 
+def _alerts_by_ip(
+    client, query: dict, field: str, sig_severity: dict[str, int]
+) -> dict[str, tuple[int, int]]:
+    """{ip: (alerts, worst severity)} for every `field` value among these signatures (#96).
+
+    The severity is the worst of the signatures the IP appears in, never above 4 (as before).
+    """
+    if not sig_severity:
+        return {}
+    by_sev: dict[int, list[str]] = defaultdict(list)
+    for name, sev in sig_severity.items():
+        by_sev[sev].append(name)
+    scoped = {"bool": {"filter": [query, _signature_filter(sig_severity)]}}
+    per_sev = {str(s): _signature_filter(names) for s, names in by_sev.items()}
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        scoped,
+        [{"ip": {"terms": {"field": field}}}],
+        {"sev": {"filters": {"filters": per_sev}}},
+    )
+    if not complete:
+        logger.warning("Alert %s values stopped at %d", field, len(buckets))
+    return {
+        b["key"]["ip"]: (
+            b.get("doc_count", 0),
+            min(
+                [4, *(int(s) for s, f in b["sev"]["buckets"].items() if f["doc_count"])]
+            ),
+        )
+        for b in buckets
+    }
+
+
 async def handle_alerts_categories(request: web.Request) -> web.Response:
     """GET /api/alerts/categories?from=&to=
 
@@ -1181,8 +1215,10 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     }
     per_signature = {
         "by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}},
-        "by_src_ip": {"terms": {"field": "source.ip", "size": 50}},
-        "by_dst_ip": {"terms": {"field": "destination.ip", "size": 50}},
+        # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+        # "by_src_ip": {"terms": {"field": "source.ip", "size": 50}},
+        # "by_dst_ip": {"terms": {"field": "destination.ip", "size": 50}},
+        # OLD CODE END
         "latest": {"max": {"field": "@timestamp"}},
     }
 
@@ -1190,8 +1226,11 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         # OLD CODE START — #96: the top 500 signatures only; the rest fell out of the category
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
-        # 500 x (5 + 50 + 50) sub-buckets stays under search.max_buckets (65,535)
-        signatures = _every_signature(client, query["query"], per_signature, 500)
+        # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+        # # 500 x (5 + 50 + 50) sub-buckets stays under search.max_buckets (65,535)
+        # signatures = _every_signature(client, query["query"], per_signature, 500)
+        # OLD CODE END
+        signatures = _every_signature(client, query["query"], per_signature)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category detail: %s", exc)
         return web.json_response(
@@ -1203,10 +1242,13 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     total_count = 0
     severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     sub_cat_counts: dict[str, int] = {}
-    all_sources: set[str] = set()
-    all_targets: set[str] = set()
-    device_counts: dict[str, int] = {}  # ip → total alert count
-    device_severity: dict[str, int] = {}  # ip → worst severity (lowest = worst)
+    # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+    # all_sources: set[str] = set()
+    # all_targets: set[str] = set()
+    # device_counts: dict[str, int] = {}  # ip → total alert count
+    # device_severity: dict[str, int] = {}  # ip → worst severity (lowest = worst)
+    # OLD CODE END
+    sig_severity: dict[str, int] = {}  # signature → primary severity, for the IP queries
     top_signatures: list[dict] = []
 
     # OLD CODE START — #96: the top 500 signatures only; the rest fell out of the category
@@ -1238,21 +1280,24 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                 sig_name, int(sev_buckets[0].get("key", 4))
             )
 
-        # Source IPs — track per-device counts
-        for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
-            ip = src_b.get("key", "")
-            if ip:
-                all_sources.add(ip)
-                device_counts[ip] = device_counts.get(ip, 0) + src_b.get("doc_count", 0)
-                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
-
-        # Destination IPs — track per-device counts
-        for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
-            ip = dst_b.get("key", "")
-            if ip:
-                all_targets.add(ip)
-                device_counts[ip] = device_counts.get(ip, 0) + dst_b.get("doc_count", 0)
-                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+        # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+        # # Source IPs — track per-device counts
+        # for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
+        #     ip = src_b.get("key", "")
+        #     if ip:
+        #         all_sources.add(ip)
+        #         device_counts[ip] = device_counts.get(ip, 0) + src_b.get("doc_count", 0)
+        #         device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+        #
+        # # Destination IPs — track per-device counts
+        # for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
+        #     ip = dst_b.get("key", "")
+        #     if ip:
+        #         all_targets.add(ip)
+        #         device_counts[ip] = device_counts.get(ip, 0) + dst_b.get("doc_count", 0)
+        #         device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+        # OLD CODE END
+        sig_severity[sig_name] = primary_sev
 
         # Sub-category
         sub_id = categorize_sub_category(sig_name, category)
@@ -1272,6 +1317,27 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         )
 
     top_signatures.sort(key=lambda s: s["count"], reverse=True)
+
+    # Every source and target IP of the category's signatures, with its alert count
+    try:
+        sources = _alerts_by_ip(client, query["query"], "source.ip", sig_severity)
+        targets = _alerts_by_ip(client, query["query"], "destination.ip", sig_severity)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alert category IPs: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+    all_sources = set(sources)
+    all_targets = set(targets)
+    unseen = (0, 4)  # (no alerts, low)
+    device_counts = {
+        ip: sources.get(ip, unseen)[0] + targets.get(ip, unseen)[0]
+        for ip in all_sources | all_targets
+    }
+    device_severity = {
+        ip: min(sources.get(ip, unseen)[1], targets.get(ip, unseen)[1])
+        for ip in device_counts
+    }
 
     # Build sub-categories response
     sub_categories = []

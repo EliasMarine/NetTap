@@ -83,6 +83,21 @@ def _timeline(docs: list[dict], body: dict) -> dict:
     return {"aggregations": {"over_time": {"buckets": [bucket]}}}
 
 
+def _ip_page(docs: list[dict], body: dict, comp: dict, sub: dict) -> dict:
+    """Every source or destination IP of the queried signatures, split by severity filter."""
+    field = {"source.ip": "src", "destination.ip": "dst"}[comp["sources"][0]["ip"]["terms"]["field"]]
+    names = _names(body["query"]["bool"]["filter"][1])
+    mine = [d for d in docs if d["sig"] in names]
+    per_sev = sub["sev"]["filters"]["filters"]
+
+    def bucket(ip: str) -> dict:
+        hits = [d for d in mine if d[field] == ip]
+        sev = {s: {"doc_count": sum(d["sig"] in _names(f) for d in hits)} for s, f in per_sev.items()}
+        return {"doc_count": len(hits), "sev": {"buckets": sev}}
+
+    return _composite_page(sorted({d[field] for d in mine}), comp, bucket)
+
+
 def _fake_client(docs: list[dict]) -> MagicMock:
     def search(index, body):
         aggs = body["aggs"]
@@ -101,6 +116,8 @@ def _fake_client(docs: list[dict]) -> MagicMock:
         if "sig" in comp["sources"][0]:
             keys = sorted({d["sig"] for d in docs})
             return _composite_page(keys, comp, lambda k: _sig_aggs([d for d in docs if d["sig"] == k], sub))
+        if "ip" in comp["sources"][0]:
+            return _ip_page(docs, body, comp, sub)
         raise AssertionError(f"unexpected query {json.dumps(body)[:200]}")
 
     client = MagicMock()
@@ -169,3 +186,35 @@ def test_timeline_of_a_quiet_category_is_all_zeros():
 
     assert [p["total"] for p in body["series"]] == [0]
     assert body["series"][0]["sub_categories"] == {}
+
+
+def test_category_detail_counts_every_source_and_target():
+    """'ET DROP Dshield' fired by 400 scanners read as 50 sources (top 50 per signature)."""
+    scanners = [f"198.51.{n // 250}.{n % 250}" for n in range(400)]
+    docs = [_doc("ET DROP Dshield Block Listed Source", src=ip) for ip in scanners] + [
+        _doc("ET TROJAN Zeus", src="192.168.1.20", dst="203.0.113.9", sev=1) for _ in range(5)
+    ]
+    body = _get(handle_alert_category_detail, _fake_client(docs), "/api/alerts/categories/malware_c2", "malware_c2")
+
+    assert body["stats"] == {"total": 405, "unique_sources": 401, "unique_targets": 2, "affected_devices": 403}
+    assert body["affected_devices"][0]["ip"] == "192.168.1.10"
+    assert body["affected_devices"][0]["count"] == 400
+    assert len(body["affected_devices"]) == 20
+    counts = {d["ip"]: d["count"] for d in body["affected_devices"]}
+    assert counts["192.168.1.20"] == 5
+
+
+def test_device_severity_is_the_worst_signature_it_appears_in():
+    docs = [
+        _doc("ET TROJAN Zeus", src="192.168.1.20", sev=1),
+        _doc("ET DROP Dshield Block Listed Source", src="192.168.1.20", sev=3),
+        _doc("ET DROP Dshield Block Listed Source", src="192.168.1.30", sev=3),
+    ]
+    body = _get(handle_alert_category_detail, _fake_client(docs), "/api/alerts/categories/malware_c2", "malware_c2")
+    severity = {d["ip"]: d["severity"] for d in body["affected_devices"]}
+    by_sig = {s["signature"]: s["severity_label"] for s in body["top_signatures"]}
+    worst = min(by_sig.values(), key=["critical", "high", "medium", "low", "info"].index)
+
+    assert severity["192.168.1.20"] == worst
+    assert severity["192.168.1.30"] == by_sig["ET DROP Dshield Block Listed Source"]
+    assert severity["192.168.1.10"] == worst  # the target of both
