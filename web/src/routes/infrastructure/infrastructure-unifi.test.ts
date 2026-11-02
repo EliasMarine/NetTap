@@ -25,6 +25,21 @@ const EMPTY_LISTS: Record<string, unknown> = {
 	[`${UNIFI}/vpn`]: { tunnels: [] },
 };
 
+// the page's other readings, all answering, so only UniFi decides whether a "Couldn't load" shows
+const SYSTEM_READINGS: Record<string, unknown> = {
+	'/api/capture/mode': { mode: 'bridge', interface: '' },
+	'/api/capture/stats': { capture_interface: 'br0', drop_rate_pct: 0, rx_packets: 1, tx_packets: 1, link_speed_mbps: 1000 },
+	'/api/capture/health': { mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] },
+	'/api/bridge/health': { bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, latency_us: 100, uptime_seconds: 60, issues: [] },
+	'/api/system/health': { uptime: 60, healthy: true, opensearch_reachable: true },
+	'/api/storage/status': { disk_usage_percent: 10 },
+	'/api/opensearch/cluster': { status: 'green', number_of_nodes: 1 },
+	'/api/opensearch/indices': { indices: [], count: 0 },
+	'/api/opensearch/templates': { templates: [], count: 0 },
+	'/api/logstash/stats': { events_in: 0 },
+	'/api/logstash/pipelines': { pipelines: [] },
+};
+
 /** Stub fetch: URLs in `routes` get their body, everything else a 503. */
 function stubFetch(routes: Record<string, unknown>) {
 	vi.stubGlobal(
@@ -66,7 +81,7 @@ describe('Infrastructure — UniFi reads that failed', () => {
 	});
 
 	it('keeps the real answers when UniFi is configured and everything is empty', async () => {
-		stubFetch({ ...EMPTY_LISTS, [`${UNIFI}/status`]: CONFIGURED });
+		stubFetch({ ...SYSTEM_READINGS, ...EMPTY_LISTS, [`${UNIFI}/status`]: CONFIGURED });
 		render(InfrastructurePage);
 
 		expect(await screen.findByText('No UniFi devices found')).toBeInTheDocument();

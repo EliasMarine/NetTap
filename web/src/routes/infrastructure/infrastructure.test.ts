@@ -322,6 +322,7 @@ describe('Infrastructure when requests fail', () => {
 			'/api/opensearch/templates': { templates: [], count: 0 },
 			'/api/logstash/stats': { events_in: 0 },
 			'/api/logstash/pipelines': { pipelines: [] },
+			'/api/integrations/unifi/status': { configured: false },
 		});
 		await renderPage();
 
