@@ -14,7 +14,8 @@ set -u
 REPO_DIR="/home/nettap/NetTap"
 BRANCH="fix/dashboard-data-accuracy"
 FAILED=0
-# A closed window: one hour ending 15 minutes ago, so late records can't make two queries differ
+# A past window (one hour ending 15 minutes ago) keeps late-arriving records rare; Step 5
+# brackets the API between two raw reads for the ones that still arrive
 TO_TS=$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
 FROM_TS=$(date -u -d '75 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
 
@@ -71,8 +72,6 @@ def q(**kw): return '?' + urllib.parse.urlencode(kw)
 frm, to = sys.argv[1], sys.argv[2]
 mode = call('/api/capture/mode'); h = call('/api/capture/health'); st = call('/api/capture/stats')
 print('CAPTURE', mode['mode'], h['capture_interface'], h['status'], int(h['link_up']), int(h['promisc_enabled']), st['drop_rate_pct'])
-s = call('/api/traffic/summary' + q(**{'from': frm, 'to': to}))
-print('SUMMARY', s['connection_count'], int(s['total_bytes']))
 print('EXCLUDED', ','.join(call('/api/settings/excluded-ips')['excluded_ips']) or '-')
 devs = call('/api/devices' + q(limit=500))['devices']
 print('DEVICES', len(devs), sum(1 for d in devs if d.get('mac')))
@@ -121,14 +120,29 @@ if [ -n "$EXCL" ] && [ "$EXCL" != "-" ]; then
     QUOTED=${EXCL//,/'","'}
     MUST_NOT="[{\"terms\":{\"source.ip\":[\"$QUOTED\"]}}]"
 fi
-RAW=$(os_query "/arkime_sessions3-*/_search" "{\"size\":0,\"track_total_hits\":true,\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"$FROM_TS\",\"lte\":\"$TO_TS\"}}},{\"term\":{\"event.provider\":\"zeek\"}},{\"term\":{\"event.dataset\":\"conn\"}}],\"must_not\":$MUST_NOT}},\"aggs\":{\"o\":{\"sum\":{\"field\":\"source.bytes\"}},\"r\":{\"sum\":{\"field\":\"destination.bytes\"}}}}")
-RAW_CONN=$(echo "$RAW" | grep -o '"total":{"value":[0-9]*' | grep -o '[0-9]*$')
-RAW_BYTES=$(echo "$RAW" | grep -o '"value":[0-9.E+]*' | tail -2 | cut -d: -f2 | awk '{s += $1} END {printf "%d", s}')
-API_CONN=$(field SUMMARY 2); API_BYTES=$(field SUMMARY 3)
-if [ -n "$API_CONN" ] && [ "$API_CONN" = "$RAW_CONN" ]; then rc=0; else rc=1; fi
-check "traffic summary connections = OpenSearch" "$rc" "API ${API_CONN:-?}, raw ${RAW_CONN:-?}"
-if [ -n "$API_BYTES" ] && [ "$API_BYTES" = "$RAW_BYTES" ]; then rc=0; else rc=1; fi
-check "traffic summary bytes = OpenSearch" "$rc" "API ${API_BYTES:-?}, raw ${RAW_BYTES:-?}"
+raw_totals() {  # "<connections> <bytes>" for the window, straight from OpenSearch
+    local r
+    r=$(os_query "/arkime_sessions3-*/_search" "{\"size\":0,\"track_total_hits\":true,\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"$FROM_TS\",\"lte\":\"$TO_TS\"}}},{\"term\":{\"event.provider\":\"zeek\"}},{\"term\":{\"event.dataset\":\"conn\"}}],\"must_not\":$MUST_NOT}},\"aggs\":{\"o\":{\"sum\":{\"field\":\"source.bytes\"}},\"r\":{\"sum\":{\"field\":\"destination.bytes\"}}}}")
+    echo "$(echo "$r" | grep -o '"total":{"value":[0-9]*' | grep -o '[0-9]*$') $(echo "$r" | grep -o '"value":[0-9.E+]*' | tail -2 | cut -d: -f2 | awk '{s += $1} END {printf "%d", s}')"
+}
+api_summary() {  # "<connections> <bytes>" from the Traffic page's API for the same window
+    sudo docker exec nettap-storage-daemon python3 -c "
+import json, sys, urllib.parse, urllib.request
+token = open('/run/nettap-auth/daemon-token').read().strip()
+url = 'http://localhost:8880/api/traffic/summary?' + urllib.parse.urlencode({'from': sys.argv[1], 'to': sys.argv[2]})
+s = json.load(urllib.request.urlopen(urllib.request.Request(url, headers={'X-NetTap-Daemon-Token': token}), timeout=60))
+print(s['connection_count'], int(s['total_bytes']))" "$FROM_TS" "$TO_TS" 2>&1
+}
+between() { [[ "${1:-}" =~ ^[0-9]+$ && "${2:-}" =~ ^[0-9]+$ && "${3:-}" =~ ^[0-9]+$ ]] && [ "$1" -le "$2" ] && [ "$2" -le "$3" ]; }
+# Zeek logs a connection when it ends but stamps it with its start, so even a past window
+# can still grow: the API must fall between a raw read just before it and one just after
+read -r R1C R1B <<<"$(raw_totals)"
+read -r API_CONN API_BYTES <<<"$(api_summary)"
+read -r R2C R2B <<<"$(raw_totals)"
+if between "${R1C:-}" "${API_CONN:-}" "${R2C:-}"; then rc=0; else rc=1; fi
+check "traffic summary connections = OpenSearch" "$rc" "API ${API_CONN:-?}, raw ${R1C:-?} before / ${R2C:-?} after"
+if between "${R1B:-}" "${API_BYTES:-}" "${R2B:-}"; then rc=0; else rc=1; fi
+check "traffic summary bytes = OpenSearch" "$rc" "API ${API_BYTES:-?}, raw ${R1B:-?} before / ${R2B:-?} after"
 NDEV=$(field DEVICES 2); NMAC=$(field DEVICES 3)
 if [ "${NDEV:-0}" -gt 0 ] && [ "$NDEV" = "$NMAC" ]; then rc=0; else rc=1; fi
 check "devices listed, each with a MAC" "$rc" "${NDEV:-0} devices, ${NMAC:-0} with a MAC"
