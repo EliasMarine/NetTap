@@ -18,23 +18,22 @@ OS_CURL=(sudo docker exec nettap-opensearch curl -s
     -H "Content-Type: application/json")
 FAILED=0
 
-api() {  # api <path> [json body for POST]
-    local token
-    token=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token 2>/dev/null)
-    if [ $# -gt 1 ]; then
-        curl -s -m 120 -H "X-NetTap-Daemon-Token: $token" -H "Content-Type: application/json" -d "$2" "http://localhost:8880$1"
-    else
-        curl -s -m 60 -H "X-NetTap-Daemon-Token: $token" "http://localhost:8880$1"
-    fi
-}
-
-jq_py() {  # jq_py '<python expression over d>' — evaluates against JSON on stdin, inside the daemon container
-    sudo docker exec -i nettap-storage-daemon python3 -c "import json,sys
+api_eval() {  # api_eval <path> '<python expression over d>' [json body to POST]
+    # Fetches and parses inside the daemon container: no host python3, and nothing
+    # is piped into sudo (its stdin may carry the password).
+    sudo docker exec nettap-storage-daemon python3 -c "
+import json, sys, urllib.request
+path, expr = sys.argv[1], sys.argv[2]
+body = sys.argv[3].encode() if len(sys.argv) > 3 else None
+token = open('/run/nettap-auth/daemon-token').read().strip()
+req = urllib.request.Request('http://localhost:8880' + path, data=body,
+    headers={'X-NetTap-Daemon-Token': token, 'Content-Type': 'application/json'})
 try:
-    d = json.load(sys.stdin)
-    print($1)
+    d = json.load(urllib.request.urlopen(req, timeout=120))
+    print(eval(expr))
 except Exception as e:
-    print('ERR', e)"
+    print('ERR', e)
+" "$@"
 }
 
 check() {  # check "label" <0 pass / 1 fail> "detail"
@@ -83,30 +82,27 @@ wait_healthy nettap-web
 echo ""
 
 echo "→ Step 5: Check each fix..."
-AUDIT=$(api /api/iot/protocol-audit)
-BAD_FINDINGS=$(printf '%s' "$AUDIT" | jq_py "sum(1 for dev in d.get('devices', []) for f in dev.get('findings', []) if f.get('type') == 'unencrypted_traffic' or f.get('port') == 0)")
+BAD_FINDINGS=$(api_eval /api/iot/protocol-audit "sum(1 for dev in d.get('devices', []) for f in dev.get('findings', []) if f.get('type') == 'unencrypted_traffic' or f.get('port') == 0)")
 if [ "$BAD_FINDINGS" = "0" ]; then rc=0; else rc=1; fi
 check "#34 IoT protocol audit has no port-0 or duplicate encryption findings" "$rc" "bad findings=$BAD_FINDINGS"
 
-ISO=$(api /api/iot/network-isolation)
-ICMP_PORTS=$(printf '%s' "$ISO" | jq_py "sum(1 for p in d.get('pairs', []) if set(p.get('ports', [])) & {0, 3, 8, 11})")
+ICMP_PORTS=$(api_eval /api/iot/network-isolation "sum(1 for p in d.get('pairs', []) if set(p.get('ports', [])) & {0, 3, 8, 11})")
 if [ "$ICMP_PORTS" = "0" ]; then rc=0; else rc=1; fi
 check "#34 IoT isolation shows no ICMP codes as ports" "$rc" "pairs with ICMP-code ports=$ICMP_PORTS"
-echo "     isolation: $(printf '%s' "$ISO" | jq_py "'score %s, pairs by risk %s' % (d.get('segmentation_score'), {r: sum(1 for p in d.get('pairs', []) if p['risk'] == r) for r in ('critical', 'high', 'medium', 'low')})")"
+echo "     isolation: $(api_eval /api/iot/network-isolation "'score %s, pairs by risk %s' % (d.get('segmentation_score'), {r: sum(1 for p in d.get('pairs', []) if p['risk'] == r) for r in ('critical', 'high', 'medium', 'low')})")"
 
-STATS=$(api /api/certificates/stats)
-CERT_TOTAL=$(printf '%s' "$STATS" | jq_py "d.get('total_certs')")
-LIST_COUNT=$(api /api/certificates | jq_py "d.get('count')")
+CERT_TOTAL=$(api_eval /api/certificates/stats "d.get('total_certs')")
+LIST_COUNT=$(api_eval /api/certificates "d.get('count')")
 X509_Q='{"size":0,"query":{"bool":{"filter":[{"range":{"@timestamp":{"gte":"now-7d"}}},{"term":{"event.dataset":"x509"}},{"terms":{"zeek.x509.host_cert":["true","T"]}}]}},"aggs":{"fp":{"cardinality":{"field":"zeek.x509.fingerprint"}}}}'
 TRUTH=$("${OS_CURL[@]}" "https://localhost:9200/arkime_sessions3-*/_search" -d "$X509_Q" | grep -o '"fp":{"value":[0-9]*' | grep -o '[0-9]*$')
 # a few seconds apart, so allow 2 new certificates
 if [ -n "$TRUTH" ] && [ "$TRUTH" -gt 0 ] && [ "${CERT_TOTAL:-x}" -ge $((TRUTH - 2)) ] 2>/dev/null && [ "$CERT_TOTAL" -le $((TRUTH + 2)) ] && [ "$LIST_COUNT" = "$CERT_TOTAL" ]; then rc=0; else rc=1; fi
 check "#14 certificate count = distinct x509 certificates" "$rc" "card=${CERT_TOTAL:-?} list=${LIST_COUNT:-?} OpenSearch=${TRUTH:-?}"
-echo "     certificates: $(printf '%s' "$STATS" | jq_py "'expiring %s, expired %s, self-signed %s, issuer changes %s' % (d.get('expiring_count'), d.get('expired_count'), d.get('self_signed_count'), d.get('issuer_changes_count'))")"
+echo "     certificates: $(api_eval /api/certificates/stats "'expiring %s, expired %s, self-signed %s, issuer changes %s' % (d.get('expiring_count'), d.get('expired_count'), d.get('self_signed_count'), d.get('issuer_changes_count'))")"
 
-PCAP=$(api /api/tshark/pcaps | jq_py "d['pcaps'][0]['path'] if d.get('pcaps') else ''")
+PCAP=$(api_eval /api/tshark/pcaps "d['pcaps'][0]['path'] if d.get('pcaps') else ''")
 if [ -n "$PCAP" ] && [ "${PCAP#ERR}" = "$PCAP" ]; then
-    HEX=$(api /api/tshark/analyze "{\"pcap_path\": \"$PCAP\", \"max_packets\": 3, \"include_hex\": true}" | jq_py "sum(1 for p in d.get('packets', []) if p.get('_source', {}).get('layers', {}).get('frame_raw'))")
+    HEX=$(api_eval /api/tshark/analyze "sum(1 for p in d.get('packets', []) if p.get('_source', {}).get('layers', {}).get('frame_raw'))" "{\"pcap_path\": \"$PCAP\", \"max_packets\": 3, \"include_hex\": true}")
     if [ "${HEX:-0}" -gt 0 ] 2>/dev/null; then rc=0; else rc=1; fi
     check "#40 TShark returns raw bytes for the hex dump" "$rc" "packets with frame_raw=$HEX ($(basename "$PCAP"))"
 else
