@@ -58,6 +58,7 @@
 
 	// Preview
 	let previewPackets = $state<PcapPacket[]>([]);
+	let previewTimedOut = $state(false);
 	let previewFile = $state('');
 	let previewLoading = $state(false);
 
@@ -288,6 +289,7 @@
 		previewLoading = true;
 		previewFile = file;
 		previewPackets = [];
+		previewTimedOut = false;
 		error = '';
 		try {
 			const response = await previewPcap(file, {
@@ -295,6 +297,7 @@
 				limit: 100,
 			});
 			previewPackets = response.packets;
+			previewTimedOut = response.timed_out ?? false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Preview failed';
 		} finally {
@@ -308,6 +311,7 @@
 	function closePreview() {
 		previewFile = '';
 		previewPackets = [];
+		previewTimedOut = false;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -653,6 +657,11 @@
 				</table>
 			</div>
 			<p class="table-footer">Showing {previewPackets.length} packets</p>
+			{#if previewTimedOut}
+				<p class="search-note">Stopped after 45 seconds: this file is large, so only its first part was read.</p>
+			{/if}
+		{:else if !previewLoading && previewTimedOut}
+			<p class="search-note">No matching packets in the part of this file read within 45 seconds. The file is large; try a smaller file or a narrower time range.</p>
 		{:else if !previewLoading}
 			<p class="empty-state">No packets to display{bpfFilter ? ` matching filter "${bpfFilter}"` : ''}.</p>
 		{/if}

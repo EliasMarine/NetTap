@@ -50,6 +50,8 @@ export interface PcapPreviewResponse {
 	filter: string | null;
 	count: number;
 	packets: PcapPacket[];
+	/** tshark ran out of time before the end of the file: fewer matches is not "none" */
+	timed_out?: boolean;
 }
 
 // ---------------------------------------------------------------------------

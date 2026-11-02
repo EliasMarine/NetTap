@@ -302,3 +302,55 @@ describe('PCAP page — search polling', () => {
 		expect(screen.queryByText(/were skipped/)).not.toBeInTheDocument();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Rendered page: preview that ran out of time (#52)
+// ---------------------------------------------------------------------------
+
+describe('PCAP page — preview time limit', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	async function previewWith(body: Record<string, unknown>) {
+		// jsdom has no ResizeObserver; the traffic chart beside the file list needs one to mount
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				observe() {}
+				unobserve() {}
+				disconnect() {}
+			},
+		);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url.startsWith('/api/pcap/files')) {
+					return { ok: true, status: 200, json: async () => ({ count: 1, files: [MATCH] }) };
+				}
+				if (url.startsWith('/api/pcap/preview')) {
+					return { ok: true, status: 200, json: async () => ({ file: MATCH.file, filter: 'dns', count: 0, ...body }) };
+				}
+				return { ok: false, status: 500, json: async () => ({}) };
+			}),
+		);
+		render(PcapPage);
+		await fireEvent.click(await screen.findByText('a.pcap'));
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('says the read stopped early instead of "No packets to display"', async () => {
+		await previewWith({ packets: [], timed_out: true });
+
+		expect(screen.getByText(/No matching packets in the part of this file read within 45 seconds/)).toBeInTheDocument();
+		expect(screen.queryByText(/No packets to display/)).not.toBeInTheDocument();
+	});
+
+	it('keeps "No packets to display" when the whole file was read', async () => {
+		await previewWith({ packets: [], timed_out: false });
+
+		expect(screen.getByText(/No packets to display/)).toBeInTheDocument();
+		expect(screen.queryByText(/within 45 seconds/)).not.toBeInTheDocument();
+	});
+});
