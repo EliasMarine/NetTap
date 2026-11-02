@@ -184,9 +184,10 @@ def _device_score_aggs() -> dict:
 
 
 async def handle_risk_scores(request: web.Request) -> web.Response:
-    """GET /api/risk/scores?from=&to=&limit=100
+    """GET /api/risk/scores?from=&to=&limit=
 
-    Returns risk scores for all devices in the given time range.
+    Returns risk scores for every device in the given time range, highest first;
+    `limit` (1-500) keeps only the top ones.
     """
     from_ts, to_ts = _parse_time_range(request)
     # OLD CODE START — #96: listed the top 100 by default; Compliance compared that with a different top 100
@@ -334,6 +335,8 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     device_ips = [b["key"] for b in device_buckets]
 
     # Batch alert count query
+    # shortcut: one terms filter of every device IP; past 65,536 devices (index.max_terms_count)
+    # it fails and scores count no alerts, so chunk the IPs if a site ever gets there
     alert_counts: dict[str, int] = {}
     if device_ips:
         alert_query = {
