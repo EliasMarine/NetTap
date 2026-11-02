@@ -12,16 +12,17 @@ set -u
 REPO_DIR="/home/nettap/NetTap"
 BRANCH="fix/daemon-drop-nsenter"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
-START=$(date '+%Y-%m-%d %H:%M:%S')
 
 echo "=== Deploy: daemon runs host network commands without nsenter ==="
 echo ""
 
 echo "→ Step 1: Pull latest code..."
 cd "$REPO_DIR" || { echo "   ✗ $REPO_DIR not found"; exit 1; }
-git fetch origin
-git checkout "$BRANCH"
-git pull origin "$BRANCH"
+# A failed checkout or pull would rebuild the old code, so stop here instead
+if ! git fetch origin || ! git checkout "$BRANCH" || ! git pull origin "$BRANCH"; then
+    echo "   ✗ Could not update to $BRANCH — nothing was rebuilt"
+    exit 1
+fi
 echo "   ✓ Code: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
 echo ""
 
@@ -35,6 +36,8 @@ echo ""
 
 echo "→ Step 3: Recreate the daemon (only the daemon; OpenSearch is not touched)..."
 "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon
+# Count AppArmor refusals from here on; the old daemon logged one every 30 s until now
+START=$(date '+%Y-%m-%d %H:%M:%S')
 echo "   ✓ Daemon recreated"
 echo ""
 
@@ -62,17 +65,23 @@ fi
 echo ""
 
 echo "→ Step 6: AppArmor refusals since this deploy started..."
-DENIED=$(journalctl -k --since "$START" --no-pager 2>/dev/null | grep -c 'apparmor="DENIED".*comm="nsenter"')
-if [ "$DENIED" = "0" ]; then
-    echo "   ✓ None (was one every 30s before the fix)"
+if ! KLOG=$(sudo journalctl -k --since "$START" --no-pager 2>&1); then
+    echo "   ? Couldn't read the kernel log: $KLOG"
 else
-    echo "   ✗ $DENIED nsenter refusals — the old image may still be running"
+    DENIED=$(printf '%s\n' "$KLOG" | grep -c 'apparmor="DENIED".*comm="nsenter"')
+    if [ "$DENIED" = "0" ]; then
+        echo "   ✓ None (was one every 30s before the fix)"
+    else
+        echo "   ✗ $DENIED nsenter refusals — the old image may still be running"
+    fi
 fi
 echo ""
 
 echo "→ Step 7: Start the boot unit the daemon wrote (also turns IPv6 off on the capture port)..."
 sudo systemctl daemon-reload
-if systemctl cat nettap-mirror.service >/dev/null 2>&1; then
+if sudo docker logs nettap-storage-daemon 2>&1 | grep -q "Mirror setup skipped"; then
+    echo "   ✗ Not started: the daemon refused this NIC (see Step 5), so its boot unit may be stale"
+elif systemctl cat nettap-mirror.service >/dev/null 2>&1; then
     if sudo systemctl restart nettap-mirror.service; then
         echo "   ✓ nettap-mirror.service ran: $(systemctl is-active nettap-mirror.service), $(systemctl is-enabled nettap-mirror.service)"
     else
