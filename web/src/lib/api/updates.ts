@@ -104,7 +104,7 @@ export async function scanVersions(): Promise<{ versions: Record<string, Compone
 /**
  * Get a list of available updates that have been previously checked.
  */
-export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[]; last_check: string; failed_checks?: string[] }> {
+export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[]; last_check: string; failed_checks?: string[]; checked?: string[] }> {
 	const res = await fetch('/api/system/updates/available');
 
 	// OLD CODE START — #96: a failed request marked every component "Up to Date"
@@ -125,7 +125,7 @@ export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[
 /**
  * Check for new updates from upstream sources.
  */
-export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[]; failed_checks?: string[] }> {
+export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[]; failed_checks?: string[]; checked?: string[] }> {
 	const res = await fetch('/api/system/updates/check', {
 		method: 'POST',
 	});

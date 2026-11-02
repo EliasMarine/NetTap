@@ -76,6 +76,8 @@ class UpdateChecker:
         self._checking: bool = False
         # Components the last check could not ask about (#96): unknown, not "up to date"
         self._failed_checks: list[str] = []
+        # components the last check looked at; anything else has no update source here
+        self._checked: list[str] = []
         self._version_manager = None  # Set externally after init
 
         logger.info(
@@ -168,6 +170,10 @@ class UpdateChecker:
 
             self._available_updates = all_updates
             self._last_check = now
+            own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+            self._checked = sorted(
+                {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+            )
 
             logger.info(
                 "Update check complete: %d updates available",
@@ -180,6 +186,7 @@ class UpdateChecker:
                 "count": len(all_updates),
                 "has_updates": len(all_updates) > 0,
                 "failed_checks": list(self._failed_checks),
+                "checked": list(self._checked),
             }
         finally:
             self._checking = False
@@ -197,6 +204,7 @@ class UpdateChecker:
             "count": len(self._available_updates),
             "has_updates": len(self._available_updates) > 0,
             "failed_checks": list(self._failed_checks),
+            "checked": list(self._checked),
         }
 
     async def get_update_for(self, component: str) -> dict | None:

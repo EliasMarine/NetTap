@@ -322,3 +322,31 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		expect(await screen.findAllByRole('button', { name: 'Update' })).toHaveLength(1);
 	});
 });
+
+// On the G11 the page said "7 updates available" while every row read "Up to Date": the daemon
+// sends versions as a list, so each row was keyed by its index and matched no update. Rows that
+// nothing checks (the OS, Docker, Python) also read "Up to Date".
+describe('Software Updates page — rows match the real reply', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('shows each row its own update, and "Not checked" for what the daemon does not check', async () => {
+		const row = (name: string, category: string, current_version: string) =>
+			({ name, category, current_version, install_type: 'docker', last_checked: '', status: 'ok', details: {} });
+		stubFetch({
+			'/api/system/versions': { versions: [row('logstash', 'docker', '26.02.0'), row('os', 'os', '12'), row('suricata-rules', 'database', '2026-11-02')], last_scan: '' },
+			'/api/system/updates/available': {
+				updates: [{ component: 'logstash', current_version: '26.02.0', latest_version: '26.10.0', update_type: 'minor', release_url: '', release_date: '',
+					changelog: '', size_mb: null, requires_restart: true, applies_with: "Comes with NetTap's pinned Malcolm release: update NetTap to get it." }],
+				last_check: '2026-11-02T21:00:00Z', failed_checks: [], checked: ['geoip-db', 'logstash', 'nettap-daemon', 'suricata-rules'],
+			},
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+
+		render(UpdatesPage);
+
+		const status = async (name: string) => (await screen.findByText(name)).closest('.version-row')?.querySelector('.vtcol-status')?.textContent?.trim();
+		expect(await status('logstash')).toBe('Update Available');
+		expect(await status('os')).toBe('Not checked');
+		expect(await status('suricata-rules')).toBe('Up to Date');
+	});
+});

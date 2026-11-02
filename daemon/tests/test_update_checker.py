@@ -560,6 +560,19 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
             "Comes with NetTap's pinned Malcolm release: update NetTap to get it.",
         )
 
+    def test_says_which_components_it_checked(self):
+        """The Updates page read "Up to Date" for the OS, Docker and Python, which nothing checks."""
+        result, _ = self._run(
+            {"tag_name": "v26.02.0"},
+            [
+                ("logstash", "ghcr.io/idaholab/malcolm/logstash:26.02.0"),
+                ("nettap-web", "nettap/web:latest"),
+                ("nettap-nginx", "nginx:stable-alpine"),
+            ],
+        )
+        self.assertEqual(result["checked"], ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"])
+        self.assertNotIn("nettap-nginx", result["checked"])
+
 
 class TestNetTapUpdatesStayApplicable(unittest.TestCase):
     """Updates NetTap applies itself carry no applies_with sentence."""

@@ -37,6 +37,8 @@
 	let actionError = $state('');
 	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
 	let failedChecks = $state<string[]>([]);
+	// components the daemon's last check covered (null: an older daemon that doesn't say)
+	let checkedComponents = $state<string[] | null>(null);
 
 	// names a reader can follow; anything else is a component name, as in the table below
 	let failedChecksNote = $derived(
@@ -63,7 +65,11 @@
 	// ---------------------------------------------------------------------------
 
 	const versionEntries = $derived.by(() => {
-		const entries = Object.entries(versions).map(([key, v]) => ({ key, ...v }));
+		// OLD CODE START — the daemon sends a list, so each key was its index ("0", "1"…) and no
+		// row ever matched its update: every row read "Up to Date" beside "7 updates available"
+		// const entries = Object.entries(versions).map(([key, v]) => ({ key, ...v }));
+		// OLD CODE END
+		const entries = Object.values(versions).map((v) => ({ key: v.name, ...v }));
 
 		if (sortBy === 'status') {
 			const statusOrder: Record<string, number> = { error: 0, unknown: 1, ok: 2 };
@@ -252,6 +258,7 @@
 			availableUpdates = updatesRes.value.updates;
 			lastCheck = updatesRes.value.last_check;
 			failedChecks = updatesRes.value.failed_checks ?? [];
+			checkedComponents = updatesRes.value.checked ?? null;
 		}
 		if (historyRes.status === 'fulfilled') updateHistory = historyRes.value;
 		historyFailed = historyRes.status === 'rejected';
@@ -269,6 +276,7 @@
 			lastCheck = new Date().toISOString();
 			updatesFailed = false;
 			failedChecks = res.failed_checks ?? [];
+			checkedComponents = res.checked ?? null;
 		} catch {
 			// OLD CODE START — #96: a failed check was silent
 			// // Keep existing state
@@ -781,7 +789,8 @@
 										{:else if checkFailed(entry.key, entry.name)}
 											<span class="badge badge-muted">Unknown</span>
 										<!-- no check since the daemon started: no update listed doesn't mean none exists -->
-										{:else if !lastCheck}
+										{:else if !lastCheck || (checkedComponents && !checkedComponents.includes(entry.name))}
+											<!-- nothing checks the OS, Docker, Python…: no listed update doesn't make them current -->
 											<span class="badge badge-muted">Not checked</span>
 										{:else}
 											<span class="badge badge-success">Up to Date</span>
