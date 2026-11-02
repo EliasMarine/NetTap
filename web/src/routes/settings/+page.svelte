@@ -1791,9 +1791,11 @@
 		gap: var(--space-lg);
 	}
 
+	/* OLD CODE START — 2026-11-02: pages are always full width (design system rule 4, #67)
 	.settings-section {
 		max-width: 720px;
 	}
+	OLD CODE END */
 
 	.field-help {
 		font-size: var(--text-xs);
