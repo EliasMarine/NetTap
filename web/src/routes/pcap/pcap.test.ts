@@ -354,3 +354,40 @@ describe('PCAP page — preview time limit', () => {
 		expect(screen.queryByText(/within 45 seconds/)).not.toBeInTheDocument();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Rendered page: a failed file listing is not "No PCAP files" (#96)
+// ---------------------------------------------------------------------------
+
+describe('PCAP page — file list', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubFiles(reply: { ok: boolean; status: number; json: () => Promise<unknown> }) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.startsWith('/api/pcap/files') ? reply : { ok: false, status: 500, json: async () => ({}) },
+			),
+		);
+	}
+
+	it('says the list could not be loaded instead of "No PCAP files"', async () => {
+		stubFiles({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+
+		render(PcapPage);
+
+		expect((await screen.findAllByText("Couldn't load the PCAP file list: the request failed.")).length).toBe(2);
+		expect(screen.queryByText(/No PCAP files/)).not.toBeInTheDocument();
+	});
+
+	it('still says there are no PCAP files when the list really is empty', async () => {
+		stubFiles({ ok: true, status: 200, json: async () => ({ count: 0, files: [] }) });
+
+		render(PcapPage);
+
+		expect(await screen.findByText('No PCAP files in this time range.')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load the PCAP file list/)).not.toBeInTheDocument();
+	});
+});
