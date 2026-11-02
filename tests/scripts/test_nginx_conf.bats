@@ -40,3 +40,10 @@ _location() {
     echo "$output" | grep -q 'auth_request /_nettap_auth;'
     echo "$output" | grep -q 'error_page 401 = @nettap_login;'
 }
+
+@test "nginx: CSP lets same-origin blob Web Workers run (CyberChef)" {
+    # CyberChef inlines its workers as blob: URLs; without worker-src they fall back to
+    # script-src and are blocked, so CyberChef never leaves its loading screen
+    csp=$(grep -v '^\s*#' "$NGINX_CONF" | grep 'add_header Content-Security-Policy')
+    echo "$csp" | grep -q "worker-src 'self' blob:"
+}
