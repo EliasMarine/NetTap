@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
-from storage.all_buckets import all_buckets
+from storage.all_buckets import all_buckets, complete_terms
 
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
@@ -217,8 +217,16 @@ class LANAnomalyDetector:
         # OLD CODE END
         result = self._client.search(index=NETWORK_INDEX, body=query)
 
-        buckets = (
-            result.get("aggregations", {}).get("dhcp_servers", {}).get("buckets", [])
+        # OLD CODE START — #96: the top 20 servers only; a 21st DHCP server went unreported
+        # buckets = (
+        #     result.get("aggregations", {}).get("dhcp_servers", {}).get("buckets", [])
+        # )
+        # OLD CODE END
+        servers = query["aggs"]["dhcp_servers"]
+        buckets = complete_terms(
+            self._client, NETWORK_INDEX, query["query"],
+            result.get("aggregations", {}).get("dhcp_servers", {}),
+            {"terms": {"field": servers["terms"]["field"]}}, aggs=servers["aggs"],
         )
 
         alerts: list[dict[str, Any]] = []

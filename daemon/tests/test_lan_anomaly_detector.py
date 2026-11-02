@@ -184,6 +184,24 @@ class TestDetectRogueDhcp:
         )
         assert alerts == []
 
+    def test_a_server_past_the_top_list_is_reported(self, detector, mock_client):
+        """#96: only the top 20 servers were read; one ranked past them went unreported."""
+        top = [{"key": f"10.0.0.{i}", "doc_count": 100 - i, "server_mac": {"buckets": []},
+                "first_seen": {"value": 1}, "last_seen": {"value": 2}} for i in range(1, 21)]
+        every = [{**b, "key": {"value": b["key"]}} for b in top] + [
+            {"key": {"value": "10.0.0.99"}, "doc_count": 3, "server_mac": {"buckets": []},
+             "first_seen": {"value": 1}, "last_seen": {"value": 2}}]
+        mock_client.search.side_effect = [
+            {"aggregations": {"dhcp_servers": {"buckets": top, "sum_other_doc_count": 3}}},
+            {"aggregations": {"all": {"buckets": every}}},
+        ]
+        alerts = detector.detect_rogue_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        assert "10.0.0.99" in {a["server_ip"] for a in alerts}
+        assert len(alerts) == 20
+        page = mock_client.search.call_args_list[1].kwargs["body"]["aggs"]["all"]
+        assert page["composite"]["sources"] == [{"value": {"terms": {"field": "source.ip"}}}]
+        assert set(page["aggs"]) == {"server_mac", "first_seen", "last_seen"}
+
     def test_opensearch_error_raises(self, detector, mock_client):
         """#96: [] read as "no rogue DHCP server"."""
         mock_client.search.side_effect = Exception("Connection refused")

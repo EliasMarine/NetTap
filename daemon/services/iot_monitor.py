@@ -21,7 +21,7 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
-from storage.all_buckets import all_buckets
+from storage.all_buckets import all_buckets, complete_terms
 
 logger = logging.getLogger("nettap.services.iot_monitor")
 
@@ -1244,6 +1244,14 @@ class IoTMonitor:
             raise
 
         aggs = result.get("aggregations", {})
+
+        def every(name: str, known: str) -> list[dict]:
+            # #96: the hour's top 100/20/50/10 only; a new value ranked past them went unreported
+            return complete_terms(
+                self._client, NETWORK_INDEX, {"bool": bool_clause}, aggs.get(name, {}),
+                BASELINE_KNOWN_SOURCES[known], missing="Unknown",
+            )
+
         anomalies: list[dict[str, Any]] = []
         known_dests = set(baseline.get("known_destinations", []))
         known_ports = set(baseline.get("known_ports", []))
@@ -1252,7 +1260,10 @@ class IoTMonitor:
         active_hours = set(baseline.get("active_hours", []))
 
         # Check new destinations
-        for b in aggs.get("destinations", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("destinations", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("destinations", "known_destinations"):
             if b["key"] not in known_dests:
                 anomalies.append(
                     {
@@ -1267,7 +1278,10 @@ class IoTMonitor:
                 )
 
         # Check new countries
-        for b in aggs.get("countries", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("countries", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("countries", "known_countries"):
             if b["key"] not in known_countries and b["key"] != "Unknown":
                 anomalies.append(
                     {
@@ -1282,7 +1296,10 @@ class IoTMonitor:
                 )
 
         # Check new ports
-        for b in aggs.get("dest_ports", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("dest_ports", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("dest_ports", "known_ports"):
             if b["key"] not in known_ports:
                 anomalies.append(
                     {
@@ -1297,7 +1314,10 @@ class IoTMonitor:
                 )
 
         # Check protocol changes
-        for b in aggs.get("protocols", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("protocols", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("protocols", "known_protocols"):
             if b["key"] not in known_protocols:
                 anomalies.append(
                     {

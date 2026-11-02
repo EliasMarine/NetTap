@@ -53,3 +53,28 @@ def all_buckets(
             return buckets, True
         if len(buckets) >= max_buckets:
             return buckets, False
+
+
+def complete_terms(
+    client: Any,
+    index: str,
+    query: dict,
+    terms_reply: dict,
+    source: dict,
+    aggs: dict | None = None,
+    missing: Any = None,
+) -> list[dict]:
+    """A terms aggregation's buckets when they hold every value, else every value paged (#96).
+
+    `sum_other_doc_count` 0 means no record fell outside the returned buckets, so the top list is
+    the whole set (one search, the usual case). Otherwise `source` (a composite source on the same
+    field) pages every value; buckets come back in terms form, the key flattened and a missing
+    value (null) read as `missing`, as the terms aggregation's own `missing` would.
+    """
+    if not terms_reply.get("sum_other_doc_count"):
+        return terms_reply.get("buckets", [])
+    buckets, _complete = all_buckets(client, index, query, [{"value": source}], aggs=aggs)
+    return [
+        {**b, "key": missing if b["key"]["value"] is None else b["key"]["value"]}
+        for b in buckets
+    ]

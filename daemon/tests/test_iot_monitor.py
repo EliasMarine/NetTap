@@ -302,6 +302,27 @@ class TestCheckAnomalies:
         ]
         assert len(typed) == 0
 
+    def test_a_new_destination_past_the_top_list_is_reported(self, iot, mock_client):
+        """#96: only the hour's top 100 destinations were compared with the baseline."""
+        self._setup_baseline(iot, mock_client)
+        mock_client.search.side_effect = [
+            {"aggregations": {
+                "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 10}], "sum_other_doc_count": 2},
+                "dest_ports": {"buckets": [{"key": 443, "doc_count": 12}]},
+                "protocols": {"buckets": [{"key": "tcp", "doc_count": 12}]},
+                "total_bytes": {"value": 500},
+                "countries": {"buckets": [{"key": "Unknown", "doc_count": 12}]},
+            }},
+            {"aggregations": {"all": {"buckets": [
+                {"key": {"value": "8.8.8.8"}, "doc_count": 10},
+                {"key": {"value": "203.0.113.9"}, "doc_count": 2},
+            ]}}},
+        ]
+        anomalies = iot.check_anomalies("AA:BB:CC:DD:EE:FF")
+        assert [a["detail"] for a in anomalies if a["type"] == ANOMALY_NEW_DESTINATION] == ["203.0.113.9"]
+        # a missing country still reads "Unknown", never "None"
+        assert not [a for a in anomalies if a["type"] == ANOMALY_NEW_COUNTRY]
+
     def test_no_baseline_returns_empty(self, iot):
         anomalies = iot.check_anomalies("FF:FF:FF:FF:FF:FF")
         assert anomalies == []
