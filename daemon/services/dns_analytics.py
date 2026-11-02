@@ -32,10 +32,29 @@ DNS_NOISE_EXCLUSION = [
 # DNS analytics count lookups, not local discovery: mDNS (5353), LLMNR (5355) and
 # NetBIOS (137) were ~76% of dns.log on the G11 and pushed the average RTT to ~2 s.
 # Log search keeps showing them (it uses DNS_NOISE_EXCLUSION only).
+# Only local destinations are left out: those ports to an internet host stay counted,
+# so DNS tunneled over 5353 still reaches the tunneling detector.
 LOCAL_NAME_SERVICE_PORTS = [5353, 5355, 137]
+LOCAL_DESTINATIONS = [
+    "224.0.0.0/4",  # IPv4 multicast (mDNS 224.0.0.251, LLMNR 224.0.0.252)
+    "ff00::/8",  # IPv6 multicast (ff02::fb, ff02::1:3)
+    "255.255.255.255",  # NetBIOS broadcast
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "fe80::/10",
+]
 DNS_LOOKUP_EXCLUSION = [
     *DNS_NOISE_EXCLUSION,
-    {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}},
+    {
+        "bool": {
+            "filter": [
+                {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}},
+                {"terms": {"destination.ip": LOCAL_DESTINATIONS}},
+            ]
+        }
+    },
 ]
 
 

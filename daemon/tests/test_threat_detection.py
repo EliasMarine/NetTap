@@ -9,6 +9,8 @@ external dependencies (OpenSearch calls are not tested here).
 import sys
 import os
 
+from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -137,4 +139,4 @@ class TestDnsAnomalyNoise:
         must_not = client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
         assert {"term": {"zeek.dns.query": "pcap-monitor"}} in must_not
         # long mDNS service names would otherwise read as DNS tunneling
-        assert {"terms": {"destination.port": [5353, 5355, 137]}} in must_not
+        assert DNS_LOOKUP_EXCLUSION[1] in must_not

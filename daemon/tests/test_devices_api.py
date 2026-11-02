@@ -11,6 +11,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -538,7 +540,7 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         )
         # nor are its mDNS announcements
         self.assertIn(
-            {"terms": {"destination.port": [5353, 5355, 137]}},
+            DNS_LOOKUP_EXCLUSION[1],
             dns_bodies[0]["query"]["bool"]["must_not"],
         )
 

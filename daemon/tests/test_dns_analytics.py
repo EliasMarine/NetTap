@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from services.dns_analytics import DNSAnalytics, _shannon_entropy
 
 
+from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+
+
 @pytest.fixture
 def mock_client():
     return MagicMock()
@@ -412,7 +415,7 @@ class TestGetStats:
 
 _FROM, _TO = "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
 _NOISE = {"term": {"zeek.dns.query": "pcap-monitor"}}
-_LOCAL_DISCOVERY = {"terms": {"destination.port": [5353, 5355, 137]}}
+_LOCAL_DISCOVERY = DNS_LOOKUP_EXCLUSION[1]
 
 
 class TestDnsNoiseExclusion:
@@ -509,3 +512,14 @@ class TestStatsAccuracy:
         result = dns.get_stats(_FROM, _TO)
         assert result["avg_resolution_ms"] == 0
         assert result["median_resolution_ms"] == 0
+
+
+def test_local_discovery_exclusion_is_scoped_to_local_destinations():
+    """Port 5353 to an internet host is not discovery; it must stay visible (tunneling)."""
+    from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+
+    scoped = DNS_LOOKUP_EXCLUSION[1]["bool"]["filter"]
+    assert {"terms": {"destination.port": [5353, 5355, 137]}} in scoped
+    destinations = next(c for c in scoped if "destination.ip" in c.get("terms", {}))
+    assert "224.0.0.0/4" in destinations["terms"]["destination.ip"]
+    assert "8.8.8.8" not in destinations["terms"]["destination.ip"]
