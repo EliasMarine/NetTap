@@ -10,6 +10,11 @@
 - **NIC discovery:** `nic_discovery._get_ipv4_map` no longer tries nsenter first.
 - **Fail-closed guard:** `api/setup._nic_in_use_problem` now refuses a NIC when `ip -j link show dev X` returns nothing. Before, a failed `ip` call looked like "spare".
 - **CR-076 startup guard:** `main._build_capture_manager` skips `MirrorManager.setup()` when the NIC carries the default route or has an IPv4 address. It logs `Mirror setup skipped, nothing changed`.
+- **Review follow-ups (same day):**
+  - The boot unit no longer runs `ip addr flush` by NIC name at every boot (that was CR-076 too).
+  - Its `ethtool -K` line is now non-fatal.
+  - Go Live's `POST /api/setup/bridge` gets the bridge preview's in-use check and name validation.
+  - The deploy script now counts AppArmor refusals only from after the recreate, reads the kernel log with sudo, and stops if the pull fails.
 - **Verify script:** `verify-mirror-mode.sh` reports an admin-DOWN port as such, instead of "check the cable". It also prints the systemd unit state once (it used to print `not-found` and `missing` on two lines).
 - **Deploy script:** new `scripts/remote/deploy-drop-nsenter.sh`.
 - **Comments only:** compose and Dockerfile comments now say `network_mode: host` is load-bearing, and that SYS_PTRACE and pid: host were only for nsenter.
@@ -32,19 +37,23 @@ On Ubuntu 24.04 (the G11), the kernel logged this every 30 s:
 
 ## Files touched
 - `daemon/services/{mirror_manager,bridge_manager,bridge_health,dhcp_gateway_host,dhcp_gateway}.py`
-- `daemon/api/{nic_discovery,setup}.py`
+- `daemon/api/{nic_discovery,setup,bridge}.py`
 - `daemon/main.py`
-- `daemon/tests/test_host_commands.py` (new), `daemon/tests/test_main.py`, `daemon/tests/test_setup_configure.py`
+- `daemon/tests/test_host_commands.py` (new), `test_main.py`, `test_setup_configure.py`, `test_mirror_manager.py`, `test_bridge_api.py`
 - `docker/docker-compose.yml`, `docker/Dockerfile.daemon` (comments only)
 - `scripts/remote/verify-mirror-mode.sh`, `scripts/remote/deploy-drop-nsenter.sh` (new)
 - `Debugging/DEPLOYMENT-ISSUES.md`, `Debugging/BRIDGE-ARCHITECTURE.md`, `Debugging/RELEASE-VERIFICATION.md`
 
 ## Test results
-- pytest: 2349 passed, up from 2345. The 4 new tests:
+- pytest: 2352 passed, up from 2345. The first 4 new tests:
   - all four helpers run commands without nsenter;
   - a missing binary is named in the error;
   - the guard fails closed;
   - CR-076 skips setup.
+- Review follow-ups added 3 more tests:
+  - the boot unit has no flush and has a non-fatal `ethtool -K`;
+  - bridge create refuses an in-use NIC;
+  - bridge create refuses a bad NIC name.
 - `ruff check` and `ruff format --check` are clean.
 - `shellcheck -S warning` is clean on both scripts.
 - The admin-UP regex was self-checked against five flag strings.

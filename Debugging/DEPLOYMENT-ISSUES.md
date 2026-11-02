@@ -258,6 +258,12 @@ CHAIN 22: Ubuntu AppArmor blocked every daemon nsenter, so mirror setup never ra
   Because setup()'s address flush now really runs at every daemon start, the CR-076 guard
   went in too: main.py skips mirror setup when the NIC carries the default route or has an
   IPv4 address (a NIC rename could otherwise point the config at the management port).
+  The review of the fix found two more places CR-076 applied:
+  - The boot unit nettap-mirror.service ran `ip addr flush` by NIC name at every boot, with no
+    check. That line is removed; the netplan file keeps the NIC address-free. Its ethtool -K line
+    is now non-fatal, so a refused offload can't stop the unit before the IPv6 line runs.
+  - Go Live's POST /api/setup/bridge had no in-use check. It works on Ubuntu for the first time
+    now, so it gets the same refusal (and name validation) as the bridge preview.
   Still true after the fix: /proc/sys is read-only in the container, so setup()'s
   `sysctl -w ...disable_ipv6=1` only logs a warning. The host boot unit
   nettap-mirror.service applies it; deploy-drop-nsenter.sh starts that unit once so no
