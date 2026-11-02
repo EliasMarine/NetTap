@@ -353,7 +353,10 @@ class IoTMonitor:
             )
         except Exception as exc:
             logger.error("IoT Arkime OUI discovery query failed: %s", exc)
-            return
+            # OLD CODE START — #96: the fleet read the cached devices, or "no IoT devices", as current
+            # return
+            # OLD CODE END
+            raise
         if not complete:
             logger.warning("IoT discovery stopped at %d MACs", len(buckets))
 
@@ -718,7 +721,10 @@ class IoTMonitor:
             ports_by_mac = self._counts_by_mac({"bool": bool_clause}, "destination.port")
         except Exception as exc:
             logger.error("Fleet conn stats query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: every device was scored as having no traffic
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, dict[str, Any]] = {}
         buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
@@ -799,7 +805,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Fleet alert count query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: every device read 0 alerts
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, int] = {}
         for bucket in (
@@ -863,7 +872,10 @@ class IoTMonitor:
             domains_by_mac = self._counts_by_mac({"bool": bool_clause}, "dns.host")
         except Exception as exc:
             logger.error("Fleet DNS tracker query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: every device read 0 tracker domains
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, dict[str, Any]] = {}
         for bucket in (
@@ -1081,7 +1093,10 @@ class IoTMonitor:
             known = self._baseline_known_sets({"bool": bool_clause}, mac)
         except Exception as exc:
             logger.error("Failed to build baseline for %s: %s", mac, exc)
-            return {"error": str(exc)}
+            # OLD CODE START — #96: answered 200 with {"error": ...} as the baseline
+            # return {"error": str(exc)}
+            # OLD CODE END
+            raise
 
         aggs = result.get("aggregations", {})
 
@@ -1223,7 +1238,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Anomaly check failed for %s: %s", mac, exc)
-            return []
+            # OLD CODE START — #96: read as "no anomalies" and a fleet anomaly count of 0
+            # return []
+            # OLD CODE END
+            raise
 
         aggs = result.get("aggregations", {})
         anomalies: list[dict[str, Any]] = []
@@ -1524,7 +1542,10 @@ class IoTMonitor:
             domains_by_mac = self._counts_by_mac({"bool": bool_clause}, "dns.host")
         except Exception as exc:
             logger.error("DNS tracker detail query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: the privacy report read no trackers for every device
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, dict[str, Any]] = {}
         for bucket in (
@@ -1629,7 +1650,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Communication map query failed for %s: %s", mac, exc)
-            return {"mac": mac, "destinations": []}
+            # OLD CODE START — #96: read as a device that talks to nobody
+            # return {"mac": mac, "destinations": []}
+            # OLD CODE END
+            raise
 
         # Resolve hostnames via DNS logs
         dest_ips = []
@@ -1801,13 +1825,16 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Activity timeline query failed for %s: %s", mac, exc)
-            return {
-                "mac": mac,
-                "interval": "1h",
-                "buckets": [],
-                "baseline_hours": [],
-                "baseline_avg_hourly_bytes": 0,
-            }
+            # OLD CODE START — #96: read as a device with no activity
+            # return {
+            #     "mac": mac,
+            #     "interval": "1h",
+            #     "buckets": [],
+            #     "baseline_hours": [],
+            #     "baseline_avg_hourly_bytes": 0,
+            # }
+            # OLD CODE END
+            raise
 
         hourly_buckets = (
             result.get("aggregations", {}).get("hourly", {}).get("buckets", [])
@@ -2066,7 +2093,10 @@ class IoTMonitor:
             return self._counts_by_mac({"bool": bool_clause}, "destination.port")
         except Exception as exc:
             logger.error("Port detail query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: the protocol audit read no ports for every device
+            # return {}
+            # OLD CODE END
+            raise
 
     def _counts_by_mac(self, query: dict, field: str) -> dict[str, dict[Any, int]]:
         """Documents per value of `field` for each source MAC in `query`: every value,
@@ -2155,7 +2185,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Hardcoded DNS query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: read as "no device bypasses your DNS"
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, list[dict[str, Any]]] = {}
         for bucket in (
@@ -2385,12 +2418,15 @@ class IoTMonitor:
             )
         except Exception as exc:
             logger.error("Network isolation query failed: %s", exc)
-            return {
-                "segmentation_score": 100,
-                "segmentation_grade": "A",
-                "pairs": [],
-                "recommendation": "Could not analyze network isolation.",
-            }
+            # OLD CODE START — #96: a failure scored the network 100 / grade A
+            # return {
+            #     "segmentation_score": 100,
+            #     "segmentation_grade": "A",
+            #     "pairs": [],
+            #     "recommendation": "Could not analyze network isolation.",
+            # }
+            # OLD CODE END
+            raise
         if not complete:
             logger.warning("Network isolation stopped at %d pairs", len(buckets))
 

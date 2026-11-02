@@ -148,10 +148,12 @@ class TestBuildBaseline:
         assert baseline["total_bytes"] == 5000000
         assert baseline["connection_count"] == 1000
 
-    def test_handles_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: answered 200 with {"error": ...} as the device's baseline."""
         mock_client.search.side_effect = Exception("Connection refused")
-        baseline = iot.build_baseline("AA:BB:CC:DD:EE:FF")
-        assert "error" in baseline
+        with pytest.raises(Exception, match="Connection refused"):
+            iot.build_baseline("AA:BB:CC:DD:EE:FF")
+        assert iot.get_device_baseline("AA:BB:CC:DD:EE:FF") is None
 
     def test_stores_baseline(self, iot, mock_client):
         mock_client.search.return_value = {
@@ -575,8 +577,8 @@ class TestFleetSummary:
         assert iot._is_tracker_domain("mixpanel.com") is True
         assert iot._is_tracker_domain("api.mixpanel.com") is True
 
-    def test_opensearch_error_handled(self, iot, mock_client):
-        """Fleet summary handles OpenSearch failures gracefully."""
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure scored the cached devices on no traffic, 0 alerts and 0 anomalies."""
         iot._iot_devices = {
             "AA:BB:CC:DD:EE:FF": {
                 "mac": "AA:BB:CC:DD:EE:FF",
@@ -588,11 +590,29 @@ class TestFleetSummary:
         }
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
-        # Should still return a valid structure (empty stats, default scores)
-        assert result["device_count"] == 1
-        assert "health_score" in result
-        assert "devices" in result
+        with pytest.raises(Exception, match="Connection refused"):
+            iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+
+    def test_failed_stats_after_discovery_raise(self, iot, monkeypatch):
+        """Each fleet query on its own: conn stats, DNS trackers, then the anomaly check."""
+        devices = {"AA:BB:CC:DD:EE:FF": {"mac": "AA:BB:CC:DD:EE:FF", "manufacturer": "Ring"}}
+        monkeypatch.setattr(iot, "_discover_iot_devices_from_arkime", lambda *a: None)
+        iot._iot_devices = devices
+        iot._baselines = {"AA:BB:CC:DD:EE:FF": {"known_destinations": []}}
+        ok = {"aggregations": {}}
+        for failing in range(3):
+            calls = {"n": 0}
+
+            def search(index=None, body=None, failing=failing, calls=calls):
+                calls["n"] += 1
+                if calls["n"] - 1 == failing:
+                    raise Exception("timeout")
+                return ok
+
+            monkeypatch.setattr(iot, "_counts_by_mac", lambda *a: {})
+            iot._client.search.side_effect = search
+            with pytest.raises(Exception, match="timeout"):
+                iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -692,14 +712,13 @@ class TestPrivacyReport:
         assert "phone_home_per_hour" in dev
         assert dev["tracker_count"] >= 1  # at least google-analytics.com
 
-    def test_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure read as no trackers on any device."""
         self._setup_devices(iot)
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
-        # Should still return valid structure with default data
-        assert "devices" in result
-        assert len(result["devices"]) == 1
+        with pytest.raises(Exception, match="Connection refused"):
+            iot.get_privacy_report("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -780,13 +799,13 @@ class TestCommunicationMap:
         assert dest["connection_count"] == 234
         assert "in_baseline" in dest
 
-    def test_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure read as a device that talks to nobody."""
         mock_client.search.side_effect = Exception("timeout")
-        result = iot.get_communication_map(
-            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
-        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
-        assert result["destinations"] == []
+        with pytest.raises(Exception, match="timeout"):
+            iot.get_communication_map(
+                "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -855,13 +874,13 @@ class TestActivityTimeline:
         assert result["baseline_hours"] == [8, 9, 10, 11, 12]
         assert result["baseline_avg_hourly_bytes"] == 2000  # 48000 / 24
 
-    def test_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure read as a device with no activity."""
         mock_client.search.side_effect = Exception("timeout")
-        result = iot.get_activity_timeline(
-            "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
-        assert result["mac"] == "AA:BB:CC:DD:EE:FF"
-        assert result["buckets"] == []
+        with pytest.raises(Exception, match="timeout"):
+            iot.get_activity_timeline(
+                "AA:BB:CC:DD:EE:FF", "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -926,13 +945,13 @@ class TestProtocolAudit:
         assert dev["compliant"] is True
         assert dev["violation_count"] == 0
 
-    def test_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure read as no ports and no hardcoded DNS on any device."""
         self._setup_devices(iot)
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
-        assert "devices" in result
-        assert len(result["devices"]) == 1
+        with pytest.raises(Exception, match="Connection refused"):
+            iot.get_protocol_audit("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -1011,15 +1030,13 @@ class TestNetworkIsolation:
         assert result["segmentation_grade"] == "A"
         assert result["pairs"] == []
 
-    def test_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure scored the network 100 / grade A."""
         self._setup_devices(iot)
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_network_isolation(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
-        assert result["segmentation_score"] == 100
-        assert result["pairs"] == []
+        with pytest.raises(Exception, match="Connection refused"):
+            iot.get_network_isolation("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -1082,15 +1099,13 @@ class TestManufacturerProfiles:
             assert "total_violations" in m
             assert m["device_count"] == 1
 
-    def test_opensearch_error(self, iot, mock_client):
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failure listed the cached devices' makers with no traffic or alerts."""
         self._setup_devices(iot)
         mock_client.search.side_effect = Exception("Connection refused")
 
-        result = iot.get_manufacturer_profiles(
-            "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
-        )
-        assert "manufacturers" in result
-        assert len(result["manufacturers"]) == 2
+        with pytest.raises(Exception, match="Connection refused"):
+            iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -1377,14 +1392,14 @@ class TestDiscoverIotDevicesFromArkime:
         )
         assert len(iot.get_iot_devices()) == 0
 
-    def test_opensearch_error_handled(self, iot, mock_client):
-        """OpenSearch errors do not crash discovery."""
+    def test_opensearch_error_raises(self, iot, mock_client):
+        """#96: a failed discovery left the cached (or empty) device set to be read as current."""
         mock_client.search.side_effect = Exception("Connection refused")
 
-        iot._discover_iot_devices_from_arkime(
-            "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
-        )
-        assert len(iot.get_iot_devices()) == 0
+        with pytest.raises(Exception, match="Connection refused"):
+            iot._discover_iot_devices_from_arkime(
+                "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
+            )
 
     def test_raspberry_pi_matches_keyword(self, iot, mock_client):
         """Raspberry Pi (Trading) Ltd matches 'raspberry pi' keyword."""
