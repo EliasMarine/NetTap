@@ -34,8 +34,9 @@ r = json.load(urllib.request.urlopen(req, timeout=120))
 print($2)" "$1" 2>&1
 }
 
-json_get() {  # json_get <python expression over `r`>: one value from the JSON on stdin (python in a container)
-    sudo docker exec -i nettap-storage-daemon python3 -c "import json, sys; r = json.load(sys.stdin); print($1)" 2>&1
+json_get() {  # json_get <json> <python expression over `r`>: python runs in a container
+    # The JSON goes in as an argument, not stdin: sudo -S (password on stdin) would swallow it
+    sudo docker exec nettap-storage-daemon python3 -c "import json, sys; r = json.loads(sys.argv[1]); print($2)" "$1" 2>&1
 }
 
 between() { [[ "${1:-}" =~ ^[0-9]+$ && "${2:-}" =~ ^[0-9]+$ && "${3:-}" =~ ^[0-9]+$ ]] && [ "$1" -le "$2" ] && [ "$2" -le "$3" ]; }
@@ -48,7 +49,9 @@ compare() {  # compare "label" <raw function> <api function>: raw before <= API 
 }
 
 raw() {  # raw <bool clause> <aggs or {}> <python expression over `r`>
-    os_query "/arkime_sessions3-*/_search" "{\"size\":0,\"track_total_hits\":true,\"query\":{\"bool\":$1},\"aggs\":$2}" | json_get "$3"
+    local out
+    out=$(os_query "/arkime_sessions3-*/_search" "{\"size\":0,\"track_total_hits\":true,\"query\":{\"bool\":$1},\"aggs\":$2}")
+    json_get "$out" "$3"
 }
 
 # --- What each endpoint filters on (daemon/api/*.py, daemon/services/*.py) ---
