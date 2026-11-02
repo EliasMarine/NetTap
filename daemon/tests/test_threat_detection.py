@@ -140,3 +140,43 @@ class TestDnsAnomalyNoise:
         assert {"term": {"zeek.dns.query": "pcap-monitor"}} in must_not
         # long mDNS service names would otherwise read as DNS tunneling
         assert DNS_LOOKUP_EXCLUSION[1] in must_not
+
+
+# ---------------------------------------------------------------------------
+# DGA rule scores the registered name (#35, 2026-11-02)
+# ---------------------------------------------------------------------------
+
+
+class TestDgaRegisteredName:
+    """Real names the G11 flagged as DGA because the rule scored the leftmost label."""
+
+    def _dga(self, domains: list[str]) -> list[str]:
+        from unittest.mock import MagicMock
+
+        from services.threat_detection import analyze_dns_anomalies
+
+        client = MagicMock()
+        client.search.return_value = {
+            "aggregations": {"domains": {"buckets": [{"key": d, "doc_count": 5} for d in domains]}}
+        }
+        found = analyze_dns_anomalies(client, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        return [f["domain"] for f in found["dga_suspects"]]
+
+    def test_random_hostname_under_real_domain_not_flagged(self):
+        assert self._dga([
+            "7b18d6de7a0148e5ae70caf5253e933c-7a0ef8ad28aa.cdn.forter.com",
+            "23o27znco77ezwi2qraa3vul2diwfioswcqputkh0e9e8735e3b694b2sac.d.aa.online-metrix.net",
+            "s3-figma-force-client-reloads-production.figma.com",
+        ]) == []
+
+    def test_single_label_lan_hostname_not_flagged(self):
+        assert self._dga(["sarabouzeid-fgwk3p497k"]) == []
+
+    def test_hyphenated_words_not_flagged(self):
+        assert self._dga(["browser-intake-datadoghq.com"]) == []
+
+    def test_random_registered_name_flagged(self):
+        assert self._dga(["www.kq3z8wxv1m7tbn5r6yhp.com", "kq3z8wxv1m7tbn5r6yhp.co.uk"]) == [
+            "www.kq3z8wxv1m7tbn5r6yhp.com",
+            "kq3z8wxv1m7tbn5r6yhp.co.uk",
+        ]

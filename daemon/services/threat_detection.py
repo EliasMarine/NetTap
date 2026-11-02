@@ -396,7 +396,19 @@ def analyze_dns_anomalies(
             continue
 
         # DGA detection
-        registrable = parts[0] if len(parts) >= 2 else domain
+        # OLD CODE START — parts[0] is the leftmost hostname label (CDN/session IDs like
+        # "7b18d6de...-7a0ef8ad28aa.cdn.forter.com"), not the registered name a DGA randomises,
+        # and single-label LAN hostnames ("sarabouzeid-fgwk3p497k") were scored too (#35).
+        # registrable = parts[0] if len(parts) >= 2 else domain
+        # OLD CODE END
+        if len(parts) < 2:
+            continue  # single-label names are local hostnames, not registered domains
+        # shortcut: no public-suffix list; a 2nd-level label of <=3 chars (co.uk, com.au) is
+        # taken as part of the suffix. Use a PSL library if this misfires.
+        registrable = parts[-3] if len(parts) >= 3 and len(parts[-2]) <= 3 else parts[-2]
+        # DGA labels are one random run; score the longest hyphen-separated word so compound
+        # names like "browser-intake-datadoghq" aren't read as random
+        registrable = max(registrable.split("-"), key=len)
         entropy = _shannon_entropy(registrable)
         if entropy > DGA_ENTROPY_THRESHOLD and len(registrable) > 8:
             findings["dga_suspects"].append(
