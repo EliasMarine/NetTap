@@ -151,14 +151,16 @@ class TestDgaRegisteredName:
     """Real names the G11 flagged as DGA because the rule scored the leftmost label."""
 
     def _dga(self, domains: list[str]) -> list[str]:
-        from unittest.mock import MagicMock
-
         from services.threat_detection import analyze_dns_anomalies
+        from tests.fake_opensearch import FakeOpenSearch
 
-        client = MagicMock()
-        client.search.return_value = {
-            "aggregations": {"domains": {"buckets": [{"key": d, "doc_count": 5} for d in domains]}}
-        }
+        # OLD CODE START — #96: mocked the old top-500 terms reply; names are now paged
+        # client = MagicMock()
+        # client.search.return_value = {
+        #     "aggregations": {"domains": {"buckets": [{"key": d, "doc_count": 5} for d in domains]}}
+        # }
+        # OLD CODE END
+        client = FakeOpenSearch([_dns(d) for d in domains for _ in range(5)])
         found = analyze_dns_anomalies(client, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
         return [f["domain"] for f in found["dga_suspects"]]
 
@@ -176,9 +178,10 @@ class TestDgaRegisteredName:
         assert self._dga(["browser-intake-datadoghq.com"]) == []
 
     def test_random_registered_name_flagged(self):
+        # equal counts and entropy: name order, as OpenSearch breaks count ties
         assert self._dga(["www.kq3z8wxv1m7tbn5r6yhp.com", "kq3z8wxv1m7tbn5r6yhp.co.uk"]) == [
-            "www.kq3z8wxv1m7tbn5r6yhp.com",
             "kq3z8wxv1m7tbn5r6yhp.co.uk",
+            "www.kq3z8wxv1m7tbn5r6yhp.com",
         ]
 
 
@@ -198,6 +201,19 @@ def _conn(src: str, dst: str, port: int, ts: int) -> dict:
         "destination.ip": dst,
         "destination.port": port,
         "@timestamp": ts,
+    }
+
+
+def _dns(name: str, src: str = "192.168.1.10", rcode: str = "NOERROR") -> dict:
+    return {
+        "event.provider": "zeek",
+        "event.dataset": "dns",
+        "zeek.dns.query": name,
+        "zeek.dns.rcode_name": rcode,
+        "source.ip": src,
+        "destination.ip": "8.8.8.8",
+        "destination.port": 53,
+        "@timestamp": _T0,
     }
 
 
@@ -271,3 +287,28 @@ class TestLateralMovementSeesEveryPair:
             ("192.168.1.66", "192.168.1.11", 3),
             ("192.168.1.66", "192.168.1.12", 3),
         ]
+
+
+class TestDnsAnomaliesSeeEveryNameAndSource:
+    def test_once_queried_names_and_the_101st_source_are_checked(self):
+        """Top 500 names / top 100 sources: tunnel and DGA names are queried ~once, so were cut."""
+        from services.threat_detection import analyze_dns_anomalies
+        from tests.fake_opensearch import FakeOpenSearch
+
+        tunnel = "x" * 55 + ".t.evil-tunnel.com"
+        docs = (
+            [_dns("www.example.com", f"10.1.0.{s}") for s in range(1, 101) for _ in range(80)]
+            + [_dns(f"site{i}.example.org", "10.1.0.1") for i in range(600) for _ in range(3)]
+            + [_dns(f"zz{k}.invalid-test.net", "10.9.9.9", "NXDOMAIN") for k in range(45)]
+            + [_dns("www.example.com", "10.9.9.9") for _ in range(15)]
+            + [_dns(tunnel, "10.9.9.8"), _dns("kq3z8wxv1m7tbn5r6yhp.com", "10.9.9.8")]
+        )
+
+        found = analyze_dns_anomalies(FakeOpenSearch(docs), *_DAY)
+
+        assert [d["domain"] for d in found["dga_suspects"]] == ["kq3z8wxv1m7tbn5r6yhp.com"]
+        assert [t["domain"] for t in found["tunnel_suspects"]] == [tunnel]
+        assert [(s["source_ip"], s["nxdomain_count"], s["unique_domains"]) for s in found["nxdomain_spikes"]] == [
+            ("10.9.9.9", 45, 46)
+        ]
+        assert found["complete"] is True

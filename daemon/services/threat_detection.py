@@ -495,27 +495,54 @@ def analyze_dns_anomalies(
     #     bool_clause["must_not"] = excluded
     # OLD CODE END
 
-    query = {
-        "size": 0,
-        "query": {"bool": bool_clause},
-        "aggs": {
-            "domains": {
-                "terms": {"field": "zeek.dns.query", "size": 500},
-            },
-            "by_source": {
-                "terms": {"field": "source.ip", "size": 100},
-                "aggs": {
-                    "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
-                    "nxdomain_count": {
-                        "filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}
-                    },
-                },
-            },
-        },
-    }
-
+    # OLD CODE START — #96: only the top 500 names and top 100 sources were checked; DGA and
+    # tunnel names are each queried about once (the tail the list cut), and a source ranked
+    # 101st by volume could send any share of NXDOMAINs unseen
+    # query = {
+    #     "size": 0,
+    #     "query": {"bool": bool_clause},
+    #     "aggs": {
+    #         "domains": {
+    #             "terms": {"field": "zeek.dns.query", "size": 500},
+    #         },
+    #         "by_source": {
+    #             "terms": {"field": "source.ip", "size": 100},
+    #             "aggs": {
+    #                 "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
+    #                 "nxdomain_count": {
+    #                     "filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}
+    #                 },
+    #             },
+    #         },
+    #     },
+    # }
+    #
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error("DNS anomaly analysis failed", exc_info=True)
+    #     return {
+    #         "dga_suspects": [],
+    #         "tunnel_suspects": [],
+    #         "nxdomain_spikes": [],
+    #         "suspicious_tlds": [],
+    #     }
+    # OLD CODE END
+    query = {"bool": bool_clause}
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        names, names_complete = all_buckets(
+            client, NETWORK_INDEX, query, [{"name": {"terms": {"field": "zeek.dns.query"}}}]
+        )
+        sources, sources_complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            query,
+            [{"src": {"terms": {"field": "source.ip"}}}],
+            aggs={
+                "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
+                "nxdomain_count": {"filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}},
+            },
+        )
     except Exception:
         logger.error("DNS anomaly analysis failed", exc_info=True)
         return {
@@ -523,7 +550,11 @@ def analyze_dns_anomalies(
             "tunnel_suspects": [],
             "nxdomain_spikes": [],
             "suspicious_tlds": [],
+            "complete": False,
         }
+    complete = names_complete and sources_complete
+    if not complete:
+        logger.warning("DNS anomalies: the scan hit its bucket cap; names or sources past it were not checked")
 
     findings: dict[str, list] = {
         "dga_suspects": [],
@@ -532,8 +563,13 @@ def analyze_dns_anomalies(
         "suspicious_tlds": [],
     }
 
-    for bucket in result.get("aggregations", {}).get("domains", {}).get("buckets", []):
-        domain = bucket["key"]
+    # OLD CODE START — #96: iterated the top-500 terms list
+    # for bucket in result.get("aggregations", {}).get("domains", {}).get("buckets", []):
+    #     domain = bucket["key"]
+    # OLD CODE END
+    # most-queried first, the order the top list gave, so each list's first rows mean the same
+    for bucket in sorted(names, key=lambda b: -b["doc_count"]):
+        domain = bucket["key"]["name"]
         count = bucket["doc_count"]
         parts = domain.split(".")
 
@@ -590,10 +626,14 @@ def analyze_dns_anomalies(
             )
 
     # NXDOMAIN spikes per source
-    for bucket in (
-        result.get("aggregations", {}).get("by_source", {}).get("buckets", [])
-    ):
-        src_ip = bucket["key"]
+    # OLD CODE START — #96: iterated the top-100 sources list
+    # for bucket in (
+    #     result.get("aggregations", {}).get("by_source", {}).get("buckets", [])
+    # ):
+    #     src_ip = bucket["key"]
+    # OLD CODE END
+    for bucket in sorted(sources, key=lambda b: -b["doc_count"]):
+        src_ip = bucket["key"]["src"]
         total = bucket["doc_count"]
         nxdomain = bucket.get("nxdomain_count", {}).get("doc_count", 0)
 
@@ -614,4 +654,7 @@ def analyze_dns_anomalies(
             )
 
     findings["dga_suspects"].sort(key=lambda d: d["entropy"], reverse=True)
-    return findings
+    # OLD CODE START — #96: no way to tell a full scan from one a bucket cap stopped
+    # return findings
+    # OLD CODE END
+    return {**findings, "complete": complete}
