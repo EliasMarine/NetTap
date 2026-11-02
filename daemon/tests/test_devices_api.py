@@ -766,13 +766,18 @@ def _composite_page(buckets, composite):
     return {"aggregations": {"all": {"buckets": page, **({"after_key": page[-1]["key"]} if page else {})}}}
 
 
-def _route_device_searches(device_response):
+def _route_device_searches(device_response, alerts=None):
     """search() side effect: like OpenSearch, the device terms agg gets the top `size` buckets
-    with min_doc_count, a composite every bucket page by page; the rest empty."""
+    with min_doc_count, a composite every bucket page by page, the alert count `alerts`
+    ({ip: count}) for the IPs asked; the rest empty."""
     buckets = device_response["aggregations"]["devices"]["buckets"]
 
     def _search(index=None, body=None, **_kwargs):
         aggs = (body or {}).get("aggs", {})
+        if "by_ip" in aggs and alerts:
+            asked = next(f["terms"]["source.ip"] for f in body["query"]["bool"]["filter"] if "terms" in f)
+            hits = [{"key": ip, "doc_count": n} for ip, n in alerts.items() if ip in asked]
+            return {"aggregations": {"by_ip": {"buckets": hits}}}
         if "devices" in aggs:
             terms = aggs["devices"]["terms"]
             kept = [b for b in buckets if b["doc_count"] >= terms.get("min_doc_count", 1)]
@@ -903,6 +908,46 @@ class TestDeviceCountHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["count"], 1200)
         self.assertEqual(self.mock_client.search.call_count, 3)  # two full pages and an empty one
+
+
+class TestDeviceListAlertSort(AioHTTPTestCase):
+    """#96: sort=alerts ranks every device, not the top 2 x limit by bytes."""
+
+    # Ten busy devices, then a quiet one with the most alerts
+    BUCKETS = [
+        *(_device_bucket(f"192.168.1.{i}", total_bytes=1_000_000 - i) for i in range(10, 20)),
+        _device_bucket("192.168.1.50", total_bytes=10),
+    ]
+    ALERTS = {"192.168.1.50": 7, "192.168.1.11": 2}
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_device_routes(app, self.storage)
+        return app
+
+    async def _listed(self, query):
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response(self.BUCKETS), self.ALERTS
+        )
+        resp = await self.client.request("GET", "/api/devices" + query)
+        self.assertEqual(resp.status, 200)
+        return [(d["ip"], d["alert_count"]) for d in (await resp.json())["devices"]]
+
+    @unittest_run_loop
+    async def test_most_alerts_first_from_every_device(self):
+        # The top 4 by bytes left 192.168.1.50 out
+        listed = await self._listed("?sort=alerts&limit=2")
+        self.assertEqual(listed, [("192.168.1.50", 7), ("192.168.1.11", 2)])
+
+    @unittest_run_loop
+    async def test_fewest_alerts_first_bytes_breaks_ties(self):
+        listed = await self._listed("?sort=alerts&order=asc&limit=2")
+        self.assertEqual(listed, [("192.168.1.10", 0), ("192.168.1.12", 0)])
 
 
 class TestDeviceTimeRange(AioHTTPTestCase):

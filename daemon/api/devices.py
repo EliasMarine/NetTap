@@ -384,8 +384,12 @@ async def handle_device_list(request: web.Request) -> web.Response:
     }
     agg_sort_key = sort_map.get(sort_field, "total_bytes")
 
-    # Fetch more than needed if sorting by alerts (post-query sort)
-    fetch_size = limit * 2 if sort_field == "alerts" else limit
+    # OLD CODE START — #96: the alert sort only saw the top 2 x limit devices by bytes, so a
+    # quieter device with more alerts was never listed
+    # # Fetch more than needed if sorting by alerts (post-query sort)
+    # fetch_size = limit * 2 if sort_field == "alerts" else limit
+    # OLD CODE END
+    fetch_size = limit
 
     # OLD CODE START — replaced 2026-11-01: moved into _device_bool_query so the count uses the same filters
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
@@ -438,14 +442,26 @@ async def handle_device_list(request: web.Request) -> web.Response:
     }
 
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — #96: the alert sort read the same capped list
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE END
+        if sort_field == "alerts":
+            # Every device: alert counts aren't in conn records, so the top `limit` is picked below
+            buckets = _lan_device_buckets(
+                client, request.app, from_ts, to_ts, aggs=query["aggs"]["devices"]["aggs"]
+            )
+        else:
+            result = client.search(index=NETWORK_INDEX, body=query)
+            buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices list: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    # OLD CODE START — #96: moved into the try above
+    # buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    # OLD CODE END
 
     # Collect all device IPs for batch alert count query
     device_ips = [b["key"] for b in buckets]
@@ -487,6 +503,13 @@ async def handle_device_list(request: web.Request) -> web.Response:
                 alert_counts[ab["key"]] = ab["doc_count"]
         except OpenSearchException as exc:
             logger.warning("Alert count query failed: %s", exc)
+
+    if sort_field == "alerts":
+        # Bytes (largest first) breaks ties, as the bytes-ordered list did before
+        by_bytes = sorted(buckets, key=lambda b: b.get("total_bytes", {}).get("value", 0) or 0, reverse=True)
+        buckets = sorted(
+            by_bytes, key=lambda b: alert_counts.get(b["key"], 0), reverse=(sort_order == "desc")
+        )[:limit]
 
     # Build device list with enrichment — skip broadcast/gateway IPs
     # Fingerprint lookups for every device at once (#21: 4 round trips per device before)
@@ -562,12 +585,14 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
         devices.append(device)
 
-    # Post-query sort by alerts if requested
-    if sort_field == "alerts":
-        devices.sort(
-            key=lambda d: d["alert_count"],
-            reverse=(sort_order == "desc"),
-        )
+    # OLD CODE START — #96: sorted the capped list; the buckets are sorted above now
+    # # Post-query sort by alerts if requested
+    # if sort_field == "alerts":
+    #     devices.sort(
+    #         key=lambda d: d["alert_count"],
+    #         reverse=(sort_order == "desc"),
+    #     )
+    # OLD CODE END
 
     # Apply limit after post-sort
     devices = devices[:limit]
