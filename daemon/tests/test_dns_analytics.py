@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.dns_analytics import DNSAnalytics, _shannon_entropy
+from tests.fake_opensearch import FakeOpenSearch
 
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
@@ -261,10 +262,62 @@ class TestGetDnsTimeline:
 # ---------------------------------------------------------------------------
 
 
+def _dns_doc(name: str, src: str = "192.168.1.10", qtype: str = "A") -> dict:
+    return {
+        "event.provider": "zeek",
+        "event.dataset": "dns",
+        "zeek.dns.query": name,
+        "zeek.dns.qtype_name": qtype,
+        "source.ip": src,
+        "destination.ip": "8.8.8.8",
+        "destination.port": 53,
+        "@timestamp": 0,
+    }
+
+
+def _over(reply: dict) -> DNSAnalytics:
+    """#96: the detections page every name now; serve the docs an old top-list reply described."""
+    aggs = reply["aggregations"]
+    names = [
+        _dns_doc(b["key"], f"192.168.1.{n % b['unique_clients']['value'] + 1}")
+        for b in aggs.get("top_domains", {}).get("buckets", [])
+        for n in range(b["doc_count"])
+    ]
+    txt = [_dns_doc(b["key"], qtype="TXT") for b in aggs.get("txt_domains", {}).get("buckets", []) for _ in range(b["doc_count"])]
+    return DNSAnalytics(FakeOpenSearch(names + txt))
+
+
+class TestDetectionsSeeEveryName:
+    """#96: detections ran on the top 200 (TXT: top 20) names; the tail was never checked."""
+
+    _BUSY = [_dns_doc(f"site{i}.example.org") for i in range(250) for _ in range(3)]
+
+    def test_long_name_queried_once_is_flagged(self):
+        long_name = "a" * 60 + ".evil.com"
+        dns = DNSAnalytics(FakeOpenSearch(self._BUSY + [_dns_doc(long_name)]))
+
+        result = dns.get_suspicious_dns(_FROM, _TO)
+
+        assert [(r["type"], r["domain"]) for r in result] == [("long_domain", long_name)]
+
+    def test_every_txt_name_over_50_is_flagged(self):
+        docs = [_dns_doc(f"t{i:02d}.mail.example.com", qtype="TXT") for i in range(25) for _ in range(60)]
+
+        result = DNSAnalytics(FakeOpenSearch(docs)).get_suspicious_dns(_FROM, _TO)
+
+        assert len([r for r in result if r["type"] == "txt_abuse"]) == 25
+
+    def test_tunnel_name_queried_once_is_detected(self):
+        encoded = "a1b2c3d4e5f6g7h8i9j0.tunnel.evil.com"
+        dns = DNSAnalytics(FakeOpenSearch(self._BUSY + [_dns_doc(encoded)]))
+
+        assert [d["domain"] for d in dns.detect_dns_tunneling(_FROM, _TO)] == [encoded]
+
+
 class TestGetSuspiciousDns:
     def test_detects_long_domain_names(self, dns, mock_client):
         long_domain = "a" * 60 + ".evil.com"
-        mock_client.search.return_value = {
+        reply = {
             "aggregations": {
                 "top_domains": {
                     "buckets": [
@@ -279,14 +332,14 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         long_findings = [r for r in result if r["type"] == "long_domain"]
         assert len(long_findings) >= 1
         assert long_findings[0]["length"] > 50
 
     def test_detects_high_frequency(self, dns, mock_client):
-        mock_client.search.return_value = {
+        reply = {
             "aggregations": {
                 "top_domains": {
                     "buckets": [
@@ -301,7 +354,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         hf = [r for r in result if r["type"] == "high_frequency"]
         assert len(hf) >= 1
@@ -313,7 +366,7 @@ class TestGetSuspiciousDns:
             "1.0.17.172.in-addr.arpa",
             "b.a.9.8.7.6.5.0.4.0.0.0.3.0.0.0.2.0.0.0.1.0.0.0.0.0.0.0.1.2.3.4.ip6.arpa",
         ]
-        mock_client.search.return_value = {
+        reply = {
             "aggregations": {
                 "top_domains": {
                     "buckets": [
@@ -325,12 +378,12 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         assert [(r["type"], r["domain"]) for r in result] == [("high_frequency", "beacon.evil.com")]
 
     def test_detects_txt_abuse(self, dns, mock_client):
-        mock_client.search.return_value = {
+        reply = {
             "aggregations": {
                 "top_domains": {"buckets": []},
                 "txt_domains": {
@@ -339,7 +392,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = dns.get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
         txt = [r for r in result if r["type"] == "txt_abuse"]
         assert len(txt) >= 1
@@ -354,7 +407,7 @@ class TestDetectDnsTunneling:
     def test_detects_high_entropy_subdomains(self, dns, mock_client):
         # Base32-encoded subdomain (high entropy)
         encoded = "a1b2c3d4e5f6g7h8i9j0.tunnel.evil.com"
-        mock_client.search.return_value = {
+        reply = {
             "aggregations": {
                 "top_domains": {
                     "buckets": [
@@ -368,7 +421,7 @@ class TestDetectDnsTunneling:
             }
         }
 
-        result = dns.detect_dns_tunneling(
+        result = _over(reply).detect_dns_tunneling(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
@@ -376,7 +429,7 @@ class TestDetectDnsTunneling:
         assert result[0]["entropy"] > 3.5
 
     def test_ignores_normal_domains(self, dns, mock_client):
-        mock_client.search.return_value = {
+        reply = {
             "aggregations": {
                 "top_domains": {
                     "buckets": [
@@ -390,7 +443,7 @@ class TestDetectDnsTunneling:
             }
         }
 
-        result = dns.detect_dns_tunneling(
+        result = _over(reply).detect_dns_tunneling(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 

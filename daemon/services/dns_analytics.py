@@ -13,6 +13,7 @@ from collections import Counter
 from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
+from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.dns_analytics")
 
@@ -145,6 +146,34 @@ class DNSAnalytics:
             }
             for b in buckets
         ]
+
+    def _all_domains(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+        extra_filters: list[dict] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every queried name (get_top_domains' shape), most-queried first, paged to the end (#96)."""
+        buckets, complete = all_buckets(
+            self._client,
+            NETWORK_INDEX,
+            {"bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters)},
+            [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
+            aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
+        )
+        if not complete:
+            logger.warning("DNS: the name scan hit its bucket cap at %d names; later names were not checked", len(buckets))
+        names = [
+            {
+                "domain": b["key"]["domain"],
+                "count": b["doc_count"],
+                "unique_clients": b.get("unique_clients", {}).get("value", 0),
+            }
+            for b in buckets
+        ]
+        # the order the top list gave (count, then name), so detections list the same way
+        return sorted(names, key=lambda n: -n["count"])
 
     def get_device_dns(
         self,
@@ -339,7 +368,11 @@ class DNSAnalytics:
         suspicious: list[dict[str, Any]] = []
 
         # 1. Long domain names (potential DGA/tunneling)
-        top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE START — #96: only the 200 most-queried names were checked; an exfiltration
+        # name is queried about once, and a beaconing name can rank below 200 on a busy network
+        # top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE END
+        top = self._all_domains(from_ts, to_ts, excluded_ips)
         # OLD CODE START — every name was scored, so reverse lookups and Plex's per-server
         # hostnames (long and hex by design) were flagged as exfiltration or beaconing (#35)
         # (the loops below iterated `top`)
@@ -374,43 +407,51 @@ class DNSAnalytics:
                 )
 
         # 3. TXT record abuse
-        txt_query = {
-            "size": 0,
-            "query": {
-                "bool": self._bool_clause(
-                    from_ts,
-                    to_ts,
-                    excluded_ips,
-                    extra_filters=[
-                        {"term": {"zeek.dns.qtype_name": "TXT"}},
-                    ],
-                )
-            },
-            "aggs": {
-                "txt_domains": {
-                    "terms": {
-                        "field": "zeek.dns.query",
-                        "size": 20,
-                        "order": {"_count": "desc"},
-                    }
-                }
-            },
-        }
-
-        result = self._client.search(index=NETWORK_INDEX, body=txt_query)
-        txt_buckets = (
-            result.get("aggregations", {}).get("txt_domains", {}).get("buckets", [])
+        # OLD CODE START — #96: the top 20 TXT names only, so a 21st name over 50 TXT queries
+        # was never flagged
+        # txt_query = {
+        #     "size": 0,
+        #     "query": {
+        #         "bool": self._bool_clause(
+        #             from_ts,
+        #             to_ts,
+        #             excluded_ips,
+        #             extra_filters=[
+        #                 {"term": {"zeek.dns.qtype_name": "TXT"}},
+        #             ],
+        #         )
+        #     },
+        #     "aggs": {
+        #         "txt_domains": {
+        #             "terms": {
+        #                 "field": "zeek.dns.query",
+        #                 "size": 20,
+        #                 "order": {"_count": "desc"},
+        #             }
+        #         }
+        #     },
+        # }
+        #
+        # result = self._client.search(index=NETWORK_INDEX, body=txt_query)
+        # txt_buckets = (
+        #     result.get("aggregations", {}).get("txt_domains", {}).get("buckets", [])
+        # )
+        #
+        # for b in txt_buckets:
+        #     if b["doc_count"] > 50:
+        # OLD CODE END
+        txt = self._all_domains(
+            from_ts, to_ts, excluded_ips, extra_filters=[{"term": {"zeek.dns.qtype_name": "TXT"}}]
         )
-
-        for b in txt_buckets:
-            if b["doc_count"] > 50:
+        for entry in txt:
+            if entry["count"] > 50:
                 suspicious.append(
                     {
                         "type": "txt_abuse",
-                        "domain": b["key"],
-                        "count": b["doc_count"],
+                        "domain": entry["domain"],
+                        "count": entry["count"],
                         "severity": "low",
-                        "description": f"High TXT query volume ({b['doc_count']}) — TXT records can be used for data tunneling",
+                        "description": f"High TXT query volume ({entry['count']}) — TXT records can be used for data tunneling",
                     }
                 )
 
@@ -429,7 +470,11 @@ class DNSAnalytics:
         """
         detections: list[dict[str, Any]] = []
 
-        top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE START — #96: only the 200 most-queried names; tunnel names are each queried
+        # about once, the tail that list cut
+        # top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE END
+        top = self._all_domains(from_ts, to_ts, excluded_ips)
 
         for entry in top:
             domain = entry["domain"]
