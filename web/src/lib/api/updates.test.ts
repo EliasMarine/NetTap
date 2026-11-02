@@ -133,13 +133,10 @@ describe('updates API client', () => {
 			expect(result.last_scan).toBe('2026-02-26T12:00:00Z');
 		});
 
-		it('returns empty versions on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no versions', async () => {
 			mockFetchFailure(500);
 
-			const result = await getVersions();
-
-			expect(result.versions).toEqual({});
-			expect(result.last_scan).toBe('');
+			await expect(getVersions()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -180,13 +177,10 @@ describe('updates API client', () => {
 			expect(result.last_check).toBe('2026-02-26T12:00:00Z');
 		});
 
-		it('returns empty updates on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting everything up to date', async () => {
 			mockFetchFailure(502);
 
-			const result = await getAvailableUpdates();
-
-			expect(result.updates).toEqual([]);
-			expect(result.last_check).toBe('');
+			await expect(getAvailableUpdates()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -204,12 +198,10 @@ describe('updates API client', () => {
 			expect(result.updates).toHaveLength(1);
 		});
 
-		it('returns empty updates on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no updates', async () => {
 			mockFetchFailure(500);
 
-			const result = await checkForUpdates();
-
-			expect(result.updates).toEqual([]);
+			await expect(checkForUpdates()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -267,14 +259,10 @@ describe('updates API client', () => {
 			expect(result.results[0].success).toBe(true);
 		});
 
-		it('returns idle status on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting idle', async () => {
 			mockFetchFailure(500);
 
-			const result = await getUpdateStatus();
-
-			expect(result.state).toBe('idle');
-			expect(result.current_component).toBeNull();
-			expect(result.results).toEqual([]);
+			await expect(getUpdateStatus()).rejects.toThrow('HTTP 500');
 		});
 	});
 
