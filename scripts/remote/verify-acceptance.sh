@@ -48,7 +48,10 @@ if [ -z "$UNHEALTHY" ]; then rc=0; else rc=1; fi
 check "every NetTap container up and healthy" "$rc" "$RUNNING running${UNHEALTHY:+; not healthy: $UNHEALTHY}"
 FATAL=""
 for c in nettap-logstash nettap-dashboards-helper; do
-    S=$(sudo docker exec "$c" supervisorctl -c /etc/supervisord.conf status 2>&1 | grep -E 'FATAL|BACKOFF|EXITED' | awk '{print $1}' | tr '\n' ' ')
+    # fix-perms and idxinit are one-shots (autorestart=false): EXITED is their done state, and
+    # their effects are checked below (indexing resumes, Malcolm's dashboards exist)
+    S=$(sudo docker exec "$c" supervisorctl -c /etc/supervisord.conf status 2>&1 \
+        | awk '$2 != "RUNNING" && !($1 ~ /^(fix-perms|idxinit)$/ && $2 == "EXITED") {print $1 "=" $2}' | tr '\n' ' ')
     [ -n "$S" ] && FATAL="$FATAL $c: $S"
 done
 if [ -z "$FATAL" ]; then rc=0; else rc=1; fi
@@ -134,7 +137,8 @@ echo ""
 echo "→ Step 6: PCAP and TShark..."
 FILE_PATH=$(field FILE 3)
 read -r _ TS_COUNT TS_DNS TS_SECS TS_ERR <<<"$(echo "$OUT" | grep '^TSHARK')"
-TRUTH=$(sudo docker exec nettap-tshark sh -c 'tshark -r "$1" -Y dns -T fields -e frame.number 2>/dev/null | head -n 50 | wc -l' _ "${FILE_PATH:-none}" 2>/dev/null | tr -d ' ')
+# The tshark container mounts the PCAP directory at /pcap (the daemon maps paths the same way)
+TRUTH=$(sudo docker exec nettap-tshark sh -c 'tshark -r "$1" -Y dns -T fields -e frame.number 2>/dev/null | head -n 50 | wc -l' _ "/pcap/${FILE_PATH##*/}" 2>/dev/null | tr -d ' ')
 if [ -n "${TS_COUNT:-}" ] && [ "$TS_COUNT" = "${TRUTH:-x}" ] && [ "$TS_COUNT" = "${TS_DNS:-y}" ]; then rc=0; else rc=1; fi
 check "TShark 'dns' filter = tshark run directly" "$rc" "API ${TS_COUNT:-?} (${TS_DNS:-?} with a DNS layer) in ${TS_SECS:-?} s, tshark ${TRUTH:-?}, error ${TS_ERR:-?}"
 read -r _ PV_N PV_ERR <<<"$(echo "$OUT" | grep '^PREVIEW')"
