@@ -15,6 +15,7 @@
 		UpdateResult,
 	} from '$api/updates.js';
 	import Collapsible from '$lib/components/Collapsible.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -32,6 +33,7 @@
 	// #96: a failed request never reads as "Up to Date" or a finished update
 	let versionsFailed = $state(false);
 	let updatesFailed = $state(false);
+	let historyFailed = $state(false);
 	let actionError = $state('');
 	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
 	let failedChecks = $state<string[]>([]);
@@ -245,6 +247,7 @@
 			failedChecks = updatesRes.value.failed_checks ?? [];
 		}
 		if (historyRes.status === 'fulfilled') updateHistory = historyRes.value;
+		historyFailed = historyRes.status === 'rejected';
 		versionsFailed = versionsRes.status === 'rejected';
 		updatesFailed = updatesRes.status === 'rejected';
 		loading = false;
@@ -814,6 +817,9 @@
 					{/each}
 				</div>
 			</Collapsible>
+		{/if}
+		{#if historyFailed}
+			<p class="text-warning">{loadFailed('the update history', updateHistory.length > 0)}</p>
 		{/if}
 	{/if}
 </div>

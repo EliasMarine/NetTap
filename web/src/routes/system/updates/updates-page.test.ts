@@ -109,11 +109,62 @@ describe('Software Updates page when a request fails (#96)', () => {
 	});
 
 	it('still reads Up to Date when the update list loads and is empty', async () => {
-		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [], last_check: '' } });
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
 
 		render(UpdatesPage);
 
 		expect(await screen.findByText('Up to Date')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+});
+
+// The daemon replies {history, count}; the client treated that object as the list, so no history ever showed.
+describe('Software Updates page — update history', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const PAST = {
+		component: 'suricata', success: false, old_version: '7.0.2', new_version: '7.0.3',
+		started_at: '2026-02-20T10:00:00Z', completed_at: '2026-02-20T10:01:30Z', error: 'pull failed', rollback_available: false,
+	};
+
+	it('shows past updates from the daemon reply', async () => {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [PAST], count: 1 },
+		});
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText('Update History')).toBeInTheDocument();
+		expect(screen.getByText('1 past update')).toBeInTheDocument();
+	});
+
+	it('shows no history section and no error when there are no past updates', async () => {
+		stubFetch({
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [], last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+
+		render(UpdatesPage);
+
+		await screen.findByText('Zeek');
+		expect(screen.queryByText('Update History')).not.toBeInTheDocument();
+		expect(screen.queryByText(/update history/)).not.toBeInTheDocument();
+	});
+
+	it('says the history failed to load', async () => {
+		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [], last_check: '' } });
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText("Couldn't load the update history: the request failed.")).toBeInTheDocument();
 	});
 });
