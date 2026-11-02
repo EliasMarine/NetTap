@@ -619,9 +619,11 @@ class IoTMonitor:
                     "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                        "dest_ports": {
-                            "terms": {"field": "destination.port", "size": 100}
-                        },
+                        # OLD CODE START — #96: top 100 ports per device; see _counts_by_mac
+                        # "dest_ports": {
+                        #     "terms": {"field": "destination.port", "size": 100}
+                        # },
+                        # OLD CODE END
                         # OLD CODE START — 2026-11-02: port list only; DNS-over-TLS (853),
                         # SSH and Zeek-identified TLS on other ports counted as plaintext
                         # "encrypted": {
@@ -659,6 +661,7 @@ class IoTMonitor:
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            ports_by_mac = self._counts_by_mac({"bool": bool_clause}, "destination.port")
         except Exception as exc:
             logger.error("Fleet conn stats query failed: %s", exc)
             return {}
@@ -673,7 +676,10 @@ class IoTMonitor:
             total_conns = bucket.get("doc_count", 0) - no_payload
             encrypted_conns = bucket.get("encrypted", {}).get("doc_count", 0)
             total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
-            ports = {b["key"] for b in bucket.get("dest_ports", {}).get("buckets", [])}
+            # OLD CODE START — #96: top 100 ports per device
+            # ports = {b["key"] for b in bucket.get("dest_ports", {}).get("buckets", [])}
+            # OLD CODE END
+            ports = set(ports_by_mac.get(raw_mac, {}))
             third_party = bucket.get("third_party_orgs", {}).get("value", 0) or 0
 
             out[raw_mac] = {
@@ -1951,36 +1957,67 @@ class IoTMonitor:
         #     bool_clause["must_not"] = excluded
         # OLD CODE END
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_mac": {
-                    "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "ports": {"terms": {"field": "destination.port", "size": 200}},
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: top 200 ports per device; a quiet telnet/SMB port fell off
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_mac": {
+        #             "terms": {"field": "source.mac", "size": len(macs) * 2},
+        #             "aggs": {
+        #                 "ports": {"terms": {"field": "destination.port", "size": 200}},
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("Port detail query failed: %s", exc)
+        #     return {}
+        #
+        # out: dict[str, dict[int, int]] = {}
+        # for bucket in (
+        #     result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+        # ):
+        #     raw_mac = bucket["key"].upper()
+        #     port_map: dict[int, int] = {}
+        #     for pb in bucket.get("ports", {}).get("buckets", []):
+        #         port_map[pb["key"]] = pb.get("doc_count", 0)
+        #     out[raw_mac] = port_map
+        #
+        # return out
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            return self._counts_by_mac({"bool": bool_clause}, "destination.port")
         except Exception as exc:
             logger.error("Port detail query failed: %s", exc)
             return {}
 
-        out: dict[str, dict[int, int]] = {}
-        for bucket in (
-            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
-        ):
-            raw_mac = bucket["key"].upper()
-            port_map: dict[int, int] = {}
-            for pb in bucket.get("ports", {}).get("buckets", []):
-                port_map[pb["key"]] = pb.get("doc_count", 0)
-            out[raw_mac] = port_map
-
-        return out
+    def _counts_by_mac(self, query: dict, field: str) -> dict[str, dict[Any, int]]:
+        """Documents per value of `field` for each source MAC in `query`: every value,
+        busiest first (ties in value order, as a terms aggregation lists them)."""
+        buckets, complete = all_buckets(
+            self._client,
+            NETWORK_INDEX,
+            query,
+            [
+                {"mac": {"terms": {"field": "source.mac"}}},
+                {"value": {"terms": {"field": field}}},
+            ],
+        )
+        if not complete:
+            logger.warning("%s per device stopped at %d pairs", field, len(buckets))
+        counts: dict[str, dict[Any, int]] = {}
+        for b in buckets:
+            per_mac = counts.setdefault(b["key"]["mac"].upper(), {})
+            value = b["key"]["value"]
+            per_mac[value] = per_mac.get(value, 0) + b.get("doc_count", 0)
+        return {
+            mac: dict(sorted(c.items(), key=lambda kv: kv[1], reverse=True))
+            for mac, c in counts.items()
+        }
 
     def _query_hardcoded_dns_batch(
         self,

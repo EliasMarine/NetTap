@@ -60,6 +60,15 @@ def _baseline_search(reply: dict):
     return search
 
 
+def _port_page(mac: str, ports: dict[int, int]) -> dict:
+    """The last page of the paged per-device port counts (#96)."""
+    buckets = [
+        {"key": {"mac": mac, "value": port}, "doc_count": count}
+        for port, count in ports.items()
+    ]
+    return {"aggregations": {"all": {"buckets": buckets}}}
+
+
 # ---------------------------------------------------------------------------
 # classify_as_iot
 # ---------------------------------------------------------------------------
@@ -458,6 +467,8 @@ class TestFleetSummary:
                     }
                 },
             },
+            # Every destination port per device (#96), one page
+            _port_page("AA:BB:CC:DD:EE:FF", {443: 45, 80: 5}),
             # Alert counts
             {
                 "hits": {"total": {"value": 0}},
@@ -629,6 +640,8 @@ class TestPrivacyReport:
                     }
                 },
             },
+            # Every destination port per device (#96), one page
+            _port_page("AA:BB:CC:DD:EE:FF", {443: 90}),
             # Alert counts
             {"aggregations": {"by_mac": {"buckets": []}}},
             # DNS tracker detail
@@ -871,24 +884,8 @@ class TestProtocolAudit:
         mock_client.search.side_effect = [
             # OUI discovery (devices already registered)
             {"aggregations": {"by_mac": {"buckets": []}}},
-            # Port detail batch
-            {
-                "aggregations": {
-                    "by_mac": {
-                        "buckets": [
-                            {
-                                "key": "AA:BB:CC:DD:EE:FF",
-                                "ports": {
-                                    "buckets": [
-                                        {"key": 443, "doc_count": 90},
-                                        {"key": 8888, "doc_count": 5},
-                                    ]
-                                },
-                            }
-                        ]
-                    }
-                },
-            },
+            # Port detail batch, every port (#96), one page
+            _port_page("AA:BB:CC:DD:EE:FF", {443: 90, 8888: 5}),
             # Hardcoded DNS batch
             {"aggregations": {"by_mac": {"buckets": []}}},
         ]
@@ -910,18 +907,7 @@ class TestProtocolAudit:
             # OUI discovery (devices already registered)
             {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch - only port 443
-            {
-                "aggregations": {
-                    "by_mac": {
-                        "buckets": [
-                            {
-                                "key": "AA:BB:CC:DD:EE:FF",
-                                "ports": {"buckets": [{"key": 443, "doc_count": 100}]},
-                            }
-                        ]
-                    }
-                },
-            },
+            _port_page("AA:BB:CC:DD:EE:FF", {443: 100}),
             # Hardcoded DNS batch
             {"aggregations": {"by_mac": {"buckets": []}}},
         ]

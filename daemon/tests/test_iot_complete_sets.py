@@ -136,3 +136,94 @@ class TestBaselineKnowsEveryValue:
         paged = [b for b in bodies if _composite_field(b)]
         assert {_composite_field(b) for b in paged} == set(HISTORY)
         assert all(b["query"] == main["query"] for b in paged)
+
+
+# ---------------------------------------------------------------------------
+# 2. Every destination port a device used, for the trust score and the protocol audit
+# ---------------------------------------------------------------------------
+
+FROM_TS = "2026-11-01T00:00:00Z"
+TO_TS = "2026-11-02T00:00:00Z"
+
+
+def _composite_fields(body: dict) -> list[str]:
+    composite = body.get("aggs", {}).get("all", {}).get("composite", {})
+    return [next(iter(s.values()))["terms"]["field"] for s in composite.get("sources", [])]
+
+
+def _by_mac(buckets: list[dict]) -> dict[str, Any]:
+    return {"aggregations": {"by_mac": {"buckets": buckets}}}
+
+
+def _ports_search(ports: list[int]):
+    """A device that used `ports`, busiest first; every other query finds nothing."""
+
+    def search(index: str, body: dict) -> dict[str, Any]:
+        if _composite_fields(body) == ["source.mac", "destination.port"]:
+            rows = [
+                {"key": {"source.mac": MAC.lower(), "destination.port": p}, "doc_count": 1}
+                for p in ports
+            ]
+            return _composite_reply(body, rows)
+        if _composite_fields(body):
+            return _composite_reply(body, [])
+        sub = body.get("aggs", {}).get("by_mac", {}).get("aggs", {})
+        if "encrypted" in sub:
+            bucket = {"key": MAC.lower(), "doc_count": 1000, "encrypted": {"doc_count": 1000}}
+            if "dest_ports" in sub:
+                size = sub["dest_ports"]["terms"]["size"]
+                bucket = {**bucket, "dest_ports": {"buckets": _top(ports, size)}}
+            return _by_mac([bucket])
+        if "ports" in sub:
+            top = _top(ports, sub["ports"]["terms"]["size"])
+            return _by_mac([{"key": MAC.lower(), "ports": {"buckets": top}}])
+        return _by_mac([])
+
+    return search
+
+
+def _monitor_with_device(client: MagicMock) -> IoTMonitor:
+    iot = IoTMonitor(client=client)
+    iot._iot_devices = {
+        MAC: {"mac": MAC, "manufacturer": "Tuya Smart Inc.", "hostname": None, "ip": "192.168.1.40"}
+    }
+    return iot
+
+
+class TestEveryPortCounts:
+    def test_protocol_audit_flags_a_quiet_telnet_port(self):
+        """250 ports, telnet the quietest: the old top 200 dropped the one high-severity finding."""
+        client = MagicMock()
+        client.search.side_effect = _ports_search([*range(20_000, 20_249), 23])
+        [device] = _monitor_with_device(client).get_protocol_audit(FROM_TS, TO_TS)["devices"]
+
+        telnet = [f for f in device["findings"] if f["port"] == 23]
+        assert [f["severity"] for f in telnet] == ["high"]
+        assert device["violation_count"] == 250  # was 200
+
+    def test_trust_score_sees_ports_beyond_the_busiest_100(self):
+        """150 ports, the 50 quietest new since the baseline: the old top 100 saw none of them."""
+        ports = list(range(30_000, 30_150))
+        client = MagicMock()
+        client.search.side_effect = _ports_search(ports)
+        iot = _monitor_with_device(client)
+        baseline = {"known_ports": ports[:100], "known_destinations": [], "active_hours": []}
+
+        conn = iot._query_conn_stats_batch([MAC], FROM_TS, TO_TS, [])[MAC]
+        stats = iot._build_device_stats(MAC, conn, {}, baseline, set())
+
+        assert len(conn["dest_ports"]) == 150  # was 100
+        assert stats["new_destinations"] == 50  # was 0
+        assert stats["baseline_adherence"] == 100 / 150  # was 1.0
+
+    def test_port_counts_keep_the_device_filter(self):
+        client = MagicMock()
+        client.search.side_effect = _ports_search([443])
+        _monitor_with_device(client).get_protocol_audit(
+            FROM_TS, TO_TS, excluded_ips=["10.0.0.9"]
+        )
+
+        bodies = [c.kwargs["body"] for c in client.search.call_args_list]
+        paged = next(b for b in bodies if _composite_fields(b) == ["source.mac", "destination.port"])
+        assert {"terms": {"source.mac": [MAC, MAC.lower()]}} in paged["query"]["bool"]["filter"]
+        assert {"terms": {"source.ip": ["10.0.0.9"]}} in paged["query"]["bool"]["must_not"]
