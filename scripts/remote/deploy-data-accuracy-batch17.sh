@@ -27,6 +27,13 @@ os_get() {  # os_get <path>: GET against OpenSearch from inside its container
         --cacert /usr/share/opensearch/config/certs/ca.crt --insecure "https://localhost:9200$1"
 }
 
+os_put() {  # os_put <path> <json>: PUT against OpenSearch, prints the HTTP status
+    sudo docker exec nettap-opensearch curl -s -o /dev/null -w '%{http_code}' \
+        --config /var/local/curlrc/.opensearch.primary.curlrc \
+        --cacert /usr/share/opensearch/config/certs/ca.crt --insecure \
+        -X PUT -H 'Content-Type: application/json' "https://localhost:9200$1" -d "$2"
+}
+
 saved_objects() {  # count of saved objects of type $1 in the Dashboards index
     os_get "/.kibana*/_count?q=type:%22$1%22" | grep -o '"count":[0-9]*' | cut -d: -f2
 }
@@ -54,7 +61,17 @@ fi
 echo "   ✓ Code: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
 echo ""
 
-echo "→ Step 3: Recreate dashboards-helper..."
+echo "→ Step 3: Arkime template marker (the helper waits for it; Arkime is off)..."
+if os_get "/_template/arkime_sessions3_template" | grep -q mappings; then
+    check "#73 arkime_sessions3_template present" 0 "already there, left alone"
+else
+    CODE=$(os_put "/_template/arkime_sessions3_template" '{"index_patterns":["nettap-arkime-template-marker"],"mappings":{"properties":{}}}')
+    if [ "$CODE" = "200" ]; then rc=0; else rc=1; fi
+    check "#73 arkime_sessions3_template marker written" "$rc" "HTTP ${CODE:-?} (matches no index)"
+fi
+echo ""
+
+echo "→ Step 4: Recreate dashboards-helper..."
 "${COMPOSE[@]}" up -d --no-deps --force-recreate dashboards-helper
 sleep 10
 STATUS=$(sudo docker exec nettap-dashboards-helper supervisorctl -c /etc/supervisord.conf status 2>&1)
@@ -63,12 +80,12 @@ if echo "$STATUS" | grep -q 'EACCES'; then rc=1; else rc=0; fi
 check "#73 supervisor programs start" "$rc" "$(echo "$STATUS" | grep -c 'EACCES') EACCES"
 if echo "$STATUS" | grep -E '^(cron|idxinit) ' | grep -q 'FATAL'; then rc=1; else rc=0; fi
 check "#73 idxinit and cron are not FATAL" "$rc" "$(echo "$STATUS" | grep -E '^(cron|idxinit) ' | awk '{print $1 "=" $2}' | tr '\n' ' ')"
-USERS=$(sudo docker exec nettap-dashboards-helper ps -o user=,args= 2>/dev/null | grep -E 'supercronic|sleep 180|index-refresh' | grep -v grep | awk '{print $1}' | sort -u | tr '\n' ' ')
+USERS=$(sudo docker exec nettap-dashboards-helper ps -eo user,args 2>/dev/null | grep -E 'supercronic|goStatic' | grep -v grep | awk '{print $1}' | sort -u | tr '\n' ' ')
 if [ -n "$USERS" ] && ! echo "$USERS" | grep -qw root; then rc=0; else rc=1; fi
 check "#73 the jobs run as helper, not root" "$rc" "${USERS:-no job process seen}"
 echo ""
 
-echo "→ Step 4: Wait for the index pattern and dashboards (cron runs every 2 min)..."
+echo "→ Step 5: Wait for the index pattern and dashboards (cron runs every 2 min)..."
 for i in $(seq 1 30); do
     IP=$(saved_objects index-pattern); DB=$(saved_objects dashboard)
     [ "${IP:-0}" -gt 0 ] && [ "${DB:-0}" -gt 0 ] && break
@@ -83,7 +100,7 @@ PATTERNS=$(os_get "/.kibana*/_search?q=type:%22index-pattern%22&size=20&_source=
 echo "   index patterns: ${PATTERNS:-none}"
 echo ""
 
-echo "→ Step 5: Nothing else changed..."
+echo "→ Step 6: Nothing else changed..."
 INDICES_AFTER=$(os_get "/_cat/indices?h=index" | grep -v '^\.' | sort)
 GONE=$(comm -23 <(echo "$INDICES_BEFORE") <(echo "$INDICES_AFTER") | grep . || true)
 if [ -z "$GONE" ]; then rc=0; else rc=1; fi
@@ -96,7 +113,7 @@ if [ -n "$POLICY" ]; then rc=0; else rc=1; fi
 check "nettap-hot-policy untouched" "$rc" "${POLICY:-missing}"
 echo ""
 
-echo "→ Step 6: Container status..."
+echo "→ Step 7: Container status..."
 sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAMES|dashboards"
 echo ""
 
