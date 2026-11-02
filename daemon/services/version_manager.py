@@ -266,6 +266,11 @@ class VersionManager:
             output = await self._run_command(
                 ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.ID}}"]
             )
+            # #96: _run_command returns "" when docker is missing, denied or timed out;
+            # NetTap's own containers always run, so empty output means the scan failed
+            # (before, the Docker rows were silently missing)
+            if not output.strip():
+                raise RuntimeError("docker ps returned no containers")
 
             if output:
                 for line in output.strip().split("\n"):

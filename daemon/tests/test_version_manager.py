@@ -435,6 +435,33 @@ class TestRunCommand(unittest.TestCase):
         self.assertIsInstance(result, str)
 
 
+class TestDockerScanFailure(unittest.TestCase):
+    """#96: docker that can't be asked shows an error row, not no containers."""
+
+    def test_failed_docker_ps_is_an_error_entry(self):
+        vm = VersionManager()
+
+        async def no_output(cmd):
+            return ""  # what _run_command returns when docker is missing or denied
+
+        vm._run_command = no_output
+        result = asyncio.run(vm._scan_docker_images())
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].name, "docker")
+        self.assertEqual(result[0].status, "error")
+        self.assertIn("no containers", result[0].details["error"])
+
+    def test_listed_containers_are_ok(self):
+        vm = VersionManager()
+
+        async def listing(cmd):
+            return "nettap-zeek-live\tghcr.io/idaholab/malcolm/zeek:26.02.0\tabc\n"
+
+        vm._run_command = listing
+        (zeek,) = asyncio.run(vm._scan_docker_images())
+        self.assertEqual((zeek.name, zeek.current_version, zeek.status), ("zeek", "26.02.0", "ok"))
+
+
 class TestCacheStaleness(unittest.TestCase):
     """Tests for VersionManager._is_cache_stale()."""
 
