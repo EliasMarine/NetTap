@@ -62,7 +62,10 @@
 	let systemHealth = $state<SystemHealth | null>(null);
 	let systemHealthFailed = $state(false); // #96: "Unknown", never "Degraded"
 	let categories = $state<TrafficCategory[]>([]);
-	let deviceCount = $state(0);
+	// OLD CODE START — a real 0 devices showed '--'
+	// let deviceCount = $state(0);
+	// OLD CODE END
+	let deviceCount = $state<number | null>(null); // null until a count loads
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertSummary = $state<SmartAlertSummary | null>(null);
 	// #96: a failed request must not read as "No actionable alerts detected"
@@ -79,6 +82,7 @@
 	let protocolsFailed = $state(false);
 	let categoriesFailed = $state(false);
 	let deviceCountFailed = $state(false);
+	let alertCountFailed = $state(false);
 	let topDevicesFailed = $state(false);
 	let registryFailed = $state(false);
 
@@ -204,7 +208,11 @@
 			bandwidthFailed = bandwidthRes.status === 'rejected';
 			protocolsFailed = protocolsRes.status === 'rejected';
 			topTalkers = talkersRes.status === 'fulfilled' ? talkersRes.value.top_talkers : [];
-			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
+			// OLD CODE START — a failed refresh cleared the last count and the card read '--'
+			// alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
+			// OLD CODE END
+			if (alertCountRes.status === 'fulfilled') alertCount = alertCountRes.value;
+			alertCountFailed = alertCountRes.status === 'rejected';
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
 			systemHealthFailed = healthRes.status === 'rejected';
@@ -264,7 +272,8 @@
 		protocols = [];
 		services = [];
 		categories = [];
-		deviceCount = 0;
+		deviceCount = null;
+		alertCount = null;
 		topDevices = [];
 		fetchAllData();
 	}
@@ -730,7 +739,10 @@
 				<div class="skeleton skeleton-value"></div>
 			{:else}
 				<div class="card-value">
-					{totalAlerts > 0 ? formatNumber(totalAlerts) : '--'}
+					<!-- OLD CODE START — a real 0 alerts showed '--' -->
+					<!-- {totalAlerts > 0 ? formatNumber(totalAlerts) : '--'} -->
+					<!-- OLD CODE END -->
+					{alertCount ? formatNumber(totalAlerts) : '\u2014'}
 					{#if alertTrend.arrow}
 						<span class="trend-indicator trend-{alertTrend.direction}" title="vs previous period">
 							{alertTrend.arrow} {alertTrend.pct}
@@ -739,7 +751,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				{#if alertCount?.counts}
+				{#if alertCountFailed}
+					<span class="text-warning">{loadFailed('the alert count', alertCount !== null)}</span>
+				{:else if alertCount?.counts}
 					{alertCount.counts.high} high, {alertCount.counts.medium} med, {alertCount.counts.low} low
 				{:else}
 					Suricata IDS detections
@@ -781,11 +795,14 @@
 					<rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
 				</svg>
 			</div>
-			{#if loading && deviceCount === 0}
+			{#if loading && deviceCount === null}
 				<div class="skeleton skeleton-value"></div>
 			{:else}
 				<div class="card-value">
-					{deviceCount > 0 ? formatNumber(deviceCount) : '--'}
+					<!-- OLD CODE START — a real 0 devices showed '--' -->
+					<!-- {deviceCount > 0 ? formatNumber(deviceCount) : '--'} -->
+					<!-- OLD CODE END -->
+					{deviceCount !== null ? formatNumber(deviceCount) : '\u2014'}
 				</div>
 			{/if}
 			<!-- OLD CODE START — 2026-11-01: the count comes from observed traffic, not DHCP leases -->
@@ -793,7 +810,7 @@
 			<!-- OLD CODE END -->
 			<p class="card-description">
 				{#if deviceCountFailed}
-					<span class="text-warning">{loadFailed('the device count', deviceCount > 0)}</span>
+					<span class="text-warning">{loadFailed('the device count', deviceCount !== null)}</span>
 				{:else}
 					Devices seen on the network
 				{/if}
@@ -983,7 +1000,7 @@
 						</div>
 					</a>
 				{/each}
-				<a href="/devices" class="card-link-bottom">View all {deviceCount || topDevices.length} devices &rarr;</a>
+				<a href="/devices" class="card-link-bottom">View all {deviceCount ?? topDevices.length} devices &rarr;</a>
 			{/if}
 		</div>
 
