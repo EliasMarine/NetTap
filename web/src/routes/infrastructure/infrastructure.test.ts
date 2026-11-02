@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import InfrastructurePage from './+page.svelte';
 
 describe('Infrastructure', () => {
@@ -123,6 +123,28 @@ describe('Infrastructure pipeline in mirror mode', () => {
 		expect(screen.getByText(/Not promiscuous/)).toBeInTheDocument();
 		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
 		expect(screen.getByText('Promiscuous mode is off')).toBeInTheDocument();
+	});
+
+	it('shows the gateway port, not a br0 bridge, in DHCP gateway mode', async () => {
+		stubFetch('dhcp_gateway', {
+			mode: 'dhcp_gateway', status: 'normal', capture_interface: 'enp4s0', link_up: true, promisc_enabled: true,
+			issues: [], subnet: '10.77.0.0/24', routing_active: true, dhcp_server_running: true, lease_count: 14,
+		});
+		await renderPage();
+
+		expect(screen.getByText('Gateway Port')).toBeInTheDocument();
+		expect(screen.getByText(/enp4s0 UP/)).toBeInTheDocument();
+		expect(screen.queryByText('Bridge')).not.toBeInTheDocument();
+		expect(screen.queryByText(/WAN/)).not.toBeInTheDocument();
+
+		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
+		const detail = within(document.querySelector('.detail-panel') as HTMLElement);
+		expect(detail.getByText(/Gateway Port — enp4s0/)).toBeInTheDocument();
+		expect(detail.getByText('10.77.0.0/24')).toBeInTheDocument();
+		expect(detail.getByText('14')).toBeInTheDocument();
+		expect(detail.getByText('Running')).toBeInTheDocument();
+		expect(screen.queryByText('IP on Mirror Port')).not.toBeInTheDocument();
+		expect(screen.queryByText(/Bridge — br0/)).not.toBeInTheDocument();
 	});
 
 	it('keeps the bridge node in bridge mode', async () => {

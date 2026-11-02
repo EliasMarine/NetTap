@@ -49,6 +49,9 @@
 	let captureHealth = $state<CaptureHealthResponse | null>(null);
 	// a mirror box has no bridge: the first pipeline node is the mirror (SPAN) port instead
 	const isMirror = $derived(captureMode?.mode === 'mirror');
+	// nor does a DHCP gateway box: its first node is the LAN port it routes and captures on
+	const isGateway = $derived(captureMode?.mode === 'dhcp_gateway');
+	const portName = $derived(isGateway ? 'Gateway Port' : 'Mirror Port');
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
 	let cluster = $state<OpenSearchCluster | null>(null);
@@ -584,8 +587,12 @@
 								<line x1="12" y1="6" x2="12" y2="18"/>
 							</svg>
 						</div>
+						<!-- OLD CODE START — DHCP gateway mode fell through to the br0 bridge node
 						{#if isMirror}
 							<div class="node-name">Mirror Port</div>
+						OLD CODE END -->
+						{#if isMirror || isGateway}
+							<div class="node-name">{portName}</div>
 							<div class="node-health">
 								<span class="health-dot {captureHealth ? (captureHealth.link_up ? healthDotClass(captureHealth.status) : 'red') : ''}"></span>
 								{captureHealth ? `${captureHealth.capture_interface || captureMode?.interface} ${captureHealth.link_up ? 'UP' : 'DOWN'}` : '--'}
@@ -623,7 +630,10 @@
 						</div>
 						<div class="node-name">Capture</div>
 						<div class="node-health">
+							<!-- OLD CODE START — DHCP gateway mode showed the bridge's bypass state
 							{#if isMirror}
+							OLD CODE END -->
+							{#if isMirror || isGateway}
 								<span class="health-dot {captureHealth?.promisc_enabled ? 'green' : 'yellow'}"></span>
 								{captureHealth?.promisc_enabled ? 'Promiscuous' : 'Not promiscuous'}
 							{:else}
@@ -734,8 +744,11 @@
 	     DETAIL PANELS
 	     ═══════════════════════════════════════════════════════════ -->
 
-	<!-- Mirror Port Detail (takes the bridge node's place on a mirror box) -->
+	<!-- Mirror / Gateway Port Detail (takes the bridge node's place on a mirror or DHCP gateway box) -->
+	<!-- OLD CODE START — mirror only; DHCP gateway mode opened the bridge detail
 	{#if selectedNode === 'bridge' && isMirror}
+	OLD CODE END -->
+	{#if selectedNode === 'bridge' && (isMirror || isGateway)}
 		<div class="detail-panel open">
 			<div class="detail-header">
 				<div class="detail-header-left">
@@ -743,8 +756,12 @@
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="12" y1="6" x2="12" y2="18"/></svg>
 					</div>
 					<div>
-						<div class="detail-title">Mirror Port &mdash; {captureHealth?.capture_interface || captureMode?.interface || '--'}</div>
-						<div class="detail-subtitle">Receives a copy of the switch port's traffic (SPAN); NetTap is not in the traffic path</div>
+						<div class="detail-title">{portName} &mdash; {captureHealth?.capture_interface || captureMode?.interface || '--'}</div>
+						{#if isGateway}
+							<div class="detail-subtitle">Devices get their address and gateway from NetTap, which routes their traffic to the router and captures it</div>
+						{:else}
+							<div class="detail-subtitle">Receives a copy of the switch port's traffic (SPAN); NetTap is not in the traffic path</div>
+						{/if}
 					</div>
 				</div>
 				<button class="btn-close-detail" onclick={closeDetail}>&#10005;</button>
@@ -763,22 +780,47 @@
 							{captureHealth?.promisc_enabled ? 'Yes' : 'No'}
 						</div>
 					</div>
-					<div class="detail-stat">
-						<div class="detail-stat-label">IP on Mirror Port</div>
-						<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : 'green'}">
-							{captureHealth?.has_ip === true ? 'Yes (should have none)' : 'None'}
+					{#if isGateway}
+						<div class="detail-stat">
+							<div class="detail-stat-label">Routing</div>
+							<div class="detail-stat-value {captureHealth?.routing_active ? 'green' : 'amber'}">
+								{captureHealth?.routing_active ? 'On' : 'Off'}
+							</div>
 						</div>
-					</div>
+						<div class="detail-stat">
+							<div class="detail-stat-label">DHCP Server</div>
+							<div class="detail-stat-value {captureHealth?.dhcp_server_running ? 'green' : 'amber'}">
+								{captureHealth?.dhcp_server_running ? 'Running' : 'Stopped'}
+							</div>
+						</div>
+						<div class="detail-stat">
+							<div class="detail-stat-label">Leases</div>
+							<div class="detail-stat-value">{captureHealth?.lease_count ?? '--'}</div>
+						</div>
+						<div class="detail-stat">
+							<div class="detail-stat-label">Subnet</div>
+							<div class="detail-stat-value">{captureHealth?.subnet ?? '--'}</div>
+						</div>
+					{:else}
+						<div class="detail-stat">
+							<div class="detail-stat-label">IP on Mirror Port</div>
+							<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : 'green'}">
+								{captureHealth?.has_ip === true ? 'Yes (should have none)' : 'None'}
+							</div>
+						</div>
+					{/if}
 					<div class="detail-stat">
 						<div class="detail-stat-label">Status</div>
 						<div class="detail-stat-value {captureHealth?.status === 'normal' ? 'green' : captureHealth?.status === 'degraded' ? 'amber' : 'red'}">
 							{captureHealth?.status?.toUpperCase() ?? '--'}
 						</div>
 					</div>
-					<div class="detail-stat">
-						<div class="detail-stat-label">Management Port</div>
-						<div class="detail-stat-value">{captureHealth?.management_interface ?? '--'}</div>
-					</div>
+					{#if !isGateway}
+						<div class="detail-stat">
+							<div class="detail-stat-label">Management Port</div>
+							<div class="detail-stat-value">{captureHealth?.management_interface ?? '--'}</div>
+						</div>
+					{/if}
 				</div>
 				{#if captureHealth?.issues?.length}
 					<ul class="detail-issues">
@@ -792,7 +834,10 @@
 	{/if}
 
 	<!-- Bridge Detail -->
+	<!-- OLD CODE START — DHCP gateway mode opened this br0 detail
 	{#if selectedNode === 'bridge' && !isMirror}
+	OLD CODE END -->
+	{#if selectedNode === 'bridge' && !isMirror && !isGateway}
 		<div class="detail-panel open">
 			<div class="detail-header">
 				<div class="detail-header-left">
