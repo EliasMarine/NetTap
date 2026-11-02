@@ -14,6 +14,7 @@
 	 *   9. Trend indicators vs previous period
 	 */
 
+	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { page } from '$app/stores';
 	import { onDestroy } from 'svelte';
 	import {
@@ -439,7 +440,7 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Per-Device Breakdown</span>
-					<span class="card-badge">{filteredDevices.length}{filteredDevices.length !== data.devices.length ? ` / ${data.devices.length}` : ''} devices</span>
+					<span class="card-badge">{filteredDevices.length}{filteredDevices.length !== data.devices.length ? ` / ${data.devices.length}` : ''} devices{data.device_count > data.devices.length ? ` · top ${partOfWhole(data.devices.length, data.device_count)}` : ''}</span>
 				</div>
 
 				<!-- Search toolbar -->

@@ -17,6 +17,7 @@
 	import { analyzeConnection } from '$lib/utils/tshark-analyze';
 	import type { AnalysisMode } from '$lib/utils/tshark-analyze';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
+	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { getRelatedConnections } from '$api/traffic';
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
@@ -630,7 +631,10 @@
 						{/each}
 					</svg>
 					{#if relatedData.connections.length > 15}
+						<!-- OLD CODE START — #96: the list holds at most 200 rows; the total counts the whole window
 						<p class="text-muted" style="font-size: var(--text-xs);">Showing 15 of {relatedData.connections.length} connections</p>
+						OLD CODE END -->
+						<p class="text-muted" style="font-size: var(--text-xs);">Showing {partOfWhole(15, relatedData.total_connections ?? relatedData.connections.length)} connections</p>
 					{/if}
 				</div>
 			{/if}
