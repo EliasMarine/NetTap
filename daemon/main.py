@@ -304,6 +304,13 @@ async def device_registry_loop(
     """
     logger.info("Device registry loop started (interval=%ds)", interval)
     loop = asyncio.get_running_loop()
+    registry = app.get("device_registry")
+    if registry is not None:
+        try:
+            fixed = await loop.run_in_executor(None, registry.correct_last_seen)
+            logger.info("Device registry: %d last-seen times were later than the last record; corrected", fixed)
+        except Exception:
+            logger.exception("Device registry: last-seen correction failed")
     while not shutdown_event.is_set():
         try:
             await loop.run_in_executor(None, refresh_device_registry, app)

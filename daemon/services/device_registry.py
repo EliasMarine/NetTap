@@ -270,6 +270,39 @@ class DeviceRegistry:
             logger.error("Failed to set category on %s: %s", device["mac"], exc)
             return False
 
+    def correct_last_seen(self) -> int:
+        """Move back each last_seen that is later than the device's newest network record.
+
+        Before seen_at, any update (a vendor or OS lookup included) stamped last_seen with the
+        time it ran, and last_seen only moves forward, so a quiet device kept "13 h ago" for a
+        last record 17 h old. No device is seen after its newest record, so a later value is
+        wrong; a device whose records have all aged out is left alone. A failed search raises.
+        Returns the number corrected.
+        """
+        fixed = 0
+        for device in self.get_all_devices(limit=1000):
+            mac, stored = device.get("mac"), device.get("last_seen")
+            if not mac or not stored:
+                continue
+            body = {
+                "size": 0,
+                "query": {"bool": {
+                    "should": [{"terms": {"source.ip": device.get("ips") or []}}, {"term": {"source.mac": mac.lower()}}],
+                    "minimum_should_match": 1,
+                }},
+                "aggs": {"newest": {"max": {"field": "@timestamp"}}},
+            }
+            reply = self._client.search(index=NETWORK_INDEX, body=body)
+            newest = record_time((reply.get("aggregations") or {}).get("newest", {}).get("value"))
+            if newest is None or _later(newest, stored) == newest:
+                continue  # last_seen is no later than the newest record
+            first = device.get("first_seen")
+            self._client.index(index=DEVICES_INDEX, id=mac, body={
+                **device, "last_seen": newest, "first_seen": newest if not first or _later(first, newest) == first else first,
+            })
+            fixed += 1
+        return fixed
+
     def drop_reassigned_ips(self, assigned: dict[str, str]) -> int:
         """Remove each just-seen IP from every device other than the one it was seen on (#26).
 

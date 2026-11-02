@@ -33,6 +33,11 @@ describe('withTraffic', () => {
 		expect([card.total_bytes, card.connection_count, card.last_seen]).toEqual([1500, 15, '2026-11-02T21:50:00Z']);
 	});
 
+	it("takes last seen from the list even when the registry's is later (stamped by an old lookup)", () => {
+		const stamped = { ...gateway, last_seen: '2026-11-02T21:59:00+00:00' };
+		expect(withTraffic([stamped], list, true, FROM)[0].last_seen).toBe('2026-11-02T21:50:00Z');
+	});
+
 	it('gives a real 0 to a device last seen before the range on a complete list', () => {
 		const [card] = withTraffic([reg('AA:00:00:00:00:01', ['192.168.1.9'], '2026-11-01T10:00:00+00:00')], list, true, FROM);
 		expect([card.total_bytes, card.connection_count]).toEqual([0, 0]);

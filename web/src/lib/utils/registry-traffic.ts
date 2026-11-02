@@ -28,10 +28,9 @@ export function withTraffic(
 			...device,
 			total_bytes: rows.reduce((sum, d) => sum + d.total_bytes, 0),
 			connection_count: rows.reduce((sum, d) => sum + d.connection_count, 0),
-			// the list's newest record, as the Devices page shows it (the registry refreshes on a timer)
-			last_seen: [device.last_seen, ...rows.map((d) => d.last_seen)].reduce((a, b) =>
-				Date.parse(b) > Date.parse(a) ? b : a,
-			),
+			// the list's newest record, as the Devices page shows it: the registry refreshes on a
+			// timer, and an install that ran older code can hold a last_seen later than any record
+			last_seen: rows.map((d) => d.last_seen).reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)),
 		};
 	});
 }

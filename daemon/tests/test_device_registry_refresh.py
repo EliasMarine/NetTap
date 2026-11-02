@@ -246,6 +246,46 @@ class TestLastSeenIsTheLastRecord:
         assert client.store[mac]["last_seen"] == quiet
 
 
+class TestCorrectLastSeen:
+    """Installs that ran the old code keep last_seen values stamped by a lookup, later than
+    any record; last_seen only moves forward, so a quiet device would keep one for good."""
+
+    @staticmethod
+    def _client(store: dict, newest: dict[str, str]) -> MagicMock:
+        client = _fake_client([], store)
+        serve = client.search.side_effect
+
+        def search(index: str, body: dict) -> dict:
+            if "newest" not in body.get("aggs", {}):
+                return serve(index=index, body=body)
+            mac = body["query"]["bool"]["should"][1]["term"]["source.mac"]
+            value = datetime.fromisoformat(newest[mac]).timestamp() * 1000 if mac in newest else None
+            return {"aggregations": {"newest": {"value": value}}}
+
+        client.search.side_effect = search
+        return client
+
+    def test_a_last_seen_later_than_every_record_moves_back_to_the_newest_record(self):
+        mac, real = "FC:9D:05:98:2A:BE", "2026-11-02T05:10:00+00:00"
+        store = {mac: {"mac": mac, "ips": ["192.168.1.10"], "category": "computer",
+                       "first_seen": "2026-11-02T08:04:00+00:00", "last_seen": "2026-11-02T08:51:00+00:00"}}
+        client = self._client(store, {mac.lower(): real})
+
+        assert DeviceRegistry(client=client).correct_last_seen() == 1
+        assert (client.store[mac]["last_seen"], client.store[mac]["first_seen"]) == (real, real)
+
+    def test_a_last_seen_at_or_before_the_newest_record_and_aged_out_devices_are_left_alone(self):
+        ok, gone = "AA:00:00:00:00:01", "AA:00:00:00:00:02"
+        store = {
+            ok: {"mac": ok, "ips": ["192.168.1.20"], "first_seen": "2026-11-01T00:00:00+00:00", "last_seen": "2026-11-02T21:00:00+00:00"},
+            gone: {"mac": gone, "ips": ["192.168.1.21"], "first_seen": "2026-10-01T00:00:00+00:00", "last_seen": "2026-10-02T00:00:00+00:00"},
+        }
+        client = self._client(store, {ok.lower(): "2026-11-02T21:30:00+00:00"})
+
+        assert DeviceRegistry(client=client).correct_last_seen() == 0
+        client.index.assert_not_called()
+
+
 class TestNewDeviceChangelog:
     def test_logged_once_per_new_mac(self):
         assert "device_joined" in CHANGELOG_EVENT_TYPES
@@ -346,6 +386,28 @@ class TestDeviceRegistryLoop:
 
         calls = asyncio.run(scenario())
         assert len(calls) == 2
+
+    def test_last_seen_is_corrected_once_at_start_and_a_failure_does_not_stop_refreshes(self, monkeypatch):
+        registry = MagicMock()
+        registry.correct_last_seen.side_effect = RuntimeError("OpenSearch not ready")
+
+        async def scenario() -> int:
+            loop = asyncio.get_running_loop()
+            shutdown = asyncio.Event()
+            refreshes = []
+
+            def refresh(app: dict) -> int:
+                refreshes.append(app)
+                if len(refreshes) == 2:
+                    loop.call_soon_threadsafe(shutdown.set)
+                return 0
+
+            monkeypatch.setattr(main, "refresh_device_registry", refresh)
+            await asyncio.wait_for(main.device_registry_loop({"device_registry": registry}, 0.01, shutdown), timeout=5)
+            return len(refreshes)
+
+        assert asyncio.run(scenario()) == 2
+        assert registry.correct_last_seen.call_count == 1
 
 
 class TestVendorFromMalcolm:
