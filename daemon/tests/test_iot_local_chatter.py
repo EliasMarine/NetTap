@@ -7,6 +7,7 @@ finding listed twice per device. OpenSearch is mocked; the fake routes each
 query by its aggregation names so the tests don't depend on query order.
 """
 
+import json
 import os
 import sys
 from typing import Any
@@ -319,15 +320,6 @@ class TestEncryptionShare:
 class TestConnectionRecordsOnly:
     CONN_ONLY = {"term": {"event.dataset": "conn"}}
 
-    def _filters(self, body: dict) -> list[dict]:
-        return body["query"]["bool"]["filter"]
-
-    def _is_conn_only(self, body: dict) -> bool:
-        return any(
-            self.CONN_ONLY in f.get("bool", {}).get("should", [])
-            for f in self._filters(body)
-        )
-
     def test_connection_queries_skip_alerts_and_other_logs(self, iot, client):
         """An ESP device read 1% encrypted: 162 alert records + 2 TLS connections."""
         client.search.side_effect = _fake_search()
@@ -335,19 +327,20 @@ class TestConnectionRecordsOnly:
         iot.get_protocol_audit(FROM_TS, TO_TS)
         iot.get_network_isolation(FROM_TS, TO_TS)
         for agg in ("encrypted", "ports", "by_source_mac"):
-            assert self._is_conn_only(_body_with_agg(client, agg)), agg
+            body = _body_with_agg(client, agg)
+            assert self.CONN_ONLY in body["query"]["bool"]["filter"], agg
 
-    def test_arkime_sessions_without_a_dataset_still_count(self, iot, client):
+    def test_arkime_sessions_are_not_counted_twice(self, iot, client):
+        """Arkime sessions (no event.dataset) duplicate Zeek conn flows."""
         client.search.side_effect = _fake_search()
         iot.get_privacy_report(FROM_TS, TO_TS)
-        conn_clause = next(
-            f
-            for f in self._filters(_body_with_agg(client, "encrypted"))
-            if self.CONN_ONLY in f.get("bool", {}).get("should", [])
+        assert "must_not" not in json.dumps(
+            [
+                f
+                for f in _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
+                if "bool" in f
+            ]
         )
-        assert {
-            "bool": {"must_not": [{"exists": {"field": "event.dataset"}}]}
-        } in conn_clause["bool"]["should"]
 
 
 # ---------------------------------------------------------------------------

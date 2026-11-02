@@ -378,10 +378,7 @@ class TestGetDeviceTraffic:
         assert len(result["top_destinations"]) == 1
         # DNS/SSL logs and Suricata alerts share source.mac; only connections count
         filters = mock_client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
-        assert any(
-            {"term": {"event.dataset": "conn"}} in f.get("bool", {}).get("should", [])
-            for f in filters
-        )
+        assert {"term": {"event.dataset": "conn"}} in filters
 
     def test_get_device_traffic_error(self, registry, mock_client):
         """Should return empty summary on OpenSearch error."""
