@@ -35,11 +35,11 @@ MAX_OUTPUT_BYTES = 5 * 1024 * 1024  # 5MB
 # A filtered analysis first scans for its matches (#64); the scan stops here and keeps
 # what it found, leaving the rest of the web proxy's 60 s for the JSON and Info passes.
 MATCH_SCAN_SECONDS = 15
-# Frame number of the Nth match (fewer if the file or the time runs out). Filter and
-# path are positional args, never parsed by the shell.
+# "<matches found> <frame number of the last>" for up to N matches (fewer if the file or
+# the time runs out). Filter and path are positional args, never parsed by the shell.
 _LAST_MATCH_SCRIPT = (
     'timeout -k 2 "$4" tshark -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
-    ' | head -n "$3" | tail -n 1'
+    ' | head -n "$3" | awk \'END { print NR, $1 }\''
 )
 ALLOWED_FIELD_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 # Shell metacharacters that must NOT appear in display filters.
@@ -393,11 +393,12 @@ class TSharkService:
         loop = asyncio.get_running_loop()
         started = loop.time()
         stdout, _, _ = await self._exec_tshark(cmd)
-        last = stdout.strip()
-        # shortcut: a scan that used its whole budget is taken as cut short; a file that
-        # really ends right at 15 s is reported the same way
-        timed_out = loop.time() - started >= MATCH_SCAN_SECONDS
-        return (int(last) if last.isdigit() else 0), timed_out
+        found, _, last = stdout.strip().partition(" ")
+        found_n = int(found) if found.isdigit() else 0
+        # Cut short = fewer than N matches and the whole time budget used. shortcut: a file
+        # that really ends right at the budget is reported the same way
+        timed_out = found_n < request.max_packets and loop.time() - started >= MATCH_SCAN_SECONDS
+        return (int(last) if found_n and last.isdigit() else 0), timed_out
 
     async def analyze(self, request: TSharkRequest) -> TSharkResult:
         """Run TShark analysis on a PCAP file.

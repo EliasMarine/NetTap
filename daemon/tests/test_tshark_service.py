@@ -321,7 +321,7 @@ class TestInfoColumn(unittest.TestCase):
         async def run():
             with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
                 # a filter first scans for its matches (#64)
-                ex.side_effect = [("2\n", "", 0), (json_out, "", 0), (fields_out, "", 0)]
+                ex.side_effect = [("2 2\n", "", 0), (json_out, "", 0), (fields_out, "", 0)]
                 with patch.object(self.svc, "get_version", new_callable=AsyncMock):
                     req = TSharkRequest(
                         pcap_path="test.pcap",
@@ -617,7 +617,7 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
             return asyncio.run(run())
 
     def test_reads_up_to_the_nth_match(self):
-        result, calls = self._run([("48211\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100)
+        result, calls = self._run([("100 48211\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100)
         scan, main = calls
         self.assertEqual(scan[:5], ["docker", "exec", "nettap-tshark", "sh", "-c"])
         self.assertEqual(scan[-4:-1], ["/pcap/test.pcap", "dns", "100"])
@@ -627,14 +627,19 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
         self.assertFalse(result.truncated)
 
     def test_no_match_skips_the_analysis(self):
-        result, calls = self._run([("", "", 0)])
+        result, calls = self._run([("0 \n", "", 0)])
         self.assertEqual((result.packet_count, len(calls)), (0, 1))
         self.assertIsNone(result.error)
 
     def test_scan_cut_short_by_time_is_flagged(self):
         with patch("services.tshark_service.MATCH_SCAN_SECONDS", 0):
-            result, _ = self._run([("900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)])
+            result, _ = self._run([("7 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100)
         self.assertTrue(result.truncated)
+
+    def test_slow_scan_that_found_all_n_is_not_truncated(self):
+        with patch("services.tshark_service.MATCH_SCAN_SECONDS", 0):
+            result, _ = self._run([("50 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=50)
+        self.assertFalse(result.truncated)
 
     def test_filter_and_path_are_not_parsed_by_the_shell(self):
         from services.tshark_service import _LAST_MATCH_SCRIPT
