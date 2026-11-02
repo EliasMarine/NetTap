@@ -38,6 +38,7 @@
 		beaconing: 'beaconing',
 		dns_anomalies: 'DNS anomalies',
 		lateral_movement: 'lateral movement',
+		investigations: 'auto-investigations',
 	};
 	let selectedRange = $state('24h');
 	let lastUpdated = $state(new Date());
@@ -507,6 +508,15 @@
 		<!-- ============================================================
 		     Auto-Investigations
 		     ============================================================ -->
+		{#if failedChecks.has('investigations')}
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">Auto-Investigations</span>
+					<span class="card-badge">check failed</span>
+				</div>
+				<p class="empty-msg">Couldn't investigate one or more critical alerts: a query failed.{investigations.length > 0 ? ` ${investigations.length} completed.` : ''}</p>
+			</div>
+		{/if}
 		{#if investigations.length > 0}
 			<div class="card">
 				<div class="card-header">

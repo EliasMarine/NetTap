@@ -78,5 +78,15 @@ describe('Threats page', () => {
 		expect(screen.getByText(/contacts 12 internet hosts on regular schedules/)).toBeInTheDocument();
 		expect(screen.queryByText('198.51.100.3', { exact: false })).not.toBeInTheDocument();
 	});
+
+	it('says a failed auto-investigation failed instead of hiding it', async () => {
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, failed_checks: ['investigations'], incomplete_checks: [] },
+			'/api/threats/intel': { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 },
+		});
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText(/Couldn't investigate one or more critical alerts/)).toBeInTheDocument());
+		expect(screen.getByText(/Couldn't check auto-investigations/)).toBeInTheDocument();
+	});
 });
 
