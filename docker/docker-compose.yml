@@ -447,6 +447,13 @@ services:
       # conflicts with Malcolm's internal UNIX_SOCKET initialization in
       # Suricata 8.x and causes: "The custom type workers doesn't exist for
       # this runmode type UNIX_SOCKET".
+      # Suricata reassembles IP fragments itself. With kernel defrag (Malcolm's default) a
+      # reassembled datagram is bigger than default-packet-size (1514), so Suricata inspected
+      # only its first 1514 bytes and raised ~124 "AF-PACKET/IPv4 truncated packet" alerts a
+      # day. Safe with the autofp runmode Malcolm picks: the kernel hashes every fragment of a
+      # datagram to the same capture thread, then autofp hands the packet to its flow's worker.
+      # (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #27)
+      SURICATA_AF_PACKET_DEFRAG: "false"
       SURICATA_UPDATE_RULES: "true"
       SURICATA_UPDATE_ETOPEN: "true"
       SURICATA_ROTATED_PCAP: "false"

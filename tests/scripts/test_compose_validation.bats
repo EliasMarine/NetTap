@@ -782,6 +782,15 @@ print('pcap writer: OK')
     done
 }
 
+@test "compose: suricata-live leaves IP defrag to Suricata (no truncated reassembled packets)" {
+    # Kernel defrag hands Suricata datagrams bigger than its 1514-byte packet size, which it
+    # cuts off and flags as truncated (dashboard data accuracy #27)
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    echo "$section" | grep -q 'SURICATA_AF_PACKET_DEFRAG: "false"'
+    # the safety argument relies on Malcolm's autofp runmode, so nothing may pin another one
+    ! echo "$section" | grep -q '^ *SURICATA_RUNMODE:'
+}
+
 @test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
