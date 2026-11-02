@@ -133,3 +133,15 @@ def test_summary_reports_the_informational_alerts_it_hides():
     assert summary["total_events"] == 202
     assert summary["informational_events"] == 204
     assert all(t["severity"] < 5 for t in summary["top_threats"])
+
+
+def test_engine_events_are_left_out_like_the_alerts_page():
+    """SURICATA decoder/stream events are not alerts on the Alerts page either."""
+    from api.alerts import _SURICATA_NOISE_EXCLUSION
+
+    client = MagicMock()
+    client.search.return_value = _page([], None)
+    asyncio.run(get_smart_alerts(client, _FROM, _TO))
+    must_not = client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
+    for clause in _SURICATA_NOISE_EXCLUSION:
+        assert clause in must_not

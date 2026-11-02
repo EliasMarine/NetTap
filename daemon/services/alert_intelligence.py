@@ -1197,9 +1197,17 @@ async def get_smart_alerts(
             }
         )
 
-    bool_clause: dict = {"filter": filters}
-    if excluded_ips:
-        bool_clause["must_not"] = excluded_ips
+    # OLD CODE START — replaced 2026-11-01: only 11 named engine signatures were skipped,
+    # so "SURICATA QUIC error on data" etc. were counted as informational alerts
+    # bool_clause: dict = {"filter": filters}
+    # if excluded_ips:
+    #     bool_clause["must_not"] = excluded_ips
+    # OLD CODE END
+    # Same engine-event rule as the Alerts page (api/alerts.py _SURICATA_NOISE_EXCLUSION)
+    bool_clause: dict = {
+        "filter": filters,
+        "must_not": [{"prefix": {"rule.name": "SURICATA "}}, *(excluded_ips or [])],
+    }
 
     query = {
         "size": 0,
