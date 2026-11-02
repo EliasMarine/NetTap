@@ -74,8 +74,9 @@ echo ""
 echo "→ Step 3: Every container user can still read it..."
 for c in $CONSUMERS; do
     # docker top lists only the container's processes (/proc would show the host's with pid: host)
-    UIDS=$(sudo docker top "$c" -eo uid 2>/dev/null | sed 1d | sort -un | tr '\n' ' ')
+    UIDS=$(sudo docker top "$c" -o pid,uid 2>/dev/null | awk 'NR > 1 {print $2}' | sort -un | tr '\n' ' ')
     BAD=""
+    [ -z "$UIDS" ] && BAD=" (no process list)"
     for u in $UIDS; do
         sudo docker exec -u "$u" "$c" test -r /var/local/curlrc/.opensearch.primary.curlrc || BAD="$BAD $u"
     done
