@@ -176,7 +176,8 @@ _VENDOR_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("sonos", "media"), ("roku", "media"),
     ("ubiquiti", "infrastructure"), ("cisco", "infrastructure"), ("netgear", "infrastructure"),
     ("aruba", "infrastructure"), ("juniper", "infrastructure"), ("mikrotik", "infrastructure"),
-    ("routerboard", "infrastructure"), ("arcadyan", "infrastructure"),
+    # Arcadyan left out: it makes ISP routers but also the Wi-Fi modules in LG TVs ("LGwebOSTV")
+    ("routerboard", "infrastructure"),
     ("synology", "infrastructure"), ("qnap", "infrastructure"),
     ("western digital", "infrastructure"),
     ("raspberry pi", "computer"), ("proxmox", "computer"), ("micro-star", "computer"),

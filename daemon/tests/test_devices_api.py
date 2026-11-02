@@ -923,6 +923,7 @@ class TestDeviceCategoryFallbacks:
         assert _device_category(None, None, "Ubiquiti Inc") == "infrastructure"
         assert _device_category(None, None, "Proxmox Server Solutions GmbH") == "computer"
         assert _device_category(None, None, "Apple, Inc.") == "unknown"  # makes phones and computers
+        assert _device_category(None, None, "Arcadyan Corporation") == "unknown"  # routers and TV Wi-Fi
         assert _device_category(None, None, None) == "unknown"
 
     def test_os_and_hostname_still_win(self):
