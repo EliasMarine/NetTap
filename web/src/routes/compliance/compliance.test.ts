@@ -117,3 +117,62 @@ describe('Security Posture page', () => {
 		expect(within(dns).getByText('10 DNS-over-TLS connections')).toBeInTheDocument();
 	});
 });
+
+// #96: a failed input became zeros or an empty list, so its categories scored as if measured
+// ("0 of 2 device(s) have risk scores computed") and the overall grade looked complete.
+describe('Security Posture page when an input fails', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubDaemon(failing: Record<string, 'http' | 'network'>): void {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				if (failing[path] === 'network') throw new TypeError('Failed to fetch');
+				if (failing[path] === 'http') return { ok: false, status: 502, json: async () => ({}) };
+				return { ok: true, status: 200, json: async () => DAEMON_REPLIES[path] };
+			}),
+		);
+	}
+
+	it('says which categories it could not compute when risk scores fail', async () => {
+		stubDaemon({ '/api/risk/scores': 'http' });
+		render(CompliancePage);
+
+		await vi.waitFor(() => expect(screen.getByText('Monitoring Coverage')).toBeInTheDocument());
+		for (const name of ['Monitoring Coverage', 'Network Segmentation']) {
+			const card = categoryCard(name);
+			expect(within(card).getAllByText("Couldn't load risk scores: the request failed.").length).toBeGreaterThan(0);
+			expect(within(card).queryByText(/%$/)).not.toBeInTheDocument();
+		}
+		expect(screen.queryByText(/0 of 2 device\(s\) have risk scores/)).not.toBeInTheDocument();
+		expect(screen.getByText(/Couldn't compute the overall score/)).toBeInTheDocument();
+		// the categories that loaded still score
+		expect(within(categoryCard('Encryption')).getByText('60%')).toBeInTheDocument();
+	});
+
+	it('handles a rejected request the same way (traffic protocols)', async () => {
+		stubDaemon({ '/api/traffic/protocols': 'network' });
+		render(CompliancePage);
+
+		await vi.waitFor(() => expect(screen.getByText('Encryption')).toBeInTheDocument());
+		for (const name of ['Encryption', 'DNS Security', 'Patch Currency']) {
+			expect(within(categoryCard(name)).getAllByText("Couldn't load traffic protocols: the request failed.").length).toBeGreaterThan(0);
+		}
+		expect(screen.queryByText('No legacy unencrypted protocols detected')).not.toBeInTheDocument();
+		expect(screen.queryByText(/looks excellent/)).not.toBeInTheDocument();
+		expect(within(categoryCard('Monitoring Coverage')).getByText('100%')).toBeInTheDocument();
+	});
+
+	it('shows the overall score when every input loads', async () => {
+		stubDaemon({});
+		render(CompliancePage);
+
+		await vi.waitFor(() => expect(screen.getByText('Overall Security Posture')).toBeInTheDocument());
+		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+		// the overall figure plus all six categories
+		expect(screen.getAllByText(/^\d+%$/)).toHaveLength(7);
+	});
+});

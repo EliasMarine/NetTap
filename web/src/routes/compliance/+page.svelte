@@ -21,15 +21,38 @@
 	// Types
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — #96: every category had a number, even when its input never loaded
+	// interface CategoryScore {
+	// 	name: string;
+	// 	icon: string;
+	// 	score: number;
+	// 	status: 'Good' | 'Needs Attention' | 'Poor';
+	// 	statusClass: string;
+	// 	description: string;
+	// 	findings: string[];
+	// }
+	// OLD CODE END
+	/** The page's five requests; a category built on one that failed has no score. */
+	type Input = 'protocols' | 'alerts' | 'devices' | 'risk' | 'investigations';
+
 	interface CategoryScore {
 		name: string;
 		icon: string;
-		score: number;
-		status: 'Good' | 'Needs Attention' | 'Poor';
+		score: number | null;
+		status: 'Good' | 'Needs Attention' | 'Poor' | "Couldn't compute";
 		statusClass: string;
 		description: string;
 		findings: string[];
+		needs: Input[];
 	}
+
+	const INPUT_NAMES: Record<Input, string> = {
+		protocols: 'traffic protocols',
+		alerts: 'alert counts',
+		devices: 'the device count',
+		risk: 'risk scores',
+		investigations: 'investigation stats',
+	};
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -44,6 +67,8 @@
 	let deviceCount = $state<DeviceCountResponse>({ from: '', to: '', count: 0 });
 	let riskScores = $state<RiskScoresResponse>({ scores: [] });
 	let investigationStats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
+	// #96: requests that failed; the defaults above stand in for them only so the other scores compute
+	let failed = $state<Input[]>([]);
 
 	// ---------------------------------------------------------------------------
 	// Scoring constants
@@ -348,7 +373,25 @@
 		return findings;
 	}
 
-	let categories = $derived<CategoryScore[]>([
+	/** #96: a category whose input failed says so instead of scoring the stand-in defaults. */
+	function withFailures(cats: CategoryScore[]): CategoryScore[] {
+		return cats.map((cat) => {
+			const missing = cat.needs.filter((n) => failed.includes(n));
+			if (missing.length === 0) return cat;
+			return {
+				...cat,
+				score: null,
+				status: "Couldn't compute",
+				statusClass: 'badge-muted',
+				findings: [`Couldn't load ${missing.map((n) => INPUT_NAMES[n]).join(' or ')}: the request failed.`],
+			};
+		});
+	}
+
+	// OLD CODE START — #96: scored every category, including ones whose input failed
+	// let categories = $derived<CategoryScore[]>([
+	// OLD CODE END
+	let categories = $derived<CategoryScore[]>(withFailures([
 		{
 			name: 'Encryption',
 			icon: 'lock',
@@ -357,6 +400,7 @@
 			statusClass: getStatusClass(encryptionScore),
 			description: 'Share of connections that use encryption (TLS/HTTPS, QUIC, SSH, VPN). Local chatter that is never encrypted (DNS, DHCP, NTP, discovery, pings) is left out.',
 			findings: getEncryptionFindings(),
+			needs: ['protocols'],
 		},
 		{
 			name: 'DNS Security',
@@ -366,6 +410,7 @@
 			statusClass: getStatusClass(dnsScore),
 			description: 'Share of DNS lookups sent over DNS-over-TLS instead of plain text. DNS-over-HTTPS looks like any other HTTPS, so it is not counted.',
 			findings: getDnsFindings(),
+			needs: ['protocols'],
 		},
 		{
 			name: 'Network Segmentation',
@@ -375,6 +420,7 @@
 			statusClass: getStatusClass(networkScore),
 			description: 'Whether all devices have been baselined and communicate with expected destinations.',
 			findings: getNetworkFindings(),
+			needs: ['devices', 'risk'],
 		},
 		{
 			name: 'Patch Currency',
@@ -384,6 +430,7 @@
 			statusClass: getStatusClass(patchScore),
 			description: 'Usage of modern protocol versions (TLS 1.3, HTTP/2+) vs legacy unencrypted protocols.',
 			findings: getPatchFindings(),
+			needs: ['protocols'],
 		},
 		{
 			name: 'Alert Response',
@@ -393,6 +440,8 @@
 			statusClass: getStatusClass(alertScore),
 			description: 'How effectively alerts are being acknowledged and investigated.',
 			findings: getAlertFindings(),
+			// with no alerts the score is 100 whatever the investigations; with some it needs them
+			needs: alertCounts.counts.total > 0 ? ['alerts', 'investigations'] : ['alerts'],
 		},
 		{
 			name: 'Monitoring Coverage',
@@ -402,8 +451,12 @@
 			statusClass: getStatusClass(monitoringScore),
 			description: 'Proportion of discovered devices that have been risk-scored and are actively monitored.',
 			findings: getMonitoringFindings(),
+			needs: ['devices', 'risk'],
 		},
-	]);
+	]));
+
+	/** Categories that couldn't be computed: the overall score needs all six. */
+	let uncomputed = $derived(categories.filter((c) => c.score === null).map((c) => c.name));
 
 	// ---------------------------------------------------------------------------
 	// Recommendations
@@ -411,44 +464,59 @@
 
 	let recommendations = $derived.by(() => {
 		const recs: { text: string; priority: 'high' | 'medium' | 'low' }[] = [];
+		// OLD CODE START — #96: a category that couldn't be computed was judged on its stand-in score
+		// if (encryptionScore < 80) {
+		// if (dnsScore < 80) {
+		// if (networkScore < 80) {
+		// if (patchScore < 80) {
+		// if (alertScore < 80) {
+		// if (monitoringScore < 80) {
+		// if (recs.length === 0) {
+		// OLD CODE END
+		const low = (name: string, score: number) => !uncomputed.includes(name) && score < 80;
 
-		if (encryptionScore < 80) {
+		if (low('Encryption', encryptionScore)) {
 			recs.push({
 				text: 'Reduce unencrypted HTTP traffic by enabling HTTPS on internal services and ensuring browser HSTS is active.',
 				priority: encryptionScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (dnsScore < 80) {
+		if (low('DNS Security', dnsScore)) {
 			recs.push({
 				text: 'Enable DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT) on your router or devices to encrypt DNS queries.',
 				priority: dnsScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (networkScore < 80) {
+		if (low('Network Segmentation', networkScore)) {
 			recs.push({
 				text: 'Review un-baselined devices on the Devices page and mark them as known to improve segmentation visibility.',
 				priority: 'medium',
 			});
 		}
-		if (patchScore < 80) {
+		if (low('Patch Currency', patchScore)) {
 			recs.push({
 				text: 'Replace legacy protocols (FTP, Telnet, plain HTTP) with encrypted alternatives (SFTP, SSH, HTTPS).',
 				priority: patchScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (alertScore < 80) {
+		if (low('Alert Response', alertScore)) {
 			recs.push({
 				text: 'Investigate and resolve open alerts. Create investigations for high-severity alerts to improve response tracking.',
 				priority: alertScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (monitoringScore < 80) {
+		if (low('Monitoring Coverage', monitoringScore)) {
 			recs.push({
 				text: 'Ensure all devices are being monitored. Visit the Devices page to trigger risk scoring for un-scored devices.',
 				priority: 'medium',
 			});
 		}
-		if (recs.length === 0) {
+		if (uncomputed.length > 0) {
+			recs.push({
+				text: `Couldn't compute ${uncomputed.join(', ')}: a request failed. Refresh to try again.`,
+				priority: 'medium',
+			});
+		} else if (recs.length === 0) {
 			recs.push({
 				text: 'Your network security posture looks excellent. Keep monitoring for changes and new devices.',
 				priority: 'low',
@@ -461,6 +529,34 @@
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
+	async function fetchAll() {
+		loading = true;
+		// #96: each input on its own, so one failure marks only the categories built on it
+		const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([
+			getProtocolDistribution(),
+			getAlertCount(),
+			getDeviceCount(),
+			getRiskScores(),
+			getInvestigationStats(),
+		]);
+		if (protocolsRes.status === 'fulfilled') protocols = protocolsRes.value;
+		if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
+		if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
+		if (riskRes.status === 'fulfilled') riskScores = riskRes.value;
+		if (statsRes.status === 'fulfilled') investigationStats = statsRes.value;
+		const settled: Record<Input, PromiseSettledResult<unknown>> = {
+			protocols: protocolsRes,
+			alerts: alertsRes,
+			devices: devicesRes,
+			risk: riskRes,
+			investigations: statsRes,
+		};
+		failed = (Object.keys(settled) as Input[]).filter((k) => settled[k].status === 'rejected');
+		loading = false;
+	}
+
+	// OLD CODE START — #96: any failure left the defaults in place, so it scored as a clean network
+	/*
 	async function fetchAll() {
 		loading = true;
 		try {
@@ -489,6 +585,8 @@
 			loading = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Initial fetch
@@ -530,6 +628,21 @@
 	{:else}
 		<!-- Overall score card -->
 		<div class="overall-score-card card">
+			{#if uncomputed.length > 0}
+				<!-- #96: a weighted score over the categories that loaded would read as the whole picture -->
+				<div class="overall-score-content">
+					<div class="grade-circle grade-unknown">
+						<span class="grade-letter">?</span>
+					</div>
+					<div class="overall-score-info">
+						<h3 class="overall-score-title">Overall Security Posture</h3>
+						<p class="overall-score-summary text-muted">
+							Couldn't compute the overall score: {uncomputed.join(', ')}
+							{uncomputed.length === 1 ? 'has' : 'have'} no score because a request failed. Refresh to try again.
+						</p>
+					</div>
+				</div>
+			{:else}
 			<div class="overall-score-content">
 				<div class="grade-circle {gradeColorClass}">
 					<span class="grade-letter">{overallGrade}</span>
@@ -560,6 +673,7 @@
 					</p>
 				</div>
 			</div>
+			{/if}
 		</div>
 
 		<!-- Category cards grid (2x3) -->
@@ -590,15 +704,23 @@
 						<span class="badge {cat.statusClass}">{cat.status}</span>
 					</div>
 
-					<div class="category-score-row">
-						<span class="category-score-value">{cat.score}%</span>
-						<div class="progress-bar-track">
-							<div
-								class="progress-bar-fill {cat.score >= 80 ? 'fill-success' : cat.score >= 50 ? 'fill-warning' : 'fill-danger'}"
-								style="width: {cat.score}%"
-							></div>
+					{#if cat.score === null}
+						<!-- #96: no score for a category whose input failed -->
+						<div class="category-score-row">
+							<span class="category-score-value text-muted">—</span>
+							<span class="category-unavailable text-muted">{cat.findings[0]}</span>
 						</div>
-					</div>
+					{:else}
+						<div class="category-score-row">
+							<span class="category-score-value">{cat.score}%</span>
+							<div class="progress-bar-track">
+								<div
+									class="progress-bar-fill {cat.score >= 80 ? 'fill-success' : cat.score >= 50 ? 'fill-warning' : 'fill-danger'}"
+									style="width: {cat.score}%"
+								></div>
+							</div>
+						</div>
+					{/if}
 
 					<p class="category-description text-muted">{cat.description}</p>
 
@@ -765,6 +887,20 @@
 
 	.grade-df .grade-letter {
 		color: var(--danger);
+	}
+
+	.grade-circle.grade-unknown {
+		background-color: var(--bg-tertiary);
+		border-color: var(--border-default);
+	}
+
+	.grade-unknown .grade-letter,
+	.category-score-value.text-muted {
+		color: var(--text-muted);
+	}
+
+	.category-unavailable {
+		font-size: var(--text-sm);
 	}
 
 	.overall-score-info {
