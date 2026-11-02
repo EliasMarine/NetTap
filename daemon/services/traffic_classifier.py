@@ -677,17 +677,20 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
             }
         }
     }
-    try:
-        buckets, complete = all_buckets(
-            client,
-            NETWORK_INDEX,
-            query,
-            [{"asn": {"terms": {"field": "destination.as.full"}}}],
-            aggs={"total_bytes": bytes_sum},
-        )
-    except Exception:
-        logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
-        return []
+    # OLD CODE START — #96: a failed query read as "no traffic in any category"
+    # try:
+    #     buckets, complete = all_buckets(...)
+    # except Exception:
+    #     logger.error("get_category_stats: OpenSearch query failed", exc_info=True)
+    #     return []
+    # OLD CODE END
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        query,
+        [{"asn": {"terms": {"field": "destination.as.full"}}}],
+        aggs={"total_bytes": bytes_sum},
+    )
     if not complete:
         logger.warning("get_category_stats: stopped at %d ASNs; totals are short", len(buckets))
 
@@ -1019,21 +1022,20 @@ async def get_category_devices(
         "download_bytes": {"sum": {"field": "destination.bytes"}},
         "upload_bytes": {"sum": {"field": "source.bytes"}},
     }
-    try:
-        buckets, complete = all_buckets(
-            client,
-            NETWORK_INDEX,
-            query,
-            [{"ip": {"terms": {"field": "source.ip"}}}],
-            aggs=per_device,
-        )
-    except Exception:
-        logger.error(
-            "get_category_devices: OpenSearch query failed for category=%s",
-            category,
-            exc_info=True,
-        )
-        return {**_NO_CATEGORY_DEVICES}
+    # OLD CODE START — #96: a failed query read as "no devices in this category"
+    # try:
+    #     buckets, complete = all_buckets(...)
+    # except Exception:
+    #     logger.error("get_category_devices: OpenSearch query failed for category=%s", category, exc_info=True)
+    #     return {**_NO_CATEGORY_DEVICES}
+    # OLD CODE END
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        query,
+        [{"ip": {"terms": {"field": "source.ip"}}}],
+        aggs=per_device,
+    )
     if not complete:
         logger.warning("get_category_devices: stopped at %d devices; totals are short", len(buckets))
 
@@ -1111,15 +1113,18 @@ async def get_category_services(
         },
     }
 
-    try:
-        resp = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        logger.error(
-            "get_category_services: OpenSearch query failed for category=%s",
-            category,
-            exc_info=True,
-        )
-        return []
+    # OLD CODE START — #96: a failed query read as "no services in this category"
+    # try:
+    #     resp = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error(
+    #         "get_category_services: OpenSearch query failed for category=%s",
+    #         category,
+    #         exc_info=True,
+    #     )
+    #     return []
+    # OLD CODE END
+    resp = client.search(index=NETWORK_INDEX, body=query)
 
     # Merge buckets that share the same org name after stripping ASN prefix.
     # e.g. "AS16509 Amazon.com, Inc." and "AS14618 Amazon.com, Inc." both
@@ -1187,15 +1192,18 @@ async def get_category_bandwidth(
         },
     }
 
-    try:
-        resp = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        logger.error(
-            "get_category_bandwidth: OpenSearch query failed for category=%s",
-            category,
-            exc_info=True,
-        )
-        return []
+    # OLD CODE START — #96: a failed query read as a flat, empty chart
+    # try:
+    #     resp = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error(
+    #         "get_category_bandwidth: OpenSearch query failed for category=%s",
+    #         category,
+    #         exc_info=True,
+    #     )
+    #     return []
+    # OLD CODE END
+    resp = client.search(index=NETWORK_INDEX, body=query)
 
     series = []
     for bucket in (

@@ -295,8 +295,8 @@ class TestGetCategoryStats(unittest.TestCase):
         # Verify search was called once (single ASN aggregation)
         self.assertEqual(mock_client.search.call_count, 1)
 
-    def test_category_stats_error(self):
-        """OpenSearch query error returns empty list."""
+    def test_category_stats_error_raises(self):
+        """#96: a query error raises; [] would read as no traffic in any category."""
         mock_client = MagicMock()
         mock_client.search = MagicMock(side_effect=Exception("Connection refused"))
 
@@ -305,8 +305,8 @@ class TestGetCategoryStats(unittest.TestCase):
                 mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
             )
 
-        result = asyncio.run(run())
-        self.assertEqual(result, [])
+        with self.assertRaises(Exception):
+            asyncio.run(run())
 
     def test_category_stats_empty_results(self):
         """Empty ASN buckets returns empty list."""

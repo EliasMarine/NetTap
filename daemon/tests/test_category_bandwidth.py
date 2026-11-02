@@ -87,19 +87,17 @@ class TestCategoryBandwidth(unittest.TestCase):
         self.assertEqual(result, [])
         client.search.assert_not_called()
 
-    def test_opensearch_error_returns_empty(self):
+    def test_opensearch_error_raises(self):
+        """#96: a failed query raises; [] would draw an empty, quiet chart."""
         client = MagicMock()
         client.search = MagicMock(side_effect=Exception("Connection refused"))
 
-        result = asyncio.run(
-            get_category_bandwidth(
-                client,
-                "streaming",
-                "2026-03-01T00:00:00Z",
-                "2026-03-02T00:00:00Z",
+        with self.assertRaises(Exception):
+            asyncio.run(
+                get_category_bandwidth(
+                    client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                )
             )
-        )
-        self.assertEqual(result, [])
 
     def test_series_includes_all_fields(self):
         client = MagicMock()

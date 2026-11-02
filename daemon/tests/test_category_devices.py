@@ -101,16 +101,17 @@ class TestCategoryDevices(unittest.TestCase):
         self.assertIn("upload_bytes", device)
         self.assertIn("connections", device)
 
-    def test_opensearch_error_returns_empty(self):
+    def test_opensearch_error_raises(self):
+        """#96: a failed query raises; an empty breakdown would read as nobody streaming."""
         client = MagicMock()
         client.search = MagicMock(side_effect=Exception("Connection refused"))
 
-        result = asyncio.run(
-            get_category_devices(
-                client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+        with self.assertRaises(Exception):
+            asyncio.run(
+                get_category_devices(
+                    client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                )
             )
-        )
-        self.assertEqual(result, _EMPTY)
 
 
 if __name__ == "__main__":
