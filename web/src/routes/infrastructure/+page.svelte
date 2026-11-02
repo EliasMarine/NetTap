@@ -35,6 +35,8 @@
 		UnifiVpnTunnel,
 	} from '$api/unifi';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { getTrafficSummary } from '$api/traffic';
+	import { getAlertCount } from '$api/alerts';
 
 	// ─── Node type for topology ─────────────────────────────────
 	type NodeId = 'bridge' | 'capture' | 'zeek' | 'suricata' | 'filebeat' | 'logstash' | 'opensearch';
@@ -243,26 +245,40 @@
 		settle('storage', storage, (v) => (storageStatus = v));
 	}
 
+	// OLD CODE START — the daemon doesn't read "now-5m", so it answered for 24 h and Zeek showed
+	// 1,601 evt/s (a day of connections / 300 s) for ~5/s; Suricata read d.total, which the count
+	// reply nests under counts, so it always said 0; Math.round turned 0.8 alerts/s into 1
+	// async function fetchToolRates() {
+	// 	const WINDOW_SECS = 300; // 5-minute window
+	// 	try {
+	// 		// Zeek events (connection count from traffic summary)
+	// 		const zeekRes = await fetch('/api/traffic/summary?from=now-5m&to=now');
+	// 		if (zeekRes.ok) {
+	// 			const d = await zeekRes.json();
+	// 			const count = d.connection_count ?? d.total_connections ?? 0;
+	// 			zeekEventsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
+	// 		}
+	// 	} catch { /* swallow */ }
+	// 	try {
+	// 		// Suricata alerts (total count from alerts API)
+	// 		const suriRes = await fetch('/api/alerts/count?from=now-5m&to=now');
+	// 		if (suriRes.ok) {
+	// 			const d = await suriRes.json();
+	// 			const count = d.total ?? 0;
+	// 			suricataAlertsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
+	// 		}
+	// 	} catch { /* swallow */ }
+	// }
+	// OLD CODE END
 	async function fetchToolRates() {
 		const WINDOW_SECS = 300; // 5-minute window
-		try {
-			// Zeek events (connection count from traffic summary)
-			const zeekRes = await fetch('/api/traffic/summary?from=now-5m&to=now');
-			if (zeekRes.ok) {
-				const d = await zeekRes.json();
-				const count = d.connection_count ?? d.total_connections ?? 0;
-				zeekEventsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
-			}
-		} catch { /* swallow */ }
-		try {
-			// Suricata alerts (total count from alerts API)
-			const suriRes = await fetch('/api/alerts/count?from=now-5m&to=now');
-			if (suriRes.ok) {
-				const d = await suriRes.json();
-				const count = d.total ?? 0;
-				suricataAlertsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
-			}
-		} catch { /* swallow */ }
+		const to = new Date();
+		const range = { from: new Date(to.getTime() - WINDOW_SECS * 1000).toISOString(), to: to.toISOString() };
+		const perSec = (count: number) => Math.round((count / WINDOW_SECS) * 10) / 10;
+		const [conns, alerts] = await Promise.allSettled([getTrafficSummary(range), getAlertCount(range)]);
+		// a failed read keeps the last rate (or '--' before the first)
+		if (conns.status === 'fulfilled') zeekEventsPerSec = perSec(conns.value.connection_count);
+		if (alerts.status === 'fulfilled') suricataAlertsPerSec = perSec(alerts.value.counts.total);
 	}
 
 	async function fetchUnifi() {
@@ -785,7 +801,7 @@
 							<span class="health-dot green"></span>
 							Running
 						</div>
-						<div class="node-metric"><span class="value">{zeekEventsPerSec != null ? formatNumber(zeekEventsPerSec) : '--'}</span> evt/s</div>
+						<div class="node-metric"><span class="value">{zeekEventsPerSec != null ? formatNumber(zeekEventsPerSec) : '--'}</span> conn/s</div>
 					</div>
 				</div>
 
