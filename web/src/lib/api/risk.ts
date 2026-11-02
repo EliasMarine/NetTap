@@ -40,7 +40,12 @@ export async function getRiskScores(): Promise<RiskScoresResponse> {
 		return { scores: [] };
 	}
 
-	return res.json();
+	// OLD CODE START — #81: the daemon sends its list as `devices`, so `scores` was undefined
+	// and the Security Posture page crashed on `.length`, stuck on "Calculating..."
+	// return res.json();
+	// OLD CODE END
+	const data = await res.json();
+	return { scores: Array.isArray(data?.devices) ? data.devices : [] };
 }
 
 /**

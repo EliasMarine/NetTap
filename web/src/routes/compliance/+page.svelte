@@ -84,11 +84,17 @@
 		return Math.round(100 - (plainDns / totalDns) * 100);
 	});
 
+	// Devices on the list that have a score. OLD CODE: each figure used riskScores.scores.length,
+	// which counts per IP: a second address of one device (G11: an AP's VLAN 40 IP) gave
+	// "55 of 54 devices" and coverage above 100% (#81)
+	let scoredIps = $derived(new Set(riskScores.scores.map((s) => s.ip)));
+	let scoredDevices = $derived(deviceList.devices.filter((d) => scoredIps.has(d.ip)).length);
+
 	let networkScore = $derived.by(() => {
 		const totalDevices = deviceList.devices.length;
 		if (totalDevices === 0) return 100;
 
-		const devicesWithRisk = riskScores.scores.length;
+		const devicesWithRisk = scoredDevices;
 		const unbaselined = totalDevices - devicesWithRisk;
 		const penalty = unbaselined * 10;
 		return Math.max(0, 100 - penalty);
@@ -129,7 +135,7 @@
 		const totalDevices = deviceList.devices.length;
 		if (totalDevices === 0) return 100;
 
-		const devicesWithRisk = riskScores.scores.length;
+		const devicesWithRisk = scoredDevices;
 		return Math.round((devicesWithRisk / totalDevices) * 100);
 	});
 
@@ -229,7 +235,7 @@
 	function getNetworkFindings(): string[] {
 		const findings: string[] = [];
 		const totalDevices = deviceList.devices.length;
-		const baselinedDevices = riskScores.scores.length;
+		const baselinedDevices = scoredDevices;
 		const unbaselined = totalDevices - baselinedDevices;
 
 		findings.push(`${totalDevices} device(s) discovered on your network`);
@@ -283,7 +289,7 @@
 	function getMonitoringFindings(): string[] {
 		const findings: string[] = [];
 		const totalDevices = deviceList.devices.length;
-		const scored = riskScores.scores.length;
+		const scored = scoredDevices;
 
 		if (totalDevices === 0) {
 			findings.push('No devices discovered yet');

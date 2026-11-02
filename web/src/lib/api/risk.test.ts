@@ -55,7 +55,7 @@ describe('risk API client', () => {
 
 	describe('getRiskScores', () => {
 		it('returns parsed risk scores on success', async () => {
-			const expected = { scores: [sampleScore] };
+			const expected = { devices: [sampleScore] };
 			mockFetchSuccess(expected);
 
 			const result = await getRiskScores();
@@ -68,7 +68,7 @@ describe('risk API client', () => {
 
 		it('returns scores array with multiple devices', async () => {
 			const secondScore = { ...sampleScore, ip: '192.168.1.200', score: 35, level: 'medium' };
-			mockFetchSuccess({ scores: [sampleScore, secondScore] });
+			mockFetchSuccess({ devices: [sampleScore, secondScore] });
 
 			const result = await getRiskScores();
 
@@ -93,7 +93,7 @@ describe('risk API client', () => {
 		});
 
 		it('includes risk factors in each score', async () => {
-			mockFetchSuccess({ scores: [sampleScore] });
+			mockFetchSuccess({ devices: [sampleScore] });
 
 			const result = await getRiskScores();
 
@@ -104,11 +104,19 @@ describe('risk API client', () => {
 		});
 
 		it('includes the risk level for each device', async () => {
-			mockFetchSuccess({ scores: [sampleScore] });
+			mockFetchSuccess({ devices: [sampleScore] });
 
 			const result = await getRiskScores();
 
 			expect(result.scores[0].level).toBe('high');
+		});
+
+		it('reads the daemon list from devices, as /api/risk/scores sends it (#81)', async () => {
+			mockFetchSuccess({ from: '', to: '', device_count: 1, devices: [sampleScore] });
+			expect((await getRiskScores()).scores).toHaveLength(1);
+
+			mockFetchSuccess({ device_count: 0 });
+			expect((await getRiskScores()).scores).toEqual([]);
 		});
 	});
 
