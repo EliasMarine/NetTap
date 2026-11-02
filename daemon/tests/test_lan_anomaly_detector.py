@@ -96,12 +96,11 @@ class TestDetectArpSpoofing:
         )
         assert alerts == []
 
-    def test_handles_opensearch_error(self, detector, mock_client):
+    def test_opensearch_error_raises(self, detector, mock_client):
+        """#96: [] read as "no ARP spoofing detected"."""
         mock_client.search.side_effect = Exception("Connection refused")
-        alerts = detector.detect_arp_spoofing(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
-        assert alerts == []
+        with pytest.raises(Exception, match="Connection refused"):
+            detector.detect_arp_spoofing("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -185,12 +184,11 @@ class TestDetectRogueDhcp:
         )
         assert alerts == []
 
-    def test_handles_opensearch_error(self, detector, mock_client):
+    def test_opensearch_error_raises(self, detector, mock_client):
+        """#96: [] read as "no rogue DHCP server"."""
         mock_client.search.side_effect = Exception("Connection refused")
-        alerts = detector.detect_rogue_dhcp(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
-        assert alerts == []
+        with pytest.raises(Exception, match="Connection refused"):
+            detector.detect_rogue_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
@@ -256,12 +254,17 @@ class TestDetectIpConflicts:
 
         assert len(alerts) == 0
 
-    def test_handles_opensearch_error(self, detector, mock_client):
+    def test_opensearch_error_raises(self, detector, mock_client):
+        """#96: [] read as "no IP conflicts"."""
         mock_client.search.side_effect = Exception("Timeout")
-        alerts = detector.detect_ip_conflicts(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
-        assert alerts == []
+        with pytest.raises(Exception, match="Timeout"):
+            detector.detect_ip_conflicts("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+    def test_one_failed_check_fails_all_anomalies(self, detector, mock_client):
+        """#96: /api/lan/anomalies must not list two checks' findings as the whole picture."""
+        mock_client.search.side_effect = Exception("Timeout")
+        with pytest.raises(Exception, match="Timeout"):
+            detector.get_all_anomalies("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------

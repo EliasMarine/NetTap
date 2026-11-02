@@ -129,11 +129,14 @@ class LANAnomalyDetector:
         #
         # buckets = result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
         # OLD CODE END
-        try:
-            buckets = _ips_with_many_macs(self._client, bool_clause, "source.ip")
-        except Exception as exc:
-            logger.error("ARP spoofing detection failed: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as "no ARP spoofing detected"
+        # try:
+        #     buckets = _ips_with_many_macs(self._client, bool_clause, "source.ip")
+        # except Exception as exc:
+        #     logger.error("ARP spoofing detection failed: %s", exc)
+        #     return []
+        # OLD CODE END
+        buckets = _ips_with_many_macs(self._client, bool_clause, "source.ip")
 
         alerts: list[dict[str, Any]] = []
         for b in buckets:
@@ -205,11 +208,14 @@ class LANAnomalyDetector:
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except Exception as exc:
-            logger.error("Rogue DHCP detection failed: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as "no rogue DHCP server"
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("Rogue DHCP detection failed: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         buckets = (
             result.get("aggregations", {}).get("dhcp_servers", {}).get("buckets", [])
@@ -315,11 +321,14 @@ class LANAnomalyDetector:
         #     result.get("aggregations", {}).get("by_dest_ip", {}).get("buckets", [])
         # )
         # OLD CODE END
-        try:
-            buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
-        except Exception as exc:
-            logger.error("IP conflict detection failed: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as "no IP conflicts"
+        # try:
+        #     buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
+        # except Exception as exc:
+        #     logger.error("IP conflict detection failed: %s", exc)
+        #     return []
+        # OLD CODE END
+        buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
 
         alerts: list[dict[str, Any]] = []
         for b in buckets:
