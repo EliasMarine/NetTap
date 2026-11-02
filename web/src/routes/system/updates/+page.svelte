@@ -108,6 +108,8 @@
 	};
 
 	const updatesAvailableCount = $derived(availableUpdates.length);
+	// updates NetTap can apply here; the others say how they arrive (applies_with)
+	const applicableCount = $derived(availableUpdates.filter((u) => !u.applies_with).length);
 
 	const updatesMap = $derived.by(() => {
 		const map = new Map<string, AvailableUpdate>();
@@ -493,7 +495,12 @@
 							{updatesAvailableCount} update{updatesAvailableCount !== 1 ? 's' : ''} available
 						</span>
 						<span class="update-banner-subtitle">
-							Review and apply updates to keep your appliance secure and up to date.
+							<!-- was always "Review and apply…", also when none could be applied here -->
+							{#if applicableCount > 0}
+								Review and apply updates to keep your appliance secure and up to date.
+							{:else}
+								None of these can be applied from here: each one says how it arrives.
+							{/if}
 						</span>
 					</div>
 				</div>
@@ -501,9 +508,12 @@
 					<button class="btn btn-secondary btn-sm" onclick={() => openUpdatePanel(true)}>
 						Review
 					</button>
-					<button class="btn btn-primary btn-sm" onclick={() => openUpdatePanel(true)}>
-						Update All
-					</button>
+					<!-- was always shown: with nothing applicable it opened a panel with nothing to pick -->
+					{#if applicableCount > 0}
+						<button class="btn btn-primary btn-sm" onclick={() => openUpdatePanel(true)}>
+							Update All
+						</button>
+					{/if}
 				</div>
 			</div>
 		{/if}

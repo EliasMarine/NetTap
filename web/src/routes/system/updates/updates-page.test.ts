@@ -321,6 +321,21 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		await screen.findByText('arkime');
 		expect(await screen.findAllByRole('button', { name: 'Update' })).toHaveLength(1);
 	});
+
+	// On the G11 all 7 updates came with a NetTap release, yet the banner offered "Update All"
+	it('offers no Update All when none of the updates can be applied here', async () => {
+		stubFetch({
+			'/api/system/versions': versions,
+			'/api/system/updates/available': { updates: [UPDATES[0]], last_check: '' },
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+		render(UpdatesPage);
+
+		expect(await screen.findByText('1 update available')).toBeInTheDocument();
+		expect(screen.getByText('None of these can be applied from here: each one says how it arrives.')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Update All' })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+	});
 });
 
 // On the G11 the page said "7 updates available" while every row read "Up to Date": the daemon
