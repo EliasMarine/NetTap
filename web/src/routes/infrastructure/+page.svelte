@@ -401,9 +401,14 @@
 		return storageStatus?.disk_usage_percent ?? 0;
 	});
 
-	let indexCount = $derived.by(() => {
-		return indices.length || cluster?.active_primary_shards || 0;
-	});
+	// OLD CODE START — fell back to the primary shard count, which is not an index count (#39)
+	// let indexCount = $derived.by(() => {
+	// 	return indices.length || cluster?.active_primary_shards || 0;
+	// });
+	// OLD CODE END
+	let indexCount = $derived(indices.length);
+	// System pages count data indices only (OpenSearch's own ".…" indices are skipped), so show the split
+	let dataIndexCount = $derived(indices.filter((i) => !i.index.startsWith('.')).length);
 
 	let latencyMs = $derived.by(() => {
 		if (!bridgeHealth || bridgeHealth.latency_us <= 0) return 0;
@@ -1281,6 +1286,9 @@
 		<div class="stat-card-mini">
 			<div class="stat-label">Indices</div>
 			<div class="stat-value">{indexCount > 0 ? indexCount : '--'}</div>
+			{#if indexCount > 0}
+				<div class="stat-split">{dataIndexCount} data &middot; {indexCount - dataIndexCount} system</div>
+			{/if}
 		</div>
 		<div class="stat-card-mini">
 			<div class="stat-label">Latency</div>
@@ -2317,6 +2325,12 @@
 		border-radius: var(--radius-md);
 		padding: var(--space-md) var(--space-lg);
 		text-align: center;
+	}
+
+	.stat-split {
+		margin-top: var(--space-xs);
+		font-size: var(--text-xs);
+		color: var(--text-muted);
 	}
 
 	.stat-label {

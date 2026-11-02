@@ -168,7 +168,8 @@
 						</span>
 					</div>
 					<div class="info-row">
-						<span class="info-label">Indices</span>
+						<!-- data indices only: the storage manager skips OpenSearch's own "." indices (#39) -->
+						<span class="info-label">Data Indices</span>
 						<span class="info-value mono">
 							{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
 						</span>

@@ -134,3 +134,48 @@ describe('Infrastructure pipeline in mirror mode', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Index count: real indices only, split into data and system (#39)
+// ---------------------------------------------------------------------------
+
+describe('Infrastructure index count', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubFetch(indexNames: string[]) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url.startsWith('/api/opensearch/indices')) {
+					const indices = indexNames.map((index) => ({ index, health: 'green', status: 'open', docs_count: '1', store_size: '1kb' }));
+					return { ok: true, status: 200, json: async () => ({ indices, count: indices.length }) };
+				}
+				if (url.startsWith('/api/opensearch/cluster')) {
+					return { ok: true, status: 200, json: async () => ({ status: 'green', number_of_nodes: 1, active_primary_shards: 42 }) };
+				}
+				return { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+	}
+
+	async function renderPage() {
+		render(InfrastructurePage);
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/opensearch/indices')));
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('splits the count the way the System page counts', async () => {
+		stubFetch(['.kibana_1', '.opendistro-job-scheduler-lock', 'arkime_sessions3-261101', 'arkime_sessions3-261102']);
+		await renderPage();
+
+		expect(screen.getByText('2 data · 2 system')).toBeInTheDocument();
+	});
+
+	it('never shows the primary shard count as an index count', async () => {
+		stubFetch([]);
+		await renderPage();
+
+		expect(screen.queryByText('42')).not.toBeInTheDocument();
+	});
+});
