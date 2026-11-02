@@ -112,3 +112,20 @@ def test_longer_lists_never_pass_the_cap(monkeypatch):
         client.search(index="x-*", body={"size": 0, "aggs": {"t": {"terms": {"field": "f"}}}})
     sizes = [c.kwargs["body"]["aggs"]["t"]["terms"]["shard_size"] for c in search.call_args_list]
     assert sizes == [10, 50, 500, 5000, 50_000, MAX_SHARD_SIZE]  # size 10 floors the first
+
+
+def test_a_reply_from_only_some_shards_is_an_error():
+    """By default OpenSearch answers from the shards that worked, so a count read low silently."""
+    import pytest
+
+    from storage.exact_terms import PartialResultsError
+
+    partial = {"_shards": {"total": 3, "successful": 2, "failed": 1}, "hits": {"total": {"value": 7}}}
+    whole = {"_shards": {"total": 3, "successful": 3, "failed": 0}, "hits": {"total": {"value": 9}}}
+    client = ExactTermsOpenSearch(hosts=[{"host": "localhost", "port": 9200}])
+    with patch.object(OpenSearch, "search", return_value=partial), pytest.raises(PartialResultsError):
+        client.search(index="x-*", body={"size": 0})
+    with patch.object(OpenSearch, "msearch", return_value={"responses": [whole, partial]}), pytest.raises(PartialResultsError):
+        client.msearch(body=[{"index": "x-*"}, {"size": 0}])
+    with patch.object(OpenSearch, "search", return_value=whole):
+        assert client.search(index="x-*", body={"size": 0}) == whole

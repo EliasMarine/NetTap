@@ -11,7 +11,7 @@ ordered by a metric), so a busier network's search is re-run with longer lists (
 import logging
 from typing import Any
 
-from opensearchpy import OpenSearch
+from opensearchpy import OpenSearch, OpenSearchException
 
 logger = logging.getLogger("nettap.opensearch")
 
@@ -69,6 +69,20 @@ def _any_truncated(reply: Any) -> bool:
     return truncated(reply.get("aggregations"))
 
 
+class PartialResultsError(OpenSearchException):
+    """Some shards failed, so the reply counts only part of the data."""
+
+
+def _failed_shards(reply: Any) -> int:
+    """Shards that failed in a search or msearch reply (OpenSearch still answers from the rest)."""
+    if not isinstance(reply, dict):
+        return 0
+    if "responses" in reply:
+        return sum(_failed_shards(r) for r in reply["responses"])
+    shards = reply.get("_shards")
+    return int(shards.get("failed", 0) or 0) if isinstance(shards, dict) else 0
+
+
 class ExactTermsOpenSearch(OpenSearch):
     """The daemon's OpenSearch client: search and msearch bodies get exact terms counts."""
 
@@ -76,6 +90,10 @@ class ExactTermsOpenSearch(OpenSearch):
         shard_size = EXACT_SHARD_SIZE
         while True:
             reply = send(body=body, shard_size=shard_size, **kwargs)
+            # By default OpenSearch answers from the shards that worked; a figure from part of the
+            # data must be an error, not a smaller number
+            if failed := _failed_shards(reply):
+                raise PartialResultsError(f"{failed} shard(s) failed on {kwargs.get('index', '?')}; the reply is partial")
             if not _any_truncated(reply):
                 return reply
             if shard_size >= MAX_SHARD_SIZE:
