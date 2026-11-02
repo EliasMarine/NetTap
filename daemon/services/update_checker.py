@@ -176,7 +176,15 @@ class UpdateChecker:
 
             self._available_updates = all_updates
             self._last_check = now
-            own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+            # OLD CODE START — NetTap's images counted as checked even when the release check
+            # failed or found a newer release, so they read "Up to Date" beside it
+            # own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+            # OLD CODE END
+            # NetTap's own images are built from its release: as current as that check says
+            nettap_current = "nettap-daemon" not in self._failed_checks and not any(
+                u.component == "nettap-daemon" for u in all_updates
+            )
+            own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX) if nettap_current else (_MALCOLM_REGISTRY,)
             # OLD CODE START — a source that couldn't be read was still listed as checked
             # self._checked = sorted(
             #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}

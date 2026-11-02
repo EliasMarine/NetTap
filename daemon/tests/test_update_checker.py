@@ -574,6 +574,37 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         self.assertNotIn("nettap-nginx", result["checked"])
 
 
+class TestNetTapImagesFollowTheRelease(unittest.TestCase):
+    """NetTap's images (nettap-web, nettap-tshark...) read "Up to Date" beside a newer NetTap
+    release or a failed release check: nothing compares them but that check."""
+
+    def _checked(self, release):
+        uc = UpdateChecker()
+
+        async def fetch(url):
+            if isinstance(release, Exception):
+                raise release
+            return release if "EliasMarine" in url else {}
+
+        async def none():
+            return None
+
+        uc._fetch_json = fetch
+        uc._check_suricata_rules = none
+        uc._check_geoip_update = none
+        uc.set_version_manager(TestFailedChecksAreReported._vm(("nettap-web", "nettap/web:latest")))
+        return asyncio.run(uc.check_updates())["checked"]
+
+    def test_no_newer_release_means_checked(self):
+        self.assertIn("nettap-web", self._checked({}))
+
+    def test_a_newer_release_is_not_up_to_date(self):
+        self.assertNotIn("nettap-web", self._checked({"tag_name": "v99.0.0", "html_url": ""}))
+
+    def test_a_failed_release_check_is_not_up_to_date(self):
+        self.assertNotIn("nettap-web", self._checked(RuntimeError("HTTP 403 rate limited")))
+
+
 class TestNetTapUpdatesStayApplicable(unittest.TestCase):
     """Updates NetTap applies itself carry no applies_with sentence; the rest say how they arrive."""
 
