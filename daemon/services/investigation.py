@@ -201,7 +201,9 @@ async def generate_threat_report(
     from services.alert_intelligence import (
         get_smart_alerts,
         get_smart_alert_summary,
-        detect_kill_chains,
+        # OLD CODE START — #96: kill chains now come from the summary (every group)
+        # detect_kill_chains,
+        # OLD CODE END
     )
     from services.threat_detection import (
         detect_beaconing,
@@ -230,7 +232,10 @@ async def generate_threat_report(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": {"from": from_ts, "to": to_ts},
         "summary": summary,
-        "kill_chains": detect_kill_chains(alerts),
+        # OLD CODE START — #96: chains from the top 200 groups disagreed with summary.kill_chains
+        # "kill_chains": detect_kill_chains(alerts),
+        # OLD CODE END
+        "kill_chains": summary.get("kill_chains", []),
         "beaconing": detect_beaconing(
             client, from_ts, to_ts, excluded_ips=excluded_ips
         ),
