@@ -960,7 +960,11 @@
 							{:else if retentionHealth.ilmPending}
 								<span style="color: var(--amber);">&#x27f3; Syncing...</span>
 							{:else if retentionHealth.ilmOk}
+								<!-- OLD CODE START — 2026-11-02: read "All 1 synced" with one policy
 								<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
+								OLD CODE END -->
+								{@const policyCount = Object.keys(ilmStatus.policies).length}
+								<span style="color: var(--green);">&#x2713; {policyCount === 1 ? 'Policy synced' : `${policyCount || 'All'} policies synced`}</span>
 							{:else}
 								<span style="color: var(--red);">&#x2717; Out of sync</span>
 							{/if}

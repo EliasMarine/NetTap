@@ -171,6 +171,27 @@ describe('Settings — About', () => {
 	});
 });
 
+describe('Settings — retention health', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('words a single synced ILM policy naturally', async () => {
+		stubFetch({
+			'/api/storage/status': () => ({
+				body: { disk_usage_percent: 6.8, last_prune_at: new Date().toISOString(),
+					ilm_status: { synced: true, last_applied: 'x', pending_retry: false, policies: { 'nettap-hot-policy': 'updated' } } },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText(/Policy synced/)).toBeInTheDocument();
+		expect(screen.queryByText(/All 1 synced/)).not.toBeInTheDocument();
+	});
+});
+
 describe('Settings — capture status label', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
