@@ -331,3 +331,47 @@ describe('Infrastructure when requests fail', () => {
 		expect(screen.getByText('Idle')).toBeInTheDocument();
 	});
 });
+
+// The daemon now sends latency_us: null (with latency_note) instead of a made-up 50 µs; the page read "-- ms".
+describe('Infrastructure bridge latency', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const NOTE = "Not measured: NetTap can't time packets through the bridge";
+
+	function stubBridge(latency: Record<string, unknown>) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url === '/api/capture/mode') return { ok: true, status: 200, json: async () => ({ mode: 'bridge', interface: '' }) };
+				if (url === '/api/bridge/health') {
+					return { ok: true, status: 200, json: async () => ({ bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, uptime_seconds: 60, issues: [], ...latency }) };
+				}
+				return { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+	}
+
+	async function latencyCard() {
+		render(InfrastructurePage);
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/bridge/health'));
+		await new Promise((r) => setTimeout(r, 0));
+		return screen.getByText('Latency', { selector: '.stat-label' }).closest('.stat-card-mini') as HTMLElement;
+	}
+
+	it('says Not measured, with the reason, instead of "-- ms"', async () => {
+		stubBridge({ latency_us: null, latency_note: NOTE });
+		const card = await latencyCard();
+
+		expect(within(card).getByText('Not measured')).toHaveAttribute('title', NOTE);
+		expect(card.textContent).not.toContain('ms');
+	});
+
+	it('still shows a measured latency in ms', async () => {
+		stubBridge({ latency_us: 1500 });
+		const card = await latencyCard();
+
+		expect(card.textContent?.replace(/\s+/g, '')).toBe('Latency1.5ms');
+	});
+});

@@ -72,7 +72,11 @@
 		}
 	}
 
-	function formatLatency(us: number): string {
+	// OLD CODE START — no null: the daemon sends null when latency isn't measured
+	// function formatLatency(us: number): string {
+	// OLD CODE END
+	function formatLatency(us: number | null): string {
+		if (us == null) return 'Not measured';
 		if (us <= 0) return '--';
 		if (us < 1000) return `${us} us`;
 		if (us < 1_000_000) return `${(us / 1000).toFixed(1)} ms`;
@@ -273,7 +277,7 @@
 		<div class="bridge-stats">
 			<div class="stat-item">
 				<span class="stat-label">Latency</span>
-				<span class="stat-value mono">{formatLatency(health.latency_us)}</span>
+				<span class="stat-value mono" title={health.latency_note || undefined}>{formatLatency(health.latency_us)}</span>
 			</div>
 			<div class="stat-item">
 				<span class="stat-label">RX Rate</span>

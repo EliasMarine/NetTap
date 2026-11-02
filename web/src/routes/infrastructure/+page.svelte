@@ -529,7 +529,10 @@
 	let dataIndexCount = $derived(indices.filter((i) => !i.index.startsWith('.')).length);
 
 	let latencyMs = $derived.by(() => {
-		if (!bridgeHealth || bridgeHealth.latency_us <= 0) return 0;
+		// OLD CODE START — latency_us is null when not measured
+		// if (!bridgeHealth || bridgeHealth.latency_us <= 0) return 0;
+		// OLD CODE END
+		if (!bridgeHealth || bridgeHealth.latency_us == null || bridgeHealth.latency_us <= 0) return 0;
 		return bridgeHealth.latency_us / 1000;
 	});
 
@@ -1002,7 +1005,14 @@
 					<div class="detail-stat">
 						<div class="detail-stat-label">Latency</div>
 						<div class="detail-stat-value cyan">
+							<!-- OLD CODE START — read '--' with no reason when the daemon says latency isn't measured
 							{bridgeHealth && bridgeHealth.latency_us > 0 ? (bridgeHealth.latency_us / 1000).toFixed(1) + ' ms' : '--'}
+							OLD CODE END -->
+							{#if bridgeHealth && bridgeHealth.latency_us == null}
+								<span title={bridgeHealth.latency_note || undefined}>Not measured</span>
+							{:else}
+								{bridgeHealth && bridgeHealth.latency_us && bridgeHealth.latency_us > 0 ? (bridgeHealth.latency_us / 1000).toFixed(1) + ' ms' : '--'}
+							{/if}
 						</div>
 					</div>
 					<div class="detail-stat">
@@ -1479,7 +1489,14 @@
 		</div>
 		<div class="stat-card-mini">
 			<div class="stat-label">Latency</div>
+			<!-- OLD CODE START — read "-- ms" when the daemon says latency isn't measured
 			<div class="stat-value green">{latencyMs > 0 ? latencyMs.toFixed(1) : '--'}<span class="stat-unit">ms</span></div>
+			OLD CODE END -->
+			{#if bridgeHealth && bridgeHealth.latency_us == null}
+				<div class="stat-value stat-value-note" title={bridgeHealth.latency_note || undefined}>Not measured</div>
+			{:else}
+				<div class="stat-value green">{latencyMs > 0 ? latencyMs.toFixed(1) : '--'}<span class="stat-unit">ms</span></div>
+			{/if}
 		</div>
 		<div class="stat-card-mini">
 			<div class="stat-label">Drop Rate</div>
@@ -2557,6 +2574,11 @@
 	.stat-value.green { color: var(--green); }
 	.stat-value.cyan { color: var(--cyan); }
 	.stat-value.amber { color: var(--amber); }
+
+	.stat-value.stat-value-note {
+		font-size: var(--text-sm);
+		color: var(--text-muted);
+	}
 
 	.stat-unit {
 		font-size: var(--text-xs);

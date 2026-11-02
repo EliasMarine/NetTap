@@ -78,3 +78,30 @@ describe('BridgeStatus when a request fails (#96)', () => {
 		expect(screen.getByRole('button', { name: 'Enable Bypass' })).toBeEnabled();
 	});
 });
+
+// The daemon now sends latency_us: null (with latency_note) instead of a made-up 50 µs.
+describe('BridgeStatus latency', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const NOTE = "Not measured: NetTap can't time packets through the bridge";
+
+	it('says Not measured, with the reason, when the daemon has no latency', async () => {
+		stubFetch({ '/api/bridge/health': { ...HEALTH, latency_us: null, latency_note: NOTE } });
+
+		render(BridgeStatus);
+
+		const latency = await screen.findByText('Not measured');
+		expect(latency).toHaveAttribute('title', NOTE);
+		expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+	});
+
+	it('still shows a measured latency', async () => {
+		stubFetch({ '/api/bridge/health': HEALTH });
+
+		render(BridgeStatus);
+
+		expect(await screen.findByText('120 us')).toBeInTheDocument();
+	});
+});

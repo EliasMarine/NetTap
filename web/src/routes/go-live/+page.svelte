@@ -456,7 +456,10 @@
 					</div>
 					<div class="health-stat">
 						<span class="health-label">Latency</span>
+						<!-- OLD CODE START — read "null us" now that the daemon doesn't make up a latency
 						<span class="health-value">{health.latency_us} us</span>
+						OLD CODE END -->
+						<span class="health-value" title={health.latency_note || undefined}>{health.latency_us != null ? `${health.latency_us} us` : 'Not measured'}</span>
 					</div>
 					<div class="health-stat">
 						<span class="health-label">Uptime</span>

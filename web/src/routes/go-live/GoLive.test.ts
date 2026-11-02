@@ -177,6 +177,47 @@ describe('GoLive page — failed readiness check', () => {
 	});
 });
 
+// The daemon now sends latency_us: null (with latency_note); the page read "null us".
+describe('GoLive page — bridge latency', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	const NOTE = "Not measured: NetTap can't time packets through the bridge";
+	const LIVE = {
+		ready: true,
+		message: '',
+		checks: ['bridge_exists', 'wan_carrier', 'lan_carrier'].map((name) => ({ name, passed: true, detail: '' })),
+	};
+	const HEALTH = {
+		bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, watchdog_active: true,
+		rx_bytes_delta: 0, tx_bytes_delta: 0, rx_packets_delta: 10, tx_packets_delta: 5, uptime_seconds: 60,
+		health_status: 'normal', issues: [], last_check: '',
+	};
+
+	async function renderLive(health: Record<string, unknown>) {
+		stubModeFetch(() => jsonResponse(200, { mode: 'bridge', interface: '' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue(LIVE as never);
+		vi.mocked(bridgeApi.getBridgeHealth).mockResolvedValue(health as never);
+		render(GoLivePage);
+		await vi.waitFor(() => expect(bridgeApi.getBridgeHealth).toHaveBeenCalled());
+	}
+
+	it('says Not measured, never "null us"', async () => {
+		await renderLive({ ...HEALTH, latency_us: null, latency_note: NOTE });
+
+		expect(await screen.findByText('Not measured')).toHaveAttribute('title', NOTE);
+		expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+	});
+
+	it('still shows a measured latency', async () => {
+		await renderLive({ ...HEALTH, latency_us: 42 });
+
+		expect(await screen.findByText('42 us')).toBeInTheDocument();
+	});
+});
+
 /**
  * Tests for Go Live page logic.
  *
