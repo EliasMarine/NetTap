@@ -1,6 +1,10 @@
 """Tests for ThreatIntelService."""
 
 import json
+from unittest.mock import MagicMock
+
+import pytest
+
 from services.threat_intel import ThreatIntelService
 
 
@@ -170,3 +174,31 @@ class TestPopulateFromSuricata:
 
         assert svc.populate_from_suricata(index, "now-1d", "now") == 1
         assert svc.populate_from_suricata(index, "now-1d", "now") == 0
+
+    def test_failed_alert_scan_raises(self, tmp_path, monkeypatch):
+        """#96: 0 new indicators read as "nothing new" when the alerts were never read."""
+        monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+        client = MagicMock()
+        client.search.side_effect = Exception("Connection refused")
+
+        with pytest.raises(Exception, match="Connection refused"):
+            ThreatIntelService().populate_from_suricata(client, "now-1d", "now")
+
+
+@pytest.mark.asyncio
+async def test_intel_endpoint_answers_500_when_the_alert_scan_fails(tmp_path, monkeypatch):
+    """#96: GET /api/threats/intel must not report 0 new indicators for a scan that never ran."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from api.threats import handle_threat_intel
+
+    monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+    storage = MagicMock()
+    storage._client.search.side_effect = Exception("Connection refused")
+    app = web.Application()
+    app["storage"] = storage
+
+    resp = await handle_threat_intel(make_mocked_request("GET", "/api/threats/intel", app=app))
+    assert resp.status == 500
+    assert "error" in json.loads(resp.text)

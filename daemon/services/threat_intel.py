@@ -199,17 +199,20 @@ class ThreatIntelService:
         #     self.save_cache()
         # return len(bad_ips)
         # OLD CODE END
-        try:
-            buckets, complete = all_buckets(
-                client,
-                NETWORK_INDEX,
-                {"bool": bool_clause},
-                [{"ip": {"terms": {"field": "destination.ip"}}}],
-                page_size=_IP_PAGE,
-            )
-        except Exception:
-            logger.error("Failed to populate TI from Suricata", exc_info=True)
-            return 0
+        # OLD CODE START — #96: 0 read as "no new indicators" when the alerts were never read
+        # try:
+        #     buckets, complete = all_buckets(...)
+        # except Exception:
+        #     logger.error("Failed to populate TI from Suricata", exc_info=True)
+        #     return 0
+        # OLD CODE END
+        buckets, complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            {"bool": bool_clause},
+            [{"ip": {"terms": {"field": "destination.ip"}}}],
+            page_size=_IP_PAGE,
+        )
         if not complete:
             logger.warning("TI scan stopped at %d IPs; indicators are partial", len(buckets))
 

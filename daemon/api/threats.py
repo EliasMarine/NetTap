@@ -136,9 +136,13 @@ async def handle_threat_intel(request: web.Request) -> web.Response:
     ti.load_cache()
 
     # Bootstrap from Suricata data
-    new_count = ti.populate_from_suricata(
-        client, from_ts, to_ts, excluded_ips=excluded_ips_list
-    )
+    try:
+        new_count = ti.populate_from_suricata(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
+    except Exception as exc:
+        logger.error("Threat intel refresh from Suricata failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
     feeds = ti.get_all_matches()
 
     return web.json_response(
