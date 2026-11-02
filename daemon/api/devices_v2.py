@@ -62,7 +62,7 @@ REGISTRY_REFRESH_WINDOW = timedelta(hours=1)
 
 
 def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
-    """The device list's LAN conn query, bucketed by IP with each IP's latest MAC."""
+    """The device list's LAN conn query, bucketed by IP with each IP's most common MAC."""
     return {
         "size": 0,
         "query": {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
@@ -74,8 +74,14 @@ def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dic
                     "min_doc_count": _MIN_CONNECTIONS,
                 },
                 "aggs": {
+                    # OLD CODE START — the newest record's MAC: routed inter-VLAN legs on a
+                    # mirrored uplink carry the router's MAC, so IoT IPs were filed under the UDM (#26)
+                    # "with_mac": {"filter": {"exists": {"field": "source.mac"}},
+                    #              "aggs": {"latest": {"top_hits": {"size": 1, "sort": [{"@timestamp": "desc"}], ...}}}}
+                    # OLD CODE END
+                    # The device's own MAC is on every flow's first leg, so it is the most common
                     "with_mac": {
-                        "filter": {"exists": {"field": "source.mac"}},
+                        "terms": {"field": "source.mac", "size": 1},
                         "aggs": {
                             "latest": {
                                 "top_hits": {
@@ -92,13 +98,16 @@ def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dic
     }
 
 
-def _register_conn_devices(registry: DeviceRegistry, result: dict) -> int:
-    """Register each IP bucket under its MAC, skipping the IPs the device list skips."""
-    count = 0
+def _register_conn_devices(registry: DeviceRegistry, result: dict) -> dict[str, str]:
+    """Register each IP bucket under its MAC, skipping the IPs the device list skips.
+
+    Returns the {ip: mac} pairs registered.
+    """
+    assigned: dict[str, str] = {}
     for bucket in result.get("aggregations", {}).get("devices", {}).get("buckets", []):
         ip = bucket["key"]
-        latest = bucket.get("with_mac", {}).get("latest", {})
-        hits = latest.get("hits", {}).get("hits", [])
+        macs = bucket.get("with_mac", {}).get("buckets", [])
+        hits = macs[0].get("latest", {}).get("hits", {}).get("hits", []) if macs else []
         mac = _mac_from_hit(hits[0]) if hits else None
         # shortcut: an IP with no MAC in its conn records can't be keyed, so it stays out of the registry
         if _is_skipped_device_ip(ip) or not mac:
@@ -109,8 +118,8 @@ def _register_conn_devices(registry: DeviceRegistry, result: dict) -> int:
         oui = _oui_from_hit(hits[0])  # Malcolm's IEEE vendor name, absent for randomized MACs
         metadata = {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None
         registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata)
-        count += 1
-    return count
+        assigned[ip] = mac
+    return assigned
 
 
 def refresh_device_registry(app: Mapping[str, Any]) -> int:
@@ -133,7 +142,12 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     to_ts = now.isoformat()
     query = _conn_devices_query(app, from_ts, to_ts)
     result = registry._client.search(index=NETWORK_INDEX, body=query)
-    count = _register_conn_devices(registry, result)
+    # OLD CODE START — #26: the {ip: mac} pairs are needed to drop IPs that moved
+    # count = _register_conn_devices(registry, result)
+    # OLD CODE END
+    assigned = _register_conn_devices(registry, result)
+    count = len(assigned)
+    registry.drop_reassigned_ips(assigned)
 
     # enrich_from_arp is left out: it registers any MAC from any record (public
     # IPs, multicast), which breaks agreement with the device list

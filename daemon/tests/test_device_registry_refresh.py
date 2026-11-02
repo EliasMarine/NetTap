@@ -31,14 +31,11 @@ from services.device_registry import DeviceRegistry
 LAN_FILTER = {"terms": {"source.ip": ["192.168.1.0/24"]}}
 
 
-def _bucket(ip: str, mac: str | list[str] | None) -> dict:
+def _bucket(ip: str, mac: str | list[str] | None, oui: str | None = None) -> dict:
     """A conn terms bucket as OpenSearch returns it for _conn_devices_query."""
-    hits = [] if mac is None else [{"_source": {"source": {"mac": mac}}}]
-    return {
-        "key": ip,
-        "doc_count": 12,
-        "with_mac": {"doc_count": len(hits), "latest": {"hits": {"hits": hits}}},
-    }
+    source = {"mac": mac, **({"oui": oui} if oui else {})}
+    macs = [] if mac is None else [{"key": "x", "doc_count": 12, "latest": {"hits": {"hits": [{"_source": {"source": source}}]}}}]
+    return {"key": ip, "doc_count": 12, "with_mac": {"doc_count_error_upper_bound": 0, "buckets": macs}}
 
 
 def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
@@ -59,6 +56,8 @@ def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
     def search(index: str, body: dict) -> dict:
         if "devices" in body.get("aggs", {}):
             return {"aggregations": {"devices": {"buckets": buckets}}}
+        if "match_all" in body.get("query", {}):  # registry listing
+            return {"hits": {"hits": [{"_source": copy.deepcopy(d)} for d in client.store.values()]}}
         return {"hits": {"hits": []}}
 
     client.get.side_effect = get
@@ -267,10 +266,8 @@ class TestVendorFromMalcolm:
     """#26: the registry takes Malcolm's IEEE vendor and the category it implies."""
 
     def test_registers_vendor_and_category(self):
-        hue = _bucket("192.168.1.154", "00:17:88:48:3c:07")
-        hue["with_mac"]["latest"]["hits"]["hits"][0]["_source"]["source"]["oui"] = "Philips Lighting BV"
-        apple = _bucket("192.168.1.95", "7c:01:3e:74:d2:1c")
-        apple["with_mac"]["latest"]["hits"]["hits"][0]["_source"]["source"]["oui"] = "Apple, Inc."
+        hue = _bucket("192.168.1.154", "00:17:88:48:3c:07", "Philips Lighting BV")
+        apple = _bucket("192.168.1.95", "7c:01:3e:74:d2:1c", "Apple, Inc.")
         client = _fake_client([hue, apple, _bucket("192.168.1.151", "0e:cc:55:a1:28:66")])
 
         refresh_device_registry(_app(client))
@@ -283,11 +280,38 @@ class TestVendorFromMalcolm:
         assert client.store["0E:CC:55:A1:28:66"]["manufacturer"] is None  # randomized MAC
 
     def test_category_outside_the_grid_groups_is_unknown(self):
-        sonos = _bucket("192.168.1.30", "48:a6:b8:00:00:01")
-        sonos["with_mac"]["latest"]["hits"]["hits"][0]["_source"]["source"]["oui"] = "Sonos, Inc."
+        sonos = _bucket("192.168.1.30", "48:a6:b8:00:00:01", "Sonos, Inc.")
         client = _fake_client([sonos])
 
         refresh_device_registry(_app(client))
 
         doc = client.store["48:A6:B8:00:00:01"]
         assert (doc["manufacturer"], doc["category"]) == ("Sonos, Inc.", "unknown")
+
+
+class TestIpOwnership:
+    """#26: each IP is filed under its most common MAC and leaves any other device."""
+
+    def test_query_takes_the_most_common_mac(self):
+        client = _fake_client([])
+        refresh_device_registry(_app(client))
+        with_mac = _conn_query(client)[1]["aggs"]["devices"]["aggs"]["with_mac"]
+        assert with_mac["terms"] == {"field": "source.mac", "size": 1}
+
+    def test_ip_moves_off_the_router_and_0000_is_dropped(self):
+        udm = "D0:21:F9:5E:35:32"
+        store = {
+            udm: {"mac": udm, "ips": ["192.168.1.1", "192.168.1.164"], "category": "infrastructure"},
+            "AA:BB:CC:00:00:05": {"mac": "AA:BB:CC:00:00:05", "ips": ["0.0.0.0", "192.168.1.116"]},
+        }
+        client = _fake_client(
+            [_bucket("192.168.1.164", "cc:f4:11:b4:7f:68"), _bucket("192.168.1.1", "d0:21:f9:5e:35:32")],
+            store,
+        )
+
+        refresh_device_registry(_app(client))
+
+        assert client.store[udm]["ips"] == ["192.168.1.1"]
+        assert client.store[udm]["category"] == "infrastructure"  # rest of the doc kept
+        assert client.store["CC:F4:11:B4:7F:68"]["ips"] == ["192.168.1.164"]
+        assert client.store["AA:BB:CC:00:00:05"]["ips"] == ["192.168.1.116"]

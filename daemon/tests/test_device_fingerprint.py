@@ -193,6 +193,12 @@ class TestGetHostnameForIP(unittest.TestCase):
         self.assertIsNone(result)
 
 
+def _conn_mac(source: dict) -> dict:
+    """The conn MAC lookup's reply: one source.mac bucket (the most common) with one hit."""
+    hit = {"_source": source}
+    return {"aggregations": {"mac": {"buckets": [{"key": "x", "doc_count": 9, "hit": {"hits": {"hits": [hit]}}}]}}}
+
+
 class TestGetMacForIP(unittest.TestCase):
     """Tests for get_mac_for_ip() DHCP/conn lookup."""
 
@@ -223,7 +229,7 @@ class TestGetMacForIP(unittest.TestCase):
         # First call (DHCP) returns empty, second call (conn) returns MAC
         mock_client.search.side_effect = [
             {"hits": {"hits": []}},
-            {"hits": {"hits": [{"_source": {"source": {"mac": "11:22:33:44:55:66"}}}]}},
+            _conn_mac({"source": {"mac": "11:22:33:44:55:66"}}),
         ]
 
         result = self.fp.get_mac_for_ip(
@@ -241,7 +247,7 @@ class TestGetMacForIP(unittest.TestCase):
         }
         mock_client.search.side_effect = [
             {"hits": {"hits": []}},
-            {"hits": {"hits": [{"_source": real_source}]}},
+            _conn_mac(real_source),
         ]
 
         result = self.fp.get_mac_for_ip(
@@ -274,11 +280,7 @@ class TestGetMacForIP(unittest.TestCase):
         mock_client = MagicMock()
         mock_client.search.side_effect = [
             {"hits": {"hits": [{"_source": {"source": {"mac": ["", None]}}}]}},
-            {
-                "hits": {
-                    "hits": [{"_source": {"source": {"mac": ["11:22:33:44:55:66"]}}}]
-                }
-            },
+            _conn_mac({"source": {"mac": ["11:22:33:44:55:66"]}}),
         ]
 
         result = self.fp.get_mac_for_ip(
@@ -456,3 +458,17 @@ class TestManufacturerFromMalcolm(unittest.TestCase):
         self.assertEqual(self.fp.get_manufacturer(mac), "Philips Lighting (Hue)")
         mac = self._mac({"mac": "0e:cc:55:a1:28:66"})  # randomized MAC: Malcolm has no vendor
         self.assertEqual(self.fp.get_manufacturer(mac), "Unknown")
+
+    def test_conn_takes_the_most_common_mac(self):
+        """Routed inter-VLAN legs carry the router's MAC; the IP's own MAC is the most common."""
+        client = MagicMock()
+        client.search.side_effect = [
+            {"hits": {"hits": []}},
+            _conn_mac({"source": {"mac": "cc:f4:11:b4:7f:68", "oui": "Google, Inc."}}),
+        ]
+        mac = self.fp.get_mac_for_ip(client, "10.10.0.164", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        self.assertEqual(mac, "cc:f4:11:b4:7f:68")
+        body = client.search.call_args.kwargs["body"]
+        self.assertEqual(body["aggs"]["mac"]["terms"], {"field": "source.mac", "size": 1})
+        self.assertNotIn("sort", body)  # not the newest record
+        self.assertEqual(self.fp.get_manufacturer(mac), "Google, Inc.")

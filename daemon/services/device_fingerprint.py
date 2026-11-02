@@ -222,9 +222,15 @@ class DeviceFingerprint:
         except Exception as exc:
             logger.debug("DHCP MAC lookup failed for %s: %s", ip, exc)
 
-        # Strategy 2: Connection logs — source.mac where source.ip == ip
+        # Strategy 2: Connection logs — the MAC most of this IP's conn records carry.
+        # OLD CODE START — the newest record's MAC: on a mirrored uplink, traffic routed
+        # between VLANs carries the router's MAC, so IoT devices could read as the UDM (#26)
+        # conn_query = {"size": 1, ..., "sort": [{"@timestamp": {"order": "desc"}}], ...}
+        # OLD CODE END
+        # Every routed flow also has a leg on the device's own VLAN with its real MAC, and
+        # internet traffic has only that leg, so the device's own MAC is the most common.
         conn_query = {
-            "size": 1,
+            "size": 0,
             "query": {
                 "bool": {
                     "filter": [
@@ -242,13 +248,18 @@ class DeviceFingerprint:
                     ]
                 }
             },
-            "sort": [{"@timestamp": {"order": "desc"}}],
-            "_source": ["source.mac", "source.oui"],
+            "aggs": {
+                "mac": {
+                    "terms": {"field": "source.mac", "size": 1},
+                    "aggs": {"hit": {"top_hits": {"size": 1, "_source": ["source.mac", "source.oui"]}}},
+                }
+            },
         }
 
         try:
             result = client.search(index=NETWORK_INDEX, body=conn_query)
-            hits = result.get("hits", {}).get("hits", [])
+            buckets = result.get("aggregations", {}).get("mac", {}).get("buckets", [])
+            hits = buckets[0].get("hit", {}).get("hits", {}).get("hits", []) if buckets else []
             if hits:
                 # OLD CODE START — replaced 2026-11-01: _source is nested, the flat "source.mac" key never exists
                 # mac = hits[0].get("_source", {}).get("source.mac")

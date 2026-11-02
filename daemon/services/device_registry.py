@@ -210,6 +210,30 @@ class DeviceRegistry:
 
         return doc
 
+    def drop_reassigned_ips(self, assigned: dict[str, str]) -> int:
+        """Remove each just-seen IP from every device other than the one it was seen on (#26).
+
+        An IPv4 address belongs to one MAC at a time, so an IP left on another device is a
+        DHCP reassignment or an old mis-filing (routed traffic carrying the router's MAC).
+        0.0.0.0 (a DHCP client's address before it has one) is dropped everywhere.
+
+        Returns:
+            Number of devices updated.
+        """
+        owner = {ip: self._normalize_mac(mac) for ip, mac in assigned.items()}
+        count = 0
+        for device in self.get_all_devices(limit=1000):
+            mac, ips = device.get("mac"), device.get("ips") or []
+            keep = [ip for ip in ips if ip != "0.0.0.0" and owner.get(ip, mac) == mac]
+            if len(keep) == len(ips):
+                continue
+            try:
+                self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}, refresh="wait_for")
+                count += 1
+            except OpenSearchException as exc:
+                logger.error("Failed to drop moved IPs from %s: %s", mac, exc)
+        return count
+
     def _get_existing(self, mac: str) -> dict | None:
         """The stored device doc, or None only when OpenSearch says it does not exist.
 
@@ -511,6 +535,8 @@ class DeviceRegistry:
                 # OLD CODE END
                 zeek_dhcp = src.get("zeek", {}).get("dhcp", {})
                 ip = zeek_dhcp.get("assigned_ip") or src.get("source", {}).get("ip")
+                if ip == "0.0.0.0":  # a DISCOVER/REQUEST from a client with no address yet
+                    ip = None
                 hostname = zeek_dhcp.get("host_name")
                 # vendor_class not reliably available in Arkime DHCP data
                 vendor_class = None

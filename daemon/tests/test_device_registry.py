@@ -561,6 +561,19 @@ class TestDHCPEnrichment:
         # Verify index was called (device was registered)
         assert mock_client.index.called
 
+    def test_enrich_from_dhcp_skips_unassigned_address(self, registry, mock_client):
+        """#26: a DISCOVER's 0.0.0.0 source is not the device's IP."""
+        from opensearchpy import NotFoundError
+
+        mock_client.get.side_effect = NotFoundError(404, "not found", {})
+        mock_client.search.return_value = {
+            "hits": {"hits": [{"_source": {"source": {"mac": "2A:37:F4:D9:20:F5", "ip": "0.0.0.0"}, "dhcp": {"id": "d1"}}}]}
+        }
+
+        registry.enrich_from_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+        assert mock_client.index.call_args.kwargs["body"]["ips"] == []
+
     def test_enrich_from_dhcp_deduplicates(self, registry, mock_client):
         """Should not register the same MAC twice."""
         from opensearchpy import NotFoundError
