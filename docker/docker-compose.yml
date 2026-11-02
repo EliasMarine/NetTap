@@ -377,6 +377,10 @@ services:
     environment:
       <<: *process-env
       ZEEK_LIVE_CAPTURE: "true"
+      # No offline PCAP processor: it subscribes to Malcolm's pcap-monitor, which NetTap
+      # doesn't run, so it retried forever and leaked thousands of "pcap-monitor" DNS
+      # lookups an hour to the LAN resolver (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #32)
+      ZEEK_PCAP_PROCESSOR: "false"
       ZEEK_JSON: "true"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
@@ -431,6 +435,10 @@ services:
     environment:
       <<: *process-env
       SURICATA_LIVE_CAPTURE: "true"
+      # No offline PCAP processor: it subscribes to Malcolm's pcap-monitor, which NetTap
+      # doesn't run, so it retried forever and leaked thousands of "pcap-monitor" DNS
+      # lookups an hour to the LAN resolver (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #32)
+      SURICATA_PCAP_PROCESSOR: "false"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
       # NOTE: Do NOT set SURICATA_RUNMODE here. Malcolm's entrypoint selects
@@ -563,6 +571,10 @@ services:
       # doesn't resolve on the host network. nginx-proxy binds 127.0.0.1:9200.
       OPENSEARCH_URL: "https://localhost:9200"
       ARKIME_LIVE_CAPTURE: "true"
+      # No offline PCAP processor: it subscribes to Malcolm's pcap-monitor, which NetTap
+      # doesn't run, so it retried forever and leaked thousands of "pcap-monitor" DNS
+      # lookups an hour to the LAN resolver (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #32)
+      ARKIME_PCAP_PROCESSOR: "false"
       ARKIME_VIEWER_PORT: "8005"
       ARKIME_ROTATE_INDEX: "daily"
       ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"

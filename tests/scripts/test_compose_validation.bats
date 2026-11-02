@@ -770,3 +770,14 @@ print('pcap writer: OK')
 "
     [ "$status" -eq 0 ]
 }
+
+@test "compose: live capture containers do not run the offline PCAP processor" {
+    # It subscribes to Malcolm's pcap-monitor, which NetTap doesn't run, and retries
+    # forever, leaking "pcap-monitor" DNS lookups (dashboard data accuracy #32)
+    for pair in zeek-live:ZEEK suricata-live:SURICATA arkime-live:ARKIME; do
+        svc="${pair%%:*}"; prefix="${pair##*:}"
+        section=$(sed -n "/^  ${svc}:/,/^  [^ ]/p" "$COMPOSE_FILE")
+        echo "$section" | grep -q "${prefix}_PCAP_PROCESSOR: \"false\"" || {
+            echo "$svc is missing ${prefix}_PCAP_PROCESSOR: \"false\""; return 1; }
+    done
+}
