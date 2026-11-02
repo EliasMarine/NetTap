@@ -401,8 +401,12 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   600, and every service still logs in. The installer's bats file had errexit off (fake passes).
   Batch 23: every filtered TShark analysis spent its full 15 s match scan (piped tshark buffers
   output and read on after head quit); tshark -l, 17.6 s -> 4.6 s. Same pipe in PCAP preview.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch23.sh.
-  Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks).
+  Batch 24: the excluded-IP list held the .env.example MGMT_IP placeholder while NetTap's own
+  address was counted everywhere; MGMT_IP must be a local address, else the management NIC's.
+  Batch 25: Top Destinations now also leaves out what excluded IPs send.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch25.sh.
+  Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
+  page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (11 checks).
   Each checks its fixes against the live APIs.
 ```
 
@@ -1897,6 +1901,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 138. **`docker top` needs a PID column** — `docker top c -o uid` fails ("Couldn't find PID field"); use `-o pid,uid`. And an empty list must fail a check, not pass it vacuously.
 139. **`tshark ... | head -n N` does not stop tshark (Chain 25, #78)** — piped tshark buffers 4 KB of output, so it only sees head has quit on a later flush and may read the whole file first. Every filtered analysis used its full 15 s scan for a 1 s job. Use `tshark -l` (flush per line) whenever its output feeds `head`. Time each pass on the box before guessing.
 140. **Zeek windows are never closed (Chain 25)** — a connection is logged when it ends but stamped with its start, so a past time window keeps gaining records. Compare an API figure against OpenSearch by bracketing it between a raw read just before and one just after, not one read taken at another moment.
+141. **Never trust a placeholder from an example env file (Chain 25, #79)** — `.env.example`'s `MGMT_IP=192.168.1.100` was taken as NetTap's own address, excluded, and saved into the owner's list, while the real address was counted. Validate configured addresses against the host (`ip -j -4 addr show`), and keep auto-detected values out of user-owned settings so a wrong one can't stick.
+142. **`sudo -S` eats stdin (Chain 25)** — piping JSON into `sudo docker exec -i` under a password-on-stdin wrapper delivers nothing. Pass data as an argument; it also works with a cached sudo.
 
 ---
 
