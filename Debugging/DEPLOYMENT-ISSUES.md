@@ -420,10 +420,15 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 33: OpenSearch 3.5's concurrent segment search made every terms top-N approximate
   (device top lists read low); the daemon sets it to none. Categories read every ASN;
   unique destinations is an exact count.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch33.sh.
+  Batch 34: top lists merged across daily indices lost counts (no shard_size anywhere); the
+  daemon's client sets one on every terms aggregation; the DNS median is an HDR percentile.
+  Batch 35: searches whose lists a shard cut short are re-run with longer lists (any network
+  size); the Threats baseline counts hours, not page requests.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch35.sh.
   Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
   page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (16 checks);
-  every device's own pages: bash scripts/remote/verify-device-figures.sh.
+  every device's own pages: bash scripts/remote/verify-device-figures.sh;
+  figures independent of how the data is split: bash scripts/remote/verify-split-invariance.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1926,6 +1931,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 146. **Check that a control does something, not just that the page renders (Chain 25, #87)** — Device detail's range pills had no handlers, and no figure check could notice, because every figure was correct for 24 h. Click each control in the browser and confirm the requests it sends (here: `from=` changes). A same-end rule applies to range checks too: compare windows that end at the same moment, or the newest minutes skew the result.
 147. **Parse OpenSearch replies as JSON; never grep the numbers (Chain 25, #89)** — batch 32's raw byte check grepped `"value":[0-9]*`. It also caught `hits.total.value` (exactly +10,000 when capped), and sums past ~10^7 come back as `3.7E9`, so the grep kept `3`. Both looked like data errors until the reply was read whole. Pipe the reply into `python3 -c 'json.load(...)'` inside a container (the device has no host Python packages) and pass it as an argument, not stdin, when the harness uses `sudo -S`.
 148. **OpenSearch 3.x terms aggregations are approximate even on one shard (Chain 25, #90)** — `search.concurrent_segment_search.mode` defaults to `auto`, which slices each shard for aggregation searches, so a terms top-N carries a count error (`doc_count_error_upper_bound`) like a multi-shard search. NetTap sets it to `none`. To check a top list, compare it with an exact list (`size` larger than the number of terms), not with the same query shape, and pass `request_cache=false` when probing a settings change: the shard request cache answers repeated size-0 searches.
+149. **Test multi-index behaviour before the data spans several indices (Chain 25, #93–#94)** — forcing `search.concurrent_segment_search.mode` to `all` (transient) makes OpenSearch count each shard in slices and merge them the way it merges daily indices, so an endpoint whose figures change under it will change once a window spans days. A fixed `shard_size` is only exact up to that many terms; read `doc_count_error_upper_bound` (!= 0 means a shard cut its list short) and re-run instead.
+150. **A GET must not change what the next GET reports (Chain 25, #95)** — the Threats baseline appended a point per request, so the figure depended on how often a page was open. Reading the same past window twice and comparing (the split check's A/A2 reads) catches it.
 
 ---
 
