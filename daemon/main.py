@@ -83,6 +83,7 @@ from services.dhcp_gateway import DhcpGatewayManager
 from services.mirror_manager import MirrorManager
 from api.server import start_api
 from api.devices_v2 import REGISTRY_REFRESH_INTERVAL_S, refresh_device_registry
+from services.excluded_ips import changed_lan_filter
 from api.setup import _nic_in_use_problem
 from api.capture_control import enforce_capture_state
 from api.dhcp_gateway import ensure_capture_lock
@@ -293,6 +294,27 @@ async def smart_loop(
     logger.info("SMART monitor loop stopped")
 
 
+# detection reads every stored connection (0.9 s on the G11 with two days kept), so hourly
+LAN_REDETECT_INTERVAL_S = 3600
+
+
+async def _redetect_lan(app: Mapping[str, Any], loop: asyncio.AbstractEventLoop) -> None:
+    """Pick up a LAN subnet first seen since startup before the registry pass (#116)."""
+    current, storage = app.get("lan_filter"), app.get("storage")
+    if current is None or storage is None:
+        return
+    try:
+        new = await loop.run_in_executor(None, changed_lan_filter, storage._client, current)
+    except Exception:
+        logger.exception("LAN re-detection failed; keeping the current LAN subnets")
+        return
+    if new is not None:
+        # in place, on the event loop: the started app is frozen and every handler reads this dict
+        current.clear()
+        current.update(new)
+        logger.info("LAN subnets changed since startup; the LAN filter is updated")
+
+
 async def device_registry_loop(
     app: Mapping[str, Any],
     interval: int,
@@ -311,7 +333,11 @@ async def device_registry_loop(
             logger.info("Device registry: %d last-seen times were later than the last record; corrected", fixed)
         except Exception:
             logger.exception("Device registry: last-seen correction failed")
+    next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S  # startup just detected them
     while not shutdown_event.is_set():
+        if loop.time() >= next_lan_check:
+            await _redetect_lan(app, loop)
+            next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S
         try:
             await loop.run_in_executor(None, refresh_device_registry, app)
         except Exception:

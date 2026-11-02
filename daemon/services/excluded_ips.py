@@ -349,6 +349,23 @@ def detect_and_build_lan_filter(client) -> dict:
     return build_lan_filter([])
 
 
+def changed_lan_filter(client, current: dict) -> dict | None:
+    """Re-run LAN detection; the new filter if the subnets changed, else None (#116).
+
+    Detection ran only at startup, so a subnet first seen later (a new VLAN) counted
+    nowhere until a restart. With LAN_SUBNETS set, or when detection finds nothing
+    (e.g. OpenSearch unreachable), the current filter stays: falling back to all of
+    RFC1918 on a hiccup would change every count.
+    """
+    if _parse_manual_subnets():
+        return None
+    detected = detect_lan_subnets(client)
+    if not detected:
+        return None
+    new = build_lan_filter(detected)
+    return None if new == current else new
+
+
 # Module-level fallback — used only until auto-detection runs in create_app()
 # After startup, devices.py and risk.py read from request.app["lan_filter"]
 RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())

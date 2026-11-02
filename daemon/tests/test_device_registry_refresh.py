@@ -410,6 +410,53 @@ class TestDeviceRegistryLoop:
         assert registry.correct_last_seen.call_count == 1
 
 
+class TestLanSubnetsFollowTheNetwork:
+    """#116: LAN detection ran only at startup, so a subnet first seen later (here a
+    10.10.0.x network on the G11) was in no device count and the registry never got
+    its devices' IPs until the daemon restarted."""
+
+    def _run(self, monkeypatch, detected, manual=""):
+        from services import excluded_ips
+
+        monkeypatch.setenv("LAN_SUBNETS", manual)
+        monkeypatch.setattr(main, "LAN_REDETECT_INTERVAL_S", 0)  # hourly in the daemon
+        monkeypatch.setattr(excluded_ips, "detect_lan_subnets", lambda client: detected)
+        lan_filter = excluded_ips.build_lan_filter([(192, 168, 1)])
+        before = dict(lan_filter)
+        seen: list[dict] = []
+
+        async def scenario() -> None:
+            loop = asyncio.get_running_loop()
+            shutdown = asyncio.Event()
+
+            def refresh(app: dict) -> int:
+                seen.append(dict(app["lan_filter"]))
+                loop.call_soon_threadsafe(shutdown.set)
+                return 0
+
+            monkeypatch.setattr(main, "refresh_device_registry", refresh)
+            app = {"lan_filter": lan_filter, "storage": MagicMock()}
+            await asyncio.wait_for(main.device_registry_loop(app, 0.01, shutdown), timeout=5)
+
+        asyncio.run(scenario())
+        return before, lan_filter, seen
+
+    def test_a_new_subnet_is_counted_before_the_registry_pass(self, monkeypatch):
+        from services.excluded_ips import build_lan_filter
+
+        _, lan_filter, seen = self._run(monkeypatch, [(192, 168, 1), (10, 10, 0)])
+        assert lan_filter == build_lan_filter([(192, 168, 1), (10, 10, 0)])
+        assert seen == [lan_filter]  # the same dict every handler reads, updated before the pass
+
+    def test_failed_detection_keeps_the_subnets(self, monkeypatch):
+        before, lan_filter, _ = self._run(monkeypatch, [])  # not the all-RFC1918 fallback
+        assert lan_filter == before
+
+    def test_manual_subnets_are_never_replaced(self, monkeypatch):
+        before, lan_filter, _ = self._run(monkeypatch, [(10, 10, 0)], manual="192.168.1.0/24")
+        assert lan_filter == before
+
+
 class TestVendorFromMalcolm:
     """#26: the registry takes Malcolm's IEEE vendor and the category it implies."""
 
