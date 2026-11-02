@@ -628,6 +628,44 @@ class TestBypassMode(unittest.TestCase):
         self.assertTrue(any("promisc on" in c and "eth0" in c for c in nsenter_cmds))
         self.assertTrue(any("promisc on" in c and "eth1" in c for c in nsenter_cmds))
 
+    def _bypass_with_failing_promisc(self, method):
+        monitor = BridgeHealthMonitor()
+        monitor._write_bypass_file = lambda active: None
+
+        async def mock_nsenter(*args):
+            return (1, "", "RTNETLINK answers: Operation not permitted") if "eth1" in args else (0, "", "")
+
+        monitor._run_nsenter = mock_nsenter
+        return asyncio.run(getattr(monitor, method)()), monitor
+
+    def test_bypass_that_left_promisc_on_says_so(self):
+        """#96: bypass said "traffic is flowing uninspected" while capture went on."""
+        result, monitor = self._bypass_with_failing_promisc("trigger_bypass")
+        self.assertTrue(result["bypass_active"])  # bypass itself still applies
+        self.assertTrue(monitor._bypass_active)
+        self.assertEqual(
+            result["warnings"],
+            ["Could not turn promiscuous mode off on eth1: RTNETLINK answers: Operation not permitted"],
+        )
+        self.assertNotIn("uninspected", result["message"])
+
+    def test_leaving_bypass_with_promisc_still_off_says_so(self):
+        result, monitor = self._bypass_with_failing_promisc("disable_bypass")
+        self.assertFalse(result["bypass_active"])
+        self.assertFalse(monitor._bypass_active)
+        self.assertIn("eth1", result["warnings"][0])
+        self.assertNotIn("resumed", result["message"])
+
+    def test_clean_bypass_has_no_warnings(self):
+        monitor = BridgeHealthMonitor()
+        monitor._write_bypass_file = lambda active: None
+
+        async def ok(*args):
+            return (0, "", "")
+
+        monitor._run_nsenter = ok
+        self.assertNotIn("warnings", asyncio.run(monitor.trigger_bypass()))
+
     def test_bypass_affects_health_status(self):
         """Health check during bypass should report 'bypass' status."""
         monitor = BridgeHealthMonitor()
