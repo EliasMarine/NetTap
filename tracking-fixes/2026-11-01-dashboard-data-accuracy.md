@@ -1,6 +1,6 @@
 # 2026-11-01 — Dashboard data accuracy audit (G11)
 
-**Status:** In progress.
+**Status:** Every row fixed and verified on the G11 except #75 (unit-tested; the box stays in mirror mode). Batches 1–20.
 - **Batches 1–7:** deployed and verified on the G11 (`deploy-data-accuracy-batch{1..7}.sh`, every check ✓). Every route has now had a browser pass.
 - **Batch 7 (2026-11-02):** Settings — capture file size (#53), ILM health card (#54), About version/uptime (#55), PCAP copy (#56).
 - **Batch 6 (2026-11-02):** PCAP Search — orphaned tshark (#48), search as a background job (#49), filtered preview (#50), downloads cut off at 10 s (#51).
