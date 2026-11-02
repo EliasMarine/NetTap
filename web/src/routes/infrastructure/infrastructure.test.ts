@@ -147,6 +147,26 @@ describe('Infrastructure pipeline in mirror mode', () => {
 		expect(screen.queryByText(/Bridge — br0/)).not.toBeInTheDocument();
 	});
 
+	it('says the mirror port IP check could not run instead of "None"', async () => {
+		stubFetch('mirror', { ...HEALTH, has_ip: null, status: 'degraded', issues: ['Could not check whether enp4s0 has an IP address'] });
+		await renderPage();
+
+		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
+		const detail = within(document.querySelector('.detail-panel') as HTMLElement);
+		expect(detail.getByText("Couldn't check")).toBeInTheDocument();
+		expect(detail.queryByText('None')).not.toBeInTheDocument();
+	});
+
+	it('shows "None" when the mirror port really has no IP', async () => {
+		stubFetch('mirror', HEALTH);
+		await renderPage();
+
+		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
+		const detail = within(document.querySelector('.detail-panel') as HTMLElement);
+		expect(detail.getByText('None')).toBeInTheDocument();
+		expect(detail.queryByText("Couldn't check")).not.toBeInTheDocument();
+	});
+
 	it('keeps the bridge node in bridge mode', async () => {
 		stubFetch('bridge', { ...HEALTH, mode: 'bridge' });
 		await renderPage();

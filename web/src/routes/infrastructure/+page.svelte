@@ -864,8 +864,13 @@
 					{:else}
 						<div class="detail-stat">
 							<div class="detail-stat-label">IP on Mirror Port</div>
+							<!-- OLD CODE START — #96: has_ip is null when the daemon couldn't run the IP check, which read as "None"
 							<div class="detail-stat-value {captureHealth ? (captureHealth.has_ip === true ? 'red' : 'green') : ''}">
 								{captureHealth ? (captureHealth.has_ip === true ? 'Yes (should have none)' : 'None') : '--'}
+							</div>
+							OLD CODE END -->
+							<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : captureHealth?.has_ip === false ? 'green' : ''}">
+								{captureHealth?.has_ip === true ? 'Yes (should have none)' : captureHealth?.has_ip === false ? 'None' : captureHealth?.has_ip === null ? "Couldn't check" : '--'}
 							</div>
 						</div>
 					{/if}
