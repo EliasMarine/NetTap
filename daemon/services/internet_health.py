@@ -28,8 +28,9 @@ class HealthCheck:
     timestamp: str  # ISO format
     latency_ms: float | None  # ping RTT in ms, None if unreachable
     dns_resolve_ms: float | None  # DNS lookup time in ms
-    packet_loss_pct: float  # 0-100%
-    status: str  # 'healthy', 'degraded', 'down'
+    packet_loss_pct: float | None  # 0-100%; None = ping couldn't measure it
+    status: str  # 'healthy', 'degraded', 'down', 'unknown' (ping couldn't run)
+    error: str | None = None  # why ping couldn't measure
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -122,47 +123,86 @@ class InternetHealthMonitor:
         """Send multiple pings and return packet loss percentage (0-100).
 
         Uses asyncio subprocess to run 'ping -c {count} -W {timeout}'.
-        Parses the loss percentage from ping summary output.
+        Parses the loss percentage from ping summary output. Raises RuntimeError
+        with ping's error when ping printed no summary: it couldn't run (#96).
         """
+        # OLD CODE START — #96: ping that couldn't run (missing, no NET_RAW, timed out)
+        # read as 100% loss, so the internet showed as down
+        # try:
+        #     timeout_sec = str(int(timeout))
+        #     proc = await asyncio.create_subprocess_exec(
+        #         "ping",
+        #         "-c",
+        #         str(count),
+        #         "-W",
+        #         timeout_sec,
+        #         target,
+        #         stdout=asyncio.subprocess.PIPE,
+        #         stderr=asyncio.subprocess.PIPE,
+        #     )
+        #     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 10)
+        #
+        #     output = stdout.decode("utf-8", errors="replace")
+        #     # Parse: "3 packets transmitted, 2 received, 33.3333% packet loss"
+        #     match = re.search(r"([\d.]+)%\s+packet\s+loss", output)
+        #     if match:
+        #         return float(match.group(1))
+        #     # If ping completely failed (returncode != 0 and no parse), 100% loss
+        #     if proc.returncode != 0:
+        #         return 100.0
+        #     return 0.0
+        # except (asyncio.TimeoutError, OSError) as exc:
+        #     logger.debug("Packet loss check to %s failed: %s", target, exc)
+        #     return 100.0
+        # OLD CODE END
         try:
-            timeout_sec = str(int(timeout))
             proc = await asyncio.create_subprocess_exec(
                 "ping",
                 "-c",
                 str(count),
                 "-W",
-                timeout_sec,
+                str(int(timeout)),
                 target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 10)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout + 10
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"ping to {target} didn't finish in {int(timeout) + 10} s"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(f"ping couldn't run: {exc}") from exc
 
-            output = stdout.decode("utf-8", errors="replace")
-            # Parse: "3 packets transmitted, 2 received, 33.3333% packet loss"
-            match = re.search(r"([\d.]+)%\s+packet\s+loss", output)
-            if match:
-                return float(match.group(1))
-            # If ping completely failed (returncode != 0 and no parse), 100% loss
-            if proc.returncode != 0:
-                return 100.0
-            return 0.0
-        except (asyncio.TimeoutError, OSError) as exc:
-            logger.debug("Packet loss check to %s failed: %s", target, exc)
-            return 100.0
+        output = stdout.decode("utf-8", errors="replace")
+        # Parse: "3 packets transmitted, 2 received, 33.3333% packet loss"
+        # (no replies at all still prints this, as "100% packet loss")
+        match = re.search(r"([\d.]+)%\s+packet\s+loss", output)
+        if match:
+            return float(match.group(1))
+        error = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            error or f"ping to {target} exited with code {proc.returncode} and no result"
+        )
 
     def _determine_status(
         self,
         latency: float | None,
         dns: float | None,
-        packet_loss: float,
+        packet_loss: float | None,
     ) -> str:
         """Determine health status from check results.
 
+        - 'unknown': ping couldn't run, so loss and latency weren't measured
         - 'down': latency is None AND dns is None, OR loss >= 50%
         - 'degraded': latency >= 100ms, OR dns >= 500ms, OR loss >= 5%
         - 'healthy': latency < 100ms, dns < 500ms, loss < 5%
         """
+        if packet_loss is None:
+            return "unknown"
+
         # Down conditions
         if (latency is None and dns is None) or packet_loss >= 50:
             return "down"
@@ -204,7 +244,15 @@ class InternetHealthMonitor:
         median_dns = round(statistics.median(valid_dns), 2) if valid_dns else None
 
         # Packet loss check
-        packet_loss = await self.check_packet_loss(self._ping_targets[0])
+        # OLD CODE START — #96: check_packet_loss now raises when ping couldn't run
+        # packet_loss = await self.check_packet_loss(self._ping_targets[0])
+        # OLD CODE END
+        error = None
+        try:
+            packet_loss = await self.check_packet_loss(self._ping_targets[0])
+        except RuntimeError as exc:
+            packet_loss, error = None, str(exc)
+            logger.warning("Internet health not measured: %s", error)
 
         # Determine status
         status = self._determine_status(median_latency, median_dns, packet_loss)
@@ -213,8 +261,12 @@ class InternetHealthMonitor:
             timestamp=datetime.now(timezone.utc).isoformat(),
             latency_ms=median_latency,
             dns_resolve_ms=median_dns,
-            packet_loss_pct=round(packet_loss, 2),
+            # OLD CODE START — #96: an unmeasured loss is None
+            # packet_loss_pct=round(packet_loss, 2),
+            # OLD CODE END
+            packet_loss_pct=round(packet_loss, 2) if packet_loss is not None else None,
             status=status,
+            error=error,
         )
 
         # Store in history with size limit
@@ -238,6 +290,7 @@ class InternetHealthMonitor:
                 "dns_resolve_ms": None,
                 "packet_loss_pct": None,
                 "status": "not_configured",
+                "error": None,
             }
         return self._history[-1].to_dict()
 
@@ -270,11 +323,19 @@ class InternetHealthMonitor:
         dns_times = [
             h.dns_resolve_ms for h in self._history if h.dns_resolve_ms is not None
         ]
-        losses = [h.packet_loss_pct for h in self._history]
+        # OLD CODE START — #96: checks ping couldn't make count neither as up nor as loss
+        # losses = [h.packet_loss_pct for h in self._history]
+        #
+        # # Uptime = percentage of checks that are NOT 'down'
+        # non_down = sum(1 for h in self._history if h.status != "down")
+        # uptime_pct = round((non_down / len(self._history)) * 100, 2)
+        # OLD CODE END
+        losses = [h.packet_loss_pct for h in self._history if h.packet_loss_pct is not None]
 
-        # Uptime = percentage of checks that are NOT 'down'
-        non_down = sum(1 for h in self._history if h.status != "down")
-        uptime_pct = round((non_down / len(self._history)) * 100, 2)
+        # Uptime = percentage of measured checks that are NOT 'down'
+        measured = [h for h in self._history if h.status != "unknown"]
+        non_down = sum(1 for h in measured if h.status != "down")
+        uptime_pct = round((non_down / len(measured)) * 100, 2) if measured else None
 
         # History span in hours
         try:
@@ -299,7 +360,7 @@ class InternetHealthMonitor:
             "min_latency_ms": (round(min(latencies), 2) if latencies else None),
             "max_latency_ms": (round(max(latencies), 2) if latencies else None),
             "avg_dns_ms": (round(statistics.mean(dns_times), 2) if dns_times else None),
-            "avg_packet_loss_pct": round(statistics.mean(losses), 2),
+            "avg_packet_loss_pct": round(statistics.mean(losses), 2) if losses else None,
             "uptime_pct": uptime_pct,
             "total_checks": len(self._history),
             "history_span_hours": span_hours,
