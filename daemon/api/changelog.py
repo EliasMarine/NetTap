@@ -7,6 +7,7 @@ Registers changelog event query endpoints.
 import logging
 
 from aiohttp import web
+from opensearchpy import OpenSearchException
 
 from services.changelog import ChangelogService
 
@@ -45,12 +46,16 @@ async def handle_get_events(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         limit = 100
 
-    events = changelog.get_events(
-        from_ts=from_ts,
-        to_ts=to_ts,
-        event_types=event_types,
-        limit=limit,
-    )
+    try:
+        events = changelog.get_events(
+            from_ts=from_ts,
+            to_ts=to_ts,
+            event_types=event_types,
+            limit=limit,
+        )
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in changelog: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
 
     return web.json_response({"events": events, "count": len(events)})
 
