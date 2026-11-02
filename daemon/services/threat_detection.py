@@ -12,8 +12,10 @@ import math
 import os
 import statistics
 from collections import Counter, defaultdict
+from datetime import datetime
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+from storage.all_buckets import all_buckets
 
 # OLD CODE START — excluded IPs stay visible in threat detections
 # from services.excluded_ips import build_excluded_ips_filter
@@ -30,6 +32,18 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 BEACONING_JITTER_THRESHOLD = 0.15  # 15% coefficient of variation
 BEACONING_MIN_CONNECTIONS = 10
 COMMON_BEACON_INTERVALS = [30, 60, 120, 300, 600, 900, 1800, 3600]
+# Regularity is read from a 10 s histogram per pair. OpenSearch refuses a response with more
+# than search.max_buckets (65,535) buckets, so pairs are sent in batches that stay under this.
+BEACON_SLOT_SECONDS = 10
+HISTOGRAM_BUCKETS_PER_REQUEST = 50_000
+PAIRS_PER_REQUEST = 500
+
+# Every (source, destination, port) pair, paged to the end (#96)
+_PAIR_SOURCES = [
+    {"src": {"terms": {"field": "source.ip"}}},
+    {"dst": {"terms": {"field": "destination.ip"}}},
+    {"port": {"terms": {"field": "destination.port"}}},
+]
 
 LATERAL_MOVEMENT_PORTS = {
     22: "SSH",
@@ -114,6 +128,135 @@ def _beacon_confidence(cv: float, count: int, interval: float) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _max_slots(from_ts: str, to_ts: str) -> int | None:
+    """10 s slots the range can touch, or None if the bounds aren't ISO times (e.g. "now-1h")."""
+    try:
+        start = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+        return max(0, int((end - start).total_seconds() // BEACON_SLOT_SECONDS)) + 2
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _histogram_cost(doc_count: int, slots: int | None) -> int:
+    """Most buckets one pair adds to a request: its own bucket plus one per non-empty slot."""
+    return 1 + (doc_count if slots is None else min(doc_count, slots))
+
+
+def _histogram_batches(pairs: list[dict], slots: int | None) -> tuple[list[list[dict]], list[dict]]:
+    """(batches that each stay under the bucket budget, pairs too busy to share a request)."""
+    costs = [(p, _histogram_cost(p["doc_count"], slots)) for p in pairs]
+    too_big = [p for p, cost in costs if cost > HISTOGRAM_BUCKETS_PER_REQUEST]
+    batches: list[list[dict]] = []
+    batch: list[dict] = []
+    used = 0
+    for pair, cost in costs:
+        if cost > HISTOGRAM_BUCKETS_PER_REQUEST:
+            continue
+        if batch and (used + cost > HISTOGRAM_BUCKETS_PER_REQUEST or len(batch) == PAIRS_PER_REQUEST):
+            batches.append(batch)
+            batch, used = [], 0
+        batch.append(pair)
+        used += cost
+    return ([*batches, batch] if batch else batches), too_big
+
+
+def _pair_name(key: dict) -> str:
+    return f"{key['src']} {key['dst']} {key['port']}"
+
+
+def _pair_filter(key: dict) -> list[dict]:
+    return [
+        {"term": {"source.ip": key["src"]}},
+        {"term": {"destination.ip": key["dst"]}},
+        {"term": {"destination.port": key["port"]}},
+    ]
+
+
+def _batch_slots(client, filters: list[dict], batch: list[dict]) -> dict[str, list[dict]]:
+    """Non-empty 10 s slots of every pair in `batch`, in one request."""
+    narrowed = [
+        *filters,
+        {"terms": {"source.ip": sorted({p["key"]["src"] for p in batch})}},
+        {"terms": {"destination.ip": sorted({p["key"]["dst"] for p in batch})}},
+    ]
+    histogram = {"field": "@timestamp", "fixed_interval": f"{BEACON_SLOT_SECONDS}s", "min_doc_count": 1}
+    body = {
+        "size": 0,
+        "query": {"bool": {"filter": narrowed}},
+        "aggs": {
+            "pairs": {
+                "filters": {
+                    "filters": {_pair_name(p["key"]): {"bool": {"filter": _pair_filter(p["key"])}} for p in batch}
+                },
+                "aggs": {"timestamps": {"date_histogram": histogram}},
+            }
+        },
+    }
+    reply = client.search(index=NETWORK_INDEX, body=body)
+    buckets = ((reply.get("aggregations") or {}).get("pairs") or {}).get("buckets") or {}
+    return {name: b.get("timestamps", {}).get("buckets", []) for name, b in buckets.items()}
+
+
+def _paged_slots(client, filters: list[dict], key: dict) -> tuple[list[dict], bool]:
+    """Non-empty 10 s slots of one pair too busy to share a request, paged (False if capped)."""
+    slots, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        {"bool": {"filter": [*filters, *_pair_filter(key)]}},
+        [{"t": {"date_histogram": {"field": "@timestamp", "fixed_interval": f"{BEACON_SLOT_SECONDS}s"}}}],
+    )
+    return [{"key": s["key"]["t"]} for s in slots], complete
+
+
+def _assess_beacon(key: dict, conn_count: int, ts_buckets: list[dict]) -> dict | None:
+    """The beacon finding for one pair, or None if its connections aren't periodic."""
+    if conn_count < BEACONING_MIN_CONNECTIONS or len(ts_buckets) < BEACONING_MIN_CONNECTIONS:
+        return None
+
+    epochs = [b["key"] for b in ts_buckets]
+    deltas = [epochs[i + 1] - epochs[i] for i in range(len(epochs) - 1)]
+    mean_delta = statistics.mean(deltas)
+    if mean_delta <= 5000:  # < 5s intervals = not beaconing, just chatty
+        return None
+
+    std_delta = statistics.stdev(deltas) if len(deltas) > 1 else 0
+    cv = std_delta / mean_delta if mean_delta > 0 else 1.0
+    if cv >= BEACONING_JITTER_THRESHOLD:
+        return None
+
+    interval_sec = mean_delta / 1000
+    confidence = _beacon_confidence(cv, conn_count, interval_sec)
+    return {
+        "source_ip": key["src"],
+        "destination_ip": key["dst"],
+        "destination_port": key["port"],
+        "connection_count": conn_count,
+        "interval_seconds": round(interval_sec, 1),
+        "jitter_coefficient": round(cv, 4),
+        "confidence": round(confidence, 1),
+        "assessment": (
+            f"Periodic callbacks every ~{round(interval_sec)}s with "
+            f"{round(cv * 100, 1)}% jitter over {conn_count} connections. "
+            f"Consistent with C2 beaconing."
+        ),
+    }
+
+
+def _scan_beacons(client, filters: list[dict], slots: int | None) -> tuple[list[dict], bool]:
+    """(beacons among every pair, False if a bucket cap left some pairs unchecked)."""
+    pairs, complete = all_buckets(client, NETWORK_INDEX, {"bool": {"filter": filters}}, _PAIR_SOURCES)
+    # timing is only read for pairs with enough connections to be a beacon
+    candidates = [p for p in pairs if p["doc_count"] >= BEACONING_MIN_CONNECTIONS]
+    batches, too_big = _histogram_batches(candidates, slots)
+    timings = {name: ts for batch in batches for name, ts in _batch_slots(client, filters, batch).items()}
+    paged = {_pair_name(p["key"]): _paged_slots(client, filters, p["key"]) for p in too_big}
+    timings = {**timings, **{name: ts for name, (ts, _) in paged.items()}}
+    complete = complete and all(done for _, done in paged.values())
+    found = (_assess_beacon(p["key"], p["doc_count"], timings.get(_pair_name(p["key"]), [])) for p in candidates)
+    return [b for b in found if b is not None], complete
+
+
 def detect_beaconing(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
 ) -> list[dict]:
@@ -136,80 +279,54 @@ def detect_beaconing(
     #     bool_clause["must_not"] = excluded
     # OLD CODE END
 
-    query = {
-        "size": 0,
-        "query": {"bool": bool_clause},
-        "aggs": {
-            "by_pair": {
-                "composite": {
-                    "size": 300,
-                    "sources": [
-                        {"src": {"terms": {"field": "source.ip"}}},
-                        {"dst": {"terms": {"field": "destination.ip"}}},
-                        {"port": {"terms": {"field": "destination.port"}}},
-                    ],
-                },
-                "aggs": {
-                    "timestamps": {
-                        "date_histogram": {
-                            "field": "@timestamp",
-                            "fixed_interval": "10s",
-                            "min_doc_count": 1,
-                        }
-                    },
-                    "conn_count": {"value_count": {"field": "@timestamp"}},
-                },
-            }
-        },
-    }
-
+    # OLD CODE START — #96: one 300-pair page in key order, so a pair sorting after the first
+    # 300 (192.168.1.50 on a busy hour) was never checked; 300 10 s histograms could also pass
+    # search.max_buckets, and that error was caught and reported as "no beacons"
+    # query = {
+    #     "size": 0,
+    #     "query": {"bool": bool_clause},
+    #     "aggs": {
+    #         "by_pair": {
+    #             "composite": {
+    #                 "size": 300,
+    #                 "sources": [
+    #                     {"src": {"terms": {"field": "source.ip"}}},
+    #                     {"dst": {"terms": {"field": "destination.ip"}}},
+    #                     {"port": {"terms": {"field": "destination.port"}}},
+    #                 ],
+    #             },
+    #             "aggs": {
+    #                 "timestamps": {
+    #                     "date_histogram": {
+    #                         "field": "@timestamp",
+    #                         "fixed_interval": "10s",
+    #                         "min_doc_count": 1,
+    #                     }
+    #                 },
+    #                 "conn_count": {"value_count": {"field": "@timestamp"}},
+    #             },
+    #         }
+    #     },
+    # }
+    #
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error("Beaconing detection query failed", exc_info=True)
+    #     return []
+    #
+    # beacons = []
+    # for bucket in result.get("aggregations", {}).get("by_pair", {}).get("buckets", []):
+    #     conn_count = bucket.get("conn_count", {}).get("value", 0)
+    #     ... (the per-pair checks, unchanged, are now _assess_beacon)
+    # OLD CODE END
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        beacons, complete = _scan_beacons(client, bool_clause["filter"], _max_slots(from_ts, to_ts))
     except Exception:
         logger.error("Beaconing detection query failed", exc_info=True)
         return []
-
-    beacons = []
-    for bucket in result.get("aggregations", {}).get("by_pair", {}).get("buckets", []):
-        conn_count = bucket.get("conn_count", {}).get("value", 0)
-        if conn_count < BEACONING_MIN_CONNECTIONS:
-            continue
-
-        ts_buckets = bucket.get("timestamps", {}).get("buckets", [])
-        if len(ts_buckets) < BEACONING_MIN_CONNECTIONS:
-            continue
-
-        epochs = [b["key"] for b in ts_buckets]
-        deltas = [epochs[i + 1] - epochs[i] for i in range(len(epochs) - 1)]
-        if not deltas:
-            continue
-
-        mean_delta = statistics.mean(deltas)
-        if mean_delta <= 5000:  # < 5s intervals = not beaconing, just chatty
-            continue
-
-        std_delta = statistics.stdev(deltas) if len(deltas) > 1 else 0
-        cv = std_delta / mean_delta if mean_delta > 0 else 1.0
-
-        if cv < BEACONING_JITTER_THRESHOLD:
-            interval_sec = mean_delta / 1000
-            confidence = _beacon_confidence(cv, conn_count, interval_sec)
-            beacons.append(
-                {
-                    "source_ip": bucket["key"]["src"],
-                    "destination_ip": bucket["key"]["dst"],
-                    "destination_port": bucket["key"]["port"],
-                    "connection_count": conn_count,
-                    "interval_seconds": round(interval_sec, 1),
-                    "jitter_coefficient": round(cv, 4),
-                    "confidence": round(confidence, 1),
-                    "assessment": (
-                        f"Periodic callbacks every ~{round(interval_sec)}s with "
-                        f"{round(cv * 100, 1)}% jitter over {conn_count} connections. "
-                        f"Consistent with C2 beaconing."
-                    ),
-                }
-            )
+    if not complete:
+        logger.warning("Beaconing: the scan hit its bucket cap; pairs past it were not checked")
 
     beacons.sort(key=lambda b: b["confidence"], reverse=True)
     return beacons

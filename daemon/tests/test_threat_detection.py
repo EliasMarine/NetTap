@@ -180,3 +180,75 @@ class TestDgaRegisteredName:
             "www.kq3z8wxv1m7tbn5r6yhp.com",
             "kq3z8wxv1m7tbn5r6yhp.co.uk",
         ]
+
+
+# ---------------------------------------------------------------------------
+# Detections see every pair and name, not the first page (#96)
+# ---------------------------------------------------------------------------
+
+_T0 = 1_767_225_600_000  # 2026-01-01T00:00:00Z in epoch ms
+_DAY = ("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+
+def _conn(src: str, dst: str, port: int, ts: int) -> dict:
+    return {
+        "event.provider": "zeek",
+        "event.dataset": "conn",
+        "source.ip": src,
+        "destination.ip": dst,
+        "destination.port": port,
+        "@timestamp": ts,
+    }
+
+
+def _beacon_docs(src: str, every_s: int, count: int) -> list[dict]:
+    return [_conn(src, "203.0.113.9", 443, _T0 + k * every_s * 1000) for k in range(count)]
+
+
+class TestBeaconingSeesEveryPair:
+    def test_beacon_after_the_first_300_pairs_is_found(self):
+        """One 300-pair page in key order: 192.168.1.50 sorted after 400 one-off 10.x pairs."""
+        from services.threat_detection import detect_beaconing
+        from tests.fake_opensearch import FakeOpenSearch
+
+        noise = [_conn(f"10.0.{i // 200}.{i % 200}", "198.51.100.1", 443, _T0) for i in range(400)]
+        client = FakeOpenSearch(noise + _beacon_docs("192.168.1.50", 60, 20))
+
+        beacons = detect_beaconing(client, *_DAY)
+
+        assert [(b["source_ip"], b["interval_seconds"], b["connection_count"]) for b in beacons] == [
+            ("192.168.1.50", 60.0, 20)
+        ]
+
+    def test_requests_stay_under_max_buckets(self, monkeypatch):
+        """30 pairs x 40 slots in one response passed max_buckets and read as "no beacons"."""
+        import services.threat_detection as td
+        from tests.fake_opensearch import FakeOpenSearch
+
+        monkeypatch.setattr(td, "HISTOGRAM_BUCKETS_PER_REQUEST", 500, raising=False)
+        irregular = [
+            _conn(f"10.0.0.{i}", "198.51.100.1", 443, _T0 + k * k * 10_000) for i in range(29) for k in range(40)
+        ]
+        client = FakeOpenSearch(irregular + _beacon_docs("192.168.1.50", 300, 40), max_buckets=1_000)
+
+        beacons = td.detect_beaconing(client, *_DAY)
+
+        assert [b["source_ip"] for b in beacons] == ["192.168.1.50"]
+        assert max(client.bucket_counts) <= 500
+
+    def test_pair_too_busy_for_a_shared_request_is_paged(self, monkeypatch):
+        import services.threat_detection as td
+        from tests.fake_opensearch import FakeOpenSearch
+
+        monkeypatch.setattr(td, "HISTOGRAM_BUCKETS_PER_REQUEST", 20)
+        client = FakeOpenSearch(_beacon_docs("192.168.1.50", 60, 30))
+
+        beacons = td.detect_beaconing(client, "now-1h", "now")
+
+        assert [(b["source_ip"], b["connection_count"]) for b in beacons] == [("192.168.1.50", 30)]
+        assert any("date_histogram" in str(b["aggs"]["all"]["composite"]["sources"]) for b in client.bodies)
+
+    def test_budget_is_under_opensearch_max_buckets(self):
+        from services.threat_detection import HISTOGRAM_BUCKETS_PER_REQUEST
+
+        assert HISTOGRAM_BUCKETS_PER_REQUEST < 65_535
