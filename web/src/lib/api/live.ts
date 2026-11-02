@@ -76,13 +76,16 @@ export async function getLiveConnections(
 	});
 	const res = await fetch(`/api/live/connections${query}`);
 
-	if (!res.ok) {
-		return {
-			connections: [],
-			count: 0,
-			filters: { device: null, proto: null, country: null },
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 active connections
+	// if (!res.ok) {
+	// 	return {
+	// 		connections: [],
+	// 		count: 0,
+	// 		filters: { device: null, proto: null, country: null },
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Live connections failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -93,13 +96,16 @@ export async function getLiveConnections(
 export async function getConnectionRate(): Promise<ConnectionRate> {
 	const res = await fetch('/api/live/rate');
 
-	if (!res.ok) {
-		return {
-			connections_per_second: 0,
-			total_in_window: 0,
-			window_seconds: 60,
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 connections per second
+	// if (!res.ok) {
+	// 	return {
+	// 		connections_per_second: 0,
+	// 		total_in_window: 0,
+	// 		window_seconds: 60,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection rate failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -190,17 +196,20 @@ export async function getLiveDashboard(
 	});
 	const res = await fetch(`/api/live/dashboard${query}`);
 
-	if (!res.ok) {
-		return {
-			connections: [],
-			count: 0,
-			stats: { connections_per_second: 0, bandwidth_bytes_per_second: 0, active_devices: 0, top_country: '' },
-			protocols: {},
-			top_talkers: [],
-			geo_arcs: [],
-			_error: `Dashboard API returned ${res.status}`,
-		};
-	}
+	// OLD CODE START — #96: a failed request replaced the live view with zeros
+	// if (!res.ok) {
+	// 	return {
+	// 		connections: [],
+	// 		count: 0,
+	// 		stats: { connections_per_second: 0, bandwidth_bytes_per_second: 0, active_devices: 0, top_country: '' },
+	// 		protocols: {},
+	// 		top_talkers: [],
+	// 		geo_arcs: [],
+	// 		_error: `Dashboard API returned ${res.status}`,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Live dashboard failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -216,14 +225,17 @@ export async function getLiveConnectionDetail(
 	const query = buildQuery({ src, dst, port });
 	const res = await fetch(`/api/live/connection/detail${query}`);
 
-	if (!res.ok) {
-		return {
-			geo: { ip: dst, country: '', country_code: '', city: '', lat: null, lon: null, asn: null, organization: '' },
-			alerts: [],
-			alert_count: 0,
-			history: { total_bytes: 0, connection_count: 0, timeline: [] },
-		};
-	}
+	// OLD CODE START — #96: a failed request read as "No alerts for this connection"
+	// if (!res.ok) {
+	// 	return {
+	// 		geo: { ip: dst, country: '', country_code: '', city: '', lat: null, lon: null, asn: null, organization: '' },
+	// 		alerts: [],
+	// 		alert_count: 0,
+	// 		history: { total_bytes: 0, connection_count: 0, timeline: [] },
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection detail failed: HTTP ${res.status}`);
 
 	return res.json();
 }

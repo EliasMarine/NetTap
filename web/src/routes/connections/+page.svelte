@@ -84,7 +84,11 @@
 
 	// Stats
 	let stats = $state<ConnectionStatsResponse | null>(null);
-	let activeNow = $state(0);
+	// OLD CODE START — #96: 0 before (or without) a successful load read as "0 Active Devices"
+	// let activeNow = $state(0);
+	// OLD CODE END
+	let activeNow = $state<number | null>(null);
+	let liveFailed = $state(false);
 
 	// Sankey
 	let sankey = $state<SankeyResponse | null>(null);
@@ -322,6 +326,7 @@
 			// OLD CODE END
 			// Distinct source devices seen in the live window (last 5 minutes)
 			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.stats?.active_devices ?? 0;
+			liveFailed = liveRes.status === 'rejected';
 		} catch { /* handled per-request */ }
 
 		// OLD CODE START
@@ -498,6 +503,9 @@
 	{#if statsFailed}
 		<p class="text-warning load-note">{loadFailed('connection stats', stats !== null)}</p>
 	{/if}
+	{#if liveFailed}
+		<p class="text-warning load-note">{loadFailed('active devices', activeNow !== null)}</p>
+	{/if}
 	<div class="stat-cards">
 		<div class="stat-card">
 			<span class="stat-value mono">{stats ? formatNumber(stats.total_sessions) : '—'}</span>
@@ -505,8 +513,8 @@
 		</div>
 		<div class="stat-card">
 			<span class="stat-value mono">
-				{activeNow}
-				{#if activeNow > 0}<span class="pulse-dot"></span>{/if}
+				{activeNow ?? '—'}
+				{#if activeNow && !liveFailed}<span class="pulse-dot"></span>{/if}
 			</span>
 			<!-- OLD CODE START — the value is now active devices, not a connection count
 			<span class="stat-label">Active Now</span>

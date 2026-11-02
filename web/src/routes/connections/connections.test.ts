@@ -147,6 +147,18 @@ describe('Connections — failed requests', () => {
 		expect(screen.getByText("Couldn't load top sources: the request failed.")).toBeInTheDocument();
 	});
 
+	it('shows a dash, not 0, for active devices when the live request fails', async () => {
+		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
+		vi.mocked(getLiveDashboard).mockRejectedValue(new Error('Live dashboard failed: HTTP 503'));
+		render(Page);
+		await flush();
+
+		const card = screen.getByText('Active Devices').closest('.stat-card');
+		expect(card).toHaveTextContent('—');
+		expect(card).not.toHaveTextContent('0');
+		expect(screen.getByText("Couldn't load active devices: the request failed.")).toBeInTheDocument();
+	});
+
 	it('still says "No Connections" when the list is really empty', async () => {
 		vi.mocked(getConnections).mockResolvedValue({ ...connectionsPage(1, 0), connections: [], total: 0 });
 		render(Page);
