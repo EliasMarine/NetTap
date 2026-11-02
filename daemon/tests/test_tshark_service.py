@@ -24,6 +24,13 @@ from services.tshark_service import (
     bounded_exec,
 )
 
+# stderr of TShark 4.0.17 (the debian:bookworm container) refusing a filter, exit code 2
+_ROOT_WARNING = 'Running as user "root" and group "root". This could be dangerous.'
+_BAD_FILTER_STDERR = (
+    _ROOT_WARNING + '\ntshark: Left side of "==" expression must be a field or function, '
+    "not ip.srcc.\n    ip.srcc == 1\n    ^~~~~~~\n"
+)
+
 
 def _mock_exists_true(*args, **kwargs):
     """Helper: always return True for os.path.exists (PCAP file exists)."""
@@ -627,9 +634,26 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
         self.assertFalse(result.truncated)
 
     def test_no_match_skips_the_analysis(self):
-        result, calls = self._run([("0 \n", "", 0)])
-        self.assertEqual((result.packet_count, len(calls)), (0, 1))
+        # OLD CODE START — #96: no matches is now confirmed with a filter check first
+        # result, calls = self._run([("0 \n", "", 0)])
+        # self.assertEqual((result.packet_count, len(calls)), (0, 1))
+        # OLD CODE END
+        result, calls = self._run([("0 \n", "", 0), ("", _ROOT_WARNING, 0)])
+        self.assertEqual((result.packet_count, len(calls)), (0, 2))
+        self.assertEqual(calls[1][3:5], ["tshark", "-r"])  # the check, not the analysis
         self.assertIsNone(result.error)
+
+    def test_invalid_filter_is_an_error_not_no_match(self):
+        """#96: the scan's pipe hid tshark's refusal, so a typo read as "no matches"."""
+        with self.assertRaises(TSharkValidationError) as ctx:
+            self._run([("0 \n", "", 0), ("", _BAD_FILTER_STDERR, 2)])
+        message = str(ctx.exception)
+        self.assertTrue(message.startswith('tshark: Left side of "==" expression'), message)
+        self.assertNotIn("Running as user", message)
+
+    def test_matches_need_no_filter_check(self):
+        _, calls = self._run([("3 12\n", "", 0), ("1 0.0 a -> b DNS", "", 0)])
+        self.assertEqual(len(calls), 2)  # scan + analysis
 
     def test_failed_scan_is_an_error_not_no_match(self):
         """#96: docker exec failing (container down) is not "0 matches"."""
@@ -696,3 +720,35 @@ class TestFailuresAreErrors(unittest.TestCase):
     def test_unparsable_json_raises(self):
         with self.assertRaises(RuntimeError):
             self.svc._parse_json_output('[{"_index": "packets", "lay')
+
+
+class TestFilterDryRun(unittest.TestCase):
+    """#96: the dry run read /dev/null, which tshark refuses, so no filter ever passed."""
+
+    def _check(self, result):
+        svc = TSharkService()
+
+        async def run():
+            with patch.object(svc, "_exec_tshark", new_callable=AsyncMock) as ex:
+                ex.return_value = result
+                await svc.validate_filter_dry_run("dns", "/pcap/test.pcap")
+                return ex.call_args.args[0]
+
+        return asyncio.run(run())
+
+    def test_valid_filter_passes_reading_one_packet_of_the_file(self):
+        cmd = self._check(("", _ROOT_WARNING, 0))
+        self.assertEqual(cmd[3:], [
+            "tshark", "-r", "/pcap/test.pcap", "-Y", "dns", "-c", "1",
+            "-T", "fields", "-e", "frame.number",
+        ])
+
+    def test_refused_filter_raises_tshark_message(self):
+        with self.assertRaises(TSharkValidationError) as ctx:
+            self._check(("", _BAD_FILTER_STDERR, 2))
+        self.assertIn("not ip.srcc", str(ctx.exception))
+
+    def test_docker_failure_is_not_blamed_on_the_filter(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._check(("", "Error response from daemon: container is not running", 1))
+        self.assertNotIsInstance(ctx.exception, TSharkValidationError)

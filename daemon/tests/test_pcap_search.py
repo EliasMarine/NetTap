@@ -506,6 +506,71 @@ class TestFailuresAreErrors:
             await service.download_filtered("dns")
 
 
+# stderr of TShark 4.0.17 (the debian:bookworm container) refusing a filter, exit code 2
+_ROOT_WARNING = b'Running as user "root" and group "root". This could be dangerous.\n'
+_BAD_FILTER_STDERR = _ROOT_WARNING + (
+    b'tshark: Left side of "==" expression must be a field or function, not ip.srcc.\n'
+    b"    ip.srcc == 1\n    ^~~~~~~\n"
+)
+
+
+class TestRefusedFilterInPreview:
+    """#96: the preview pipes tshark into head, so a refused filter read as no packets."""
+
+    @pytest.fixture
+    def tshark_runs(self, monkeypatch):
+        """Pipe run prints nothing (rc 0, head's); then the filter check gets `check`."""
+        state = type("S", (), {"check": (0, _ROOT_WARNING), "calls": []})()
+
+        class P:
+            def __init__(self, rc, out, err):
+                self.returncode, self._out, self._err = rc, out, err
+
+            async def communicate(self):
+                return self._out, self._err
+
+        async def fake_exec(*argv, **kwargs):
+            state.calls.append(list(argv))
+            if "sh" in argv:
+                return P(0, b"", _BAD_FILTER_STDERR)
+            return P(state.check[0], b"", state.check[1])
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        return state
+
+    @pytest.mark.asyncio
+    async def test_refused_filter_raises_tshark_message(self, service, pcap_dir, tshark_runs):
+        tshark_runs.check = (2, _BAD_FILTER_STDERR)
+        with pytest.raises(ValueError, match="not ip.srcc") as exc:
+            await service.preview_with_status(
+                str(pcap_dir / "capture_001.pcap"), bpf_filter="ip.srcc == 1"
+            )
+        assert "Running as user" not in str(exc.value)
+        check = tshark_runs.calls[1]
+        assert check[3:6] == ["timeout", "-k", "5"]
+        assert check[7:] == [
+            "tshark", "-r", "/pcap/capture_001.pcap", "-Y", "ip.srcc == 1", "-c", "1",
+            "-T", "fields", "-e", "frame.number",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_valid_filter_without_matches_is_empty(self, service, pcap_dir, tshark_runs):
+        result = await service.preview_with_status(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="udp.port == 7"
+        )
+        assert result == {"packets": [], "timed_out": False}
+
+    @pytest.mark.asyncio
+    async def test_docker_failure_in_check_is_not_a_filter_error(
+        self, service, pcap_dir, tshark_runs
+    ):
+        tshark_runs.check = (1, b"Error response from daemon: container is not running\n")
+        with pytest.raises(RuntimeError, match="not running"):
+            await service.preview_with_status(
+                str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
+            )
+
+
 class TestContains:
     """The PCAP directory check resolves ".." and symlinks and rejects sibling directories."""
 

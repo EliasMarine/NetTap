@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from services.tshark_service import bounded_exec
+from services.tshark_service import bounded_exec, filter_check_cmd, raise_filter_check_failure
 
 logger = logging.getLogger("nettap.services.pcap_search")
 
@@ -483,6 +483,9 @@ class PcapSearchService:
                 raise RuntimeError(
                     err_msg or f"tshark exited with code {proc.returncode}"
                 )
+            if bpf_filter and not timed_out and not stdout.strip():
+                # the pipeline's status is head's: a filter tshark refused also printed nothing (#96)
+                await self._check_filter(container_path, bpf_filter)
 
             packets = []
             for line in stdout.decode(errors="replace").strip().split("\n"):
@@ -515,6 +518,17 @@ class PcapSearchService:
         except FileNotFoundError as exc:
             # not FileNotFoundError: the API reads that as "PCAP file not found" (404)
             raise RuntimeError("docker not found in PATH") from exc
+
+    async def _check_filter(self, container_path: str, display_filter: str) -> None:
+        """Raise ValueError carrying tshark's message if it refuses the filter (#96)."""
+        async with self._semaphore:
+            proc = await asyncio.create_subprocess_exec(
+                *bounded_exec(filter_check_cmd(container_path, display_filter), 15),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
+        raise_filter_check_failure(proc.returncode, stderr.decode(errors="replace"), ValueError)
 
     # ------------------------------------------------------------------
     # Download (merge + filter)

@@ -79,6 +79,32 @@ def bounded_exec(cmd: list[str], seconds: int) -> list[str]:
     return [*cmd[:3], "timeout", "-k", "5", str(seconds), *cmd[3:]]
 
 
+_ROOT_WARNING = 'Running as user "root"'  # tshark prints this on every run in the container
+
+
+def filter_check_cmd(pcap_path: str, display_filter: str) -> list[str]:
+    """tshark reads one packet with the filter: exit 0 when the filter compiles (#96).
+
+    The match scan and the filtered preview pipe tshark into head, so their exit status
+    is head's. pipefail can't help: TShark 4.0 also exits 2 when head quits early, the
+    same code it gives a filter it refuses.
+    """
+    return [
+        "docker", "exec", TSHARK_CONTAINER, "tshark", "-r", pcap_path, "-Y", display_filter,
+        "-c", "1", "-T", "fields", "-e", "frame.number",
+    ]
+
+
+def raise_filter_check_failure(returncode: int, stderr: str, refused: type[Exception]) -> None:
+    """Return if the check passed. Raise `refused` carrying tshark's message when tshark
+    refused the filter (or file), RuntimeError when docker exec itself failed."""
+    if returncode == 0:
+        return
+    lines = [line for line in stderr.strip().splitlines() if not line.startswith(_ROOT_WARNING)]
+    message = "\n".join(lines).strip() or f"tshark exited with code {returncode}"
+    raise (refused if message.startswith("tshark:") else RuntimeError)(message)
+
+
 @dataclass
 class TSharkRequest:
     pcap_path: str
@@ -412,6 +438,9 @@ class TSharkService:
             raise RuntimeError(stderr.strip() or f"TShark scan exited with code {rc}")
         found, _, last = stdout.strip().partition(" ")
         found_n = int(found) if found.isdigit() else 0
+        if not found_n:
+            # a filter tshark refused also prints "0" here: its error went to /dev/null (#96)
+            await self.validate_filter_dry_run(request.display_filter, request.pcap_path)
         # Cut short = fewer than N matches and the whole time budget used. shortcut: a file
         # that really ends right at the budget is reported the same way
         timed_out = found_n < request.max_packets and loop.time() - started >= MATCH_SCAN_SECONDS
@@ -650,26 +679,32 @@ class TSharkService:
         pcaps.sort(key=lambda p: p["modified"], reverse=True)
         return pcaps
 
-    async def validate_filter_dry_run(self, display_filter: str) -> bool:
-        """Validate a display filter by running tshark -Y <filter> -r /dev/null.
+    async def validate_filter_dry_run(self, display_filter: str, pcap_path: str) -> None:
+        """Raise TSharkValidationError carrying tshark's message if it refuses the filter.
 
-        Returns True if the filter is syntactically valid.
+        Reads one packet of pcap_path (a path inside the container) with the filter.
         """
+        # OLD CODE START — #96: tshark refuses /dev/null as "a special file" (exit 2, TShark
+        # 4.0), so every filter came back invalid; nothing called it
+        # self.validate_display_filter(display_filter)  # Basic sanitization first
+        # try:
+        #     cmd = [
+        #         "docker",
+        #         "exec",
+        #         TSHARK_CONTAINER,
+        #         "tshark",
+        #         "-Y",
+        #         display_filter,
+        #         "-r",
+        #         "/dev/null",
+        #     ]
+        #     _, stderr, rc = await self._exec_tshark(cmd)
+        #     # tshark returns 0 for valid filters (even with no packets)
+        #     # and non-zero for invalid filter syntax
+        #     return rc == 0
+        # except Exception:
+        #     return False
+        # OLD CODE END
         self.validate_display_filter(display_filter)  # Basic sanitization first
-        try:
-            cmd = [
-                "docker",
-                "exec",
-                TSHARK_CONTAINER,
-                "tshark",
-                "-Y",
-                display_filter,
-                "-r",
-                "/dev/null",
-            ]
-            _, stderr, rc = await self._exec_tshark(cmd)
-            # tshark returns 0 for valid filters (even with no packets)
-            # and non-zero for invalid filter syntax
-            return rc == 0
-        except Exception:
-            return False
+        _, stderr, rc = await self._exec_tshark(filter_check_cmd(pcap_path, display_filter))
+        raise_filter_check_failure(rc, stderr, TSharkValidationError)
