@@ -29,16 +29,117 @@ Endpoints:
 """
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from aiohttp import web
 
+from api.devices import (
+    NETWORK_INDEX,
+    _MAX_DEVICE_LIMIT,
+    _MIN_CONNECTIONS,
+    _is_skipped_device_ip,
+    _lan_device_bool_query,
+)
+from services.device_fingerprint import _mac_from_hit
 from services.device_registry import DeviceRegistry
 from services.unifi_integration import UnifiIntegration, normalize_controller_url
 
 logger = logging.getLogger("nettap.api.devices_v2")
 
 _DEFAULT_RANGE_HOURS = 24
+
+# How often the daemon refreshes the device registry, and how far back each refresh looks
+REGISTRY_REFRESH_INTERVAL_S = 300
+REGISTRY_REFRESH_WINDOW = timedelta(hours=1)
+
+
+# ---------------------------------------------------------------------------
+# Registry refresh (run periodically by main.device_registry_loop)
+# ---------------------------------------------------------------------------
+
+
+def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
+    """The device list's LAN conn query, bucketed by IP with each IP's latest MAC."""
+    return {
+        "size": 0,
+        "query": {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
+        "aggs": {
+            "devices": {
+                "terms": {
+                    "field": "source.ip",
+                    "size": _MAX_DEVICE_LIMIT,
+                    "min_doc_count": _MIN_CONNECTIONS,
+                },
+                "aggs": {
+                    "with_mac": {
+                        "filter": {"exists": {"field": "source.mac"}},
+                        "aggs": {
+                            "latest": {
+                                "top_hits": {
+                                    "size": 1,
+                                    "sort": [{"@timestamp": {"order": "desc"}}],
+                                    "_source": ["source.mac"],
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+
+
+def _register_conn_devices(registry: DeviceRegistry, result: dict) -> int:
+    """Register each IP bucket under its MAC, skipping the IPs the device list skips."""
+    count = 0
+    for bucket in result.get("aggregations", {}).get("devices", {}).get("buckets", []):
+        ip = bucket["key"]
+        latest = bucket.get("with_mac", {}).get("latest", {})
+        hits = latest.get("hits", {}).get("hits", [])
+        mac = _mac_from_hit(hits[0]) if hits else None
+        # shortcut: an IP with no MAC in its conn records can't be keyed, so it stays out of the registry
+        if _is_skipped_device_ip(ip) or not mac:
+            continue
+        registry.register_device(mac=mac, ip=ip, source="conn")
+        count += 1
+    return count
+
+
+def refresh_device_registry(app: Mapping[str, Any]) -> int:
+    """Register the LAN devices seen in recent conn traffic, then add names and vendors.
+
+    Uses the device list's filters, threshold and skip rules, so the registry
+    agrees with GET /api/devices. Blocking: run it in an executor.
+
+    Returns:
+        Number of devices registered from conn traffic.
+    """
+    registry: DeviceRegistry | None = app.get("device_registry")
+    if registry is None:
+        return 0
+    # The daemon often starts before OpenSearch; never let a write auto-create the index unmapped
+    registry._ensure_index()
+
+    now = datetime.now(timezone.utc)
+    from_ts = (now - REGISTRY_REFRESH_WINDOW).isoformat()
+    to_ts = now.isoformat()
+    query = _conn_devices_query(app, from_ts, to_ts)
+    result = registry._client.search(index=NETWORK_INDEX, body=query)
+    count = _register_conn_devices(registry, result)
+
+    # enrich_from_arp is left out: it registers any MAC from any record (public
+    # IPs, multicast), which breaks agreement with the device list
+    registry.enrich_from_dhcp(from_ts, to_ts)
+    registry.enrich_from_mdns(from_ts, to_ts)
+    registry.enrich_from_ssdp(from_ts, to_ts)
+    mac_lookup = app.get("mac_lookup")
+    if mac_lookup is not None:
+        registry.enrich_with_oui(mac_lookup)
+
+    logger.info("Device registry refresh: %d LAN devices from conn traffic", count)
+    return count
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:

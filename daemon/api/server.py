@@ -1115,7 +1115,14 @@ def create_app(
     register_dhcp_gateway_routes(app)
 
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
-    device_registry = DeviceRegistry(client=storage._client)
+    # The changelog is built first so the registry can log each new device to it
+    changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE START — 2026-11-01: the registry now logs new devices to the changelog
+    # device_registry = DeviceRegistry(client=storage._client)
+    # OLD CODE END
+    device_registry = DeviceRegistry(
+        client=storage._client, changelog=changelog_service
+    )
     unifi_integration = UnifiIntegration()
     if unifi_integration.load_config():
         logger.info("UniFi integration restored from saved config")
@@ -1137,7 +1144,9 @@ def create_app(
     register_notification_hub_routes(app, notification_hub)
 
     # Changelog (network event audit log)
-    changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE START — 2026-11-01: built above, before the device registry, which logs new devices to it
+    # changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE END
     app["changelog_service"] = changelog_service
     register_changelog_routes(app, changelog_service)
 

@@ -9,7 +9,9 @@ hostname, manufacturer, OS hint).
 
 import logging
 import os
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
@@ -104,23 +106,43 @@ def _time_range_filter(from_ts: str, to_ts: str) -> dict:
     }
 
 
-def _device_bool_query(request: web.Request, from_ts: str, to_ts: str) -> dict:
+def _lan_device_bool_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
     """Bool query for LAN-source Zeek conn records, minus excluded IPs.
 
-    Shared by the device list and the device count so the two always agree.
+    Shared by the device list, the device count and the device registry
+    refresh so they always agree.
     """
     bool_query: dict = {
         "filter": [
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
-            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+            app.get("lan_filter", RFC1918_SOURCE_FILTER),
         ],
     }
-    excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    excluded = build_excluded_ips_filter(app.get("excluded_ips", []))
     if excluded:
         bool_query["must_not"] = excluded
     return bool_query
+
+
+def _device_bool_query(request: web.Request, from_ts: str, to_ts: str) -> dict:
+    """_lan_device_bool_query for the request's app."""
+    # OLD CODE START — 2026-11-01: body moved to _lan_device_bool_query(app); the registry refresh has the app but no request
+    # bool_query: dict = {
+    #     "filter": [
+    #         _time_range_filter(from_ts, to_ts),
+    #         {"term": {"event.provider": "zeek"}},
+    #         {"term": {"event.dataset": "conn"}},
+    #         request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+    #     ],
+    # }
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # if excluded:
+    #     bool_query["must_not"] = excluded
+    # return bool_query
+    # OLD CODE END
+    return _lan_device_bool_query(request.app, from_ts, to_ts)
 
 
 def _is_skipped_device_ip(ip: str) -> bool:

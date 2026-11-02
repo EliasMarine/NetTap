@@ -20,7 +20,9 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from opensearchpy import OpenSearchException
+from opensearchpy import NotFoundError, OpenSearchException
+
+from services.device_fingerprint import _mac_from_hit
 
 logger = logging.getLogger("nettap.services.device_registry")
 
@@ -61,8 +63,10 @@ class DeviceRegistry:
     device documents using the MAC address as the document ID.
     """
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, changelog: Any = None):
         self._client = client
+        # ChangelogService; when set, a device's first write logs "device_joined"
+        self._changelog = changelog
         self._ensure_index()
 
     def _ensure_index(self) -> None:
@@ -103,7 +107,10 @@ class DeviceRegistry:
         metadata = metadata or {}
         now = datetime.now(timezone.utc).isoformat()
 
-        existing = self.get_device(mac)
+        # OLD CODE START — 2026-11-01: get_device() returns None on any error, so a timeout made a known device look new (first_seen reset, duplicate changelog event)
+        # existing = self.get_device(mac)
+        # OLD CODE END
+        existing = self._get_existing(mac)
 
         if existing:
             # Merge into existing record
@@ -191,7 +198,31 @@ class DeviceRegistry:
             logger.error("Failed to upsert device %s: %s", mac, exc)
             raise
 
+        if existing is None and self._changelog is not None:
+            self._log_new_device(doc, source)
+
         return doc
+
+    def _get_existing(self, mac: str) -> dict | None:
+        """The stored device doc, or None only when OpenSearch says it does not exist.
+
+        Any other error raises, so a failed lookup never re-creates a known device.
+        """
+        try:
+            return self._client.get(index=DEVICES_INDEX, id=mac).get("_source")
+        except NotFoundError:
+            return None
+
+    def _log_new_device(self, doc: dict, source: str) -> None:
+        """Record a device's first sighting on the Changelog page."""
+        ip = doc["ips"][0] if doc["ips"] else None
+        where = f" at {ip}" if ip else ""
+        self._changelog.log_event(
+            "device_joined",
+            f"New device {doc['mac']}",
+            f"First seen{where} (source: {source})",
+            {"mac": doc["mac"], "ip": ip, "source": source},
+        )
 
     def get_device(self, mac: str) -> dict | None:
         """Retrieve a device by MAC address.
@@ -412,16 +443,28 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"exists": {"field": "dhcp.id"}},
+                        # OLD CODE START — 2026-11-01: Malcolm fills dhcp.id from zeek.dhcp.trans_id, which dhcp.log never has, so this matched nothing
+                        # {"exists": {"field": "dhcp.id"}},
+                        # OLD CODE END
+                        # Malcolm tags Zeek dhcp.log and ja4d.log records with service "dhcp"
+                        {"term": {"network.protocol": "dhcp"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
             },
+            # OLD CODE START — 2026-11-01: dhcp.ip is Arkime-only; Malcolm merges the assigned IP into dhcp.host, so dhcp.host[0] can be an IP
+            # "_source": [
+            #     "source.mac",
+            #     "source.ip",
+            #     "dhcp.host",
+            #     "dhcp.ip",
+            # ],
+            # OLD CODE END
             "_source": [
                 "source.mac",
                 "source.ip",
-                "dhcp.host",
-                "dhcp.ip",
+                "zeek.dhcp.host_name",
+                "zeek.dhcp.assigned_ip",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -432,26 +475,34 @@ class DeviceRegistry:
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
-                mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE START — 2026-11-01: Malcolm stores source.mac as a list, which crashed the set lookup below
+                # mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hit)
                 if not mac or mac in seen_macs:
                     continue
                 seen_macs.add(mac)
 
-                # Arkime stores DHCP fields under nested "dhcp" object
-                dhcp_obj = src.get("dhcp", {})
-                dhcp_ip_val = dhcp_obj.get("ip")
-                # dhcp.ip may be a list in Arkime
-                if isinstance(dhcp_ip_val, list):
-                    dhcp_ip_val = dhcp_ip_val[0] if dhcp_ip_val else None
-                ip = (
-                    dhcp_ip_val
-                    or src.get("source.ip")
-                    or src.get("source", {}).get("ip")
-                )
-                dhcp_host_val = dhcp_obj.get("host")
-                if isinstance(dhcp_host_val, list):
-                    dhcp_host_val = dhcp_host_val[0] if dhcp_host_val else None
-                hostname = dhcp_host_val
+                # OLD CODE START — 2026-11-01: read Malcolm's zeek.dhcp fields, see the _source note above
+                # # Arkime stores DHCP fields under nested "dhcp" object
+                # dhcp_obj = src.get("dhcp", {})
+                # dhcp_ip_val = dhcp_obj.get("ip")
+                # # dhcp.ip may be a list in Arkime
+                # if isinstance(dhcp_ip_val, list):
+                #     dhcp_ip_val = dhcp_ip_val[0] if dhcp_ip_val else None
+                # ip = (
+                #     dhcp_ip_val
+                #     or src.get("source.ip")
+                #     or src.get("source", {}).get("ip")
+                # )
+                # dhcp_host_val = dhcp_obj.get("host")
+                # if isinstance(dhcp_host_val, list):
+                #     dhcp_host_val = dhcp_host_val[0] if dhcp_host_val else None
+                # hostname = dhcp_host_val
+                # OLD CODE END
+                zeek_dhcp = src.get("zeek", {}).get("dhcp", {})
+                ip = zeek_dhcp.get("assigned_ip") or src.get("source", {}).get("ip")
+                hostname = zeek_dhcp.get("host_name")
                 # vendor_class not reliably available in Arkime DHCP data
                 vendor_class = None
 
@@ -563,7 +614,10 @@ class DeviceRegistry:
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
-                mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE START — 2026-11-01: Malcolm stores source.mac as a list, which crashed the set lookup below
+                # mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hit)
                 if not mac or mac in seen_macs:
                     continue
                 seen_macs.add(mac)
@@ -645,7 +699,10 @@ class DeviceRegistry:
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
-                mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE START — 2026-11-01: Malcolm stores source.mac as a list, which crashed the set lookup below
+                # mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hit)
                 if not mac or mac in seen_macs:
                     continue
                 seen_macs.add(mac)
