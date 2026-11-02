@@ -509,8 +509,9 @@ class TestStatsAccuracy:
         dns.get_stats(_FROM, _TO)
         aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
         assert aggs["avg_rtt"] == {"avg": {"field": "zeek.dns.rtt"}}
+        # #93: HDR, not t-digest, so the median doesn't change with how the data is split
         assert aggs["median_rtt"] == {
-            "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
+            "percentiles": {"field": "zeek.dns.rtt", "percents": [50], "hdr": {"number_of_significant_value_digits": 3}}
         }
 
     def test_median_resolution_ms(self, dns, mock_client):

@@ -484,7 +484,12 @@ class DNSAnalytics:
                 # OLD CODE END
                 "avg_rtt": {"avg": {"field": "zeek.dns.rtt"}},
                 "median_rtt": {
-                    "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
+                    # OLD CODE START — #93: t-digest, an estimate that changed with how the data
+                    # was split (6.13 ms vs 5.81 ms for the same day)
+                    # "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
+                    # OLD CODE END
+                    # HDR histograms merge exactly in any order; 3 digits = 0.1% resolution
+                    "percentiles": {"field": "zeek.dns.rtt", "percents": [50], "hdr": {"number_of_significant_value_digits": 3}}
                 },
             },
         }

@@ -23,6 +23,8 @@ from typing import Optional
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage.exact_terms import ExactTermsOpenSearch
+
 from api.capture_control import (
     CONTAINER_NAME as CAPTURE_CONTAINER,
     DEFAULT_ENV_FILE,
@@ -256,7 +258,10 @@ class StorageManager:
         if http_auth:
             kwargs["http_auth"] = http_auth
 
-        return OpenSearch(**kwargs)
+        # OLD CODE START — #93: terms top lists merged across daily indices lost counts
+        # return OpenSearch(**kwargs)
+        # OLD CODE END
+        return ExactTermsOpenSearch(**kwargs)
 
     # ------------------------------------------------------------------
     # Disk usage
