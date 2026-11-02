@@ -67,6 +67,8 @@
 	let relatedData = $state<RelatedConnectionsResponse | null>(null);
 	let relatedLoading = $state(false);
 	let relatedTabLoaded = $state(false);
+	// #96: a failed load must not read as "No related connections found"
+	let relatedFailed = $state(false);
 
 	// Threat context state
 	let threatAlerts = $state<Alert[]>([]);
@@ -336,10 +338,12 @@
 
 	async function loadRelated() {
 		relatedLoading = true;
+		relatedFailed = false;
 		try {
 			relatedData = await getRelatedConnections(srcIp, dstIp);
 		} catch {
 			relatedData = null;
+			relatedFailed = true;
 		} finally {
 			relatedLoading = false;
 		}
@@ -638,6 +642,10 @@
 					{/if}
 				</div>
 			{/if}
+		{:else if relatedFailed}
+			<div class="empty-state">
+				<p class="text-warning">Couldn't load related connections: the request failed.</p>
+			</div>
 		{:else}
 			<div class="empty-state">
 				<p class="text-muted">No related connections found</p>

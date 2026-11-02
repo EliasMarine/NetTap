@@ -20,6 +20,7 @@
 	// import { getLiveConnections } from '$api/live';
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type { BarItem } from '$components/HorizontalBarList.svelte';
@@ -90,6 +91,12 @@
 
 	// Timeline
 	let timeline = $state<ConnectionTimelineBucket[]>([]);
+
+	// #96: a failed request keeps the last good figures and says so, never zeros or "none"
+	let statsFailed = $state(false);
+	let sankeyFailed = $state(false);
+	let timelineFailed = $state(false);
+	let connectionsFailed = $state(false);
 
 	// Connections table
 	let connections = $state<Connection[]>([]);
@@ -307,6 +314,9 @@
 			if (statsRes.status === 'fulfilled') stats = statsRes.value;
 			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
 			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
+			statsFailed = statsRes.status === 'rejected';
+			sankeyFailed = sankeyRes.status === 'rejected';
+			timelineFailed = timelineRes.status === 'rejected';
 			// OLD CODE START
 			// if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
 			// OLD CODE END
@@ -336,10 +346,13 @@
 			currentPage = response.page;
 			totalPages = response.total_pages;
 			totalConnections = response.total;
+			connectionsFailed = false;
 		} catch {
+			// rows are specific to this page and filter set, so they are not kept as stale
 			connections = [];
 			totalPages = 0;
 			totalConnections = 0;
+			connectionsFailed = true;
 		}
 	}
 
@@ -358,6 +371,10 @@
 
 	function handleTimeRangeChange(range: TimeRange) {
 		selectedTimeRange = range;
+		// #96: the last range's figures must not stand in for this range if its load fails
+		stats = null;
+		sankey = null;
+		timeline = [];
 		// A new time range is a new result set: start from page 1
 		if (initialized) fetchAll(1);
 	}
@@ -472,9 +489,18 @@
 	<!-- ================================================================== -->
 	<!-- Stat Cards                                                         -->
 	<!-- ================================================================== -->
+	<!-- OLD CODE START — #96: with no stats (failed or not yet loaded) the cards read 0 sessions, 0 B
+	<span class="stat-value mono">{formatNumber(stats?.total_sessions ?? 0)}</span>
+	<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
+	<span class="stat-value mono">{formatBytes(stats?.bytes_out ?? 0)}</span>
+	<span class="stat-value mono">{formatNumber(stats?.alert_sessions ?? 0)}</span>
+	OLD CODE END -->
+	{#if statsFailed}
+		<p class="text-warning load-note">{loadFailed('connection stats', stats !== null)}</p>
+	{/if}
 	<div class="stat-cards">
 		<div class="stat-card">
-			<span class="stat-value mono">{formatNumber(stats?.total_sessions ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatNumber(stats.total_sessions) : '—'}</span>
 			<span class="stat-label">Total Sessions</span>
 		</div>
 		<div class="stat-card">
@@ -488,15 +514,15 @@
 			<span class="stat-label" title="Devices with traffic in the last 5 minutes">Active Devices</span>
 		</div>
 		<div class="stat-card">
-			<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatBytes(stats.bytes_in) : '—'}</span>
 			<span class="stat-label">Bytes In</span>
 		</div>
 		<div class="stat-card">
-			<span class="stat-value mono">{formatBytes(stats?.bytes_out ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatBytes(stats.bytes_out) : '—'}</span>
 			<span class="stat-label">Bytes Out</span>
 		</div>
 		<div class="stat-card" class:has-alerts={stats && stats.alert_sessions > 0}>
-			<span class="stat-value mono">{formatNumber(stats?.alert_sessions ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatNumber(stats.alert_sessions) : '—'}</span>
 			<span class="stat-label">w/ Alerts</span>
 		</div>
 	</div>
@@ -518,9 +544,16 @@
 					links={sankey.links}
 					onNodeClick={handleSankeyNodeClick}
 				/>
+				{#if sankeyFailed}
+					<p class="text-warning load-note">{loadFailed('the flow diagram', true)}</p>
+				{/if}
 			{:else if loading}
 				<div class="chart-placeholder">
 					<div class="spinner"></div>
+				</div>
+			{:else if sankeyFailed}
+				<div class="chart-placeholder">
+					<p class="text-warning">{loadFailed('the flow diagram')}</p>
 				</div>
 			{:else}
 				<div class="chart-placeholder">
@@ -534,7 +567,10 @@
 	<!-- Session Volume Timeline                                            -->
 	<!-- ================================================================== -->
 	<section class="card">
-		<SessionTimeline buckets={timeline} {loading} />
+		<SessionTimeline buckets={timeline} {loading} emptyMessage={timelineFailed ? loadFailed('the session timeline') : undefined} />
+		{#if timelineFailed && timeline.length > 0}
+			<p class="text-warning load-note">{loadFailed('the session timeline', true)}</p>
+		{/if}
 	</section>
 
 	<!-- ================================================================== -->
@@ -546,20 +582,20 @@
 				<h3>Top Sources</h3>
 				<span class="card-badge">by bytes</span>
 			</div>
-			<HorizontalBarList items={sourceBarItems} showRank labelWidth={130} />
+			<HorizontalBarList items={sourceBarItems} showRank labelWidth={130} emptyMessage={statsFailed ? loadFailed('top sources') : undefined} />
 		</div>
 		<div class="analytics-col card">
 			<div class="analytics-header">
 				<h3>Protocol Distribution</h3>
 			</div>
-			<HorizontalBarList items={protocolBarItems} showDot labelWidth={80} />
+			<HorizontalBarList items={protocolBarItems} showDot labelWidth={80} emptyMessage={statsFailed ? loadFailed('the protocol split') : undefined} />
 		</div>
 		<div class="analytics-col card">
 			<div class="analytics-header">
 				<h3>Top Destinations</h3>
 				<span class="card-badge">by bytes</span>
 			</div>
-			<HorizontalBarList items={destBarItems} showRank labelWidth={160} />
+			<HorizontalBarList items={destBarItems} showRank labelWidth={160} emptyMessage={statsFailed ? loadFailed('top destinations') : undefined} />
 		</div>
 	</div>
 
@@ -649,6 +685,10 @@
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Loading connections...</p>
+		</div>
+	{:else if connectionsFailed && !loading}
+		<div class="empty-state">
+			<p class="text-warning">{loadFailed('connections')}</p>
 		</div>
 	{:else if connections.length === 0 && !loading}
 		<div class="empty-state">
@@ -935,6 +975,12 @@
 		align-items: center;
 		justify-content: center;
 		min-height: 200px;
+	}
+
+	.load-note {
+		margin: 0;
+		padding: var(--space-sm) var(--space-md);
+		font-size: var(--text-sm);
 	}
 
 	/* ================================================================== */

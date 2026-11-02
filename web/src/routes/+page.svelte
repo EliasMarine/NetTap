@@ -25,6 +25,7 @@
 	import DashboardFilters from '$components/DashboardFilters.svelte';
 	import type { FilterState } from '$components/DashboardFilters.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// Mirror mode components
 	import { getCaptureMode } from '$api/capture';
@@ -68,6 +69,12 @@
 	// Previous-period data for trend indicators
 	let prevTrafficSummary = $state<TrafficSummary | null>(null);
 	let prevAlertCount = $state<AlertCountResponse | null>(null);
+
+	// #96: a failed request keeps the last good figures and says so; it never shows 0 B or "no data"
+	let summaryFailed = $state(false);
+	let bandwidthFailed = $state(false);
+	let protocolsFailed = $state(false);
+	let categoriesFailed = $state(false);
 
 	// Alert detail panel state
 	let selectedAlert = $state<Alert | null>(null);
@@ -165,15 +172,30 @@
 				getAlertCount(prevTimeParams),
 			]);
 
-			trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
-			bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
-			protocols = protocolsRes.status === 'fulfilled' ? protocolsRes.value.protocols : [];
-			services = protocolsRes.status === 'fulfilled' ? protocolsRes.value.services : [];
+			// OLD CODE START — #96: a failure blanked each section, which read as "no data"
+			// trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+			// bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
+			// protocols = protocolsRes.status === 'fulfilled' ? protocolsRes.value.protocols : [];
+			// services = protocolsRes.status === 'fulfilled' ? protocolsRes.value.services : [];
+			// OLD CODE END
+			if (summaryRes.status === 'fulfilled') trafficSummary = summaryRes.value;
+			if (bandwidthRes.status === 'fulfilled') bandwidthData = bandwidthRes.value.series;
+			if (protocolsRes.status === 'fulfilled') {
+				protocols = protocolsRes.value.protocols;
+				services = protocolsRes.value.services;
+			}
+			summaryFailed = summaryRes.status === 'rejected';
+			bandwidthFailed = bandwidthRes.status === 'rejected';
+			protocolsFailed = protocolsRes.status === 'rejected';
 			topTalkers = talkersRes.status === 'fulfilled' ? talkersRes.value.top_talkers : [];
 			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
-			categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
+			// OLD CODE START — #96: see above
+			// categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
+			// OLD CODE END
+			if (categoriesRes.status === 'fulfilled') categories = categoriesRes.value.categories;
+			categoriesFailed = categoriesRes.status === 'rejected';
 			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
 			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
@@ -209,6 +231,13 @@
 	 */
 	function handleFilterChange(filters: FilterState) {
 		activeFilters = filters;
+		// #96: the last range's figures must not stand in for this range if its load fails
+		trafficSummary = null;
+		prevTrafficSummary = null;
+		bandwidthData = [];
+		protocols = [];
+		services = [];
+		categories = [];
 		fetchAllData();
 	}
 
@@ -342,18 +371,33 @@
 		};
 	}
 
+	// OLD CODE START — #96: a failed previous-period request compared against 0 and read "▲ new"
+	// let bandwidthTrend = $derived(
+	// 	trendPercent(
+	// 		trafficSummary?.total_bytes ?? 0,
+	// 		prevTrafficSummary?.total_bytes ?? 0,
+	// 	)
+	// );
+	//
+	// let connectionTrend = $derived(
+	// 	trendPercent(
+	// 		trafficSummary?.connection_count ?? 0,
+	// 		prevTrafficSummary?.connection_count ?? 0,
+	// 	)
+	// );
+	// OLD CODE END
+	const NO_TREND = trendPercent(0, 0);
+
 	let bandwidthTrend = $derived(
-		trendPercent(
-			trafficSummary?.total_bytes ?? 0,
-			prevTrafficSummary?.total_bytes ?? 0,
-		)
+		trafficSummary && prevTrafficSummary
+			? trendPercent(trafficSummary.total_bytes, prevTrafficSummary.total_bytes)
+			: NO_TREND
 	);
 
 	let connectionTrend = $derived(
-		trendPercent(
-			trafficSummary?.connection_count ?? 0,
-			prevTrafficSummary?.connection_count ?? 0,
-		)
+		trafficSummary && prevTrafficSummary
+			? trendPercent(trafficSummary.connection_count, prevTrafficSummary.connection_count)
+			: NO_TREND
 	);
 
 	let alertTrend = $derived(
@@ -490,7 +534,10 @@
 			</svg>
 			<span>OpenSearch is not reachable. The daemon is running but cannot connect to OpenSearch. Traffic data will be unavailable until the connection is restored.</span>
 		</div>
+	<!-- OLD CODE START — #96: a failed traffic request would read as "No traffic data yet"
 	{:else if !loading && systemHealth?.opensearch_reachable && !trafficSummary && bandwidthData.length === 0}
+	OLD CODE END -->
+	{:else if !loading && systemHealth?.opensearch_reachable && !summaryFailed && !bandwidthFailed && !trafficSummary && bandwidthData.length === 0}
 		<div class="alert alert-info error-banner">
 			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
@@ -579,7 +626,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				{#if trafficSummary}
+				{#if summaryFailed}
+					<span class="text-warning">{loadFailed('traffic totals', trafficSummary !== null)}</span>
+				{:else if trafficSummary}
 					<!-- OLD CODE START — 2026-11-01: orig_bytes (sent by the side that opened the connection, usually a LAN device) was labelled "in" -->
 					<!-- {formatBytesShort(trafficSummary.orig_bytes)} in / {formatBytesShort(trafficSummary.resp_bytes)} out -->
 					<!-- OLD CODE END -->
@@ -611,7 +660,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				{#if trafficSummary}
+				{#if summaryFailed}
+					<span class="text-warning">{loadFailed('connection totals', trafficSummary !== null)}</span>
+				{:else if trafficSummary}
 					Top protocol: {trafficSummary.top_protocol}
 				{:else}
 					Total observed connections
@@ -706,6 +757,8 @@
 			</div>
 			{#if loading && bandwidthData.length === 0}
 				<div class="skeleton skeleton-chart"></div>
+			{:else if bandwidthFailed && bandwidthData.length === 0}
+				<div class="table-empty"><p class="text-warning">{loadFailed('bandwidth over time')}</p></div>
 			{:else}
 				<TimeSeriesChart
 					data={chartData}
@@ -714,6 +767,9 @@
 					label="Bytes"
 					formatValue={formatBytesShort}
 				/>
+				{#if bandwidthFailed}
+					<p class="text-warning load-note">{loadFailed('bandwidth over time', true)}</p>
+				{/if}
 			{/if}
 		</div>
 
@@ -725,7 +781,12 @@
 			</div>
 			{#if loading && protocols.length === 0}
 				<div class="skeleton skeleton-chart"></div>
+			{:else if protocolsFailed && protocols.length === 0 && services.length === 0}
+				<div class="table-empty"><p class="text-warning">{loadFailed('network protocols')}</p></div>
 			{:else}
+				{#if protocolsFailed}
+					<p class="text-warning load-note">{loadFailed('network protocols', true)}</p>
+				{/if}
 				<div class="protocol-dual-panel">
 					<!-- Left: Transport donut -->
 					<div class="transport-panel">
@@ -779,11 +840,18 @@
 					<div class="skeleton skeleton-row"></div>
 				{/each}
 			</div>
+		{:else if categoriesFailed && categories.length === 0}
+			<div class="table-empty">
+				<p class="text-warning">{loadFailed('traffic categories')}</p>
+			</div>
 		{:else if categories.length === 0}
 			<div class="table-empty">
 				<p class="text-muted">No category data yet. Traffic will appear once Zeek captures ASN-tagged connections.</p>
 			</div>
 		{:else}
+			{#if categoriesFailed}
+				<p class="text-warning load-note">{loadFailed('traffic categories', true)}</p>
+			{/if}
 			<div class="categories-columns">
 				<div class="categories-col">
 					<HorizontalBarList
@@ -1011,6 +1079,12 @@
 	.card-description {
 		font-size: var(--text-xs);
 		color: var(--text-muted);
+	}
+
+	.load-note {
+		margin: 0;
+		padding: var(--space-xs) 0;
+		font-size: var(--text-xs);
 	}
 
 	/* Trend indicators */

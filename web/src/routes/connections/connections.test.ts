@@ -120,3 +120,39 @@ describe('Connections — auto-refresh', () => {
 		expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
 	});
 });
+
+// #96: a failed request read as "No Connections" and 0 sessions / 0 B
+describe('Connections — failed requests', () => {
+	beforeEach(() => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('says what failed instead of "No Connections" and zero totals', async () => {
+		// stats, flow and timeline are mocked to fail at the top of this file
+		vi.mocked(getConnections).mockRejectedValue(new Error('Connection list failed: HTTP 503'));
+		render(Page);
+		await flush();
+
+		expect(screen.getByText("Couldn't load connections: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No Connections')).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't load connection stats: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText('Total Sessions').closest('.stat-card')).not.toHaveTextContent('0');
+		expect(screen.getByText("Couldn't load the flow diagram: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No flow data available')).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the session timeline: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load top sources: the request failed.")).toBeInTheDocument();
+	});
+
+	it('still says "No Connections" when the list is really empty', async () => {
+		vi.mocked(getConnections).mockResolvedValue({ ...connectionsPage(1, 0), connections: [], total: 0 });
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('No Connections')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load connections/)).not.toBeInTheDocument();
+	});
+});

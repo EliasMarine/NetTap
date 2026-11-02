@@ -278,18 +278,21 @@ export async function getTrafficSummary(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/summary${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			total_bytes: 0,
-			orig_bytes: 0,
-			resp_bytes: 0,
-			packet_count: 0,
-			connection_count: 0,
-			top_protocol: 'unknown',
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 B and 0 connections
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		total_bytes: 0,
+	// 		orig_bytes: 0,
+	// 		resp_bytes: 0,
+	// 		packet_count: 0,
+	// 		connection_count: 0,
+	// 		top_protocol: 'unknown',
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Traffic summary failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -303,9 +306,12 @@ export async function getTopTalkers(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/traffic/top-talkers${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', limit: opts.limit ?? 20, top_talkers: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no talkers
+	// if (!res.ok) {
+	// 	return { from: '', to: '', limit: opts.limit ?? 20, top_talkers: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top talkers failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -319,9 +325,12 @@ export async function getTopDestinations(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/traffic/top-destinations${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', limit: opts.limit ?? 20, top_destinations: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no destinations
+	// if (!res.ok) {
+	// 	return { from: '', to: '', limit: opts.limit ?? 20, top_destinations: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top destinations failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -335,9 +344,12 @@ export async function getProtocolDistribution(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/protocols${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', protocols: [], services: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no protocols or services
+	// if (!res.ok) {
+	// 	return { from: '', to: '', protocols: [], services: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Protocol distribution failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -352,9 +364,12 @@ export async function getBandwidthTimeSeries(
 	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/traffic/bandwidth${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', interval: opts.interval ?? '5m', series: [] };
-	}
+	// OLD CODE START — #96: a failed request read as an empty chart
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: opts.interval ?? '5m', series: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Bandwidth time series failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -374,17 +389,20 @@ export async function getConnections(
 	});
 	const res = await fetch(`/api/traffic/connections${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			page: opts.page ?? 1,
-			size: opts.size ?? 50,
-			total: 0,
-			total_pages: 0,
-			connections: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as "No Connections"
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		page: opts.page ?? 1,
+	// 		size: opts.size ?? 50,
+	// 		total: 0,
+	// 		total_pages: 0,
+	// 		connections: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection list failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -398,9 +416,12 @@ export async function getTrafficCategories(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/categories${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', categories: [] };
-	}
+	// OLD CODE START — #96: a failed request read as "No category data yet"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', categories: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Traffic categories failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -414,22 +435,27 @@ export async function getCategoryDetail(
 ): Promise<CategoryDetailResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
 	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
-	try {
-		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
-	} catch (err) {
-		console.error('[getCategoryDetail] fetch failed for', category, err);
-		return {
-			category,
-			label: category,
-			device_count: 0,
-			total_bytes: 0,
-			connection_count: 0,
-			devices: [],
-			services: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as "No traffic data" for the category
+	// try {
+	// 	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	return await res.json();
+	// } catch (err) {
+	// 	console.error('[getCategoryDetail] fetch failed for', category, err);
+	// 	return {
+	// 		category,
+	// 		label: category,
+	// 		device_count: 0,
+	// 		total_bytes: 0,
+	// 		connection_count: 0,
+	// 		devices: [],
+	// 		services: [],
+	// 	};
+	// }
+	// OLD CODE END
+	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Category detail failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
@@ -441,20 +467,25 @@ export async function getCategoryBandwidth(
 ): Promise<CategoryBandwidthResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
 	const url = `/api/traffic/categories/${encodeURIComponent(category)}/bandwidth${q}`;
-	try {
-		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
-	} catch (err) {
-		console.error('[getCategoryBandwidth] fetch failed for', category, err);
-		return {
-			category,
-			from: '',
-			to: '',
-			interval: opts.interval ?? '15m',
-			series: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as an empty chart
+	// try {
+	// 	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	return await res.json();
+	// } catch (err) {
+	// 	console.error('[getCategoryBandwidth] fetch failed for', category, err);
+	// 	return {
+	// 		category,
+	// 		from: '',
+	// 		to: '',
+	// 		interval: opts.interval ?? '15m',
+	// 		series: [],
+	// 	};
+	// }
+	// OLD CODE END
+	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Category bandwidth failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -469,12 +500,15 @@ export async function getConnectionStats(
 ): Promise<ConnectionStatsResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/connections/stats${query}`);
-	if (!res.ok) {
-		return {
-			from: '', to: '', total_sessions: 0, bytes_in: 0, bytes_out: 0,
-			alert_sessions: 0, protocols: [], top_sources: [], top_destinations: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 sessions and 0 B
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '', to: '', total_sessions: 0, bytes_in: 0, bytes_out: 0,
+	// 		alert_sessions: 0, protocols: [], top_sources: [], top_destinations: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection stats failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -486,13 +520,16 @@ export async function getConnectionSankey(
 ): Promise<SankeyResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/traffic/connections/sankey${query}`);
-	if (!res.ok) {
-		return {
-			from: '', to: '',
-			nodes: { sources: [], protocols: [], destinations: [] },
-			links: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as no flows
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '', to: '',
+	// 		nodes: { sources: [], protocols: [], destinations: [] },
+	// 		links: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection flow failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -504,9 +541,12 @@ export async function getConnectionTimeline(
 ): Promise<ConnectionTimelineResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/traffic/connections/timeline${query}`);
-	if (!res.ok) {
-		return { from: '', to: '', interval: opts.interval ?? '15m', buckets: [] };
-	}
+	// OLD CODE START — #96: a failed request read as an empty timeline
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: opts.interval ?? '15m', buckets: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection timeline failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -520,12 +560,15 @@ export async function getRelatedConnections(
 ): Promise<RelatedConnectionsResponse> {
 	const query = buildQuery({ src_ip: srcIp, dst_ip: dstIp, from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/connections/related${query}`);
-	if (!res.ok) {
-		return {
-			from: '', to: '', src_ip: srcIp, dst_ip: dstIp,
-			total_connections: 0, total_bytes: 0, protocols: [],
-			first_seen: null, last_seen: null, connections: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 related sessions
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '', to: '', src_ip: srcIp, dst_ip: dstIp,
+	// 		total_connections: 0, total_bytes: 0, protocols: [],
+	// 		first_seen: null, last_seen: null, connections: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Related connections failed: HTTP ${res.status}`);
 	return res.json();
 }
