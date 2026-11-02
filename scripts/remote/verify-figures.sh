@@ -124,6 +124,62 @@ api_certs() { api "/api/certificates/stats?$Q" 'r["total_certs"]'; }
 compare "certificates" raw_certs api_certs
 echo ""
 
+echo "→ Security Posture (Encryption, DNS Security): the IoT encryption rule, network-wide (#86)"
+# The rule's clauses come from the daemon's own constants, so this checks the counting, not the rule
+RULES=$(sudo docker exec nettap-storage-daemon python3 -c "
+import json
+from services.iot_monitor import ENCRYPTED_CONN_FILTER, LOCAL_CHATTER_EXCLUSION, NO_PAYLOAD_PROTOCOLS
+from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
+print(json.dumps([[*LOCAL_CHATTER_EXCLUSION, {'terms': {'network.protocol': NO_PAYLOAD_PROTOCOLS}}], ENCRYPTED_CONN_FILTER, LOCAL_NAME_SERVICE_PORTS]))" 2>&1)
+ELIG_OUT=$(json_get "$RULES" 'json.dumps(r[0])')
+ENC_RULE=$(json_get "$RULES" 'json.dumps(r[1])')
+NAME_PORTS=$(json_get "$RULES" 'json.dumps(r[2])')
+raw_elig() { raw "{\"filter\":[$T,$CONN],\"must_not\":$ELIG_OUT}" '{}' "$TOTAL"; }
+api_elig() { api "/api/traffic/protocols?$Q" 'r["encryption"]["eligible"]'; }
+compare "connections that can be encrypted" raw_elig api_elig
+raw_enc() { raw "{\"filter\":[$T,$CONN,$ENC_RULE],\"must_not\":$ELIG_OUT}" '{}' "$TOTAL"; }
+api_enc() { api "/api/traffic/protocols?$Q" 'r["encryption"]["encrypted"]'; }
+compare "encrypted connections" raw_enc api_enc
+raw_pdns() { raw "{\"filter\":[$T,$CONN,{\"term\":{\"network.protocol\":\"dns\"}}],\"must_not\":[{\"terms\":{\"destination.port\":$NAME_PORTS}}]}" '{}' "$TOTAL"; }
+api_pdns() { api "/api/traffic/protocols?$Q" 'r["dns"]["plain"]'; }
+compare "plain DNS lookups" raw_pdns api_pdns
+raw_dot() { raw "{\"filter\":[$T,$CONN,{\"term\":{\"destination.port\":853}}]}" '{}' "$TOTAL"; }
+api_dot() { api "/api/traffic/protocols?$Q" 'r["dns"]["over_tls"]'; }
+compare "DNS-over-TLS connections" raw_dot api_dot
+echo ""
+
+echo "→ IoT (fleet summary): each device's encryption share, recounted"
+IOT=$(sudo docker exec nettap-storage-daemon python3 -c "
+import os, sys, json, urllib.request
+from main import _parse_curlrc_credentials
+from opensearchpy import OpenSearch
+from services.iot_monitor import ENCRYPTED_CONN_FILTER, LOCAL_CHATTER_EXCLUSION, NO_PAYLOAD_PROTOCOLS
+f, t, excl = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+client = OpenSearch(os.environ.get('OPENSEARCH_URL', 'http://localhost:9200'), verify_certs=False, ssl_show_warn=False,
+                    http_auth=_parse_curlrc_credentials(os.environ.get('OPENSEARCH_CREDS_CONFIG_FILE', '')))
+token = open('/run/nettap-auth/daemon-token').read().strip()
+req = urllib.request.Request(f'http://localhost:8880/api/iot/fleet-summary?from={f}&to={t}', headers={'X-NetTap-Daemon-Token': token})
+fleet = json.load(urllib.request.urlopen(req, timeout=300))
+def count(mac, extra=None):
+    q = {'bool': {'filter': [{'range': {'@timestamp': {'gte': f, 'lte': t}}}, {'term': {'event.dataset': 'conn'}},
+                             {'terms': {'source.mac': [mac, mac.lower()]}}] + ([extra] if extra else []),
+                  'must_not': [{'terms': {'source.ip': excl}}, *LOCAL_CHATTER_EXCLUSION]}}
+    return client.count(index='arkime_sessions3-*', body={'query': q})['count']
+bad = []
+for d in fleet['devices']:
+    mac = d['mac'].upper()
+    total = count(mac) - count(mac, {'terms': {'network.protocol': NO_PAYLOAD_PROTOCOLS}})
+    raw = round(min(1, count(mac, ENCRYPTED_CONN_FILTER) / total) * 100) if total > 0 else None
+    shown = d['encryption_pct'] if d['encryption_applicable'] else None
+    # 1 point of slack: late Zeek records can land between the two reads
+    if not (raw == shown or (None not in (raw, shown) and abs(raw - shown) <= 1)):
+        bad.append(f'{mac} page {shown} raw {raw}')
+print(len(bad), len(fleet['devices']), '; '.join(bad))" "$FROM_TS" "$TO_TS" "$EXCL" 2>&1 | grep -v Warning | tail -n 1)
+IOT_BAD=$(printf '%s' "$IOT" | cut -d' ' -f1)
+if [ "$IOT_BAD" = "0" ]; then rc=0; else rc=1; fi
+check "IoT encryption share per device" "$rc" "$(printf '%s' "$IOT" | awk '{print $2}') devices, mismatches: ${IOT:-no output}"
+echo ""
+
 if [ "$FAILED" -eq 0 ]; then
     echo "=== Every page figure matches OpenSearch ==="
 else
