@@ -370,7 +370,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Alerts API (one device read 6,150 alerts, 6,101 of them noise).
   Batch 12: DGA rule scored the leftmost hostname label (CDN/session IDs) instead of the
   registered name; suspicious DNS flagged reverse lookups and *.plex.direct (DGA 6 -> 0).
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch12.sh.
+  Batch 13: device vendors from Malcolm's source.oui (41 of 53 were Unknown), vendor/hostname
+  categories, each IP filed under its most common MAC (routed inter-VLAN legs carry the
+  router's MAC: the UDM's registry entry held 3 IoT IPs), Home grid categorised like Devices.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch13.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1846,6 +1849,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 119. **Rank alerts by signature, then check every query that counts them (Chain 25)** — two decoder events (STP/LLDP frames, QUIC parse errors) were two-thirds of all Suricata alert documents; a switch-uplink mirror carries layer-2 control traffic Suricata cannot decode. The Alerts API already excluded `SURICATA ` events, but the per-device counts and risk scores did not (#60): one device read 6,150 alerts, 6,101 of them noise. Grep for every `event.dataset: alert` query when you change what counts as an alert.
 120. **Don't pass an API reply back through `docker exec` as an argument (Chain 25)** — a 223 KB suricata-update log in the JSON hit "Argument list too long". Parse the reply in the same in-container Python that fetched it and print only the fields the check needs.
 121. **Check which label a domain heuristic actually scores (Chain 25)** — the DGA rule's comment said "registrable domain" but the code took `parts[0]`, the leftmost label, so every CDN session ID under a real domain read as a DGA. Before tuning a threshold, print the label being scored for the false positives; the bug may be the input, not the threshold.
+122. **On a mirrored uplink, an IP's newest MAC can be the router's (Chain 25)** — a flow routed between VLANs crosses the uplink twice, the second leg with the router as source MAC. Map IP→MAC by the most common MAC (the device's own leg is on every flow), never the latest record.
+123. **Look for Malcolm's enrichment before bundling data (Chain 25)** — the daemon carried 208/500-prefix OUI tables while every record already had Malcolm's full IEEE vendor in `source.oui`. Check what logstash adds to the documents first.
+124. **Two pages showing the same thing must share the rule (Chain 25)** — Home (registry) and Devices (live query) categorised devices by different inputs and disagreed 29 vs 15 Unknown. Reuse the one function, and make the deploy check compare the two pages.
 
 ---
 
