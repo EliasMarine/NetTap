@@ -255,6 +255,9 @@ services:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
       - ./curlrc:/var/local/curlrc:ro
       - ../config/logstash/supervisord.conf:/etc/supervisord.conf:ro
+    # Monitoring API for the daemon (host network, so no Docker DNS). Loopback only.
+    ports:
+      - "127.0.0.1:9600:9600"
     networks:
       - default
     depends_on:
@@ -801,6 +804,9 @@ services:
       # doesn't resolve on the host network. OpenSearch binds 127.0.0.1:9200
       # directly on the host. Same pattern as arkime-live.
       OPENSEARCH_URL: "https://localhost:9200"
+      # Same reason: Docker names (logstash, nettap-cyberchef) don't resolve on the host network
+      LOGSTASH_API_URL: "http://127.0.0.1:9600"
+      CYBERCHEF_URL: "http://127.0.0.1:8443"
       RETENTION_HOT: "${RETENTION_HOT:-90}"
       RETENTION_WARM: "${RETENTION_WARM:-180}"
       RETENTION_COLD: "${RETENTION_COLD:-30}"
@@ -1035,6 +1041,9 @@ services:
       - CHOWN            # nginx needs to chown cache directories
       - SETUID           # nginx master needs to switch to worker user
       - SETGID           # nginx master needs to set worker group
+    # Status checks from the daemon (host network, so no Docker DNS). Loopback only.
+    ports:
+      - "127.0.0.1:8443:8443"
     networks:
       - default
     healthcheck:
