@@ -5,6 +5,8 @@
 #   #26 Devices, device detail, Home's device grid and Tools -> MAC Lookup use Malcolm's full
 #       IEEE vendor name (source.oui) when the bundled ~500-prefix table has no entry, and the
 #       category falls back to single-purpose vendors (Hue -> IoT, UniFi -> Infrastructure)
+#   #26 each IP is filed under its own (most common) MAC, not the router's, and leaves any
+#       other registry entry; DHCP's 0.0.0.0 is no longer recorded as a device IP
 #
 # Only the daemon restarts. Capture (netsniff, Zeek, Suricata) is not touched.
 #
@@ -97,6 +99,19 @@ wrong = [d for d in devices if not d.get('os_hint') and not d.get('hostname') an
     ('Ubiquiti' in (d.get('manufacturer') or '') and d['category'] != 'infrastructure')
     or ('Philips Lighting' in (d.get('manufacturer') or '') and d['category'] != 'iot'))]
 bad_reg_cat = [r for r in registry if r.get('category') not in ('computer', 'phone', 'iot', 'infrastructure', 'unknown')]
+owners = {}
+for r in registry:
+    for ip in r.get('ips') or []:
+        owners.setdefault(ip, []).append(r['mac'])
+shared = {ip: m for ip, m in owners.items() if len(m) > 1}
+zeros = [r['mac'] for r in registry if '0.0.0.0' in (r.get('ips') or [])]
+listed = {d['ip']: (d.get('mac') or '').upper() for d in devices}
+disagree = [(ip, m[0], listed[ip]) for ip, m in owners.items() if ip in listed and listed[ip] and m[0] != listed[ip]]
+for ip, m in shared.items():
+    print('SHARED', ip, m)
+for ip, reg, lst in disagree:
+    print('DISAGREE', ip, 'registry', reg, 'devices', lst)
+print('OWNERSHIP', len(shared), len(zeros), len(disagree))
 for d in devices:
     print('DEVICE', d['ip'], d.get('mac'), '|', d.get('manufacturer'), '|', d['category'])
 print('CATS', json.dumps(cats, sort_keys=True))
@@ -104,7 +119,8 @@ print('TOOL', tool.get('found'), tool.get('vendor'))
 print('SUMMARY', len(truth), len(devices), len(miss), len(registry), len(reg_miss), len(wrong), len(bad_reg_cat), int('Proxmox' in (tool.get('vendor') or '')))
 " "$TRUTH" 2>&1)
     read -r _ _ _ _ _ RMISS _ _ <<<"$(echo "$OUT" | grep '^SUMMARY')"
-    [ "${RMISS:-1}" = "0" ] && break
+    read -r _ NSHARED _ _ <<<"$(echo "$OUT" | grep '^OWNERSHIP')"
+    [ "${RMISS:-1}" = "0" ] && [ "${NSHARED:-1}" = "0" ] && break
     sleep 5
 done
 while IFS= read -r line; do echo "   $line"; done <<<"$OUT"
@@ -113,6 +129,9 @@ if [ "${NTRUTH:-0}" -ge 1 ] && [ "${MISS:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#26 Devices: every MAC Malcolm names has a manufacturer" "$rc" "${NDEV:-?} devices, ${MISS:-?} still Unknown (Malcolm names ${NTRUTH:-?} MACs)"
 if [ "${RMISS:-1}" -eq 0 ] && [ "${BADCAT:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#26 Registry (Home grid, device pages): vendors filled, categories valid" "$rc" "${NREG:-?} entries, ${RMISS:-?} without a vendor Malcolm knows, ${BADCAT:-?} invalid categories"
+read -r _ NSHARED NZERO NDISAGREE <<<"$(echo "$OUT" | grep '^OWNERSHIP')"
+if [ "${NSHARED:-1}" -eq 0 ] && [ "${NZERO:-1}" -eq 0 ]; then rc=0; else rc=1; fi
+check "#26 Registry: every IP on one device only, no 0.0.0.0" "$rc" "${NSHARED:-?} IPs on two devices, ${NZERO:-?} entries with 0.0.0.0, ${NDISAGREE:-?} IPs where Devices shows another MAC"
 if [ "${WRONG:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#26 Ubiquiti -> infrastructure, Philips Lighting -> iot" "$rc" "${WRONG:-?} wrong"
 if [ "${TOOLOK:-0}" -eq 1 ]; then rc=0; else rc=1; fi
