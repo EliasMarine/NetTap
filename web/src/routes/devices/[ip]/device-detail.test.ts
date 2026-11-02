@@ -131,3 +131,48 @@ describe('Device detail — time range (#87)', () => {
 		expect(connOpts.from).toBe(detailOpts.from);
 	});
 });
+
+// #96: one failed request blanked the page as "Device not found"; a failed risk score read "0 LOW"
+// and failed ports read "No port data."
+describe('Device detail — failed requests', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('says the device failed to load instead of "Device not found"', async () => {
+		const devices = await import('$api/devices');
+		vi.mocked(devices.getDeviceDetail).mockRejectedValueOnce(new Error('Device detail failed: HTTP 503'));
+		render(Page);
+		await flush();
+
+		expect(screen.getByText(`Couldn't load device ${IP}: the request failed.`)).toBeInTheDocument();
+		expect(screen.queryByText(/Device not found/)).not.toBeInTheDocument();
+	});
+
+	it('shows an unknown risk and failed ports while the rest of the page loads', async () => {
+		const devices = await import('$api/devices');
+		vi.mocked(devices.getDeviceRiskScore).mockRejectedValueOnce(new Error('Device risk score failed: HTTP 503'));
+		vi.mocked(devices.getDevicePorts).mockRejectedValueOnce(new Error('Device ports failed: HTTP 503'));
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('laptop')).toBeInTheDocument();
+		expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
+		expect(screen.queryByText('LOW')).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the risk score: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load ports: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No port data.')).not.toBeInTheDocument();
+	});
+
+	it('still says "No port data." when the device really has none', async () => {
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('No port data.')).toBeInTheDocument();
+		expect(screen.getByText('LOW')).toBeInTheDocument();
+	});
+});

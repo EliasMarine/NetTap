@@ -10,6 +10,7 @@
 	import { goto } from '$app/navigation';
 	import { getDevices } from '$api/devices';
 	import type { Device } from '$api/devices';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -17,6 +18,8 @@
 
 	let loading = $state(true);
 	let devices = $state<Device[]>([]);
+	// #96: a failed load keeps the last list and says so; it never reads as "No devices seen yet"
+	let devicesFailed = $state(false);
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
 	let viewMode = $state<'grid' | 'list'>('grid');
@@ -76,8 +79,12 @@
 			const res = await getDevices({ sort: 'bytes', order: 'desc', limit: 200 });
 			devices = res.devices;
 			lastUpdated = new Date().toLocaleTimeString();
+			devicesFailed = false;
 		} catch {
-			devices = [];
+			// OLD CODE START — #96: a failure read as "0 devices" and "No devices seen yet"
+			// devices = [];
+			// OLD CODE END
+			devicesFailed = true;
 		} finally {
 			loading = false;
 		}
@@ -209,7 +216,15 @@
 			<h1>Device Inventory</h1>
 			<!-- OLD CODE START — 2026-11-01: devices come from observed traffic, not DHCP leases ("DHCP-leased devices") -->
 			<!-- OLD CODE END -->
+			<!-- OLD CODE START \u2014 #96: read "0 devices seen on the network" when the list failed to load
 			<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+			OLD CODE END -->
+			{#if devicesFailed}
+				<!-- with nothing loaded the empty state below says it couldn't load -->
+				{#if devices.length > 0}<p class="subtitle">{loadFailed('devices', true)}</p>{/if}
+			{:else}
+				<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+			{/if}
 		</div>
 		<div class="header-controls">
 			<button class="auto-btn" class:active={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
@@ -223,6 +238,11 @@
 		<div class="loading-state">
 			<div class="loading-spinner"></div>
 			<span class="text-muted">Discovering devices...</span>
+		</div>
+	{:else if devicesFailed && devices.length === 0}
+		<div class="empty-state">
+			<p class="empty-text">{loadFailed('devices')}</p>
+			<button class="reset-btn" onclick={() => fetchDevices()}>Try again</button>
 		</div>
 	{:else}
 		<!-- Hero Stats -->

@@ -58,52 +58,73 @@ export async function getRegistryDevices(
 	const qs = params.toString();
 	const url = `/api/devices/registry${qs ? `?${qs}` : ''}`;
 
-	try {
-		const res = await fetch(url);
-		if (!res.ok) {
-			return { devices: [], total: 0 };
-		}
-		return res.json();
-	} catch {
-		return { devices: [], total: 0 };
-	}
+	// OLD CODE START — #96: a failed request read as "No devices detected yet"
+	// try {
+	// 	const res = await fetch(url);
+	// 	if (!res.ok) {
+	// 		return { devices: [], total: 0 };
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { devices: [], total: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(url);
+	if (!res.ok) throw new Error(`Device registry failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
  * Get a single device by MAC address.
+ * Resolves null only when the registry has no such device (404); any other failure throws.
  */
 export async function getRegistryDevice(mac: string): Promise<RegistryDevice | null> {
-	try {
-		const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}`);
-		if (!res.ok) return null;
-		// OLD CODE START — #89: the daemon wraps the device as {device: {...}}, so the MAC page read
-		// device.ips of the wrapper and crashed on .length
-		// return res.json();
-		// OLD CODE END
-		const data = await res.json();
-		return data?.device ?? null;
-	} catch {
-		return null;
-	}
+	// OLD CODE START — #96: every failure read as "Device not found"
+	// try {
+	// 	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}`);
+	// 	if (!res.ok) return null;
+	// 	// OLD CODE START — #89: the daemon wraps the device as {device: {...}}, so the MAC page read
+	// 	// device.ips of the wrapper and crashed on .length
+	// 	// return res.json();
+	// 	// OLD CODE END
+	// 	const data = await res.json();
+	// 	return data?.device ?? null;
+	// } catch {
+	// 	return null;
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}`);
+	if (res.status === 404) return null;
+	if (!res.ok) throw new Error(`Registry device failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data?.device ?? null;
 }
 
 /**
  * Get traffic data for a specific device by MAC address.
+ * Resolves null only when the registry has no such device (404); any other failure throws.
  */
 export async function getDeviceTraffic(mac: string): Promise<DeviceTraffic | null> {
-	try {
-		const res = await fetch(
-			`/api/devices/registry/${encodeURIComponent(mac)}/traffic`
-		);
-		if (!res.ok) return null;
-		// OLD CODE START — #89: the daemon sends {from, to, traffic: {...}}
-		// return res.json();
-		// OLD CODE END
-		const data = await res.json();
-		return data?.traffic ?? null;
-	} catch {
-		return null;
-	}
+	// OLD CODE START — #96: a failure silently hid the device's traffic
+	// try {
+	// 	const res = await fetch(
+	// 		`/api/devices/registry/${encodeURIComponent(mac)}/traffic`
+	// 	);
+	// 	if (!res.ok) return null;
+	// 	// OLD CODE START — #89: the daemon sends {from, to, traffic: {...}}
+	// 	// return res.json();
+	// 	// OLD CODE END
+	// 	const data = await res.json();
+	// 	return data?.traffic ?? null;
+	// } catch {
+	// 	return null;
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/traffic`);
+	if (res.status === 404) return null;
+	if (!res.ok) throw new Error(`Device traffic failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data?.traffic ?? null;
 }
 
 /**

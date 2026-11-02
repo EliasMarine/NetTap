@@ -75,6 +75,9 @@
 	let bandwidthFailed = $state(false);
 	let protocolsFailed = $state(false);
 	let categoriesFailed = $state(false);
+	let deviceCountFailed = $state(false);
+	let topDevicesFailed = $state(false);
+	let registryFailed = $state(false);
 
 	// Alert detail panel state
 	let selectedAlert = $state<Alert | null>(null);
@@ -135,8 +138,12 @@
 			try {
 				const regResult = await getRegistryDevices({ limit: 200 });
 				registryDevices = regResult.devices;
+				registryFailed = false;
 			} catch {
-				registryDevices = [];
+				// OLD CODE START — #96: a failure read as "No devices detected yet"
+				// registryDevices = [];
+				// OLD CODE END
+				registryFailed = true;
 			}
 		}
 
@@ -196,7 +203,11 @@
 			// OLD CODE END
 			if (categoriesRes.status === 'fulfilled') categories = categoriesRes.value.categories;
 			categoriesFailed = categoriesRes.status === 'rejected';
-			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
+			// OLD CODE START — #96: see above
+			// deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
+			// OLD CODE END
+			if (deviceCountRes.status === 'fulfilled') deviceCount = deviceCountRes.value.count;
+			deviceCountFailed = deviceCountRes.status === 'rejected';
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
 			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
 
@@ -208,7 +219,11 @@
 			]).then(([smartRes, summaryRes, devicesRes]) => {
 				smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
 				smartAlertSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
-				topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
+				// OLD CODE START — #96: a failure read as "No device data available"
+				// topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
+				// OLD CODE END
+				if (devicesRes.status === 'fulfilled') topDevices = devicesRes.value.devices;
+				topDevicesFailed = devicesRes.status === 'rejected';
 			});
 
 			lastUpdated = new Date().toLocaleTimeString();
@@ -238,6 +253,8 @@
 		protocols = [];
 		services = [];
 		categories = [];
+		deviceCount = 0;
+		topDevices = [];
 		fetchAllData();
 	}
 
@@ -595,7 +612,14 @@
 	{#if isMirrorMode}
 		<div class="grid grid-cols-2 mirror-mode-grid">
 			<div class="mirror-main">
-				<DeviceGrid devices={registryDevices} loading={loading} />
+				{#if registryFailed && registryDevices.length === 0}
+					<div class="card table-empty"><p class="text-warning">{loadFailed('devices')}</p></div>
+				{:else}
+					{#if registryFailed}
+						<p class="text-warning load-note">{loadFailed('devices', true)}</p>
+					{/if}
+					<DeviceGrid devices={registryDevices} loading={loading} />
+				{/if}
 			</div>
 			<div class="mirror-sidebar">
 				<CaptureHealthPanel />
@@ -742,7 +766,11 @@
 			<!-- DHCP-leased devices on network -->
 			<!-- OLD CODE END -->
 			<p class="card-description">
-				Devices seen on the network
+				{#if deviceCountFailed}
+					<span class="text-warning">{loadFailed('the device count', deviceCount > 0)}</span>
+				{:else}
+					Devices seen on the network
+				{/if}
 			</p>
 		</a>
 	</div>
@@ -901,9 +929,14 @@
 				<div class="skeleton-table">
 					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
+			{:else if topDevicesFailed && topDevices.length === 0}
+				<div class="table-empty"><p class="text-warning">{loadFailed('top devices')}</p></div>
 			{:else if topDevices.length === 0}
 				<div class="table-empty"><p class="text-muted">No device data available.</p></div>
 			{:else}
+				{#if topDevicesFailed}
+					<p class="text-warning load-note">{loadFailed('top devices', true)}</p>
+				{/if}
 				{#each topDevices.slice(0, 4) as device, i (`td-${device.ip}-${i}`)}
 					<a href="/devices/{encodeURIComponent(device.ip)}" class="td-item">
 						<div class="td-top">

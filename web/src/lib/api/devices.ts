@@ -193,9 +193,12 @@ export async function getDeviceCount(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/devices/count${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', count: 0 };
-	}
+	// OLD CODE START — #96: a failed request read as no devices
+	// if (!res.ok) {
+	// 	return { from: '', to: '', count: 0 };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device count failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -215,14 +218,17 @@ export async function getDevices(
 	});
 	const res = await fetch(`/api/devices${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			limit: opts.limit ?? 100,
-			devices: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as "No devices seen yet"
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		limit: opts.limit ?? 100,
+	// 		devices: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device list failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -237,26 +243,29 @@ export async function getDeviceDetail(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}${query}`);
 
-	if (!res.ok) {
-		return {
-			device: {
-				ip,
-				mac: null,
-				hostname: null,
-				manufacturer: null,
-				os_hint: null,
-				first_seen: '',
-				last_seen: '',
-				total_bytes: 0,
-				connection_count: 0,
-				protocols: [],
-				alert_count: 0,
-				top_destinations: [],
-				dns_queries: [],
-				bandwidth_series: [],
-			},
-		};
-	}
+	// OLD CODE START — #96: a failed request read as a device with no traffic
+	// if (!res.ok) {
+	// 	return {
+	// 		device: {
+	// 			ip,
+	// 			mac: null,
+	// 			hostname: null,
+	// 			manufacturer: null,
+	// 			os_hint: null,
+	// 			first_seen: '',
+	// 			last_seen: '',
+	// 			total_bytes: 0,
+	// 			connection_count: 0,
+	// 			protocols: [],
+	// 			alert_count: 0,
+	// 			top_destinations: [],
+	// 			dns_queries: [],
+	// 			bandwidth_series: [],
+	// 		},
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device detail failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -276,18 +285,21 @@ export async function getDeviceConnections(
 	});
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/connections${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			ip,
-			page: opts.page ?? 1,
-			size: opts.size ?? 50,
-			total: 0,
-			total_pages: 0,
-			connections: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 connections
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		ip,
+	// 		page: opts.page ?? 1,
+	// 		size: opts.size ?? 50,
+	// 		total: 0,
+	// 		total_pages: 0,
+	// 		connections: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device connections failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -301,7 +313,10 @@ export async function getDeviceCategories(
 ): Promise<DeviceCategoriesResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/categories${query}`);
-	if (!res.ok) return { ip, from: '', to: '', categories: [] };
+	// OLD CODE START — #96: a failed request read as "No category data available"
+	// if (!res.ok) return { ip, from: '', to: '', categories: [] };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device categories failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -314,7 +329,10 @@ export async function getDeviceAlerts(
 ): Promise<DeviceAlertsResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/alerts${query}`);
-	if (!res.ok) return { ip, from: '', to: '', total: 0, alerts: [] };
+	// OLD CODE START — #96: a failed request read as no alerts
+	// if (!res.ok) return { ip, from: '', to: '', total: 0, alerts: [] };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device alerts failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -327,7 +345,10 @@ export async function getDevicePorts(
 ): Promise<DevicePortsResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/ports${query}`);
-	if (!res.ok) return { ip, from: '', to: '', ports: [] };
+	// OLD CODE START — #96: a failed request read as "No port data"
+	// if (!res.ok) return { ip, from: '', to: '', ports: [] };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device ports failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -340,6 +361,9 @@ export async function getDeviceRiskScore(
 ): Promise<RiskScoreResponse> {
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/risk/scores/${encodeURIComponent(ip)}${query}`);
-	if (!res.ok) return { ip, from: '', to: '', score: 0, level: 'low', factors: [], connection_count: 0, alert_count: 0 };
+	// OLD CODE START — #96: a failed request read as risk 0, LOW
+	// if (!res.ok) return { ip, from: '', to: '', score: 0, level: 'low', factors: [], connection_count: 0, alert_count: 0 };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device risk score failed: HTTP ${res.status}`);
 	return res.json();
 }

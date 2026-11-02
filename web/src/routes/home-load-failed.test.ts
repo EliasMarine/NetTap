@@ -41,6 +41,19 @@ describe('Home — failed traffic requests (#96)', () => {
 		expect(screen.queryByText(/No category data yet/)).not.toBeInTheDocument();
 		expect(screen.queryByText('No service data available.')).not.toBeInTheDocument();
 		expect(screen.queryByText(/0 B/)).not.toBeInTheDocument();
+		// devices (#96): not "No device data available."
+		expect(await screen.findByText("Couldn't load top devices: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the device count: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No device data available.')).not.toBeInTheDocument();
+	});
+
+	it('says the mirror-mode device list failed instead of "No devices detected yet"', async () => {
+		stubCharts();
+		stubDaemon({ '/api/capture/mode': { mode: 'mirror', interface: 'eth1' } });
+		render(HomePage);
+
+		expect(await screen.findByText("Couldn't load devices: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No devices detected yet')).not.toBeInTheDocument();
 	});
 
 	it('still says there is no category data when the request succeeds with none', async () => {
