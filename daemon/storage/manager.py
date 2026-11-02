@@ -1098,6 +1098,7 @@ class StorageManager:
                 http_auth=self._http_auth,
             )
             self._ilm_verified = True
+            self._exact_aggregation_counts()
             self._keep_ism_history_single_copy()
 
             # Log summary
@@ -1126,6 +1127,21 @@ class StorageManager:
         except Exception as exc:
             logger.error("ILM policy verification failed: %s", exc)
             return {"_error": f"error: {exc}"}
+
+    def _exact_aggregation_counts(self) -> None:
+        """Turn off concurrent segment search (#90).
+
+        OpenSearch 3.x defaults it to "auto", which splits each shard into up to 4 slices
+        for aggregations, and a terms top-N then counts like 4 shards: on the G11 a
+        device's top destinations read 106 for 112 and a top destination could go missing.
+        Every page's top lists come from terms aggregations, so they must count exactly.
+        """
+        try:
+            self._client.cluster.put_settings(
+                body={"persistent": {"search.concurrent_segment_search.mode": "none"}}
+            )
+        except Exception as exc:
+            logger.warning("Could not turn off concurrent segment search: %s", exc)
 
     def _keep_ism_history_single_copy(self) -> None:
         """Stop ISM's history index asking for a replica.

@@ -336,6 +336,18 @@ class TestIlmPolicyVerification:
         assert index_call["body"] == {"index": {"number_of_replicas": 0}}
         assert index_call["expand_wildcards"] == "all"
 
+    def test_ilm_verification_turns_off_concurrent_segment_search(self):
+        """#90: OpenSearch 3.x slices each shard for aggregations, so terms top-N counts read low."""
+        mgr = _make_manager()
+        mgr._client = MagicMock()
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = {"nettap-hot-policy": "unchanged"}
+            mgr.verify_ilm_policy()
+
+        bodies = [c.kwargs["body"] for c in mgr._client.cluster.put_settings.call_args_list]
+        assert {"persistent": {"search.concurrent_segment_search.mode": "none"}} in bodies
+
     def test_ilm_policy_verification_passes_when_exists(self):
         """When policies already exist, verify_ilm_policy reports unchanged."""
         mgr = _make_manager()
