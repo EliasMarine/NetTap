@@ -72,7 +72,7 @@ async def handle_beaconing(request: web.Request) -> web.Response:
     from services.threat_detection import detect_beaconing
 
     try:
-        beacons = detect_beaconing(
+        beacons, complete = detect_beaconing(
             client, from_ts, to_ts, excluded_ips=excluded_ips_list
         )
     except Exception as exc:
@@ -80,7 +80,7 @@ async def handle_beaconing(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     return web.json_response(
-        {"from": from_ts, "to": to_ts, "beacons": beacons, "total": len(beacons)}
+        {"from": from_ts, "to": to_ts, "beacons": beacons, "total": len(beacons), "complete": complete}
     )
 
 
@@ -93,7 +93,7 @@ async def handle_lateral_movement(request: web.Request) -> web.Response:
     from services.threat_detection import detect_lateral_movement
 
     try:
-        movements = detect_lateral_movement(
+        movements, complete = detect_lateral_movement(
             client, from_ts, to_ts, excluded_ips=excluded_ips_list
         )
     except Exception as exc:
@@ -101,7 +101,7 @@ async def handle_lateral_movement(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     return web.json_response(
-        {"from": from_ts, "to": to_ts, "movements": movements, "total": len(movements)}
+        {"from": from_ts, "to": to_ts, "movements": movements, "total": len(movements), "complete": complete}
     )
 
 

@@ -236,17 +236,38 @@ async def generate_threat_report(
         # "kill_chains": detect_kill_chains(alerts),
         # OLD CODE END
         "kill_chains": summary.get("kill_chains", []),
-        "beaconing": detect_beaconing(
-            client, from_ts, to_ts, excluded_ips=excluded_ips
-        ),
-        "dns_anomalies": analyze_dns_anomalies(
-            client, from_ts, to_ts, excluded_ips=excluded_ips
-        ),
-        "lateral_movement": detect_lateral_movement(
-            client, from_ts, to_ts, excluded_ips=excluded_ips
-        ),
+        # OLD CODE START — #96: a failed detector returned [], shown as "No ... detected"
+        # "beaconing": detect_beaconing(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        # "dns_anomalies": analyze_dns_anomalies(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        # "lateral_movement": detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        # OLD CODE END
+        "beaconing": [],
+        "dns_anomalies": {"dga_suspects": [], "tunnel_suspects": [], "nxdomain_spikes": [], "suspicious_tlds": []},
+        "lateral_movement": [],
+        # checks that could not run, and checks a bucket cap stopped part way
+        "failed_checks": [],
+        "incomplete_checks": [],
         "investigations": [],
     }
+    for name, detect in (
+        ("beaconing", detect_beaconing),
+        ("dns_anomalies", analyze_dns_anomalies),
+        ("lateral_movement", detect_lateral_movement),
+    ):
+        try:
+            found = detect(client, from_ts, to_ts, excluded_ips=excluded_ips)
+        except Exception:
+            logger.error("Threat report: the %s check failed", name, exc_info=True)
+            report["failed_checks"] = [*report["failed_checks"], name]
+            continue
+        if isinstance(found, dict):  # DNS anomalies: findings plus "complete"
+            complete = found.get("complete", True)
+            found = {k: v for k, v in found.items() if k != "complete"}
+        else:
+            found, complete = found
+        report[name] = found
+        if not complete:
+            report["incomplete_checks"] = [*report["incomplete_checks"], name]
 
     # Auto-investigate top critical alerts (cap at 3)
     critical = [a for a in alerts if a.get("severity", 5) <= 2]

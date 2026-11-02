@@ -40,10 +40,33 @@ def test_threat_report_kill_chains_match_the_summary():
     with (
         patch("services.alert_intelligence.get_smart_alert_summary", summary),
         patch("services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])),
-        patch("services.threat_detection.detect_beaconing", return_value=[]),
-        patch("services.threat_detection.detect_lateral_movement", return_value=[]),
+        patch("services.threat_detection.detect_beaconing", return_value=([], True)),
+        patch("services.threat_detection.detect_lateral_movement", return_value=([], True)),
         patch("services.threat_detection.analyze_dns_anomalies", return_value={}),
     ):
         report = asyncio.run(generate_threat_report(MagicMock(), "now-1h", "now"))
 
     assert report["kill_chains"] == report["summary"]["kill_chains"] == [chain]
+
+
+def test_threat_report_names_failed_and_partial_checks():
+    """#96: a failed detector returned [] and /threats said "No beaconing patterns detected"."""
+    move = {"source_ip": "192.168.1.66", "destination_ip": "192.168.1.10", "port": 445}
+    with (
+        patch("services.alert_intelligence.get_smart_alert_summary", AsyncMock(return_value={})),
+        patch("services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])),
+        patch("services.threat_detection.detect_beaconing", side_effect=ConnectionError("down")),
+        patch("services.threat_detection.detect_lateral_movement", return_value=([move], False)),
+        patch(
+            "services.threat_detection.analyze_dns_anomalies",
+            return_value={"dga_suspects": [{"domain": "x"}], "tunnel_suspects": [], "nxdomain_spikes": [],
+                          "suspicious_tlds": [], "complete": True},
+        ),
+    ):
+        report = asyncio.run(generate_threat_report(MagicMock(), "now-1h", "now"))
+
+    assert report["failed_checks"] == ["beaconing"]
+    assert report["incomplete_checks"] == ["lateral_movement"]
+    assert report["lateral_movement"] == [move]
+    assert report["dns_anomalies"]["dga_suspects"] == [{"domain": "x"}]
+    assert "complete" not in report["dns_anomalies"]

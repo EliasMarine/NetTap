@@ -263,8 +263,11 @@ def _scan_beacons(client, filters: list[dict], slots: int | None) -> tuple[list[
 
 def detect_beaconing(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """Detect periodic callback patterns indicative of C2 beaconing.
+
+    Returns (beacons, complete): complete is False if the bucket cap stopped the scan. A failed
+    query raises, so callers can't mistake it for "no beacons" (#96).
 
     ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
     """
@@ -324,16 +327,19 @@ def detect_beaconing(
     #     conn_count = bucket.get("conn_count", {}).get("value", 0)
     #     ... (the per-pair checks, unchanged, are now _assess_beacon)
     # OLD CODE END
-    try:
-        beacons, complete = _scan_beacons(client, bool_clause["filter"], _max_slots(from_ts, to_ts))
-    except Exception:
-        logger.error("Beaconing detection query failed", exc_info=True)
-        return []
+    # OLD CODE START — #96: a failed query read as "No beaconing patterns detected"
+    # try:
+    #     beacons, complete = _scan_beacons(client, bool_clause["filter"], _max_slots(from_ts, to_ts))
+    # except Exception:
+    #     logger.error("Beaconing detection query failed", exc_info=True)
+    #     return []
+    # OLD CODE END
+    beacons, complete = _scan_beacons(client, bool_clause["filter"], _max_slots(from_ts, to_ts))
     if not complete:
         logger.warning("Beaconing: the scan hit its bucket cap; pairs past it were not checked")
 
     beacons.sort(key=lambda b: b["confidence"], reverse=True)
-    return beacons
+    return beacons, complete
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +349,11 @@ def detect_beaconing(
 
 def detect_lateral_movement(
     client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """Find internal hosts connecting to other internal hosts on admin ports.
+
+    Returns (movements, complete): complete is False if the bucket cap stopped the scan. A
+    failed query raises, so callers can't mistake it for "no lateral movement" (#96).
 
     ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
     """
@@ -401,20 +410,23 @@ def detect_lateral_movement(
     # suspicious = []
     # for bucket in result.get("aggregations", {}).get("by_pair", {}).get("buckets", []):
     # OLD CODE END
-    try:
-        pairs, complete = all_buckets(
-            client,
-            NETWORK_INDEX,
-            {"bool": bool_clause},
-            _PAIR_SOURCES,
-            aggs={
-                "first_seen": {"min": {"field": "@timestamp"}},
-                "last_seen": {"max": {"field": "@timestamp"}},
-            },
-        )
-    except Exception:
-        logger.error("Lateral movement detection query failed", exc_info=True)
-        return []
+    # OLD CODE START — #96: a failed query read as "No lateral movement detected"
+    # try:
+    #     pairs, complete = all_buckets(...)
+    # except Exception:
+    #     logger.error("Lateral movement detection query failed", exc_info=True)
+    #     return []
+    # OLD CODE END
+    pairs, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        {"bool": bool_clause},
+        _PAIR_SOURCES,
+        aggs={
+            "first_seen": {"min": {"field": "@timestamp"}},
+            "last_seen": {"max": {"field": "@timestamp"}},
+        },
+    )
     if not complete:
         logger.warning("Lateral movement: the scan hit its bucket cap; pairs past it were not checked")
 
@@ -463,7 +475,7 @@ def detect_lateral_movement(
             )
 
     suspicious.sort(key=lambda s: s.get("fan_out", 0), reverse=True)
-    return suspicious
+    return suspicious, complete
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +488,7 @@ def analyze_dns_anomalies(
 ) -> dict:
     """Detect DNS-based threats: DGA, tunneling, NXDOMAIN spikes.
 
+    A failed query raises, so callers can't mistake it for "no DNS anomalies" (#96).
     ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
     """
     # OLD CODE START — excluded IPs stay visible in threat detections
@@ -529,29 +542,28 @@ def analyze_dns_anomalies(
     #     }
     # OLD CODE END
     query = {"bool": bool_clause}
-    try:
-        names, names_complete = all_buckets(
-            client, NETWORK_INDEX, query, [{"name": {"terms": {"field": "zeek.dns.query"}}}]
-        )
-        sources, sources_complete = all_buckets(
-            client,
-            NETWORK_INDEX,
-            query,
-            [{"src": {"terms": {"field": "source.ip"}}}],
-            aggs={
-                "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
-                "nxdomain_count": {"filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}},
-            },
-        )
-    except Exception:
-        logger.error("DNS anomaly analysis failed", exc_info=True)
-        return {
-            "dga_suspects": [],
-            "tunnel_suspects": [],
-            "nxdomain_spikes": [],
-            "suspicious_tlds": [],
-            "complete": False,
-        }
+    # OLD CODE START — #96: a failed query returned empty lists, read as "No DNS anomalies detected"
+    # try:
+    #     names, names_complete = all_buckets(...)
+    #     sources, sources_complete = all_buckets(...)
+    # except Exception:
+    #     logger.error("DNS anomaly analysis failed", exc_info=True)
+    #     return {"dga_suspects": [], "tunnel_suspects": [], "nxdomain_spikes": [],
+    #             "suspicious_tlds": [], "complete": False}
+    # OLD CODE END
+    names, names_complete = all_buckets(
+        client, NETWORK_INDEX, query, [{"name": {"terms": {"field": "zeek.dns.query"}}}]
+    )
+    sources, sources_complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        query,
+        [{"src": {"terms": {"field": "source.ip"}}}],
+        aggs={
+            "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
+            "nxdomain_count": {"filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}},
+        },
+    )
     complete = names_complete and sources_complete
     if not complete:
         logger.warning("DNS anomalies: the scan hit its bucket cap; names or sources past it were not checked")

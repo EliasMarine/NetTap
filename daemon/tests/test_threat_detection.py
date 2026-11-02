@@ -230,11 +230,12 @@ class TestBeaconingSeesEveryPair:
         noise = [_conn(f"10.0.{i // 200}.{i % 200}", "198.51.100.1", 443, _T0) for i in range(400)]
         client = FakeOpenSearch(noise + _beacon_docs("192.168.1.50", 60, 20))
 
-        beacons = detect_beaconing(client, *_DAY)
+        beacons, complete = detect_beaconing(client, *_DAY)
 
         assert [(b["source_ip"], b["interval_seconds"], b["connection_count"]) for b in beacons] == [
             ("192.168.1.50", 60.0, 20)
         ]
+        assert complete is True
 
     def test_requests_stay_under_max_buckets(self, monkeypatch):
         """30 pairs x 40 slots in one response passed max_buckets and read as "no beacons"."""
@@ -247,7 +248,7 @@ class TestBeaconingSeesEveryPair:
         ]
         client = FakeOpenSearch(irregular + _beacon_docs("192.168.1.50", 300, 40), max_buckets=1_000)
 
-        beacons = td.detect_beaconing(client, *_DAY)
+        beacons, complete = td.detect_beaconing(client, *_DAY)
 
         assert [b["source_ip"] for b in beacons] == ["192.168.1.50"]
         assert max(client.bucket_counts) <= 500
@@ -259,7 +260,7 @@ class TestBeaconingSeesEveryPair:
         monkeypatch.setattr(td, "HISTOGRAM_BUCKETS_PER_REQUEST", 20)
         client = FakeOpenSearch(_beacon_docs("192.168.1.50", 60, 30))
 
-        beacons = td.detect_beaconing(client, "now-1h", "now")
+        beacons, complete = td.detect_beaconing(client, "now-1h", "now")
 
         assert [(b["source_ip"], b["connection_count"]) for b in beacons] == [("192.168.1.50", 30)]
         assert any("date_histogram" in str(b["aggs"]["all"]["composite"]["sources"]) for b in client.bodies)
@@ -280,13 +281,14 @@ class TestLateralMovementSeesEveryPair:
         fan_out = [_conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)]
         client = FakeOpenSearch(scans + fan_out)
 
-        moves = detect_lateral_movement(client, *_DAY)
+        moves, complete = detect_lateral_movement(client, *_DAY)
 
         assert sorted((m["source_ip"], m["destination_ip"], m.get("fan_out")) for m in moves) == [
             ("192.168.1.66", "192.168.1.10", 3),
             ("192.168.1.66", "192.168.1.11", 3),
             ("192.168.1.66", "192.168.1.12", 3),
         ]
+        assert complete is True
 
 
 class TestDnsAnomaliesSeeEveryNameAndSource:
@@ -312,3 +314,36 @@ class TestDnsAnomaliesSeeEveryNameAndSource:
             ("10.9.9.9", 45, 46)
         ]
         assert found["complete"] is True
+
+
+class TestDetectorsDoNotHideFailures:
+    """#96: a failed query returned [] and the page said "No beaconing patterns detected"."""
+
+    def _failing_client(self):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.search.side_effect = ConnectionError("OpenSearch unreachable")
+        return client
+
+    def test_each_detector_raises_when_its_query_fails(self):
+        import pytest
+
+        from services.threat_detection import analyze_dns_anomalies, detect_beaconing, detect_lateral_movement
+
+        for detect in (detect_beaconing, detect_lateral_movement, analyze_dns_anomalies):
+            with pytest.raises(ConnectionError):
+                detect(self._failing_client(), *_DAY)
+
+    def test_a_capped_scan_says_it_is_incomplete(self, monkeypatch):
+        import services.threat_detection as td
+        from tests.fake_opensearch import FakeOpenSearch
+
+        real = td.all_buckets
+        monkeypatch.setattr(td, "all_buckets", lambda *a, **kw: real(*a, **{**kw, "page_size": 1, "max_buckets": 1}))
+        fan_out = [_conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)]
+
+        moves, complete = td.detect_lateral_movement(FakeOpenSearch(fan_out), *_DAY)
+
+        assert complete is False
+        assert len(moves) == 1
