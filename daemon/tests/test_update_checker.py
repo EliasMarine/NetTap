@@ -119,7 +119,7 @@ class TestCheckUpdates(unittest.TestCase):
         async def mock_github():
             return updates or []
 
-        async def mock_docker(current_versions):
+        async def mock_docker(current_versions, images):
             return []
 
         async def mock_rules():
@@ -414,21 +414,59 @@ class TestFailedChecksAreReported(unittest.TestCase):
         self.assertEqual(result["failed_checks"], [])
         self.assertFalse(result["has_updates"])
 
-    def test_docker_hub_failure_listed(self):
+    # OLD CODE START — #96: containers are no longer checked on Docker Hub
+    # def test_docker_hub_failure_listed(self):
+    #     ... Docker Hub HTTP 500 for zeek -> failed_checks == ["zeek"]
+    # OLD CODE END
+
+    @staticmethod
+    def _vm(*containers):
+        class VM:
+            async def get_versions(self):
+                return {
+                    "versions": [
+                        {
+                            "name": name,
+                            "category": "docker",
+                            "current_version": image.rsplit(":", 1)[-1],
+                            "status": "ok",
+                            "details": {"image": image},
+                        }
+                        for name, image in containers
+                    ]
+                }
+
+        return VM()
+
+    def test_malcolm_release_failure_listed(self):
         async def fetch(url):
-            if "github" in url:
-                return {}
-            raise RuntimeError("HTTP 500")
+            if "idaholab/Malcolm" in url:
+                raise RuntimeError("HTTP 500")
+            return {}
 
         uc = self._checker(fetch)
+        uc.set_version_manager(
+            self._vm(("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0"))
+        )
+        result = asyncio.run(uc.check_updates())
+        self.assertEqual(result["failed_checks"], ["suricata"])
+
+    def test_docker_unavailable_listed(self):
+        async def not_found(url):
+            return {}
 
         class VM:
             async def get_versions(self):
-                return {"versions": [{"name": "zeek", "current_version": "6.0.0"}]}
+                return {
+                    "versions": [
+                        {"name": "docker", "category": "docker", "status": "error",
+                         "current_version": "unknown", "details": {"error": "x"}}
+                    ]
+                }
 
+        uc = self._checker(not_found)
         uc.set_version_manager(VM())
-        result = asyncio.run(uc.check_updates())
-        self.assertEqual(result["failed_checks"], ["zeek"])
+        self.assertEqual(asyncio.run(uc.check_updates())["failed_checks"], ["docker"])
 
     def test_version_lookup_failure_listed(self):
         async def not_found(url):
@@ -443,6 +481,70 @@ class TestFailedChecksAreReported(unittest.TestCase):
         uc.set_version_manager(VM())
         result = asyncio.run(uc.check_updates())
         self.assertEqual(result["failed_checks"], ["component-versions"])
+
+
+class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
+    """#96: the deployed images (ghcr.io/idaholab/malcolm) are compared with Malcolm's
+    releases; Docker Hub malcolm/* could never find an update."""
+
+    def _run(self, release, containers):
+        urls = []
+
+        async def fetch(url):
+            urls.append(url)
+            return release if "idaholab/Malcolm" in url else {}
+
+        uc = UpdateChecker()
+        uc._fetch_json = fetch
+
+        async def none():
+            return None
+
+        uc._check_suricata_rules = none
+        uc._check_geoip_update = none
+        uc.set_version_manager(TestFailedChecksAreReported._vm(*containers))
+        return asyncio.run(uc.check_updates()), urls
+
+    def test_newer_malcolm_release_is_an_update(self):
+        result, urls = self._run(
+            {"tag_name": "v26.03.0", "html_url": "https://github.com/idaholab/Malcolm"},
+            [
+                ("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0"),
+                ("opensearch", "ghcr.io/idaholab/malcolm/opensearch:26.02.0"),
+            ],
+        )
+        by_component = {u["component"]: u for u in result["updates"]}
+        self.assertEqual(set(by_component), {"suricata", "opensearch"})
+        self.assertEqual(by_component["suricata"]["latest_version"], "26.03.0")
+        self.assertEqual(by_component["suricata"]["update_type"], "minor")
+        self.assertIsNone(by_component["suricata"]["size_mb"])
+        self.assertEqual(result["failed_checks"], [])
+        self.assertFalse(any("hub.docker.com" in u for u in urls))
+
+    def test_same_release_is_up_to_date(self):
+        result, _ = self._run(
+            {"tag_name": "v26.02.0"},
+            [("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0")],
+        )
+        self.assertEqual((result["updates"], result["failed_checks"]), ([], []))
+
+    def test_nettap_images_skipped_others_cant_be_checked(self):
+        result, _ = self._run(
+            {"tag_name": "v26.02.0"},
+            [
+                ("nettap-web", "nettap/web:latest"),
+                ("nettap-grafana", "grafana/grafana:10.4.2"),
+            ],
+        )
+        self.assertEqual(result["failed_checks"], ["nettap-grafana"])
+
+    def test_unparseable_tag_cant_be_checked(self):
+        result, _ = self._run(
+            {"tag_name": "v26.03.0"},
+            [("arkime", "ghcr.io/idaholab/malcolm/arkime:latest")],
+        )
+        self.assertEqual(result["failed_checks"], ["arkime"])
+        self.assertEqual(result["updates"], [])
 
 
 class TestEstimateReleaseSize(unittest.TestCase):

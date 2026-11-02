@@ -16,6 +16,11 @@ import aiohttp
 
 logger = logging.getLogger("nettap.services.update_checker")
 
+# Where the deployed images come from (docker/docker-compose.yml)
+_MALCOLM_REGISTRY = "ghcr.io/idaholab/malcolm/"
+_MALCOLM_RELEASE_URL = "https://api.github.com/repos/idaholab/Malcolm/releases/latest"
+_NETTAP_IMAGE_PREFIX = "nettap/"  # built by NetTap; the NetTap release check covers them
+
 
 @dataclass
 class AvailableUpdate:
@@ -28,7 +33,7 @@ class AvailableUpdate:
     release_url: str  # Link to release notes
     release_date: str  # ISO timestamp
     changelog: str  # Brief changelog/description
-    size_mb: float  # Estimated download size
+    size_mb: float | None  # Download size in MB; None = not known
     requires_restart: bool  # Whether component restart is needed
 
     def to_dict(self) -> dict:
@@ -95,11 +100,18 @@ class UpdateChecker:
 
             # Get current versions from VersionManager if available
             current_versions: dict[str, str] = {}
+            images: dict[str, str] = {}  # running container -> image reference
             if self._version_manager is not None:
                 try:
                     versions_data = await self._version_manager.get_versions()
                     for v in versions_data.get("versions", []):
                         current_versions[v["name"]] = v["current_version"]
+                        if v.get("category") != "docker":
+                            continue
+                        if v.get("status") == "ok":
+                            images[v["name"]] = (v.get("details") or {}).get("image", "")
+                        else:  # docker couldn't be asked: container updates unknown
+                            self._failed_checks.append(v["name"])
                 except Exception as exc:
                     # OLD CODE START — #96: the container checks were skipped unseen
                     # logger.debug("Could not get current versions: %s", exc)
@@ -118,8 +130,14 @@ class UpdateChecker:
                 logger.warning("GitHub release check failed: %s", exc)
                 self._failed_checks.append("nettap-daemon")
 
-            # Check Docker Hub for image updates
-            docker_updates = await self._check_docker_updates(current_versions)
+            # OLD CODE START — #96: checked Docker Hub malcolm/*, which isn't where the
+            # deployed images come from (ghcr.io), so it could never find an update
+            # # Check Docker Hub for image updates
+            # docker_updates = await self._check_docker_updates(current_versions)
+            # all_updates.extend(docker_updates)
+            # OLD CODE END
+            # Check the running containers' images against their real source
+            docker_updates = await self._check_docker_updates(current_versions, images)
             all_updates.extend(docker_updates)
 
             # Check Suricata rule updates
@@ -238,90 +256,90 @@ class UpdateChecker:
 
         return results
 
+    # OLD CODE START — #96: asked Docker Hub malcolm/*, but the deployed images come from
+    # ghcr.io/idaholab/malcolm, so it could never find an update ("up to date" was false)
+    # async def _check_docker_updates(self, current_versions):
+    #     docker_images = {
+    #         "zeek": "malcolm/zeek", "suricata": "malcolm/suricata",
+    #         "arkime": "malcolm/arkime", "opensearch": "opensearchproject/opensearch",
+    #         "dashboards": "opensearchproject/opensearch-dashboards",
+    #         "logstash": "malcolm/logstash-oss", "file-monitor": "malcolm/file-monitor",
+    #         "pcap-capture": "malcolm/pcap-capture",
+    #     }
+    #     for component, image_name in docker_images.items():
+    #         current = current_versions.get(component)
+    #         if not current or current in ("unknown", "latest"):
+    #             continue
+    #         hub_url = (f"https://hub.docker.com/v2/repositories/{image_name}"
+    #                    f"/tags/?page_size=5&ordering=last_updated")
+    #         try:
+    #             data = await self._fetch_json(hub_url)
+    #             ... first tag newer than current -> AvailableUpdate(size from full_size)
+    #         except Exception as exc:
+    #             logger.warning("Docker Hub check failed for %s: %s", component, exc)
+    #             self._failed_checks.append(component)
+    #     return results
+    # OLD CODE END
     async def _check_docker_updates(
-        self, current_versions: dict[str, str]
+        self, current_versions: dict[str, str], images: dict[str, str]
     ) -> list[AvailableUpdate]:
-        """Check Docker Hub for newer image tags.
+        """Check the running containers' images for newer versions.
 
-        For each Docker component in current_versions, checks if a
-        newer tag is available on Docker Hub.
+        Malcolm images (ghcr.io/idaholab/malcolm/*) all carry the Malcolm release
+        tag (docker/docker-compose.yml), so they are compared with Malcolm's latest
+        GitHub release. NetTap's own images (nettap/*) follow the NetTap release
+        check. Any other image has no source to ask, so it goes in failed_checks
+        rather than reading as up to date.
 
         Args:
-            current_versions: Dict mapping component names to current
-                version strings.
+            current_versions: Component name -> running image tag.
+            images: Component name -> running image reference (from docker ps).
 
         Returns:
-            List of AvailableUpdate for components with newer images.
+            List of AvailableUpdate for components with a newer release.
         """
         results: list[AvailableUpdate] = []
-
-        # Malcolm Docker Hub namespace
-        docker_images: dict[str, str] = {
-            "zeek": "malcolm/zeek",
-            "suricata": "malcolm/suricata",
-            "arkime": "malcolm/arkime",
-            "opensearch": "opensearchproject/opensearch",
-            "dashboards": "opensearchproject/opensearch-dashboards",
-            "logstash": "malcolm/logstash-oss",
-            "file-monitor": "malcolm/file-monitor",
-            "pcap-capture": "malcolm/pcap-capture",
-        }
-
-        for component, image_name in docker_images.items():
-            current = current_versions.get(component)
-            if not current or current in ("unknown", "latest"):
-                continue
-
-            # Query Docker Hub API for tags
-            hub_url = (
-                f"https://hub.docker.com/v2/repositories/{image_name}"
-                f"/tags/?page_size=5&ordering=last_updated"
-            )
-
-            try:
-                data = await self._fetch_json(hub_url)
-                if not data or "results" not in data:
-                    continue
-
-                for tag_info in data["results"]:
-                    tag_name = tag_info.get("name", "")
-                    if tag_name in ("latest", ""):
-                        continue
-
-                    latest_version = tag_name.lstrip("v")
-                    current_clean = current.lstrip("v")
-                    update_type = await self._compare_versions(
-                        current_clean, latest_version
-                    )
-
-                    if update_type != "same" and update_type != "unknown":
-                        # Estimate size from compressed image layers
-                        total_size = tag_info.get("full_size", 0) or 0
-                        size_mb = round(total_size / (1024 * 1024), 1)
-
-                        results.append(
-                            AvailableUpdate(
-                                component=component,
-                                current_version=current,
-                                latest_version=tag_name,
-                                update_type=update_type,
-                                release_url=(
-                                    f"https://hub.docker.com/r/{image_name}/tags"
-                                ),
-                                release_date=tag_info.get("last_updated", ""),
-                                changelog=f"Docker image {image_name} updated",
-                                size_mb=size_mb,
-                                requires_restart=True,
-                            )
-                        )
-                        break  # Only report the latest newer tag
-            except Exception as exc:
-                # OLD CODE START — #96: a failed check read as "no update" for it
-                # logger.debug("Docker Hub check failed for %s: %s", component, exc)
-                # OLD CODE END
-                logger.warning("Docker Hub check failed for %s: %s", component, exc)
+        malcolm: list[str] = []
+        for component, image in sorted(images.items()):
+            if image.startswith(_MALCOLM_REGISTRY):
+                malcolm.append(component)
+            elif not image.startswith(_NETTAP_IMAGE_PREFIX):
+                # shortcut: no registry lookup for third-party images (grafana, nginx);
+                # add one if NetTap ever updates them itself
                 self._failed_checks.append(component)
+        if not malcolm:
+            return results
 
+        try:
+            data = await self._fetch_json(_MALCOLM_RELEASE_URL)
+        except Exception as exc:
+            logger.warning("Malcolm release check failed: %s", exc)
+            self._failed_checks.extend(malcolm)
+            return results
+        latest = (data.get("tag_name") or "").lstrip("v")
+        if not latest:  # nothing to compare with is not "no update"
+            self._failed_checks.extend(malcolm)
+            return results
+
+        for component in malcolm:
+            current = current_versions.get(component, "")
+            update_type = await self._compare_versions(current.lstrip("v"), latest)
+            if update_type == "unknown":  # e.g. a "latest" or custom tag
+                self._failed_checks.append(component)
+            elif update_type != "same":
+                results.append(
+                    AvailableUpdate(
+                        component=component,
+                        current_version=current,
+                        latest_version=latest,
+                        update_type=update_type,
+                        release_url=data.get("html_url", ""),
+                        release_date=data.get("published_at", ""),
+                        changelog=f"Malcolm {latest}: {images[component].split(':')[0]}",
+                        size_mb=None,  # the image size isn't known from the release
+                        requires_restart=True,
+                    )
+                )
         return results
 
     async def _check_suricata_rules(self) -> AvailableUpdate | None:
