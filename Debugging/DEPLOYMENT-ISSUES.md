@@ -354,7 +354,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 5: arkime-live off (profile "arkime"), PCAP capped at PCAP_MAX_DISK_PCT (25%) of the disk,
   Live Monitor map bundled offline + LAN-only device count + NIC line-rate bandwidth, CyberChef
   quick recipes (recipe list lacked recipe_fragment; links used the internal container URL).
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch5.sh.
+  Batch 6 (PCAP Search): tshark orphaned by asyncio timeouts (now coreutils timeout inside the
+  container), search as a background job, filtered preview via head, proxy no longer cuts PCAP
+  downloads at 10 s.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch6.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1821,6 +1824,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 110. **Read a container's logs for a retry loop before trusting it is running (Chain 25)** — arkime-live sat "Up" for its whole life while looping on `opensearch_status.sh` (missing curlrc mount). `docker ps` showed it healthy enough; only its log and 58 TLS errors a minute in OpenSearch gave it away.
 111. **Exercise every button once, not just the page load (Chain 25)** — CyberChef "loaded" in three earlier checks, yet every quick recipe failed: the daemon's recipe list never carried the `recipe_fragment` the page posts back, and links pointed at the container's internal URL. Contract mismatches between daemon JSON and the web types only show when the action runs.
 112. **Ground truth must use the app's own definitions (Chain 25)** — Live "30 devices" vs a check's "38" was the check counting every private range; the daemon counts its detected LAN (192.168.1.0/24), same as the Devices page. Compare like with like before calling a figure wrong, then raise the definition itself (#47) as a separate question.
+113. **A timeout on `docker exec` does not stop the process in the container (Chain 25)** — `asyncio.wait_for` (or killing the docker CLI) leaves the exec'd process running. Seven orphaned full-file tshark reads pinned the tshark container at its memory limit and made every preview time out. Run the command under `timeout -k 5 N` inside the container.
+114. **A fetch `AbortSignal.timeout` also kills a response body that is already streaming (Chain 25)** — the web proxy's 10 s timeout silently truncated every PCAP download longer than 10 s. Streaming downloads must use the browser request's signal, not a fixed timer.
 
 ---
 
