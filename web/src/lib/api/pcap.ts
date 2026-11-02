@@ -33,6 +33,9 @@ export interface PcapSearchResponse {
 	complete: boolean;
 	/** Files too large to search within the per-file limit (counted in files_checked). */
 	timed_out: number;
+	/** Files tshark couldn't read (counted in files_checked), and the first reason (#96). */
+	failed?: number;
+	error?: string | null;
 }
 
 export interface PcapPacket {

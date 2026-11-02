@@ -53,7 +53,7 @@
 	// Search
 	let searchResults = $state<PcapSearchResult[]>([]);
 	let searchDone = $state(false);
-	let searchProgress = $state<{ checked: number; total: number; timedOut: number } | null>(null);
+	let searchProgress = $state<{ checked: number; total: number; timedOut: number; failed: number; error: string } | null>(null);
 	/** Bumped on every new search and on destroy so a stale poll loop exits. */
 	let searchRun = 0;
 	/** The scroll-to-preview timer; cleared on destroy, when `document` may be gone. */
@@ -276,6 +276,9 @@
 					checked: response.files_checked,
 					total: response.files_total,
 					timedOut: response.timed_out,
+					// #96: files tshark couldn't read are not "no match"
+					failed: response.failed ?? 0,
+					error: response.error ?? '',
 				};
 				if (response.complete) {
 					searchDone = true;
@@ -580,8 +583,15 @@
 			{:else if searchProgress && searchProgress.timedOut > 0}
 				<p class="search-note">{timedOutNote(searchProgress.timedOut)}</p>
 			{/if}
+			{#if !loading && searchProgress && searchProgress.failed > 0}
+				<p class="search-note">
+					{searchProgress.failed === 1 ? "1 file couldn't be searched" : `${searchProgress.failed} files couldn't be searched`}{searchProgress.error ? `: ${searchProgress.error}` : '.'}
+				</p>
+			{/if}
 			{#if searchResults.length === 0}
-				{#if searchDone}
+				{#if searchDone && searchProgress && searchProgress.failed > 0}
+					<p class="empty-state">No matching packets in the files that could be searched.</p>
+				{:else if searchDone}
 					<p class="empty-state">No matching packets found in any PCAP file.</p>
 				{/if}
 			{:else}

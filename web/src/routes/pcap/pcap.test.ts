@@ -300,6 +300,17 @@ describe('PCAP page — search polling', () => {
 
 		expect(screen.getByText(/No matching packets found/)).toBeInTheDocument();
 		expect(screen.queryByText(/were skipped/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/couldn't be searched/)).not.toBeInTheDocument();
+	});
+
+	it('says files tshark could not read were not searched, instead of "no match" (#96)', async () => {
+		stubSearch([searchBody({ files_checked: 53, complete: true, failed: 2, error: 'docker not found in PATH' })]);
+
+		await startSearch();
+
+		expect(screen.getByText("2 files couldn't be searched: docker not found in PATH")).toBeInTheDocument();
+		expect(screen.getByText('No matching packets in the files that could be searched.')).toBeInTheDocument();
+		expect(screen.queryByText('No matching packets found in any PCAP file.')).not.toBeInTheDocument();
 	});
 });
 
