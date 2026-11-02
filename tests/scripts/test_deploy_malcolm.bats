@@ -414,6 +414,18 @@ print('OK: all actions have retry config')
     [ "$bootstrap_line" -lt "$full_up_line" ]
 }
 
+@test "deploy: malcolm_template is pushed with its index pattern filled in (Chain 24)" {
+    local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    # The raw file's pattern is a placeholder that matches no index
+    grep -q 's/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g' "$script"
+    ! grep -E '^[^#]*-d @/opt/templates/malcolm_template.json' "$script"
+
+    # The same sed turns Malcolm's placeholder into a pattern that matches today's index
+    local index_pattern="arkime_sessions3-*"
+    run sh -c "echo '{\"index_patterns\":[\"MALCOLM_NETWORK_INDEX_PATTERN_REPLACER\"]}' | sed 's/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g'"
+    [ "$output" = '{"index_patterns":["arkime_sessions3-*"]}' ]
+}
+
 # ==========================================================================
 # OpenSearch security bootstrap
 # ==========================================================================

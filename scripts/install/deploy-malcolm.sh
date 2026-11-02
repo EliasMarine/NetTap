@@ -543,9 +543,23 @@ bootstrap_index_templates() {
 
     # Push malcolm_template index template
     local template_code
+    # OLD CODE START — replaced 2026-11-01: the raw file's index pattern is the
+    # placeholder MALCOLM_NETWORK_INDEX_PATTERN_REPLACER, which matches no index,
+    # so every daily arkime_sessions3-* index got guessed field types and
+    # OpenSearch rejected Zeek records (event.id as long, IPs as text). Chain 24.
+    # template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #     curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
+    #     -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+    #     -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    # OLD CODE END
+    # Fill in the placeholder the way Malcolm's own loader does (shared-object-creation.sh)
+    local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}"
     template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        cat /opt/templates/malcolm_template.json \
+        | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
+        | docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
         curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
-        -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+        -H "Content-Type: application/json" -d @- \
         -o /dev/null -w '%{http_code}' 2>/dev/null) || true
 
     if [[ "$template_code" == "200" ]]; then
