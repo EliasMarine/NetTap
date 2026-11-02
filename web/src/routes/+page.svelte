@@ -33,6 +33,7 @@
 	import { getRegistryDevices } from '$api/devices-registry';
 	import type { RegistryDevice } from '$api/devices-registry';
 	import DeviceGrid from '$components/DeviceGrid.svelte';
+	import { withTraffic } from '$lib/utils/registry-traffic';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
 	import { goto } from '$app/navigation';
 	import CaptureHealthPanel from '$components/CaptureHealthPanel.svelte';
@@ -71,6 +72,13 @@
 	// #96: a failed request must not read as "No actionable alerts detected"
 	let smartAlertsFailed = $state(false);
 	let topDevices = $state<Device[]>([]);
+	// the device list's range start, once the list for the current range has loaded
+	let deviceListFrom = $state<string | null>(null);
+	const DEVICE_LIST_LIMIT = 500; // the daemon's largest device list, as on the Devices page
+	// device cards with the range's traffic per IP; a list shorter than its limit holds every device
+	const deviceCards = $derived(
+		withTraffic(registryDevices, deviceListFrom ? topDevices : null, topDevices.length < DEVICE_LIST_LIMIT, deviceListFrom ?? ''),
+	);
 
 	// Previous-period data for trend indicators
 	let prevTrafficSummary = $state<TrafficSummary | null>(null);
@@ -233,7 +241,10 @@
 			Promise.allSettled([
 				getSmartAlerts({ ...timeParams, limit: 10 }),
 				getSmartAlertSummary(timeParams),
-				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
+				// OLD CODE START — the top 5 only; the device cards need every device's traffic
+				// getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
+				// OLD CODE END
+				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: DEVICE_LIST_LIMIT }),
 			]).then(([smartRes, summaryRes, devicesRes]) => {
 				smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
 				smartAlertsFailed = smartRes.status === 'rejected';
@@ -241,7 +252,10 @@
 				// OLD CODE START — #96: a failure read as "No device data available"
 				// topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
 				// OLD CODE END
-				if (devicesRes.status === 'fulfilled') topDevices = devicesRes.value.devices;
+				if (devicesRes.status === 'fulfilled') {
+					topDevices = devicesRes.value.devices;
+					deviceListFrom = devicesRes.value.from;
+				}
 				topDevicesFailed = devicesRes.status === 'rejected';
 			});
 
@@ -275,6 +289,7 @@
 		deviceCount = null;
 		alertCount = null;
 		topDevices = [];
+		deviceListFrom = null;
 		fetchAllData();
 	}
 
@@ -651,7 +666,10 @@
 					{#if registryFailed}
 						<p class="text-warning load-note">{loadFailed('devices', true)}</p>
 					{/if}
-					<DeviceGrid devices={registryDevices} loading={loading} />
+					<!-- OLD CODE START — the registry has no traffic, so every card read "--" -->
+					<!-- <DeviceGrid devices={registryDevices} loading={loading} /> -->
+					<!-- OLD CODE END -->
+					<DeviceGrid devices={deviceCards} loading={loading} />
 				{/if}
 			</div>
 			<div class="mirror-sidebar">
@@ -903,7 +921,10 @@
 	<div class="card categories-card">
 		<div class="card-header">
 			<span class="card-title">Traffic Categories</span>
-			<span class="card-subtitle">Bandwidth by category</span>
+			<!-- OLD CODE START — read as all traffic: the bars cover only connections to internet services (53.6 of 98.8 GB on the G11) -->
+			<!-- <span class="card-subtitle">Bandwidth by category</span> -->
+			<!-- OLD CODE END -->
+			<span class="card-subtitle">Traffic to internet services; local traffic isn't counted</span>
 		</div>
 		{#if loading && categories.length === 0}
 			<div class="skeleton-table">
