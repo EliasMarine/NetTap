@@ -232,3 +232,32 @@ class TestCategoriesPast500Asns(_FakeOpenSearchCase):
         self.assertEqual(cats["streaming"]["connection_count"], 1)
         self.assertEqual(cats["other"]["connection_count"], 1_200)  # was 1,000
         self.assertEqual(sum(c["total_bytes"] for c in cats.values()), 1_201_000)
+
+
+def _office_streaming() -> list[dict]:
+    """60 devices on Netflix: 50 light ones (2 x 1 kB) and 10 heavy ones (1 x 10 kB)."""
+    light = [
+        _conn(f"10.0.0.{n}", "198.51.100.7", "AS2906 Netflix Inc", 100, 900)
+        for n in range(50)
+        for _ in range(2)
+    ]
+    heavy = [_conn(f"10.0.1.{n}", "198.51.100.7", "AS2906 Netflix Inc", 1_000, 9_000) for n in range(10)]
+    return [*light, *heavy]
+
+
+class TestCategoryDetailPast50Devices(_FakeOpenSearchCase):
+    """/traffic/[category] totals and shares cover every device, not the 50 listed."""
+
+    DOCS = _office_streaming()
+
+    @unittest_run_loop
+    async def test_totals_and_shares_cover_all_60_devices(self):
+        data = await self._get("/api/traffic/categories/streaming")
+
+        self.assertEqual(data["device_count"], 60)  # was 50
+        self.assertEqual(data["total_bytes"], 200_000)  # was 100,000
+        self.assertEqual(data["connection_count"], 110)  # was 100
+        self.assertEqual(len(data["devices"]), 50)  # the list stays top 50, now by bytes
+        self.assertEqual(data["devices"][0]["total_bytes"], 10_000)  # heavy devices were missing
+        self.assertEqual(data["devices"][0]["percent"], 5.0)
+        self.assertEqual(data["devices"][-1]["percent"], 1.0)  # was 2.0

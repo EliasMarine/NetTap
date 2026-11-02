@@ -18,13 +18,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from services.traffic_classifier import get_category_devices
 
 
+_EMPTY = {"devices": [], "device_count": 0, "total_bytes": 0, "connection_count": 0}
+
+
 def _mock_device_response(device_buckets):
+    # #96: one composite page (no after_key), as all_buckets reads it
     return {
         "aggregations": {
-            "devices": {
+            "all": {
                 "buckets": [
                     {
-                        "key": ip,
+                        "key": {"ip": ip},
                         "doc_count": conns,
                         "total_bytes": {"value": total},
                         "download_bytes": {"value": dl},
@@ -56,9 +60,13 @@ class TestCategoryDevices(unittest.TestCase):
                 client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
             )
         )
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["ip"], "192.168.1.20")
-        self.assertEqual(result[0]["total_bytes"], 8_000_000)
+        devices = result["devices"]
+        self.assertEqual(len(devices), 2)
+        self.assertEqual(devices[0]["ip"], "192.168.1.20")
+        self.assertEqual(devices[0]["total_bytes"], 8_000_000)
+        self.assertEqual(result["device_count"], 2)
+        self.assertEqual(result["total_bytes"], 13_000_000)
+        self.assertEqual(result["connection_count"], 300)
 
     def test_unknown_category_returns_empty(self):
         client = MagicMock()
@@ -69,7 +77,7 @@ class TestCategoryDevices(unittest.TestCase):
                 client, "nonexistent", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
             )
         )
-        self.assertEqual(result, [])
+        self.assertEqual(result, _EMPTY)
 
     def test_device_fields_present(self):
         client = MagicMock()
@@ -86,7 +94,7 @@ class TestCategoryDevices(unittest.TestCase):
                 client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
             )
         )
-        device = result[0]
+        device = result["devices"][0]
         self.assertIn("ip", device)
         self.assertIn("total_bytes", device)
         self.assertIn("download_bytes", device)
@@ -102,7 +110,7 @@ class TestCategoryDevices(unittest.TestCase):
                 client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
             )
         )
-        self.assertEqual(result, [])
+        self.assertEqual(result, _EMPTY)
 
 
 if __name__ == "__main__":

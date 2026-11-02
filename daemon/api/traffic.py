@@ -695,7 +695,7 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     fingerprint = request.app.get("device_fingerprint")
 
     try:
-        devices, services = await asyncio.gather(
+        breakdown, services = await asyncio.gather(
             traffic_classifier.get_category_devices(
                 client, category, from_ts, to_ts, fingerprint=fingerprint
             ),
@@ -707,19 +707,41 @@ async def handle_category_detail(request: web.Request) -> web.Response:
             {"error": f"Category detail query failed: {exc}"}, status=500
         )
 
-    grand_total = sum(d["total_bytes"] for d in devices)
-    for d in devices:
-        d["percent"] = (
-            round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
-        )
+    # OLD CODE START — #96: totals and shares were taken over the 50 listed devices only
+    # grand_total = sum(d["total_bytes"] for d in devices)
+    # for d in devices:
+    #     d["percent"] = (
+    #         round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+    #     )
+    #
+    # return web.json_response(
+    #     {
+    #         "category": category,
+    #         "label": traffic_classifier.CATEGORIES[category],
+    #         "device_count": len(devices),
+    #         "total_bytes": grand_total,
+    #         "connection_count": sum(d["connections"] for d in devices),
+    #         "devices": devices,
+    #         "services": services,
+    #     }
+    # )
+    # OLD CODE END
+    grand_total = breakdown["total_bytes"]
+    devices = [
+        {
+            **d,
+            "percent": round(d["total_bytes"] / grand_total * 100, 1) if grand_total > 0 else 0,
+        }
+        for d in breakdown["devices"]
+    ]
 
     return web.json_response(
         {
             "category": category,
             "label": traffic_classifier.CATEGORIES[category],
-            "device_count": len(devices),
+            "device_count": breakdown["device_count"],
             "total_bytes": grand_total,
-            "connection_count": sum(d["connections"] for d in devices),
+            "connection_count": breakdown["connection_count"],
             "devices": devices,
             "services": services,
         }

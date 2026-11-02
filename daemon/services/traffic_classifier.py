@@ -897,6 +897,19 @@ def _asn_filters_for_category(category: str) -> list[str]:
     return [substr for substr, cat in ASN_CATEGORY_MAP.items() if cat == category]
 
 
+_NO_CATEGORY_DEVICES = {"devices": [], "device_count": 0, "total_bytes": 0, "connection_count": 0}
+
+
+def _category_device_row(bucket: dict) -> dict:
+    return {
+        "ip": bucket["key"]["ip"],
+        "total_bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
+        "download_bytes": int(bucket.get("download_bytes", {}).get("value", 0)),
+        "upload_bytes": int(bucket.get("upload_bytes", {}).get("value", 0)),
+        "connections": bucket.get("doc_count", 0),
+    }
+
+
 async def get_category_devices(
     client,
     category: str,
@@ -904,74 +917,130 @@ async def get_category_devices(
     to_ts: str,
     limit: int = 50,
     fingerprint=None,
-) -> list[dict]:
-    """Get per-device bandwidth breakdown for a traffic category."""
+) -> dict:
+    """Per-device bandwidth for a traffic category.
+
+    {"devices": the top `limit` devices by bytes, "device_count", "total_bytes",
+    "connection_count": over every device in the category}.
+    """
     asn_substrings = _asn_filters_for_category(category)
     if not asn_substrings:
-        return []
+        return {**_NO_CATEGORY_DEVICES}
 
     should_clauses = [
         {"wildcard": {"destination.as.full": f"*{substr}*"}}
         for substr in asn_substrings
     ]
 
+    # OLD CODE START — #96: the top `limit` devices by connections were the only ones counted,
+    # so totals, device_count and every share covered those 50 instead of the category
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 {"term": {"event.provider": "zeek"}},
+    #                 {"term": {"event.dataset": "conn"}},
+    #                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+    #             ],
+    #             "must": [
+    #                 {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+    #             ],
+    #         }
+    #     },
+    #     "aggs": {
+    #         "devices": {
+    #             "terms": {"field": "source.ip", "size": limit},
+    #             "aggs": {
+    #                 "total_bytes": {
+    #                     "sum": {
+    #                         "script": {
+    #                             "source": (
+    #                                 "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+    #                                 " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+    #                             ),
+    #                             "lang": "painless",
+    #                         }
+    #                     }
+    #                 },
+    #                 "download_bytes": {"sum": {"field": "destination.bytes"}},
+    #                 "upload_bytes": {"sum": {"field": "source.bytes"}},
+    #             },
+    #         }
+    #     },
+    # }
+    #
+    # try:
+    #     resp = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error(
+    #         "get_category_devices: OpenSearch query failed for category=%s",
+    #         category,
+    #         exc_info=True,
+    #     )
+    #     return []
+    #
+    # devices = []
+    # for bucket in resp.get("aggregations", {}).get("devices", {}).get("buckets", []):
+    #     devices.append(
+    #         {
+    #             "ip": bucket["key"],
+    #             "total_bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
+    #             "download_bytes": int(bucket.get("download_bytes", {}).get("value", 0)),
+    #             "upload_bytes": int(bucket.get("upload_bytes", {}).get("value", 0)),
+    #             "connections": bucket.get("doc_count", 0),
+    #         }
+    #     )
+    # OLD CODE END
     query = {
-        "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
-                    {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
-                ],
-                "must": [
-                    {"bool": {"should": should_clauses, "minimum_should_match": 1}},
-                ],
-            }
-        },
-        "aggs": {
-            "devices": {
-                "terms": {"field": "source.ip", "size": limit},
-                "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": (
-                                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
-                                    " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                                ),
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                    "download_bytes": {"sum": {"field": "destination.bytes"}},
-                    "upload_bytes": {"sum": {"field": "source.bytes"}},
-                },
-            }
-        },
+        "bool": {
+            "filter": [
+                {"term": {"event.provider": "zeek"}},
+                {"term": {"event.dataset": "conn"}},
+                {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            ],
+            "must": [
+                {"bool": {"should": should_clauses, "minimum_should_match": 1}},
+            ],
+        }
     }
-
+    per_device = {
+        "total_bytes": {
+            "sum": {
+                "script": {
+                    "source": (
+                        "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                        " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                    ),
+                    "lang": "painless",
+                }
+            }
+        },
+        "download_bytes": {"sum": {"field": "destination.bytes"}},
+        "upload_bytes": {"sum": {"field": "source.bytes"}},
+    }
     try:
-        resp = client.search(index=NETWORK_INDEX, body=query)
+        buckets, complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            query,
+            [{"ip": {"terms": {"field": "source.ip"}}}],
+            aggs=per_device,
+        )
     except Exception:
         logger.error(
             "get_category_devices: OpenSearch query failed for category=%s",
             category,
             exc_info=True,
         )
-        return []
+        return {**_NO_CATEGORY_DEVICES}
+    if not complete:
+        logger.warning("get_category_devices: stopped at %d devices; totals are short", len(buckets))
 
-    devices = []
-    for bucket in resp.get("aggregations", {}).get("devices", {}).get("buckets", []):
-        devices.append(
-            {
-                "ip": bucket["key"],
-                "total_bytes": int(bucket.get("total_bytes", {}).get("value", 0)),
-                "download_bytes": int(bucket.get("download_bytes", {}).get("value", 0)),
-                "upload_bytes": int(bucket.get("upload_bytes", {}).get("value", 0)),
-                "connections": bucket.get("doc_count", 0),
-            }
-        )
+    every = sorted(
+        (_category_device_row(b) for b in buckets), key=lambda d: d["total_bytes"], reverse=True
+    )
+    devices = every[:limit]
 
     if fingerprint:
         for d in devices:
@@ -983,8 +1052,16 @@ async def get_category_devices(
             except Exception:
                 d["hostname"] = None
 
-    devices.sort(key=lambda d: d["total_bytes"], reverse=True)
-    return devices
+    # OLD CODE START — #96: `every` is already ranked by bytes and the caller needs the totals
+    # devices.sort(key=lambda d: d["total_bytes"], reverse=True)
+    # return devices
+    # OLD CODE END
+    return {
+        "devices": devices,
+        "device_count": len(every),
+        "total_bytes": sum(d["total_bytes"] for d in every),
+        "connection_count": sum(d["connections"] for d in every),
+    }
 
 
 async def get_category_services(
