@@ -105,10 +105,10 @@ check "#89 inbound + outbound = total" "$rc" "in + out $IN_OUT, total $TOTAL"
 bracket "#89 connections for $MAC" "$WHO,$CONN_ONLY" "" "$MAC_PATH" "d['traffic']['connection_count']"
 TOP=$(api "$MAC_PATH" "d['traffic']['top_destinations'][0]['ip']")
 [[ "$TOP" =~ ^[0-9a-fA-F:.]+$ ]] || { echo "   ✗ no top destination: $TOP"; exit 1; }
-raw_bytes() {
+raw_bytes() {  # sums the two "value" fields; track_total_hits false keeps hits.total's out of the reply
     sudo docker exec nettap-opensearch curl -s --config /var/local/curlrc/.opensearch.primary.curlrc --insecure \
         -H 'Content-Type: application/json' "https://localhost:9200/arkime_sessions3-*/_search" \
-        -d "{\"size\":0,\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"$FROM_TS\",\"lte\":\"$TO_TS\"}}},$WHO,$CONN_ONLY,{\"term\":{\"destination.ip\":\"$TOP\"}}]}},\"aggs\":{\"o\":{\"sum\":{\"field\":\"source.bytes\"}},\"i\":{\"sum\":{\"field\":\"destination.bytes\"}}}}" \
+        -d "{\"size\":0,\"track_total_hits\":false,\"query\":{\"bool\":{\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"$FROM_TS\",\"lte\":\"$TO_TS\"}}},$WHO,$CONN_ONLY,{\"term\":{\"destination.ip\":\"$TOP\"}}]}},\"aggs\":{\"o\":{\"sum\":{\"field\":\"source.bytes\"}},\"i\":{\"sum\":{\"field\":\"destination.bytes\"}}}}" \
         | grep -o '"value":[0-9.]*' | cut -d: -f2 | awk '{s += $1} END {printf "%d", s}'
 }
 R1=$(raw_bytes); V=$(api "$MAC_PATH" "d['traffic']['top_destinations'][0]['bytes']"); R2=$(raw_bytes)
