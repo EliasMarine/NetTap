@@ -11,6 +11,7 @@
 - **Batches 18–20 (2026-11-02):** registry refresh 62 s → 0.9 s (#74) and console hostnames (#69); backup guide run on the box (#72) and DHCP gateway node (#75); LAN detection finds all three subnets, with no owner edit (#47).
 - **Batch 21 (2026-11-02):** phantom device from an 8-byte DHCP MAC (#76).
 - **Batch 22 (2026-11-02):** the OpenSearch login file is private (#77); the installer's bats tests now really check.
+- **Acceptance check (2026-11-02):** `scripts/remote/verify-acceptance.sh` re-checks the whole goal in one read-only run; 18 of 18 on the G11.
 - **Owner decisions (2026-11-02):** bridge mode and DHCP gateway mode are tested on hardware later, on a separate bench (the G11 stays mirror-only); the owner reviews and merges PRs #148–#152 personally.
 - **Still open:** none in this table. #75 is unit-tested only (the G11 stays in mirror mode).
 **Branch:** `fix/dashboard-data-accuracy`, off `fix/index-template-pattern`.
@@ -182,3 +183,4 @@ Status key: ⬜ todo · 🔧 in progress · ✅ done (code) · 🟢 verified on 
 - 2026-11-02: owner answered the Grafana question: keep it off by default (#71). Stacked PRs #148–#152 opened.
 - 2026-11-02: #77 deployed with `deploy-data-accuracy-batch22.sh`. The first run's three ✗ were the checks (host processes under `pid: host`, a fixed 90 s wait, `401` matching a number); the second run's user list was empty (`docker top` needs a PID column) and is now fixed; the final run is 16 of 16 with real per-user read checks.
 - 2026-11-02: owner decisions: bridge/DHCP gateway hardware tests later on a separate bench; the owner merges the PR chain personally.
+- 2026-11-02: one read-only acceptance check for the whole goal, `scripts/remote/verify-acceptance.sh` (`b795316`, `746db53`). First run: two ✗, both check bugs (supervisor one-shots `fix-perms` and `idxinit` are EXITED by design; the direct tshark count used the daemon's path, but the tshark container mounts PCAPs at `/pcap`). Second run 18 of 18: 15 containers up; mirror on enp4s0, link and promiscuous, 0.0% drops; newest PCAP 2 s old; 3,605 Zeek and 243 Suricata records in 5 min; Traffic summary = raw OpenSearch over a closed hour (22,477 connections, 2,291,542,938 bytes, 192.168.1.100 excluded on both sides); 55 devices, all with a MAC; TShark `dns` 50 = tshark direct 50; preview 20 DNS packets; download is pcap (`d4c3b2a1`); CyberChef link and page 200; Dashboards 200 with 109 dashboards; web `/login` 200.
