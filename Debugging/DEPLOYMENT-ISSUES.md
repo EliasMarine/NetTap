@@ -399,7 +399,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   second device; MACs keep 6 octets and long entries merge into the real one.
   Batch 22: the OpenSearch login (docker/curlrc) was 644 for every local account; now PUID-owned
   600, and every service still logs in. The installer's bats file had errexit off (fake passes).
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch22.sh.
+  Batch 23: every filtered TShark analysis spent its full 15 s match scan (piped tshark buffers
+  output and read on after head quit); tshark -l, 17.6 s -> 4.6 s. Same pipe in PCAP preview.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch23.sh.
+  Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks).
   Each checks its fixes against the live APIs.
 ```
 
@@ -1892,6 +1895,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 136. **A file a dropped-privilege process must read: give it to that user, don't open it to everyone (Chain 25)** — the installer made the OpenSearch login 644 because root:root 600 broke Malcolm (its entrypoints read it as PUID). PUID-owned 600 works for PUID and root and shuts out every other account. Check by reading the file as each process user in each consuming container (`docker exec -u <uid> c test -r f`).
 137. **A bats test that turns off `-e` can't fail on a middle line (Chain 25)** — `set +euo pipefail` in a helper made `test_malcolm_config.bats` pass with failing checks; restoring `-e` exposed 11. Also: a sourced script that defines `run()` replaces bats' `run`; keep a copy (`bats_run`). Prove a new test fails on the old code before trusting it.
 138. **`docker top` needs a PID column** — `docker top c -o uid` fails ("Couldn't find PID field"); use `-o pid,uid`. And an empty list must fail a check, not pass it vacuously.
+139. **`tshark ... | head -n N` does not stop tshark (Chain 25, #78)** — piped tshark buffers 4 KB of output, so it only sees head has quit on a later flush and may read the whole file first. Every filtered analysis used its full 15 s scan for a 1 s job. Use `tshark -l` (flush per line) whenever its output feeds `head`. Time each pass on the box before guessing.
+140. **Zeek windows are never closed (Chain 25)** — a connection is logged when it ends but stamped with its start, so a past time window keeps gaining records. Compare an API figure against OpenSearch by bracketing it between a raw read just before and one just after, not one read taken at another moment.
 
 ---
 
