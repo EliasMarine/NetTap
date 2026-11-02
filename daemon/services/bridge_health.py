@@ -47,7 +47,10 @@ class BridgeHealthCheck:
     lan_link: bool  # carrier detected on LAN NIC
     bypass_active: bool
     watchdog_active: bool
-    latency_us: float  # bridge latency estimate in microseconds
+    # OLD CODE START — #96: a simulated estimate (fixed 50 µs) was shown as a figure
+    # latency_us: float  # bridge latency estimate in microseconds
+    # OLD CODE END
+    latency_us: float | None  # bridge latency in µs; None = not measured
     rx_bytes_delta: int  # bytes received since last check
     tx_bytes_delta: int  # bytes transmitted since last check
     rx_packets_delta: int  # packets received since last check
@@ -56,9 +59,14 @@ class BridgeHealthCheck:
     health_status: str  # "normal" | "degraded" | "bypass" | "down" | "not_configured"
     issues: list  # human-readable issue descriptions
     last_check: str  # ISO timestamp
+    latency_note: str = ""  # why latency_us is None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# Timing the bridge needs timestamped packets on both ports, which NetTap doesn't have
+LATENCY_NOT_MEASURED = "Not measured: NetTap can't time packets through the bridge"
 
 
 class BridgeHealthMonitor:
@@ -176,9 +184,12 @@ class BridgeHealthMonitor:
         # Check watchdog
         watchdog_active = await self._check_watchdog()
 
-        # Estimate bridge latency (simulated -- real measurement would
-        # require timestamped packets through the bridge path)
-        latency_us = self._estimate_latency(bridge_state, wan_link, lan_link)
+        # OLD CODE START — #96: a made-up figure (50 µs, 150 µs degraded) shown as latency
+        # # Estimate bridge latency (simulated -- real measurement would
+        # # require timestamped packets through the bridge path)
+        # latency_us = self._estimate_latency(bridge_state, wan_link, lan_link)
+        # OLD CODE END
+        latency_us = None
 
         # Build issue list
         if bridge_state == "not_configured":
@@ -221,6 +232,7 @@ class BridgeHealthMonitor:
             health_status=health_status,
             issues=issues,
             last_check=now.isoformat(),
+            latency_note=LATENCY_NOT_MEASURED,
         )
 
         self._history.append(check)
@@ -265,7 +277,10 @@ class BridgeHealthMonitor:
                 },
             }
 
-        latencies = [h.latency_us for h in self._history if h.latency_us > 0]
+        # OLD CODE START — #96: latency_us is None when not measured
+        # latencies = [h.latency_us for h in self._history if h.latency_us > 0]
+        # OLD CODE END
+        latencies = [h.latency_us for h in self._history if h.latency_us]
         avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else None
 
         total_rx_bytes = sum(h.rx_bytes_delta for h in self._history)
@@ -566,28 +581,20 @@ class BridgeHealthMonitor:
 
         return "normal"
 
-    def _estimate_latency(
-        self, bridge_state: str, wan_link: bool, lan_link: bool
-    ) -> float:
-        """Estimate bridge forwarding latency in microseconds.
-
-        This is a simulated estimate. Real latency measurement would
-        require timestamped test packets through the bridge path.
-
-        Returns:
-            Estimated latency in microseconds.
-        """
-        if bridge_state != "up":
-            return 0.0
-
-        # Base latency for a software bridge on modern hardware
-        base_latency = 50.0  # ~50us for Linux bridge forwarding
-
-        if not wan_link or not lan_link:
-            # Degraded -- higher latency estimate
-            return base_latency * 3
-
-        return base_latency
+    # OLD CODE START — #96: a simulated latency, shown on the dashboard as if measured
+    # def _estimate_latency(
+    #     self, bridge_state: str, wan_link: bool, lan_link: bool
+    # ) -> float:
+    #     """Estimate bridge forwarding latency in microseconds (simulated)."""
+    #     if bridge_state != "up":
+    #         return 0.0
+    #     # Base latency for a software bridge on modern hardware
+    #     base_latency = 50.0  # ~50us for Linux bridge forwarding
+    #     if not wan_link or not lan_link:
+    #         # Degraded -- higher latency estimate
+    #         return base_latency * 3
+    #     return base_latency
+    # OLD CODE END
 
     def _check_bypass_file(self) -> bool:
         """Check if the bypass state file exists on disk."""

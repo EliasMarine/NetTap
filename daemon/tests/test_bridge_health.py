@@ -56,6 +56,7 @@ class TestBridgeHealthCheckDataclass(unittest.TestCase):
             "health_status",
             "issues",
             "last_check",
+            "latency_note",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -183,26 +184,12 @@ class TestDetermineHealthStatus(unittest.TestCase):
         self.assertEqual(status, "not_configured")
 
 
-class TestEstimateLatency(unittest.TestCase):
-    """Tests for BridgeHealthMonitor._estimate_latency()."""
-
-    def setUp(self):
-        self.monitor = BridgeHealthMonitor()
-
-    def test_bridge_not_up_returns_zero(self):
-        """Non-up bridge should return 0 latency."""
-        self.assertEqual(self.monitor._estimate_latency("down", True, True), 0.0)
-        self.assertEqual(self.monitor._estimate_latency("unknown", True, True), 0.0)
-
-    def test_normal_latency(self):
-        """Bridge up with both links should return base latency."""
-        latency = self.monitor._estimate_latency("up", True, True)
-        self.assertEqual(latency, 50.0)
-
-    def test_degraded_latency_higher(self):
-        """Missing link should return higher latency."""
-        latency = self.monitor._estimate_latency("up", False, True)
-        self.assertGreater(latency, 50.0)
+# OLD CODE START — #96: _estimate_latency (a simulated 50 µs) was removed
+# class TestEstimateLatency(unittest.TestCase):
+#     def test_bridge_not_up_returns_zero(self): ... == 0.0
+#     def test_normal_latency(self): ... == 50.0
+#     def test_degraded_latency_higher(self): ... > 50.0
+# OLD CODE END
 
 
 class TestCalculateDeltas(unittest.TestCase):
@@ -305,8 +292,18 @@ class TestCheckHealth(unittest.TestCase):
             "health_status",
             "issues",
             "last_check",
+            "latency_note",
         }
         self.assertEqual(set(result.keys()), expected_keys)
+
+    def test_latency_is_not_measured_not_a_made_up_figure(self):
+        """#96: there is no latency measurement, so none is reported."""
+        monitor = self._make_monitor_with_mocks("up", True, True)
+        result = asyncio.run(monitor.check_health())
+        self.assertIsNone(result["latency_us"])
+        self.assertIn("Not measured", result["latency_note"])
+        stats = asyncio.run(monitor.get_statistics())
+        self.assertIsNone(stats["average_latency_us"])
 
     def test_check_health_normal(self):
         """Bridge up + both links = normal health."""
