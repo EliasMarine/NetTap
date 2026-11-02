@@ -30,7 +30,7 @@ The consequences of this blind spot are meaningful: undetected malware beaconing
 
 - Provide full packet capture and metadata logging for all traffic between ISP and router
 - Deliver a web-based dashboard with real-time and historical traffic analytics
-- Enable deep packet inspection and session-level forensic review via Arkime
+- Enable deep packet inspection and session-level forensic review via NetTap's PCAP Search and TShark tools (Arkime is off by default since 2026-11-02, owner decision; see 5.2)
 - Run IDS/IPS alerting via Suricata with community rulesets pre-loaded
 - Be deployable on commodity N100 dual-NIC mini PCs for under $200 hardware cost
 - Require no ongoing cloud dependency or subscription fee
@@ -72,7 +72,7 @@ The appliance requires a host device with two physical NICs. The recommended ref
 | Containerization | Docker + Docker Compose | Orchestrates all Malcolm service containers |
 | Traffic Capture | Zeek (via Malcolm) | Converts raw packets into structured network metadata logs |
 | IDS/IPS | Suricata (via Malcolm) | Signature and anomaly-based intrusion detection with alerting |
-| Packet Archive | Arkime (via Malcolm) | Full PCAP storage with session-level search and replay |
+| Packet Archive | netsniff-ng (Malcolm `pcap-capture`) + NetTap PCAP Search and TShark | Rolling PCAP storage; PCAP Search finds sessions by BPF filter, TShark decodes and replays packets. Arkime stays in the compose file but is off by default (owner decision 2026-11-02: it never worked on NetTap and nothing used it) |
 | Data Store | OpenSearch (via Malcolm) | Indexed storage of all Zeek logs and Suricata alerts |
 | Dashboards | OpenSearch Dashboards | Primary web UI for traffic analytics, filtering, investigation |
 | Visualization | Grafana (optional) | Custom dashboards for bandwidth trends and executive summaries |
@@ -122,7 +122,7 @@ Continuous write workloads are demanding on consumer SSDs. NetTap's reference de
 - A web-based dashboard MUST be accessible on the local network at a friendly hostname (e.g., `nettap.local`)
 - The home screen MUST display: real-time bandwidth (in/out), top talker IPs, top destinations, protocol distribution, and active alert count
 - Users MUST be able to filter all views by time range, source IP, destination IP, protocol, and port
-- The Arkime interface MUST allow session search and raw packet replay for any captured session within the retention window
+- NetTap's PCAP Search and TShark tools MUST allow session search and raw packet replay for any captured session within the retention window (this replaced the Arkime interface: Arkime is off by default since 2026-11-02, owner decision)
 - A dedicated Alerts view MUST surface Suricata detections with severity, rule name, source/destination, and timestamp
 - GeoIP maps MUST visualize outbound connection destinations globally
 

@@ -24,11 +24,19 @@ from api.settings import _load_env_file, _save_env_file
 logger = logging.getLogger("nettap.api.capture_control")
 
 CONTAINER_NAME = "nettap-pcap-capture"
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile
+# "arkime", tracking-fixes/2026-11-01-dashboard-data-accuracy.md #44)
+# CAPTURE_CONTAINERS = (
+#     "nettap-zeek-live",
+#     "nettap-suricata-live",
+#     "nettap-arkime-live",
+#     CONTAINER_NAME,
+# )
+# OLD CODE END
 # Containers whose entrypoint reads /etc/nettap/capture.env
 CAPTURE_CONTAINERS = (
     "nettap-zeek-live",
     "nettap-suricata-live",
-    "nettap-arkime-live",
     CONTAINER_NAME,
 )
 DEFAULT_ENV_FILE = "/opt/nettap/data/.env"

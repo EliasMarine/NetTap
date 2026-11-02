@@ -232,7 +232,10 @@ monitor_startup() {
     # shellcheck disable=SC2034
     local -a critical_services=(opensearch)
     local -a dependent_services=(dashboards-helper dashboards logstash)
-    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    # OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+    # local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    # OLD CODE END
+    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture)
     local -a infra_services=(redis api nginx-proxy)
     local -a nettap_services=(nettap-storage-daemon nettap-web nettap-grafana nettap-nginx nettap-tshark nettap-cyberchef)
 

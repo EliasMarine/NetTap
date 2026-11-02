@@ -325,7 +325,6 @@ class TestRestartCaptureContainers(unittest.TestCase):
     ALL = [
         "nettap-zeek-live",
         "nettap-suricata-live",
-        "nettap-arkime-live",
         "nettap-pcap-capture",
     ]
 
@@ -348,7 +347,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
             result = asyncio.run(restart_capture_containers())
         return result, mock_cmd
 
-    def test_restarts_all_four_running_containers(self):
+    def test_restarts_all_three_running_containers(self):
         result, mock_cmd = self._run(
             lambda c: _mock_container_status(True), lambda a, c: (0, "")
         )
@@ -367,7 +366,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
         result, _ = self._run(lambda c: _mock_container_status(True), cmd)
         self.assertEqual(
             result["restarted"],
-            ["nettap-zeek-live", "nettap-arkime-live", "nettap-pcap-capture"],
+            ["nettap-zeek-live", "nettap-pcap-capture"],
         )
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("nettap-suricata-live", result["errors"][0])
@@ -379,7 +378,18 @@ class TestRestartCaptureContainers(unittest.TestCase):
 
         result, _ = self._run(lambda c: _mock_container_status(True), cmd)
         self.assertEqual(result["restarted"], [])
-        self.assertEqual(len(result["errors"]), 4)
+        self.assertEqual(len(result["errors"]), 3)
+
+    def test_never_touches_arkime(self):
+        """arkime-live is off by default (compose profile "arkime", #44): even a
+        running one is never restarted, since restarting would keep it going."""
+        result, mock_cmd = self._run(
+            lambda c: _mock_container_status(True), lambda a, c: (0, "")
+        )
+        self.assertNotIn("nettap-arkime-live", result["restarted"])
+        self.assertNotIn(
+            "nettap-arkime-live", [call.args[1] for call in mock_cmd.await_args_list]
+        )
 
     def test_stopped_container_is_left_stopped(self):
         """docker restart would start it; the PCAP toggle stops it on purpose."""

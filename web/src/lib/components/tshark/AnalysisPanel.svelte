@@ -81,7 +81,10 @@
 		}
 
 		if (pcapFiles.length === 0) {
-			errorMessage = 'No PCAP files found. Arkime may not be capturing packets, or the PCAP volume is empty.';
+			// OLD CODE START — 2026-11-02: netsniff (pcap-capture) writes the PCAP; Arkime is off (#44)
+			// errorMessage = 'No PCAP files found. Arkime may not be capturing packets, or the PCAP volume is empty.';
+			// OLD CODE END
+			errorMessage = 'No PCAP files found. PCAP capture may be turned off, or the PCAP volume is empty.';
 			return;
 		}
 

@@ -8,7 +8,10 @@ REPO_DIR="/home/nettap/NetTap"
 BRANCH="phase-4/dhcp-gateway-mode"
 COMPOSE="docker/docker-compose.yml"
 DAEMON="nettap-storage-daemon"
-CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-arkime-live nettap-pcap-capture)
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+# CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-arkime-live nettap-pcap-capture)
+# OLD CODE END
+CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-pcap-capture)
 
 echo "=== Deploy DHCP gateway capture mode ==="
 echo ""
@@ -26,10 +29,15 @@ sudo docker compose -f "$COMPOSE" build nettap-storage-daemon nettap-web || echo
 echo "   ✓ Images rebuilt"
 echo ""
 
-echo "→ Step 3: Recreate daemon, web and the four capture containers..."
+echo "→ Step 3: Recreate daemon, web and the three capture containers..."
 # --no-deps: never touch OpenSearch (recreating it resets its security mapping).
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44); naming it here would start it
+# sudo docker compose -f "$COMPOSE" up -d --no-deps --force-recreate \
+#     nettap-storage-daemon nettap-web zeek-live suricata-live arkime-live pcap-capture \
+#     || echo "   ✗ recreate failed"
+# OLD CODE END
 sudo docker compose -f "$COMPOSE" up -d --no-deps --force-recreate \
-    nettap-storage-daemon nettap-web zeek-live suricata-live arkime-live pcap-capture \
+    nettap-storage-daemon nettap-web zeek-live suricata-live pcap-capture \
     || echo "   ✗ recreate failed"
 echo "   ✓ Containers recreated"
 echo ""

@@ -12,7 +12,10 @@ set -u
 
 REPO_DIR="/home/nettap/NetTap"
 DAEMON="nettap-storage-daemon"
-CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-arkime-live nettap-pcap-capture)
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+# CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-arkime-live nettap-pcap-capture)
+# OLD CODE END
+CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-pcap-capture)
 SAMPLE_SECONDS=10
 # A non-mirror port sees broadcast/multicast and only the odd flooded unicast
 # frame; a working uplink mirror sees a steady stream of other hosts' unicast.

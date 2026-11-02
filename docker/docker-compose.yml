@@ -531,6 +531,12 @@ services:
         condition: service_healthy
 
   arkime-live:
+    # Off by default (owner decision 2026-11-02, tracking-fixes/2026-11-01-dashboard-data-accuracy.md #44):
+    # it never started (no curlrc mount) and nothing in NetTap uses it; PCAP Search and
+    # TShark read the netsniff files from pcap-capture. Start it only with --profile arkime.
+    # Naming it on a compose command line also starts it, so scripts must not list it.
+    # ARKIME_SECRET below stays required: compose interpolates every service.
+    profiles: ["arkime"]
     image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-arkime-live
     restart: unless-stopped

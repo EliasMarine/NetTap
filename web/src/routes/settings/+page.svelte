@@ -1694,7 +1694,8 @@
 					</div>
 					<div class="about-row">
 						<span class="about-label">Stack</span>
-						<span class="about-value">Zeek + Suricata + Arkime + OpenSearch</span>
+						<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
+						<span class="about-value">Zeek + Suricata + OpenSearch</span>
 					</div>
 					<div class="about-row">
 						<span class="about-label">Build</span>

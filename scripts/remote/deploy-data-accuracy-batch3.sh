@@ -2,9 +2,9 @@
 # Deploy dashboard data-accuracy batch 3 and check each fix on the box.
 # Tracking: tracking-fixes/2026-11-01-dashboard-data-accuracy.md
 #
-# Recreates the daemon and web (new code) and zeek-live, suricata-live and
-# arkime-live (offline PCAP processor switched off). Capture pauses for a few
-# seconds while the live containers restart.
+# Recreates the daemon and web (new code) and zeek-live and suricata-live
+# (offline PCAP processor switched off). Capture pauses for a few seconds while
+# the live containers restart. arkime-live is off by default since 2026-11-02 (#44).
 #
 # Run as the normal user (NOT with sudo):
 #   bash /home/nettap/NetTap/scripts/remote/deploy-data-accuracy-batch3.sh
@@ -66,7 +66,10 @@ echo "   ✓ Images built"
 echo ""
 
 echo "→ Step 3: Recreate daemon, web and the live capture containers..."
-"${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web zeek-live suricata-live arkime-live
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44); naming it here would start it
+# "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web zeek-live suricata-live arkime-live
+# OLD CODE END
+"${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web zeek-live suricata-live
 # nginx bind-mounts nginx.conf as a single file; git replaced the file, so a reload
 # would keep the old copy. A restart re-reads it (CSP worker-src for CyberChef).
 sudo docker restart nettap-nginx >/dev/null
@@ -78,7 +81,10 @@ wait_healthy nettap-web
 CSP=$(curl -skI https://localhost/cyberchef/ | grep -i '^content-security-policy')
 if printf '%s' "$CSP" | grep -q "worker-src 'self' blob:"; then rc=0; else rc=1; fi
 check "#36 CSP lets CyberChef start its workers" "$rc" "$(printf '%s' "$CSP" | grep -o "worker-src[^;]*" || echo 'worker-src missing')"
-for c in nettap-zeek-live nettap-suricata-live nettap-arkime-live; do
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+# for c in nettap-zeek-live nettap-suricata-live nettap-arkime-live; do
+# OLD CODE END
+for c in nettap-zeek-live nettap-suricata-live; do
     state=$(sudo docker inspect --format='{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
     if [ "$state" = "running" ]; then rc=0; else rc=1; fi
     check "$c running" "$rc" "$state"
@@ -86,7 +92,10 @@ done
 echo ""
 
 echo "→ Step 5: Check each fix..."
-for c in nettap-zeek-live nettap-suricata-live nettap-arkime-live; do
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+# for c in nettap-zeek-live nettap-suricata-live nettap-arkime-live; do
+# OLD CODE END
+for c in nettap-zeek-live nettap-suricata-live; do
     # wc -l, not grep -c: grep -c exits 1 on a zero count, which tripped the fallback
     PROCS=$(sudo docker exec "$c" sh -c 'ps -eo args | grep "[p]cap_.*_processor.py" | wc -l' 2>/dev/null | tr -d ' ')
     if [ "$PROCS" = "0" ]; then rc=0; else rc=1; fi

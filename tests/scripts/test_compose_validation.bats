@@ -781,3 +781,22 @@ print('pcap writer: OK')
             echo "$svc is missing ${prefix}_PCAP_PROCESSOR: \"false\""; return 1; }
     done
 }
+
+@test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # It never started (no curlrc mount) and nothing uses it (dashboard data accuracy #44).
+    # A plain "docker compose up -d" must not start it, and nothing may depend on it.
+    run _compose_query "
+svc = data['services']['arkime-live']
+assert svc.get('profiles') == ['arkime'], 'arkime-live must only start with --profile arkime: ' + repr(svc.get('profiles'))
+deps = [name for name, s in data['services'].items() if 'arkime-live' in (s.get('depends_on') or {})]
+assert not deps, 'these services depend on arkime-live: ' + str(deps)
+others = [name for name, s in data['services'].items() if name != 'arkime-live' and s.get('profiles')]
+assert not others, 'only arkime-live is profiled out of the default stack: ' + str(others)
+print('arkime profile: OK')
+"
+    [ "$status" -eq 0 ]
+}
