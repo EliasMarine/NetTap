@@ -5,6 +5,7 @@
 #   #48 tshark/mergecap run under coreutils timeout inside the container (no orphans)
 #   #49 PCAP search is a background job the page polls (no 10 s proxy timeout)
 #   #50 filtered preview shows the first 100 matches, not matches among 100 packets
+#   #51 PCAP downloads no longer cut off after 10 s (web proxy follows the browser request)
 # Capture (netsniff, Zeek, Suricata) is not restarted.
 #
 # Run as the normal user (NOT with sudo):
@@ -65,7 +66,7 @@ wait_healthy nettap-storage-daemon
 wait_healthy nettap-web
 echo ""
 
-echo "→ Step 4: Check PCAP preview and search through the daemon API (~2 min)..."
+echo "→ Step 4: Check PCAP preview and search through the daemon API (up to ~6 min)..."
 # One Python block in the daemon container: no host python3, nothing piped into sudo.
 OUT=$(sudo docker exec nettap-storage-daemon python3 -c "
 import json, time, urllib.parse, urllib.request
@@ -90,7 +91,7 @@ try:
     q = dict(filter='dns', **{'from': (now - timedelta(hours=1)).isoformat(), 'to': now.isoformat()})
     s, dt = get('/api/pcap/search', **q)
     print(f'SEARCH_START {s[\"files_total\"]} {s[\"files_checked\"]} {s[\"complete\"]} {dt:.2f}')
-    for _ in range(40):
+    for _ in range(100):  # a busy 20-minute file is ~1-3.5 GB: minutes at 0.5 CPU
         time.sleep(3)
         s, _ = get('/api/pcap/search', **q)
         if s['files_checked'] >= 1:
@@ -106,8 +107,8 @@ if [ "${N:-0}" -ge 1 ] && awk -v t="${DT:-99}" 'BEGIN { exit !(t < 10) }'; then 
 check "#48 preview of the newest file answers inside the 10 s proxy limit" "$rc" "${N:-?} packets in ${DT:-?} s"
 
 read -r _ N DNS DT <<<"$(echo "$OUT" | grep '^FILTERED')"
-if [ "${N:-0}" -ge 1 ] && [ "${DNS:-0}" -eq "${N:-x}" ]; then rc=0; else rc=1; fi
-check "#50 filtered preview returns matching packets from anywhere in the file" "$rc" "${N:-?} packets, ${DNS:-?} DNS, ${DT:-?} s"
+if [ "${N:-0}" -ge 1 ] && [ "${DNS:-0}" -eq "${N:-x}" ] && awk -v t="${DT:-99}" 'BEGIN { exit !(t < 60) }'; then rc=0; else rc=1; fi
+check "#50 filtered preview returns matching packets from anywhere in the file (60 s proxy limit)" "$rc" "${N:-?} packets, ${DNS:-?} DNS, ${DT:-?} s"
 
 read -r _ TOTAL CHECKED COMPLETE DT <<<"$(echo "$OUT" | grep '^SEARCH_START')"
 if [ "${TOTAL:-0}" -ge 1 ] && awk -v t="${DT:-99}" 'BEGIN { exit !(t < 2) }'; then rc=0; else rc=1; fi
@@ -117,10 +118,14 @@ read -r _ CHECKED TOTAL COUNT TIMED <<<"$(echo "$OUT" | grep '^SEARCH_PROGRESS')
 if [ "${CHECKED:-0}" -ge 1 ]; then rc=0; else rc=1; fi
 check "#49 search job makes progress in the background" "$rc" "checked ${CHECKED:-?} of ${TOTAL:-?}, files with DNS=${COUNT:-?}, timed out=${TIMED:-?}"
 
-PROCS=$(sudo docker top nettap-tshark -eo args 2>/dev/null | grep -c '^tshark ')
-BOUNDED=$(sudo docker top nettap-tshark -eo args 2>/dev/null | grep -c '^timeout -k 5 ')
+# docker top needs a pid column ("Couldn't find PID field" otherwise)
+PROCS=$(sudo docker top nettap-tshark -eo pid,args 2>/dev/null | awk 'NR > 1 && $2 == "tshark"' | wc -l)
+BOUNDED=$(sudo docker top nettap-tshark -eo pid,args 2>/dev/null | awk 'NR > 1 && $2 == "timeout"' | wc -l)
 if [ "$PROCS" -le 2 ] && [ "$BOUNDED" -ge "$PROCS" ]; then rc=0; else rc=1; fi
 check "#48 tshark processes are bounded and few" "$rc" "tshark=$PROCS under-timeout=$BOUNDED (limit 2)"
+
+# #51 has no on-box check: a container-to-container download finishes before 10 s.
+# It is covered by web/src/routes/api/catchall-proxy.test.ts.
 
 MEM=$(sudo docker stats --no-stream --format '{{.MemUsage}}' nettap-tshark)
 check "#48 tshark container memory" 0 "$MEM (was 909 MiB of 1 GiB with orphans)"
