@@ -44,7 +44,7 @@ from api.devices import (
     _vendor_category,
 )
 from services.device_fingerprint import _mac_from_hit, _oui_from_hit
-from services.device_registry import DeviceRegistry
+from services.device_registry import DeviceRegistry, record_time
 from services.unifi_integration import UnifiIntegration, normalize_controller_url
 
 logger = logging.getLogger("nettap.api.devices_v2")
@@ -115,7 +115,9 @@ def _conn_device_aggs() -> dict:
                     }
                 }
             },
-        }
+        },
+        # the device's last record: the registry's last_seen, as on the Devices page
+        "last_record": {"max": {"field": "@timestamp"}},
     }
 
 
@@ -141,7 +143,11 @@ def _register_conn_devices(registry: DeviceRegistry, buckets: list[dict]) -> dic
         # OLD CODE END
         oui = _oui_from_hit(hits[0])  # Malcolm's IEEE vendor name, absent for randomized MACs
         metadata = {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None
-        registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata)
+        # OLD CODE START — no record time: last_seen became the refresh time
+        # registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata)
+        # OLD CODE END
+        seen_at = record_time(bucket.get("last_record", {}).get("value"))
+        registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata, seen_at=seen_at)
         assigned[ip] = mac
     return assigned
 

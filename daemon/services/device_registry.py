@@ -27,6 +27,29 @@ from services.excluded_ips import CONN_RECORDS
 
 logger = logging.getLogger("nettap.services.device_registry")
 
+
+def record_time(epoch_ms: Any) -> str | None:
+    """An OpenSearch date (epoch ms, as a sort value or max aggregation returns it) as ISO, or None."""
+    if not isinstance(epoch_ms, (int, float)) or isinstance(epoch_ms, bool):
+        return None
+    return datetime.fromtimestamp(epoch_ms / 1000, timezone.utc).isoformat()
+
+
+def hit_time(hit: dict) -> str | None:
+    """The record time of a hit from a search sorted on @timestamp."""
+    sort = hit.get("sort") or [None]
+    return record_time(sort[0])
+
+
+def _later(current: str | None, seen_at: str) -> str:
+    """The later of a stored last_seen and a record time; an unreadable stored value gives way."""
+    try:
+        if current and datetime.fromisoformat(current) >= datetime.fromisoformat(seen_at):
+            return current
+    except (TypeError, ValueError):
+        pass
+    return seen_at
+
 DEVICES_INDEX = "nettap-devices"
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
@@ -97,6 +120,7 @@ class DeviceRegistry:
         ip: str | None = None,
         source: str = "unknown",
         metadata: dict | None = None,
+        seen_at: str | None = None,
     ) -> dict:
         """Upsert a device record, merging enrichment data.
 
@@ -105,6 +129,8 @@ class DeviceRegistry:
             ip: IP address currently associated with this device.
             source: Enrichment source name (e.g. "dhcp", "arp", "mdns", "unifi").
             metadata: Additional enrichment data from this source.
+            seen_at: Time of the network record this comes from. Only a record moves
+                last_seen; vendor and OS lookups (no record) leave it alone.
 
         Returns:
             The updated device document dict.
@@ -162,8 +188,14 @@ class DeviceRegistry:
             }
             doc["enrichment_sources"] = enrichment
 
-            # Update last_seen
-            doc["last_seen"] = now
+            # OLD CODE START — every update, a vendor or OS lookup included, made the device
+            # "last seen" at the moment the registry ran: Home said "4m ago" for devices
+            # last heard 24 min (or 17 h) earlier
+            # # Update last_seen
+            # doc["last_seen"] = now
+            # OLD CODE END
+            if seen_at:
+                doc["last_seen"] = _later(doc.get("last_seen"), seen_at)
 
             # No longer new after first update
             doc["is_new"] = False
@@ -188,8 +220,12 @@ class DeviceRegistry:
                 "category": metadata.get("category")
                 if metadata.get("category") in VALID_CATEGORIES
                 else CATEGORY_UNKNOWN,
-                "first_seen": now,
-                "last_seen": now,
+                # OLD CODE START — registration time, up to a refresh window after the record
+                # "first_seen": now,
+                # "last_seen": now,
+                # OLD CODE END
+                "first_seen": seen_at or now,
+                "last_seen": seen_at or now,
                 "is_new": True,
                 "enrichment_sources": {
                     source: {
@@ -678,7 +714,7 @@ class DeviceRegistry:
                 if vendor_class:
                     metadata["vendor_class"] = vendor_class
 
-                self.register_device(mac=mac, ip=ip, source="dhcp", metadata=metadata)
+                self.register_device(mac=mac, ip=ip, source="dhcp", metadata=metadata, seen_at=hit_time(hit))
                 count += 1
 
         except OpenSearchException as exc:
@@ -810,6 +846,7 @@ class DeviceRegistry:
                         ip=ip,
                         source="mdns",
                         metadata={"hostname": hostname, "mdns_query": dns_query},
+                        seen_at=hit_time(hit),
                     )
                     count += 1
 
@@ -887,7 +924,7 @@ class DeviceRegistry:
                     if parts:
                         metadata["hostname"] = parts[0].replace("-", " ")
 
-                self.register_device(mac=mac, ip=ip, source="ssdp", metadata=metadata)
+                self.register_device(mac=mac, ip=ip, source="ssdp", metadata=metadata, seen_at=hit_time(hit))
                 count += 1
 
         except OpenSearchException as exc:

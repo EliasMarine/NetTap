@@ -31,11 +31,16 @@ from services.device_registry import DeviceRegistry
 LAN_FILTER = {"terms": {"source.ip": ["192.168.1.0/24"]}}
 
 
-def _bucket(ip: str, mac: str | list[str] | None, oui: str | None = None) -> dict:
+LAST_RECORD = "2026-11-02T21:30:00+00:00"
+
+
+def _bucket(ip: str, mac: str | list[str] | None, oui: str | None = None, last: str = LAST_RECORD) -> dict:
     """A conn terms bucket as OpenSearch returns it for _conn_devices_query."""
     source = {"mac": mac, **({"oui": oui} if oui else {})}
     macs = [] if mac is None else [{"key": "x", "doc_count": 12, "latest": {"hits": {"hits": [{"_source": {"source": source}}]}}}]
-    return {"key": ip, "doc_count": 12, "with_mac": {"doc_count_error_upper_bound": 0, "buckets": macs}}
+    last_ms = datetime.fromisoformat(last).timestamp() * 1000
+    return {"key": ip, "doc_count": 12, "with_mac": {"doc_count_error_upper_bound": 0, "buckets": macs},
+            "last_record": {"value": last_ms, "value_as_string": last}}
 
 
 def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
@@ -201,6 +206,44 @@ class TestReRegistration:
         assert doc["first_seen"] == old
         assert doc["last_seen"] > old
         assert doc["ips"] == ["192.168.1.10", "192.168.1.20"]
+
+
+class TestLastSeenIsTheLastRecord:
+    """Home said "last seen 4m ago" for devices last heard 24 min or 17 h earlier: every
+    registry update, a vendor or OS lookup included, set last_seen to the time it ran."""
+
+    def test_last_seen_is_the_devices_last_record_not_the_refresh_time(self):
+        client = _fake_client([_bucket("192.168.1.20", "aa:bb:cc:00:00:01", last="2026-11-02T21:05:00+00:00")])
+
+        refresh_device_registry(_app(client))
+
+        doc = client.store["AA:BB:CC:00:00:01"]
+        assert doc["last_seen"] == "2026-11-02T21:05:00+00:00"
+        assert doc["first_seen"] == "2026-11-02T21:05:00+00:00"
+
+    def test_an_older_record_does_not_move_last_seen_back(self):
+        newer = "2026-11-02T21:40:00+00:00"
+        store = {"AA:BB:CC:00:00:01": {"mac": "AA:BB:CC:00:00:01", "ips": ["192.168.1.20"], "category": "unknown",
+                                       "first_seen": "2026-11-01T00:00:00+00:00", "last_seen": newer}}
+        client = _fake_client([_bucket("192.168.1.20", "aa:bb:cc:00:00:01", last="2026-11-02T21:05:00+00:00")], store)
+
+        refresh_device_registry(_app(client))
+
+        assert client.store["AA:BB:CC:00:00:01"]["last_seen"] == newer
+
+    def test_a_vendor_lookup_leaves_last_seen_alone(self):
+        quiet = "2026-11-02T04:00:00+00:00"
+        mac = "70:A7:41:3F:1B:59"
+        store = {mac: {"mac": mac, "ips": ["192.168.1.220"], "manufacturer": None, "category": "unknown",
+                       "first_seen": quiet, "last_seen": quiet, "enrichment_sources": {}}}
+        client = _fake_client([], store)
+        mac_lookup = MagicMock()
+        mac_lookup.lookup.return_value = {"found": True, "vendor": "Ubiquiti Inc"}
+
+        refresh_device_registry({**_app(client), "mac_lookup": mac_lookup})
+
+        assert client.store[mac]["manufacturer"] == "Ubiquiti Inc"
+        assert client.store[mac]["last_seen"] == quiet
 
 
 class TestNewDeviceChangelog:
