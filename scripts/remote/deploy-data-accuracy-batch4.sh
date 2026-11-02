@@ -105,6 +105,9 @@ if [ -n "$PCAP" ] && [ "${PCAP#ERR}" = "$PCAP" ]; then
     HEX=$(api_eval /api/tshark/analyze "sum(1 for p in d.get('packets', []) if p.get('_source', {}).get('layers', {}).get('frame_raw'))" "{\"pcap_path\": \"$PCAP\", \"max_packets\": 3, \"include_hex\": true}")
     if [ "${HEX:-0}" -gt 0 ] 2>/dev/null; then rc=0; else rc=1; fi
     check "#40 TShark returns raw bytes for the hex dump" "$rc" "packets with frame_raw=$HEX ($(basename "$PCAP"))"
+    INFO=$(api_eval /api/tshark/analyze "[p['_source']['layers'].get('_ws.col.Info', '') for p in d.get('packets', [])][:2]" "{\"pcap_path\": \"$PCAP\", \"max_packets\": 3}")
+    if printf '%s' "$INFO" | grep -q "'[^']\{3,\}'"; then rc=0; else rc=1; fi
+    check "#41 TShark Info column has the packet summary" "$rc" "$INFO"
 else
     check "#40 TShark returns raw bytes for the hex dump" 1 "no PCAP file listed ($PCAP)"
 fi
