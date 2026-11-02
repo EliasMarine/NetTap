@@ -13,6 +13,8 @@ from aiohttp import web
 from services.bridge_health import BridgeHealthMonitor
 from services.bridge_manager import BridgeManager
 from services.capture_manager import CaptureMode
+from services.dhcp_gateway_net import validate_interface_name
+from api.setup import _nic_in_use_problem
 
 logger = logging.getLogger("nettap.api.bridge")
 
@@ -181,6 +183,24 @@ async def handle_bridge_create(request: web.Request) -> web.Response:
             {"error": "wan_interface and lan_interface are required"},
             status=400,
         )
+
+    # Same refusal as the bridge preview (CR-004): never enslave a NIC this
+    # machine still uses. Reachable on Ubuntu only since nsenter was dropped.
+    for iface in (wan, lan):
+        try:
+            validate_interface_name(iface)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        problem = await _nic_in_use_problem(capture_manager, iface)
+        if problem is not None:
+            return web.json_response(
+                {
+                    "error": f"{iface} {problem}. The bridge takes over both of its "
+                    "network cards, so bridging this one would cut that connection "
+                    "off. Nothing was changed."
+                },
+                status=400,
+            )
 
     try:
         result = await manager.create_bridge(wan=wan, lan=lan)

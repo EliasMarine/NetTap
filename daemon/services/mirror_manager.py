@@ -515,6 +515,14 @@ class MirrorManager(CaptureManager):
         files_written: list[str] = []
 
         unit_path = os.path.join(self._systemd_dir, "nettap-mirror.service")
+        # OLD CODE START — removed 2026-11-01 (CR-076): the unit ran, at every boot
+        # and by NIC name with no in-use check,
+        #   ExecStart=/sbin/ip addr flush dev {self._interface}
+        # After a NIC rename that strips the management port. The netplan file
+        # (dhcp4/dhcp6 false, link-local: []) already keeps the NIC address-free.
+        # ethtool -K also gained "-": a refused offload (Realtek) stopped the unit
+        # before the IPv6 line ran.
+        # OLD CODE END
         unit_content = textwrap.dedent(f"""\
             # NetTap mirror interface service — auto-generated
             # Configures mirror/SPAN capture NIC at boot
@@ -527,14 +535,12 @@ class MirrorManager(CaptureManager):
             [Service]
             Type=oneshot
             RemainAfterExit=yes
-            # Strip any IP addresses
-            ExecStart=/sbin/ip addr flush dev {self._interface}
             # Enable promiscuous mode for packet capture
             ExecStart=/sbin/ip link set {self._interface} promisc on
             # Bring interface UP
             ExecStart=/sbin/ip link set {self._interface} up
-            # Disable NIC offloads for accurate capture
-            ExecStart=/usr/sbin/ethtool -K {self._interface} tso off gso off gro off lro off rx-vlan-offload off
+            # Disable NIC offloads for accurate capture (non-fatal, like the ring buffer)
+            ExecStart=-/usr/sbin/ethtool -K {self._interface} tso off gso off gro off lro off rx-vlan-offload off
             # Maximize ring buffer to reduce drops
             ExecStart=-/usr/sbin/ethtool -G {self._interface} rx 4096
             # Disable IPv6

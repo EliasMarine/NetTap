@@ -215,6 +215,21 @@ class TestBootUnitLink(unittest.TestCase):
             self.assertEqual(os.readlink(link), "../nettap-mirror.service")
             self.assertTrue(os.path.isfile(link))
 
+    def test_boot_unit_never_flushes_and_survives_an_offload_refusal(self):
+        """CR-076: the unit runs by NIC name at every boot with no in-use check,
+        so it must not flush addresses; a refused offload must not stop it."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as systemd_dir:
+            mgr = MirrorManager(interface="enp4s0", systemd_dir=systemd_dir)
+            mgr._write_systemd_persistence()
+            with open(os.path.join(systemd_dir, "nettap-mirror.service")) as f:
+                unit = f.read()
+
+        self.assertNotIn("addr flush", unit)
+        self.assertIn("ExecStart=-/usr/sbin/ethtool -K enp4s0", unit)
+        self.assertIn("disable_ipv6=1", unit)
+
 
 class TestTeardown(unittest.TestCase):
     """Tests for teardown()."""
