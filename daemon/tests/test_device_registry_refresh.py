@@ -70,8 +70,13 @@ def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
             return {"hits": {"hits": [{"_source": copy.deepcopy(d)} for d in client.searchable.values()]}}
         return {"hits": {"hits": []}}
 
+    def delete(index: str, id: str) -> dict:
+        client.store.pop(id)
+        return {"result": "deleted"}
+
     client.get.side_effect = get
     client.index.side_effect = index
+    client.delete.side_effect = delete
     client.search.side_effect = search
     client.indices.refresh.side_effect = make_searchable
     return client
@@ -385,3 +390,28 @@ class TestRefreshSpeed:
         assert doc["last_seen"] > old
         assert doc["ips"] == ["192.168.1.154"]
         assert (doc["manufacturer"], doc["category"]) == ("Philips Lighting BV", "iot")
+
+
+class TestLongMacs:
+    """#76: Zeek printed a UniFi AP's DHCP chaddr as 8 bytes, which became a second device."""
+
+    def test_dhcp_mac_longer_than_6_octets_files_under_the_real_device(self):
+        assert DeviceRegistry._normalize_mac("f4:e2:c6:ff:98:21:62:72") == "F4:E2:C6:FF:98:21"
+        assert DeviceRegistry._normalize_mac("f4-e2-c6-ff-98-21") == "F4:E2:C6:FF:98:21"
+
+    def test_existing_long_entry_merges_into_the_real_device(self):
+        real = {"mac": "F4:E2:C6:FF:98:21", "ips": ["192.168.1.198"], "hostnames": ["U7Pro"],
+                "category": "infrastructure", "last_seen": "2026-11-02T10:16:31+00:00"}
+        phantom = {"mac": "F4:E2:C6:FF:98:21:62:72", "ips": ["192.168.40.198"], "hostnames": ["U7Pro"],
+                   "category": "unknown", "last_seen": "2026-11-02T06:45:37+00:00"}
+        orphan = {"mac": "AA:BB:CC:00:00:01:02:03", "ips": ["10.10.0.9"], "last_seen": "2026-11-02T05:00:00+00:00"}
+        client = _fake_client([], {real["mac"]: real, phantom["mac"]: phantom, orphan["mac"]: orphan})
+
+        refresh_device_registry(_app(client))
+
+        assert set(client.store) == {"F4:E2:C6:FF:98:21", "AA:BB:CC:00:00:01"}
+        ap = client.store["F4:E2:C6:FF:98:21"]
+        assert ap["ips"] == ["192.168.1.198", "192.168.40.198"]
+        assert ap["hostnames"] == ["U7Pro"]
+        assert (ap["category"], ap["last_seen"]) == ("infrastructure", real["last_seen"])
+        assert client.store["AA:BB:CC:00:00:01"]["ips"] == ["10.10.0.9"]  # no real entry: renamed

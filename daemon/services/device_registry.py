@@ -84,7 +84,12 @@ class DeviceRegistry:
     @staticmethod
     def _normalize_mac(mac: str) -> str:
         """Normalize MAC to uppercase colon-separated format."""
-        return mac.strip().upper().replace("-", ":").replace(".", ":")
+        # OLD CODE START — #76: kept every octet, so an 8-byte DHCP chaddr became a second device
+        # return mac.strip().upper().replace("-", ":").replace(".", ":")
+        # OLD CODE END
+        octets = mac.strip().upper().replace("-", ":").replace(".", ":").split(":")
+        # Zeek prints a DHCP chaddr at the client's own length; a UniFi AP sent 8 bytes on a VLAN
+        return ":".join(octets[:6])
 
     def register_device(
         self,
@@ -255,6 +260,39 @@ class DeviceRegistry:
                 count += 1
             except OpenSearchException as exc:
                 logger.error("Failed to drop moved IPs from %s: %s", mac, exc)
+        return count
+
+    def merge_long_macs(self) -> int:
+        """Fold entries stored under a MAC longer than 6 octets into their real device (#76).
+
+        Keeps the long entry's IPs and names; the real device's last_seen is left alone.
+
+        Returns:
+            Number of entries merged.
+        """
+        self.refresh_index()
+        count = 0
+        for device in self.get_all_devices(limit=1000):
+            long_mac = device.get("mac") or ""
+            if len(long_mac.split(":")) <= 6:
+                continue
+            mac = self._normalize_mac(long_mac)
+            try:
+                real = self._get_existing(mac)
+                if real is None:
+                    merged = {**device, "mac": mac}
+                else:
+                    merged = {
+                        **real,
+                        "ips": list(dict.fromkeys((real.get("ips") or []) + (device.get("ips") or []))),
+                        "hostnames": list(dict.fromkeys((real.get("hostnames") or []) + (device.get("hostnames") or []))),
+                    }
+                self._client.index(index=DEVICES_INDEX, id=mac, body=merged)
+                self._client.delete(index=DEVICES_INDEX, id=long_mac)
+                count += 1
+                logger.info("Merged registry entry %s into %s", long_mac, mac)
+            except OpenSearchException as exc:
+                logger.error("Failed to merge registry entry %s: %s", long_mac, exc)
         return count
 
     def refresh_index(self) -> None:

@@ -202,6 +202,7 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     # OLD CODE END
     assigned = _register_conn_devices(registry, result)
     count = len(assigned)
+    registry.merge_long_macs()
     registry.drop_reassigned_ips(assigned)
 
     # enrich_from_arp is left out: it registers any MAC from any record (public
