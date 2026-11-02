@@ -78,10 +78,13 @@ import json, sys
 d = json.load(sys.stdin)
 print(json.dumps({b[\"key\"].lower(): b[\"oui\"][\"buckets\"][0][\"key\"] for b in d[\"aggregations\"][\"mac\"][\"buckets\"] if b[\"oui\"][\"buckets\"]}))
 "' _ "$BODY" 2>/dev/null)
-# The registry refreshes once at startup; give it up to a minute
-OUT=""
-for i in $(seq 1 12); do
-    OUT=$(sudo docker exec nettap-storage-daemon python3 -c "
+# The registry refreshes once at startup (about a minute: each device write waits for an index refresh)
+echo "   waiting for the daemon's startup device-registry refresh..."
+for i in $(seq 1 60); do
+    sudo docker logs --since 10m nettap-storage-daemon 2>&1 | grep -q "Device registry refresh" && break
+    sleep 5
+done
+OUT=$(sudo docker exec nettap-storage-daemon python3 -c "
 import json, sys, urllib.request
 truth = json.loads(sys.argv[1] or '{}')
 token = open('/run/nettap-auth/daemon-token').read().strip()
@@ -113,14 +116,12 @@ for ip, m in shared.items():
 for ip, reg, lst in disagree:
     print('DISAGREE', ip, 'registry', reg, 'devices', lst)
 print('OWNERSHIP', len(shared), len(zeros), len(disagree))
-from datetime import datetime, timedelta, timezone
-recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
 reg_by_mac = {r['mac']: r for r in registry}
 grid = {}
 for r in registry:
     grid[r.get('category')] = grid.get(r.get('category'), 0) + 1
 home_unknown = sorted({(d['mac'].upper(), d['category']) for d in devices if d.get('mac') and d['category'] not in ('unknown', 'media')
-    and reg_by_mac.get(d['mac'].upper(), {}).get('category') == 'unknown' and reg_by_mac[d['mac'].upper()].get('last_seen', '') >= recent})
+    and reg_by_mac.get(d['mac'].upper(), {}).get('category') == 'unknown'})
 for mac, cat in home_unknown:
     print('HOME_UNKNOWN', mac, 'devices page says', cat)
 print('GRID', json.dumps(grid, sort_keys=True))
@@ -131,11 +132,6 @@ print('CATS', json.dumps(cats, sort_keys=True))
 print('TOOL', tool.get('found'), tool.get('vendor'))
 print('SUMMARY', len(truth), len(devices), len(miss), len(registry), len(reg_miss), len(wrong), len(bad_reg_cat), int('Proxmox' in (tool.get('vendor') or '')))
 " "$TRUTH" 2>&1)
-    read -r _ _ _ _ _ RMISS _ _ <<<"$(echo "$OUT" | grep '^SUMMARY')"
-    read -r _ NSHARED _ _ <<<"$(echo "$OUT" | grep '^OWNERSHIP')"
-    [ "${RMISS:-1}" = "0" ] && [ "${NSHARED:-1}" = "0" ] && break
-    sleep 5
-done
 while IFS= read -r line; do echo "   $line"; done <<<"$OUT"
 read -r _ NTRUTH NDEV MISS NREG RMISS WRONG BADCAT TOOLOK <<<"$(echo "$OUT" | grep '^SUMMARY')"
 if [ "${NTRUTH:-0}" -ge 1 ] && [ "${MISS:-1}" -eq 0 ]; then rc=0; else rc=1; fi
@@ -147,7 +143,7 @@ if [ "${NSHARED:-1}" -eq 0 ] && [ "${NZERO:-1}" -eq 0 ]; then rc=0; else rc=1; f
 check "#26 Registry: every IP on one device only, no 0.0.0.0" "$rc" "${NSHARED:-?} IPs on two devices, ${NZERO:-?} entries with 0.0.0.0, ${NDISAGREE:-?} IPs where Devices shows another MAC"
 read -r _ NHOMEUNK <<<"$(echo "$OUT" | grep '^CATAGREE')"
 if [ "${NHOMEUNK:-1}" -eq 0 ]; then rc=0; else rc=1; fi
-check "#26 Home grid categories match the Devices page" "$rc" "${NHOMEUNK:-?} recent devices Unknown on Home but categorised on Devices; Home grid $(echo "$OUT" | grep '^GRID' | cut -d' ' -f2-)"
+check "#26 Home grid categories match the Devices page" "$rc" "${NHOMEUNK:-?} devices Unknown on Home but categorised on Devices; Home grid $(echo "$OUT" | grep '^GRID' | cut -d' ' -f2-)"
 if [ "${WRONG:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#26 Ubiquiti -> infrastructure, Philips Lighting -> iot" "$rc" "${WRONG:-?} wrong"
 if [ "${TOOLOK:-0}" -eq 1 ]; then rc=0; else rc=1; fi
