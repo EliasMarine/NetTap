@@ -72,6 +72,42 @@ describe('Software Updates page when a request fails (#96)', () => {
 		expect(screen.queryByText('Update Complete')).not.toBeInTheDocument();
 	});
 
+	it('names the sources the daemon could not check and marks their rows Unknown', async () => {
+		const versions = {
+			versions: {
+				...VERSIONS.versions,
+				'nettap-daemon': { name: 'nettap-daemon', category: 'core', current_version: '1.0.0', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			},
+			last_scan: '',
+		};
+		stubFetch({
+			'/api/system/versions': versions,
+			'/api/system/updates/available': { updates: [], last_check: '', failed_checks: ['nettap-daemon'] },
+		});
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText("Couldn't check nettap-daemon: those sources didn't answer.")).toBeInTheDocument();
+		// Zeek was checked and is current; the daemon's own release check failed
+		expect(screen.getAllByText('Up to Date')).toHaveLength(1);
+		expect(screen.getAllByText('Unknown')).toHaveLength(1);
+	});
+
+	it('shows the daemon\'s docker error row as an error', async () => {
+		const versions = {
+			versions: {
+				docker: { name: 'docker', category: 'docker', current_version: 'unknown', install_type: 'docker', last_checked: '', status: 'error', details: {} },
+			},
+			last_scan: '',
+		};
+		stubFetch({ '/api/system/versions': versions, '/api/system/updates/available': { updates: [], last_check: '' } });
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText('Error')).toBeInTheDocument();
+		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+	});
+
 	it('still reads Up to Date when the update list loads and is empty', async () => {
 		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [], last_check: '' } });
 

@@ -33,6 +33,12 @@
 	let versionsFailed = $state(false);
 	let updatesFailed = $state(false);
 	let actionError = $state('');
+	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
+	let failedChecks = $state<string[]>([]);
+
+	function checkFailed(key: string, name: string): boolean {
+		return updatesFailed || failedChecks.some((c) => c === key || c === name || c === 'component-versions');
+	}
 
 	// Update modal/panel state
 	let showUpdatePanel = $state(false);
@@ -236,6 +242,7 @@
 		if (updatesRes.status === 'fulfilled') {
 			availableUpdates = updatesRes.value.updates;
 			lastCheck = updatesRes.value.last_check;
+			failedChecks = updatesRes.value.failed_checks ?? [];
 		}
 		if (historyRes.status === 'fulfilled') updateHistory = historyRes.value;
 		versionsFailed = versionsRes.status === 'rejected';
@@ -251,6 +258,7 @@
 			availableUpdates = res.updates;
 			lastCheck = new Date().toISOString();
 			updatesFailed = false;
+			failedChecks = res.failed_checks ?? [];
 		} catch {
 			// OLD CODE START — #96: a failed check was silent
 			// // Keep existing state
@@ -413,6 +421,9 @@
 					Updates have not been checked yet
 				{/if}
 			</p>
+			{#if failedChecks.length > 0}
+				<p class="text-warning">Couldn't check {failedChecks.join(', ')}: those sources didn't answer.</p>
+			{/if}
 		</div>
 		<div class="header-actions">
 			<button
@@ -738,7 +749,7 @@
 											<span class="badge badge-muted">Unknown</span>
 										{:else if update}
 											<span class="badge badge-warning">Update Available</span>
-										{:else if updatesFailed}
+										{:else if checkFailed(entry.key, entry.name)}
 											<span class="badge badge-muted">Unknown</span>
 										{:else}
 											<span class="badge badge-success">Up to Date</span>
