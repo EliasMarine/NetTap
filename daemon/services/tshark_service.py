@@ -37,10 +37,18 @@ MAX_OUTPUT_BYTES = 5 * 1024 * 1024  # 5MB
 MATCH_SCAN_SECONDS = 15
 # "<matches found> <frame number of the last>" for up to N matches (fewer if the file or
 # the time runs out). Filter and path are positional args, never parsed by the shell.
+# -l flushes each line: piped tshark otherwise buffers 4 KB, never notices head has quit, and
+# reads the rest of the file, so every scan ran the full MATCH_SCAN_SECONDS (#78)
 _LAST_MATCH_SCRIPT = (
-    'timeout -k 2 "$4" tshark -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
+    'timeout -k 2 "$4" tshark -l -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
     ' | head -n "$3" | awk \'END { print NR, $1 }\''
 )
+# OLD CODE START — #78: without -l the scan always used the whole 15 s budget
+# _LAST_MATCH_SCRIPT = (
+#     'timeout -k 2 "$4" tshark -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
+#     ' | head -n "$3" | awk \'END { print NR, $1 }\''
+# )
+# OLD CODE END
 ALLOWED_FIELD_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 # Shell metacharacters that must NOT appear in display filters.
 # Note: & and | are allowed because TShark uses && (AND) and || (OR)

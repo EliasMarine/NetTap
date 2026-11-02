@@ -409,6 +409,7 @@ class TestFilteredPreview:
         assert argv[7:9] == ["sh", "-c"]
         assert argv[-3:] == ["/pcap/capture_001.pcap", "dns", "50"]
         assert '| head -n "$3"' in argv[9]
+        assert "tshark -l -r" in argv[9]  # #78: flushed lines let tshark stop when head quits
         assert "-c" not in argv[10:]
 
     @pytest.mark.asyncio

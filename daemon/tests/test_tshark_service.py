@@ -646,3 +646,10 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
 
         self.assertIn('-r "$1" -Y "$2"', _LAST_MATCH_SCRIPT)
         self.assertIn('head -n "$3"', _LAST_MATCH_SCRIPT)
+
+    def test_scan_stops_once_head_has_n_matches(self):
+        """#78: without -l, tshark buffered its output, kept reading after head quit, and
+        every scan ran the whole MATCH_SCAN_SECONDS (15.2 s vs 1.1 s on the G11)."""
+        from services.tshark_service import _LAST_MATCH_SCRIPT
+
+        self.assertIn("tshark -l -r", _LAST_MATCH_SCRIPT)
