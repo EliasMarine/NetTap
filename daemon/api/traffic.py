@@ -72,6 +72,11 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
     return (raw_from or default_from, raw_to or default_to)
 
 
+# OpenSearch's default index.max_result_window: from + size past it returns nothing.
+# shortcut: only the newest 10,000 records can be paged to; use search_after if older pages are needed
+_RESULT_WINDOW = 10_000
+
+
 def _parse_int_param(request: web.Request, name: str, default: int) -> int:
     """Parse an integer query parameter with a fallback default."""
     raw = request.query.get(name, "")
@@ -594,7 +599,10 @@ async def handle_connections(request: web.Request) -> web.Response:
             "page": page,
             "size": size,
             "total": total,
-            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            # OLD CODE START — #85: pages past OpenSearch's 10,000-result window came back empty
+            # "total_pages": (total + size - 1) // size if size > 0 else 0,
+            # OLD CODE END
+            "total_pages": min(-(-total // size), _RESULT_WINDOW // size) if size > 0 else 0,
             "connections": connections,
         }
     )

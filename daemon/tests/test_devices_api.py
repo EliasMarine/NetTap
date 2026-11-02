@@ -1000,3 +1000,11 @@ class TestDeviceTotalsPast10000(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/devices/192.168.1.202/alerts")
         self.assertEqual(resp.status, 200)
         self.assertIs(self._bodies()[0].get("track_total_hits"), True)
+
+    @unittest_run_loop
+    async def test_connections_pages_stop_at_the_result_window(self):
+        """#85: OpenSearch returns nothing past 10,000 results, so page 201 of 50 was empty."""
+        resp = await self.client.request("GET", "/api/devices/192.168.1.1/connections?size=50")
+        data = await resp.json()
+        self.assertEqual(data["total"], 48158)
+        self.assertEqual(data["total_pages"], 200)

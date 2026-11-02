@@ -505,6 +505,17 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertIs(body["track_total_hits"], True)
 
     @unittest_run_loop
+    async def test_connections_pages_stop_at_the_result_window(self):
+        """#85: OpenSearch returns nothing past 10,000 results, so later pages came back empty."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 600000}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/traffic/connections?size=50")
+        data = await resp.json()
+        self.assertEqual(data["total"], 600000)
+        self.assertEqual(data["total_pages"], 200)
+
+    @unittest_run_loop
     async def test_connections_size_capped(self):
         """Page size is capped at 200."""
         self.mock_client.search.return_value = {

@@ -180,6 +180,17 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertIs(body["track_total_hits"], True)
 
     @unittest_run_loop
+    async def test_alerts_list_pages_stop_at_the_result_window(self):
+        """#85: 7 days on the G11 = 43,355 alerts, 868 pages; pages past 200 of 50 came back empty."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 43355}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/alerts?size=50")
+        data = await resp.json()
+        self.assertEqual(data["total"], 43355)
+        self.assertEqual(data["total_pages"], 200)
+
+    @unittest_run_loop
     async def test_alerts_list_with_severity_filter(self):
         """Severity filter is included in query."""
         self.mock_client.search.return_value = {
