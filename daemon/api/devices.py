@@ -167,8 +167,35 @@ def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
 # ---------------------------------------------------------------------------
 
 
-def _device_category(os_hint: str | None, hostname: str | None) -> str:
-    """Classify a device into a broad category based on OS hint and hostname."""
+# Vendors that make one kind of device, as lowercase substrings of the IEEE vendor name.
+# Mixed vendors (Apple, Google, Samsung, Amazon, TP-Link) are left out on purpose.
+_VENDOR_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("philips lighting", "iot"), ("signify", "iot"), ("tuya", "iot"), ("espressif", "iot"),
+    ("shelly", "iot"), ("lifx", "iot"), ("ecobee", "iot"), ("wyze", "iot"), ("itead", "iot"),
+    ("nest labs", "iot"), ("ring llc", "iot"), ("belkin", "iot"),
+    ("sonos", "media"), ("roku", "media"),
+    ("ubiquiti", "infrastructure"), ("cisco", "infrastructure"), ("netgear", "infrastructure"),
+    ("aruba", "infrastructure"), ("juniper", "infrastructure"), ("mikrotik", "infrastructure"),
+    ("routerboard", "infrastructure"), ("arcadyan", "infrastructure"),
+    ("synology", "infrastructure"), ("qnap", "infrastructure"),
+    ("western digital", "infrastructure"),
+    ("raspberry pi", "computer"), ("proxmox", "computer"), ("micro-star", "computer"),
+    ("jwipc", "computer"), ("dell", "computer"), ("lenovo", "computer"),
+)
+_PHONE_HOSTNAME_HINTS = ("iphone", "ipad", "android", "galaxy", "pixel")
+_COMPUTER_HOSTNAME_HINTS = ("macbook", "imac", "mac-studio", "mac-mini", "desktop", "laptop")
+
+
+def _vendor_category(manufacturer: str | None) -> str:
+    """Category implied by a single-purpose vendor, else "unknown" (#26)."""
+    vendor = (manufacturer or "").lower()
+    return next((cat for key, cat in _VENDOR_CATEGORIES if key in vendor), "unknown")
+
+
+def _device_category(
+    os_hint: str | None, hostname: str | None, manufacturer: str | None = None
+) -> str:
+    """Classify a device into a broad category based on OS hint, hostname and vendor."""
     if not os_hint:
         # Fall back to hostname-based heuristics
         if hostname:
@@ -195,7 +222,14 @@ def _device_category(os_hint: str | None, hostname: str | None) -> str:
                 for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]
             ):
                 return "infrastructure"
-        return "unknown"
+            if any(x in hn for x in _PHONE_HOSTNAME_HINTS):
+                return "phone"
+            if any(x in hn for x in _COMPUTER_HOSTNAME_HINTS):
+                return "computer"
+        # OLD CODE START — the vendor was ignored, so Hue bulbs and UniFi gear read "unknown" (#26)
+        # return "unknown"
+        # OLD CODE END
+        return _vendor_category(manufacturer)
     os_lower = os_hint.lower()
     if os_lower in ("ios", "android"):
         return "phone"
@@ -228,7 +262,10 @@ def _device_category(os_hint: str | None, hostname: str | None) -> str:
             for x in ["router", "gateway", "switch", "ap-", "access-point", "unifi"]
         ):
             return "infrastructure"
-    return "unknown"
+    # OLD CODE START — see above (#26)
+    # return "unknown"
+    # OLD CODE END
+    return _vendor_category(manufacturer)
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +455,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
             "hostname": hostname,
             "manufacturer": manufacturer,
             "os_hint": os_hint,
-            "category": _device_category(os_hint, hostname),
+            "category": _device_category(os_hint, hostname, manufacturer),
             "first_seen": first_seen,
             "last_seen": last_seen,
             "total_bytes": total_bytes,

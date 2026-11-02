@@ -911,3 +911,29 @@ class TestDeviceTimeRange(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDeviceCategoryFallbacks:
+    """#26: the vendor (and phone/computer hostnames) decide when OS and hostname hints don't."""
+
+    def test_single_purpose_vendor(self):
+        from api.devices import _device_category
+
+        assert _device_category(None, "001788483c07.local", "Philips Lighting (Hue)") == "iot"
+        assert _device_category(None, None, "Ubiquiti Inc") == "infrastructure"
+        assert _device_category(None, None, "Proxmox Server Solutions GmbH") == "computer"
+        assert _device_category(None, None, "Apple, Inc.") == "unknown"  # makes phones and computers
+        assert _device_category(None, None, None) == "unknown"
+
+    def test_os_and_hostname_still_win(self):
+        from api.devices import _device_category
+
+        assert _device_category("Android", None, "Ubiquiti Inc") == "phone"
+        assert _device_category(None, "living-room-smart-plug", "Ubiquiti Inc") == "iot"
+
+    def test_phone_and_computer_hostnames(self):
+        from api.devices import _device_category
+
+        assert _device_category(None, "ipad-2.local", None) == "phone"
+        assert _device_category(None, "saras-macbook-air-2.local", None) == "computer"
+        assert _device_category(None, "elias-mac-studio.local", None) == "computer"
