@@ -162,6 +162,7 @@ Chronological log of all verification test runs. Add a new row after every run.
 | 2026-11-01 | G11 (Ubuntu 24.04.5) | Mirror/SPAN verify after `deploy-drop-nsenter.sh` + reboot | **PASS** | all | 0 | — | Claude | Every `verify-mirror-mode.sh` check passed after a reboot, ~3,800 packets/s on enp4s0 (Chain 22, NET-126). |
 | 2026-11-01 | G11 (Ubuntu 24.04.5) | Zeek pipeline (`deploy-zeek-rdrand-fix.sh`) | **PASS** | 4 | 0 | — | Claude | Unique Broker IDs, cluster connected (9 links), conn.log written, Zeek records reached OpenSearch (Chain 23, NET-127). |
 | 2026-11-01 | G11 (Ubuntu 24.04.5) | Index template + dashboard APIs (`fix-index-template.sh --delete-today`, `deploy-malcolm-field-names.sh`) | **PASS** | 5 | 0 | — | Claude | Template pattern `arkime_sessions3-*`, today's index recreated with Malcolm types (owner approved deleting 15,457 records), 0 Logstash rejections; traffic summary 6,185 connections, 18 devices, 5 top talkers, top protocol udp, 0 daemon errors (Chain 24, NET-128). |
+| 2026-11-02 | G11 (Ubuntu 24.04.5) | Dashboard data accuracy batches 1–5 (`deploy-data-accuracy-batch{1..5}.sh`) | **PASS** | all | 0 | — | Claude | Every batch check ✓ (Chain 25, NET-129): device/DNS/bytes/alerts figures match OpenSearch; certificates = x509 count; TShark hex + Info; arkime-live off (TLS errors 0); PCAP 5.2% of disk under a 25% cap; Live map offline, devices 30 = 30, bandwidth = NIC rate; CyberChef recipe decodes in the browser. Open: #47 (other VLANs not counted as LAN). |
 
 ---
 

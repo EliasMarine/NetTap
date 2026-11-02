@@ -351,7 +351,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Full list with causes: tracking-fixes/2026-11-01-dashboard-data-accuracy.md.
   Also: IoT counted Suricata alerts and Zeek dns/ssl/files logs as connections (CONN_RECORDS now
   limits connection queries to Zeek conn); certificates read ssl sessions instead of x509.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh, -batch3.sh, -batch4.sh.
+  Batch 5: arkime-live off (profile "arkime"), PCAP capped at PCAP_MAX_DISK_PCT (25%) of the disk,
+  Live Monitor map bundled offline + LAN-only device count + NIC line-rate bandwidth, CyberChef
+  quick recipes (recipe list lacked recipe_fragment; links used the internal container URL).
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch5.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1816,6 +1819,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 108. **"Connections" must be filtered to `event.dataset: conn` (Chain 25)** — `arkime_sessions3-*` holds Zeek conn, dns, ssl, files, http and x509 logs plus Suricata alerts, all with `source.mac`. A query without a dataset filter counts all of them: an ESP device read 1% encrypted from 162 alerts + 2 TLS connections. The April "Arkime compatibility" commits that removed these filters were wrong for a Zeek deployment. Use the shared `CONN_RECORDS`.
 109. **A failed query must never render as 0 (Chain 25)** — the certificate service logged an OpenSearch error and returned zeros, and the web client also mapped HTTP errors to zeros, so the card said "0 certificates" with 85 present. Raise in the service, return 503, show "—". Also avoid `now` ranges inside filter aggregations on OpenSearch 2.x.
 110. **Read a container's logs for a retry loop before trusting it is running (Chain 25)** — arkime-live sat "Up" for its whole life while looping on `opensearch_status.sh` (missing curlrc mount). `docker ps` showed it healthy enough; only its log and 58 TLS errors a minute in OpenSearch gave it away.
+111. **Exercise every button once, not just the page load (Chain 25)** — CyberChef "loaded" in three earlier checks, yet every quick recipe failed: the daemon's recipe list never carried the `recipe_fragment` the page posts back, and links pointed at the container's internal URL. Contract mismatches between daemon JSON and the web types only show when the action runs.
+112. **Ground truth must use the app's own definitions (Chain 25)** — Live "30 devices" vs a check's "38" was the check counting every private range; the daemon counts its detected LAN (192.168.1.0/24), same as the Devices page. Compare like with like before calling a figure wrong, then raise the definition itself (#47) as a separate question.
 
 ---
 
