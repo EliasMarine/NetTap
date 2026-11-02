@@ -377,7 +377,10 @@ class UpdateChecker:
                         release_url="https://rules.emergingthreats.net/",
                         release_date=now.isoformat(),
                         changelog=f"Suricata rules are {age_days} day(s) old",
-                        size_mb=15.0,  # Approximate ET ruleset size
+                        # OLD CODE START — #96: an approximate size shown as the download size
+                        # size_mb=15.0,  # Approximate ET ruleset size
+                        # OLD CODE END
+                        size_mb=None,
                         requires_restart=True,
                     )
                 return None
@@ -422,7 +425,10 @@ class UpdateChecker:
                         release_url="https://dev.maxmind.com/geoip/updating-databases",
                         release_date=now.isoformat(),
                         changelog=f"GeoIP database is {age_days} day(s) old",
-                        size_mb=65.0,  # Approximate GeoLite2-City size
+                        # OLD CODE START — #96: an approximate size shown as the download size
+                        # size_mb=65.0,  # Approximate GeoLite2-City size
+                        # OLD CODE END
+                        size_mb=None,
                         requires_restart=False,
                     )
                 return None
@@ -539,10 +545,10 @@ class UpdateChecker:
             return None
 
     @staticmethod
-    def _estimate_release_size(release_data: dict) -> float:
-        """Estimate release download size in MB from GitHub release data.
+    def _estimate_release_size(release_data: dict) -> float | None:
+        """Release download size in MB from GitHub release data.
 
-        Sums up asset sizes if available, otherwise returns a default.
+        Sums up asset sizes if available, otherwise None (not known).
         """
         total = 0
         for asset in release_data.get("assets", []):
@@ -551,5 +557,8 @@ class UpdateChecker:
         if total > 0:
             return round(total / (1024 * 1024), 1)
 
-        # Default estimate for NetTap release
-        return 50.0
+        # OLD CODE START — #96: a release without assets showed a made-up 50 MB
+        # # Default estimate for NetTap release
+        # return 50.0
+        # OLD CODE END
+        return None

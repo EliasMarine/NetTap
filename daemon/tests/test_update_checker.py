@@ -561,15 +561,31 @@ class TestEstimateReleaseSize(unittest.TestCase):
         result = UpdateChecker._estimate_release_size(data)
         self.assertAlmostEqual(result, 15.0, places=0)
 
-    def test_without_assets(self):
-        """Should return default estimate when no assets."""
-        result = UpdateChecker._estimate_release_size({})
-        self.assertEqual(result, 50.0)
+    def test_without_assets_size_is_unknown(self):
+        """#96: no assets means the size isn't known, not a made-up 50 MB."""
+        self.assertIsNone(UpdateChecker._estimate_release_size({}))
 
-    def test_empty_assets_list(self):
-        """Should return default estimate for empty assets list."""
-        result = UpdateChecker._estimate_release_size({"assets": []})
-        self.assertEqual(result, 50.0)
+    def test_empty_assets_list_size_is_unknown(self):
+        self.assertIsNone(UpdateChecker._estimate_release_size({"assets": []}))
+
+
+class TestStaleDatabaseSizeIsUnknown(unittest.TestCase):
+    """#96: rule and GeoIP update sizes were approximations shown as figures."""
+
+    def test_rules_and_geoip_sizes_are_none(self):
+        from unittest.mock import patch
+
+        month_old = datetime.now(timezone.utc).timestamp() - 30 * 86400
+        uc = UpdateChecker()
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getmtime", return_value=month_old),
+        ):
+            rule_update = asyncio.run(uc._check_suricata_rules())
+            geoip_update = asyncio.run(uc._check_geoip_update())
+
+        self.assertIsNone(rule_update.size_mb)
+        self.assertIsNone(geoip_update.size_mb)
 
 
 if __name__ == "__main__":
