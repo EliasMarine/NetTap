@@ -47,6 +47,8 @@ _DEFAULT_RANGE_HOURS = 24
 
 # Scored devices per composite page: ~55 buckets each keeps a page well under search.max_buckets
 _SCORE_PAGE_SIZE = 500
+# Device IPs per alert-count search: under index.max_terms_count (65,536) and search.max_buckets
+_ALERT_IP_CHUNK = 10_000
 
 
 def _baseline(counts: list[int]) -> tuple[float, float]:
@@ -335,10 +337,21 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     device_ips = [b["key"] for b in device_buckets]
 
     # Batch alert count query
-    # shortcut: one terms filter of every device IP; past 65,536 devices (index.max_terms_count)
-    # it fails and scores count no alerts, so chunk the IPs if a site ever gets there
+    # OLD CODE START — #96: one terms filter of every IP failed past 65,536 devices
+    # (index.max_terms_count), and any failure scored every device as having no alerts
+    # alert_counts: dict[str, int] = {}
+    # if device_ips:
+    #     alert_query = {... {"terms": {"source.ip": device_ips}} ... size len(device_ips)}
+    #     try:
+    #         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+    #         for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+    #             alert_counts[ab["key"]] = ab["doc_count"]
+    #     except OpenSearchException as exc:
+    #         logger.warning("Alert count query failed: %s", exc)
+    # OLD CODE END
     alert_counts: dict[str, int] = {}
-    if device_ips:
+    for start in range(0, len(device_ips), _ALERT_IP_CHUNK):
+        chunk = device_ips[start : start + _ALERT_IP_CHUNK]
         alert_query = {
             "size": 0,
             "query": {
@@ -353,7 +366,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                                 }
                             }
                         },
-                        {"terms": {"source.ip": device_ips}},
+                        {"terms": {"source.ip": chunk}},
                         {"term": {"event.provider": "suricata"}},
                         {"term": {"event.dataset": "alert"}},
                     ],
@@ -361,18 +374,17 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                 }
             },
             "aggs": {
-                "by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}
+                "by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}
             },
         }
 
         try:
             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-            for ab in (
-                alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-            ):
-                alert_counts[ab["key"]] = ab["doc_count"]
         except OpenSearchException as exc:
-            logger.warning("Alert count query failed: %s", exc)
+            logger.error("Alert count query failed in risk scores: %s", exc)
+            return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+            alert_counts[ab["key"]] = ab["doc_count"]
 
     # Score each device
     scored_devices = []
@@ -569,13 +581,21 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     #     logger.warning("Network stats query failed: %s", exc)
     # OLD CODE END
     # Network-wide baseline over the list view's population: every device the device list can show
-    network_avg = 0.0
-    network_stddev = 0.0
+    # OLD CODE START — #96: a failure scored the device against a 0 ± 0 baseline
+    # network_avg = 0.0
+    # network_stddev = 0.0
+    # try:
+    #     devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
+    #     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
+    # except OpenSearchException as exc:
+    #     logger.warning("Network stats query failed: %s", exc)
+    # OLD CODE END
     try:
         devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
-        network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
     except OpenSearchException as exc:
-        logger.warning("Network stats query failed: %s", exc)
+        logger.error("Network stats query failed in single risk score: %s", exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+    network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
 
     # Alert count for this device
     alert_count = 0
@@ -611,8 +631,13 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             if isinstance(alert_total, dict)
             else alert_total
         )
+    # OLD CODE START — #96: a failure scored the device as having no alerts
+    # except OpenSearchException as exc:
+    #     logger.warning("Alert count query failed for %s: %s", ip, exc)
+    # OLD CODE END
     except OpenSearchException as exc:
-        logger.warning("Alert count query failed for %s: %s", ip, exc)
+        logger.error("Alert count query failed for %s: %s", ip, exc)
+        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
 
     device_stats = _build_device_stats(
         ip=ip,

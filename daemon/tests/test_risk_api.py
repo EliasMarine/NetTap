@@ -6,7 +6,7 @@ Tests cover the risk scoring API endpoints using AioHTTPTestCase.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import sys
 import os
@@ -221,8 +221,8 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
 
     @unittest_run_loop
-    async def test_scores_alert_query_failure_graceful(self):
-        """If alert query fails, scoring should still succeed (0 alerts)."""
+    async def test_scores_alert_query_failure_is_an_error(self):
+        """#96: a failed alert count scored every device as having no alerts; now a 502."""
         from opensearchpy import OpenSearchException
 
         buckets = [_make_device_bucket("192.168.1.10")]
@@ -234,9 +234,7 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
         ]
 
         resp = await self.client.request("GET", "/api/risk/scores")
-        self.assertEqual(resp.status, 200)
-        data = await resp.json()
-        self.assertEqual(data["device_count"], 1)
+        self.assertEqual(resp.status, 502)
 
     @unittest_run_loop
     async def test_scores_query_never_aggregates_doc_count(self):
@@ -411,8 +409,8 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
         self.assertEqual(len(data["factors"]), 5)
 
     @unittest_run_loop
-    async def test_single_device_network_query_failure_graceful(self):
-        """If network stats query fails, scoring still works."""
+    async def test_single_device_network_query_failure_is_an_error(self):
+        """#96: a failed baseline scored the device against 0 +/- 0; now a 502."""
         from opensearchpy import OpenSearchException
 
         conn_result = _make_single_conn_result(total=100)
@@ -425,7 +423,23 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
         ]
 
         resp = await self.client.request("GET", "/api/risk/scores/192.168.1.10")
-        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.status, 502)
+
+    @unittest_run_loop
+    async def test_single_device_alert_query_failure_is_an_error(self):
+        """#96: a failed alert count scored the device as having no alerts; now a 502."""
+        from opensearchpy import OpenSearchException
+
+        def search(index=None, body=None, **_kwargs):
+            if {"term": {"event.dataset": "alert"}} in body["query"]["bool"]["filter"]:
+                raise OpenSearchException("alert query failed")
+            if "all" in body.get("aggs", {}):
+                return {"aggregations": {"all": {"buckets": []}}}
+            return _make_single_conn_result(total=100)
+
+        self.mock_storage._client.search.side_effect = search
+        resp = await self.client.request("GET", "/api/risk/scores/192.168.1.10")
+        self.assertEqual(resp.status, 502)
 
 
 class TestRiskQueryConsistency(AioHTTPTestCase):
@@ -636,6 +650,29 @@ class TestRiskCoversEveryDevice(AioHTTPTestCase):
 
         data = await (await self.client.request("GET", "/api/risk/scores?limit=1")).json()
 
+        self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.9.7"])
+
+    @unittest_run_loop
+    async def test_alert_counts_are_asked_in_chunks_that_cover_every_device(self):
+        """#96: one terms filter of every IP fails past 65,536 devices (index.max_terms_count)."""
+        answer = _risk_search(self.CONNS, {"192.168.9.7": 20})
+        asked: list[list[str]] = []
+
+        def search(index=None, body=None, **kwargs):
+            if "by_ip" in body.get("aggs", {}):
+                ips = next(f["terms"]["source.ip"] for f in body["query"]["bool"]["filter"] if "terms" in f)
+                asked.append(ips)
+                reply = answer(index=index, body=body, **kwargs)
+                buckets = reply["aggregations"]["by_ip"]["buckets"]
+                return {**reply, "aggregations": {"by_ip": {"buckets": [b for b in buckets if b["key"] in ips]}}}
+            return answer(index=index, body=body, **kwargs)
+
+        self.mock_storage._client.search.side_effect = search
+        with patch("api.risk._ALERT_IP_CHUNK", 250):
+            data = await (await self.client.request("GET", "/api/risk/scores?limit=1")).json()
+
+        self.assertEqual([len(ips) for ips in asked], [250, 250, 100])
+        self.assertEqual(sorted(ip for ips in asked for ip in ips), sorted(self.CONNS))
         self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.9.7"])
 
 
