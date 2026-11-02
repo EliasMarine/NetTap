@@ -73,7 +73,8 @@ echo ""
 
 echo "→ Step 3: Every container user can still read it..."
 for c in $CONSUMERS; do
-    UIDS=$(sudo docker exec "$c" sh -c 'for p in /proc/[0-9]*; do stat -c %u "$p" 2>/dev/null; done' | sort -un | tr '\n' ' ')
+    # docker top lists only the container's processes (/proc would show the host's with pid: host)
+    UIDS=$(sudo docker top "$c" -eo uid 2>/dev/null | sed 1d | sort -un | tr '\n' ' ')
     BAD=""
     for u in $UIDS; do
         sudo docker exec -u "$u" "$c" test -r /var/local/curlrc/.opensearch.primary.curlrc || BAD="$BAD $u"
@@ -93,15 +94,20 @@ for i in $(seq 1 36); do
     [ $((i % 6)) -eq 0 ] && echo "   waiting... daemon=$D logstash=$L ($i/36)"
     sleep 5
 done
-echo "   letting logstash ship for 90 s..."
-sleep 90
+echo "   waiting for indexing to resume (logstash takes ~1 min to start its pipelines)..."
+N=0
+for _ in $(seq 1 18); do
+    N=$(recent_docs)
+    [ "${N:-0}" -gt 0 ] && break
+    sleep 10
+done
 echo ""
 
 echo "→ Step 5: They still log in..."
-N=$(recent_docs)
 if [ "${N:-0}" -gt 0 ]; then rc=0; else rc=1; fi
 check "#77 logstash + filebeat still index (last 2 min)" "$rc" "${N:-0} documents"
-AUTHERR=$(sudo docker logs --since 3m nettap-logstash 2>&1 | grep -c -E '401|403|Unauthorized|security_exception' || true)
+# OpenSearch refusals only (supervisord logs an unrelated "without any HTTP authentication" line)
+AUTHERR=$(sudo docker logs --since 5m nettap-logstash 2>&1 | grep -c -E "response code '40[13]'|security_exception|401 Unauthorized" || true)
 if [ "$AUTHERR" -eq 0 ]; then rc=0; else rc=1; fi
 check "#77 logstash has no auth errors since the restart" "$rc" "$AUTHERR lines"
 HELPER=$(sudo docker exec nettap-dashboards-helper supervisorctl -c /etc/supervisord.conf status 2>&1 | awk '{print $1 "=" $2}' | tr '\n' ' ')
