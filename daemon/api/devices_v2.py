@@ -37,12 +37,9 @@ from typing import Any
 from aiohttp import web
 
 from api.devices import (
-    NETWORK_INDEX,
-    _MAX_DEVICE_LIMIT,
-    _MIN_CONNECTIONS,
     _device_category,
     _is_skipped_device_ip,
-    _lan_device_bool_query,
+    _lan_device_buckets,
     _vendor_category,
 )
 from services.device_fingerprint import _mac_from_hit, _oui_from_hit
@@ -63,50 +60,74 @@ REGISTRY_REFRESH_WINDOW = timedelta(hours=1)
 # ---------------------------------------------------------------------------
 
 
-def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
-    """The device list's LAN conn query, bucketed by IP with each IP's most common MAC."""
+# OLD CODE START — #96: a terms list of 500 IPs; past that, devices active this hour were never registered
+# def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
+#     """The device list's LAN conn query, bucketed by IP with each IP's most common MAC."""
+#     return {
+#         "size": 0,
+#         "query": {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
+#         "aggs": {
+#             "devices": {
+#                 "terms": {
+#                     "field": "source.ip",
+#                     "size": _MAX_DEVICE_LIMIT,
+#                     "min_doc_count": _MIN_CONNECTIONS,
+#                 },
+#                 "aggs": {
+#                     # OLD CODE START — the newest record's MAC: routed inter-VLAN legs on a
+#                     # mirrored uplink carry the router's MAC, so IoT IPs were filed under the UDM (#26)
+#                     # "with_mac": {"filter": {"exists": {"field": "source.mac"}},
+#                     #              "aggs": {"latest": {"top_hits": {"size": 1, "sort": [{"@timestamp": "desc"}], ...}}}}
+#                     # OLD CODE END
+#                     # The device's own MAC is on every flow's first leg, so it is the most common
+#                     "with_mac": {
+#                         "terms": {"field": "source.mac", "size": 1},
+#                         "aggs": {
+#                             "latest": {
+#                                 "top_hits": {
+#                                     "size": 1,
+#                                     "sort": [{"@timestamp": {"order": "desc"}}],
+#                                     "_source": ["source.mac", "source.oui"],
+#                                 }
+#                             }
+#                         },
+#                     }
+#                 },
+#             }
+#         },
+#     }
+# OLD CODE END
+
+
+def _conn_device_aggs() -> dict:
+    """Each device bucket's most common MAC (for _lan_device_buckets)."""
     return {
-        "size": 0,
-        "query": {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
-        "aggs": {
-            "devices": {
-                "terms": {
-                    "field": "source.ip",
-                    "size": _MAX_DEVICE_LIMIT,
-                    "min_doc_count": _MIN_CONNECTIONS,
-                },
-                "aggs": {
-                    # OLD CODE START — the newest record's MAC: routed inter-VLAN legs on a
-                    # mirrored uplink carry the router's MAC, so IoT IPs were filed under the UDM (#26)
-                    # "with_mac": {"filter": {"exists": {"field": "source.mac"}},
-                    #              "aggs": {"latest": {"top_hits": {"size": 1, "sort": [{"@timestamp": "desc"}], ...}}}}
-                    # OLD CODE END
-                    # The device's own MAC is on every flow's first leg, so it is the most common
-                    "with_mac": {
-                        "terms": {"field": "source.mac", "size": 1},
-                        "aggs": {
-                            "latest": {
-                                "top_hits": {
-                                    "size": 1,
-                                    "sort": [{"@timestamp": {"order": "desc"}}],
-                                    "_source": ["source.mac", "source.oui"],
-                                }
-                            }
-                        },
+        # The device's own MAC is on every flow's first leg, so it is the most common
+        "with_mac": {
+            "terms": {"field": "source.mac", "size": 1},
+            "aggs": {
+                "latest": {
+                    "top_hits": {
+                        "size": 1,
+                        "sort": [{"@timestamp": {"order": "desc"}}],
+                        "_source": ["source.mac", "source.oui"],
                     }
-                },
-            }
-        },
+                }
+            },
+        }
     }
 
 
-def _register_conn_devices(registry: DeviceRegistry, result: dict) -> dict[str, str]:
+def _register_conn_devices(registry: DeviceRegistry, buckets: list[dict]) -> dict[str, str]:
     """Register each IP bucket under its MAC, skipping the IPs the device list skips.
 
     Returns the {ip: mac} pairs registered.
     """
     assigned: dict[str, str] = {}
-    for bucket in result.get("aggregations", {}).get("devices", {}).get("buckets", []):
+    # OLD CODE START — #96: buckets came from one capped terms search
+    # for bucket in result.get("aggregations", {}).get("devices", {}).get("buckets", []):
+    # OLD CODE END
+    for bucket in buckets:
         ip = bucket["key"]
         macs = bucket.get("with_mac", {}).get("buckets", [])
         hits = macs[0].get("latest", {}).get("hits", {}).get("hits", []) if macs else []
@@ -195,12 +216,15 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     now = datetime.now(timezone.utc)
     from_ts = (now - REGISTRY_REFRESH_WINDOW).isoformat()
     to_ts = now.isoformat()
-    query = _conn_devices_query(app, from_ts, to_ts)
-    result = registry._client.search(index=NETWORK_INDEX, body=query)
+    # OLD CODE START — #96: the capped terms search (see _conn_devices_query)
+    # query = _conn_devices_query(app, from_ts, to_ts)
+    # result = registry._client.search(index=NETWORK_INDEX, body=query)
+    # OLD CODE END
+    buckets = _lan_device_buckets(registry._client, app, from_ts, to_ts, aggs=_conn_device_aggs())
     # OLD CODE START — #26: the {ip: mac} pairs are needed to drop IPs that moved
     # count = _register_conn_devices(registry, result)
     # OLD CODE END
-    assigned = _register_conn_devices(registry, result)
+    assigned = _register_conn_devices(registry, buckets)
     count = len(assigned)
     registry.merge_long_macs()
     registry.drop_reassigned_ips(assigned)

@@ -64,8 +64,15 @@ def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
         return {"result": "created"}
 
     def search(index: str, body: dict) -> dict:
-        if "devices" in body.get("aggs", {}):
-            return {"aggregations": {"devices": {"buckets": buckets}}}
+        aggs = body.get("aggs", {})
+        if "devices" in aggs:  # a terms list, top `size` like OpenSearch
+            return {"aggregations": {"devices": {"buckets": buckets[: aggs["devices"]["terms"]["size"]]}}}
+        if "all" in aggs:  # a composite, page by page in key order
+            composite = aggs["all"]["composite"]
+            after = (composite.get("after") or {}).get("ip")
+            rest = [b for b in sorted(buckets, key=lambda b: b["key"]) if after is None or b["key"] > after]
+            page = [{**b, "key": {"ip": b["key"]}} for b in rest[: composite["size"]]]
+            return {"aggregations": {"all": {"buckets": page, **({"after_key": page[-1]["key"]} if page else {})}}}
         if "match_all" in body.get("query", {}):  # registry listing
             return {"hits": {"hits": [{"_source": copy.deepcopy(d)} for d in client.searchable.values()]}}
         return {"hits": {"hits": []}}
@@ -93,7 +100,10 @@ def _app(client: MagicMock, changelog: MagicMock | None = None) -> dict:
 def _conn_query(client: MagicMock) -> tuple[str, dict]:
     """The (index, body) of the refresh's conn device search."""
     for call in client.search.call_args_list:
-        if "devices" in call.kwargs["body"].get("aggs", {}):
+        # OLD CODE START — #96: the refresh's terms search became a composite
+        # if "devices" in call.kwargs["body"].get("aggs", {}):
+        # OLD CODE END
+        if "all" in call.kwargs["body"].get("aggs", {}):
             return call.kwargs["index"], call.kwargs["body"]
     raise AssertionError("refresh made no conn device search")
 
@@ -138,12 +148,29 @@ class TestRegisterFromConn:
         assert span == REGISTRY_REFRESH_WINDOW
         request = SimpleNamespace(app=app)
         assert body["query"]["bool"] == _device_bool_query(request, from_ts, to_ts)
-        terms = body["aggs"]["devices"]["terms"]
-        assert terms == {
-            "field": "source.ip",
-            "size": _MAX_DEVICE_LIMIT,
-            "min_doc_count": _MIN_CONNECTIONS,
-        }
+        # OLD CODE START — #96: a terms list of _MAX_DEVICE_LIMIT IPs
+        # terms = body["aggs"]["devices"]["terms"]
+        # assert terms == {
+        #     "field": "source.ip",
+        #     "size": _MAX_DEVICE_LIMIT,
+        #     "min_doc_count": _MIN_CONNECTIONS,
+        # }
+        # OLD CODE END
+        assert body["aggs"]["all"]["composite"]["sources"] == [{"ip": {"terms": {"field": "source.ip"}}}]
+
+    def test_ips_under_min_connections_are_not_devices(self):
+        quiet = {**_bucket("192.168.1.10", "aa:bb:cc:00:00:01"), "doc_count": _MIN_CONNECTIONS - 1}
+        client = _fake_client([quiet])
+
+        assert refresh_device_registry(_app(client)) == 0
+
+    def test_registers_past_500_devices(self):
+        """#96: the refresh kept a terms list of 500 IPs; devices past it were never registered."""
+        ips = [f"192.168.{i // 200}.{i % 200 + 1}" for i in range(_MAX_DEVICE_LIMIT + 100)]
+        client = _fake_client([_bucket(ip, f"aa:bb:cc:00:{i // 256:02x}:{i % 256:02x}") for i, ip in enumerate(ips)])
+
+        assert refresh_device_registry(_app(client)) == len(ips)
+        assert len(client.store) == len(ips)
 
     def test_no_registry_does_nothing(self):
         assert refresh_device_registry({}) == 0
@@ -311,7 +338,10 @@ class TestIpOwnership:
     def test_query_takes_the_most_common_mac(self):
         client = _fake_client([])
         refresh_device_registry(_app(client))
-        with_mac = _conn_query(client)[1]["aggs"]["devices"]["aggs"]["with_mac"]
+        # OLD CODE START — #96: the terms search became a composite
+        # with_mac = _conn_query(client)[1]["aggs"]["devices"]["aggs"]["with_mac"]
+        # OLD CODE END
+        with_mac = _conn_query(client)[1]["aggs"]["all"]["aggs"]["with_mac"]
         assert with_mac["terms"] == {"field": "source.mac", "size": 1}
 
     def test_ip_moves_off_the_router_and_0000_is_dropped(self):
