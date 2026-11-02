@@ -6,10 +6,22 @@ from services.excluded_ips import detect_lan_subnets
 
 
 def _client(per_ip: dict[str, int]) -> MagicMock:
-    """OpenSearch mock answering the detection query's source.ip terms agg."""
+    """OpenSearch stand-in for the detection query: a terms list keeps its top `size`
+    sources (#96), a composite pages every source."""
+
+    def search(index: str, body: dict) -> dict:
+        ((name, agg),) = body["aggs"].items()
+        if "composite" in agg:
+            if "after" in agg["composite"]:
+                return {"aggregations": {name: {"buckets": []}}}
+            buckets = [{"key": {"ip": ip}, "doc_count": n} for ip, n in per_ip.items()]
+            after = {"after_key": buckets[-1]["key"]} if buckets else {}
+            return {"aggregations": {name: {"buckets": buckets, **after}}}
+        top = sorted(per_ip.items(), key=lambda kv: kv[1], reverse=True)[: agg["terms"]["size"]]
+        return {"aggregations": {name: {"buckets": [{"key": ip, "doc_count": n} for ip, n in top]}}}
+
     client = MagicMock()
-    buckets = [{"key": ip, "doc_count": n} for ip, n in per_ip.items()]
-    client.search.return_value = {"aggregations": {"top_sources": {"buckets": buckets}}}
+    client.search.side_effect = search
     return client
 
 
@@ -32,3 +44,14 @@ def test_single_lan_still_detected():
 
 def test_no_private_sources_detects_nothing():
     assert detect_lan_subnets(_client({"8.8.8.8": 10})) == []
+
+
+def test_vlan_of_quiet_devices_beyond_the_busiest_500_sources_counts():
+    """#96: only the 500 busiest sources were summed, so this VLAN (2% of outbound
+    connections, every device quieter than the main LAN's) was never detected."""
+    main = {f"192.168.{1 + i // 250}.{1 + i % 250}": 100 for i in range(500)}  # 50,000
+    iot = {f"10.10.0.{i}": 5 for i in range(1, 201)}  # 1,000
+
+    assert detect_lan_subnets(_client({**main, **iot})) == [
+        (192, 168, 1), (192, 168, 2), (10, 10, 0)
+    ]

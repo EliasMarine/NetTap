@@ -61,7 +61,9 @@ class TestApplianceIpNotSaved(unittest.TestCase):
             saved = os.path.join(tmp, "excluded_ips.json")
             with open(saved, "w") as f:
                 json.dump(["10.0.0.5"], f)
-            with patch.object(StorageManager, "_create_client", return_value=MagicMock()):
+            # An empty reply, not a MagicMock: LAN detection pages until a reply has no after_key (#96)
+            client = MagicMock(**{"search.return_value": {}})
+            with patch.object(StorageManager, "_create_client", return_value=client):
                 storage = StorageManager(RetentionConfig(), "http://localhost:9200")
             env = {"DAEMON_TOKEN_FILE": os.path.join(tmp, "auth", "token"), "EXCLUDED_IPS_FILE": saved}
             with (

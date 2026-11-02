@@ -16,6 +16,8 @@ import json
 import logging
 import os
 
+from storage.all_buckets import all_buckets
+
 logger = logging.getLogger("nettap.services.excluded_ips")
 
 DEFAULT_EXCLUDED_IPS_FILE = "/opt/nettap/data/excluded_ips.json"
@@ -77,13 +79,15 @@ def _is_rfc1918(a: int, b: int) -> bool:
 # A /24 counts as LAN when it makes at least this share of all outbound connections from
 # private addresses. G11 (#47): real subnets 85%, 10.7% and 4%; stray sources 0.06% or less.
 _MIN_SUBNET_SHARE = 0.01
+# Source pages carry no sub-aggregations: 10x fewer scans than the default, far below max_buckets
+_SOURCE_PAGE = 10_000
 
 
 def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
     """Auto-detect LAN subnets by querying OpenSearch for common source IPs.
 
     Strategy: aggregate source.ip from recent zeek conn logs, extract the
-    /24 subnet of each top IP, keep only RFC1918 subnets, and return them
+    /24 subnet of every IP, keep only RFC1918 subnets, and return them
     sorted by frequency. This correctly identifies the user's actual LAN
     regardless of their subnet scheme (192.168.1.x, 10.0.1.x, 172.16.x.x, etc.).
 
@@ -130,20 +134,35 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                     ]
                 }
             },
-            "aggs": {
-                "top_sources": {
-                    "terms": {
-                        "field": "source.ip",
-                        "size": 500,
-                    }
-                }
-            },
+            # OLD CODE START — #96: the 500 busiest sources only
+            # "aggs": {
+            #     "top_sources": {
+            #         "terms": {
+            #             "field": "source.ip",
+            #             "size": 500,
+            #         }
+            #     }
+            # },
+            # OLD CODE END
         }
 
-        result = client.search(index=NETWORK_INDEX, body=query)
-        buckets = (
-            result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        # OLD CODE START — #96: on a network with more than 500 sources, quieter devices fell out
+        # of their subnet's count and of the total its share is measured against
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # buckets = (
+        #     result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        # )
+        # OLD CODE END
+        pages, complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            query["query"],
+            [{"ip": {"terms": {"field": "source.ip"}}}],
+            page_size=_SOURCE_PAGE,
         )
+        if not complete:
+            logger.warning("LAN detection stopped at %d sources; shares are partial", len(pages))
+        buckets = [{**b, "key": b["key"]["ip"]} for b in pages]
 
         if not buckets:
             logger.warning("LAN detection: no source IPs found in OpenSearch")
