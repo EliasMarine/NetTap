@@ -575,9 +575,17 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
 
 
 class TestNetTapUpdatesStayApplicable(unittest.TestCase):
-    """Updates NetTap applies itself carry no applies_with sentence."""
+    """Updates NetTap applies itself carry no applies_with sentence; the rest say how they arrive."""
 
-    def test_nettap_release_is_applicable(self):
+    # OLD CODE START — a NetTap release was offered as applicable, and the executor
+    # answered "Unsupported component for update: nettap-daemon"
+    # def test_nettap_release_is_applicable(self):
+    #     ...
+    #     self.assertIsNone(update.applies_with)
+    # OLD CODE END
+    def test_nettap_release_says_how_to_get_it(self):
+        from services.update_checker import NETTAP_APPLIES_WITH
+
         async def fetch(url):
             return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
 
@@ -585,7 +593,7 @@ class TestNetTapUpdatesStayApplicable(unittest.TestCase):
         uc._fetch_json = fetch
         (update,) = asyncio.run(uc._check_github_releases())
         self.assertEqual(update.component, "nettap-daemon")
-        self.assertIsNone(update.applies_with)
+        self.assertEqual(update.applies_with, NETTAP_APPLIES_WITH)
 
     def test_stale_suricata_rules_are_applicable(self):
         from unittest.mock import patch
@@ -598,6 +606,50 @@ class TestNetTapUpdatesStayApplicable(unittest.TestCase):
             update = asyncio.run(UpdateChecker()._check_suricata_rules())
         self.assertEqual(update.component, "suricata-rules")
         self.assertIsNone(update.applies_with)
+
+
+class TestRulesAreReadInTheSuricataContainer(unittest.TestCase):
+    """The daemon container has no rules file: the check found none and read as current."""
+
+    def _check(self, live):
+        from unittest.mock import AsyncMock, patch
+
+        uc = UpdateChecker()
+        with (
+            patch("os.path.exists", return_value=False),
+            patch("services.update_checker.SuricataRuleManager.get_live_status", AsyncMock(return_value=live)),
+        ):
+            return asyncio.run(uc._check_suricata_rules()), uc._failed_checks
+
+    def test_stale_rules_in_the_container_are_an_update(self):
+        update, failed = self._check({"available": True, "last_updated": "2026-01-02T00:00:00+00:00"})
+        self.assertEqual((update.component, update.current_version), ("suricata-rules", "2026-01-02"))
+        self.assertFalse(update.requires_restart)  # the update reloads them
+        self.assertEqual(failed, [])
+
+    def test_unreadable_rules_are_a_failed_check(self):
+        update, failed = self._check({"available": False, "error": "Could not reach the Suricata container."})
+        self.assertIsNone(update)
+        self.assertEqual(failed, ["suricata-rules"])
+
+    def test_a_failed_check_is_not_listed_as_checked(self):
+        uc = UpdateChecker()
+
+        async def unreadable():
+            uc._failed_checks.append("suricata-rules")
+
+        async def nothing():
+            return []
+
+        async def none():
+            return None
+
+        uc._check_suricata_rules = unreadable
+        uc._check_github_releases = nothing
+        uc._check_geoip_update = none
+        result = asyncio.run(uc.check_updates())
+        self.assertEqual(result["failed_checks"], ["suricata-rules"])
+        self.assertNotIn("suricata-rules", result["checked"])
 
 
 class TestEstimateReleaseSize(unittest.TestCase):

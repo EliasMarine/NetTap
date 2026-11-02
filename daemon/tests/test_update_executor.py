@@ -585,11 +585,7 @@ class TestRollbackOnlyWithABackup(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             ue = UpdateExecutor(backup_dir=tmp)
-
-            async def run_command(cmd):
-                return ("", 0)
-
-            ue._run_command = run_command
+            ue._rule_manager = FakeRuleManager()
             with patch("os.path.exists", return_value=False):
                 result = asyncio.run(ue._update_suricata_rules())
         self.assertTrue(result.success)
@@ -682,11 +678,57 @@ class TestPinnedMalcolmContainers(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             ue = self._executor(tmp)
+            ue._rule_manager = FakeRuleManager()
             ue.set_update_checker(Checker())
             result = asyncio.run(ue.apply_update(["suricata-rules"]))
 
-        self.assertEqual(ue.ran[0], ["suricata-update", "update"])
+        # OLD CODE START — suricata-update ran in the daemon container, which doesn't have it
+        # self.assertEqual(ue.ran[0], ["suricata-update", "update"])
+        # OLD CODE END
+        self.assertEqual(ue._rule_manager.updates, 1)
         self.assertTrue(result["success"])
+
+
+class FakeRuleManager:
+    """Stands in for SuricataRuleManager: the rules file is dated by each update."""
+
+    def __init__(self, result=None, dates=("2026-11-01T00:00:00+00:00", "2026-11-02T22:30:00+00:00")):
+        self.result = result or {"success": True, "output": "", "reload_output": "OK"}
+        self.dates = list(dates)
+        self.updates = 0
+
+    async def get_live_status(self):
+        date = self.dates[min(self.updates, len(self.dates) - 1)]
+        return {"available": date is not None, "last_updated": date}
+
+    async def update_rules(self):
+        self.updates += 1
+        return self.result
+
+
+class TestRulesUpdateRunsInTheSuricataContainer(unittest.TestCase):
+    """The old update ran suricata-update in the daemon container, which doesn't have it."""
+
+    def _update(self, manager):
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = UpdateExecutor(backup_dir=tmp)
+            ue._rule_manager = manager
+            return asyncio.run(ue._update_suricata_rules())
+
+    def test_versions_are_the_rules_file_before_and_after(self):
+        result = self._update(FakeRuleManager())
+        self.assertTrue(result.success)
+        self.assertEqual((result.old_version, result.new_version), ("2026-11-01", "2026-11-02"))
+
+    def test_a_failed_reload_is_a_failure_that_says_why(self):
+        manager = FakeRuleManager({"success": False, "output": "x" * 5000, "reload_output": "NOK: reload failed"})
+        result = self._update(manager)
+        self.assertFalse(result.success)
+        self.assertEqual(result.error, "Suricata's rule update failed: NOK: reload failed")
+
+    def test_unreadable_rules_date_is_unknown(self):
+        result = self._update(FakeRuleManager(dates=(None,)))
+        self.assertEqual((result.old_version, result.new_version), ("unknown", "unknown"))
 
 
 if __name__ == "__main__":

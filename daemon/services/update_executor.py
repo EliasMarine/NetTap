@@ -15,6 +15,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
 
+from services.suricata_rules import SuricataRuleManager
+
 logger = logging.getLogger("nettap.services.update_executor")
 
 # Malcolm's containers, by the names VersionManager gives them. NetTap pins their images
@@ -73,6 +75,8 @@ class UpdateExecutor:
     ) -> None:
         self._compose_file = compose_file
         self._backup_dir = backup_dir
+        # runs the update in the Suricata container: the daemon has no suricata-update
+        self._rule_manager = SuricataRuleManager()
         self._current_update: dict | None = None  # tracks in-progress update
         self._update_history: list[dict] = []
         self._max_history = 50
@@ -502,94 +506,138 @@ class UpdateExecutor:
 
         return results
 
+    # OLD CODE START — ran suricata-update and suricatasc in the daemon container, which
+    # has neither (and no rules file), so it could only fail; kept for reference
+    # async def _update_suricata_rules(self) -> UpdateResult:
+    #     """Update Suricata IDS rules via suricata-update.
+    #
+    #     Returns:
+    #         UpdateResult for the suricata-rules component.
+    #     """
+    #     started = datetime.now(timezone.utc).isoformat()
+    #     old_version = "unknown"
+    #
+    #     try:
+    #         # Get current rule date
+    #         rule_paths = [
+    #             "/var/lib/suricata/rules/suricata.rules",
+    #             "/opt/nettap/config/suricata/rules/suricata.rules",
+    #         ]
+    #         for rule_path in rule_paths:
+    #             try:
+    #                 if os.path.exists(rule_path):
+    #                     mtime = os.path.getmtime(rule_path)
+    #                     old_version = datetime.fromtimestamp(
+    #                         mtime, tz=timezone.utc
+    #                     ).strftime("%Y-%m-%d")
+    #                     break
+    #             except OSError:
+    #                 continue
+    #
+    #         # Create backup
+    #         # OLD CODE START — #96: rollback_available was True even with no backup
+    #         # await self._create_backup("suricata-rules")
+    #         # OLD CODE END
+    #         backup_ok = self._has_restorable_backup(
+    #             await self._create_backup("suricata-rules")
+    #         )
+    #
+    #         # Run suricata-update
+    #         output, returncode = await self._run_command(
+    #             [
+    #                 "suricata-update",
+    #                 "update",
+    #             ]
+    #         )
+    #
+    #         if returncode != 0:
+    #             return UpdateResult(
+    #                 component="suricata-rules",
+    #                 success=False,
+    #                 old_version=old_version,
+    #                 new_version=old_version,
+    #                 started_at=started,
+    #                 completed_at=datetime.now(timezone.utc).isoformat(),
+    #                 error=f"suricata-update failed: {output}",
+    #                 rollback_available=backup_ok,  # was True (#96)
+    #             )
+    #
+    #         new_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    #
+    #         # Reload Suricata rules (best effort)
+    #         await self._run_command(
+    #             [
+    #                 "suricatasc",
+    #                 "-c",
+    #                 "reload-rules",
+    #             ]
+    #         )
+    #
+    #         return UpdateResult(
+    #             component="suricata-rules",
+    #             success=True,
+    #             old_version=old_version,
+    #             new_version=new_version,
+    #             started_at=started,
+    #             completed_at=datetime.now(timezone.utc).isoformat(),
+    #             error=None,
+    #             rollback_available=backup_ok,  # was True (#96)
+    #         )
+    #
+    #     except Exception as exc:
+    #         logger.exception("Failed to update Suricata rules")
+    #         return UpdateResult(
+    #             component="suricata-rules",
+    #             success=False,
+    #             old_version=old_version,
+    #             new_version=old_version,
+    #             started_at=started,
+    #             completed_at=datetime.now(timezone.utc).isoformat(),
+    #             error=str(exc),
+    #             rollback_available=False,
+    #         )
+    # OLD CODE END
     async def _update_suricata_rules(self) -> UpdateResult:
-        """Update Suricata IDS rules via suricata-update.
+        """Update Suricata's rules in the Suricata container and reload them.
+
+        Uses the Suricata Rules page's update (suricata-update + reload, checked on the
+        G11); the rules date before and after is read from the container's rules file.
 
         Returns:
             UpdateResult for the suricata-rules component.
         """
         started = datetime.now(timezone.utc).isoformat()
-        old_version = "unknown"
 
+        async def rules_date() -> str:
+            updated = (await self._rule_manager.get_live_status()).get("last_updated")
+            return updated[:10] if updated else "unknown"
+
+        old_version = await rules_date()
+        backup_ok = self._has_restorable_backup(
+            await self._create_backup("suricata-rules")
+        )
         try:
-            # Get current rule date
-            rule_paths = [
-                "/var/lib/suricata/rules/suricata.rules",
-                "/opt/nettap/config/suricata/rules/suricata.rules",
-            ]
-            for rule_path in rule_paths:
-                try:
-                    if os.path.exists(rule_path):
-                        mtime = os.path.getmtime(rule_path)
-                        old_version = datetime.fromtimestamp(
-                            mtime, tz=timezone.utc
-                        ).strftime("%Y-%m-%d")
-                        break
-                except OSError:
-                    continue
-
-            # Create backup
-            # OLD CODE START — #96: rollback_available was True even with no backup
-            # await self._create_backup("suricata-rules")
-            # OLD CODE END
-            backup_ok = self._has_restorable_backup(
-                await self._create_backup("suricata-rules")
-            )
-
-            # Run suricata-update
-            output, returncode = await self._run_command(
-                [
-                    "suricata-update",
-                    "update",
-                ]
-            )
-
-            if returncode != 0:
-                return UpdateResult(
-                    component="suricata-rules",
-                    success=False,
-                    old_version=old_version,
-                    new_version=old_version,
-                    started_at=started,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                    error=f"suricata-update failed: {output}",
-                    rollback_available=backup_ok,  # was True (#96)
-                )
-
-            new_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-            # Reload Suricata rules (best effort)
-            await self._run_command(
-                [
-                    "suricatasc",
-                    "-c",
-                    "reload-rules",
-                ]
-            )
-
-            return UpdateResult(
-                component="suricata-rules",
-                success=True,
-                old_version=old_version,
-                new_version=new_version,
-                started_at=started,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                error=None,
-                rollback_available=backup_ok,  # was True (#96)
-            )
-
+            result = await self._rule_manager.update_rules()
         except Exception as exc:
-            logger.exception("Failed to update Suricata rules")
-            return UpdateResult(
-                component="suricata-rules",
-                success=False,
-                old_version=old_version,
-                new_version=old_version,
-                started_at=started,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                error=str(exc),
-                rollback_available=False,
-            )
+            logger.error("Suricata rule update failed: %s", exc)
+            result = {"success": False, "output": str(exc), "reload_output": ""}
+        new_version = await rules_date()
+
+        error = None
+        if not result.get("success"):
+            # the update log can be hundreds of KB; its end says what went wrong
+            detail = (result.get("reload_output") or result.get("output") or "").strip()[-500:]
+            error = f"Suricata's rule update failed: {detail or 'no output'}"
+        return UpdateResult(
+            component="suricata-rules",
+            success=error is None,
+            old_version=old_version,
+            new_version=new_version,
+            started_at=started,
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            error=error,
+            rollback_available=backup_ok,
+        )
 
     async def _update_geoip(self) -> UpdateResult:
         """Update GeoIP database.

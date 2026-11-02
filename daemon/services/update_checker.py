@@ -16,6 +16,8 @@ from typing import Any
 
 import aiohttp
 
+from services.suricata_rules import SuricataRuleManager
+
 logger = logging.getLogger("nettap.services.update_checker")
 
 # Where the deployed images come from (docker/docker-compose.yml)
@@ -33,6 +35,10 @@ _LOGSTASH_GEOIP_DB = (  # the jruby and gem versions vary between images
 )
 _LOGSTASH_GEOIP_APPLIES_WITH = (
     "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+)
+# the update executor has no way to replace the running daemon and web containers
+NETTAP_APPLIES_WITH = (
+    "NetTap can't replace itself from this page: get the new release and rerun its install script."
 )
 
 
@@ -171,8 +177,14 @@ class UpdateChecker:
             self._available_updates = all_updates
             self._last_check = now
             own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+            # OLD CODE START — a source that couldn't be read was still listed as checked
+            # self._checked = sorted(
+            #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+            # )
+            # OLD CODE END
             self._checked = sorted(
                 {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+                - set(self._failed_checks)
             )
 
             logger.info(
@@ -275,6 +287,9 @@ class UpdateChecker:
                 changelog=(data.get("body") or "")[:500],
                 size_mb=self._estimate_release_size(data),
                 requires_restart=True,
+                # was unset: the page offered Update and the executor answered
+                # "Unsupported component for update: nettap-daemon"
+                applies_with=NETTAP_APPLIES_WITH,
             )
         )
 
@@ -370,8 +385,10 @@ class UpdateChecker:
     async def _check_suricata_rules(self) -> AvailableUpdate | None:
         """Check if Suricata ruleset has updates available.
 
-        Compares local rule file mtime against current date to suggest
-        daily rule updates.
+        Compares the rule file's mtime against the current date (Suricata's own job
+        refreshes it every night). The daemon container holds no copy, so the file is
+        read in the Suricata container; if it can't be, "suricata-rules" goes in
+        failed_checks.
 
         Returns:
             AvailableUpdate if rules are stale, None otherwise.
@@ -383,36 +400,55 @@ class UpdateChecker:
             "/opt/nettap/config/suricata/rules/suricata.rules",
         ]
 
+        # OLD CODE START — no local rules file read as "rules are current", but the
+        # daemon container never has one: the file lives in the Suricata container
+        # for rule_path in rule_paths:
+        #     try:
+        #         if not os.path.exists(rule_path):
+        #             continue
+        #         mtime = os.path.getmtime(rule_path)
+        #         rule_date = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        #         ... (age check below, unchanged)
+        #     except OSError:
+        #         continue
+        # return None
+        # OLD CODE END
+        rule_date = None
         for rule_path in rule_paths:
             try:
-                if not os.path.exists(rule_path):
-                    continue
-
-                mtime = os.path.getmtime(rule_path)
-                rule_date = datetime.fromtimestamp(mtime, tz=timezone.utc)
-                now = datetime.now(timezone.utc)
-                age_days = (now - rule_date).days
-
-                if age_days >= 1:
-                    return AvailableUpdate(
-                        component="suricata-rules",
-                        current_version=rule_date.strftime("%Y-%m-%d"),
-                        latest_version=now.strftime("%Y-%m-%d"),
-                        update_type="patch",
-                        release_url="https://rules.emergingthreats.net/",
-                        release_date=now.isoformat(),
-                        changelog=f"Suricata rules are {age_days} day(s) old",
-                        # OLD CODE START — #96: an approximate size shown as the download size
-                        # size_mb=15.0,  # Approximate ET ruleset size
-                        # OLD CODE END
-                        size_mb=None,
-                        requires_restart=True,
-                    )
-                return None
+                if os.path.exists(rule_path):
+                    rule_date = datetime.fromtimestamp(os.path.getmtime(rule_path), tz=timezone.utc)
+                    break
             except OSError:
                 continue
 
-        return None
+        if rule_date is None:
+            live = await SuricataRuleManager().get_live_status()
+            if not live.get("last_updated"):
+                logger.warning("Could not read Suricata's rules date: %s", live.get("error"))
+                self._failed_checks.append("suricata-rules")
+                return None
+            rule_date = datetime.fromisoformat(live["last_updated"])
+
+        now = datetime.now(timezone.utc)
+        age_days = (now - rule_date).days
+        if age_days < 1:
+            return None
+        return AvailableUpdate(
+            component="suricata-rules",
+            current_version=rule_date.strftime("%Y-%m-%d"),
+            latest_version=now.strftime("%Y-%m-%d"),
+            update_type="patch",
+            release_url="https://rules.emergingthreats.net/",
+            release_date=now.isoformat(),
+            changelog=f"Suricata rules are {age_days} day(s) old",
+            # OLD CODE START — #96: an approximate size shown as the download size
+            # size_mb=15.0,  # Approximate ET ruleset size
+            # OLD CODE END
+            size_mb=None,
+            # was True: the update reloads the rules into the running Suricata
+            requires_restart=False,
+        )
 
     async def _check_geoip_update(self) -> AvailableUpdate | None:
         """Check if GeoIP database needs updating.
