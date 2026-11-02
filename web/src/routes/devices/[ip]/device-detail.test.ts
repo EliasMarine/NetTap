@@ -131,3 +131,30 @@ describe('Device detail — time range (#87)', () => {
 		expect(connOpts.from).toBe(detailOpts.from);
 	});
 });
+
+// #96: getSmartAlerts turned an HTTP error into an empty list, so the card said "No actionable
+// alerts for this device" when the request had failed.
+describe('Device detail — smart alerts request fails', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('says the alerts could not be loaded and keeps the rest of the page', async () => {
+		vi.mocked(getSmartAlerts).mockRejectedValue(new Error('Smart alerts failed: HTTP 502'));
+		render(Page);
+		await flush();
+
+		expect(screen.getByText("Couldn't load alerts for this device: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No actionable alerts for this device.')).not.toBeInTheDocument();
+		expect(screen.getByText('check failed')).toBeInTheDocument();
+		expect(screen.getAllByText('laptop').length).toBeGreaterThan(0);
+	});
+
+	it('still says there are none when the request succeeds empty', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('No actionable alerts for this device.')).toBeInTheDocument();
+	});
+});

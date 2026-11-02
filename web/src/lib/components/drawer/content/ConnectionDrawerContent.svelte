@@ -71,6 +71,8 @@
 	// Threat context state
 	let threatAlerts = $state<Alert[]>([]);
 	let threatLoading = $state(false);
+	// #96: a failed lookup must not read as "No associated alerts found"
+	let threatFailed = $state(false);
 	let threatLoaded = $state(false);
 
 	// Derived connection fields
@@ -199,8 +201,10 @@
 		try {
 			const result = await getAlerts({ ip: srcIp || dstIp, size: 10 });
 			threatAlerts = result.alerts || [];
+			threatFailed = false;
 		} catch {
 			threatAlerts = [];
+			threatFailed = true;
 		} finally {
 			threatLoading = false;
 		}
@@ -445,6 +449,8 @@
 						<p class="text-muted" style="margin-top: var(--space-xs);">+ {threatAlerts.length - 5} more alerts</p>
 					{/if}
 				</div>
+			{:else if threatFailed}
+				<p class="text-muted no-threats">Couldn't check for associated alerts: the request failed.</p>
 			{:else}
 				<p class="text-muted no-threats">No associated alerts found</p>
 			{/if}

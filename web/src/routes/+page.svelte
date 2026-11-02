@@ -63,6 +63,8 @@
 	let deviceCount = $state(0);
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertSummary = $state<SmartAlertSummary | null>(null);
+	// #96: a failed request must not read as "No actionable alerts detected"
+	let smartAlertsFailed = $state(false);
 	let topDevices = $state<Device[]>([]);
 
 	// Previous-period data for trend indicators
@@ -185,6 +187,7 @@
 				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
 			]).then(([smartRes, summaryRes, devicesRes]) => {
 				smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
+				smartAlertsFailed = smartRes.status === 'rejected';
 				smartAlertSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
 				topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
 			});
@@ -356,11 +359,18 @@
 		)
 	);
 
+	// OLD CODE START — #96: a failed count compared as 0, so a failure read as "▼ 100%"
+	// let alertTrend = $derived(
+	// 	trendPercent(
+	// 		alertCount?.counts?.total ?? 0,
+	// 		prevAlertCount?.counts?.total ?? 0,
+	// 	)
+	// );
+	// OLD CODE END
 	let alertTrend = $derived(
-		trendPercent(
-			alertCount?.counts?.total ?? 0,
-			prevAlertCount?.counts?.total ?? 0,
-		)
+		alertCount && prevAlertCount
+			? trendPercent(alertCount.counts.total, prevAlertCount.counts.total)
+			: { arrow: '', pct: '', direction: 'flat' as const },
 	);
 
 	// ---------------------------------------------------------------------------
@@ -867,7 +877,10 @@
 				<!-- OLD CODE START — 2026-11-01: "394 total" beside "2.2K alerts" read as a contradiction; the summary hides informational alerts -->
 				<!-- <span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span> -->
 				<!-- OLD CODE END -->
+				<!-- #96: with both counts failed this read "0 to review" -->
+				{#if smartAlertSummary || alertCount}
 				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review{#if smartAlertSummary?.informational_events}{` · ${formatNumber(smartAlertSummary.informational_events)} informational`}{/if}</span>
+				{/if}
 			</div>
 			{#if smartAlerts.length > 0}
 				<!-- Severity summary bar -->
@@ -898,6 +911,9 @@
 				<div class="skeleton-table">
 					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
+			{:else if smartAlertsFailed}
+				<div class="table-empty"><p class="text-muted">Couldn't load the alert summary: the request failed.</p></div>
+				<a href="/alerts" class="card-link-bottom">View raw alerts &rarr;</a>
 			{:else}
 				<div class="table-empty"><p class="text-muted">No actionable alerts detected.</p></div>
 				<a href="/alerts" class="card-link-bottom">View raw alerts &rarr;</a>

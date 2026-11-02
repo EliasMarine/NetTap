@@ -162,17 +162,20 @@ export async function getAlerts(
 	});
 	const res = await fetch(`/api/alerts${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			page: opts.page ?? 1,
-			size: opts.size ?? 50,
-			total: 0,
-			total_pages: 0,
-			alerts: [],
-		};
-	}
+	// OLD CODE START — #96: a failure read as "No Alerts"
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		page: opts.page ?? 1,
+	// 		size: opts.size ?? 50,
+	// 		total: 0,
+	// 		total_pages: 0,
+	// 		alerts: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Alerts failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -186,13 +189,16 @@ export async function getAlertCount(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/alerts/count${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			counts: { total: 0, high: 0, medium: 0, low: 0 },
-		};
-	}
+	// OLD CODE START — #96: a failure read as zero alerts
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		counts: { total: 0, high: 0, medium: 0, low: 0 },
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Alert count failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -203,9 +209,13 @@ export async function getAlertCount(
 export async function getAlertDetail(id: string): Promise<AlertDetailResponse | null> {
 	const res = await fetch(`/api/alerts/${encodeURIComponent(id)}`);
 
-	if (!res.ok) {
-		return null;
-	}
+	// OLD CODE START — #96: a failed request read the same as "no such alert"
+	// if (!res.ok) {
+	// 	return null;
+	// }
+	// OLD CODE END
+	if (res.status === 404) return null;
+	if (!res.ok) throw new Error(`Alert detail failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -244,9 +254,12 @@ export async function getAlertTimeline(
 	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/alerts/timeline${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', interval: opts.interval || '1h', buckets: [] };
-	}
+	// OLD CODE START — #96: a failure read as "No timeline data available"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: opts.interval || '1h', buckets: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Alert timeline failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -260,9 +273,12 @@ export async function getAlertTopSignatures(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/alerts/top-signatures${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', signatures: [] };
-	}
+	// OLD CODE START — #96: a failure read as "No signatures found"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', signatures: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top signatures failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -281,9 +297,12 @@ export async function getAlertTopIps(
 	});
 	const res = await fetch(`/api/alerts/top-ips${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', direction: opts.direction || 'dest', ips: [] };
-	}
+	// OLD CODE START — #96: a failure read as "No source/destination IPs found"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', direction: opts.direction || 'dest', ips: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top alert IPs failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -297,9 +316,12 @@ export async function getAlertCategories(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/alerts/categories${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', categories: [] };
-	}
+	// OLD CODE START — #96: a failure read as no alert categories
+	// if (!res.ok) {
+	// 	return { from: '', to: '', categories: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Alert categories failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -414,9 +436,12 @@ export async function getSmartAlerts(
 	const query = qs.toString() ? `?${qs.toString()}` : '';
 	const res = await fetch(`/api/alerts/smart${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', device_ip: null, alerts: [], total: 0 };
-	}
+	// OLD CODE START — #96: a failure read as "No actionable alerts"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', device_ip: null, alerts: [], total: 0 };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Smart alerts failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -438,18 +463,21 @@ export async function getSmartAlertSummary(
 	const query = qs.toString() ? `?${qs.toString()}` : '';
 	const res = await fetch(`/api/alerts/smart/summary${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			threat_score: 0,
-			threat_level: 'none',
-			total_groups: 0,
-			total_events: 0,
-			categories: {},
-			top_threats: [],
-		};
-	}
+	// OLD CODE START — #96: a failure read as threat level "none" with nothing to review
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		threat_score: 0,
+	// 		threat_level: 'none',
+	// 		total_groups: 0,
+	// 		total_events: 0,
+	// 		categories: {},
+	// 		top_threats: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Smart alert summary failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -623,20 +651,27 @@ export async function getEnhancedCategories(
 	opts: TimeRangeParams = {}
 ): Promise<EnhancedCategoriesResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
-	try {
-		const res = await fetch(`/api/alerts/categories${q}`, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		// OLD CODE START — passed the daemon payload through, but the daemon sends `trend`
-		// as a bare string and `sparkline` as [{timestamp, count}], so every card showed
-		// "stable" and the sparkline polyline was NaN
-		// return await res.json();
-		// OLD CODE END
-		const data = await res.json();
-		const categories: Record<string, unknown>[] = Array.isArray(data?.categories) ? data.categories : [];
-		return { ...data, categories: categories.map(normaliseCategory) };
-	} catch {
-		return { from: '', to: '', categories: [] };
-	}
+	// OLD CODE START — #96: any failure (HTTP, timeout, network) read as "No category data available"
+	// try {
+	// 	const res = await fetch(`/api/alerts/categories${q}`, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	const data = await res.json();
+	// 	const categories: Record<string, unknown>[] = Array.isArray(data?.categories) ? data.categories : [];
+	// 	return { ...data, categories: categories.map(normaliseCategory) };
+	// } catch {
+	// 	return { from: '', to: '', categories: [] };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/alerts/categories${q}`, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Alert categories failed: HTTP ${res.status}`);
+	// OLD CODE START — passed the daemon payload through, but the daemon sends `trend`
+	// as a bare string and `sparkline` as [{timestamp, count}], so every card showed
+	// "stable" and the sparkline polyline was NaN
+	// return await res.json();
+	// OLD CODE END
+	const data = await res.json();
+	const categories: Record<string, unknown>[] = Array.isArray(data?.categories) ? data.categories : [];
+	return { ...data, categories: categories.map(normaliseCategory) };
 }
 
 const TREND_DIRECTIONS: CategoryTrend['direction'][] = ['increasing', 'decreasing', 'stable'];
@@ -665,22 +700,27 @@ export async function getAlertCategoryDetail(
 	opts: TimeRangeParams = {}
 ): Promise<CategoryDetailResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
-	try {
-		const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}${q}`, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
-	} catch {
-		return {
-			// OLD CODE START — mitre_tactic removed from the type (never sent by the daemon)
-			// category: { id: category, label: category, description: '', color: 'muted', icon: 'info', mitre_tactic: null },
-			// OLD CODE END
-			category: { id: category, label: category, description: '', color: 'muted', icon: 'info' },
-			stats: { total: 0, unique_sources: 0, unique_targets: 0, affected_devices: 0 },
-			severity_breakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
-			sub_categories: [], affected_devices: [], top_signatures: [], mitre_techniques: [],
-			from: '', to: '',
-		};
-	}
+	// OLD CODE START — #96: any failure read as "No alerts in <category>"
+	// try {
+	// 	const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}${q}`, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	return await res.json();
+	// } catch {
+	// 	return {
+	// 		// OLD CODE START — mitre_tactic removed from the type (never sent by the daemon)
+	// 		// category: { id: category, label: category, description: '', color: 'muted', icon: 'info', mitre_tactic: null },
+	// 		// OLD CODE END
+	// 		category: { id: category, label: category, description: '', color: 'muted', icon: 'info' },
+	// 		stats: { total: 0, unique_sources: 0, unique_targets: 0, affected_devices: 0 },
+	// 		severity_breakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+	// 		sub_categories: [], affected_devices: [], top_signatures: [], mitre_techniques: [],
+	// 		from: '', to: '',
+	// 	};
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}${q}`, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Alert category failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
@@ -691,11 +731,16 @@ export async function getAlertCategoryTimeline(
 	opts: TimeRangeParams & { interval?: string } = {}
 ): Promise<CategoryTimelineResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
-	try {
-		const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}/timeline${q}`, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
-	} catch {
-		return { category, from: '', to: '', interval: opts.interval ?? '1h', series: [] };
-	}
+	// OLD CODE START — #96: any failure read as an empty timeline
+	// try {
+	// 	const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}/timeline${q}`, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	return await res.json();
+	// } catch {
+	// 	return { category, from: '', to: '', interval: opts.interval ?? '1h', series: [] };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/alerts/categories/${encodeURIComponent(category)}/timeline${q}`, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Alert category timeline failed: HTTP ${res.status}`);
+	return res.json();
 }

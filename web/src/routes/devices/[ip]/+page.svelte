@@ -68,6 +68,7 @@
 	let categories = $state<DeviceCategory[]>([]);
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertsTotal = $state(0);
+	let smartAlertsFailed = $state(false);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
 	let suppressFailedId = $state<number | null>(null);
@@ -191,14 +192,20 @@
 			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
 				getDeviceDetail(deviceIp, span),
 				getDeviceCategories(deviceIp, span),
-				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }),
+				// #96: a failed alert lookup marks its card only, not the whole device page
+				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }).catch(() => null),
 				getDevicePorts(deviceIp, span),
 				getDeviceRiskScore(deviceIp, span),
 			]);
 			device = deviceRes.device;
 			categories = catRes.categories;
-			smartAlerts = smartRes.alerts;
-			smartAlertsTotal = smartRes.total;
+			// OLD CODE START — #96: getSmartAlerts now throws instead of returning no alerts
+			// smartAlerts = smartRes.alerts;
+			// smartAlertsTotal = smartRes.total;
+			// OLD CODE END
+			smartAlerts = smartRes?.alerts ?? [];
+			smartAlertsTotal = smartRes?.total ?? 0;
+			smartAlertsFailed = smartRes === null;
 			ports = portRes.ports;
 			riskScore = riskRes.score;
 			riskLevel = riskRes.level;
@@ -578,7 +585,7 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Smart Alerts</span>
-					<span class="card-badge">{smartAlertsTotal} grouped</span>
+					<span class="card-badge">{smartAlertsFailed ? 'check failed' : `${smartAlertsTotal} grouped`}</span>
 				</div>
 				{#if smartAlerts.length > 0}
 					<div class="smart-alert-list">
@@ -620,6 +627,8 @@
 						</button>
 					{/if}
 					<a href="/alerts?ip={deviceIp}" class="card-link">View all alerts &rarr;</a>
+				{:else if smartAlertsFailed}
+					<p class="empty-msg">Couldn't load alerts for this device: the request failed.</p>
 				{:else}
 					<p class="empty-msg">No actionable alerts for this device.</p>
 				{/if}
