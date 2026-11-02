@@ -435,5 +435,55 @@ class TestBandwidthApiQueryFailure(AioHTTPTestCase):
             self.assertIn("error", await resp.json())
 
 
+class TestHeatmapScriptsAndTimeZone(AioHTTPTestCase):
+    """The heatmap counts in the viewer's zone with java.time getters OpenSearch 3.x still has."""
+
+    async def get_application(self):
+        from api.bandwidth import register_bandwidth_routes
+
+        self.mock_client = MagicMock()
+        self.mock_client.search.return_value = {"aggregations": {"by_day_of_week": {"buckets": []}}}
+        with patch("services.bandwidth_tracker._CAP_FILE", "/nonexistent/path"):
+            tracker = BandwidthTracker(client=self.mock_client)
+        app = web.Application()
+        register_bandwidth_routes(app, tracker)
+        return app
+
+    def _scripts(self) -> list[dict]:
+        day = self.mock_client.search.call_args.kwargs["body"]["aggs"]["by_day_of_week"]
+        return [day["terms"]["script"], day["aggs"]["by_hour"]["terms"]["script"]]
+
+    async def test_scripts_use_java_time_not_joda_getters(self):
+        """'.dayOfWeek' / '.hourOfDay' failed the data shard on OpenSearch 3.x: an empty heatmap."""
+        resp = await self.client.request("GET", "/api/bandwidth/heatmap")
+        self.assertEqual(resp.status, 200)
+        day, hour = self._scripts()
+        for script in (day, hour):
+            self.assertNotIn(".dayOfWeek", script["source"])
+            self.assertNotIn(".hourOfDay", script["source"])
+        self.assertTrue(day["source"].endswith(".getDayOfWeek().getValue()"))  # 1=Mon..7=Sun
+        self.assertTrue(hour["source"].endswith(".getHour()"))
+
+    async def test_viewer_zone_reaches_the_scripts_and_is_echoed(self):
+        resp = await self.client.request("GET", "/api/bandwidth/heatmap?tz=America/Los_Angeles")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["tz"], "America/Los_Angeles")
+        for script in self._scripts():
+            self.assertEqual(script["params"], {"tz": "America/Los_Angeles"})
+            self.assertIn("withZoneSameInstant(ZoneId.of(params.tz))", script["source"])
+
+    async def test_zone_defaults_to_utc(self):
+        resp = await self.client.request("GET", "/api/bandwidth/heatmap")
+        self.assertEqual((await resp.json())["tz"], "UTC")
+        self.assertEqual(self._scripts()[0]["params"], {"tz": "UTC"})
+
+    async def test_unknown_zone_is_400(self):
+        for tz in ("Mars/Olympus_Mons", "../etc/passwd"):
+            resp = await self.client.request("GET", f"/api/bandwidth/heatmap?tz={tz}")
+            self.assertEqual(resp.status, 400, tz)
+            self.assertIn("error", await resp.json())
+        self.mock_client.search.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

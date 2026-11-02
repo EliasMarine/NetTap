@@ -398,7 +398,11 @@ class BandwidthTracker:
         return result
 
     def get_hourly_heatmap(
-        self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+        tz: str = "UTC",
     ) -> list[list[int]]:
         """Get a 7x24 hour-of-day x day-of-week bandwidth matrix.
 
@@ -408,6 +412,7 @@ class BandwidthTracker:
             from_ts: ISO timestamp start.
             to_ts: ISO timestamp end.
             excluded_ips: Optional list of IPs to exclude from results.
+            tz: IANA time zone the days and hours are counted in (the caller validates it).
 
         Returns:
             7x24 matrix of byte totals.
@@ -425,6 +430,13 @@ class BandwidthTracker:
         if excluded:
             bool_clause["must_not"] = excluded
 
+        # OLD CODE START — Joda getters OpenSearch 3.x removed ("dynamic getter
+        # [java.time.ZonedDateTime, hourOfDay] not found"): the data shard failed and the heatmap
+        # read empty; and the hours were UTC, so a Pacific evening showed at 02:00-06:00
+        # "script": {"source": "doc['@timestamp'].value.dayOfWeek", "lang": "painless"},
+        # "script": {"source": "doc['@timestamp'].value.hourOfDay", "lang": "painless"},
+        # OLD CODE END
+        local = "doc['@timestamp'].value.withZoneSameInstant(ZoneId.of(params.tz))"
         query = {
             "size": 0,
             "query": {"bool": bool_clause},
@@ -432,8 +444,10 @@ class BandwidthTracker:
                 "by_day_of_week": {
                     "terms": {
                         "script": {
-                            "source": "doc['@timestamp'].value.dayOfWeek",
+                            # 1=Mon..7=Sun
+                            "source": f"{local}.getDayOfWeek().getValue()",
                             "lang": "painless",
+                            "params": {"tz": tz},
                         },
                         "size": 7,
                     },
@@ -441,8 +455,9 @@ class BandwidthTracker:
                         "by_hour": {
                             "terms": {
                                 "script": {
-                                    "source": "doc['@timestamp'].value.hourOfDay",
+                                    "source": f"{local}.getHour()",
                                     "lang": "painless",
+                                    "params": {"tz": tz},
                                 },
                                 "size": 24,
                             },

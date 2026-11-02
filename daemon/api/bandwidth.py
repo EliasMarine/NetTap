@@ -15,6 +15,7 @@ Endpoints:
 
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
@@ -158,16 +159,25 @@ async def handle_devices(request: web.Request) -> web.Response:
 
 
 async def handle_heatmap(request: web.Request) -> web.Response:
-    """GET /api/bandwidth/heatmap?from=&to=
+    """GET /api/bandwidth/heatmap?from=&to=&tz=
 
-    Returns a 7x24 hour-of-day x day-of-week bandwidth matrix.
+    Returns a 7x24 hour-of-day x day-of-week bandwidth matrix, in the viewer's IANA
+    time zone `tz` (default UTC).
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
+    tz = request.query.get("tz") or "UTC"
     try:
-        matrix = tracker.get_hourly_heatmap(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return web.json_response({"error": f"Unknown time zone: {tz}"}, status=400)
+
+    try:
+        matrix = tracker.get_hourly_heatmap(
+            from_ts, to_ts, excluded_ips=excluded_ips_list, tz=tz
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/heatmap: %s", exc)
         return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
@@ -176,6 +186,7 @@ async def handle_heatmap(request: web.Request) -> web.Response:
         {
             "from": from_ts,
             "to": to_ts,
+            "tz": tz,
             "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
             "hours": list(range(24)),
             "matrix": matrix,
