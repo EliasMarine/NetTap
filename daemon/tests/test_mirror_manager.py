@@ -366,6 +366,24 @@ class TestGetHealth(unittest.TestCase):
         self.assertFalse(health.promisc_enabled)
         self.assertTrue(len(health.issues) >= 1)
 
+    @patch("os.path.exists", return_value=True)
+    def test_failed_ip_check_is_not_normal(self, mock_exists):
+        """#96: an IP check that couldn't run is an issue, not "no IP, all normal"."""
+        mgr = _make_manager(interface="enp2s0")
+        self._setup_health_mocks(mgr, operstate="up", carrier="1", flags="0x1103")
+        del mgr._check_has_ip  # use the real check
+
+        async def ip_fails(*args):
+            return (1, "", "ip: command failed")
+
+        mgr._run_nsenter = ip_fails
+
+        health = asyncio.run(mgr.get_health())
+
+        self.assertEqual(health.status, "degraded")
+        self.assertIn("Could not check whether enp2s0 has an IP address", health.issues)
+        self.assertIsNone(health.extra["has_ip"])
+
 
 class TestGetStats(unittest.TestCase):
     """Tests for get_stats() — sysfs counter reading."""
