@@ -743,7 +743,14 @@
 							<div class="service-bar-list">
 								{#each services.slice(0, 8) as svc, i (`${svc.name}-${i}`)}
 									<div class="svc-bar-row">
+										<!-- OLD CODE START — "UNKNOWN" read like missing data; it is connections Zeek could not identify (#20)
 										<span class="svc-bar-name">{(svc.name || 'unknown').toUpperCase()}</span>
+										OLD CODE END -->
+										{#if !svc.name || svc.name === 'unknown'}
+											<span class="svc-bar-name" title="Connections where Zeek could not identify the application protocol">UNIDENTIFIED</span>
+										{:else}
+											<span class="svc-bar-name">{svc.name.toUpperCase()}</span>
+										{/if}
 										<div class="svc-bar-track">
 											<div class="svc-bar-fill" style="width: {(svc.count / maxServiceCount) * 100}%; background: {SERVICE_COLORS[i] ?? SERVICE_COLORS[SERVICE_COLORS.length - 1]};"></div>
 										</div>
