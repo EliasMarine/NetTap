@@ -145,21 +145,29 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     "size": limit,
                 },
                 "aggs": {
+                    # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
+                    # "total_orig_bytes": {
+                    #     "sum": {
+                    #         "script": {
+                    #             "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
+                    #             "lang": "painless",
+                    #         }
+                    #     }
+                    # },
+                    # "total_resp_bytes": {
+                    #     "sum": {
+                    #         "script": {
+                    #             "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
+                    #             "lang": "painless",
+                    #         }
+                    #     }
+                    # },
+                    # OLD CODE END
                     "total_orig_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
-                                "lang": "painless",
-                            }
-                        }
+                        "sum": {"field": "source.bytes", "missing": 0}
                     },
                     "total_resp_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
-                                "lang": "painless",
-                            }
-                        }
+                        "sum": {"field": "destination.bytes", "missing": 0}
                     },
                     "ports_used": {"terms": {"field": "destination.port", "size": 50}},
                     "external_conns": {
@@ -175,7 +183,9 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     },
                 },
             },
-            "conn_stats": {"extended_stats": {"field": "_doc_count"}},
+            # OLD CODE START — replaced 2026-11-01: _doc_count is a metadata field, OpenSearch 400s on it (every call 502'd), and nothing read the result
+            # "conn_stats": {"extended_stats": {"field": "_doc_count"}},
+            # OLD CODE END
         },
     }
 
@@ -191,7 +201,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
         conn_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
     )
 
-    # Compute network average and stddev from bucket doc_counts
+    # Mean and population stddev of per-device connection counts, from the terms buckets
     if device_buckets:
         counts = [b.get("doc_count", 0) for b in device_buckets]
         network_avg = sum(counts) / len(counts)
@@ -312,22 +322,26 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "total_orig_bytes": {
-                "sum": {
-                    "script": {
-                        "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
-                        "lang": "painless",
-                    }
-                }
-            },
-            "total_resp_bytes": {
-                "sum": {
-                    "script": {
-                        "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
-                        "lang": "painless",
-                    }
-                }
-            },
+            # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
+            # "total_orig_bytes": {
+            #     "sum": {
+            #         "script": {
+            #             "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
+            #             "lang": "painless",
+            #         }
+            #     }
+            # },
+            # "total_resp_bytes": {
+            #     "sum": {
+            #         "script": {
+            #             "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
+            #             "lang": "painless",
+            #         }
+            #     }
+            # },
+            # OLD CODE END
+            "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
             "ports_used": {"terms": {"field": "destination.port", "size": 50}},
             "external_conns": {
                 "filter": {
@@ -387,6 +401,8 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             },
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
+            # Same LAN population as /api/risk/scores, so the baseline matches the list view
+            request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
         ],
     }
     if net_excluded:

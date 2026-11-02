@@ -36,7 +36,9 @@ def _make_conn_search_result(buckets=None, total=0):
         "hits": {"total": {"value": total}},
         "aggregations": {
             "devices": {"buckets": buckets},
-            "conn_stats": {"count": len(buckets), "avg": 100.0, "std_deviation": 50.0},
+            # OLD CODE START — replaced 2026-11-01: the handler no longer asks for conn_stats (it 400'd on _doc_count)
+            # "conn_stats": {"count": len(buckets), "avg": 100.0, "std_deviation": 50.0},
+            # OLD CODE END
         },
     }
 
@@ -216,6 +218,45 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual(data["device_count"], 1)
 
+    @unittest_run_loop
+    async def test_scores_query_never_aggregates_doc_count(self):
+        """No aggregation may target _doc_count: OpenSearch rejects it with a 400."""
+        self.mock_storage._client.search.return_value = _make_conn_search_result()
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual(resp.status, 200)
+
+        def fields(node):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "field":
+                        yield value
+                    yield from fields(value)
+            elif isinstance(node, list):
+                for item in node:
+                    yield from fields(item)
+
+        conn_query = self.mock_storage._client.search.call_args_list[0].kwargs["body"]
+        self.assertNotIn("_doc_count", list(fields(conn_query["aggs"])))
+
+    @unittest_run_loop
+    async def test_scores_network_stats_from_buckets(self):
+        """Mean and population stddev come from the per-device bucket counts."""
+        buckets = [
+            _make_device_bucket("192.168.1.10", doc_count=100),
+            _make_device_bucket("192.168.1.20", doc_count=200),
+            _make_device_bucket("192.168.1.30", doc_count=600),
+        ]
+        self.mock_storage._client.search.side_effect = [
+            _make_conn_search_result(buckets=buckets, total=900),
+            _make_alert_search_result({}),
+        ]
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(data["network_avg_connections"], 300.0)
+        # sqrt(((100-300)^2 + (200-300)^2 + (600-300)^2) / 3) = 216.02
+        self.assertEqual(data["network_stddev_connections"], 216.02)
+
 
 class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
     """Tests for GET /api/risk/scores/{ip}."""
@@ -362,6 +403,82 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
 
         resp = await self.client.request("GET", "/api/risk/scores/192.168.1.10")
         self.assertEqual(resp.status, 200)
+
+
+class TestRiskQueryConsistency(AioHTTPTestCase):
+    """Both endpoints read the same byte fields and score against the same population."""
+
+    LAN_FILTER = {"term": {"network.direction": "lan-test-marker"}}
+    RANGE = {"from": "2026-10-31T00:00:00Z", "to": "2026-11-01T00:00:00Z"}
+
+    def setUp(self):
+        self.mock_storage = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.mock_storage
+        app["lan_filter"] = self.LAN_FILTER
+        app["excluded_ips"] = ["192.168.1.1"]
+        register_risk_routes(app, RiskScorer(), self.mock_storage)
+        return app
+
+    def _bodies(self):
+        return [
+            c.kwargs["body"] for c in self.mock_storage._client.search.call_args_list
+        ]
+
+    def _assert_zeek_byte_fields(self, aggs):
+        # Arkime's client/server.bytes are inflated; traffic.py uses these instead
+        self.assertEqual(
+            aggs["total_orig_bytes"], {"sum": {"field": "source.bytes", "missing": 0}}
+        )
+        self.assertEqual(
+            aggs["total_resp_bytes"],
+            {"sum": {"field": "destination.bytes", "missing": 0}},
+        )
+
+    @unittest_run_loop
+    async def test_list_endpoint_byte_fields(self):
+        self.mock_storage._client.search.return_value = _make_conn_search_result()
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual(resp.status, 200)
+        self._assert_zeek_byte_fields(self._bodies()[0]["aggs"]["devices"]["aggs"])
+
+    @unittest_run_loop
+    async def test_single_endpoint_byte_fields(self):
+        self.mock_storage._client.search.side_effect = [
+            _make_single_conn_result(total=100),
+            _make_network_stats_result(),
+            _make_single_alert_result(total=0),
+        ]
+        resp = await self.client.request("GET", "/api/risk/scores/192.168.1.10")
+        self.assertEqual(resp.status, 200)
+        self._assert_zeek_byte_fields(self._bodies()[0]["aggs"])
+
+    @unittest_run_loop
+    async def test_single_baseline_matches_list_population(self):
+        self.mock_storage._client.search.return_value = _make_conn_search_result()
+        await self.client.request("GET", "/api/risk/scores", params=self.RANGE)
+        list_bool = self._bodies()[0]["query"]["bool"]
+
+        self.mock_storage._client.search.reset_mock(return_value=True)
+        self.mock_storage._client.search.side_effect = [
+            _make_single_conn_result(total=100),
+            _make_network_stats_result(),
+            _make_single_alert_result(total=0),
+        ]
+        resp = await self.client.request(
+            "GET", "/api/risk/scores/192.168.1.10", params=self.RANGE
+        )
+        self.assertEqual(resp.status, 200)
+        baseline_bool = self._bodies()[1]["query"]["bool"]
+
+        self.assertIn(self.LAN_FILTER, baseline_bool["filter"])
+        self.assertEqual(
+            baseline_bool["must_not"], [{"terms": {"source.ip": ["192.168.1.1"]}}]
+        )
+        self.assertEqual(baseline_bool, list_bool)
 
 
 class TestRiskRouteRegistration(AioHTTPTestCase):
