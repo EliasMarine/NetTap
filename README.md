@@ -77,7 +77,7 @@ The installer auto-detects your NICs (with LED blink to identify ports), assigns
 | IDS | [Suricata](https://suricata.io/) 7.x | Signature-based intrusion detection |
 | Packet Archive | [netsniff-ng](http://netsniff-ng.org/) (Malcolm `pcap-capture`) | Full PCAP storage, capped by `PCAP_MAX_DISK_PCT`; Arkime is off by default (compose profile `arkime`) |
 | Data Store | [OpenSearch](https://opensearch.org/) 2.x | Indexed log storage + dashboards |
-| Visualization | [Grafana](https://grafana.com/) 10.x | Custom bandwidth and alert dashboards |
+| Visualization | [Grafana](https://grafana.com/) 10.x | Optional, off by default (`--profile grafana`); NetTap's own pages are the dashboard |
 | Core Framework | [Malcolm](https://github.com/cisagov/Malcolm) (CISA) | Bundles the above into a cohesive stack |
 
 ## Project Structure

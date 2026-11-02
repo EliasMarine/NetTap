@@ -104,9 +104,11 @@ Enriched events are indexed into OpenSearch.
 
 **OpenSearch** (`nettap-opensearch`) stores all indexed data:
 
-- `zeek-*` indices --- connection metadata
-- `suricata-*` indices --- IDS alerts and protocol logs
-- `arkime-*` / `pcap-*` --- cold-tier index patterns (`arkime_sessions3-*` is the Malcolm name for the index that holds Zeek and Suricata records)
+- `arkime_sessions3-YYMMDD` --- one daily index holding every Zeek log and Suricata alert (Malcolm's name; hot tier, deleted after `RETENTION_HOT` days)
+- `malcolm_beats_*` --- host data, when present (hot tier)
+- `nettap-devices`, `nettap-changelog-*` --- NetTap's device registry and change log
+
+PCAP is not indexed: netsniff-ng writes files under `/opt/nettap/pcap`.
 
 ### 5. Visualization
 
@@ -178,11 +180,11 @@ Capture containers (Zeek, Suricata, pcap-capture) have no service dependencies -
 
 ### Three-Tier Model
 
-| Tier | Index Pattern | Data Type | Retention | Daily Size |
-|---|---|---|---|---|
-| Hot | `zeek-*` | Zeek metadata | 90 days | 300--800 MB |
-| Warm | `suricata-*` | Suricata alerts | 180 days | 10--50 MB |
-| Cold | `arkime-*`, `pcap-*` | Raw PCAP | 30 days | Variable |
+| Tier | Where | Data Type | Retention |
+|---|---|---|---|
+| Hot | `arkime_sessions3-*` (one daily index) | Zeek logs and Suricata alerts | 90 days (`RETENTION_HOT`) |
+| Warm | `suricata-*` | Separate Suricata indices; a Malcolm install creates none | 180 days (`RETENTION_WARM`) |
+| Cold | `/opt/nettap/pcap` files | Raw PCAP of all traffic | 30 days (`RETENTION_COLD`) and `PCAP_MAX_DISK_PCT` |
 
 ### Lifecycle
 

@@ -65,7 +65,7 @@ The `opensearch-backup` Docker volume is already mounted at `/opt/opensearch/bac
 curl -sk -X PUT "https://localhost:9200/_snapshot/nettap_backup/snapshot_$(date +%Y%m%d)" \
   -H "Content-Type: application/json" \
   -d '{
-    "indices": "zeek-*,suricata-*,arkime-*",
+    "indices": "arkime_sessions3-*,malcolm_beats_*,nettap-*",
     "ignore_unavailable": true,
     "include_global_state": false
   }'
@@ -88,14 +88,13 @@ curl -sk "https://localhost:9200/_snapshot/nettap_backup/snapshot_20260226/_stat
 
 ```bash
 # Close the indices first (if they exist)
-curl -sk -X POST "https://localhost:9200/zeek-*/_close"
-curl -sk -X POST "https://localhost:9200/suricata-*/_close"
+curl -sk -X POST "https://localhost:9200/arkime_sessions3-*/_close"
 
 # Restore from snapshot
 curl -sk -X POST "https://localhost:9200/_snapshot/nettap_backup/snapshot_20260226/_restore" \
   -H "Content-Type: application/json" \
   -d '{
-    "indices": "zeek-*,suricata-*",
+    "indices": "arkime_sessions3-*,malcolm_beats_*,nettap-*",
     "ignore_unavailable": true,
     "include_global_state": false
   }'
@@ -181,7 +180,7 @@ tar czf "$BACKUP_DIR/data-$DATE.tar.gz" -C /opt/nettap data/ 2>/dev/null || true
 # Create OpenSearch snapshot
 curl -sk -X PUT "https://localhost:9200/_snapshot/nettap_backup/snapshot_$DATE" \
   -H "Content-Type: application/json" \
-  -d '{"indices":"zeek-*,suricata-*","ignore_unavailable":true,"include_global_state":false}'
+  -d '{"indices":"arkime_sessions3-*,malcolm_beats_*,nettap-*","ignore_unavailable":true,"include_global_state":false}'
 
 # Clean up old backups
 find "$BACKUP_DIR" -name "*.tar.gz" -mtime +$KEEP_DAYS -delete

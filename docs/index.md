@@ -80,7 +80,7 @@ NetTap is invisible on the data path. Your ISP modem and router communicate exac
 | Suricata | Intrusion detection (IDS) | 7.x |
 | netsniff-ng | Full packet capture (`pcap-capture`) | Malcolm 26.02.0 |
 | OpenSearch | Search and analytics engine | 2.x |
-| Grafana | Enhanced visualizations | 10.4.x |
+| Grafana | Optional dashboards, off by default (`--profile grafana`) | 10.4.x |
 | SvelteKit | Web dashboard framework | 2.x |
 | Python (aiohttp) | Storage/health daemon | 3.10+ |
 
