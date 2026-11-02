@@ -8,6 +8,7 @@
 	let selectedIndex = $state(-1);
 	let searching = $state(false);
 	let results = $state<SearchResponse | null>(null);
+	let searchFailed = $state(false);
 	let debounceTimer = $state<ReturnType<typeof setTimeout> | null>(null);
 
 	function debounce(fn: () => void, ms: number) {
@@ -36,8 +37,13 @@
 		if (!value) return;
 		showSuggestions = false;
 		searching = true;
+		searchFailed = false;
 		try {
 			results = await executeSearch(value);
+		} catch {
+			// #96: a failed search must not read as "No results found"
+			results = null;
+			searchFailed = true;
 		} finally {
 			searching = false;
 		}
@@ -147,6 +153,10 @@
 		<div class="search-loading">
 			<span class="spinner"></span> Searching...
 		</div>
+	{/if}
+
+	{#if searchFailed && !searching}
+		<div class="no-results">Couldn't search: the request failed.</div>
 	{/if}
 
 	{#if results && !searching}
