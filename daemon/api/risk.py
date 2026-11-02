@@ -141,7 +141,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "source.ip.keyword",
+                    "field": "source.ip",
                     "size": limit,
                 },
                 "aggs": {
@@ -161,9 +161,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "ports_used": {
-                        "terms": {"field": "destination.port.keyword", "size": 50}
-                    },
+                    "ports_used": {"terms": {"field": "destination.port", "size": 50}},
                     "external_conns": {
                         "filter": {
                             "bool": {
@@ -233,9 +231,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                 }
             },
             "aggs": {
-                "by_ip": {
-                    "terms": {"field": "source.ip.keyword", "size": len(device_ips)}
-                }
+                "by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}
             },
         }
 
@@ -332,7 +328,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                     }
                 }
             },
-            "ports_used": {"terms": {"field": "destination.port.keyword", "size": 50}},
+            "ports_used": {"terms": {"field": "destination.port", "size": 50}},
             "external_conns": {
                 "filter": {
                     "bool": {
@@ -399,7 +395,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     network_query = {
         "size": 0,
         "query": {"bool": net_bool},
-        "aggs": {"devices": {"terms": {"field": "source.ip.keyword", "size": 500}}},
+        "aggs": {"devices": {"terms": {"field": "source.ip", "size": 500}}},
     }
 
     network_avg = 0.0

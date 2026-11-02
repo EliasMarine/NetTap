@@ -117,7 +117,7 @@ class MACCorrelator:
             "aggs": {
                 "macs": {
                     "terms": {
-                        "field": "source.mac.keyword",
+                        "field": "source.mac",
                         "size": 500,
                     },
                     "aggs": {
@@ -136,7 +136,7 @@ class MACCorrelator:
                         },
                         "top_dests": {
                             "terms": {
-                                "field": "destination.ip.keyword",
+                                "field": "destination.ip",
                                 "size": 5,
                             }
                         },
@@ -205,7 +205,7 @@ class MACCorrelator:
                 }
             }
         }
-        mac_filter = {"term": {"source.mac.keyword": mac}}
+        mac_filter = {"term": {"source.mac": mac}}
 
         fingerprint: dict[str, Any] = {
             "mac": mac,
@@ -224,19 +224,19 @@ class MACCorrelator:
             "aggs": {
                 "dns_domains": {
                     "terms": {
-                        "field": "dns.question.name.keyword",
+                        "field": "dns.question.name",
                         "size": 20,
                     }
                 },
                 "dest_ips": {
                     "terms": {
-                        "field": "destination.ip.keyword",
+                        "field": "destination.ip",
                         "size": 20,
                     }
                 },
                 "ja3_hashes": {
                     "terms": {
-                        "field": "tls.ja3.keyword",
+                        "field": "tls.ja3",
                         "size": 10,
                     }
                 },
@@ -388,7 +388,7 @@ class MACCorrelator:
                     ]
                 }
             },
-            "aggs": {"macs": {"terms": {"field": "source.mac.keyword", "size": 500}}},
+            "aggs": {"macs": {"terms": {"field": "source.mac", "size": 500}}},
         }
 
         try:

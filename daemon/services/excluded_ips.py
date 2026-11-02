@@ -107,7 +107,7 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                             "script": {
                                 "script": {
                                     "source": """
-                                        def ip = doc['destination.ip.keyword'].size() > 0 ? doc['destination.ip.keyword'].value : '';
+                                        def ip = doc['destination.ip'].size() > 0 ? doc['destination.ip'].value : '';
                                         if (ip.length() == 0) return false;
                                         def parts = ip.splitOnToken('.');
                                         if (parts.length != 4) return false;
@@ -128,7 +128,7 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
             "aggs": {
                 "top_sources": {
                     "terms": {
-                        "field": "source.ip.keyword",
+                        "field": "source.ip",
                         "size": 500,
                     }
                 }
@@ -243,7 +243,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
             "script": {
                 "script": {
                     "source": """
-                        def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
+                        def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
                         if (ip.length() == 0) return false;
                         def parts = ip.splitOnToken('.');
                         if (parts.length != 4) return false;
@@ -274,7 +274,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
         "script": {
             "script": {
                 "source": f"""
-                    def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
+                    def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
                     if (ip.length() == 0) return false;
                     def parts = ip.splitOnToken('.');
                     if (parts.length != 4) return false;

@@ -130,9 +130,7 @@ class DeviceFingerprint:
                     ]
                 }
             },
-            "aggs": {
-                "top_hostname": {"terms": {"field": "dns.host.keyword", "size": 1}}
-            },
+            "aggs": {"top_hostname": {"terms": {"field": "dns.host", "size": 1}}},
         }
 
         try:
@@ -253,9 +251,7 @@ class DeviceFingerprint:
                     ]
                 }
             },
-            "aggs": {
-                "top_ua": {"terms": {"field": "http.useragent.keyword", "size": 5}}
-            },
+            "aggs": {"top_ua": {"terms": {"field": "http.useragent", "size": 5}}},
         }
 
         try:

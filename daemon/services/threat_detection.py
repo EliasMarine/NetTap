@@ -142,8 +142,8 @@ def detect_beaconing(
                 "composite": {
                     "size": 300,
                     "sources": [
-                        {"src": {"terms": {"field": "source.ip.keyword"}}},
-                        {"dst": {"terms": {"field": "destination.ip.keyword"}}},
+                        {"src": {"terms": {"field": "source.ip"}}},
+                        {"dst": {"terms": {"field": "destination.ip"}}},
                         {"port": {"terms": {"field": "destination.port"}}},
                     ],
                 },
@@ -251,8 +251,8 @@ def detect_lateral_movement(
                 "composite": {
                     "size": 300,
                     "sources": [
-                        {"src": {"terms": {"field": "source.ip.keyword"}}},
-                        {"dst": {"terms": {"field": "destination.ip.keyword"}}},
+                        {"src": {"terms": {"field": "source.ip"}}},
+                        {"dst": {"terms": {"field": "destination.ip"}}},
                         {"port": {"terms": {"field": "destination.port"}}},
                     ],
                 },
@@ -350,16 +350,14 @@ def analyze_dns_anomalies(
         "query": {"bool": bool_clause},
         "aggs": {
             "domains": {
-                "terms": {"field": "zeek.dns.query.keyword", "size": 500},
+                "terms": {"field": "zeek.dns.query", "size": 500},
             },
             "by_source": {
-                "terms": {"field": "source.ip.keyword", "size": 100},
+                "terms": {"field": "source.ip", "size": 100},
                 "aggs": {
-                    "unique_domains": {
-                        "cardinality": {"field": "zeek.dns.query.keyword"}
-                    },
+                    "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
                     "nxdomain_count": {
-                        "filter": {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}}
+                        "filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}
                     },
                 },
             },

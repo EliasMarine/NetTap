@@ -167,8 +167,8 @@ class LiveConnectionTracker:
                 {
                     "bool": {
                         "should": [
-                            {"term": {"source.ip.keyword": device}},
-                            {"term": {"destination.ip.keyword": device}},
+                            {"term": {"source.ip": device}},
+                            {"term": {"destination.ip": device}},
                         ],
                         "minimum_should_match": 1,
                     }
@@ -176,11 +176,11 @@ class LiveConnectionTracker:
             )
 
         if proto:
-            filters.append({"term": {"network.transport.keyword": proto.lower()}})
+            filters.append({"term": {"network.transport": proto.lower()}})
 
         if country:
             filters.append(
-                {"term": {"destination.geo.country_iso_code.keyword": country.upper()}}
+                {"term": {"destination.geo.country_iso_code": country.upper()}}
             )
 
         query = {
@@ -363,8 +363,8 @@ class LiveConnectionTracker:
                 {
                     "bool": {
                         "should": [
-                            {"term": {"source.ip.keyword": device}},
-                            {"term": {"destination.ip.keyword": device}},
+                            {"term": {"source.ip": device}},
+                            {"term": {"destination.ip": device}},
                         ],
                         "minimum_should_match": 1,
                     }
@@ -372,11 +372,11 @@ class LiveConnectionTracker:
             )
 
         if proto:
-            conn_filters.append({"term": {"network.transport.keyword": proto.lower()}})
+            conn_filters.append({"term": {"network.transport": proto.lower()}})
 
         if country:
             conn_filters.append(
-                {"term": {"destination.geo.country_iso_code.keyword": country.upper()}}
+                {"term": {"destination.geo.country_iso_code": country.upper()}}
             )
 
         # --- Build must_not clauses (excluded IPs) ---
@@ -396,14 +396,14 @@ class LiveConnectionTracker:
             "sort": [{"@timestamp": {"order": "desc"}}],
             "aggs": {
                 "protocols": {
-                    "terms": {"field": "network.transport.keyword", "size": 10},
+                    "terms": {"field": "network.transport", "size": 10},
                 },
                 "top_talkers": {
                     # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
                     # "terms": {"field": "source.ip.keyword", "size": 5},
                     # OLD CODE END
                     "terms": {
-                        "field": "source.ip.keyword",
+                        "field": "source.ip",
                         "size": 5,
                         "order": {"total_bytes": "desc"},
                     },
@@ -427,7 +427,7 @@ class LiveConnectionTracker:
                 },
                 "geo_destinations": {
                     "terms": {
-                        "field": "destination.geo.city_name.keyword",
+                        "field": "destination.geo.city_name",
                         "size": 20,
                     },
                     "aggs": {
@@ -441,13 +441,13 @@ class LiveConnectionTracker:
                         },
                         "country": {
                             "terms": {
-                                "field": "destination.geo.country_name.keyword",
+                                "field": "destination.geo.country_name",
                                 "size": 1,
                             }
                         },
                         "country_code": {
                             "terms": {
-                                "field": "destination.geo.country_iso_code.keyword",
+                                "field": "destination.geo.country_iso_code",
                                 "size": 1,
                             }
                         },
@@ -462,19 +462,19 @@ class LiveConnectionTracker:
                 },
                 "geo_countries": {
                     "terms": {
-                        "field": "destination.geo.country_iso_code.keyword",
+                        "field": "destination.geo.country_iso_code",
                         "size": 30,
                     },
                     "aggs": {
                         "country_name": {
                             "terms": {
-                                "field": "destination.geo.country_name.keyword",
+                                "field": "destination.geo.country_name",
                                 "size": 1,
                             }
                         },
                         "top_city": {
                             "terms": {
-                                "field": "destination.geo.city_name.keyword",
+                                "field": "destination.geo.city_name",
                                 "size": 1,
                             }
                         },
@@ -499,10 +499,10 @@ class LiveConnectionTracker:
                 "total_bytes_out": {
                     "sum": {"field": "destination.bytes", "missing": 0}
                 },
-                "active_devices": {"cardinality": {"field": "source.ip.keyword"}},
+                "active_devices": {"cardinality": {"field": "source.ip"}},
                 "top_country": {
                     "terms": {
-                        "field": "destination.geo.country_name.keyword",
+                        "field": "destination.geo.country_name",
                         "size": 1,
                     }
                 },
@@ -541,12 +541,12 @@ class LiveConnectionTracker:
                         # OLD CODE END
                         "script": {
                             "source": (
-                                "def s = doc.containsKey('source.ip.keyword') "
-                                "&& doc['source.ip.keyword'].size()>0 "
-                                "? doc['source.ip.keyword'].value : ''; "
-                                "def d = doc.containsKey('destination.ip.keyword') "
-                                "&& doc['destination.ip.keyword'].size()>0 "
-                                "? doc['destination.ip.keyword'].value : ''; "
+                                "def s = doc.containsKey('source.ip') "
+                                "&& doc['source.ip'].size()>0 "
+                                "? doc['source.ip'].value : ''; "
+                                "def d = doc.containsKey('destination.ip') "
+                                "&& doc['destination.ip'].size()>0 "
+                                "? doc['destination.ip'].value : ''; "
                                 "return s + '>' + d"
                             ),
                             "lang": "painless",
@@ -787,16 +787,16 @@ class LiveConnectionTracker:
                     {
                         "bool": {
                             "must": [
-                                {"term": {"source.ip.keyword": src_ip}},
-                                {"term": {"destination.ip.keyword": dst_ip}},
+                                {"term": {"source.ip": src_ip}},
+                                {"term": {"destination.ip": dst_ip}},
                             ]
                         }
                     },
                     {
                         "bool": {
                             "must": [
-                                {"term": {"source.ip.keyword": dst_ip}},
-                                {"term": {"destination.ip.keyword": src_ip}},
+                                {"term": {"source.ip": dst_ip}},
+                                {"term": {"destination.ip": src_ip}},
                             ]
                         }
                     },

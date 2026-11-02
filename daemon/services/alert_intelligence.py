@@ -1081,16 +1081,14 @@ def enrich_device_context(client, ip: str) -> dict | None:
         "query": {
             "bool": {
                 "filter": [
-                    {"term": {"source.ip.keyword": ip}},
+                    {"term": {"source.ip": ip}},
                     {"range": {"@timestamp": {"gte": "now-24h"}}},
                     {"term": {"event.provider": "zeek"}},
                 ]
             }
         },
         "aggs": {
-            "user_agents": {
-                "terms": {"field": "zeek.http.user_agent.keyword", "size": 1}
-            },
+            "user_agents": {"terms": {"field": "zeek.http.user_agent", "size": 1}},
         },
     }
 
@@ -1183,7 +1181,7 @@ async def get_smart_alerts(
                         {
                             "sig_name": {
                                 "terms": {
-                                    "field": "rule.name.keyword",
+                                    "field": "rule.name",
                                     "missing_bucket": True,
                                 }
                             }
@@ -1191,7 +1189,7 @@ async def get_smart_alerts(
                         {
                             "src_ip": {
                                 "terms": {
-                                    "field": "source.ip.keyword",
+                                    "field": "source.ip",
                                     "missing_bucket": True,
                                 }
                             }
@@ -1199,7 +1197,7 @@ async def get_smart_alerts(
                         {
                             "dst_ip": {
                                 "terms": {
-                                    "field": "destination.ip.keyword",
+                                    "field": "destination.ip",
                                     "missing_bucket": True,
                                 }
                             }

@@ -628,7 +628,7 @@ async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
         "aggs": {
             "asn_breakdown": {
                 "terms": {
-                    "field": "destination.as.full.keyword",
+                    "field": "destination.as.full",
                     "size": 500,
                 },
                 "aggs": {
@@ -870,7 +870,7 @@ async def get_category_devices(
         return []
 
     should_clauses = [
-        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        {"wildcard": {"destination.as.full": f"*{substr}*"}}
         for substr in asn_substrings
     ]
 
@@ -890,7 +890,7 @@ async def get_category_devices(
         },
         "aggs": {
             "devices": {
-                "terms": {"field": "source.ip.keyword", "size": limit},
+                "terms": {"field": "source.ip", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -955,7 +955,7 @@ async def get_category_services(
         return []
 
     should_clauses = [
-        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        {"wildcard": {"destination.as.full": f"*{substr}*"}}
         for substr in asn_substrings
     ]
 
@@ -975,7 +975,7 @@ async def get_category_services(
         },
         "aggs": {
             "services": {
-                "terms": {"field": "destination.as.full.keyword", "size": limit},
+                "terms": {"field": "destination.as.full", "size": limit},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -1035,7 +1035,7 @@ async def get_category_bandwidth(
         return []
 
     should_clauses = [
-        {"wildcard": {"destination.as.full.keyword": f"*{substr}*"}}
+        {"wildcard": {"destination.as.full": f"*{substr}*"}}
         for substr in asn_substrings
     ]
 

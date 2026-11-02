@@ -326,8 +326,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             {
                 "bool": {
                     "should": [
-                        {"term": {"source.ip.keyword": ip_filter}},
-                        {"term": {"destination.ip.keyword": ip_filter}},
+                        {"term": {"source.ip": ip_filter}},
+                        {"term": {"destination.ip": ip_filter}},
                     ],
                     "minimum_should_match": 1,
                 }
@@ -361,7 +361,7 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 should_clauses.append(
                     {
                         "wildcard": {
-                            "rule.name.keyword": {
+                            "rule.name": {
                                 "value": f"*{pattern}*",
                                 "case_insensitive": True,
                             }
@@ -741,7 +741,7 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
         "aggs": {
             "top_sigs": {
                 "terms": {
-                    "field": "rule.name.keyword",
+                    "field": "rule.name",
                     "size": limit,
                     "missing": "Unknown",
                 },
@@ -804,7 +804,7 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     # OLD CODE END
-    field = "source.ip.keyword" if direction == "src" else "destination.ip.keyword"
+    field = "source.ip" if direction == "src" else "destination.ip"
 
     query = {
         "size": 0,
@@ -890,7 +890,7 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
         "aggs": {
             "by_signature": {
                 "terms": {
-                    "field": "rule.name.keyword",
+                    "field": "rule.name",
                     "size": 500,
                     "missing": "Unknown",
                 },
@@ -1084,7 +1084,7 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         "aggs": {
             "by_signature": {
                 "terms": {
-                    "field": "rule.name.keyword",
+                    "field": "rule.name",
                     "size": 500,
                     "missing": "Unknown",
                 },
@@ -1092,10 +1092,8 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                     "by_severity": {
                         "terms": {"field": "suricata.alert.severity", "size": 5}
                     },
-                    "by_src_ip": {"terms": {"field": "source.ip.keyword", "size": 50}},
-                    "by_dst_ip": {
-                        "terms": {"field": "destination.ip.keyword", "size": 50}
-                    },
+                    "by_src_ip": {"terms": {"field": "source.ip", "size": 50}},
+                    "by_dst_ip": {"terms": {"field": "destination.ip", "size": 50}},
                     "latest": {"max": {"field": "@timestamp"}},
                 },
             }
@@ -1281,11 +1279,7 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
                     "min_doc_count": 0,
                     "extended_bounds": {"min": from_ts, "max": to_ts},
                 },
-                "aggs": {
-                    "by_signature": {
-                        "terms": {"field": "rule.name.keyword", "size": 50}
-                    }
-                },
+                "aggs": {"by_signature": {"terms": {"field": "rule.name", "size": 50}}},
             }
         },
     }

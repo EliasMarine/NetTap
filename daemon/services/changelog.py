@@ -143,9 +143,7 @@ class ChangelogService:
         """
         query = {
             "size": 0,
-            "aggs": {
-                "event_types": {"terms": {"field": "event_type.keyword", "size": 50}}
-            },
+            "aggs": {"event_types": {"terms": {"field": "event_type", "size": 50}}},
         }
 
         try:

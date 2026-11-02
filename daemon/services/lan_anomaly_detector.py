@@ -67,18 +67,18 @@ class LANAnomalyDetector:
             "aggs": {
                 "by_ip": {
                     "terms": {
-                        "field": "source.ip.keyword",
+                        "field": "source.ip",
                         "size": 500,
                     },
                     "aggs": {
                         "mac_count": {
                             "cardinality": {
-                                "field": "source.mac.keyword",
+                                "field": "source.mac",
                             }
                         },
                         "macs": {
                             "terms": {
-                                "field": "source.mac.keyword",
+                                "field": "source.mac",
                                 "size": 10,
                             }
                         },
@@ -154,13 +154,13 @@ class LANAnomalyDetector:
             "aggs": {
                 "dhcp_servers": {
                     "terms": {
-                        "field": "source.ip.keyword",
+                        "field": "source.ip",
                         "size": 20,
                     },
                     "aggs": {
                         "server_mac": {
                             "terms": {
-                                "field": "source.mac.keyword",
+                                "field": "source.mac",
                                 "size": 5,
                             }
                         },
@@ -244,18 +244,18 @@ class LANAnomalyDetector:
             "aggs": {
                 "by_dest_ip": {
                     "terms": {
-                        "field": "destination.ip.keyword",
+                        "field": "destination.ip",
                         "size": 500,
                     },
                     "aggs": {
                         "src_mac_count": {
                             "cardinality": {
-                                "field": "source.mac.keyword",
+                                "field": "source.mac",
                             }
                         },
                         "src_macs": {
                             "terms": {
-                                "field": "source.mac.keyword",
+                                "field": "source.mac",
                                 "size": 10,
                             }
                         },

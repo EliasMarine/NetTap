@@ -510,7 +510,7 @@ _EXCLUDE_ALERTS_FILTER = {"must_not": [{"term": {"event.dataset": "alert"}}]}
 
 # Exclude Zeek internal noise from DNS aggregations
 _EXCLUDE_DNS_NOISE = [
-    {"term": {"zeek.dns.query.keyword": "pcap-monitor"}},
+    {"term": {"zeek.dns.query": "pcap-monitor"}},
 ]
 
 
@@ -575,23 +575,28 @@ async def handle_log_search(request: web.Request) -> web.Response:
         "sort": [],
     }
 
-    # Sort — auto-add .keyword suffix for text fields that need it.
-    # Fields like @timestamp, _id, and numeric fields don't need it.
-    _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
+    # OLD CODE START — replaced 2026-11-01: the .keyword sub-fields only existed
+    # because malcolm_template never applied (its index pattern was a placeholder),
+    # so indices were dynamically mapped. With Malcolm's real mapping these fields
+    # are keyword/ip/long and have no .keyword sub-field, so sorting on one is an
+    # error (Chain 24).
+    # _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
+    # ...
+    #     if (
+    #         not field.startswith(_NO_KEYWORD_PREFIXES)
+    #         and not field.endswith(".keyword")
+    #         and "." in field
+    #         and field not in ("source.port", "destination.port")
+    #     ):
+    #         field = f"{field}.keyword"
+    # OLD CODE END
     for part in sort_param.split(","):
         if ":" in part:
             field, order = part.split(":", 1)
         else:
             field, order = part, "desc"
-        # Add .keyword for text fields (zeek.*, suricata.*, source.*, destination.*)
-        # unless they already have .keyword or are known non-text fields
-        if (
-            not field.startswith(_NO_KEYWORD_PREFIXES)
-            and not field.endswith(".keyword")
-            and "." in field
-            and field not in ("source.port", "destination.port")
-        ):
-            field = f"{field}.keyword"
+        # Old clients may still send the .keyword names
+        field = field.removesuffix(".keyword")
         body["sort"].append({field: {"order": order}})
     # Always add _id tiebreaker for cursor pagination
     if not any("_id" in s for s in body["sort"]):
@@ -681,8 +686,8 @@ async def handle_log_stats(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "unique_sources": {"cardinality": {"field": "source.ip.keyword"}},
-            "protocol_count": {"cardinality": {"field": "event.dataset.keyword"}},
+            "unique_sources": {"cardinality": {"field": "source.ip"}},
+            "protocol_count": {"cardinality": {"field": "event.dataset"}},
             "src_bytes": {"sum": {"field": "source.bytes"}},
             "dst_bytes": {"sum": {"field": "destination.bytes"}},
         },
@@ -746,9 +751,7 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
                     "fixed_interval": interval,
                 },
                 "aggs": {
-                    "by_type": {
-                        "terms": {"field": "event.dataset.keyword", "size": 20}
-                    },
+                    "by_type": {"terms": {"field": "event.dataset", "size": 20}},
                 },
             }
         },
@@ -813,7 +816,7 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "top_sources": {"terms": {"field": "source.ip.keyword", "size": limit}},
+            "top_sources": {"terms": {"field": "source.ip", "size": limit}},
         },
     }
 
@@ -861,7 +864,7 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "protocols": {"terms": {"field": "event.dataset.keyword", "size": 20}},
+            "protocols": {"terms": {"field": "event.dataset", "size": 20}},
         },
     }
 
@@ -918,9 +921,7 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": limit}
-            },
+            "top_destinations": {"terms": {"field": "destination.ip", "size": limit}},
         },
     }
 
@@ -978,9 +979,7 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "top_queries": {
-                "terms": {"field": "zeek.dns.query.keyword", "size": limit}
-            },
+            "top_queries": {"terms": {"field": "zeek.dns.query", "size": limit}},
         },
     }
 

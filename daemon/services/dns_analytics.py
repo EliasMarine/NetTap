@@ -80,15 +80,11 @@ class DNSAnalytics:
             "aggs": {
                 "top_domains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": limit,
                         "order": {"_count": "desc"},
                     },
-                    "aggs": {
-                        "unique_clients": {
-                            "cardinality": {"field": "source.ip.keyword"}
-                        }
-                    },
+                    "aggs": {"unique_clients": {"cardinality": {"field": "source.ip"}}},
                 }
             },
         }
@@ -123,21 +119,21 @@ class DNSAnalytics:
                     to_ts,
                     excluded_ips,
                     extra_filters=[
-                        {"term": {"source.ip.keyword": device_ip}},
+                        {"term": {"source.ip": device_ip}},
                     ],
                 )
             },
             "aggs": {
                 "domains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": 200,
                         "order": {"_count": "desc"},
                     },
                     "aggs": {
                         "query_types": {
                             "terms": {
-                                "field": "zeek.dns.qtype_name.keyword",
+                                "field": "zeek.dns.qtype_name",
                                 "size": 10,
                             }
                         }
@@ -176,21 +172,21 @@ class DNSAnalytics:
                     to_ts,
                     excluded_ips,
                     extra_filters=[
-                        {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}},
+                        {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}},
                     ],
                 )
             },
             "aggs": {
                 "nxdomains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": 100,
                         "order": {"_count": "desc"},
                     },
                     "aggs": {
                         "clients": {
                             "terms": {
-                                "field": "source.ip.keyword",
+                                "field": "source.ip",
                                 "size": 10,
                             }
                         }
@@ -224,7 +220,7 @@ class DNSAnalytics:
             "aggs": {
                 "query_types": {
                     "terms": {
-                        "field": "zeek.dns.qtype_name.keyword",
+                        "field": "zeek.dns.qtype_name",
                         "size": 20,
                     }
                 }
@@ -338,14 +334,14 @@ class DNSAnalytics:
                     to_ts,
                     excluded_ips,
                     extra_filters=[
-                        {"term": {"zeek.dns.qtype_name.keyword": "TXT"}},
+                        {"term": {"zeek.dns.qtype_name": "TXT"}},
                     ],
                 )
             },
             "aggs": {
                 "txt_domains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": 20,
                         "order": {"_count": "desc"},
                     }
@@ -429,9 +425,9 @@ class DNSAnalytics:
             "size": 0,
             "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
-                "unique_domains": {"cardinality": {"field": "zeek.dns.query.keyword"}},
+                "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
                 "nxdomain_count": {
-                    "filter": {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}}
+                    "filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}
                 },
                 "avg_rtt": {"avg": {"field": "zeek.dns.rtt", "missing": 0}},
             },

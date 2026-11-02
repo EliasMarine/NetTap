@@ -242,8 +242,8 @@ class DeviceRegistry:
 
         # Build should clauses: match by MAC or any known IP
         should_clauses: list[dict] = [
-            {"term": {"source.mac.keyword": mac}},
-            {"term": {"source.mac.keyword": mac.lower()}},
+            {"term": {"source.mac": mac}},
+            {"term": {"source.mac": mac.lower()}},
         ]
         for ip in ips:
             should_clauses.append({"term": {"source.ip": ip}})
@@ -279,12 +279,8 @@ class DeviceRegistry:
                         }
                     }
                 },
-                "protocols": {
-                    "terms": {"field": "network.transport.keyword", "size": 10}
-                },
-                "top_destinations": {
-                    "terms": {"field": "destination.ip.keyword", "size": 20}
-                },
+                "protocols": {"terms": {"field": "network.transport", "size": 10}},
+                "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
             },
         }
 
@@ -498,9 +494,9 @@ class DeviceRegistry:
             },
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": 500},
+                    "terms": {"field": "source.mac", "size": 500},
                     "aggs": {
-                        "ips": {"terms": {"field": "source.ip.keyword", "size": 10}},
+                        "ips": {"terms": {"field": "source.ip", "size": 10}},
                     },
                 }
             },
@@ -546,7 +542,7 @@ class DeviceRegistry:
                             }
                         },
                         {"term": {"network.protocol": "dns"}},
-                        {"wildcard": {"dns.host.keyword": "*.local"}},
+                        {"wildcard": {"dns.host": "*.local"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }

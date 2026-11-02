@@ -243,7 +243,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
         "aggs": {
             "devices": {
                 "terms": {
-                    "field": "source.ip.keyword",
+                    "field": "source.ip",
                     "size": fetch_size,
                     "min_doc_count": _MIN_CONNECTIONS,
                     "order": {agg_sort_key: sort_order},
@@ -260,9 +260,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     # Same split as handle_device_detail: sent (orig) vs received (resp)
                     "orig_bytes": {"sum": {"field": "source.bytes"}},
                     "resp_bytes": {"sum": {"field": "destination.bytes"}},
-                    "protocols": {
-                        "terms": {"field": "network.transport.keyword", "size": 10}
-                    },
+                    "protocols": {"terms": {"field": "network.transport", "size": 10}},
                     "first_seen": {"min": {"field": "@timestamp"}},
                     "last_seen": {"max": {"field": "@timestamp"}},
                 },
@@ -307,9 +305,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
                 }
             },
             "aggs": {
-                "by_ip": {
-                    "terms": {"field": "source.ip.keyword", "size": len(device_ips)}
-                }
+                "by_ip": {"terms": {"field": "source.ip", "size": len(device_ips)}}
             },
         }
 
@@ -440,9 +436,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             },
             "total_orig_bytes": {"sum": {"field": "source.bytes"}},
             "total_resp_bytes": {"sum": {"field": "destination.bytes"}},
-            "unique_destinations": {"cardinality": {"field": "destination.ip.keyword"}},
+            "unique_destinations": {"cardinality": {"field": "destination.ip"}},
             "top_services": {
-                "terms": {"field": "destination.as.full.keyword", "size": 10},
+                "terms": {"field": "destination.as.full", "size": 10},
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -454,11 +450,11 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     },
                 },
             },
-            "protocols": {"terms": {"field": "network.transport.keyword", "size": 10}},
+            "protocols": {"terms": {"field": "network.transport", "size": 10}},
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
             "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": 20},
+                "terms": {"field": "destination.ip", "size": 20},
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -573,9 +569,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 ]
             }
         },
-        "aggs": {
-            "dns_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": 50}}
-        },
+        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50}}},
     }
 
     dns_queries = []
@@ -762,7 +756,7 @@ async def handle_device_categories(request: web.Request) -> web.Response:
         },
         "aggs": {
             "asn_breakdown": {
-                "terms": {"field": "destination.as.full.keyword", "size": 200},
+                "terms": {"field": "destination.as.full", "size": 200},
                 "aggs": {
                     "total_bytes": {
                         "sum": {

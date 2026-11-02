@@ -152,10 +152,10 @@ class ThreatIntelService:
                 {
                     "bool": {
                         "should": [
-                            {"wildcard": {"rule.name.keyword": "*COMPROMISED*"}},
-                            {"wildcard": {"rule.name.keyword": "*DROP*"}},
-                            {"wildcard": {"rule.name.keyword": "*CINS*"}},
-                            {"wildcard": {"rule.name.keyword": "*Dshield*"}},
+                            {"wildcard": {"rule.name": "*COMPROMISED*"}},
+                            {"wildcard": {"rule.name": "*DROP*"}},
+                            {"wildcard": {"rule.name": "*CINS*"}},
+                            {"wildcard": {"rule.name": "*Dshield*"}},
                         ],
                         "minimum_should_match": 1,
                     }
@@ -171,7 +171,7 @@ class ThreatIntelService:
             "size": 0,
             "query": {"bool": bool_clause},
             "aggs": {
-                "bad_ips": {"terms": {"field": "destination.ip.keyword", "size": 500}},
+                "bad_ips": {"terms": {"field": "destination.ip", "size": 500}},
             },
         }
 

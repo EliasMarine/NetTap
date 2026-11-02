@@ -137,9 +137,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
-            "top_protocol": {
-                "terms": {"field": "network.transport.keyword", "size": 1}
-            },
+            "top_protocol": {"terms": {"field": "network.transport", "size": 1}},
         },
     }
 
@@ -207,7 +205,7 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
                 # "terms": {"field": "source.ip.keyword", "size": limit},
                 # OLD CODE END
                 "terms": {
-                    "field": "source.ip.keyword",
+                    "field": "source.ip",
                     "size": limit,
                     "order": {"total_bytes": "desc"},
                 },
@@ -291,7 +289,7 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
                 # "terms": {"field": "destination.ip.keyword", "size": limit},
                 # OLD CODE END
                 "terms": {
-                    "field": "destination.ip.keyword",
+                    "field": "destination.ip",
                     "size": limit,
                     "order": {"total_bytes": "desc"},
                 },
@@ -365,10 +363,10 @@ async def handle_protocols(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "by_proto": {"terms": {"field": "network.transport.keyword", "size": 50}},
+            "by_proto": {"terms": {"field": "network.transport", "size": 50}},
             "by_service": {
                 "terms": {
-                    "field": "network.protocol.keyword",
+                    "field": "network.protocol",
                     "size": 50,
                     "missing": "unknown",
                 }
@@ -732,13 +730,13 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
         "aggs": {
             "bytes_in": {"sum": {"field": "source.bytes", "missing": 0}},
             "bytes_out": {"sum": {"field": "destination.bytes", "missing": 0}},
-            "protocols": {"terms": {"field": "network.transport.keyword", "size": 20}},
+            "protocols": {"terms": {"field": "network.transport", "size": 20}},
             "top_sources": {
                 # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
                 # "terms": {"field": "source.ip.keyword", "size": 10},
                 # OLD CODE END
                 "terms": {
-                    "field": "source.ip.keyword",
+                    "field": "source.ip",
                     "size": 10,
                     "order": {"total_bytes": "desc"},
                 },
@@ -763,7 +761,7 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                 # "terms": {"field": "destination.ip.keyword", "size": 10},
                 # OLD CODE END
                 "terms": {
-                    "field": "destination.ip.keyword",
+                    "field": "destination.ip",
                     "size": 10,
                     "order": {"total_bytes": "desc"},
                 },
@@ -776,12 +774,10 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "asn": {
-                        "terms": {"field": "destination.as.full.keyword", "size": 1}
-                    },
+                    "asn": {"terms": {"field": "destination.as.full", "size": 1}},
                     "geo": {
                         "terms": {
-                            "field": "destination.geo.country_iso_code.keyword",
+                            "field": "destination.geo.country_iso_code",
                             "size": 1,
                         }
                     },
@@ -905,7 +901,7 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                 # "terms": {"field": "source.ip.keyword", "size": limit},
                 # OLD CODE END
                 "terms": {
-                    "field": "source.ip.keyword",
+                    "field": "source.ip",
                     "size": limit,
                     "order": {"total_bytes": "desc"},
                 },
@@ -919,7 +915,7 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                         }
                     },
                     "by_proto": {
-                        "terms": {"field": "network.transport.keyword", "size": 10},
+                        "terms": {"field": "network.transport", "size": 10},
                         "aggs": {
                             "proto_bytes": {
                                 "sum": {
@@ -931,7 +927,7 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                             },
                             "by_dest": {
                                 "terms": {
-                                    "field": "destination.as.full.keyword",
+                                    "field": "destination.as.full",
                                     "size": limit,
                                     "missing": "Unknown",
                                 },
@@ -946,7 +942,7 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                                     },
                                     "geo": {
                                         "terms": {
-                                            "field": "destination.geo.country_iso_code.keyword",
+                                            "field": "destination.geo.country_iso_code",
                                             "size": 1,
                                         }
                                     },
@@ -1096,9 +1092,7 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
                     "extended_bounds": {"min": from_ts, "max": to_ts},
                 },
                 "aggs": {
-                    "by_proto": {
-                        "terms": {"field": "network.transport.keyword", "size": 10}
-                    },
+                    "by_proto": {"terms": {"field": "network.transport", "size": 10}},
                 },
             },
         },
@@ -1164,24 +1158,16 @@ async def handle_connection_related(request: web.Request) -> web.Response:
                                 {
                                     "bool": {
                                         "must": [
-                                            {"term": {"source.ip.keyword": src_ip}},
-                                            {
-                                                "term": {
-                                                    "destination.ip.keyword": dst_ip
-                                                }
-                                            },
+                                            {"term": {"source.ip": src_ip}},
+                                            {"term": {"destination.ip": dst_ip}},
                                         ]
                                     }
                                 },
                                 {
                                     "bool": {
                                         "must": [
-                                            {"term": {"source.ip.keyword": dst_ip}},
-                                            {
-                                                "term": {
-                                                    "destination.ip.keyword": src_ip
-                                                }
-                                            },
+                                            {"term": {"source.ip": dst_ip}},
+                                            {"term": {"destination.ip": src_ip}},
                                         ]
                                     }
                                 },

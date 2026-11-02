@@ -247,7 +247,7 @@ class BandwidthTracker:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_device": {
-                    "terms": {"field": "source.ip.keyword", "size": limit},
+                    "terms": {"field": "source.ip", "size": limit},
                     "aggs": {
                         **self._bytes_aggs(),
                         "bucket_sort": {

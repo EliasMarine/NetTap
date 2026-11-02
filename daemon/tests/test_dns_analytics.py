@@ -138,12 +138,10 @@ class TestGetDeviceDns:
         call_body = mock_client.search.call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
         ip_filter = [
-            f
-            for f in filters
-            if "term" in f and "source.ip.keyword" in f.get("term", {})
+            f for f in filters if "term" in f and "source.ip" in f.get("term", {})
         ]
         assert len(ip_filter) == 1
-        assert ip_filter[0]["term"]["source.ip.keyword"] == "10.0.0.1"
+        assert ip_filter[0]["term"]["source.ip"] == "10.0.0.1"
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +183,10 @@ class TestGetNxdomainErrors:
         nxd = [
             f
             for f in filters
-            if "term" in f and "zeek.dns.rcode_name.keyword" in f.get("term", {})
+            if "term" in f and "zeek.dns.rcode_name" in f.get("term", {})
         ]
         assert len(nxd) == 1
-        assert nxd[0]["term"]["zeek.dns.rcode_name.keyword"] == "NXDOMAIN"
+        assert nxd[0]["term"]["zeek.dns.rcode_name"] == "NXDOMAIN"
 
 
 # ---------------------------------------------------------------------------

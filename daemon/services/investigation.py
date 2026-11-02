@@ -58,7 +58,7 @@ def _get_host_profile(client, ip: str) -> dict:
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": "now-24h"}}},
-                    {"term": {"source.ip.keyword": ip}},
+                    {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "conn"}},
                 ]
@@ -66,8 +66,8 @@ def _get_host_profile(client, ip: str) -> dict:
         },
         "aggs": {
             "total_bytes": {"sum": {"field": "source.bytes"}},
-            "unique_dests": {"cardinality": {"field": "destination.ip.keyword"}},
-            "protocols": {"terms": {"field": "network.transport.keyword", "size": 5}},
+            "unique_dests": {"cardinality": {"field": "destination.ip"}},
+            "protocols": {"terms": {"field": "network.transport", "size": 5}},
             "top_ports": {"terms": {"field": "destination.port", "size": 5}},
         },
     }
@@ -101,8 +101,8 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": "now-7d"}}},
-                    {"term": {"source.ip.keyword": src_ip}},
-                    {"term": {"destination.ip.keyword": dst_ip}},
+                    {"term": {"source.ip": src_ip}},
+                    {"term": {"destination.ip": dst_ip}},
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "conn"}},
                 ]

@@ -85,7 +85,7 @@ function getVisibleContent(activeTab: string): 'summary' | 'related' | 'raw' | '
 function buildRelatedQuery(alert: AlertData): { query: string; from: string; to: string } | null {
 	const ips = [alert.src_ip, alert.dest_ip].filter(Boolean);
 	if (ips.length === 0) return null;
-	const ipClauses = ips.map(ip => `(source.ip.keyword:"${ip}" OR destination.ip.keyword:"${ip}")`).join(' OR ');
+	const ipClauses = ips.map(ip => `(source.ip:"${ip}" OR destination.ip:"${ip}")`).join(' OR ');
 	const query = `(${ipClauses}) AND NOT _id:"${alert._id}"`;
 	const alertTime = new Date(alert.timestamp);
 	const from = new Date(alertTime.getTime() - 3600_000).toISOString();
@@ -286,17 +286,17 @@ describe('AlertDrawerContent logic', () => {
 	// -- Related events query building ----------------------------------------
 
 	describe('buildRelatedQuery', () => {
-		it('uses .keyword sub-fields for IP matching', () => {
+		it('matches IPs on the ip fields, not .keyword (Chain 24)', () => {
 			const alert: AlertData = {
 				_id: 'abc123', _index: 'x', timestamp: '2026-03-01T12:00:00Z',
 				acknowledged: false, src_ip: '192.168.1.44', dest_ip: '10.0.0.1',
 			};
 			const result = buildRelatedQuery(alert);
 			expect(result).not.toBeNull();
-			expect(result!.query).toContain('source.ip.keyword:"192.168.1.44"');
-			expect(result!.query).toContain('destination.ip.keyword:"192.168.1.44"');
-			expect(result!.query).toContain('source.ip.keyword:"10.0.0.1"');
-			expect(result!.query).toContain('destination.ip.keyword:"10.0.0.1"');
+			expect(result!.query).toContain('source.ip:"192.168.1.44"');
+			expect(result!.query).toContain('destination.ip:"192.168.1.44"');
+			expect(result!.query).toContain('source.ip:"10.0.0.1"');
+			expect(result!.query).toContain('destination.ip:"10.0.0.1"');
 		});
 
 		it('excludes the alert itself from results', () => {
@@ -332,7 +332,7 @@ describe('AlertDrawerContent logic', () => {
 				acknowledged: false, src_ip: '192.168.1.44',
 			};
 			const result = buildRelatedQuery(alert);
-			expect(result!.query).toContain('source.ip.keyword:"192.168.1.44"');
+			expect(result!.query).toContain('source.ip:"192.168.1.44"');
 			expect(result!.query).not.toContain('10.0.0.1');
 		});
 
@@ -342,8 +342,8 @@ describe('AlertDrawerContent logic', () => {
 				acknowledged: false, dest_ip: '10.0.0.1',
 			};
 			const result = buildRelatedQuery(alert);
-			expect(result!.query).toContain('source.ip.keyword:"10.0.0.1"');
-			expect(result!.query).toContain('destination.ip.keyword:"10.0.0.1"');
+			expect(result!.query).toContain('source.ip:"10.0.0.1"');
+			expect(result!.query).toContain('destination.ip:"10.0.0.1"');
 		});
 	});
 

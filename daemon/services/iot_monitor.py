@@ -231,12 +231,10 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": 500},
+                    "terms": {"field": "source.mac", "size": 500},
                     "aggs": {
-                        "oui": {"terms": {"field": "source.oui.keyword", "size": 1}},
-                        "latest_ip": {
-                            "terms": {"field": "source.ip.keyword", "size": 1}
-                        },
+                        "oui": {"terms": {"field": "source.oui", "size": 1}},
+                        "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
                         "last_seen": {"max": {"field": "@timestamp"}},
                     },
                 }
@@ -541,7 +539,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
             ]
         }
         if excluded:
@@ -552,7 +550,7 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                         "dest_ports": {
@@ -563,7 +561,7 @@ class IoTMonitor:
                         },
                         "third_party_orgs": {
                             "cardinality": {
-                                "field": "destination.as.full.keyword",
+                                "field": "destination.as.full",
                             }
                         },
                     },
@@ -625,7 +623,7 @@ class IoTMonitor:
             "filter": [
                 _time_range_filter(from_ts, to_ts),
                 {"exists": {"field": "suricata.alert.severity"}},
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
             ]
         }
         if excluded:
@@ -636,7 +634,7 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                 }
             },
         }
@@ -677,7 +675,7 @@ class IoTMonitor:
             "filter": [
                 _time_range_filter(from_ts, to_ts),
                 {"term": {"network.protocol": "dns"}},
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
             ]
         }
         if excluded:
@@ -688,11 +686,11 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "queried_domains": {
                             "terms": {
-                                "field": "dns.host.keyword",
+                                "field": "dns.host",
                                 "size": 500,
                             }
                         },
@@ -868,8 +866,8 @@ class IoTMonitor:
                 {
                     "bool": {
                         "should": [
-                            {"term": {"source.mac.keyword": mac}},
-                            {"term": {"source.mac.keyword": mac.lower()}},
+                            {"term": {"source.mac": mac}},
+                            {"term": {"source.mac": mac.lower()}},
                         ],
                         "minimum_should_match": 1,
                     }
@@ -884,13 +882,9 @@ class IoTMonitor:
             "size": 0,
             "query": {"bool": bool_clause},
             "aggs": {
-                "destinations": {
-                    "terms": {"field": "destination.ip.keyword", "size": 100}
-                },
+                "destinations": {"terms": {"field": "destination.ip", "size": 100}},
                 "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
-                "protocols": {
-                    "terms": {"field": "network.protocol.keyword", "size": 10}
-                },
+                "protocols": {"terms": {"field": "network.protocol", "size": 10}},
                 "hourly_activity": {
                     "date_histogram": {
                         "field": "@timestamp",
@@ -900,7 +894,7 @@ class IoTMonitor:
                 "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                 "countries": {
                     "terms": {
-                        "field": "destination.geo.country_name.keyword",
+                        "field": "destination.geo.country_name",
                         "size": 20,
                         "missing": "Unknown",
                     }
@@ -995,8 +989,8 @@ class IoTMonitor:
                 {
                     "bool": {
                         "should": [
-                            {"term": {"source.mac.keyword": mac}},
-                            {"term": {"source.mac.keyword": mac.lower()}},
+                            {"term": {"source.mac": mac}},
+                            {"term": {"source.mac": mac.lower()}},
                         ],
                         "minimum_should_match": 1,
                     }
@@ -1010,17 +1004,13 @@ class IoTMonitor:
             "size": 0,
             "query": {"bool": bool_clause},
             "aggs": {
-                "destinations": {
-                    "terms": {"field": "destination.ip.keyword", "size": 100}
-                },
+                "destinations": {"terms": {"field": "destination.ip", "size": 100}},
                 "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
-                "protocols": {
-                    "terms": {"field": "network.protocol.keyword", "size": 10}
-                },
+                "protocols": {"terms": {"field": "network.protocol", "size": 10}},
                 "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                 "countries": {
                     "terms": {
-                        "field": "destination.geo.country_name.keyword",
+                        "field": "destination.geo.country_name",
                         "size": 20,
                         "missing": "Unknown",
                     }
@@ -1300,7 +1290,7 @@ class IoTMonitor:
             "filter": [
                 _time_range_filter(from_ts, to_ts),
                 {"term": {"network.protocol": "dns"}},
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
             ]
         }
         if excluded:
@@ -1311,11 +1301,11 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "queried_domains": {
                             "terms": {
-                                "field": "dns.host.keyword",
+                                "field": "dns.host",
                                 "size": 500,
                             }
                         },
@@ -1380,8 +1370,8 @@ class IoTMonitor:
         mac_filter = {
             "bool": {
                 "should": [
-                    {"term": {"source.mac.keyword": mac}},
-                    {"term": {"source.mac.keyword": mac.lower()}},
+                    {"term": {"source.mac": mac}},
+                    {"term": {"source.mac": mac.lower()}},
                 ],
                 "minimum_should_match": 1,
             }
@@ -1401,7 +1391,7 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_dest": {
-                    "terms": {"field": "destination.ip.keyword", "size": 200},
+                    "terms": {"field": "destination.ip", "size": 200},
                     "aggs": {
                         "ports": {"terms": {"field": "destination.port", "size": 50}},
                         "bytes_sent": {"sum": {"field": "source.bytes", "missing": 0}},
@@ -1410,7 +1400,7 @@ class IoTMonitor:
                         },
                         "country": {
                             "terms": {
-                                "field": "destination.geo.country_iso_code.keyword",
+                                "field": "destination.geo.country_iso_code",
                                 "size": 1,
                             }
                         },
@@ -1506,11 +1496,11 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_answer_ip": {
-                    "terms": {"field": "dns.ip.keyword", "size": len(ips)},
+                    "terms": {"field": "dns.ip", "size": len(ips)},
                     "aggs": {
                         "domain": {
                             "terms": {
-                                "field": "dns.host.keyword",
+                                "field": "dns.host",
                                 "size": 1,
                             }
                         },
@@ -1559,8 +1549,8 @@ class IoTMonitor:
         mac_filter = {
             "bool": {
                 "should": [
-                    {"term": {"source.mac.keyword": mac}},
-                    {"term": {"source.mac.keyword": mac.lower()}},
+                    {"term": {"source.mac": mac}},
+                    {"term": {"source.mac": mac.lower()}},
                 ],
                 "minimum_should_match": 1,
             }
@@ -1586,9 +1576,7 @@ class IoTMonitor:
                     },
                     "aggs": {
                         "bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                        "destinations": {
-                            "cardinality": {"field": "destination.ip.keyword"}
-                        },
+                        "destinations": {"cardinality": {"field": "destination.ip"}},
                     },
                 }
             },
@@ -1809,7 +1797,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
             ]
         }
         if excluded:
@@ -1820,7 +1808,7 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "ports": {"terms": {"field": "destination.port", "size": 200}},
                     },
@@ -1881,9 +1869,9 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
                 {"term": {"destination.port": 53}},
-                {"terms": {"destination.ip.keyword": well_known_dns}},
+                {"terms": {"destination.ip": well_known_dns}},
             ]
         }
         if excluded:
@@ -1894,10 +1882,10 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "dns_servers": {
-                            "terms": {"field": "destination.ip.keyword", "size": 10}
+                            "terms": {"field": "destination.ip", "size": 10}
                         },
                     },
                 }
@@ -1979,13 +1967,13 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                {"terms": {"source.mac.keyword": mac_terms}},
+                {"terms": {"source.mac": mac_terms}},
                 # Destination is RFC1918 (internal) — use script filter
                 {
                     "script": {
                         "script": {
                             "source": """
-                                def ip = doc['destination.ip.keyword'].size() > 0 ? doc['destination.ip.keyword'].value : '';
+                                def ip = doc['destination.ip'].size() > 0 ? doc['destination.ip'].value : '';
                                 if (ip.length() == 0) return false;
                                 def parts = ip.splitOnToken('.');
                                 if (parts.length != 4) return false;
@@ -2010,16 +1998,16 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "by_source_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": len(macs) * 2},
+                    "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "by_dest_ip": {
-                            "terms": {"field": "destination.ip.keyword", "size": 50},
+                            "terms": {"field": "destination.ip", "size": 50},
                             "aggs": {
                                 "ports": {
                                     "terms": {"field": "destination.port", "size": 20}
                                 },
                                 "source_ip": {
-                                    "terms": {"field": "source.ip.keyword", "size": 1}
+                                    "terms": {"field": "source.ip", "size": 1}
                                 },
                             },
                         },

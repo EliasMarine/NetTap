@@ -60,6 +60,17 @@ class TestLogSearchAPI(AioHTTPTestCase):
         call_body = self.mock_client.search.call_args[1]["body"]
         self.assertIn("query_string", json.dumps(call_body))
 
+    async def test_search_sort_uses_malcolm_field_names(self):
+        """Sort fields are used as-is; an old client's .keyword suffix is dropped (Chain 24)."""
+        self.mock_client.search.return_value = self._mock_search_response()
+        resp = await self.client.request(
+            "GET", "/api/logs/search?sort=source.ip:asc,zeek.dns.query.keyword:desc"
+        )
+        self.assertEqual(resp.status, 200)
+        sort = self.mock_client.search.call_args[1]["body"]["sort"]
+        self.assertEqual(sort[0], {"source.ip": {"order": "asc"}})
+        self.assertEqual(sort[1], {"zeek.dns.query": {"order": "desc"}})
+
     async def test_search_pagination(self):
         """GET /api/logs/search?size=10 respects size param."""
         self.mock_client.search.return_value = self._mock_search_response()

@@ -277,14 +277,13 @@ class TestLiveDashboardQueries(unittest.TestCase):
         bodies = [c.kwargs["body"] for c in client.search.call_args_list]
         return result, bodies
 
-    def test_alert_pair_script_reads_keyword_fields(self):
-        """doc['source.ip'] is a text field; the script must use .keyword."""
+    def test_alert_pair_script_reads_ip_fields(self):
+        """Malcolm maps the IPs as ip fields with no .keyword sub-field (Chain 24)."""
         _, (_, alert_body) = self._run_dashboard()
         script = alert_body["aggs"]["alert_pairs"]["terms"]["script"]["source"]
-        self.assertIn("doc['source.ip.keyword']", script)
-        self.assertIn("doc['destination.ip.keyword']", script)
-        self.assertNotIn("doc['source.ip']", script)
-        self.assertNotIn("doc['destination.ip']", script)
+        self.assertIn("doc['source.ip']", script)
+        self.assertIn("doc['destination.ip']", script)
+        self.assertNotIn(".keyword", script)
 
     def test_alert_pair_flags_matching_connection(self):
         result, _ = self._run_dashboard(alert_keys=["1.2.3.4>10.0.0.5"])
