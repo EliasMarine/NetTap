@@ -171,3 +171,4 @@ if [ "$FAILED" -eq 0 ]; then
 else
     echo "=== Finished with ✗ lines above — paste this output back ==="
 fi
+exit "$FAILED"
