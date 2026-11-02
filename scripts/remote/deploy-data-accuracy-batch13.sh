@@ -7,6 +7,7 @@
 #       category falls back to single-purpose vendors (Hue -> IoT, UniFi -> Infrastructure)
 #   #26 each IP is filed under its own (most common) MAC, not the router's, and leaves any
 #       other registry entry; DHCP's 0.0.0.0 is no longer recorded as a device IP
+#   #26 Home's device grid (registry) categorises devices like the Devices page
 #
 # Only the daemon restarts. Capture (netsniff, Zeek, Suricata) is not touched.
 #
@@ -112,6 +113,18 @@ for ip, m in shared.items():
 for ip, reg, lst in disagree:
     print('DISAGREE', ip, 'registry', reg, 'devices', lst)
 print('OWNERSHIP', len(shared), len(zeros), len(disagree))
+from datetime import datetime, timedelta, timezone
+recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+reg_by_mac = {r['mac']: r for r in registry}
+grid = {}
+for r in registry:
+    grid[r.get('category')] = grid.get(r.get('category'), 0) + 1
+home_unknown = sorted({(d['mac'].upper(), d['category']) for d in devices if d.get('mac') and d['category'] not in ('unknown', 'media')
+    and reg_by_mac.get(d['mac'].upper(), {}).get('category') == 'unknown' and reg_by_mac[d['mac'].upper()].get('last_seen', '') >= recent})
+for mac, cat in home_unknown:
+    print('HOME_UNKNOWN', mac, 'devices page says', cat)
+print('GRID', json.dumps(grid, sort_keys=True))
+print('CATAGREE', len(home_unknown))
 for d in devices:
     print('DEVICE', d['ip'], d.get('mac'), '|', d.get('manufacturer'), '|', d['category'])
 print('CATS', json.dumps(cats, sort_keys=True))
@@ -132,6 +145,9 @@ check "#26 Registry (Home grid, device pages): vendors filled, categories valid"
 read -r _ NSHARED NZERO NDISAGREE <<<"$(echo "$OUT" | grep '^OWNERSHIP')"
 if [ "${NSHARED:-1}" -eq 0 ] && [ "${NZERO:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#26 Registry: every IP on one device only, no 0.0.0.0" "$rc" "${NSHARED:-?} IPs on two devices, ${NZERO:-?} entries with 0.0.0.0, ${NDISAGREE:-?} IPs where Devices shows another MAC"
+read -r _ NHOMEUNK <<<"$(echo "$OUT" | grep '^CATAGREE')"
+if [ "${NHOMEUNK:-1}" -eq 0 ]; then rc=0; else rc=1; fi
+check "#26 Home grid categories match the Devices page" "$rc" "${NHOMEUNK:-?} recent devices Unknown on Home but categorised on Devices; Home grid $(echo "$OUT" | grep '^GRID' | cut -d' ' -f2-)"
 if [ "${WRONG:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#26 Ubiquiti -> infrastructure, Philips Lighting -> iot" "$rc" "${WRONG:-?} wrong"
 if [ "${TOOLOK:-0}" -eq 1 ]; then rc=0; else rc=1; fi
