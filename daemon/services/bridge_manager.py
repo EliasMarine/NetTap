@@ -2,12 +2,13 @@
 NetTap Bridge Manager Service
 
 Creates and manages the Linux bridge (br0) that sits inline between the ISP
-modem and the home/small business router. Uses ``nsenter -t 1 -n`` to execute
-network namespace commands on the host from inside the Docker container.
+modem and the home/small business router. Network commands run directly in
+the host network namespace, which the daemon container shares
+(network_mode: host).
 
 Architecture decisions:
-    - nsenter instead of Docker socket: proven safe, already used in
-      nic_discovery.py, works with existing caps (NET_ADMIN, SYS_PTRACE, pid:host)
+    - Host network commands run directly (network_mode: host + NET_ADMIN).
+      nsenter was dropped 2026-11-01: Ubuntu's AppArmor profile blocks it.
     - Host filesystem mounts for persistence: writes netplan, systemd unit,
       and sysctl config to mounted host dirs so bridge survives reboot
     - "Soft bypass" via promisc toggle: no Docker socket needed, containers
@@ -31,8 +32,9 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 class BridgeManager:
     """Manages bridge creation, teardown, and readiness checks.
 
-    All network operations use ``nsenter -t 1 -n`` to execute in the host
-    network namespace. Persistence files are written to mounted host dirs.
+    Network commands run in the host network namespace, which the daemon
+    container shares (network_mode: host). Persistence files are written to
+    mounted host dirs.
     """
 
     def __init__(
@@ -429,9 +431,9 @@ class BridgeManager:
             }
         )
 
-        # 8. Netfilter disabled — must read from HOST namespace via nsenter.
-        # /proc/sys/net/bridge/bridge-nf-call-iptables inside the container
-        # reflects the container's own namespace (always 1), not the host's.
+        # 8. Netfilter disabled — read from the HOST network namespace. The
+        # daemon shares it (network_mode: host); a container with its own
+        # namespace would read its own value (always 1), not the host's.
         # If the file doesn't exist, the br_netfilter kernel module is not
         # loaded — meaning bridge traffic is NOT subject to iptables at all,
         # which is the desired state (effectively disabled).
@@ -485,12 +487,17 @@ class BridgeManager:
     # -------------------------------------------------------------------
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter.
+        """Run a command in the host network namespace (network_mode: host).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -504,11 +511,11 @@ class BridgeManager:
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     async def _discover_members(self) -> tuple[str, str]:
         """Discover WAN and LAN member interfaces of the bridge.

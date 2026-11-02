@@ -694,10 +694,13 @@ services:
     # isolates containers from the host subnet. The daemon already has pid:host,
     # SYS_ADMIN, SYS_PTRACE, docker socket, and runs as root — host networking
     # doesn't meaningfully change its security posture.
+    # Load-bearing since 2026-11-01: every host network command (ip, ethtool,
+    # iptables, sysfs reads) runs directly in this shared namespace. nsenter was
+    # dropped because Ubuntu's docker-default AppArmor profile blocks it.
     network_mode: host
     # NOTE: Does NOT use *security-defaults (no-new-privileges:true).
-    # nsenter requires privilege escalation (setns syscall) which
-    # no-new-privileges blocks. Security maintained via cap_drop: ALL +
+    # Originally because nsenter's setns needed it; nsenter is gone (2026-11-01),
+    # so re-test before adding it. Security maintained via cap_drop: ALL +
     # selective cap_add + read_only: true.
     <<: *logging-defaults
     labels:
@@ -709,7 +712,8 @@ services:
     # NET_ADMIN: ethtool NIC LED blink via host network namespace
     # NET_RAW: ping requires ICMP raw socket capability
     # SYS_ADMIN: NVMe admin commands (nvme smart-log) require this capability
-    # SYS_PTRACE: nsenter -t 1 -n to enter host network namespace
+    # SYS_PTRACE: was for nsenter -t 1 -n (dropped 2026-11-01); kept until a
+    # device run shows nothing else needs it
     # SYS_RAWIO: SATA SMART queries via smartctl
     cap_add:
       - NET_ADMIN
@@ -722,7 +726,8 @@ services:
       - SETGID # dnsmasq drops to the unprivileged nogroup group
       - KILL # the daemon (root) stops dnsmasq once it runs as nobody; with pid: host it can signal any host process, a small gain over SYS_ADMIN/SYS_PTRACE/docker.sock
       - DAC_OVERRIDE # CR-001: PCAP folders are owned by uid 1000; without it root can't unlink there to enforce PCAP retention
-    # pid: host lets nsenter target PID 1 (host init) for network namespace
+    # pid: host was for nsenter -t 1 (dropped 2026-11-01); kept until a device
+    # run shows nothing else needs it
     pid: "host"
     # Override Dockerfile USER — capabilities only work for root in Docker.
     # Security maintained via cap_drop: ALL + selective cap_add + read_only.

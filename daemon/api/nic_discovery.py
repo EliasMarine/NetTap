@@ -3,8 +3,8 @@ NetTap NIC Discovery API Route
 
 Detects physical network interfaces on the host for the setup wizard.
 Reads from /sys/class/net/ (or a host-mounted path when running inside
-Docker) and optionally uses ``ip -j addr show`` (via nsenter into the
-host network namespace) to resolve IPv4 addresses.
+Docker) and optionally uses ``ip -j addr show`` (run directly; the daemon
+shares the host network namespace) to resolve IPv4 addresses.
 """
 
 import asyncio
@@ -123,14 +123,17 @@ def _get_speed(sys_path: Path, name: str) -> str:
 async def _get_ipv4_map() -> dict[str, str]:
     """Return {iface_name: ipv4_address} by running ``ip -j -4 addr show``.
 
-    Tries nsenter into host PID 1 first (Docker with pid: host), then
-    falls back to running ip directly (bare-metal or dev environment).
+    Runs ip directly: the daemon container uses network_mode: host, so it
+    already sees the host's interfaces.
 
-    NOTE: Both nsenter and ip are invoked via create_subprocess_exec with
-    arguments as a list (never shell=True) to prevent injection.
+    NOTE: ip is invoked via create_subprocess_exec with arguments as a list
+    (never shell=True) to prevent injection.
     """
     commands = [
-        ["nsenter", "-t", "1", "-n", "--", "ip", "-j", "-4", "addr", "show"],
+        # OLD CODE START — removed 2026-11-01: Ubuntu's AppArmor blocks nsenter
+        # (it only ever fell through to the direct ip call below)
+        # ["nsenter", "-t", "1", "-n", "--", "ip", "-j", "-4", "addr", "show"],
+        # OLD CODE END
         ["ip", "-j", "-4", "addr", "show"],
     ]
     for cmd in commands:

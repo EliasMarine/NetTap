@@ -377,8 +377,13 @@ class BridgeHealthMonitor:
     # -------------------------------------------------------------------
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter."""
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        """Run a command in the host network namespace (network_mode: host)."""
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -392,11 +397,11 @@ class BridgeHealthMonitor:
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     def _discover_interfaces(self) -> None:
         """Discover actual WAN/LAN member interfaces from the bridge's brif directory.

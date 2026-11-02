@@ -13,8 +13,9 @@ The mirror NIC:
     - Is NOT part of a bridge
 
 Architecture decisions:
-    - nsenter instead of Docker socket: proven safe, already used in
-      bridge_manager.py, works with existing caps (NET_ADMIN, SYS_PTRACE, pid:host)
+    - Host network commands run directly: the daemon container uses
+      network_mode: host and NET_ADMIN. (nsenter was dropped 2026-11-01 because
+      Ubuntu's docker-default AppArmor profile blocks it.)
     - Host filesystem mounts for persistence: writes networkd and systemd configs
       to mounted host dirs so mirror NIC config survives reboot
     - Separate management interface: web UI access uses a different NIC so the
@@ -44,8 +45,9 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 class MirrorManager(CaptureManager):
     """Manages a mirror/SPAN capture interface.
 
-    All network operations use ``nsenter -t 1 -n`` to execute in the host
-    network namespace. Persistence files are written to mounted host dirs.
+    Network commands run in the host network namespace, which the daemon
+    container shares (network_mode: host). Persistence files are written to
+    mounted host dirs.
     """
 
     def __init__(
@@ -385,12 +387,17 @@ class MirrorManager(CaptureManager):
     # -------------------------------------------------------------------
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter.
+        """Run a command in the host network namespace (network_mode: host).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -404,11 +411,11 @@ class MirrorManager(CaptureManager):
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     def _check_promisc(self) -> bool:
         """Check if the mirror interface has promiscuous mode enabled.

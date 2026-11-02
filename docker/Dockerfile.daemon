@@ -48,8 +48,8 @@ EXPOSE 8880
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8880/api/health')" || exit 1
 
-# NOTE: The daemon needs NET_ADMIN for ethtool NIC LED blink and
-# SYS_PTRACE for nsenter into host network namespace.  These are
-# granted via cap_add in docker-compose.yml alongside cap_drop: ALL.
-# The daemon also runs with pid: host for nsenter -t 1 -n access.
+# NOTE: The daemon needs NET_ADMIN for ip/ethtool on host NICs, granted
+# via cap_add in docker-compose.yml alongside cap_drop: ALL. It runs with
+# network_mode: host, so host network commands run directly (nsenter was
+# dropped 2026-11-01: Ubuntu's AppArmor blocks it).
 CMD ["python3", "main.py"]

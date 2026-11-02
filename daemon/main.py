@@ -82,6 +82,7 @@ from services.bridge_manager import BridgeManager
 from services.dhcp_gateway import DhcpGatewayManager
 from services.mirror_manager import MirrorManager
 from api.server import start_api
+from api.setup import _nic_in_use_problem
 from api.capture_control import enforce_capture_state
 from api.dhcp_gateway import ensure_capture_lock
 
@@ -440,6 +441,17 @@ async def _build_capture_manager(
             interface=capture_cfg.interface,
             management_interface=capture_cfg.management,
         )
+        # CR-076: setup() flushes the NIC's addresses. A NIC rename can point the
+        # saved config at the management port, so skip setup when it's in use.
+        in_use = await _nic_in_use_problem(None, capture_cfg.interface)
+        if in_use is not None:
+            logger.error(
+                "Mirror setup skipped, nothing changed: %s %s",
+                capture_cfg.interface,
+                in_use,
+            )
+            logger.info("Capture manager: MirrorManager (mirror mode, not set up)")
+            return mirror_manager, None
         setup_result = await mirror_manager.setup()
         if setup_result.get("success"):
             logger.info(
