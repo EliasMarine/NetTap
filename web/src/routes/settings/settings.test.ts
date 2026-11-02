@@ -227,6 +227,67 @@ describe('Settings — capture status label', () => {
 	});
 });
 
+describe('Settings — a failed load never saves blanks over real settings', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('Capture: no toggle or Save when the status cannot be read', async () => {
+		stubFetch({ '/api/capture/status': () => ({ status: 502, body: { error: 'Daemon unreachable' } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+
+		expect(screen.getByText(/Could not load the current capture settings/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Save Capture Settings' })).not.toBeInTheDocument();
+		expect(screen.queryByDisplayValue('100')).not.toBeInTheDocument();
+	});
+
+	it('Notifications: Save is off when the config cannot be read', async () => {
+		stubFetch(); // every call 500s
+		render(Page);
+		await flush();
+
+		expect(screen.getByText(/Could not load the current notification settings/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save Notification Settings' })).toBeDisabled();
+	});
+
+	it('Notifications: Save works once the config has loaded', async () => {
+		stubFetch({
+			'/api/notifications/config': () => ({
+				body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: 'https://hooks.example.com/x' } },
+			}),
+		});
+		render(Page);
+		await flush();
+
+		expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
+		expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save Notification Settings' })).toBeEnabled();
+	});
+
+	it('Network: no list editor or Save when the excluded IPs cannot be read', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+
+		expect(screen.getByText(/Could not load the excluded IP list/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Save Excluded IPs' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/No IPs excluded/)).not.toBeInTheDocument();
+	});
+
+	it('Network: shows the saved list when it loads', async () => {
+		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['99.10.70.92'] } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+
+		expect(screen.getByText('99.10.70.92')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save Excluded IPs' })).toBeEnabled();
+	});
+});
+
 describe('Settings — UniFi integration', () => {
 	afterEach(() => {
 		vi.clearAllMocks();

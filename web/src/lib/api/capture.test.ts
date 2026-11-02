@@ -5,6 +5,7 @@ import {
 	getCaptureHealth,
 	getCaptureStats,
 	getCaptureStatus,
+	fetchCaptureStatus,
 	toggleCapture,
 	updateCaptureSettings,
 	captureState,
@@ -114,6 +115,42 @@ describe('capture API client', () => {
 			mockFetchSuccess({ error: 'Failed to parse daemon response' });
 
 			await expect(fetchCaptureMode()).rejects.toThrow(/no mode/);
+		});
+	});
+
+	// -- fetchCaptureStatus ---------------------------------------------------
+
+	describe('fetchCaptureStatus', () => {
+		const STATUS = { enabled: true, maxFileSizeMB: 4096, rotateMinutes: 10, containerRunning: true, containerStatus: 'running' };
+
+		it('returns the status on success', async () => {
+			mockFetchSuccess(STATUS);
+
+			await expect(fetchCaptureStatus()).resolves.toEqual(STATUS);
+		});
+
+		it('throws the daemon error instead of returning a guessed 100 MB', async () => {
+			mockFetchSuccess({ error: 'Daemon unreachable: ECONNREFUSED' }, 502);
+
+			await expect(fetchCaptureStatus()).rejects.toThrow('Daemon unreachable: ECONNREFUSED');
+		});
+
+		it('throws HTTP <status> when the error body is not JSON', async () => {
+			mockFetchFailure(503);
+
+			await expect(fetchCaptureStatus()).rejects.toThrow('HTTP 503');
+		});
+
+		it('throws on a network error', async () => {
+			mockFetchReject();
+
+			await expect(fetchCaptureStatus()).rejects.toThrow('network error');
+		});
+
+		it('throws when the response has no file size', async () => {
+			mockFetchSuccess({ enabled: true });
+
+			await expect(fetchCaptureStatus()).rejects.toThrow(/incomplete/);
 		});
 	});
 

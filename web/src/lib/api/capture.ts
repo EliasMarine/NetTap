@@ -207,6 +207,25 @@ export async function getCaptureStatus(): Promise<CaptureStatus> {
 }
 
 /**
+ * Get capture status, throwing on any failure instead of returning defaults.
+ * For forms that save what they load (Settings): a guessed 100 MB or
+ * "enabled" must never be written back to the box.
+ * Throws Error with the daemon's `error` text, or `HTTP <status>`.
+ */
+export async function fetchCaptureStatus(): Promise<CaptureStatus> {
+	const res = await fetch('/api/capture/status');
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(typeof data?.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
+	}
+	const data = await res.json();
+	if (typeof data?.enabled !== 'boolean' || typeof data?.maxFileSizeMB !== 'number') {
+		throw new Error('The capture status response was incomplete.');
+	}
+	return data as CaptureStatus;
+}
+
+/**
  * Start or stop the pcap-capture container.
  */
 export async function toggleCapture(enabled: boolean): Promise<CaptureToggleResult> {

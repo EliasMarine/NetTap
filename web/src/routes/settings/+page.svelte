@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
+	import { fetchCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 	import { getUnifiStatus } from '$lib/api/unifi';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
@@ -17,6 +17,8 @@
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
+	// a failed load leaves blank fields; saving them would wipe the real config
+	let notifLoadFailed = $state(false);
 	let testingSending = $state(false);
 	let testMessage = $state('');
 	let testError = $state(false);
@@ -56,6 +58,7 @@
 	let networkMessage = $state('');
 	let networkError = $state(false);
 	let networkLoading = $state(true);
+	let networkLoadFailed = $state(false);
 
 	// --- API Keys state ---
 	let apiKeysStatus = $state<Record<string, boolean>>({});
@@ -73,6 +76,7 @@
 	let captureContainerRunning = $state(false);
 	let captureContainerStatus = $state('unknown');
 	let captureLoading = $state(true);
+	let captureLoadFailed = $state(false);
 	let captureToggling = $state(false);
 	let captureSaving = $state(false);
 	let captureMessage = $state('');
@@ -115,10 +119,13 @@
 				emailEnabled = data.email?.enabled ?? false;
 				emailAddress = data.email?.recipients?.[0] ?? '';
 				webhookUrl = data.webhook?.url ?? '';
+				notifLoadFailed = false;
+				return;
 			}
 		} catch {
-			// Will use defaults
+			// Falls through to failed
 		}
+		notifLoadFailed = true;
 	}
 
 	async function loadRetention() {
@@ -242,9 +249,12 @@
 			if (res.ok) {
 				const data = await res.json();
 				excludedIps = data.excluded_ips ?? [];
+				networkLoadFailed = false;
+				return;
 			}
+			networkLoadFailed = true;
 		} catch {
-			// Will use empty default
+			networkLoadFailed = true;
 		} finally {
 			networkLoading = false;
 		}
@@ -361,14 +371,15 @@
 	async function loadCaptureSettings() {
 		captureLoading = true;
 		try {
-			const status = await getCaptureStatus();
+			const status = await fetchCaptureStatus();
+			captureLoadFailed = false;
 			captureEnabled = status.enabled;
 			captureMaxFileSize = status.maxFileSizeMB;
 			captureRotateMinutes = status.rotateMinutes ?? null;
 			captureContainerRunning = status.containerRunning;
 			captureContainerStatus = status.containerStatus;
 		} catch {
-			// Will use defaults
+			captureLoadFailed = true;
 		} finally {
 			captureLoading = false;
 		}
@@ -871,6 +882,12 @@
 					<span class="card-title">Notification Preferences</span>
 				</div>
 
+				{#if notifLoadFailed}
+					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+						Could not load the current notification settings, so saving is off. Reload the page to try again.
+					</div>
+				{/if}
+
 				{#if notifMessage}
 					<div class="alert {notifError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
 						{notifMessage}
@@ -922,7 +939,7 @@
 				</div>
 
 				<div class="btn-row">
-					<button class="btn btn-primary" onclick={saveNotifications} disabled={notifSaving}>
+					<button class="btn btn-primary" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
 						{notifSaving ? 'Saving...' : 'Save Notification Settings'}
 					</button>
 					<button class="btn btn-secondary" onclick={sendTestNotification} disabled={testingSending}>
@@ -1210,6 +1227,10 @@
 
 				{#if captureLoading}
 					<p class="text-muted">Loading capture settings...</p>
+				{:else if captureLoadFailed}
+					<div class="alert alert-danger">
+						Could not load the current capture settings, so changes are off. Reload the page to try again.
+					</div>
 				{:else}
 					<!-- Status card -->
 					<div class="capture-status-card" style="margin-bottom: var(--space-lg);">
@@ -1489,6 +1510,10 @@
 
 				{#if networkLoading}
 					<p class="text-muted">Loading...</p>
+				{:else if networkLoadFailed}
+					<div class="alert alert-danger">
+						Could not load the excluded IP list, so changes are off. Reload the page to try again.
+					</div>
 				{:else}
 					<div class="excluded-ip-input-row">
 						<input
