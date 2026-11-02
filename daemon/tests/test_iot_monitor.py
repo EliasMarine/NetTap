@@ -965,39 +965,26 @@ class TestNetworkIsolation:
 
     def test_detects_iot_to_internal_pairs(self, iot, mock_client):
         self._setup_devices(iot)
-        mock_client.search.return_value = {
-            "aggregations": {
-                "by_source_mac": {
+        pair = {
+            "key": {"mac": "AA:BB:CC:DD:EE:FF", "dest": "192.168.1.10"},
+            "doc_count": 45,
+            "not_icmp": {
+                "doc_count": 45,
+                "ports": {
                     "buckets": [
-                        {
-                            "key": "AA:BB:CC:DD:EE:FF",
-                            "by_dest_ip": {
-                                "buckets": [
-                                    {
-                                        "key": "192.168.1.10",
-                                        "doc_count": 45,
-                                        "not_icmp": {
-                                            "doc_count": 45,
-                                            "ports": {
-                                                "buckets": [
-                                                    {"key": 445, "doc_count": 30},
-                                                    {"key": 139, "doc_count": 15},
-                                                ]
-                                            },
-                                        },
-                                        "source_ip": {
-                                            "buckets": [
-                                                {"key": "192.168.1.50", "doc_count": 45}
-                                            ]
-                                        },
-                                    }
-                                ]
-                            },
-                        }
+                        {"key": 445, "doc_count": 30},
+                        {"key": 139, "doc_count": 15},
                     ]
-                }
+                },
             },
+            "source_ip": {"buckets": [{"key": "192.168.1.50", "doc_count": 45}]},
         }
+        mock_client.search.side_effect = [
+            # OUI discovery (devices already registered)
+            {"aggregations": {"all": {"buckets": []}}},
+            # (MAC, LAN host) pairs, one page (#96)
+            {"aggregations": {"all": {"buckets": [pair]}}},
+        ]
 
         result = iot.get_network_isolation(
             "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"

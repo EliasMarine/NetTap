@@ -26,6 +26,8 @@ ICMP_CLAUSE = {"terms": {"network.transport": ["icmp", "icmp6", "ipv6-icmp"]}}
 MULTICAST_CLAUSE = {
     "terms": {"destination.ip": ["224.0.0.0/4", "ff00::/8", "255.255.255.255"]}
 }
+# the isolation query's (MAC, LAN host) composite source
+PAIR_SOURCE = {"dest": {"terms": {"field": "destination.ip"}}}
 
 
 def _empty() -> dict[str, Any]:
@@ -41,8 +43,14 @@ def _fake_search(
 
     def search(index: str, body: dict) -> dict[str, Any]:
         aggs = body.get("aggs", {})
-        if "by_source_mac" in aggs:
-            return {"aggregations": {"by_source_mac": {"buckets": isolation or []}}}
+        if PAIR_SOURCE in aggs.get("all", {}).get("composite", {}).get("sources", []):
+            # #96: isolation pages (MAC, LAN host) pairs; one page, no after_key
+            pairs = [
+                {**dest, "key": {"mac": mac["key"], "dest": dest["key"]}}
+                for mac in isolation or []
+                for dest in mac["by_dest_ip"]["buckets"]
+            ]
+            return {"aggregations": {"all": {"buckets": pairs}}}
         sub = aggs.get("by_mac", {}).get("aggs", {})
         if "encrypted" in sub:
             return {"aggregations": {"by_mac": {"buckets": conn or []}}}
@@ -65,13 +73,21 @@ def _body_with_agg(client: MagicMock, agg_name: str) -> dict:
     raise AssertionError(f"no query with aggregation {agg_name!r}")
 
 
-def _port_counts_body(client: MagicMock) -> dict:
-    """#96: per-device port counts are paged with a composite aggregation."""
+def _paged_body(client: MagicMock, source: dict) -> dict:
+    """#96: the query whose composite aggregation pages over `source`."""
     for body in _bodies(client):
         sources = body.get("aggs", {}).get("all", {}).get("composite", {}).get("sources", [])
-        if {"value": {"terms": {"field": "destination.port"}}} in sources:
+        if source in sources:
             return body
-    raise AssertionError("no paged port-count query")
+    raise AssertionError(f"no paged query over {source}")
+
+
+def _port_counts_body(client: MagicMock) -> dict:
+    return _paged_body(client, {"value": {"terms": {"field": "destination.port"}}})
+
+
+def _isolation_body(client: MagicMock) -> dict:
+    return _paged_body(client, PAIR_SOURCE)
 
 
 def _must_not(body: dict) -> list[dict]:
@@ -164,7 +180,7 @@ class TestIsolationIgnoresLanServices:
     def test_query_excludes_dns_dhcp_ntp_and_discovery(self, iot, client):
         client.search.side_effect = _fake_search()
         iot.get_network_isolation(FROM_TS, TO_TS)
-        body = _body_with_agg(client, "by_source_mac")
+        body = _isolation_body(client)
         excluded = _excluded_ports(body)
         assert {53, 67, 68, 123, 137, 138, 1900, 5353, 5355} <= excluded
         assert MULTICAST_CLAUSE in _must_not(body)
@@ -173,7 +189,7 @@ class TestIsolationIgnoresLanServices:
         # TCP 53/123 to a LAN host and ICMP sweeps are lateral-movement signals
         client.search.side_effect = _fake_search()
         iot.get_network_isolation(FROM_TS, TO_TS)
-        must_not = _must_not(_body_with_agg(client, "by_source_mac"))
+        must_not = _must_not(_isolation_body(client))
         assert ICMP_CLAUSE not in must_not
         assert not any(c.get("terms", {}).get("destination.port") for c in must_not)
         scoped = [c["bool"]["filter"] for c in must_not if "bool" in c]
@@ -214,7 +230,7 @@ class TestIsolationIgnoresLanServices:
     def test_lateral_movement_ports_stay_in(self, iot, client):
         client.search.side_effect = _fake_search()
         iot.get_network_isolation(FROM_TS, TO_TS)
-        excluded = _excluded_ports(_body_with_agg(client, "by_source_mac"))
+        excluded = _excluded_ports(_isolation_body(client))
         assert not excluded & {22, 23, 80, 139, 443, 445, 3389, 5900, 8080}
 
     def test_iot_to_lan_ssh_is_still_critical(self, iot, client):
@@ -335,10 +351,13 @@ class TestConnectionRecordsOnly:
         iot.get_privacy_report(FROM_TS, TO_TS)
         iot.get_protocol_audit(FROM_TS, TO_TS)
         iot.get_network_isolation(FROM_TS, TO_TS)
-        for agg in ("encrypted", "by_source_mac"):
-            body = _body_with_agg(client, agg)
-            assert self.CONN_ONLY in body["query"]["bool"]["filter"], agg
-        assert self.CONN_ONLY in _port_counts_body(client)["query"]["bool"]["filter"]
+        bodies = [
+            _body_with_agg(client, "encrypted"),
+            _port_counts_body(client),
+            _isolation_body(client),
+        ]
+        for body in bodies:
+            assert self.CONN_ONLY in body["query"]["bool"]["filter"]
 
     def test_arkime_sessions_are_not_counted_twice(self, iot, client):
         """Arkime sessions (no event.dataset) duplicate Zeek conn flows."""

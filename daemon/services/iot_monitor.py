@@ -69,6 +69,37 @@ ISOLATION_NOISE_EXCLUSION: list[dict] = [
     },
     {"terms": {"destination.ip": MULTICAST_BROADCAST}},
 ]
+# A port in an IoT-to-LAN pair makes it critical (SSH, Telnet, NetBIOS, SMB, RDP, VNC)
+# or high (web, management)
+ISOLATION_CRITICAL_PORTS = [22, 23, 139, 445, 3389, 5900]
+ISOLATION_HIGH_PORTS = [80, 5000, 8080, 8443, 9090]
+_ISOLATION_RISKY_PORTS = [*ISOLATION_CRITICAL_PORTS, *ISOLATION_HIGH_PORTS]
+# Per (IoT MAC, LAN host) pair
+ISOLATION_PAIR_AGGS: dict = {
+    # Zeek stores the ICMP code in destination.port; keep it out
+    "not_icmp": {
+        "filter": {
+            "bool": {"must_not": [{"terms": {"network.transport": ICMP_TRANSPORTS}}]}
+        },
+        "aggs": {
+            "ports": {"terms": {"field": "destination.port", "size": 20}},
+            # the top 20 can miss a sweep's one SMB connection; risky ports come apart (#96)
+            "risky": {
+                "filter": {"terms": {"destination.port": _ISOLATION_RISKY_PORTS}},
+                "aggs": {
+                    "ports": {
+                        "terms": {
+                            "field": "destination.port",
+                            "size": len(_ISOLATION_RISKY_PORTS),
+                        }
+                    }
+                },
+            },
+            "port_count": {"cardinality": {"field": "destination.port"}},
+        },
+    },
+    "source_ip": {"terms": {"field": "source.ip", "size": 1}},
+}
 
 # Path to tracker domains list (suffix-matched against DNS queries)
 _TRACKER_DOMAINS_FILE = os.path.join(
@@ -2230,50 +2261,128 @@ class IoTMonitor:
         #     bool_clause["must_not"] = excluded
         # OLD CODE END
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_source_mac": {
-                    "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "by_dest_ip": {
-                            "terms": {"field": "destination.ip", "size": 50},
-                            "aggs": {
-                                # Zeek stores the ICMP code in destination.port; keep it out
-                                "not_icmp": {
-                                    "filter": {
-                                        "bool": {
-                                            "must_not": [
-                                                {
-                                                    "terms": {
-                                                        "network.transport": ICMP_TRANSPORTS
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    "aggs": {
-                                        "ports": {
-                                            "terms": {
-                                                "field": "destination.port",
-                                                "size": 20,
-                                            }
-                                        }
-                                    },
-                                },
-                                "source_ip": {
-                                    "terms": {"field": "source.ip", "size": 1}
-                                },
-                            },
-                        },
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: 50 LAN hosts per device and 20 ports per pair; a pair past
+        # the 50th host or a sweep's quiet 445 dropped out, so risk and score read too low
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_source_mac": {
+        #             "terms": {"field": "source.mac", "size": len(macs) * 2},
+        #             "aggs": {
+        #                 "by_dest_ip": {
+        #                     "terms": {"field": "destination.ip", "size": 50},
+        #                     "aggs": {
+        #                         # Zeek stores the ICMP code in destination.port; keep it out
+        #                         "not_icmp": {
+        #                             "filter": {
+        #                                 "bool": {
+        #                                     "must_not": [
+        #                                         {
+        #                                             "terms": {
+        #                                                 "network.transport": ICMP_TRANSPORTS
+        #                                             }
+        #                                         }
+        #                                     ]
+        #                                 }
+        #                             },
+        #                             "aggs": {
+        #                                 "ports": {
+        #                                     "terms": {
+        #                                         "field": "destination.port",
+        #                                         "size": 20,
+        #                                     }
+        #                                 }
+        #                             },
+        #                         },
+        #                         "source_ip": {
+        #                             "terms": {"field": "source.ip", "size": 1}
+        #                         },
+        #                     },
+        #                 },
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("Network isolation query failed: %s", exc)
+        #     return {
+        #         "segmentation_score": 100,
+        #         "segmentation_grade": "A",
+        #         "pairs": [],
+        #         "recommendation": "Could not analyze network isolation.",
+        #     }
+        #
+        # pairs: list[dict[str, Any]] = []
+        # for mac_bucket in (
+        #     result.get("aggregations", {}).get("by_source_mac", {}).get("buckets", [])
+        # ):
+        #     raw_mac = mac_bucket["key"].upper()
+        #     dev_info = devices.get(raw_mac, {})
+        #     dev_name = dev_info.get("hostname") or dev_info.get(
+        #         "manufacturer", "Unknown"
+        #     )
+        #
+        #     for dest_bucket in mac_bucket.get("by_dest_ip", {}).get("buckets", []):
+        #         dest_ip = dest_bucket["key"]
+        #
+        #         # Skip if destination is also an IoT device
+        #         if dest_ip in iot_ips:
+        #             continue
+        #
+        #         not_icmp = dest_bucket.get("not_icmp", {})
+        #         ports = [
+        #             pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])
+        #         ]
+        #         conn_count = dest_bucket.get("doc_count", 0)
+        #         pinged = conn_count > not_icmp.get("doc_count", 0)
+        #
+        #         # Get source IP
+        #         src_ip_buckets = dest_bucket.get("source_ip", {}).get("buckets", [])
+        #         src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
+        #
+        #         # Classify risk based on ports
+        #         risk = self._classify_isolation_risk(ports)
+        #
+        #         # Build description
+        #         port_names = self._port_names(ports) if ports else ""
+        #         if pinged:
+        #             # ping-only pairs get no ports, so they classify as low risk
+        #             port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+        #         desc = f"{dev_name} can reach {dest_ip} via {port_names}"
+        #
+        #         pairs.append(
+        #             {
+        #                 "iot_device": {
+        #                     "mac": raw_mac,
+        #                     "name": dev_name,
+        #                     "ip": src_ip,
+        #                 },
+        #                 "internal_target": {
+        #                     "ip": dest_ip,
+        #                     "hostname": None,  # Would need reverse DNS
+        #                 },
+        #                 "risk": risk,
+        #                 "connection_count": conn_count,
+        #                 "ports": ports,
+        #                 "description": desc,
+        #             }
+        #         )
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            buckets, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                [
+                    {"mac": {"terms": {"field": "source.mac"}}},
+                    {"dest": {"terms": {"field": "destination.ip"}}},
+                ],
+                aggs=ISOLATION_PAIR_AGGS,
+            )
         except Exception as exc:
             logger.error("Network isolation query failed: %s", exc)
             return {
@@ -2282,62 +2391,15 @@ class IoTMonitor:
                 "pairs": [],
                 "recommendation": "Could not analyze network isolation.",
             }
+        if not complete:
+            logger.warning("Network isolation stopped at %d pairs", len(buckets))
 
-        pairs: list[dict[str, Any]] = []
-        for mac_bucket in (
-            result.get("aggregations", {}).get("by_source_mac", {}).get("buckets", [])
-        ):
-            raw_mac = mac_bucket["key"].upper()
-            dev_info = devices.get(raw_mac, {})
-            dev_name = dev_info.get("hostname") or dev_info.get(
-                "manufacturer", "Unknown"
-            )
-
-            for dest_bucket in mac_bucket.get("by_dest_ip", {}).get("buckets", []):
-                dest_ip = dest_bucket["key"]
-
-                # Skip if destination is also an IoT device
-                if dest_ip in iot_ips:
-                    continue
-
-                not_icmp = dest_bucket.get("not_icmp", {})
-                ports = [
-                    pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])
-                ]
-                conn_count = dest_bucket.get("doc_count", 0)
-                pinged = conn_count > not_icmp.get("doc_count", 0)
-
-                # Get source IP
-                src_ip_buckets = dest_bucket.get("source_ip", {}).get("buckets", [])
-                src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
-
-                # Classify risk based on ports
-                risk = self._classify_isolation_risk(ports)
-
-                # Build description
-                port_names = self._port_names(ports) if ports else ""
-                if pinged:
-                    # ping-only pairs get no ports, so they classify as low risk
-                    port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
-                desc = f"{dev_name} can reach {dest_ip} via {port_names}"
-
-                pairs.append(
-                    {
-                        "iot_device": {
-                            "mac": raw_mac,
-                            "name": dev_name,
-                            "ip": src_ip,
-                        },
-                        "internal_target": {
-                            "ip": dest_ip,
-                            "hostname": None,  # Would need reverse DNS
-                        },
-                        "risk": risk,
-                        "connection_count": conn_count,
-                        "ports": ports,
-                        "description": desc,
-                    }
-                )
+        # A destination that is also an IoT device is not an isolation finding
+        pairs = [
+            self._isolation_pair(b, devices)
+            for b in buckets
+            if b["key"]["dest"] not in iot_ips
+        ]
 
         # Compute segmentation score
         score = 100
@@ -2388,7 +2450,13 @@ class IoTMonitor:
 
         # Sort pairs by risk severity
         risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        pairs.sort(key=lambda p: risk_order.get(p["risk"], 99))
+        # OLD CODE START — #96: pairs arrived busiest first from terms; composite pages
+        # them in key order, so the busiest-first tiebreak is now explicit
+        # pairs.sort(key=lambda p: risk_order.get(p["risk"], 99))
+        # OLD CODE END
+        pairs.sort(
+            key=lambda p: (risk_order.get(p["risk"], 99), -p["connection_count"])
+        )
 
         return {
             "segmentation_score": score,
@@ -2397,11 +2465,50 @@ class IoTMonitor:
             "recommendation": recommendation,
         }
 
+    def _isolation_pair(self, bucket: dict, devices: dict) -> dict[str, Any]:
+        """One IoT-device-to-LAN-host pair from a (mac, dest) composite bucket."""
+        raw_mac = bucket["key"]["mac"].upper()
+        dest_ip = bucket["key"]["dest"]
+        dev_info = devices.get(raw_mac, {})
+        dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+
+        not_icmp = bucket.get("not_icmp", {})
+        top = [pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])]
+        risky = not_icmp.get("risky", {}).get("ports", {}).get("buckets", [])
+        ports = [*top, *(pb["key"] for pb in risky if pb["key"] not in top)]
+        conn_count = bucket.get("doc_count", 0)
+        pinged = conn_count > not_icmp.get("doc_count", 0)
+
+        src_ip_buckets = bucket.get("source_ip", {}).get("buckets", [])
+        src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
+
+        port_count = not_icmp.get("port_count", {}).get("value")
+        port_names = self._port_names(ports, port_count) if ports else ""
+        if pinged:
+            # ping-only pairs get no ports, so they classify as low risk
+            port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+
+        return {
+            "iot_device": {"mac": raw_mac, "name": dev_name, "ip": src_ip},
+            "internal_target": {
+                "ip": dest_ip,
+                "hostname": None,  # Would need reverse DNS
+            },
+            "risk": self._classify_isolation_risk(ports),
+            "connection_count": conn_count,
+            "ports": ports,
+            "description": f"{dev_name} can reach {dest_ip} via {port_names}",
+        }
+
     @staticmethod
     def _classify_isolation_risk(ports: list[int]) -> str:
         """Classify the risk level of IoT-to-internal communication."""
-        critical_ports = {445, 139, 3389, 5900, 22, 23}  # SMB, RDP, VNC, SSH, Telnet
-        high_ports = {80, 8080, 8443, 5000, 9090}  # Web services, management
+        # OLD CODE START — #96: now module constants, shared with the isolation query
+        # critical_ports = {445, 139, 3389, 5900, 22, 23}  # SMB, RDP, VNC, SSH, Telnet
+        # high_ports = {80, 8080, 8443, 5000, 9090}  # Web services, management
+        # OLD CODE END
+        critical_ports = set(ISOLATION_CRITICAL_PORTS)
+        high_ports = set(ISOLATION_HIGH_PORTS)
         if any(p in critical_ports for p in ports):
             return "critical"
         if any(p in high_ports for p in ports):
@@ -2411,8 +2518,8 @@ class IoTMonitor:
         return "low"
 
     @staticmethod
-    def _port_names(ports: list[int]) -> str:
-        """Convert a port list to human-readable names."""
+    def _port_names(ports: list[int], total: int | None = None) -> str:
+        """Convert a port list to human-readable names; `total` is every port used."""
         names = {
             22: "SSH",
             23: "Telnet",
@@ -2430,8 +2537,13 @@ class IoTMonitor:
         for p in ports[:5]:  # Show first 5
             name = names.get(p, str(p))
             parts.append(name)
-        if len(ports) > 5:
-            parts.append(f"+{len(ports) - 5} more")
+        # OLD CODE START — #96: "+N more" counted the listed ports, at most 20 + the risky
+        # if len(ports) > 5:
+        #     parts.append(f"+{len(ports) - 5} more")
+        # OLD CODE END
+        port_count = max(len(ports), total or 0)
+        if port_count > 5:
+            parts.append(f"+{port_count - 5} more")
         return ", ".join(parts) if parts else "unknown"
 
     # -----------------------------------------------------------------

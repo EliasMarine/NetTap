@@ -326,3 +326,86 @@ class TestEveryTrackerCounts:
 
         assert device["tracker_count"] == 6  # was 0
         assert {t["domain"] for t in device["tracker_domains"]} == set(TRACKERS)
+
+
+# ---------------------------------------------------------------------------
+# 5. Isolation sees every LAN host and every risky port of a pair
+# ---------------------------------------------------------------------------
+
+
+def _not_icmp(ports: dict[int, int], spec: dict) -> dict[str, Any]:
+    """The not_icmp sub-aggregation as OpenSearch answers `spec` for a pair's ports."""
+    ordered = sorted(ports.items(), key=lambda kv: (-kv[1], kv[0]))
+    size = spec["aggs"]["ports"]["terms"]["size"]
+    out: dict[str, Any] = {
+        "doc_count": sum(ports.values()),
+        "ports": {"buckets": [{"key": p, "doc_count": c} for p, c in ordered[:size]]},
+    }
+    if "risky" in spec["aggs"]:
+        risky = spec["aggs"]["risky"]["filter"]["terms"]["destination.port"]
+        hits = [{"key": p, "doc_count": c} for p, c in ordered if p in risky]
+        out = {**out, "risky": {"ports": {"buckets": hits}}}
+    if "port_count" in spec["aggs"]:
+        out = {**out, "port_count": {"value": len(ports)}}
+    return out
+
+
+def _isolation_search(pairs: list[tuple[str, dict[int, int], int]]):
+    """MAC reached each (LAN host, {port: connections}, pings); busiest pair first."""
+    ordered = sorted(pairs, key=lambda p: -(sum(p[1].values()) + p[2]))
+
+    def pair_bucket(key: Any, dest: str, ports: dict[int, int], pings: int, spec: dict) -> dict:
+        return {
+            "key": key,
+            "doc_count": sum(ports.values()) + pings,
+            "not_icmp": _not_icmp(ports, spec),
+            "source_ip": {"buckets": [{"key": "192.168.1.40", "doc_count": 1}]},
+        }
+
+    def search(index: str, body: dict) -> dict[str, Any]:
+        if _composite_fields(body) == ["source.mac", "destination.ip"]:
+            spec = body["aggs"]["all"]["aggs"]["not_icmp"]
+            rows = [
+                pair_bucket({"source.mac": MAC.lower(), "destination.ip": d}, d, ports, pings, spec)
+                for d, ports, pings in ordered
+            ]
+            return _composite_reply(body, rows)
+        if _composite_fields(body):
+            return _composite_reply(body, [])
+        by_dest = body.get("aggs", {}).get("by_source_mac", {}).get("aggs", {}).get("by_dest_ip")
+        if by_dest:
+            spec = by_dest["aggs"]["not_icmp"]
+            dests = [pair_bucket(d, d, ports, pings, spec) for d, ports, pings in ordered]
+            mac = {"key": MAC.lower(), "by_dest_ip": {"buckets": dests[: by_dest["terms"]["size"]]}}
+            return {"aggregations": {"by_source_mac": {"buckets": [mac]}}}
+        return _by_mac([])
+
+    return search
+
+
+class TestIsolationSeesEveryPair:
+    def test_a_port_sweep_is_critical(self):
+        """1,000 ports once each: the old top 20 were ports 1-20, so no SSH/SMB and "medium"."""
+        sweep = {port: 1 for port in range(1, 1001)}
+        client = MagicMock()
+        client.search.side_effect = _isolation_search([("192.168.1.20", sweep, 0)])
+        result = _monitor_with_device(client).get_network_isolation(FROM_TS, TO_TS)
+
+        [pair] = result["pairs"]
+        assert pair["risk"] == "critical"  # was medium
+        assert {22, 23, 139, 445} <= set(pair["ports"])
+        assert result["segmentation_score"] == 75  # was 95
+        assert pair["description"].endswith("+995 more")  # was +15 more
+
+    def test_a_pair_past_the_50th_lan_host_counts(self):
+        """60 hosts pinged often and one quiet SMB connection: the old top 50 dropped the SMB."""
+        pings = [(f"192.168.2.{i}", {}, 100) for i in range(60)]
+        smb = ("192.168.3.5", {445: 2}, 0)
+        client = MagicMock()
+        client.search.side_effect = _isolation_search([*pings, smb])
+        result = _monitor_with_device(client).get_network_isolation(FROM_TS, TO_TS)
+
+        assert len(result["pairs"]) == 61  # was 50
+        assert result["pairs"][0]["internal_target"]["ip"] == "192.168.3.5"
+        assert result["pairs"][0]["risk"] == "critical"
+        assert result["segmentation_score"] == 75  # was 100
