@@ -87,9 +87,9 @@ def system() -> None:
     sizes = [u.get("size_mb") for u in upd.get("updates", [])]
     print(f"  (info) updates: {len(sizes)} available, sizes {sizes[:5]}, couldn't check: {upd.get('failed_checks') or 'none'}")
     _, vers = call("/api/system/versions")
-    rules = [c for c in vers.get("components", []) if "rule" in str(c.get("name", "")).lower()]
+    rules = [c for c in vers.get("versions", []) if c.get("category") == "database"]
     today = datetime.now(UTC).strftime("%Y-%m-%d")
-    print(f"  (info) rules versions {[(c.get('name'), c.get('current_version'), c.get('status')) for c in rules]} (today {today})")
+    print(f"  (info) database versions {[(c.get('name'), c.get('current_version'), c.get('status')) for c in rules]} (today {today})")
 
 
 def main() -> int:
