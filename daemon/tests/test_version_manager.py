@@ -465,12 +465,14 @@ class TestDockerScanFailure(unittest.TestCase):
 class TestRulesVersionIsMeasured(unittest.TestCase):
     """#96: with no rules file the ruleset date is unknown, not today's date."""
 
-    def _rules(self, rule_file_exists):
+    def _rules(self, rule_file_exists, container_mtime=""):
         from unittest.mock import patch
 
         vm = VersionManager()
 
         async def suricata_update_answers(cmd):
+            if cmd[:2] == ["docker", "exec"]:
+                return container_mtime
             return "et/open  Emerging Threats Open\n" if cmd[0] == "suricata-update" else ""
 
         vm._run_command = suricata_update_answers
@@ -484,6 +486,16 @@ class TestRulesVersionIsMeasured(unittest.TestCase):
 
     def test_no_rules_file_is_unknown(self):
         rules = self._rules(rule_file_exists=False)
+        self.assertEqual((rules.current_version, rules.status), ("unknown", "unknown"))
+
+    def test_the_live_containers_rules_file_date_is_reported(self):
+        """The G11: the daemon has no rules file, Suricata's container does; it read "unknown"."""
+        rules = self._rules(rule_file_exists=False, container_mtime="1793577600\n")
+        self.assertEqual((rules.current_version, rules.status), ("2026-11-02", "ok"))
+        self.assertEqual(rules.details["rule_file"], "nettap-suricata-live:/var/lib/suricata/rules/suricata.rules")
+
+    def test_a_container_that_cant_be_asked_stays_unknown(self):
+        rules = self._rules(rule_file_exists=False, container_mtime="Error: No such container\n")
         self.assertEqual((rules.current_version, rules.status), ("unknown", "unknown"))
 
     def test_rules_file_date_is_reported(self):

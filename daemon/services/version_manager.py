@@ -441,6 +441,16 @@ class VersionManager:
             except OSError:
                 continue
 
+        if rules_version == "unknown":
+            # the daemon holds no copy of the rules; the file lives in the Suricata container
+            container = os.environ.get("SURICATA_CONTAINER_NAME", "nettap-suricata-live")
+            live_path = "/var/lib/suricata/rules/suricata.rules"
+            mtime = (await self._run_command(["docker", "exec", container, "stat", "-c", "%Y", live_path])).strip()
+            if mtime.isdigit():
+                rules_version = datetime.fromtimestamp(int(mtime), tz=timezone.utc).strftime("%Y-%m-%d")
+                rules_status = "ok"
+                rules_details = {"rule_file": f"{container}:{live_path}"}
+
         results.append(
             ComponentVersion(
                 name="suricata-rules",
