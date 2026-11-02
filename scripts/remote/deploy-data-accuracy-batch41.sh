@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Deploy dashboard data-accuracy batch 41 (daemon only) and check it.
+# Deploy dashboard data-accuracy batch 41 and check it.
 # Tracking: tracking-fixes/2026-11-01-dashboard-data-accuracy.md
 #
 #   #105 an unreadable from/to (e.g. "now-5m") was quietly answered for the default window
 #        (usually 24 h) by 14 API modules, and PCAP searched every capture; now a 400.
+#   Updates: rows said "Up to Date" before the daemon's first check; now "Not checked".
 #   Batches 37-40's checks run again.
 #
 # The full output is also saved to ~/nettap-batch41.log.
@@ -15,7 +16,7 @@ exec > >(tee "$HOME/nettap-batch41.log") 2>&1
 REPO_DIR="/home/nettap/NetTap"
 BRANCH="fix/dashboard-data-accuracy"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
-SERVICES=(nettap-storage-daemon)  # only the daemon changed
+SERVICES=(nettap-storage-daemon nettap-web)
 FAILED=0
 
 check() {  # check "label" <0 pass / 1 fail> "detail"
@@ -40,7 +41,7 @@ fi
 echo "   ✓ Code: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
 echo ""
 
-echo "→ Step 2: Build and recreate the daemon..."
+echo "→ Step 2: Build and recreate the daemon and the web container..."
 for svc in "${SERVICES[@]}"; do
     if ! "${COMPOSE[@]}" build "$svc"; then
         echo "   ✗ $svc build failed — nothing was restarted"
