@@ -142,6 +142,27 @@ class TestExport:
         # Should not crash, should have empty defaults
         assert config["sections"]["notification_channels"] == {}
 
+    def test_export_unreadable_file_fails(self, backup, config_paths):
+        """#96: a corrupt config file fails the export, not a backup missing it."""
+        Path(config_paths["excluded_ips"]).write_text("[not json")
+        with pytest.raises(ValueError, match="excluded_ips"):
+            backup.export_config()
+
+    def test_import_over_corrupt_file_still_works(self, backup, config_paths):
+        """Restoring a backup over a corrupt file replaces it."""
+        Path(config_paths["notification_config"]).write_text("{not json")
+        data = {
+            "metadata": {
+                "nettap_version": _NETTAP_VERSION,
+                "schema_version": _SCHEMA_VERSION,
+            },
+            "sections": {"notification_channels": {"ch9": {"type": "x"}}},
+        }
+        result = backup.import_config(data)
+        assert result["success"] is True
+        notif = json.loads(Path(config_paths["notification_config"]).read_text())
+        assert "ch9" in notif["channels"]
+
 
 # ---------------------------------------------------------------------------
 # Validate import
