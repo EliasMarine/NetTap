@@ -81,7 +81,10 @@ def get(path, **q):
 try:
     files, _ = get('/api/pcap/files')
     newest = files['files'][0]['file']
-    older = files['files'][1]['file'] if len(files['files']) > 1 else newest
+    # smallest recent finished file: a busy one (3.5 GB of one TLS download) can hold
+    # no DNS in the part 0.5 CPU reads within 45 s, which is the right answer for it
+    recent = files['files'][1:6] or files['files']
+    older = min(recent, key=lambda f: f['size_bytes'])['file']
     p, dt = get('/api/pcap/preview', file=newest, limit=100)
     print(f'PREVIEW {p[\"count\"]} {dt:.1f}')
     p, dt = get('/api/pcap/preview', file=older, filter='dns', limit=100)
