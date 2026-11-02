@@ -212,6 +212,7 @@ class SuricataRuleManager:
 
         # Step 2: Reload rules via suricatasc
         reload_output = ""
+        reload_ok = False
         if update_success:
             try:
                 reload_proc = await asyncio.create_subprocess_exec(
@@ -230,12 +231,20 @@ class SuricataRuleManager:
                     if reload_stdout
                     else ""
                 )
+                # suricatasc exits non-zero when Suricata answers NOK
+                reload_ok = reload_proc.returncode == 0
+                if not reload_ok:
+                    logger.error("Suricata rule reload failed: %s", reload_output)
             except Exception as exc:
                 logger.error("Failed to reload rules: %s", exc)
                 reload_output = "Reload failed: {}".format(exc)
 
         return {
-            "success": update_success,
+            # OLD CODE START — #96: a failed reload still said success, while Suricata
+            # kept running the old rules
+            # "success": update_success,
+            # OLD CODE END
+            "success": update_success and reload_ok,
             "output": update_output,
             "reload_output": reload_output,
         }

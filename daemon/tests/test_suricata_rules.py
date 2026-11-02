@@ -156,6 +156,42 @@ class TestUpdateRules:
         finally:
             loop.close()
 
+    def test_failed_reload_is_not_success(self, manager):
+        """#96: rules downloaded but not loaded into Suricata is not a success."""
+
+        async def run():
+            with patch("asyncio.create_subprocess_exec") as mock_exec:
+                update_proc = AsyncMock()
+                update_proc.returncode = 0
+                update_proc.communicate = AsyncMock(return_value=(b"30000 loaded", None))
+                reload_proc = AsyncMock()
+                reload_proc.returncode = 1
+                reload_proc.communicate = AsyncMock(
+                    return_value=(b'{"return": "NOK", "message": "busy"}', None)
+                )
+                mock_exec.side_effect = [update_proc, reload_proc]
+
+                result = await manager.update_rules()
+                assert result["success"] is False
+                assert "NOK" in result["reload_output"]
+
+        asyncio.run(run())
+
+    def test_reload_exception_is_not_success(self, manager):
+        async def run():
+            update_proc = AsyncMock()
+            update_proc.returncode = 0
+            update_proc.communicate = AsyncMock(return_value=(b"ok", None))
+            with patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=[update_proc, OSError("docker socket gone")],
+            ):
+                result = await manager.update_rules()
+            assert result["success"] is False
+            assert "Reload failed" in result["reload_output"]
+
+        asyncio.run(run())
+
     def test_failed_update(self, manager):
         async def run():
             with patch("asyncio.create_subprocess_exec") as mock_exec:
