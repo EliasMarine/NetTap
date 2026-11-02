@@ -417,8 +417,20 @@ class DeviceRegistry:
                         }
                     }
                 },
+                # #89: the MAC page shows in/out and per-destination bytes; without these it read 0
+                "outbound_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+                "inbound_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
                 "protocols": {"terms": {"field": "network.transport", "size": 10}},
-                "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
+                # OLD CODE START — #89: connection counts only
+                # "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
+                # OLD CODE END
+                "top_destinations": {
+                    "terms": {"field": "destination.ip", "size": 20},
+                    "aggs": {
+                        "out": {"sum": {"field": "source.bytes", "missing": 0}},
+                        "in": {"sum": {"field": "destination.bytes", "missing": 0}},
+                    },
+                },
             },
         }
 
@@ -429,8 +441,11 @@ class DeviceRegistry:
             return {
                 "mac": mac,
                 "total_bytes": 0,
+                "inbound_bytes": 0,
+                "outbound_bytes": 0,
                 "connection_count": 0,
                 "protocols": [],
+                "top_protocols": [],
                 "top_destinations": [],
             }
 
@@ -440,17 +455,32 @@ class DeviceRegistry:
             hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
         )
 
-        protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
+        protocol_buckets = aggs.get("protocols", {}).get("buckets", [])
+        protocols = [b["key"] for b in protocol_buckets]
+        # OLD CODE START — #89: connections only, so the MAC page drew every bar as 0 bytes
+        # top_destinations = [
+        #     {"ip": b["key"], "connections": b["doc_count"]}
+        #     for b in aggs.get("top_destinations", {}).get("buckets", [])
+        # ]
+        # OLD CODE END
         top_destinations = [
-            {"ip": b["key"], "connections": b["doc_count"]}
+            {
+                "ip": b["key"],
+                "connections": b["doc_count"],
+                "bytes": int((b.get("out", {}).get("value") or 0) + (b.get("in", {}).get("value") or 0)),
+            }
             for b in aggs.get("top_destinations", {}).get("buckets", [])
         ]
 
         return {
             "mac": mac,
             "total_bytes": aggs.get("total_bytes", {}).get("value", 0) or 0,
+            "inbound_bytes": int(aggs.get("inbound_bytes", {}).get("value") or 0),
+            "outbound_bytes": int(aggs.get("outbound_bytes", {}).get("value") or 0),
             "connection_count": connection_count,
             "protocols": protocols,
+            # the shape the MAC page reads; `protocols` stays for other callers
+            "top_protocols": [{"name": b["key"], "count": b["doc_count"]} for b in protocol_buckets],
             "top_destinations": top_destinations,
         }
 

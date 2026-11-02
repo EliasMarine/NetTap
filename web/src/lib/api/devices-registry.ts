@@ -36,9 +36,10 @@ export interface DeviceTraffic {
 	connection_count: number;
 	top_destinations: Array<{ ip: string; bytes: number; connections: number }>;
 	top_protocols: Array<{ name: string; count: number }>;
-	dns_queries: Array<{ domain: string; count: number }>;
-	alerts: Array<{ signature: string; severity: number; timestamp: string }>;
-	bandwidth_series: Array<{ timestamp: string; bytes: number }>;
+	// The daemon doesn't send these three (yet); the page hides their sections when absent
+	dns_queries?: Array<{ domain: string; count: number }>;
+	alerts?: Array<{ signature: string; severity: number; timestamp: string }>;
+	bandwidth_series?: Array<{ timestamp: string; bytes: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,12 @@ export async function getRegistryDevice(mac: string): Promise<RegistryDevice | n
 	try {
 		const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}`);
 		if (!res.ok) return null;
-		return res.json();
+		// OLD CODE START — #89: the daemon wraps the device as {device: {...}}, so the MAC page read
+		// device.ips of the wrapper and crashed on .length
+		// return res.json();
+		// OLD CODE END
+		const data = await res.json();
+		return data?.device ?? null;
 	} catch {
 		return null;
 	}
@@ -90,7 +96,11 @@ export async function getDeviceTraffic(mac: string): Promise<DeviceTraffic | nul
 			`/api/devices/registry/${encodeURIComponent(mac)}/traffic`
 		);
 		if (!res.ok) return null;
-		return res.json();
+		// OLD CODE START — #89: the daemon sends {from, to, traffic: {...}}
+		// return res.json();
+		// OLD CODE END
+		const data = await res.json();
+		return data?.traffic ?? null;
 	} catch {
 		return null;
 	}

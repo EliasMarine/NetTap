@@ -380,6 +380,37 @@ class TestGetDeviceTraffic:
         filters = mock_client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
         assert {"term": {"event.dataset": "conn"}} in filters
 
+    def test_get_device_traffic_has_what_the_mac_page_shows(self, registry, mock_client):
+        """#89: the MAC page shows in/out bytes, bytes per destination and protocol counts.
+
+        Without them it read "0 in / 0 out" and drew every destination bar as 0 bytes.
+        """
+        mock_client.get.return_value = {"_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}}
+        mock_client.search.return_value = {
+            "hits": {"total": {"value": 42}},
+            "aggregations": {
+                "total_bytes": {"value": 1500},
+                "outbound_bytes": {"value": 500},
+                "inbound_bytes": {"value": 1000},
+                "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
+                "top_destinations": {
+                    "buckets": [
+                        {"key": "8.8.8.8", "doc_count": 10, "out": {"value": 100}, "in": {"value": 900}},
+                    ]
+                },
+            },
+        }
+
+        result = registry.get_device_traffic("AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+        assert result["inbound_bytes"] == 1000
+        assert result["outbound_bytes"] == 500
+        assert result["top_destinations"] == [{"ip": "8.8.8.8", "connections": 10, "bytes": 1000}]
+        assert result["top_protocols"] == [{"name": "tcp", "count": 30}]
+        aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
+        assert aggs["outbound_bytes"] == {"sum": {"field": "source.bytes", "missing": 0}}
+        assert aggs["inbound_bytes"] == {"sum": {"field": "destination.bytes", "missing": 0}}
+
     def test_get_device_traffic_error(self, registry, mock_client):
         """Should return empty summary on OpenSearch error."""
         mock_client.get.return_value = {
