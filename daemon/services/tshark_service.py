@@ -50,6 +50,18 @@ ALLOWED_FOLLOW_PROTOCOLS = {"", "tcp", "udp", "tls", "http"}
 MAX_CONCURRENT_ANALYSES = 2
 
 
+def bounded_exec(cmd: list[str], seconds: int) -> list[str]:
+    """Run a ``docker exec <container> ...`` argv under coreutils ``timeout`` inside it.
+
+    Giving up on the docker exec client (asyncio timeout, kill) leaves the process
+    running in the container: on the G11 seven orphaned full-file tshark reads held it
+    at its 1 GiB limit and every analysis took minutes. ``-k 5`` follows up with KILL.
+    """
+    if cmd[:2] != ["docker", "exec"] or len(cmd) < 4:
+        return cmd
+    return [*cmd[:3], "timeout", "-k", "5", str(seconds), *cmd[3:]]
+
+
 @dataclass
 class TSharkRequest:
     pcap_path: str
@@ -269,6 +281,7 @@ class TSharkService:
         Uses asyncio.create_subprocess_exec (argument-list form, no shell
         interpolation) for safety. Returns (stdout, stderr, returncode).
         """
+        cmd = bounded_exec(cmd, EXECUTION_TIMEOUT)
         logger.info("Running: %s", " ".join(shlex.quote(c) for c in cmd))
 
         try:

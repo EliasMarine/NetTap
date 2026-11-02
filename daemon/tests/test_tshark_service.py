@@ -7,7 +7,7 @@ All tests use mocks -- no Docker or TShark binary required.
 import asyncio
 import json
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import sys
 import os
@@ -20,6 +20,8 @@ from services.tshark_service import (
     TSharkRequest,
     TSharkValidationError,
     MAX_PACKETS,
+    EXECUTION_TIMEOUT,
+    bounded_exec,
 )
 
 
@@ -547,3 +549,48 @@ class TestFollowStreamValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBoundedExec(unittest.TestCase):
+    """tshark must die inside the container when the daemon gives up on it."""
+
+    def test_docker_exec_gets_in_container_timeout(self):
+        cmd = ["docker", "exec", "nettap-tshark", "tshark", "-r", "/pcap/a.pcap"]
+        self.assertEqual(
+            bounded_exec(cmd, 30),
+            [
+                "docker",
+                "exec",
+                "nettap-tshark",
+                "timeout",
+                "-k",
+                "5",
+                "30",
+                "tshark",
+                "-r",
+                "/pcap/a.pcap",
+            ],
+        )
+
+    def test_other_commands_unchanged(self):
+        inspect = ["docker", "inspect", "--format", "{{.State.Running}}", "x"]
+        self.assertEqual(bounded_exec(inspect, 30), inspect)
+
+    def test_every_service_command_runs_bounded(self):
+        captured = []
+
+        async def fake_exec(*argv, **kwargs):
+            captured.append(list(argv))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        svc = TSharkService()
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            asyncio.run(
+                svc._exec_tshark(["docker", "exec", "nettap-tshark", "tshark", "-v"])
+            )
+        self.assertEqual(
+            captured[0][3:7], ["timeout", "-k", "5", str(EXECUTION_TIMEOUT)]
+        )

@@ -268,3 +268,36 @@ class TestFilterArgvBoundary:
         finally:
             if path:
                 os.unlink(path)
+
+
+def _assert_every_exec_is_bounded(calls):
+    """Each docker exec into the tshark container runs under coreutils timeout, so a
+    daemon-side timeout can't leave tshark/mergecap running (G11, 2026-11-02)."""
+    execs = [argv for argv in calls if argv[:2] == ["docker", "exec"]]
+    assert execs, "expected at least one docker exec"
+    for argv in execs:
+        assert argv[3:6] == ["timeout", "-k", "5"], argv
+        assert int(argv[6]) > 0
+
+
+class TestNoOrphanedTshark:
+    @pytest.mark.asyncio
+    async def test_search_is_bounded(self, service, recorded_argv):
+        await service.search(_DISPLAY_FILTER)
+        _assert_every_exec_is_bounded(recorded_argv)
+
+    @pytest.mark.asyncio
+    async def test_preview_is_bounded(self, service, pcap_dir, recorded_argv):
+        await service.preview(str(pcap_dir / "capture_001.pcap"))
+        _assert_every_exec_is_bounded(recorded_argv)
+
+    @pytest.mark.asyncio
+    async def test_merge_and_filter_download_are_bounded(self, service, recorded_argv):
+        path = await service.download_filtered(_DISPLAY_FILTER)
+        try:
+            # two files in the fixture: mergecap, then the filter pass
+            assert any("mergecap" in argv for argv in recorded_argv)
+            _assert_every_exec_is_bounded([a for a in recorded_argv if "rm" not in a])
+        finally:
+            if path:
+                os.unlink(path)

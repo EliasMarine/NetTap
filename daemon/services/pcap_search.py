@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from services.tshark_service import bounded_exec
+
 logger = logging.getLogger("nettap.services.pcap_search")
 
 _DEFAULT_PCAP_DIR = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
@@ -195,7 +197,7 @@ class PcapSearchService:
             async with self._semaphore:
                 logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
                 proc = await asyncio.create_subprocess_exec(
-                    *cmd,
+                    *bounded_exec(cmd, 45),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -286,7 +288,7 @@ class PcapSearchService:
             async with self._semaphore:
                 logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
                 proc = await asyncio.create_subprocess_exec(
-                    *cmd,
+                    *bounded_exec(cmd, 45),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -386,7 +388,7 @@ class PcapSearchService:
                         "Running: %s", " ".join(shlex.quote(c) for c in merge_cmd)
                     )
                     proc = await asyncio.create_subprocess_exec(
-                        *merge_cmd,
+                        *bounded_exec(merge_cmd, 150),
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -422,7 +424,7 @@ class PcapSearchService:
                     "Running: %s", " ".join(shlex.quote(c) for c in filter_cmd)
                 )
                 proc = await asyncio.create_subprocess_exec(
-                    *filter_cmd,
+                    *bounded_exec(filter_cmd, 150),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
