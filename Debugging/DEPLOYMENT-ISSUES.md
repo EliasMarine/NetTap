@@ -408,7 +408,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   sends `devices`); it loads again.
   Batch 27: IoT trust scores counted Suricata engine events as alerts (the one count batch 11
   missed); three devices' security scores 68/60/68 -> 92/85/92.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch27.sh.
+  Batch 28: Device detail, its lists and its risk score stopped counting at 10,000 (no
+  track_total_hits); the risk list and detail now share one 500-device baseline.
+  Batch 29: list pages stop at OpenSearch's 10,000-result window (later pages were empty).
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch29.sh.
   Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
   page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (11 checks).
   Each checks its fixes against the live APIs.
@@ -1908,6 +1911,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 141. **Never trust a placeholder from an example env file (Chain 25, #79)** — `.env.example`'s `MGMT_IP=192.168.1.100` was taken as NetTap's own address, excluded, and saved into the owner's list, while the real address was counted. Validate configured addresses against the host (`ip -j -4 addr show`), and keep auto-detected values out of user-owned settings so a wrong one can't stick.
 142. **`sudo -S` eats stdin (Chain 25)** — piping JSON into `sudo docker exec -i` under a password-on-stdin wrapper delivers nothing. Pass data as an argument; it also works with a cached sudo.
 143. **When you fix a filter, grep for every query over the same records (Chain 25, #82)** — batch 11 put the Suricata engine-event exclusion on the per-device alert counts and risk scores. The IoT fleet summary has its own alert-count query, and it never got the exclusion. `grep -rn 'suricata.alert.severity' daemon/` would have found it. The same check also showed that a test must use the scale the API reports: the IoT pillars are percentages of 40 points, so 10 points read as +25, not +10.
+144. **`hits.total` is a lower bound unless the query sets `track_total_hits` (Chain 25, #83–#85)** — OpenSearch stops counting at 10,000 and reports `relation: gte`, so a busy device read exactly 10,000. Find these with `grep -rn 'get("total"' daemon/` and compare with `grep -c track_total_hits`. Once a total is exact, a page count built from it must also stop at `index.max_result_window` (10,000), because `from + size` past it returns nothing.
 
 ---
 
