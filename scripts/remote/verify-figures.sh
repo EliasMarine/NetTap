@@ -176,8 +176,14 @@ for d in fleet['devices']:
         bad.append(f'{mac} page {shown} raw {raw}')
 print(len(bad), len(fleet['devices']), '; '.join(bad))" "$FROM_TS" "$TO_TS" "$EXCL" 2>&1 | grep -v Warning | tail -n 1)
 IOT_BAD=$(printf '%s' "$IOT" | cut -d' ' -f1)
+IOT_DEVICES=$(printf '%s' "$IOT" | cut -d' ' -f2)
+IOT_DETAIL=$(printf '%s' "$IOT" | cut -d' ' -f3-)
 if [ "$IOT_BAD" = "0" ]; then rc=0; else rc=1; fi
-check "IoT encryption share per device" "$rc" "$(printf '%s' "$IOT" | awk '{print $2}') devices, mismatches: ${IOT:-no output}"
+if [[ "$IOT_BAD" =~ ^[0-9]+$ ]]; then
+    check "IoT encryption share per device" "$rc" "$IOT_DEVICES devices, $IOT_BAD mismatched${IOT_DETAIL:+: $IOT_DETAIL}"
+else
+    check "IoT encryption share per device" 1 "no result: ${IOT:-no output}"
+fi
 echo ""
 
 if [ "$FAILED" -eq 0 ]; then
