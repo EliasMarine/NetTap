@@ -1127,6 +1127,31 @@ def enrich_device_context(client, ip: str) -> dict | None:
 # Smart Alert Aggregation
 # ---------------------------------------------------------------------------
 
+# shortcut: stops at 25 pages (5,000 alert groups) per range; raise it if a box ever has more
+_MAX_GROUP_PAGES = 25
+
+
+def _all_composite_buckets(client, query: dict) -> list[dict] | None:
+    """Page through the 'grouped' composite agg; None if the first page fails."""
+    grouped = query["aggs"]["grouped"]
+    buckets: list[dict] = []
+    after = None
+    for page in range(_MAX_GROUP_PAGES):
+        composite = {**grouped["composite"], **({"after": after} if after else {})}
+        body = {**query, "aggs": {"grouped": {**grouped, "composite": composite}}}
+        try:
+            result = client.search(index=NETWORK_INDEX, body=body)
+        except Exception:
+            logger.error("Smart alerts query failed (page %d)", page + 1, exc_info=True)
+            return None if page == 0 else buckets
+        agg = result.get("aggregations", {}).get("grouped", {})
+        buckets.extend(agg.get("buckets", []))
+        after = agg.get("after_key")
+        if not after or len(agg.get("buckets", [])) < composite["size"]:
+            return buckets
+    logger.warning("Smart alerts stopped at %d groups", len(buckets))
+    return buckets
+
 
 async def get_smart_alerts(
     client,
@@ -1134,10 +1159,13 @@ async def get_smart_alerts(
     to_ts: str,
     device_ip: str | None = None,
     include_info: bool = False,
-    limit: int = 50,
+    limit: int | None = 50,
     excluded_ips: list[dict] | None = None,
 ) -> list[dict]:
-    """Get deduplicated, reclassified, grouped alerts with full context."""
+    """Get deduplicated, reclassified, grouped alerts with full context.
+
+    limit=None returns every group (the summary totals need all of them).
+    """
 
     filters = [
         {
@@ -1218,10 +1246,16 @@ async def get_smart_alerts(
         },
     }
 
-    try:
-        result = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        logger.error("Smart alerts query failed", exc_info=True)
+    # OLD CODE START — replaced 2026-11-01: one 200-group page saw only the first 200
+    # (signature, src, dst) groups in key order, so the home summary said 394 of 2.2K
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error("Smart alerts query failed", exc_info=True)
+    #     return []
+    # OLD CODE END
+    buckets = _all_composite_buckets(client, query)
+    if buckets is None:
         return []
 
     # Optionally enrich device context
@@ -1237,7 +1271,9 @@ async def get_smart_alerts(
     from api.alerts import _normalize_alert_source
 
     groups = []
-    buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
+    # OLD CODE START — buckets now come from every composite page
+    # buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
+    # OLD CODE END
 
     for bucket in buckets:
         sig_name_key = bucket["key"].get("sig_name", "") or ""
@@ -1336,7 +1372,10 @@ async def get_smart_alert_summary(
         to_ts,
         device_ip,
         include_info=False,
-        limit=200,
+        # OLD CODE START — replaced 2026-11-01: totals came from the top 200 groups only
+        # limit=200,
+        # OLD CODE END
+        limit=None,
         excluded_ips=excluded_ips,
     )
 
