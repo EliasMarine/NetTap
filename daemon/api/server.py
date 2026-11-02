@@ -54,11 +54,11 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
+from services.capture_config import load_capture_config
 from services.excluded_ips import (
     load_excluded_ips,
     detect_and_build_lan_filter,
     detect_appliance_ip,
-    save_excluded_ips,
 )
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
@@ -898,6 +898,15 @@ def _load_daemon_token() -> str | None:
         return None
 
 
+def _management_interface() -> str:
+    """The management NIC from the capture config, or "" if it can't be read."""
+    try:
+        return load_capture_config().management
+    except Exception as exc:  # a broken capture config must not stop the API starting
+        logger.warning("Could not read the management NIC from the capture config: %s", exc)
+        return ""
+
+
 def create_app(
     storage: StorageManager,
     smart: SmartMonitor,
@@ -1028,11 +1037,21 @@ def create_app(
     logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
 
     # Auto-detect and exclude appliance management IP
-    appliance_ip = detect_appliance_ip()
+    # OLD CODE START — #79: the detected IP was saved into the owner's list, so a wrong one
+    # (the .env.example placeholder) stayed excluded after the detection was fixed
+    # appliance_ip = detect_appliance_ip()
+    # if appliance_ip and appliance_ip not in app["excluded_ips"]:
+    #     app["excluded_ips"].append(appliance_ip)
+    #     save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+    #     logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
+    # OLD CODE END
+    appliance_ip = detect_appliance_ip(_management_interface())
     if appliance_ip and appliance_ip not in app["excluded_ips"]:
-        app["excluded_ips"].append(appliance_ip)
-        save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+        # Runtime only: detected again at every start, never written into the owner's list
+        app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
         logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
+    elif not appliance_ip:
+        logger.warning("Appliance management IP not found; NetTap's own traffic is counted")
 
     # Auto-detect LAN subnets from OpenSearch traffic data
     # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback

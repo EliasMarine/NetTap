@@ -358,19 +358,58 @@ RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
 CONN_RECORDS: dict = {"term": {"event.dataset": "conn"}}
 
 
-def detect_appliance_ip() -> str | None:
+# OLD CODE START — #79: MGMT_IP was trusted as is. .env.example ships MGMT_IP=192.168.1.100,
+# so that placeholder (often a real device's address) was excluded from every page while
+# NetTap's own address (G11: 192.168.1.199, 38,744 connections a day) was counted
+# def detect_appliance_ip() -> str | None:
+#     mgmt_ip = os.environ.get("MGMT_IP", "").strip()
+#     if mgmt_ip:
+#         return mgmt_ip
+#     mgmt_iface = os.environ.get("MGMT_INTERFACE", "").strip()
+#     if mgmt_iface:
+#         return _detect_interface_ip(mgmt_iface)
+#     return None
+# OLD CODE END
+def detect_appliance_ip(fallback_iface: str = "") -> str | None:
     """Auto-detect the appliance's management interface IPv4 address.
 
-    Priority: MGMT_IP env var > query MGMT_INTERFACE via ip command > None
+    Priority: MGMT_IP env var, if this host holds it > MGMT_INTERFACE > fallback_iface
+    (the capture config's management NIC) > None
     """
     mgmt_ip = os.environ.get("MGMT_IP", "").strip()
     if mgmt_ip:
-        return mgmt_ip
+        local = _local_ipv4s()
+        if local is None or mgmt_ip in local:  # can't list addresses: trust it, as before
+            return mgmt_ip
+        logger.warning("MGMT_IP %s is not an address of this host; ignoring it", mgmt_ip)
 
-    mgmt_iface = os.environ.get("MGMT_INTERFACE", "").strip()
-    if mgmt_iface:
-        return _detect_interface_ip(mgmt_iface)
+    for iface in (os.environ.get("MGMT_INTERFACE", "").strip(), fallback_iface.strip()):
+        if iface:
+            ip = _detect_interface_ip(iface)
+            if ip:
+                return ip
+    return None
 
+
+def _local_ipv4s() -> set[str] | None:
+    """This host's IPv4 addresses (the daemon runs with host networking), or None if unknown."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            import json as _json
+
+            return {
+                a["local"]
+                for iface in _json.loads(result.stdout)
+                for a in iface.get("addr_info", [])
+                if a.get("local")
+            }
+    except Exception as exc:
+        logger.debug("Could not list local addresses: %s", exc)
     return None
 
 
