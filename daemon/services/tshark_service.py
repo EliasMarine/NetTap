@@ -320,6 +320,34 @@ class TSharkService:
             logger.warning("Failed to parse TShark JSON output: %s", e)
             return []
 
+    def _info_column_command(self, request: TSharkRequest) -> list[str]:
+        """Same packets as the JSON pass, printing only frame number and Info."""
+        cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-r", request.pcap_path]
+        cmd.extend(["-c", str(request.max_packets)])
+        if request.display_filter:
+            cmd.extend(["-Y", request.display_filter])
+        # TShark 4.0 names the column _ws.col.Info (4.2+ renamed it _ws.col.info)
+        cmd.extend(["-T", "fields", "-e", "frame.number", "-e", "_ws.col.Info"])
+        return cmd
+
+    @staticmethod
+    def _with_info_column(packets: list[dict], stdout: str) -> list[dict]:
+        """Copy each packet with the Wireshark Info text added to its layers."""
+        info_by_frame = dict(
+            line.split("\t", 1) for line in stdout.splitlines() if "\t" in line
+        )
+        merged = []
+        for pkt in packets:
+            layers = pkt.get("_source", {}).get("layers")
+            number = (layers or {}).get("frame", {}).get("frame.number")
+            info = info_by_frame.get(str(number))
+            if info is None:
+                merged.append(pkt)
+                continue
+            source = {**pkt["_source"], "layers": {**layers, "_ws.col.Info": info}}
+            merged.append({**pkt, "_source": source})
+        return merged
+
     def _parse_text_output(self, stdout: str) -> list[dict]:
         """Parse TShark text output into structured dicts."""
         packets = []
@@ -354,6 +382,21 @@ class TSharkService:
                 MAX_CONCURRENT_ANALYSES,
             )
             stdout, stderr, returncode = await self._exec_tshark(cmd)
+            # -T json has no column data, so the Info column comes from a second,
+            # fields-only pass over the same packets
+            info_stdout = ""
+            wants_info = (
+                request.output_format == "json"
+                and not (request.fields or request.verbose or request.follow_stream)
+                and stdout.strip()
+            )
+            if wants_info:
+                try:
+                    info_stdout, _, _ = await self._exec_tshark(
+                        self._info_column_command(request)
+                    )
+                except TSharkValidationError as exc:
+                    logger.warning("TShark Info column pass failed: %s", exc)
 
         if returncode != 0 and not stdout:
             return TSharkResult(
@@ -369,7 +412,9 @@ class TSharkService:
             # Follow stream and verbose modes return raw text
             packets = self._parse_text_output(stdout)
         elif request.output_format == "json":
-            packets = self._parse_json_output(stdout)
+            packets = self._with_info_column(
+                self._parse_json_output(stdout), info_stdout
+            )
         else:
             packets = self._parse_text_output(stdout)
 

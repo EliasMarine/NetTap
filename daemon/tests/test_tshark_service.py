@@ -301,6 +301,77 @@ class TestAnalyze(unittest.TestCase):
         asyncio.run(run())
 
 
+class TestInfoColumn(unittest.TestCase):
+    """-T json has no Info column; a fields pass fills it in (TShark 4.0)."""
+
+    def setUp(self):
+        self.svc = TSharkService()
+
+    @staticmethod
+    def _pkt(number: str) -> dict:
+        return {"_source": {"layers": {"frame": {"frame.number": number}}}}
+
+    @patch("os.path.exists", return_value=True)
+    def test_info_text_is_merged_by_frame_number(self, _mock_exists):
+        json_out = json.dumps([self._pkt("1"), self._pkt("2")])
+        fields_out = "1\t443 \u2192 51234 [ACK] Seq=1 Ack=1 Len=1448\n2\tStandard query 0x1a2b A example.com\n"
+
+        async def run():
+            with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
+                ex.side_effect = [(json_out, "", 0), (fields_out, "", 0)]
+                with patch.object(self.svc, "get_version", new_callable=AsyncMock):
+                    req = TSharkRequest(
+                        pcap_path="test.pcap",
+                        output_format="json",
+                        display_filter="dns",
+                    )
+                    result = await self.svc.analyze(req)
+                info_cmd = ex.call_args_list[1].args[0]
+                self.assertEqual(
+                    info_cmd[-4:], ["-e", "frame.number", "-e", "_ws.col.Info"]
+                )
+                self.assertIn("dns", info_cmd)
+                return result
+
+        result = asyncio.run(run())
+        infos = [p["_source"]["layers"]["_ws.col.Info"] for p in result.packets]
+        self.assertEqual(
+            infos,
+            [
+                "443 \u2192 51234 [ACK] Seq=1 Ack=1 Len=1448",
+                "Standard query 0x1a2b A example.com",
+            ],
+        )
+
+    @patch("os.path.exists", return_value=True)
+    def test_packets_survive_a_failed_info_pass(self, _mock_exists):
+        json_out = json.dumps([self._pkt("1")])
+
+        async def run():
+            with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
+                ex.side_effect = [(json_out, "", 0), TSharkValidationError("timed out")]
+                with patch.object(self.svc, "get_version", new_callable=AsyncMock):
+                    return await self.svc.analyze(
+                        TSharkRequest(pcap_path="test.pcap", output_format="json")
+                    )
+
+        result = asyncio.run(run())
+        self.assertEqual(result.packets, [self._pkt("1")])
+
+    @patch("os.path.exists", return_value=True)
+    def test_text_output_runs_tshark_once(self, _mock_exists):
+        async def run():
+            with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
+                ex.return_value = ("1 0.0 a -> b TCP", "", 0)
+                with patch.object(self.svc, "get_version", new_callable=AsyncMock):
+                    await self.svc.analyze(
+                        TSharkRequest(pcap_path="test.pcap", output_format="text")
+                    )
+                return ex.call_count
+
+        self.assertEqual(asyncio.run(run()), 1)
+
+
 class TestIsAvailable(unittest.TestCase):
     """Tests for TSharkService.is_available."""
 
