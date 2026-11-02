@@ -420,3 +420,39 @@ class TestGetOSHint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestManufacturerFromMalcolm(unittest.TestCase):
+    """#26: prefixes the bundled table lacks use Malcolm's IEEE vendor (source.oui)."""
+
+    def setUp(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("00:17:88\tPhilips Lighting (Hue)\n")
+            self._tmp_path = f.name
+        self.fp = DeviceFingerprint(oui_path=self._tmp_path)
+
+    def tearDown(self):
+        os.unlink(self._tmp_path)
+
+    def _mac(self, source: dict) -> str | None:
+        client = MagicMock()
+        client.search.return_value = {"hits": {"hits": [{"_source": {"source": source}}]}}
+        mac = self.fp.get_mac_for_ip(client, "192.168.1.44", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        self.assertIn("source.oui", client.search.call_args.kwargs["body"]["_source"])
+        return mac
+
+    def test_unknown_prefix_uses_malcolm_vendor(self):
+        mac = self._mac({"mac": "bc:24:11:e9:4e:56", "oui": "Proxmox Server Solutions GmbH"})
+        self.assertEqual(self.fp.get_manufacturer(mac), "Proxmox Server Solutions GmbH")
+        # any other device with the same prefix gets it too
+        self.assertEqual(self.fp.get_manufacturer("BC-24-11-00-00-01"), "Proxmox Server Solutions GmbH")
+
+    def test_list_valued_oui(self):
+        mac = self._mac({"mac": ["d0:21:f9:5e:35:32"], "oui": ["Ubiquiti Inc"]})
+        self.assertEqual(self.fp.get_manufacturer(mac), "Ubiquiti Inc")
+
+    def test_bundled_name_wins_and_no_oui_stays_unknown(self):
+        mac = self._mac({"mac": "00:17:88:48:3c:07", "oui": "Philips Lighting BV"})
+        self.assertEqual(self.fp.get_manufacturer(mac), "Philips Lighting (Hue)")
+        mac = self._mac({"mac": "0e:cc:55:a1:28:66"})  # randomized MAC: Malcolm has no vendor
+        self.assertEqual(self.fp.get_manufacturer(mac), "Unknown")

@@ -50,11 +50,22 @@ def _mac_from_hit(hit: dict) -> str | None:
     return mac or None
 
 
+def _oui_from_hit(hit: dict) -> str | None:
+    """Read Malcolm's IEEE vendor name (source.oui) from a search hit, if it has one."""
+    source = hit.get("_source", {}).get("source")
+    oui = source.get("oui") if isinstance(source, dict) else None
+    if isinstance(oui, list):
+        oui = next((o for o in oui if o), None)
+    return oui or None
+
+
 class DeviceFingerprint:
     """Passive device fingerprinting from Arkime session data."""
 
     def __init__(self, oui_path: str | None = None):
         self._oui_db: dict[str, str] = {}  # MAC prefix (AA:BB:CC) -> manufacturer
+        # Vendors Malcolm's full IEEE table gave for prefixes the bundled table lacks (#26)
+        self._learned_oui: dict[str, str] = {}
         default_path = os.path.join(os.path.dirname(__file__), "..", "data", "oui.txt")
         self._load_oui(oui_path or default_path)
 
@@ -110,7 +121,18 @@ class DeviceFingerprint:
             else:
                 return "Unknown"
 
-        return self._oui_db.get(prefix.upper(), "Unknown")
+        # OLD CODE START — the bundled table has ~500 prefixes, so Proxmox, the UDM and most
+        # devices read "Unknown" (#26); Malcolm's vendor from get_mac_for_ip now fills the gap
+        # return self._oui_db.get(prefix.upper(), "Unknown")
+        # OLD CODE END
+        prefix = prefix.upper()
+        return self._oui_db.get(prefix) or self._learned_oui.get(prefix, "Unknown")
+
+    def _learn_oui(self, hit: dict, mac: str) -> None:
+        """Remember Malcolm's vendor for this MAC's prefix (a prefix's vendor never changes)."""
+        oui = _oui_from_hit(hit)
+        if oui:
+            self._learned_oui[mac.upper().replace("-", ":")[:8]] = oui
 
     def get_hostname_for_ip(
         self, client, ip: str, from_ts: str, to_ts: str
@@ -183,7 +205,7 @@ class DeviceFingerprint:
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
-            "_source": ["source.mac"],
+            "_source": ["source.mac", "source.oui"],
         }
 
         try:
@@ -195,6 +217,7 @@ class DeviceFingerprint:
                 # OLD CODE END
                 mac = _mac_from_hit(hits[0])
                 if mac:
+                    self._learn_oui(hits[0], mac)
                     return mac
         except Exception as exc:
             logger.debug("DHCP MAC lookup failed for %s: %s", ip, exc)
@@ -220,7 +243,7 @@ class DeviceFingerprint:
                 }
             },
             "sort": [{"@timestamp": {"order": "desc"}}],
-            "_source": ["source.mac"],
+            "_source": ["source.mac", "source.oui"],
         }
 
         try:
@@ -232,6 +255,7 @@ class DeviceFingerprint:
                 # OLD CODE END
                 mac = _mac_from_hit(hits[0])
                 if mac:
+                    self._learn_oui(hits[0], mac)
                     return mac
         except Exception as exc:
             logger.debug("Conn MAC lookup failed for %s: %s", ip, exc)
