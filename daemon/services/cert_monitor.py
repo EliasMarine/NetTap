@@ -279,7 +279,11 @@ def _leaf_cert(bucket: dict, names: dict[str, list[str]]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class CertStatsUnavailable(Exception):
+class CertQueryFailed(Exception):
+    """A certificate query failed; callers must not show an empty list or zeros as findings (#96)."""
+
+
+class CertStatsUnavailable(CertQueryFailed):
     """The stats query failed; callers must not show zeros as if they were counts."""
 
 
@@ -290,12 +294,19 @@ class CertificateMonitor:
         self._client = client
 
     def _search(self, body: dict, what: str) -> dict:
-        """Run a search on the network index; {} (logged) on failure."""
+        """Run a search on the network index; CertQueryFailed (logged) on failure."""
+        # OLD CODE START — #96: {} read as "no certificates", "none expiring", "no self-signed"
+        # try:
+        #     return self._client.search(index=NETWORK_INDEX, body=body) or {}
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to query %s: %s", what, exc)
+        #     return {}
+        # OLD CODE END
         try:
             return self._client.search(index=NETWORK_INDEX, body=body) or {}
         except OpenSearchException as exc:
             logger.error("Failed to query %s: %s", what, exc)
-            return {}
+            raise CertQueryFailed(f"{what} query failed") from exc
 
     def _all_buckets(
         self,
@@ -305,14 +316,19 @@ class CertificateMonitor:
         what: str,
         page_size: int = PAGE_SIZE,
     ) -> list[dict]:
-        """Every composite bucket on the network index; [] (logged) on failure."""
+        """Every composite bucket on the network index; CertQueryFailed (logged) on failure."""
+        # OLD CODE START — #96: [] read as "no CA changes" and an issuer-change count of 0
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to query %s: %s", what, exc)
+        #     return []
+        # OLD CODE END
         try:
             buckets, complete = all_buckets(
                 self._client, NETWORK_INDEX, query, sources, aggs, page_size
             )
         except OpenSearchException as exc:
             logger.error("Failed to query %s: %s", what, exc)
-            return []
+            raise CertQueryFailed(f"{what} query failed") from exc
         if not complete:
             logger.warning("%s stopped at %d buckets; result is partial", what, len(buckets))
         return buckets
@@ -434,7 +450,7 @@ class CertificateMonitor:
         to_ts: str,
         excluded_ips: list[str] | None,
     ) -> dict[str, dict]:
-        """ssl session stats per fingerprint, in one query (empty on failure)."""
+        """ssl session stats per fingerprint, in one query (CertQueryFailed on failure)."""
         if not fingerprints:
             return {}
         bool_clause: dict = {

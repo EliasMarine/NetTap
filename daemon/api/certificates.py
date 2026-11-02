@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 
-from services.cert_monitor import CertificateMonitor, CertStatsUnavailable
+from services.cert_monitor import CertificateMonitor, CertQueryFailed
 
 logger = logging.getLogger("nettap.api.certificates")
 
@@ -55,7 +55,13 @@ async def handle_list_certificates(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
-    certs = monitor.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    try:
+        certs = monitor.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    except CertQueryFailed:
+        # the service already logged the OpenSearch error; [] would read as "none found"
+        return web.json_response(
+            {"error": "Certificate data is unavailable right now."}, status=503
+        )
     return web.json_response(
         {
             "from": from_ts,
@@ -77,9 +83,15 @@ async def handle_expiring_certs(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         days = 30
 
-    certs = monitor.get_expiring_certs(
-        days=days, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips_list
-    )
+    try:
+        certs = monitor.get_expiring_certs(
+            days=days, from_ts=from_ts, to_ts=to_ts, excluded_ips=excluded_ips_list
+        )
+    except CertQueryFailed:
+        # the service already logged the OpenSearch error; [] would read as "none found"
+        return web.json_response(
+            {"error": "Certificate data is unavailable right now."}, status=503
+        )
     return web.json_response(
         {
             "from": from_ts,
@@ -97,7 +109,13 @@ async def handle_self_signed(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
-    certs = monitor.detect_self_signed(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    try:
+        certs = monitor.detect_self_signed(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    except CertQueryFailed:
+        # the service already logged the OpenSearch error; [] would read as "none found"
+        return web.json_response(
+            {"error": "Certificate data is unavailable right now."}, status=503
+        )
     return web.json_response(
         {
             "from": from_ts,
@@ -114,9 +132,15 @@ async def handle_issuer_changes(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
-    changes = monitor.detect_issuer_changes(
-        from_ts, to_ts, excluded_ips=excluded_ips_list
-    )
+    try:
+        changes = monitor.detect_issuer_changes(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
+    except CertQueryFailed:
+        # the service already logged the OpenSearch error; [] would read as "none found"
+        return web.json_response(
+            {"error": "Certificate data is unavailable right now."}, status=503
+        )
     return web.json_response(
         {
             "from": from_ts,
@@ -135,7 +159,10 @@ async def handle_cert_stats(request: web.Request) -> web.Response:
 
     try:
         stats = monitor.get_cert_stats(from_ts, to_ts, excluded_ips=excluded_ips_list)
-    except CertStatsUnavailable:
+    # OLD CODE START — #96: only the stats query raised; the issuer-change count read 0 on failure
+    # except CertStatsUnavailable:
+    # OLD CODE END
+    except CertQueryFailed:
         # the service already logged the OpenSearch error; zeros would read as real counts
         return web.json_response(
             {"error": "Certificate statistics are unavailable right now."}, status=503

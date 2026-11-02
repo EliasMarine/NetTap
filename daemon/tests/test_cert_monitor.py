@@ -16,7 +16,7 @@ from opensearchpy import OpenSearchException
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.cert_monitor import CertificateMonitor, CertStatsUnavailable
+from services.cert_monitor import CertificateMonitor, CertQueryFailed, CertStatsUnavailable
 
 
 def _iso(days: int) -> str:
@@ -240,18 +240,21 @@ class TestInventory(unittest.TestCase):
         self.assertEqual(CertificateMonitor(fake).get_certificates(), [])
         self.assertEqual(len(fake.bodies), 1)
 
-    def test_opensearch_error_returns_empty_and_logs(self):
+    def test_opensearch_error_raises_and_logs(self):
+        """#96: [] read as "no certificates seen"."""
         fake = FakeOpenSearch(certs=[_x509_bucket("aa")], fail={"certs"})
-        with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
-            self.assertEqual(CertificateMonitor(fake).get_certificates(), [])
+        monitor = CertificateMonitor(fake)
+        for read in (monitor.get_certificates, monitor.get_expiring_certs, monitor.detect_self_signed):
+            with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
+                with self.assertRaises(CertQueryFailed, msg=read.__name__):
+                    read()
 
-    def test_session_join_error_keeps_the_certificates(self):
+    def test_session_join_error_raises(self):
+        """#96: rows without their sessions showed no clients and x509 relog counts as times seen."""
         fake = FakeOpenSearch(certs=[_x509_bucket("aa")], fail={"fps"})
         with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
-            certs = CertificateMonitor(fake).get_certificates()
-        self.assertEqual(len(certs), 1)
-        self.assertEqual(certs[0]["server_names"], [])
-        self.assertEqual(certs[0]["times_seen"], 2)
+            with self.assertRaises(CertQueryFailed):
+                CertificateMonitor(fake).get_certificates()
 
     def test_missing_expiry_is_valid_with_no_day_count(self):
         fake = FakeOpenSearch(certs=[_x509_bucket("aa", not_after_days=None)])
@@ -422,8 +425,14 @@ class TestStats(unittest.TestCase):
         """The G11 card read 0 while 85 certificates existed (query failed, logged)."""
         fake = FakeOpenSearch(fail={"total", "certs"})
         with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
-            with self.assertRaises(CertStatsUnavailable):
+            with self.assertRaises(CertQueryFailed):
                 CertificateMonitor(fake).get_cert_stats()
+
+    def test_stats_reply_without_aggregations_raises(self):
+        fake = FakeOpenSearch(certs=[_x509_bucket("aa")])
+        fake.search = lambda index, body: {}
+        with self.assertRaises(CertStatsUnavailable):
+            CertificateMonitor(fake).get_cert_stats()
 
     def test_stats_aggregations_use_absolute_times(self):
         """A "now" range in a filter agg trips an OpenSearch 2.x createWeight bug."""
