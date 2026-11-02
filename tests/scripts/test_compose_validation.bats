@@ -67,7 +67,6 @@ assert 'services' in data, 'Missing services key'
         arkime-live
         redis
         api
-        nginx-proxy
         nettap-storage-daemon
         nettap-web
         nettap-grafana
@@ -136,7 +135,6 @@ print('All services have logging config')
         filebeat
         redis
         api
-        nginx-proxy
     )
 
     if ! _has_pyyaml; then
@@ -242,8 +240,9 @@ print('${svc}: OK')
     # Only NetTap services (which we control) should have no-new-privileges.
     # Malcolm services use `su` (setuid binary) in their entrypoint which
     # silently fails with no-new-privileges, causing services to exit code 0.
+    # nettap-storage-daemon is left out on purpose: see the NOTE on its compose
+    # block (cap_drop: ALL + selective cap_add + read_only instead; re-test first).
     local nettap_services=(
-        nettap-storage-daemon
         nettap-web
         nettap-grafana
         nettap-tshark
@@ -278,7 +277,6 @@ print('${svc}: has no-new-privileges (correct)')
         filebeat
         redis
         api
-        nginx-proxy
         zeek-live
         suricata-live
         pcap-capture
@@ -467,17 +465,19 @@ print('api: no cert mount (correct)')
     [ "$status" -eq 0 ]
 }
 
-@test "compose: nginx-proxy mounts certs at /etc/nginx/certs" {
+# Malcolm's nginx-proxy service is gone from the compose file; NetTap's own
+# nettap-nginx is the front door and carries the TLS certs (2026-11-02).
+@test "compose: nettap-nginx mounts its TLS certs at /etc/nginx/ssl" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
     run _compose_query "
-svc = data['services']['nginx-proxy']
+svc = data['services']['nettap-nginx']
 volumes = svc.get('volumes', [])
-cert_mount = [v for v in volumes if '/etc/nginx/certs' in str(v)]
-assert len(cert_mount) > 0, 'nginx-proxy must mount certs at /etc/nginx/certs'
-print('nginx-proxy: cert mount found — ' + str(cert_mount[0]))
+cert_mount = [v for v in volumes if str(v).endswith(':/etc/nginx/ssl:ro')]
+assert len(cert_mount) > 0, 'nettap-nginx must mount its certs read-only at /etc/nginx/ssl'
+print('nettap-nginx: cert mount found — ' + str(cert_mount[0]))
 "
     [ "$status" -eq 0 ]
 }
@@ -631,16 +631,19 @@ print('zeek-live build: OK')
 }
 
 @test "compose: non-capture services do NOT use host network" {
+    # nettap-storage-daemon uses host networking on purpose: it runs the bridge,
+    # mirror and NIC commands in the host namespace (nsenter dropped 2026-11-01).
     local internal_services=(
-        opensearch dashboards logstash redis api nginx-proxy
-        nettap-storage-daemon nettap-web nettap-grafana
+        opensearch dashboards logstash redis api
+        nettap-web nettap-grafana
     )
 
     for svc in "${internal_services[@]}"; do
         # Should NOT have network_mode: host
         local section
         section=$(sed -n "/^  ${svc}:/,/^  [^ ]/p" "$COMPOSE_FILE")
-        if echo "$section" | grep -q "network_mode: host"; then
+        # Comments don't count (nettap-web's explains how it reaches the host-networked daemon)
+        if echo "$section" | grep -v '^[[:space:]]*#' | grep -q "network_mode: host"; then
             echo "${svc} incorrectly uses host network"
             return 1
         fi
