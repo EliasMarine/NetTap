@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { getProtocolDistribution } from '$api/traffic';
 	import { getAlertCount } from '$api/alerts';
-	import { getDevices } from '$api/devices';
+	// OLD CODE START — #96: the device list is its top 100 by bytes, not every device
+	// import { getDevices } from '$api/devices';
+	// OLD CODE END
+	import { getDeviceCount } from '$api/devices';
 	import { getRiskScores } from '$api/risk';
 	import { getInvestigationStats } from '$api/investigations';
 	import type { ProtocolsResponse } from '$api/traffic';
 	import type { AlertCountResponse } from '$api/alerts';
-	import type { DeviceListResponse } from '$api/devices';
+	// OLD CODE START — #96: see the getDevices import
+	// import type { DeviceListResponse } from '$api/devices';
+	// OLD CODE END
+	import type { DeviceCountResponse } from '$api/devices';
 	import type { RiskScoresResponse } from '$api/risk';
 	import type { InvestigationStats } from '$api/investigations';
 	import Collapsible from '$components/Collapsible.svelte';
@@ -32,7 +38,10 @@
 	let loading = $state(true);
 	let protocols = $state<ProtocolsResponse>({ from: '', to: '', protocols: [], services: [] });
 	let alertCounts = $state<AlertCountResponse>({ from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } });
-	let deviceList = $state<DeviceListResponse>({ from: '', to: '', limit: 100, devices: [] });
+	// OLD CODE START — #96: see the getDevices import
+	// let deviceList = $state<DeviceListResponse>({ from: '', to: '', limit: 100, devices: [] });
+	// OLD CODE END
+	let deviceCount = $state<DeviceCountResponse>({ from: '', to: '', count: 0 });
 	let riskScores = $state<RiskScoresResponse>({ scores: [] });
 	let investigationStats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
 
@@ -97,11 +106,20 @@
 	// Devices on the list that have a score. OLD CODE: each figure used riskScores.scores.length,
 	// which counts per IP: a second address of one device (G11: an AP's VLAN 40 IP) gave
 	// "55 of 54 devices" and coverage above 100% (#81)
-	let scoredIps = $derived(new Set(riskScores.scores.map((s) => s.ip)));
-	let scoredDevices = $derived(deviceList.devices.filter((d) => scoredIps.has(d.ip)).length);
+	// OLD CODE START — #96: the device list's top 100 by bytes against the risk list's top 100 by
+	// connections; on a network with more devices each one in only one list cost 10 points
+	// let scoredIps = $derived(new Set(riskScores.scores.map((s) => s.ip)));
+	// let scoredDevices = $derived(deviceList.devices.filter((d) => scoredIps.has(d.ip)).length);
+	// OLD CODE END
+	// Both are every device, by the same rules: the daemon scores each device /api/devices/count
+	// counts. min() keeps coverage at most 100% if one crosses the threshold between the two requests.
+	let totalDevices = $derived(deviceCount.count);
+	let scoredDevices = $derived(Math.min(riskScores.scores.length, totalDevices));
 
 	let networkScore = $derived.by(() => {
-		const totalDevices = deviceList.devices.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
 		if (totalDevices === 0) return 100;
 
 		const devicesWithRisk = scoredDevices;
@@ -142,7 +160,9 @@
 	});
 
 	let monitoringScore = $derived.by(() => {
-		const totalDevices = deviceList.devices.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
 		if (totalDevices === 0) return 100;
 
 		const devicesWithRisk = scoredDevices;
@@ -253,7 +273,9 @@
 
 	function getNetworkFindings(): string[] {
 		const findings: string[] = [];
-		const totalDevices = deviceList.devices.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
 		const baselinedDevices = scoredDevices;
 		const unbaselined = totalDevices - baselinedDevices;
 
@@ -307,7 +329,9 @@
 
 	function getMonitoringFindings(): string[] {
 		const findings: string[] = [];
-		const totalDevices = deviceList.devices.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
 		const scored = scoredDevices;
 
 		if (totalDevices === 0) {
@@ -443,14 +467,20 @@
 			const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.all([
 				getProtocolDistribution(),
 				getAlertCount(),
-				getDevices(),
+				// OLD CODE START — #96: see the getDevices import
+				// getDevices(),
+				// OLD CODE END
+				getDeviceCount(),
 				getRiskScores(),
 				getInvestigationStats(),
 			]);
 
 			protocols = protocolsRes;
 			alertCounts = alertsRes;
-			deviceList = devicesRes;
+			// OLD CODE START — #96: see the getDevices import
+			// deviceList = devicesRes;
+			// OLD CODE END
+			deviceCount = devicesRes;
 			riskScores = riskRes;
 			investigationStats = statsRes;
 		} catch {

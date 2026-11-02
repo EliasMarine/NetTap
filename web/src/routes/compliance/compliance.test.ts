@@ -20,6 +20,7 @@ const DAEMON_REPLIES: Record<string, unknown> = {
 	},
 	'/api/alerts/count': { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } },
 	'/api/devices': { from: '', to: '', limit: 100, devices: [{ ip: '192.168.1.10' }, { ip: '192.168.1.198' }] },
+	'/api/devices/count': { from: '', to: '', count: 2 },
 	'/api/risk/scores': {
 		device_count: 3,
 		devices: ['192.168.1.10', '192.168.1.198', '192.168.40.198'].map((ip) => ({
@@ -59,6 +60,39 @@ describe('Security Posture page', () => {
 		expect(screen.queryByText('Calculating security posture...')).not.toBeInTheDocument();
 		expect(within(categoryCard('Monitoring Coverage')).getByText('100%')).toBeInTheDocument();
 		expect(within(categoryCard('Network Segmentation')).getByText('100%')).toBeInTheDocument();
+	});
+
+	it('compares every device, not the two endpoints\' top 100s (#96)', async () => {
+		// 150 devices: /api/devices lists its top 100 by bytes; the count and the risk list have all 150
+		const ips = Array.from({ length: 150 }, (_, i) => `192.168.1.${i + 1}`);
+		const replies: Record<string, unknown> = {
+			...DAEMON_REPLIES,
+			'/api/devices': { from: '', to: '', limit: 100, devices: ips.slice(0, 100).map((ip) => ({ ip })) },
+			'/api/devices/count': { from: '', to: '', count: 150 },
+			'/api/risk/scores': {
+				device_count: 150,
+				devices: ips.map((ip) => ({ ip, score: 10, level: 'low', factors: [] })),
+			},
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const body = replies[url.split('?')[0]];
+				return body
+					? { ok: true, status: 200, json: async () => body }
+					: { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+
+		render(CompliancePage);
+
+		await vi.waitFor(() => expect(screen.getByText('Network Segmentation')).toBeInTheDocument());
+		const network = categoryCard('Network Segmentation');
+		expect(within(network).getByText('150 device(s) discovered on your network')).toBeInTheDocument();
+		expect(within(network).getByText('100%')).toBeInTheDocument();
+		const monitoring = categoryCard('Monitoring Coverage');
+		expect(within(monitoring).getByText('150 of 150 device(s) have risk scores computed')).toBeInTheDocument();
+		expect(within(monitoring).getByText('100%')).toBeInTheDocument();
 	});
 
 	it('scores Encryption and DNS from the daemon figures, not Zeek service names (#86)', async () => {
