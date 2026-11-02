@@ -120,6 +120,38 @@ describe('setup wizard after account creation', () => {
 		expect(screen.getByRole('link', { name: 'Go Live Setup' })).toBeInTheDocument();
 	});
 
+	// the daemon answers 200 with status "partial" and warnings when e.g. retention.json wasn't written;
+	// the wizard only checked res.ok and read that as fully saved
+	it('says setup is only partly done and lists the warnings on a partial save', async () => {
+		mockFetch({
+			'POST /api/setup/configure': {
+				body: { status: 'partial', warnings: ['Retention settings were not saved: disk full'] },
+			},
+		});
+		await chooseBridgeModeThenCreateAccount();
+
+		await screen.findByText('System Verification');
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('Setup is only partly done.');
+		expect(alert).toHaveTextContent('Retention settings were not saved: disk full');
+		expect(alert).toHaveTextContent('Your capture settings were saved');
+
+		// a retry that saves everything clears the warning
+		mockFetch();
+		await fireEvent.click(screen.getByRole('button', { name: 'Try saving again' }));
+		await waitFor(() => expect(screen.queryByText('Setup is only partly done.')).not.toBeInTheDocument());
+	});
+
+	it('shows no warning when everything saved', async () => {
+		mockFetch();
+		await chooseBridgeModeThenCreateAccount();
+
+		await screen.findByText('System Verification');
+		await waitFor(() => expect(calls).toContain('GET /api/bridge/health'));
+		expect(screen.queryByText('Setup is only partly done.')).not.toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
 	it("passes the bridge row on health_status 'normal'", async () => {
 		mockFetch();
 		await chooseBridgeModeThenCreateAccount();

@@ -229,6 +229,7 @@
 	// ----- Saving config on completion -----
 	let configSaving = $state(false);
 	let configSaveError = $state('');
+	let configSaveWarnings = $state<string[]>([]);
 
 	// ----- Helper: get the logical step name for the current step number -----
 	function getStepName(step: number): string {
@@ -651,6 +652,7 @@
 	async function saveSetupConfig(): Promise<void> {
 		configSaving = true;
 		configSaveError = '';
+		configSaveWarnings = [];
 		try {
 			const payload: Record<string, unknown> = {
 				capture_mode: selectedMode,
@@ -693,6 +695,11 @@
 			if (!res.ok) {
 				const data = await res.json();
 				throw new Error(data.error || `HTTP ${res.status}`);
+			}
+			// res.ok alone isn't "all saved": the daemon answers "partial" when e.g. retention wasn't written
+			const saved: { status?: string; warnings?: string[] } = await res.json();
+			if (saved.status === 'partial') {
+				configSaveWarnings = saved.warnings?.length ? saved.warnings : ['Some settings were not saved.'];
 			}
 		} catch (err) {
 			configSaveError = err instanceof Error ? err.message : 'Failed to save configuration';
@@ -1879,6 +1886,21 @@
 						Checking that all services are running correctly...
 					</p>
 
+					{#if configSaveWarnings.length > 0}
+						<div class="alert alert-warning" role="alert">
+							<strong>Setup is only partly done.</strong>
+							Your capture settings were saved, but not everything else was:
+							<ul class="config-warnings">
+								{#each configSaveWarnings as warning}
+									<li>{warning}</li>
+								{/each}
+							</ul>
+							<button class="btn btn-secondary btn-sm" type="button" onclick={saveSetupConfig} disabled={configSaving}>
+								{configSaving ? 'Saving...' : 'Try saving again'}
+							</button>
+						</div>
+					{/if}
+
 					{#if configSaveError}
 						<div class="alert alert-danger" role="alert">
 							<strong>Your capture settings were not saved.</strong>
@@ -2151,6 +2173,11 @@
 		list-style: none;
 		padding: 0;
 		margin-bottom: var(--space-md);
+	}
+
+	.config-warnings {
+		margin: var(--space-sm) 0;
+		padding-left: var(--space-lg);
 	}
 
 	.requirement-item {
