@@ -1151,12 +1151,22 @@ class TestCategorizeDevice:
 # ---------------------------------------------------------------------------
 
 
+def _discovery_page(reply: dict) -> dict:
+    """`reply`'s by_mac buckets as the last page of the paged discovery (#96)."""
+    buckets = reply["aggregations"]["by_mac"]["buckets"]
+    return {
+        "aggregations": {
+            "all": {"buckets": [{**b, "key": {"mac": b["key"]}} for b in buckets]}
+        }
+    }
+
+
 class TestDiscoverIotDevicesFromArkime:
     """Tests for _discover_iot_devices_from_arkime and _is_iot_oui."""
 
     def test_discovers_tuya_from_oui(self, iot, mock_client):
         """Tuya Smart Inc. OUI should be classified as IoT."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1170,7 +1180,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1184,7 +1194,7 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_excludes_ubiquiti(self, iot, mock_client):
         """Ubiquiti Inc OUI should NOT be classified as IoT."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1205,7 +1215,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1217,7 +1227,7 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_always_iot_oui(self, iot, mock_client):
         """IOT_OUI_ALWAYS entries are classified as IoT even without keyword match."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1242,7 +1252,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1254,7 +1264,7 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_never_iot_oui(self, iot, mock_client):
         """IOT_OUI_NEVER entries are never classified as IoT."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1281,7 +1291,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1299,7 +1309,7 @@ class TestDiscoverIotDevicesFromArkime:
             "classified_at": "2026-04-04T00:00:00Z",
             "is_iot": True,
         }
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1313,7 +1323,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1325,7 +1335,7 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_espressif_matches(self, iot, mock_client):
         """Espressif Inc. matches via IOT_OUI_ALWAYS."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1339,7 +1349,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1350,7 +1360,7 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_no_oui_bucket_skipped(self, iot, mock_client):
         """MACs with no OUI bucket are skipped."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1364,7 +1374,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1382,7 +1392,7 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_raspberry_pi_matches_keyword(self, iot, mock_client):
         """Raspberry Pi (Trading) Ltd matches 'raspberry pi' keyword."""
-        mock_client.search.return_value = {
+        mock_client.search.return_value = _discovery_page({
             "aggregations": {
                 "by_mac": {
                     "buckets": [
@@ -1396,7 +1406,7 @@ class TestDiscoverIotDevicesFromArkime:
                     ]
                 }
             }
-        }
+        })
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"

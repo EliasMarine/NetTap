@@ -283,31 +283,54 @@ class IoTMonitor:
         if excluded:
             bool_clause["must_not"] = excluded
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_mac": {
-                    "terms": {"field": "source.mac", "size": 500},
-                    "aggs": {
-                        "oui": {"terms": {"field": "source.oui", "size": 1}},
-                        "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
-                        "last_seen": {"max": {"field": "@timestamp"}},
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: the 500 busiest MACs only; quiet IoT devices on a bigger
+        # network were never discovered, so device_count stopped short
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_mac": {
+        #             "terms": {"field": "source.mac", "size": 500},
+        #             "aggs": {
+        #                 "oui": {"terms": {"field": "source.oui", "size": 1}},
+        #                 "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
+        #                 "last_seen": {"max": {"field": "@timestamp"}},
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("IoT Arkime OUI discovery query failed: %s", exc)
+        #     return
+        #
+        # buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            buckets, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                [{"mac": {"terms": {"field": "source.mac"}}}],
+                aggs={
+                    "oui": {"terms": {"field": "source.oui", "size": 1}},
+                    "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
+                    "last_seen": {"max": {"field": "@timestamp"}},
+                },
+            )
         except Exception as exc:
             logger.error("IoT Arkime OUI discovery query failed: %s", exc)
             return
-
-        buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+        if not complete:
+            logger.warning("IoT discovery stopped at %d MACs", len(buckets))
 
         for bucket in buckets:
-            mac = bucket["key"].upper()
+            # OLD CODE START — #96: terms bucket key
+            # mac = bucket["key"].upper()
+            # OLD CODE END
+            mac = bucket["key"]["mac"].upper()
 
             # Already registered — skip re-classification
             if mac in self._iot_devices:

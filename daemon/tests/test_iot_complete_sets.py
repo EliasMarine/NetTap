@@ -227,3 +227,49 @@ class TestEveryPortCounts:
         paged = next(b for b in bodies if _composite_fields(b) == ["source.mac", "destination.port"])
         assert {"terms": {"source.mac": [MAC, MAC.lower()]}} in paged["query"]["bool"]["filter"]
         assert {"terms": {"source.ip": ["10.0.0.9"]}} in paged["query"]["bool"]["must_not"]
+
+
+# ---------------------------------------------------------------------------
+# 3. Discovery sees every MAC, so device_count counts every IoT device
+# ---------------------------------------------------------------------------
+
+
+def _mac_bucket(mac: str, oui: str, conns: int) -> dict:
+    return {
+        "key": {"source.mac": mac},
+        "doc_count": conns,
+        "oui": {"buckets": [{"key": oui, "doc_count": conns}]},
+        "latest_ip": {"buckets": [{"key": "192.168.1.9", "doc_count": conns}]},
+        "last_seen": {"value": 0},
+    }
+
+
+def _network_search(macs: list[dict]):
+    """A network whose MACs are `macs` (busiest first); IoT detail queries find nothing."""
+
+    def search(index: str, body: dict) -> dict[str, Any]:
+        if _composite_fields(body) == ["source.mac"]:
+            return _composite_reply(body, macs)
+        if _composite_fields(body):
+            return _composite_reply(body, [])
+        by_mac = body.get("aggs", {}).get("by_mac", {})
+        if "oui" in by_mac.get("aggs", {}):
+            size = by_mac["terms"]["size"]
+            return _by_mac([{**b, "key": b["key"]["source.mac"]} for b in macs[:size]])
+        return _by_mac([])
+
+    return search
+
+
+class TestDiscoverySeesEveryMac:
+    def test_a_quiet_iot_device_on_a_busy_network_is_counted(self):
+        """520 busier non-IoT MACs: the old top 500 never reached the plug, so 0 devices."""
+        busy = [_mac_bucket(f"00:00:00:00:{i // 256:02x}:{i % 256:02x}", "Dell Inc.", 1000 - i) for i in range(520)]
+        plug = _mac_bucket("d8:1f:12:00:00:01", "Tuya Smart Inc.", 3)
+        client = MagicMock()
+        client.search.side_effect = _network_search([*busy, plug])
+
+        fleet = IoTMonitor(client=client).get_fleet_summary(FROM_TS, TO_TS)
+
+        assert fleet["device_count"] == 1  # was 0
+        assert [d["mac"] for d in fleet["devices"]] == ["D8:1F:12:00:00:01"]
