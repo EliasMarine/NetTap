@@ -554,7 +554,9 @@
 			.then((j) => (grafanaUp = j?.database === 'ok'))
 			.catch(() => (grafanaUp = false));
 		fetchAll();
-		setTimeout(drawConnections, 100);
+		// cleared on unmount: it touches `document`, which is gone once the page is torn down
+		const drawTimer = setTimeout(drawConnections, 100);
+		return () => clearTimeout(drawTimer);
 	});
 
 	// Auto-poll with $effect

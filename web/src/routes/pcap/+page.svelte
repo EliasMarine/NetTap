@@ -55,6 +55,8 @@
 	let searchProgress = $state<{ checked: number; total: number; timedOut: number } | null>(null);
 	/** Bumped on every new search and on destroy so a stale poll loop exits. */
 	let searchRun = 0;
+	/** The scroll-to-preview timer; cleared on destroy, when `document` may be gone. */
+	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// Preview
 	let previewPackets = $state<PcapPacket[]>([]);
@@ -302,7 +304,7 @@
 			error = e instanceof Error ? e.message : 'Preview failed';
 		} finally {
 			previewLoading = false;
-			setTimeout(() => {
+			scrollTimer = setTimeout(() => {
 				document.getElementById('preview-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			}, 50);
 		}
@@ -392,7 +394,7 @@
 	onMount(() => {
 		loadCaptureStatus();
 		loadFiles().then(() => { initialized = true; });
-		return () => { searchRun++; };
+		return () => { searchRun++; clearTimeout(scrollTimer); };
 	});
 </script>
 
