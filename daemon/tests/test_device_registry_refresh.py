@@ -261,3 +261,33 @@ class TestDeviceRegistryLoop:
 
         calls = asyncio.run(scenario())
         assert len(calls) == 2
+
+
+class TestVendorFromMalcolm:
+    """#26: the registry takes Malcolm's IEEE vendor and the category it implies."""
+
+    def test_registers_vendor_and_category(self):
+        hue = _bucket("192.168.1.154", "00:17:88:48:3c:07")
+        hue["with_mac"]["latest"]["hits"]["hits"][0]["_source"]["source"]["oui"] = "Philips Lighting BV"
+        apple = _bucket("192.168.1.95", "7c:01:3e:74:d2:1c")
+        apple["with_mac"]["latest"]["hits"]["hits"][0]["_source"]["source"]["oui"] = "Apple, Inc."
+        client = _fake_client([hue, apple, _bucket("192.168.1.151", "0e:cc:55:a1:28:66")])
+
+        refresh_device_registry(_app(client))
+
+        assert "source.oui" in str(_conn_query(client)[1])
+        hue_doc = client.store["00:17:88:48:3C:07"]
+        assert (hue_doc["manufacturer"], hue_doc["category"]) == ("Philips Lighting BV", "iot")
+        apple_doc = client.store["7C:01:3E:74:D2:1C"]
+        assert (apple_doc["manufacturer"], apple_doc["category"]) == ("Apple, Inc.", "unknown")
+        assert client.store["0E:CC:55:A1:28:66"]["manufacturer"] is None  # randomized MAC
+
+    def test_category_outside_the_grid_groups_is_unknown(self):
+        sonos = _bucket("192.168.1.30", "48:a6:b8:00:00:01")
+        sonos["with_mac"]["latest"]["hits"]["hits"][0]["_source"]["source"]["oui"] = "Sonos, Inc."
+        client = _fake_client([sonos])
+
+        refresh_device_registry(_app(client))
+
+        doc = client.store["48:A6:B8:00:00:01"]
+        assert (doc["manufacturer"], doc["category"]) == ("Sonos, Inc.", "unknown")

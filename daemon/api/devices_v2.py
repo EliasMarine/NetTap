@@ -41,8 +41,9 @@ from api.devices import (
     _MIN_CONNECTIONS,
     _is_skipped_device_ip,
     _lan_device_bool_query,
+    _vendor_category,
 )
-from services.device_fingerprint import _mac_from_hit
+from services.device_fingerprint import _mac_from_hit, _oui_from_hit
 from services.device_registry import DeviceRegistry
 from services.unifi_integration import UnifiIntegration, normalize_controller_url
 
@@ -80,7 +81,7 @@ def _conn_devices_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dic
                                 "top_hits": {
                                     "size": 1,
                                     "sort": [{"@timestamp": {"order": "desc"}}],
-                                    "_source": ["source.mac"],
+                                    "_source": ["source.mac", "source.oui"],
                                 }
                             }
                         },
@@ -102,7 +103,12 @@ def _register_conn_devices(registry: DeviceRegistry, result: dict) -> int:
         # shortcut: an IP with no MAC in its conn records can't be keyed, so it stays out of the registry
         if _is_skipped_device_ip(ip) or not mac:
             continue
-        registry.register_device(mac=mac, ip=ip, source="conn")
+        # OLD CODE START — the vendor came only from the bundled 208-prefix table (#26)
+        # registry.register_device(mac=mac, ip=ip, source="conn")
+        # OLD CODE END
+        oui = _oui_from_hit(hits[0])  # Malcolm's IEEE vendor name, absent for randomized MACs
+        metadata = {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None
+        registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata)
         count += 1
     return count
 

@@ -176,7 +176,13 @@ class DeviceRegistry:
                 "manufacturer": metadata.get("manufacturer"),
                 "friendly_name": metadata.get("unifi_alias")
                 or metadata.get("friendly_name"),
-                "category": metadata.get("category", CATEGORY_UNKNOWN),
+                # OLD CODE START — unchecked, unlike the merge branch above: a "media" vendor
+                # category would land in a group the device grid doesn't have (#26)
+                # "category": metadata.get("category", CATEGORY_UNKNOWN),
+                # OLD CODE END
+                "category": metadata.get("category")
+                if metadata.get("category") in VALID_CATEGORIES
+                else CATEGORY_UNKNOWN,
                 "first_seen": now,
                 "last_seen": now,
                 "is_new": True,
