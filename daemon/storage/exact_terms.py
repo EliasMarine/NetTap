@@ -29,10 +29,11 @@ def with_exact_terms(aggs: dict, shard_size: int = EXACT_SHARD_SIZE) -> dict:
             out[name] = agg
             continue
         new = dict(agg)
-        terms = agg.get("terms")
-        if isinstance(terms, dict):
-            wanted = max(shard_size, int(terms.get("size", 10)), int(terms.get("shard_size", 0)))
-            new["terms"] = {**terms, "shard_size": wanted}
+        for kind in ("terms", "multi_terms"):  # multi_terms: beacon candidates (#96)
+            terms = agg.get(kind)
+            if isinstance(terms, dict):
+                wanted = max(shard_size, int(terms.get("size", 10)), int(terms.get("shard_size", 0)))
+                new[kind] = {**terms, "shard_size": wanted}
         for key in ("aggs", "aggregations"):
             if isinstance(agg.get(key), dict):
                 new[key] = with_exact_terms(agg[key], shard_size)

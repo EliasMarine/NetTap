@@ -129,3 +129,10 @@ def test_a_reply_from_only_some_shards_is_an_error():
         client.msearch(body=[{"index": "x-*"}, {"size": 0}])
     with patch.object(OpenSearch, "search", return_value=whole):
         assert client.search(index="x-*", body={"size": 0}) == whole
+
+
+def test_multi_terms_lists_get_a_shard_size_too():
+    """#96: a cut-short multi_terms list was re-run with the same shard size until the cap."""
+    aggs = {"pairs": {"multi_terms": {"terms": [{"field": "a"}, {"field": "b"}], "size": 50_000}}}
+    assert with_exact_terms(aggs)["pairs"]["multi_terms"]["shard_size"] == 50_000
+    assert with_exact_terms(aggs, 100_000)["pairs"]["multi_terms"]["shard_size"] == 100_000

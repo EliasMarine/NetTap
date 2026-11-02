@@ -263,7 +263,10 @@ class TestBeaconingSeesEveryPair:
         beacons, complete = td.detect_beaconing(client, "now-1h", "now")
 
         assert [(b["source_ip"], b["connection_count"]) for b in beacons] == [("192.168.1.50", 30)]
-        assert any("date_histogram" in str(b["aggs"]["all"]["composite"]["sources"]) for b in client.bodies)
+        assert any(
+            "date_histogram" in str(b.get("aggs", {}).get("all", {}).get("composite", {}).get("sources"))
+            for b in client.bodies
+        )
 
     def test_budget_is_under_opensearch_max_buckets(self):
         from services.threat_detection import HISTOGRAM_BUCKETS_PER_REQUEST
@@ -347,3 +350,53 @@ class TestDetectorsDoNotHideFailures:
 
         assert complete is False
         assert len(moves) == 1
+
+
+class TestBeaconsAreCallsHome:
+    """#96: checking every pair turned up 366 "C2 beaconing" rows on the G11: 283 BitTorrent DHT
+    peers of one laptop, NTP, mDNS and LAN-internal pairs."""
+
+    def test_protocols_periodic_by_design_and_lan_pairs_are_not_beacons(self):
+        from services.threat_detection import detect_beaconing
+        from tests.fake_opensearch import FakeOpenSearch
+
+        ntp = [_conn("192.168.1.154", "203.107.6.88", 123, _T0 + k * 545_000) for k in range(20)]
+        mdns = [_conn("10.10.0.1", "10.10.0.27", 5353, _T0 + k * 60_000) for k in range(20)]
+        lan = [_conn("192.168.1.20", "192.168.1.10", 8443, _T0 + k * 60_000) for k in range(20)]
+        client = FakeOpenSearch(ntp + mdns + lan + _beacon_docs("192.168.1.50", 60, 20))
+
+        beacons, complete = detect_beaconing(client, *_DAY)
+
+        assert [(b["source_ip"], b["pattern"]) for b in beacons] == [("192.168.1.50", "beacon")]
+        assert "C2" not in beacons[0]["assessment"]
+        assert complete is True
+
+    def test_a_device_on_schedules_with_many_hosts_is_one_pattern_not_many_suspects(self):
+        from services.threat_detection import MANY_HOSTS_MIN, detect_beaconing
+        from tests.fake_opensearch import FakeOpenSearch
+
+        peers = [
+            _conn("192.168.1.205", f"198.51.100.{h}", 6881, _T0 + h * 1_000 + k * 2_200_000)
+            for h in range(MANY_HOSTS_MIN + 2) for k in range(12)
+        ]
+        client = FakeOpenSearch(peers + _beacon_docs("192.168.1.50", 60, 20))
+
+        beacons, _ = detect_beaconing(client, *_DAY)
+
+        by_source = {}
+        for b in beacons:
+            by_source.setdefault(b["source_ip"], set()).add((b["pattern"], b.get("host_count")))
+        assert by_source == {"192.168.1.205": {("many_hosts", MANY_HOSTS_MIN + 2)}, "192.168.1.50": {("beacon", None)}}
+
+    def test_more_candidates_than_one_list_are_paged(self, monkeypatch):
+        import services.threat_detection as td
+        from tests.fake_opensearch import FakeOpenSearch
+
+        monkeypatch.setattr(td, "CANDIDATE_LIST_SIZE", 1)
+        client = FakeOpenSearch(_beacon_docs("192.168.1.50", 60, 20) + _beacon_docs("192.168.1.51", 300, 20))
+
+        beacons, complete = td.detect_beaconing(client, *_DAY)
+
+        assert sorted(b["source_ip"] for b in beacons) == ["192.168.1.50", "192.168.1.51"]
+        assert complete is True
+        assert any("composite" in str(b.get("aggs")) for b in client.bodies)

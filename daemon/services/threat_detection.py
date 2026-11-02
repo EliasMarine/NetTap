@@ -38,6 +38,20 @@ BEACON_SLOT_SECONDS = 10
 HISTOGRAM_BUCKETS_PER_REQUEST = 50_000
 PAIRS_PER_REQUEST = 500
 
+# Protocols that repeat on a timer by design: their regularity says nothing about malware
+PERIODIC_BY_DESIGN_PORTS = {53: "DNS", 67: "DHCP", 68: "DHCP", 123: "NTP", 137: "NetBIOS", 138: "NetBIOS",
+                            1900: "SSDP", 5353: "mDNS", 5355: "LLMNR"}
+# Destinations that aren't internet hosts; a call home goes out to the internet
+# (internal pairs are lateral movement's job)
+NOT_INTERNET_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16",
+                      "224.0.0.0/4", "255.255.255.255/32", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"]
+# One device on regular schedules with this many internet hosts is not calling one server: on
+# the G11 a BitTorrent client gave 283 of 366 "beacons" (DHT peers every ~37 min)
+MANY_HOSTS_MIN = 10
+# Candidate pairs in one list (under search.max_buckets); more are paged with a composite
+CANDIDATE_LIST_SIZE = 50_000
+_PAIR_FIELDS = [{"field": "source.ip"}, {"field": "destination.ip"}, {"field": "destination.port"}]
+
 # Every (source, destination, port) pair, paged to the end (#96)
 _PAIR_SOURCES = [
     {"src": {"terms": {"field": "source.ip"}}},
@@ -178,6 +192,33 @@ def _pair_filter(key: dict) -> list[dict]:
 
 
 def _batch_slots(client, filters: list[dict], batch: list[dict]) -> dict[str, list[dict]]:
+    """Non-empty 10 s slots of every pair in `batch`, in one request.
+
+    The query keeps only the batch's pairs and a multi_terms splits them in one pass: on the
+    G11 the same slots in 6.4 s instead of 45 s for a `filters` aggregation of 500 pairs.
+    """
+    histogram = {"field": "@timestamp", "fixed_interval": f"{BEACON_SLOT_SECONDS}s", "min_doc_count": 1}
+    pair_clauses = [{"bool": {"filter": _pair_filter(p["key"])}} for p in batch]
+    body = {
+        "size": 0,
+        "query": {"bool": {"filter": [*filters, {"bool": {"should": pair_clauses, "minimum_should_match": 1}}]}},
+        "aggs": {
+            "pairs": {
+                "multi_terms": {"terms": _PAIR_FIELDS, "size": len(batch)},
+                "aggs": {"timestamps": {"date_histogram": histogram}},
+            }
+        },
+    }
+    reply = client.search(index=NETWORK_INDEX, body=body)
+    buckets = ((reply.get("aggregations") or {}).get("pairs") or {}).get("buckets") or []
+    return {
+        _pair_name({"src": b["key"][0], "dst": b["key"][1], "port": int(b["key"][2])}): b.get("timestamps", {}).get("buckets", [])
+        for b in buckets
+    }
+
+
+# OLD CODE START — #96: a `filters` aggregation tested every record against 500 pair filters
+def _batch_slots_filters_agg(client, filters: list[dict], batch: list[dict]) -> dict[str, list[dict]]:
     """Non-empty 10 s slots of every pair in `batch`, in one request."""
     narrowed = [
         *filters,
@@ -200,6 +241,7 @@ def _batch_slots(client, filters: list[dict], batch: list[dict]) -> dict[str, li
     reply = client.search(index=NETWORK_INDEX, body=body)
     buckets = ((reply.get("aggregations") or {}).get("pairs") or {}).get("buckets") or {}
     return {name: b.get("timestamps", {}).get("buckets", []) for name, b in buckets.items()}
+# OLD CODE END
 
 
 def _paged_slots(client, filters: list[dict], key: dict) -> tuple[list[dict], bool]:
@@ -239,26 +281,84 @@ def _assess_beacon(key: dict, conn_count: int, ts_buckets: list[dict]) -> dict |
         "interval_seconds": round(interval_sec, 1),
         "jitter_coefficient": round(cv, 4),
         "confidence": round(confidence, 1),
+        # OLD CODE START — #96: every regular schedule was called C2, NTP and BitTorrent included
+        # "assessment": (
+        #     f"Periodic callbacks every ~{round(interval_sec)}s with "
+        #     f"{round(cv * 100, 1)}% jitter over {conn_count} connections. "
+        #     f"Consistent with C2 beaconing."
+        # ),
+        # OLD CODE END
+        "pattern": "beacon",
         "assessment": (
-            f"Periodic callbacks every ~{round(interval_sec)}s with "
-            f"{round(cv * 100, 1)}% jitter over {conn_count} connections. "
-            f"Consistent with C2 beaconing."
+            f"Connects to {key['dst']}:{key['port']} every ~{round(interval_sec)}s "
+            f"({round(cv * 100, 1)}% jitter, {conn_count} connections). Malware that calls home "
+            f"looks like this; so do update checks and cloud-connected devices."
         ),
     }
 
 
+def _candidate_pairs(client, filters: list[dict]) -> tuple[list[dict], bool]:
+    """Every pair with enough connections to be a beacon (False if a bucket cap stopped it).
+
+    One multi_terms list with min_doc_count (1.4 s on the G11 instead of 5.6 s paging all
+    33,645 pairs); a network with more candidates than one list holds is paged instead.
+    """
+    body = {
+        "size": 0,
+        "query": {"bool": {"filter": filters}},
+        "aggs": {"pairs": {"multi_terms": {"terms": _PAIR_FIELDS, "size": CANDIDATE_LIST_SIZE,
+                                           "min_doc_count": BEACONING_MIN_CONNECTIONS}}},
+    }
+    reply = client.search(index=NETWORK_INDEX, body=body)
+    listed = (reply.get("aggregations") or {}).get("pairs") or {}
+    if not listed.get("sum_other_doc_count"):
+        return [
+            {"key": {"src": b["key"][0], "dst": b["key"][1], "port": int(b["key"][2])}, "doc_count": b["doc_count"]}
+            for b in listed.get("buckets", [])
+        ], True
+    pairs, complete = all_buckets(client, NETWORK_INDEX, {"bool": {"filter": filters}}, _PAIR_SOURCES)
+    return [p for p in pairs if p["doc_count"] >= BEACONING_MIN_CONNECTIONS], complete
+
+
+def _mark_many_hosts(beacons: list[dict]) -> list[dict]:
+    """Findings of a device with MANY_HOSTS_MIN or more scheduled internet hosts, relabelled."""
+    hosts: dict[str, set] = defaultdict(set)
+    for b in beacons:
+        hosts[b["source_ip"]].add(b["destination_ip"])
+    marked = []
+    for b in beacons:
+        n = len(hosts[b["source_ip"]])
+        if n < MANY_HOSTS_MIN:
+            marked.append(b)
+            continue
+        marked.append({
+            **b,
+            "pattern": "many_hosts",
+            "host_count": n,
+            "assessment": (
+                f"One of {n} internet hosts {b['source_ip']} contacts on regular schedules. Malware "
+                f"that calls home usually calls one or a few servers; this many usually means "
+                f"peer-to-peer software (such as BitTorrent) or a device syncing with many services."
+            ),
+        })
+    return marked
+
+
 def _scan_beacons(client, filters: list[dict], slots: int | None) -> tuple[list[dict], bool]:
     """(beacons among every pair, False if a bucket cap left some pairs unchecked)."""
-    pairs, complete = all_buckets(client, NETWORK_INDEX, {"bool": {"filter": filters}}, _PAIR_SOURCES)
-    # timing is only read for pairs with enough connections to be a beacon
-    candidates = [p for p in pairs if p["doc_count"] >= BEACONING_MIN_CONNECTIONS]
+    # OLD CODE START — #96: every pair was paged (34 searches on the G11) to keep ~7% of them
+    # pairs, complete = all_buckets(client, NETWORK_INDEX, {"bool": {"filter": filters}}, _PAIR_SOURCES)
+    # # timing is only read for pairs with enough connections to be a beacon
+    # candidates = [p for p in pairs if p["doc_count"] >= BEACONING_MIN_CONNECTIONS]
+    # OLD CODE END
+    candidates, complete = _candidate_pairs(client, filters)
     batches, too_big = _histogram_batches(candidates, slots)
     timings = {name: ts for batch in batches for name, ts in _batch_slots(client, filters, batch).items()}
     paged = {_pair_name(p["key"]): _paged_slots(client, filters, p["key"]) for p in too_big}
     timings = {**timings, **{name: ts for name, (ts, _) in paged.items()}}
     complete = complete and all(done for _, done in paged.values())
     found = (_assess_beacon(p["key"], p["doc_count"], timings.get(_pair_name(p["key"]), [])) for p in candidates)
-    return [b for b in found if b is not None], complete
+    return _mark_many_hosts([b for b in found if b is not None]), complete
 
 
 def detect_beaconing(
@@ -334,7 +434,12 @@ def detect_beaconing(
     #     logger.error("Beaconing detection query failed", exc_info=True)
     #     return []
     # OLD CODE END
-    beacons, complete = _scan_beacons(client, bool_clause["filter"], _max_slots(from_ts, to_ts))
+    # #96: calls home go to internet hosts; DNS, NTP, mDNS... repeat by design
+    scope = {"bool": {"must_not": [
+        {"terms": {"destination.ip": NOT_INTERNET_CIDRS}},
+        {"terms": {"destination.port": sorted(PERIODIC_BY_DESIGN_PORTS)}},
+    ]}}
+    beacons, complete = _scan_beacons(client, [*bool_clause["filter"], scope], _max_slots(from_ts, to_ts))
     if not complete:
         logger.warning("Beaconing: the scan hit its bucket cap; pairs past it were not checked")
 

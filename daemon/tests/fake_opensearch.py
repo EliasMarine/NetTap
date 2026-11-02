@@ -87,6 +87,18 @@ class FakeOpenSearch:
             step = _ms(h["fixed_interval"])
             groups = _group(docs, lambda d: d[h["field"]] // step * step if h["field"] in d else None)
             return {"buckets": [self._bucket({"key": k}, groups[k], subs) for k in sorted(groups)]}
+        if "multi_terms" in spec:
+            t = spec["multi_terms"]
+            fields = [f["field"] for f in t["terms"]]
+            groups = _group(docs, lambda d: tuple(d[f] for f in fields) if all(f in d for f in fields) else None)
+            kept = [k for k in groups if len(groups[k]) >= t.get("min_doc_count", 1)]
+            ranked = sorted(kept, key=lambda k: (-len(groups[k]), k))
+            top, rest = ranked[: t.get("size", 10)], ranked[t.get("size", 10):]
+            return {
+                "doc_count_error_upper_bound": 0,
+                "sum_other_doc_count": sum(len(groups[k]) for k in rest),
+                "buckets": [self._bucket({"key": list(k)}, groups[k], subs) for k in top],
+            }
         if "terms" in spec:
             t = spec["terms"]
             groups = _group(docs, lambda d: d.get(t["field"]))
