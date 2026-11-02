@@ -54,4 +54,29 @@ describe('Threats page', () => {
 		await vi.waitFor(() => expect(screen.getByText('Failed to load threat intelligence data.')).toBeInTheDocument());
 		expect(screen.queryByText('NONE')).not.toBeInTheDocument();
 	});
+
+	it('counts a device that contacts many hosts on schedules once, not as many suspects', async () => {
+		const peer = (h: number) => ({
+			source_ip: '192.168.1.205', destination_ip: `198.51.100.${h}`, destination_port: 6881, connection_count: 30,
+			interval_seconds: 2206, jitter_coefficient: 0.01, confidence: 60, assessment: '', pattern: 'many_hosts', host_count: 12,
+		});
+		const beacon = {
+			source_ip: '192.168.1.188', destination_ip: '188.166.201.72', destination_port: 443, connection_count: 204,
+			interval_seconds: 3600.6, jitter_coefficient: 0.0012, confidence: 100, assessment: '', pattern: 'beacon',
+		};
+		stubDaemon({
+			'/api/threats/report': {
+				...REPORT,
+				failed_checks: [],
+				incomplete_checks: [],
+				beaconing: [beacon, ...Array.from({ length: 12 }, (_, h) => peer(h))],
+			},
+			'/api/threats/intel': { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 },
+		});
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('1 suspects')).toBeInTheDocument());
+		expect(screen.getByText(/contacts 12 internet hosts on regular schedules/)).toBeInTheDocument();
+		expect(screen.queryByText('198.51.100.3', { exact: false })).not.toBeInTheDocument();
+	});
 });
+

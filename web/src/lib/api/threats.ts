@@ -56,6 +56,9 @@ export interface BeaconSuspect {
 	jitter_coefficient: number;
 	confidence: number;
 	assessment: string;
+	/** #96: 'many_hosts' = one of host_count internet hosts this source contacts on schedules */
+	pattern?: 'beacon' | 'many_hosts';
+	host_count?: number;
 }
 
 export interface LateralMovement {

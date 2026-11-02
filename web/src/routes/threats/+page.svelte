@@ -46,7 +46,19 @@
 	// Derived
 	let summary = $derived(report?.summary);
 	let killChains = $derived(report?.kill_chains ?? []);
-	let beacons = $derived(report?.beaconing ?? []);
+	// OLD CODE START — #96: every scheduled pair counted as a suspect (283 of 366 were one laptop's BitTorrent peers)
+	// let beacons = $derived(report?.beaconing ?? []);
+	// OLD CODE END
+	let allBeacons = $derived(report?.beaconing ?? []);
+	let beacons = $derived(allBeacons.filter((b) => b.pattern !== 'many_hosts'));
+	// one row per device that contacts many internet hosts on schedules
+	let manyHostSources = $derived.by(() => {
+		const seen = new Map<string, number>();
+		for (const b of allBeacons) {
+			if (b.pattern === 'many_hosts') seen.set(b.source_ip, b.host_count ?? 0);
+		}
+		return [...seen].map(([ip, hosts]) => ({ ip, hosts }));
+	});
 	let dnsAnomalies = $derived(report?.dns_anomalies ?? { dga_suspects: [], tunnel_suspects: [], nxdomain_spikes: [], suspicious_tlds: [] });
 	let lateralMoves = $derived(report?.lateral_movement ?? []);
 	let investigations = $derived(report?.investigations ?? []);
@@ -364,6 +376,15 @@
 					{/if}
 				{:else}
 					<p class="empty-msg">No beaconing patterns detected.</p>
+				{/if}
+				{#if !failedChecks.has('beaconing')}
+					{#each manyHostSources as m (m.ip)}
+						<p class="partial-note">
+							<span class="mono">{m.ip}</span> contacts {m.hosts.toLocaleString('en-US')} internet hosts on regular schedules.
+							Malware usually calls one or a few servers; this many usually means peer-to-peer software (such as BitTorrent)
+							or a device syncing with many services, so these aren't counted as suspects.
+						</p>
+					{/each}
 				{/if}
 				{#if incompleteChecks.has('beaconing')}
 					<p class="partial-note">Not every connection pair was checked: this window has more than the scan's limit.</p>
