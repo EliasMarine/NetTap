@@ -934,6 +934,17 @@ class TestDeviceCategoryFallbacks:
         assert _device_category("Windows 10/11", None, None) == "computer"
         assert _device_category("Windows 8.1", None, None) == "computer"
         assert _device_category("Xbox", None, None) == "media"
+
+    def test_console_and_streamer_hostnames_are_media(self):
+        from api.devices import _device_category
+
+        # "nintendo-switch" used to hit the IoT hint "switch"
+        for host in ("nintendo-switch", "xbox-one", "PlayStation-5", "ps5-living", "Roku-Ultra", "LGwebOSTV"):
+            assert _device_category(None, host, None) == "media", host
+        assert _device_category("Linux", "chromecast-ultra", None) == "media"
+        # the IoT and infrastructure hostname rules still apply
+        assert _device_category(None, "smart-plug-2", None) == "iot"
+        assert _device_category(None, "unifi-ap-lite", None) == "infrastructure"
         assert _device_category(None, "living-room-smart-plug", "Ubiquiti Inc") == "iot"
 
     def test_phone_and_computer_hostnames(self):

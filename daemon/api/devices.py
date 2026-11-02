@@ -185,6 +185,12 @@ _VENDOR_CATEGORIES: tuple[tuple[str, str], ...] = (
 )
 _PHONE_HOSTNAME_HINTS = ("iphone", "ipad", "android", "galaxy", "pixel")
 _COMPUTER_HOSTNAME_HINTS = ("macbook", "imac", "mac-studio", "mac-mini", "desktop", "laptop")
+# Checked first: "nintendo-switch" must not match the IoT hint "switch", and a
+# Chromecast's UA says "Linux"
+_MEDIA_HOSTNAME_HINTS = (
+    "xbox", "playstation", "ps4", "ps5", "nintendo", "roku", "appletv", "apple-tv",
+    "chromecast", "firetv", "fire-tv", "webostv",
+)
 
 
 def _vendor_category(manufacturer: str | None) -> str:
@@ -197,6 +203,9 @@ def _device_category(
     os_hint: str | None, hostname: str | None, manufacturer: str | None = None
 ) -> str:
     """Classify a device into a broad category based on OS hint, hostname and vendor."""
+    # A console or streamer name beats a generic OS label (a Chromecast reports "Linux")
+    if hostname and any(x in hostname.lower() for x in _MEDIA_HOSTNAME_HINTS):
+        return "media"
     if not os_hint:
         # Fall back to hostname-based heuristics
         if hostname:
