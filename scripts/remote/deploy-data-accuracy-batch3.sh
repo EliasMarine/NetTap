@@ -87,7 +87,8 @@ echo ""
 
 echo "→ Step 5: Check each fix..."
 for c in nettap-zeek-live nettap-suricata-live nettap-arkime-live; do
-    PROCS=$(sudo docker exec "$c" sh -c 'ps -eo args | grep -c "[p]cap_.*_processor.py"' 2>/dev/null || echo "?")
+    # wc -l, not grep -c: grep -c exits 1 on a zero count, which tripped the fallback
+    PROCS=$(sudo docker exec "$c" sh -c 'ps -eo args | grep "[p]cap_.*_processor.py" | wc -l' 2>/dev/null | tr -d ' ')
     if [ "$PROCS" = "0" ]; then rc=0; else rc=1; fi
     check "#32 no offline PCAP processor in $c" "$rc" "processes=$PROCS"
 done
@@ -100,7 +101,7 @@ if [ "${PCAPMON:-1}" -eq 0 ]; then rc=0; else rc=1; fi
 check "#32 no pcap-monitor DNS lookups in the last 2 min" "$rc" "lookups=${PCAPMON:-?}"
 
 REG=$(api "/api/devices/registry?limit=200")
-REG_COUNT=$(printf '%s' "$REG" | grep -o '"mac": *"[0-9a-f:]\{17\}"' | wc -l | tr -d ' ')
+REG_COUNT=$(printf '%s' "$REG" | grep -io '"mac": *"[0-9a-f:]\{17\}"' | wc -l | tr -d ' ')  # registry MACs are upper case
 if [ "$REG_COUNT" -gt 0 ]; then rc=0; else rc=1; fi
 check "#16/#18 device registry filled" "$rc" "devices=$REG_COUNT (device list: $(api /api/devices/count | json_num count))"
 
