@@ -1,0 +1,84 @@
+import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import InfrastructurePage from './+page.svelte';
+
+// #96: a failed UniFi status read showed "Connect your UniFi controller", and failed lists read
+// "No UniFi devices found" / 0 firewall policies
+
+const UNIFI = '/api/integrations/unifi';
+const CONFIGURED = {
+	configured: true,
+	controller_url: 'https://192.168.1.1',
+	site_id: 'default',
+	connected: true,
+	last_poll_time: 1793300000,
+	last_error: null,
+	cache_counts: {},
+};
+const EMPTY_LISTS: Record<string, unknown> = {
+	[`${UNIFI}/devices`]: { devices: [] },
+	[`${UNIFI}/networks`]: { networks: [] },
+	[`${UNIFI}/wifi`]: { wifi: [] },
+	[`${UNIFI}/firewall`]: { policies: [], zones: [] },
+	[`${UNIFI}/dns-policies`]: { policies: [] },
+	[`${UNIFI}/wans`]: { wans: [] },
+	[`${UNIFI}/vpn`]: { tunnels: [] },
+};
+
+/** Stub fetch: URLs in `routes` get their body, everything else a 503. */
+function stubFetch(routes: Record<string, unknown>) {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(async (url: string) =>
+			url in routes
+				? { ok: true, status: 200, json: async () => routes[url] }
+				: { ok: false, status: 503, json: async () => ({}) },
+		),
+	);
+}
+
+describe('Infrastructure — UniFi reads that failed', () => {
+	afterEach(() => vi.unstubAllGlobals());
+	// let the page's 100ms draw timer fire before the document is torn down
+	afterAll(() => new Promise((r) => setTimeout(r, 150)));
+
+	it('says the UniFi status failed instead of "Connect your UniFi controller"', async () => {
+		stubFetch({});
+		render(InfrastructurePage);
+		expect(await screen.findByText("Couldn't load the UniFi status: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText(/Connect your UniFi controller/)).not.toBeInTheDocument();
+	});
+
+	it('says which lists failed while the ones that loaded still show', async () => {
+		const down = ['devices', 'firewall', 'wans'].map((p) => `${UNIFI}/${p}`);
+		const lists = Object.fromEntries(Object.entries(EMPTY_LISTS).filter(([url]) => !down.includes(url)));
+		stubFetch({ ...lists, [`${UNIFI}/status`]: CONFIGURED });
+		render(InfrastructurePage);
+
+		expect(await screen.findByText("Couldn't load UniFi devices: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No UniFi devices found')).not.toBeInTheDocument();
+		expect(screen.getByText('— devices')).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load firewall policies: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load WAN interfaces: the request failed.")).toBeInTheDocument();
+		// the reads that worked keep their real empty answer
+		expect(screen.getByText('No networks found')).toBeInTheDocument();
+		expect(screen.getByText('No WiFi networks found')).toBeInTheDocument();
+	});
+
+	it('keeps the real answers when UniFi is configured and everything is empty', async () => {
+		stubFetch({ ...EMPTY_LISTS, [`${UNIFI}/status`]: CONFIGURED });
+		render(InfrastructurePage);
+
+		expect(await screen.findByText('No UniFi devices found')).toBeInTheDocument();
+		expect(screen.getByText('0 devices')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
+	});
+
+	it('still offers to connect UniFi when it really is not configured', async () => {
+		stubFetch({ [`${UNIFI}/status`]: { ...CONFIGURED, configured: false } });
+		render(InfrastructurePage);
+
+		expect(await screen.findByText(/Connect your UniFi controller/)).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load the UniFi status/)).not.toBeInTheDocument();
+	});
+});

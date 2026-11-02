@@ -34,6 +34,7 @@
 		UnifiWan,
 		UnifiVpnTunnel,
 	} from '$api/unifi';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ─── Node type for topology ─────────────────────────────────
 	type NodeId = 'bridge' | 'capture' | 'zeek' | 'suricata' | 'filebeat' | 'logstash' | 'opensearch';
@@ -71,6 +72,26 @@
 	let unifiWans = $state<UnifiWan[]>([]);
 	let unifiVpn = $state<UnifiVpnTunnel[]>([]);
 	let unifiLoading = $state(false);
+	// #96: UniFi reads that failed on the last poll, keyed by what the card calls them
+	let unifiFailed = $state<Record<string, boolean>>({});
+
+	/** A UniFi figure, or '—' when its read failed and there is no earlier reading to show. */
+	function unifiCount(what: string, n: number): number | string {
+		return unifiFailed[what] && n === 0 ? '—' : n;
+	}
+
+	const unifiPostureNotes = $derived(
+		(
+			[
+				['firewall policies', unifiFirewall.policies.length + unifiFirewall.zones.length],
+				['DNS policies', unifiDnsPolicies.length],
+				['VPN tunnels', unifiVpn.length],
+				['WAN interfaces', unifiWans.length],
+			] as const
+		)
+			.filter(([what]) => unifiFailed[what])
+			.map(([what, n]) => loadFailed(what, n > 0)),
+	);
 
 	// Zeek/Suricata throughput (computed from event counts over 5-min window)
 	let zeekEventsPerSec = $state<number | null>(null);
@@ -193,28 +214,70 @@
 	}
 
 	async function fetchUnifi() {
+		// OLD CODE START — #96: a failed status read showed "Connect your UniFi controller" and one failed
+		// list blanked them all; the getters now throw, so each read is settled and shown on its own card
+		// try {
+		// 	const status = await getUnifiStatus();
+		// 	unifiStatus = status;
+		// 	if (!status.configured) return;
+		// 	unifiLoading = true;
+		// 	const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.all([
+		// 		getUnifiDevices(),
+		// 		getUnifiNetworks(),
+		// 		getUnifiWifi(),
+		// 		getUnifiFirewall(),
+		// 		getUnifiDnsPolicies(),
+		// 		getUnifiWans(),
+		// 		getUnifiVpn(),
+		// 	]);
+		// 	unifiDevices = devices;
+		// 	unifiNetworks = networks;
+		// 	unifiWifi = wifi;
+		// 	unifiFirewall = firewall;
+		// 	unifiDnsPolicies = dnsPolicies;
+		// 	unifiWans = wans;
+		// 	unifiVpn = vpn;
+		// } catch { /* swallow */ }
+		// unifiLoading = false;
+		// OLD CODE END
+		let status: UnifiStatus;
 		try {
-			const status = await getUnifiStatus();
-			unifiStatus = status;
-			if (!status.configured) return;
-			unifiLoading = true;
-			const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.all([
-				getUnifiDevices(),
-				getUnifiNetworks(),
-				getUnifiWifi(),
-				getUnifiFirewall(),
-				getUnifiDnsPolicies(),
-				getUnifiWans(),
-				getUnifiVpn(),
-			]);
-			unifiDevices = devices;
-			unifiNetworks = networks;
-			unifiWifi = wifi;
-			unifiFirewall = firewall;
-			unifiDnsPolicies = dnsPolicies;
-			unifiWans = wans;
-			unifiVpn = vpn;
-		} catch { /* swallow */ }
+			status = await getUnifiStatus();
+		} catch {
+			// keep the last status (and the cards it shows); the banner says it is stale
+			unifiFailed = { ...unifiFailed, 'the UniFi status': true };
+			return;
+		}
+		unifiStatus = status;
+		unifiFailed = { ...unifiFailed, 'the UniFi status': false };
+		if (!status.configured) return;
+		unifiLoading = true;
+		const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.allSettled([
+			getUnifiDevices(),
+			getUnifiNetworks(),
+			getUnifiWifi(),
+			getUnifiFirewall(),
+			getUnifiDnsPolicies(),
+			getUnifiWans(),
+			getUnifiVpn(),
+		]);
+		if (devices.status === 'fulfilled') unifiDevices = devices.value;
+		if (networks.status === 'fulfilled') unifiNetworks = networks.value;
+		if (wifi.status === 'fulfilled') unifiWifi = wifi.value;
+		if (firewall.status === 'fulfilled') unifiFirewall = firewall.value;
+		if (dnsPolicies.status === 'fulfilled') unifiDnsPolicies = dnsPolicies.value;
+		if (wans.status === 'fulfilled') unifiWans = wans.value;
+		if (vpn.status === 'fulfilled') unifiVpn = vpn.value;
+		unifiFailed = {
+			'the UniFi status': false,
+			'UniFi devices': devices.status === 'rejected',
+			networks: networks.status === 'rejected',
+			'WiFi networks': wifi.status === 'rejected',
+			'firewall policies': firewall.status === 'rejected',
+			'DNS policies': dnsPolicies.status === 'rejected',
+			'WAN interfaces': wans.status === 'rejected',
+			'VPN tunnels': vpn.status === 'rejected',
+		};
 		unifiLoading = false;
 	}
 
@@ -1398,6 +1461,9 @@
 	<!-- ═══════════════════════════════════════════════════════════
 	     UNIFI INTEGRATION
 	     ═══════════════════════════════════════════════════════════ -->
+	{#if unifiFailed['the UniFi status']}
+		<div class="alert alert-warning">{loadFailed('the UniFi status', unifiStatus !== null)}</div>
+	{/if}
 	{#if unifiStatus && !unifiStatus.configured}
 		<!-- UniFi not configured — show a subtle prompt -->
 		<section class="card unifi-not-configured">
@@ -1438,8 +1504,11 @@
 					</svg>
 					UniFi Devices
 				</h2>
-				<span class="badge badge-info">{unifiDevices.length} device{unifiDevices.length !== 1 ? 's' : ''}</span>
+				<span class="badge badge-info">{unifiCount('UniFi devices', unifiDevices.length)} device{unifiDevices.length !== 1 ? 's' : ''}</span>
 			</div>
+			{#if unifiFailed['UniFi devices'] && unifiDevices.length > 0}
+				<div class="alert alert-warning">{loadFailed('UniFi devices', true)}</div>
+			{/if}
 
 			{#if unifiLoading && unifiDevices.length === 0}
 				<div class="loading-state">
@@ -1448,7 +1517,7 @@
 				</div>
 			{:else if unifiDevices.length === 0}
 				<div class="empty-state">
-					<p class="empty-text">No UniFi devices found</p>
+					<p class="empty-text">{unifiFailed['UniFi devices'] ? loadFailed('UniFi devices') : 'No UniFi devices found'}</p>
 					<p class="empty-hint">Check your UniFi controller connection</p>
 				</div>
 			{:else}
@@ -1558,11 +1627,14 @@
 						</svg>
 						Networks
 					</h2>
-					<span class="badge badge-muted">{unifiNetworks.length}</span>
+					<span class="badge badge-muted">{unifiCount('networks', unifiNetworks.length)}</span>
 				</div>
+				{#if unifiFailed.networks && unifiNetworks.length > 0}
+					<div class="alert alert-warning">{loadFailed('networks', true)}</div>
+				{/if}
 				{#if unifiNetworks.length === 0}
 					<div class="empty-state">
-						<p class="empty-text">No networks found</p>
+						<p class="empty-text">{unifiFailed.networks ? loadFailed('networks') : 'No networks found'}</p>
 					</div>
 				{:else}
 					<div class="detail-table-wrapper">
@@ -1610,11 +1682,14 @@
 						</svg>
 						WiFi Networks
 					</h2>
-					<span class="badge badge-muted">{unifiWifi.length}</span>
+					<span class="badge badge-muted">{unifiCount('WiFi networks', unifiWifi.length)}</span>
 				</div>
+				{#if unifiFailed['WiFi networks'] && unifiWifi.length > 0}
+					<div class="alert alert-warning">{loadFailed('WiFi networks', true)}</div>
+				{/if}
 				{#if unifiWifi.length === 0}
 					<div class="empty-state">
-						<p class="empty-text">No WiFi networks found</p>
+						<p class="empty-text">{unifiFailed['WiFi networks'] ? loadFailed('WiFi networks') : 'No WiFi networks found'}</p>
 					</div>
 				{:else}
 					<div class="detail-table-wrapper">
@@ -1675,21 +1750,24 @@
 			<div class="unifi-security-grid">
 				<div class="detail-stat">
 					<div class="detail-stat-label">Firewall Policies</div>
-					<div class="detail-stat-value cyan">{unifiFirewall.policies.length}</div>
+					<div class="detail-stat-value cyan">{unifiCount('firewall policies', unifiFirewall.policies.length)}</div>
 				</div>
 				<div class="detail-stat">
 					<div class="detail-stat-label">Firewall Zones</div>
-					<div class="detail-stat-value">{unifiFirewall.zones.length}</div>
+					<div class="detail-stat-value">{unifiCount('firewall policies', unifiFirewall.zones.length)}</div>
 				</div>
 				<div class="detail-stat">
 					<div class="detail-stat-label">DNS Policies</div>
-					<div class="detail-stat-value">{unifiDnsPolicies.length}</div>
+					<div class="detail-stat-value">{unifiCount('DNS policies', unifiDnsPolicies.length)}</div>
 				</div>
 				<div class="detail-stat">
 					<div class="detail-stat-label">VPN Tunnels</div>
-					<div class="detail-stat-value">{unifiVpn.length}</div>
+					<div class="detail-stat-value">{unifiCount('VPN tunnels', unifiVpn.length)}</div>
 				</div>
 			</div>
+			{#each unifiPostureNotes as note (note)}
+				<div class="alert alert-warning">{note}</div>
+			{/each}
 			{#if unifiFirewall.policies.length > 0}
 				<div class="unifi-policy-summary">
 					<h3 class="unifi-subsection-title">Firewall Policies</h3>
