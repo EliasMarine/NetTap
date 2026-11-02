@@ -315,3 +315,27 @@ class TestIpOwnership:
         assert client.store[udm]["category"] == "infrastructure"  # rest of the doc kept
         assert client.store["CC:F4:11:B4:7F:68"]["ips"] == ["192.168.1.164"]
         assert client.store["AA:BB:CC:00:00:05"]["ips"] == ["192.168.1.116"]
+
+
+class TestCategoryLikeDevicesPage:
+    """#26: Home's grid (the registry) files devices the way the Devices page does."""
+
+    def test_os_hint_hostname_and_vendor_decide(self):
+        fingerprint = MagicMock()
+        fingerprint.get_os_hint.side_effect = lambda client, ip, f, t: {"192.168.1.10": "Linux"}.get(ip)
+        store = {"2A:37:F4:D9:20:F5": {"mac": "2A:37:F4:D9:20:F5", "ips": [], "hostnames": ["saras-macbook-air-2.local"], "category": "unknown"}}
+        client = _fake_client(
+            [
+                _bucket("192.168.1.10", "fc:9d:05:98:2a:be"),  # OS hint: Linux
+                _bucket("192.168.1.116", "2a:37:f4:d9:20:f5"),  # hostname: macbook
+                _bucket("192.168.1.191", "ce:bd:0e:fa:4d:42"),  # nothing known
+            ],
+            store,
+        )
+        app = {**_app(client), "device_fingerprint": fingerprint}
+
+        refresh_device_registry(app)
+
+        assert client.store["FC:9D:05:98:2A:BE"]["category"] == "computer"
+        assert client.store["2A:37:F4:D9:20:F5"]["category"] == "computer"
+        assert client.store["CE:BD:0E:FA:4D:42"]["category"] == "unknown"

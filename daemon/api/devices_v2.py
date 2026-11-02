@@ -39,6 +39,7 @@ from api.devices import (
     NETWORK_INDEX,
     _MAX_DEVICE_LIMIT,
     _MIN_CONNECTIONS,
+    _device_category,
     _is_skipped_device_ip,
     _lan_device_bool_query,
     _vendor_category,
@@ -122,6 +123,30 @@ def _register_conn_devices(registry: DeviceRegistry, result: dict) -> dict[str, 
     return assigned
 
 
+def _categorize_unknown(
+    app: Mapping[str, Any], registry: DeviceRegistry, assigned: dict[str, str], from_ts: str, to_ts: str
+) -> int:
+    """Give still-"unknown" devices seen this refresh the Devices page's category (#26).
+
+    The registry only got categories from vendor metadata, so Home's grid called devices
+    "unknown" that the Devices page files under Computers or Phones by OS and hostname.
+    Only devices seen this refresh: a registry update also moves last_seen.
+    """
+    fingerprint = app.get("device_fingerprint")
+    count = 0
+    for ip, mac in assigned.items():
+        device = registry.get_device(mac)
+        if not device or device.get("category", "unknown") != "unknown":
+            continue
+        os_hint = fingerprint.get_os_hint(registry._client, ip, from_ts, to_ts) if fingerprint else None
+        names = " ".join(device.get("hostnames") or []) or None  # match hints in any of its names
+        category = _device_category(os_hint, names, device.get("manufacturer"))
+        if category != "unknown":
+            registry.register_device(mac=mac, source="fingerprint", metadata={"category": category})
+            count += 1
+    return count
+
+
 def refresh_device_registry(app: Mapping[str, Any]) -> int:
     """Register the LAN devices seen in recent conn traffic, then add names and vendors.
 
@@ -157,6 +182,9 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     mac_lookup = app.get("mac_lookup")
     if mac_lookup is not None:
         registry.enrich_with_oui(mac_lookup)
+    # After names and vendors are in; OS hints over the Devices page's default range so both agree
+    hint_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    _categorize_unknown(app, registry, assigned, hint_from, to_ts)
 
     logger.info("Device registry refresh: %d LAN devices from conn traffic", count)
     return count
