@@ -123,26 +123,53 @@ def _register_conn_devices(registry: DeviceRegistry, result: dict) -> dict[str, 
     return assigned
 
 
-def _categorize_unknown(
-    app: Mapping[str, Any], registry: DeviceRegistry, assigned: dict[str, str], from_ts: str, to_ts: str
-) -> int:
-    """Give still-"unknown" devices seen this refresh the Devices page's category (#26).
+# OLD CODE START — only devices seen this refresh, and register_device moved their last_seen
+# def _categorize_unknown(
+#     app: Mapping[str, Any], registry: DeviceRegistry, assigned: dict[str, str], from_ts: str, to_ts: str
+# ) -> int:
+#     """Give still-"unknown" devices seen this refresh the Devices page's category (#26).
+#
+#     The registry only got categories from vendor metadata, so Home's grid called devices
+#     "unknown" that the Devices page files under Computers or Phones by OS and hostname.
+#     Only devices seen this refresh: a registry update also moves last_seen.
+#     """
+#     fingerprint = app.get("device_fingerprint")
+#     count = 0
+#     for ip, mac in assigned.items():
+#         device = registry.get_device(mac)
+#         if not device or device.get("category", "unknown") != "unknown":
+#             continue
+#         os_hint = fingerprint.get_os_hint(registry._client, ip, from_ts, to_ts) if fingerprint else None
+#         names = " ".join(device.get("hostnames") or []) or None  # match hints in any of its names
+#         category = _device_category(os_hint, names, device.get("manufacturer"))
+#         if category != "unknown":
+#             registry.register_device(mac=mac, source="fingerprint", metadata={"category": category})
+#             count += 1
+#     return count
+# OLD CODE END
+
+
+def _categorize_unknown(app: Mapping[str, Any], registry: DeviceRegistry, from_ts: str, to_ts: str) -> int:
+    """Give every still-"unknown" registry device the Devices page's category (#26).
 
     The registry only got categories from vendor metadata, so Home's grid called devices
-    "unknown" that the Devices page files under Computers or Phones by OS and hostname.
-    Only devices seen this refresh: a registry update also moves last_seen.
+    "unknown" that the Devices page files under Computers or Phones. Same inputs as that
+    page: OS hint and DNS hostname over its default range, plus the registry's own names
+    (DHCP/mDNS) and the vendor. Devices that stay unknown are re-checked each refresh.
     """
     fingerprint = app.get("device_fingerprint")
     count = 0
-    for ip, mac in assigned.items():
-        device = registry.get_device(mac)
-        if not device or device.get("category", "unknown") != "unknown":
+    for device in registry.get_all_devices(limit=1000):
+        if device.get("category", "unknown") != "unknown":
             continue
-        os_hint = fingerprint.get_os_hint(registry._client, ip, from_ts, to_ts) if fingerprint else None
-        names = " ".join(device.get("hostnames") or []) or None  # match hints in any of its names
+        ip = (device.get("ips") or [None])[0]
+        os_hint = dns_name = None
+        if fingerprint and ip:
+            os_hint = fingerprint.get_os_hint(registry._client, ip, from_ts, to_ts)
+            dns_name = fingerprint.get_hostname_for_ip(registry._client, ip, from_ts, to_ts)
+        names = " ".join([*(device.get("hostnames") or []), dns_name or ""]).strip() or None
         category = _device_category(os_hint, names, device.get("manufacturer"))
-        if category != "unknown":
-            registry.register_device(mac=mac, source="fingerprint", metadata={"category": category})
+        if category != "unknown" and registry.set_category(device, category):
             count += 1
     return count
 
@@ -184,7 +211,7 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
         registry.enrich_with_oui(mac_lookup)
     # After names and vendors are in; OS hints over the Devices page's default range so both agree
     hint_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    _categorize_unknown(app, registry, assigned, hint_from, to_ts)
+    _categorize_unknown(app, registry, hint_from, to_ts)
 
     logger.info("Device registry refresh: %d LAN devices from conn traffic", count)
     return count

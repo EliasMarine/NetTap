@@ -210,6 +210,19 @@ class DeviceRegistry:
 
         return doc
 
+    def set_category(self, device: dict, category: str) -> bool:
+        """Store a category on a known device without touching last_seen or its sources."""
+        if category not in VALID_CATEGORIES or device.get("category") == category:
+            return False
+        try:
+            self._client.index(
+                index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category}, refresh="wait_for"
+            )
+            return True
+        except OpenSearchException as exc:
+            logger.error("Failed to set category on %s: %s", device["mac"], exc)
+            return False
+
     def drop_reassigned_ips(self, assigned: dict[str, str]) -> int:
         """Remove each just-seen IP from every device other than the one it was seen on (#26).
 

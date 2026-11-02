@@ -320,22 +320,30 @@ class TestIpOwnership:
 class TestCategoryLikeDevicesPage:
     """#26: Home's grid (the registry) files devices the way the Devices page does."""
 
-    def test_os_hint_hostname_and_vendor_decide(self):
+    def test_os_hint_hostnames_and_vendor_decide(self):
         fingerprint = MagicMock()
         fingerprint.get_os_hint.side_effect = lambda client, ip, f, t: {"192.168.1.10": "Linux"}.get(ip)
-        store = {"2A:37:F4:D9:20:F5": {"mac": "2A:37:F4:D9:20:F5", "ips": [], "hostnames": ["saras-macbook-air-2.local"], "category": "unknown"}}
+        fingerprint.get_hostname_for_ip.side_effect = lambda client, ip, f, t: {"192.168.1.95": "elias-mac-studio.local"}.get(ip)
+        quiet = {"mac": "70:A7:41:3F:1B:59", "ips": ["192.168.1.220"], "manufacturer": "Ubiquiti Inc",
+                 "category": "unknown", "last_seen": "2026-11-02T04:00:00+00:00"}
+        store = {
+            "2A:37:F4:D9:20:F5": {"mac": "2A:37:F4:D9:20:F5", "ips": [], "hostnames": ["saras-macbook-air-2.local"], "category": "unknown"},
+            "70:A7:41:3F:1B:59": quiet,  # not seen this hour: vendor still decides, last_seen kept
+        }
         client = _fake_client(
             [
                 _bucket("192.168.1.10", "fc:9d:05:98:2a:be"),  # OS hint: Linux
-                _bucket("192.168.1.116", "2a:37:f4:d9:20:f5"),  # hostname: macbook
+                _bucket("192.168.1.95", "7e:e8:ae:7a:dd:5b"),  # DNS name: mac-studio
                 _bucket("192.168.1.191", "ce:bd:0e:fa:4d:42"),  # nothing known
             ],
             store,
         )
-        app = {**_app(client), "device_fingerprint": fingerprint}
 
-        refresh_device_registry(app)
+        refresh_device_registry({**_app(client), "device_fingerprint": fingerprint})
 
         assert client.store["FC:9D:05:98:2A:BE"]["category"] == "computer"
+        assert client.store["7E:E8:AE:7A:DD:5B"]["category"] == "computer"
         assert client.store["2A:37:F4:D9:20:F5"]["category"] == "computer"
         assert client.store["CE:BD:0E:FA:4D:42"]["category"] == "unknown"
+        assert client.store["70:A7:41:3F:1B:59"]["category"] == "infrastructure"
+        assert client.store["70:A7:41:3F:1B:59"]["last_seen"] == quiet["last_seen"]
