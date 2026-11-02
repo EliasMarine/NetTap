@@ -33,7 +33,23 @@ def iso_param(request: web.Request, name: str) -> str | None:
 def parse_time_range(request: web.Request, default_span: timedelta) -> tuple[str, str]:
     """(from, to) ISO strings; an absent or empty bound is the last `default_span` up to now."""
     now = datetime.now(timezone.utc)
-    return (
-        iso_param(request, "from") or (now - default_span).isoformat(),
-        iso_param(request, "to") or now.isoformat(),
-    )
+    # OLD CODE START — a backwards range went on to OpenSearch (a 502, or an empty answer)
+    # return (
+    #     iso_param(request, "from") or (now - default_span).isoformat(),
+    #     iso_param(request, "to") or now.isoformat(),
+    # )
+    # OLD CODE END
+    from_ts = iso_param(request, "from") or (now - default_span).isoformat()
+    to_ts = iso_param(request, "to") or now.isoformat()
+    if _utc(from_ts) > _utc(to_ts):
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "from must not be later than to"}),
+            content_type="application/json",
+        )
+    return from_ts, to_ts
+
+
+def _utc(ts: str) -> datetime:
+    """A validated ISO time as an aware datetime; no zone means UTC, as OpenSearch reads it."""
+    when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
