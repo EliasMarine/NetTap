@@ -24,6 +24,13 @@ NETTAP_VERSION = "0.4.0"
 _CACHE_TTL_SECONDS = 600
 
 
+# the newest bundled GeoLite2-City in the Logstash container, as "<mtime> <path>"
+_BUNDLED_GEOIP_SCRIPT = (
+    "ls -t /usr/share/logstash/vendor/bundle/jruby/*/gems/logstash-filter-geoip-*/vendor/GeoLite2-City.mmdb "
+    "2>/dev/null | head -1 | while read -r f; do stat -c '%Y %n' \"$f\"; done"
+)
+
+
 @dataclass
 class ComponentVersion:
     """Version information for a single NetTap component."""
@@ -486,6 +493,15 @@ class VersionManager:
                     break
             except OSError:
                 continue
+
+        if geoip_version == "unknown":
+            # the daemon holds no GeoIP file; enrichment uses the Logstash geoip filter's bundled one
+            container = os.environ.get("LOGSTASH_CONTAINER_NAME", "nettap-logstash")
+            found = (await self._run_command(["docker", "exec", container, "sh", "-c", _BUNDLED_GEOIP_SCRIPT])).split(maxsplit=1)
+            if len(found) == 2 and found[0].isdigit():
+                geoip_version = datetime.fromtimestamp(int(found[0]), tz=timezone.utc).strftime("%Y-%m-%d")
+                geoip_status = "ok"
+                geoip_details = {"db_file": f"{container}:{found[1].strip()}", "source": "Logstash geoip filter (bundled)"}
 
         results.append(
             ComponentVersion(

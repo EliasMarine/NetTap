@@ -503,6 +503,33 @@ class TestRulesVersionIsMeasured(unittest.TestCase):
         self.assertEqual((rules.current_version, rules.status), ("2026-10-01", "ok"))
 
 
+class TestGeoipVersionIsTheEnrichmentDatabase(unittest.TestCase):
+    """The daemon has no GeoIP file; Logstash's geoip filter enriches with its bundled one."""
+
+    def _geoip(self, logstash_reply):
+        from unittest.mock import patch
+
+        vm = VersionManager()
+
+        async def run(cmd):
+            return logstash_reply if cmd[:3] == ["docker", "exec", "nettap-logstash"] else ""
+
+        vm._run_command = run
+        with patch("os.path.exists", return_value=False):
+            rows = asyncio.run(vm._scan_databases())
+        return next(r for r in rows if r.name == "geoip-db")
+
+    def test_the_bundled_database_date_is_reported(self):
+        path = "/usr/share/logstash/vendor/bundle/jruby/3.1.0/gems/logstash-filter-geoip-7.3.2-java/vendor/GeoLite2-City.mmdb"
+        geoip = self._geoip(f"1769552063 {path}\n")
+        self.assertEqual((geoip.current_version, geoip.status), ("2026-01-27", "ok"))
+        self.assertEqual(geoip.details["db_file"], f"nettap-logstash:{path}")
+
+    def test_no_reply_stays_unknown(self):
+        geoip = self._geoip("")
+        self.assertEqual((geoip.current_version, geoip.status), ("unknown", "unknown"))
+
+
 class TestCacheStaleness(unittest.TestCase):
     """Tests for VersionManager._is_cache_stale()."""
 
