@@ -148,6 +148,29 @@ describe('Settings — retention save', () => {
 	});
 });
 
+describe('Settings — About', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('shows the daemon version and a readable uptime', async () => {
+		stubFetch({
+			'/api/system/health': () => ({ body: { uptime: 21970.08 } }),
+			'/api/system/versions': () => ({
+				body: { versions: [{ name: 'nettap-web', current_version: 'latest' }, { name: 'nettap-daemon', current_version: '0.4.0' }] },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'About' }));
+
+		expect(screen.getByText('0.4.0')).toBeInTheDocument();
+		expect(screen.getByText('6h 6m')).toBeInTheDocument();
+		expect(screen.queryByText('0.3.0')).not.toBeInTheDocument();
+		expect(screen.queryByText('21970.08')).not.toBeInTheDocument();
+	});
+});
+
 describe('Settings — capture status label', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();

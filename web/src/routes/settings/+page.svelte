@@ -3,6 +3,7 @@
 	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 	import { getUnifiStatus } from '$lib/api/unifi';
+	import { formatDuration } from '$lib/utils/tshark-helpers';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -191,13 +192,28 @@
 				fetch('/api/system/health'),
 				fetch('/api/system/versions'),
 			]);
+			// OLD CODE START — 2026-11-02: showed raw seconds ("21970.08") and a
+			// hardcoded '0.3.0' (the API returns { versions: [...] }, no top-level version)
+			// if (healthRes.ok) {
+			// 	const data = await healthRes.json();
+			// 	uptime = data.uptime ?? 'Unknown';
+			// }
+			// if (versionsRes.ok) {
+			// 	const data = await versionsRes.json();
+			// 	version = data.nettap ?? data.version ?? '0.3.0';
+			// 	buildInfo = data.build ?? data.commit ?? 'Development build';
+			// }
+			// OLD CODE END
 			if (healthRes.ok) {
 				const data = await healthRes.json();
-				uptime = data.uptime ?? 'Unknown';
+				uptime = typeof data.uptime === 'number' ? formatDuration(data.uptime) : 'Unknown';
 			}
 			if (versionsRes.ok) {
 				const data = await versionsRes.json();
-				version = data.nettap ?? data.version ?? '0.3.0';
+				const daemon = (data.versions ?? []).find(
+					(v: { name?: string }) => v.name === 'nettap-daemon'
+				);
+				version = daemon?.current_version ?? 'Unknown';
 				buildInfo = data.build ?? data.commit ?? 'Development build';
 			}
 		} catch {
