@@ -14,11 +14,16 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from storage.all_buckets import all_buckets
+
 logger = logging.getLogger("nettap.services.threat_intel")
 
 _TI_CACHE_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
 )
+
+# IP pages carry no sub-aggregations: 10x fewer scans than the default, far below max_buckets
+_IP_PAGE = 10_000
 
 # Known threat intel feed metadata
 TI_FEEDS = {
@@ -167,27 +172,50 @@ class ThreatIntelService:
         #     bool_clause["must_not"] = excluded
         # OLD CODE END
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "bad_ips": {"terms": {"field": "destination.ip", "size": 500}},
-            },
-        }
-
+        # OLD CODE START — #96: only the 500 most-alerted IPs became indicators, and
+        # new_indicators counted them all, already known or not
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "bad_ips": {"terms": {"field": "destination.ip", "size": 500}},
+        #     },
+        # }
+        #
+        # try:
+        #     result = client.search(index=NETWORK_INDEX, body=query)
+        # except Exception:
+        #     logger.error("Failed to populate TI from Suricata", exc_info=True)
+        #     return 0
+        #
+        # bad_ips = [
+        #     b["key"]
+        #     for b in result.get("aggregations", {})
+        #     .get("bad_ips", {})
+        #     .get("buckets", [])
+        # ]
+        # if bad_ips:
+        #     self.add_indicators("et_compromised", bad_ips)
+        #     self.save_cache()
+        # return len(bad_ips)
+        # OLD CODE END
         try:
-            result = client.search(index=NETWORK_INDEX, body=query)
+            buckets, complete = all_buckets(
+                client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                [{"ip": {"terms": {"field": "destination.ip"}}}],
+                page_size=_IP_PAGE,
+            )
         except Exception:
             logger.error("Failed to populate TI from Suricata", exc_info=True)
             return 0
+        if not complete:
+            logger.warning("TI scan stopped at %d IPs; indicators are partial", len(buckets))
 
-        bad_ips = [
-            b["key"]
-            for b in result.get("aggregations", {})
-            .get("bad_ips", {})
-            .get("buckets", [])
-        ]
-        if bad_ips:
-            self.add_indicators("et_compromised", bad_ips)
+        known = self._ip_sets.get("et_compromised", set())
+        new_ips = sorted({b["key"]["ip"] for b in buckets} - known)
+        if new_ips:
+            self.add_indicators("et_compromised", new_ips)
             self.save_cache()
-        return len(bad_ips)
+        return len(new_ips)
