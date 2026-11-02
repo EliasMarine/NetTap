@@ -21,22 +21,27 @@ MODE = "search.concurrent_segment_search.mode"
 # A float sum merged in another order may differ in its last bits
 REL_TOL = 1e-9
 # The time of the request, not a figure (LAN anomaly checks stamp it; no page shows it)
-VOLATILE_KEYS = frozenset({"detected_at"})
+VOLATILE_KEYS = frozenset({"detected_at", "generated_at"})
+TRAFFIC_CATEGORIES = [
+    "streaming", "gaming", "social", "communication", "work", "iot", "cloud", "file_transfer", "dns",
+    "email", "web", "security", "shopping", "news", "ads", "updates", "suspicious", "other",
+]
 ENDPOINTS = [
     "/api/alerts/categories", "/api/alerts/count", "/api/alerts/smart/summary", "/api/alerts/timeline",
-    "/api/alerts/top-ips", "/api/alerts/top-signatures",
+    "/api/alerts/top-ips", "/api/alerts/top-signatures", "/api/alerts/smart",
     "/api/bandwidth/devices", "/api/bandwidth/heatmap",
     "/api/certificates", "/api/certificates/stats", "/api/certificates/self-signed", "/api/certificates/issuer-changes",
     "/api/devices?limit=500", "/api/devices/count",
     "/api/dns/nxdomain", "/api/dns/stats", "/api/dns/suspicious", "/api/dns/timeline", "/api/dns/top-domains", "/api/dns/types",
     "/api/iot/devices", "/api/iot/fleet-summary", "/api/iot/network-isolation", "/api/iot/privacy-report",
-    "/api/iot/protocol-audit", "/api/iot/manufacturer-profiles",
+    "/api/iot/protocol-audit", "/api/iot/manufacturer-profiles", "/api/iot/anomalies",
     "/api/lan/anomalies", "/api/lan/arp-spoofing", "/api/lan/rogue-dhcp",
     "/api/logs/protocol-breakdown", "/api/logs/stats", "/api/logs/timeline", "/api/logs/top-destinations",
     "/api/logs/top-dns", "/api/logs/top-talkers",
     "/api/mac/randomized", "/api/mac/merge-suggestions",
     "/api/risk/scores",
     "/api/threats/beaconing", "/api/threats/dns-anomalies", "/api/threats/intel", "/api/threats/lateral",
+    "/api/threats/report",
     "/api/traffic/bandwidth", "/api/traffic/categories", "/api/traffic/connections/sankey",
     "/api/traffic/connections/stats", "/api/traffic/connections/timeline", "/api/traffic/protocols",
     "/api/traffic/summary", "/api/traffic/top-destinations", "/api/traffic/top-talkers",
@@ -89,6 +94,10 @@ def main() -> int:
     devices = api(f"/api/devices?{window}&limit=500")["devices"]
     busiest = sorted(devices, key=lambda d: d["connection_count"], reverse=True)[:3]
     paths = [f"{e}{'&' if '?' in e else '?'}{window}" for e in ENDPOINTS]
+    paths += [f"/api/traffic/categories/{c}?{window}" for c in TRAFFIC_CATEGORIES]
+    iot = api(f"/api/iot/devices?{window}").get("devices") or []
+    if iot and iot[0].get("mac"):
+        paths.append(f"/api/iot/devices/{urllib.parse.quote(iot[0]['mac'])}/baseline?{window}")
     for d in busiest:
         paths += [f"/api/devices/{d['ip']}?{window}", f"/api/devices/{d['ip']}/ports?{window}",
                   f"/api/devices/{d['ip']}/categories?{window}", f"/api/risk/scores/{d['ip']}?{window}",
