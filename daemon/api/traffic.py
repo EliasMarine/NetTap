@@ -1225,11 +1225,31 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
     )
 
 
+# Rows listed in the Connection drawer's Related tab; its summary figures cover the whole window
+_RELATED_ROWS = 200
+
+
+def _related_summary(result: dict) -> dict:
+    """Pair totals from the related search's aggregations and hit count (every match, not the rows)."""
+    aggs = result.get("aggregations", {})
+    hits_total = result.get("hits", {}).get("total", {})
+    count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    src_bytes = aggs.get("src_bytes", {}).get("value") or 0
+    dst_bytes = aggs.get("dst_bytes", {}).get("value") or 0
+    return {
+        "total_connections": count,
+        "total_bytes": int(src_bytes + dst_bytes),
+        "protocols": sorted(b["key"] for b in aggs.get("protocols", {}).get("buckets", [])),
+        "first_seen": aggs.get("first_seen", {}).get("value_as_string"),
+        "last_seen": aggs.get("last_seen", {}).get("value_as_string"),
+    }
+
+
 async def handle_connection_related(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/related?src_ip=&dst_ip=&from=&to=
 
-    All connections between a specific src-dst pair (up to 200),
-    sorted by timestamp. Includes summary stats.
+    The newest connections between a specific src-dst pair (up to 200),
+    plus summary stats over every connection in the window.
     """
     from_ts, to_ts = _parse_time_range(request)
     src_ip = request.query.get("src_ip", "").strip()
@@ -1243,7 +1263,11 @@ async def handle_connection_related(request: web.Request) -> web.Response:
 
     # Match connections in either direction
     query = {
-        "size": 200,
+        # OLD CODE START — #96: the summary was computed from these 200 rows, so a busy pair read "200"
+        # "size": 200,
+        # OLD CODE END
+        "size": _RELATED_ROWS,
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
@@ -1275,7 +1299,18 @@ async def handle_connection_related(request: web.Request) -> web.Response:
                 ],
             }
         },
-        "sort": [{"@timestamp": {"order": "asc"}}],
+        # OLD CODE START — #96: oldest first, the capped rows stopped hours before last_seen
+        # "sort": [{"@timestamp": {"order": "asc"}}],
+        # OLD CODE END
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "aggs": {
+            "src_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "dst_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+            "first_seen": {"min": {"field": "@timestamp"}},
+            "last_seen": {"max": {"field": "@timestamp"}},
+            # transport values are a handful (tcp, udp, icmp, ...), so 20 holds them all
+            "protocols": {"terms": {"field": "network.transport", "size": 20}},
+        },
     }
 
     try:
@@ -1285,32 +1320,50 @@ async def handle_connection_related(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=502)
 
     hits = result.get("hits", {}).get("hits", [])
-    connections = []
-    total_bytes = 0
-    protocols_seen: set[str] = set()
-    first_seen = None
-    last_seen = None
-
-    for hit in hits:
-        src = hit.get("_source", {})
-        src["_id"] = hit.get("_id", "")
-        connections.append(src)
-
-        # Accumulate stats
-        sb = src.get("source", {}).get("bytes", 0) or 0
-        db = src.get("destination", {}).get("bytes", 0) or 0
-        total_bytes += sb + db
-
-        proto = src.get("network", {}).get("transport", "")
-        if proto:
-            protocols_seen.add(proto)
-
-        ts = src.get("@timestamp", "")
-        if ts:
-            if first_seen is None or ts < first_seen:
-                first_seen = ts
-            if last_seen is None or ts > last_seen:
-                last_seen = ts
+    # OLD CODE START — #96: count, bytes, protocols and first/last seen came from the capped rows
+    # connections = []
+    # total_bytes = 0
+    # protocols_seen: set[str] = set()
+    # first_seen = None
+    # last_seen = None
+    #
+    # for hit in hits:
+    #     src = hit.get("_source", {})
+    #     src["_id"] = hit.get("_id", "")
+    #     connections.append(src)
+    #
+    #     # Accumulate stats
+    #     sb = src.get("source", {}).get("bytes", 0) or 0
+    #     db = src.get("destination", {}).get("bytes", 0) or 0
+    #     total_bytes += sb + db
+    #
+    #     proto = src.get("network", {}).get("transport", "")
+    #     if proto:
+    #         protocols_seen.add(proto)
+    #
+    #     ts = src.get("@timestamp", "")
+    #     if ts:
+    #         if first_seen is None or ts < first_seen:
+    #             first_seen = ts
+    #         if last_seen is None or ts > last_seen:
+    #             last_seen = ts
+    #
+    # return web.json_response(
+    #     {
+    #         "from": from_ts,
+    #         "to": to_ts,
+    #         "src_ip": src_ip,
+    #         "dst_ip": dst_ip,
+    #         "total_connections": len(connections),
+    #         "total_bytes": total_bytes,
+    #         "protocols": sorted(protocols_seen),
+    #         "first_seen": first_seen,
+    #         "last_seen": last_seen,
+    #         "connections": connections,
+    #     }
+    # )
+    # OLD CODE END
+    connections = [{**hit.get("_source", {}), "_id": hit.get("_id", "")} for hit in hits]
 
     return web.json_response(
         {
@@ -1318,11 +1371,7 @@ async def handle_connection_related(request: web.Request) -> web.Response:
             "to": to_ts,
             "src_ip": src_ip,
             "dst_ip": dst_ip,
-            "total_connections": len(connections),
-            "total_bytes": total_bytes,
-            "protocols": sorted(protocols_seen),
-            "first_seen": first_seen,
-            "last_seen": last_seen,
+            **_related_summary(result),
             "connections": connections,
         }
     )

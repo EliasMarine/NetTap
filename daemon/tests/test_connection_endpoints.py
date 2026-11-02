@@ -392,7 +392,16 @@ class TestConnectionRelated(AioHTTPTestCase):
     async def test_related_success(self):
         """Should return related connections between src-dst pair with summary."""
         self.mock_client.search.return_value = {
+            # #96: the summary comes from aggregations over the whole window
+            "aggregations": {
+                "src_bytes": {"value": 1500.0},
+                "dst_bytes": {"value": 3500.0},
+                "first_seen": {"value_as_string": "2026-03-17T10:00:00Z"},
+                "last_seen": {"value_as_string": "2026-03-17T11:00:00Z"},
+                "protocols": {"buckets": [{"key": "udp"}, {"key": "tcp"}]},
+            },
             "hits": {
+                "total": {"value": 2},
                 "hits": [
                     {
                         "_id": "abc123",
