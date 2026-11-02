@@ -90,21 +90,24 @@ export async function createInvestigation(data: {
 		body: JSON.stringify(data),
 	});
 
-	if (!res.ok) {
-		return {
-			id: '',
-			title: data.title,
-			description: data.description || '',
-			status: 'open',
-			severity: data.severity || 'medium',
-			created_at: '',
-			updated_at: '',
-			alert_ids: data.alert_ids || [],
-			device_ips: data.device_ips || [],
-			notes: [],
-			tags: data.tags || [],
-		};
-	}
+	// OLD CODE START — #96: a failed create returned a made-up investigation, so it looked saved
+	// if (!res.ok) {
+	// 	return {
+	// 		id: '',
+	// 		title: data.title,
+	// 		description: data.description || '',
+	// 		status: 'open',
+	// 		severity: data.severity || 'medium',
+	// 		created_at: '',
+	// 		updated_at: '',
+	// 		alert_ids: data.alert_ids || [],
+	// 		device_ips: data.device_ips || [],
+	// 		notes: [],
+	// 		tags: data.tags || [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Creating the investigation failed: HTTP ${res.status}`);
 
 	return res.json();
 }

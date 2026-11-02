@@ -133,14 +133,10 @@ describe('investigations API client', () => {
 			expect(result.id).toBe('inv-001');
 		});
 
-		it('returns fallback investigation on HTTP error', async () => {
+		// #96: a made-up investigation on failure looked saved
+		it('throws on HTTP error instead of returning a made-up investigation', async () => {
 			mockFetchFailure(500);
-
-			const result = await createInvestigation({ title: 'Test Investigation' });
-
-			expect(result.id).toBe('');
-			expect(result.title).toBe('Test Investigation');
-			expect(result.status).toBe('open');
+			await expect(createInvestigation({ title: 'Test Investigation' })).rejects.toThrow('HTTP 500');
 		});
 	});
 

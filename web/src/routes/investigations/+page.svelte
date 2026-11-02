@@ -28,6 +28,11 @@
 	// #96: a failed request must not read as "No Investigations" or zero counts
 	let listFailed = $state(false);
 	let statsFailed = $state(false);
+	// #96: a failed save, delete or note looked like it worked; say so and keep what was typed
+	let actionError = $state<string | null>(null);
+	function failed(what: string): void {
+		actionError = `Couldn't ${what}: the request failed.`;
+	}
 	let activeFilter = $state<StatusFilter>('all');
 
 	// Expanded investigation (keep accordion for cards)
@@ -53,12 +58,12 @@
 	}
 
 	async function handleDrawerStatusChange(id: string, status: string) {
-		await updateInvestigation(id, { status });
+		if (!(await updateInvestigation(id, { status }))) failed('change the status');
 		fetchAll();
 	}
 
 	async function handleDrawerNoteAdded(id: string, noteText: string) {
-		await addNote(id, noteText);
+		if (!(await addNote(id, noteText))) failed('save the note');
 		fetchAll();
 	}
 
@@ -218,12 +223,17 @@
 				.split(',')
 				.map((t) => t.trim())
 				.filter(Boolean);
-			await createInvestigation({
-				title: newTitle.trim(),
-				description: newDescription.trim(),
-				severity: newSeverity,
-				tags,
-			});
+			try {
+				await createInvestigation({
+					title: newTitle.trim(),
+					description: newDescription.trim(),
+					severity: newSeverity,
+					tags,
+				});
+			} catch {
+				failed('create the investigation');
+				return;
+			}
 			newTitle = '';
 			newDescription = '';
 			newSeverity = 'medium';
@@ -236,12 +246,15 @@
 	}
 
 	async function handleStatusChange(inv: Investigation, newStatus: string) {
-		await updateInvestigation(inv.id, { status: newStatus });
+		if (!(await updateInvestigation(inv.id, { status: newStatus }))) failed('change the status');
 		await fetchAll();
 	}
 
 	async function handleDelete(id: string) {
-		await deleteInvestigation(id);
+		if (!(await deleteInvestigation(id))) {
+			failed('delete the investigation');
+			return;
+		}
 		deleteConfirmId = null;
 		if (expandedId === id) expandedId = null;
 		await fetchAll();
@@ -250,13 +263,16 @@
 	async function handleAddNote(invId: string) {
 		const content = noteInputs[invId]?.trim();
 		if (!content) return;
-		await addNote(invId, content);
+		if (!(await addNote(invId, content))) {
+			failed('save the note');
+			return;
+		}
 		noteInputs[invId] = '';
 		await fetchAll();
 	}
 
 	async function handleDeleteNote(invId: string, noteId: string) {
-		await deleteNote(invId, noteId);
+		if (!(await deleteNote(invId, noteId))) failed('delete the note');
 		await fetchAll();
 	}
 
@@ -297,6 +313,13 @@
 			</button>
 		</div>
 	</div>
+
+	{#if actionError}
+		<div class="action-error" role="alert">
+			<span>{actionError}</span>
+			<button class="btn btn-secondary btn-sm" onclick={() => (actionError = null)}>Dismiss</button>
+		</div>
+	{/if}
 
 	<!-- New investigation form -->
 	{#if showNewForm}
@@ -759,6 +782,20 @@
 	}
 
 	/* Empty state */
+	.action-error {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		padding: var(--space-sm) var(--space-md);
+		margin-bottom: var(--space-md);
+		border: 1px solid var(--red);
+		border-radius: var(--radius-sm);
+		background: var(--red-dim);
+		color: var(--text-primary);
+		font-size: var(--text-sm);
+	}
+
 	.empty-state {
 		display: flex;
 		flex-direction: column;
