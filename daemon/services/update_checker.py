@@ -6,7 +6,9 @@ Docker Hub, GitHub Releases API, and package repositories. Results are
 cached and refreshed every 6 hours.
 """
 
+import asyncio
 import logging
+import os
 import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -22,6 +24,16 @@ _MALCOLM_RELEASE_URL = "https://api.github.com/repos/idaholab/Malcolm/releases/l
 _NETTAP_IMAGE_PREFIX = "nettap/"  # built by NetTap; the NetTap release check covers them
 # NetTap pins Malcolm's images to a tested release, so it can't apply a newer one itself
 MALCOLM_APPLIES_WITH = "Comes with NetTap's pinned Malcolm release: update NetTap to get it."
+
+# With no local database, enrichment uses the one bundled in Malcolm's Logstash image
+_LOGSTASH_CONTAINER = os.environ.get("LOGSTASH_CONTAINER_NAME", "nettap-logstash")
+_LOGSTASH_GEOIP_DB = (  # the jruby and gem versions vary between images
+    "/usr/share/logstash/vendor/bundle/jruby/*/gems/logstash-filter-geoip-*"
+    "/vendor/GeoLite2-City.mmdb"
+)
+_LOGSTASH_GEOIP_APPLIES_WITH = (
+    "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+)
 
 
 @dataclass
@@ -398,7 +410,10 @@ class UpdateChecker:
         """Check if GeoIP database needs updating.
 
         MaxMind GeoLite2 databases are updated weekly. If the local
-        database is older than 7 days, suggest an update.
+        database is older than 7 days, suggest an update. With no local
+        database, the one bundled in the Logstash container is checked; its
+        update comes with a NetTap release (applies_with), and if it can't be
+        read, "geoip-db" goes in failed_checks.
 
         Returns:
             AvailableUpdate if database is stale, None otherwise.
@@ -440,7 +455,58 @@ class UpdateChecker:
             except OSError:
                 continue
 
-        return None
+        # OLD CODE START — no local database read as "no update", but enrichment uses
+        # the database bundled in Malcolm's Logstash image (9 months old on the G11)
+        # return None
+        # OLD CODE END
+        try:
+            mtime = await self._logstash_geoip_mtime()
+        except Exception as exc:
+            logger.warning("Could not read Logstash's GeoIP database date: %s", exc)
+            self._failed_checks.append("geoip-db")
+            return None
+
+        db_date = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        now = datetime.now(timezone.utc)
+        age_days = (now - db_date).days
+        if age_days < 7:
+            return None
+        return AvailableUpdate(
+            component="geoip-db",
+            current_version=db_date.strftime("%Y-%m-%d"),
+            latest_version=now.strftime("%Y-%m-%d"),
+            update_type="patch",
+            release_url="https://dev.maxmind.com/geoip/updating-databases",
+            release_date=now.isoformat(),
+            changelog=f"Logstash's GeoIP database is {age_days} day(s) old",
+            size_mb=None,
+            requires_restart=False,
+            applies_with=_LOGSTASH_GEOIP_APPLIES_WITH,
+        )
+
+    async def _logstash_geoip_mtime(self) -> float:
+        """Modified time (epoch seconds) of the GeoIP database in the Logstash container.
+
+        Raises:
+            RuntimeError: if docker or the container couldn't be read.
+            ValueError: if stat printed no date.
+        """
+        # create_subprocess_exec: no host shell; sh -c runs inside the container for the glob
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "exec",
+            _LOGSTASH_CONTAINER,
+            "sh",
+            "-c",
+            f"stat -c %Y {_LOGSTASH_GEOIP_DB}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+        if proc.returncode != 0:
+            raise RuntimeError(stderr.decode("utf-8", errors="replace").strip())
+        # one line per match (normally one): take the newest rather than guess
+        return max(float(line) for line in stdout.decode().split())
 
     async def _compare_versions(self, current: str, latest: str) -> str:
         """Compare two semver-style version strings.

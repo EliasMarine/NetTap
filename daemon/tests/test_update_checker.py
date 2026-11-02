@@ -628,5 +628,101 @@ class TestStaleDatabaseSizeIsUnknown(unittest.TestCase):
         self.assertIsNone(geoip_update.size_mb)
 
 
+class TestGeoIPDatabaseInLogstash(unittest.TestCase):
+    """With no local database, the one enrichment actually uses (bundled in the Logstash
+    container) is checked; before, the check said "no update" without looking."""
+
+    G11_DB_MTIME = 1769552063  # 2026-01-27, the bundled database on the G11
+
+    def _check(self, mtime=None, returncode=0, raises=None, local_db=False):
+        """Run the GeoIP check; docker exec prints mtime (or fails). Returns
+        (update, failed_checks, docker exec argv or None)."""
+        from unittest.mock import patch
+
+        calls = []
+
+        class Proc:
+            def __init__(self):
+                self.returncode = returncode
+
+            async def communicate(self):
+                out = b"" if mtime is None else f"{mtime}\n".encode()
+                return out, b"" if returncode == 0 else b"No such container"
+
+        async def exec_(*argv, **kwargs):
+            calls.append(argv)
+            if raises:
+                raise raises
+            return Proc()
+
+        uc = UpdateChecker()
+        with (
+            patch("os.path.exists", return_value=local_db),
+            patch("os.path.getmtime", return_value=mtime or 0),
+            patch("asyncio.create_subprocess_exec", exec_),
+        ):
+            update = asyncio.run(uc._check_geoip_update())
+        return update, uc._failed_checks, (calls[0] if calls else None)
+
+    def test_old_bundled_database_is_an_update_that_comes_with_nettap(self):
+        update, failed, argv = self._check(mtime=self.G11_DB_MTIME)
+        self.assertEqual(argv[:5], ("docker", "exec", "nettap-logstash", "sh", "-c"))
+        self.assertIn("stat -c %Y /usr/share/logstash/vendor/bundle/jruby/*/gems/", argv[5])
+        self.assertTrue(argv[5].endswith("logstash-filter-geoip-*/vendor/GeoLite2-City.mmdb"))
+        self.assertEqual(update.component, "geoip-db")
+        self.assertEqual(update.current_version, "2026-01-27")
+        self.assertEqual(
+            update.applies_with,
+            "Comes with Malcolm's Logstash image: update NetTap to get a newer one.",
+        )
+        self.assertEqual(failed, [])
+
+    def test_unreadable_container_is_a_failed_check_not_no_update(self):
+        for case in ({"returncode": 1}, {"raises": FileNotFoundError("docker")}):
+            with self.subTest(**case):
+                update, failed, _ = self._check(**case)
+                self.assertIsNone(update)
+                self.assertEqual(failed, ["geoip-db"])
+
+    def test_failed_geoip_check_reaches_the_update_result(self):
+        from unittest.mock import patch
+
+        async def not_found(url):
+            return {}
+
+        async def none():
+            return None
+
+        async def unreadable():
+            raise RuntimeError("No such container: nettap-logstash")
+
+        uc = UpdateChecker()
+        uc._fetch_json = not_found
+        uc._check_suricata_rules = none
+        uc._logstash_geoip_mtime = unreadable
+        with patch("os.path.exists", return_value=False):
+            result = asyncio.run(uc.check_updates())
+        self.assertEqual(result["failed_checks"], ["geoip-db"])
+
+    def test_fresh_bundled_database_is_no_update(self):
+        two_days_old = datetime.now(timezone.utc).timestamp() - 2 * 86400
+        update, failed, _ = self._check(mtime=two_days_old)
+        self.assertIsNone(update)
+        self.assertEqual(failed, [])
+
+    def test_fresh_local_database_is_no_update_and_logstash_is_not_asked(self):
+        two_days_old = datetime.now(timezone.utc).timestamp() - 2 * 86400
+        update, failed, argv = self._check(mtime=two_days_old, local_db=True)
+        self.assertIsNone(update)
+        self.assertEqual(failed, [])
+        self.assertIsNone(argv)
+
+    def test_stale_local_database_stays_applicable(self):
+        update, _, argv = self._check(mtime=self.G11_DB_MTIME, local_db=True)
+        self.assertEqual(update.component, "geoip-db")
+        self.assertIsNone(update.applies_with)
+        self.assertIsNone(argv)
+
+
 if __name__ == "__main__":
     unittest.main()
