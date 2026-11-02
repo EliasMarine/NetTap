@@ -3,6 +3,7 @@
 	import type { MonthlyUsage, DailyUsageEntry, DeviceUsage, HeatmapResponse } from '$lib/api/bandwidth';
 	import TopConsumers from '$lib/components/TopConsumers.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -14,6 +15,11 @@
 	let heatmap = $state<HeatmapResponse | null>(null);
 	let loading = $state(false);
 	let error = $state('');
+	// #96: each section says when its request failed instead of showing 0.0 GB or an empty heatmap
+	let monthlyFailed = $state(false);
+	let dailyFailed = $state(false);
+	let devicesFailed = $state(false);
+	let heatmapFailed = $state(false);
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -145,28 +151,53 @@
 	async function fetchAll() {
 		loading = true;
 		error = '';
-		try {
-			const now = new Date();
-			const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-			const from = monthStart.toISOString();
-			const to = now.toISOString();
+		// OLD CODE START — #96: the getters faked zeros on failure (0.0 GB, an empty heatmap); now that
+		// they throw, Promise.all let one failure hide every section behind a single banner
+		// try {
+		// 	const now = new Date();
+		// 	const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+		// 	const from = monthStart.toISOString();
+		// 	const to = now.toISOString();
+		//
+		// 	const [monthlyData, dailyData, deviceData, heatmapData] = await Promise.all([
+		// 		getMonthlyUsage(),
+		// 		getDailyUsage({ from, to }),
+		// 		getDeviceUsage({ from, to, limit: 50 }),
+		// 		getHeatmap({ from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: to }),
+		// 	]);
+		//
+		// 	monthly = monthlyData;
+		// 	daily = dailyData.daily;
+		// 	devices = deviceData.devices;
+		// 	heatmap = heatmapData;
+		// } catch (e) {
+		// 	error = e instanceof Error ? e.message : 'Failed to fetch bandwidth data';
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const now = new Date();
+		const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+		const from = monthStart.toISOString();
+		const to = now.toISOString();
 
-			const [monthlyData, dailyData, deviceData, heatmapData] = await Promise.all([
-				getMonthlyUsage(),
-				getDailyUsage({ from, to }),
-				getDeviceUsage({ from, to, limit: 50 }),
-				getHeatmap({ from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: to }),
-			]);
+		const [monthlyRes, dailyRes, deviceRes, heatmapRes] = await Promise.allSettled([
+			getMonthlyUsage(),
+			getDailyUsage({ from, to }),
+			getDeviceUsage({ from, to, limit: 50 }),
+			getHeatmap({ from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: to }),
+		]);
 
-			monthly = monthlyData;
-			daily = dailyData.daily;
-			devices = deviceData.devices;
-			heatmap = heatmapData;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch bandwidth data';
-		} finally {
-			loading = false;
-		}
+		// A failed refresh keeps the last good section and says so
+		if (monthlyRes.status === 'fulfilled') monthly = monthlyRes.value;
+		if (dailyRes.status === 'fulfilled') daily = dailyRes.value.daily;
+		if (deviceRes.status === 'fulfilled') devices = deviceRes.value.devices;
+		if (heatmapRes.status === 'fulfilled') heatmap = heatmapRes.value;
+		monthlyFailed = monthlyRes.status === 'rejected';
+		dailyFailed = dailyRes.status === 'rejected';
+		devicesFailed = deviceRes.status === 'rejected';
+		heatmapFailed = heatmapRes.status === 'rejected';
+		loading = false;
 	}
 
 	$effect(() => {
@@ -203,6 +234,9 @@
 		</div>
 	{:else}
 		<!-- Hero card: Monthly usage -->
+		{#if monthlyFailed}
+			<div class="card"><p class="load-note">{loadFailed("this month's usage", monthly !== null)}</p></div>
+		{/if}
 		{#if monthly}
 			<div class="card hero-card">
 				<div class="hero-content">
@@ -250,11 +284,17 @@
 		{/if}
 
 		<!-- Top consumers (reusable component) -->
+		{#if devicesFailed}
+			<div class="card"><p class="load-note">{loadFailed('per-device usage', devices.length > 0)}</p></div>
+		{/if}
 		{#if devices.length > 0}
 			<TopConsumers devices={devices.slice(0, 10)} />
 		{/if}
 
 		<!-- Daily usage bar chart -->
+		{#if dailyFailed}
+			<div class="card"><p class="load-note">{loadFailed('daily usage', daily.length > 0)}</p></div>
+		{/if}
 		{#if daily.length > 0}
 			<div class="card">
 				<h3 class="card-title">Daily Usage</h3>
@@ -311,6 +351,9 @@
 		{/if}
 
 		<!-- Heatmap -->
+		{#if heatmapFailed}
+			<div class="card"><p class="load-note">{loadFailed('the time-of-day heatmap', heatmap !== null)}</p></div>
+		{/if}
 		{#if heatmap && heatmap.matrix}
 			<div class="card">
 				<h3 class="card-title">Time-of-Day Heatmap (Last 7 Days)</h3>
@@ -498,6 +541,12 @@
 	}
 
 	/* Heatmap */
+	.load-note {
+		margin: 0;
+		color: var(--amber);
+		font-size: var(--text-sm);
+	}
+
 	.heatmap-container {
 		padding: var(--space-md) var(--space-lg);
 		overflow-x: auto;

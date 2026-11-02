@@ -100,29 +100,32 @@ export async function getMonthlyUsage(
 	const query = buildQuery({ year: opts.year, month: opts.month });
 	const res = await fetch(`/api/bandwidth/monthly${query}`);
 
-	if (!res.ok) {
-		const now = new Date();
-		return {
-			year: opts.year ?? now.getFullYear(),
-			month: opts.month ?? now.getMonth() + 1,
-			total_bytes: 0,
-			orig_bytes: 0,
-			resp_bytes: 0,
-			projection: {
-				year: opts.year ?? now.getFullYear(),
-				month: opts.month ?? now.getMonth() + 1,
-				current_bytes: 0,
-				projected_bytes: 0,
-				days_elapsed: 0,
-				days_in_month: 30,
-				daily_rate_bytes: 0,
-				cap_bytes: 0,
-				usage_percent: 0,
-				projected_percent: 0,
-				exceeds_cap: false,
-			},
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0.0 GB this month
+	// if (!res.ok) {
+	// 	const now = new Date();
+	// 	return {
+	// 		year: opts.year ?? now.getFullYear(),
+	// 		month: opts.month ?? now.getMonth() + 1,
+	// 		total_bytes: 0,
+	// 		orig_bytes: 0,
+	// 		resp_bytes: 0,
+	// 		projection: {
+	// 			year: opts.year ?? now.getFullYear(),
+	// 			month: opts.month ?? now.getMonth() + 1,
+	// 			current_bytes: 0,
+	// 			projected_bytes: 0,
+	// 			days_elapsed: 0,
+	// 			days_in_month: 30,
+	// 			daily_rate_bytes: 0,
+	// 			cap_bytes: 0,
+	// 			usage_percent: 0,
+	// 			projected_percent: 0,
+	// 			exceeds_cap: false,
+	// 		},
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Monthly usage failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -136,9 +139,12 @@ export async function getDailyUsage(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/bandwidth/daily${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', daily: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no daily usage
+	// if (!res.ok) {
+	// 	return { from: '', to: '', daily: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Daily usage failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -152,9 +158,12 @@ export async function getDeviceUsage(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/bandwidth/devices${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', devices: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no devices
+	// if (!res.ok) {
+	// 	return { from: '', to: '', devices: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device usage failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -168,15 +177,18 @@ export async function getHeatmap(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/bandwidth/heatmap${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-			hours: Array.from({ length: 24 }, (_, i) => i),
-			matrix: Array.from({ length: 7 }, () => Array(24).fill(0)),
-		};
-	}
+	// OLD CODE START — #96: a failed request read as an all-zero heatmap
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+	// 		hours: Array.from({ length: 24 }, (_, i) => i),
+	// 		matrix: Array.from({ length: 7 }, () => Array(24).fill(0)),
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Heatmap failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -187,15 +199,18 @@ export async function getHeatmap(
 export async function getBandwidthCap(): Promise<BandwidthCap> {
 	const res = await fetch('/api/bandwidth/cap');
 
-	if (!res.ok) {
-		return {
-			monthly_cap_bytes: 0,
-			monthly_cap_gb: 0,
-			enabled: false,
-			current_usage_bytes: 0,
-			usage_percent: 0,
-		};
-	}
+	// OLD CODE START — #96: a failed request read as no cap set
+	// if (!res.ok) {
+	// 	return {
+	// 		monthly_cap_bytes: 0,
+	// 		monthly_cap_gb: 0,
+	// 		enabled: false,
+	// 		current_usage_bytes: 0,
+	// 		usage_percent: 0,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Bandwidth cap failed: HTTP ${res.status}`);
 
 	return res.json();
 }

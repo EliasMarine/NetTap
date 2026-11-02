@@ -86,12 +86,10 @@ describe('bandwidth API client', () => {
 			expect(calledUrl).toContain('month=1');
 		});
 
-		it('returns zero defaults on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getMonthlyUsage();
-
-			expect(result.total_bytes).toBe(0);
+			await expect(getMonthlyUsage()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -115,12 +113,10 @@ describe('bandwidth API client', () => {
 			expect(result.daily).toHaveLength(2);
 		});
 
-		it('returns empty daily on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDailyUsage();
-
-			expect(result.daily).toEqual([]);
+			await expect(getDailyUsage()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -144,12 +140,10 @@ describe('bandwidth API client', () => {
 			expect(result.devices[0].ip).toBe('192.168.1.100');
 		});
 
-		it('returns empty devices on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDeviceUsage();
-
-			expect(result.devices).toEqual([]);
+			await expect(getDeviceUsage()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -174,13 +168,10 @@ describe('bandwidth API client', () => {
 			expect(result.matrix[0][9]).toBe(3000);
 		});
 
-		it('returns zero matrix on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getHeatmap();
-
-			expect(result.matrix).toHaveLength(7);
-			expect(result.matrix[0]).toHaveLength(24);
+			await expect(getHeatmap()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -203,12 +194,10 @@ describe('bandwidth API client', () => {
 			expect(result.enabled).toBe(true);
 		});
 
-		it('returns disabled cap on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getBandwidthCap();
-
-			expect(result.enabled).toBe(false);
+			await expect(getBandwidthCap()).rejects.toThrow('HTTP 500');
 		});
 	});
 
