@@ -8,7 +8,9 @@
 #
 # Only the daemon is rebuilt. The check reads each IoT device's security score for the same
 # fixed past day before and after, and compares the change with what OpenSearch's raw alert
-# counts say it must be (the alert part is 10 points minus 2 per alert, never below 0).
+# counts say it must be (the alert part is 10 of the pillar's 40 points, minus 2 per alert, never
+# below 0; the API shows the pillar as a percentage, so 10 points = 25). On a re-run, when the
+# running daemon already has the fix, the expected change is 0.
 #
 # Run as the normal user (NOT with sudo):
 #   bash /home/nettap/NetTap/scripts/remote/deploy-data-accuracy-batch27.sh
@@ -62,7 +64,12 @@ echo ""
 echo "→ Step 1: Before..."
 cd "$REPO_DIR" || { echo "   ✗ $REPO_DIR not found"; exit 1; }
 BEFORE=$(security_scores)
-echo "   security scores: $BEFORE"
+if sudo docker exec nettap-storage-daemon grep -q SURICATA_NOISE_EXCLUSION /opt/nettap/daemon/services/iot_monitor.py; then
+    ALREADY_FIXED=1
+else
+    ALREADY_FIXED=0
+fi
+echo "   security scores: $BEFORE (daemon already has the fix: $ALREADY_FIXED)"
 echo ""
 
 echo "→ Step 2: Pull latest code..."
@@ -106,20 +113,21 @@ REAL=$(raw_alerts_by_mac "[{\"terms\":{\"source.ip\":$EXCL_IPS}},{\"prefix\":{\"
 RESULT=$(sudo docker exec nettap-storage-daemon python3 -c "
 import json, sys
 before, after, all_, real = (json.loads(a) for a in sys.argv[1:5])
+already_fixed = sys.argv[5] == '1'
 alert_pts = lambda n: max(0, 10 - 2 * n)
 bad, lines = 0, []
 for mac in sorted(after):
     if mac not in before:
         continue
     a, r = all_.get(mac, 0), real.get(mac, 0)
-    expected = alert_pts(r) - alert_pts(a)
+    expected = 0 if already_fixed else round((alert_pts(r) - alert_pts(a)) * 100 / 40)
     actual = after[mac] - before[mac]
-    ok = abs(actual - expected) <= 1  # 1 point of slack for late records moving encryption
+    ok = abs(actual - expected) <= 2  # two rounded percentages, plus late records moving encryption
     bad += not ok
     if a != r or not ok:
         lines.append(f'{mac}: {a} with engine events, {r} real; security {before[mac]} -> {after[mac]} (expected {expected:+d})' + ('' if ok else '  <-- MISMATCH'))
 print(bad)
-print('; '.join(lines) or 'no IoT device had engine events in this window')" "$BEFORE" "$AFTER" "$ALL" "$REAL" 2>&1)
+print('; '.join(lines) or 'no IoT device had engine events in this window')" "$BEFORE" "$AFTER" "$ALL" "$REAL" "$ALREADY_FIXED" 2>&1)
 BAD=$(printf '%s\n' "$RESULT" | head -n 1)
 DETAIL=$(printf '%s\n' "$RESULT" | tail -n +2)
 if [ "$BAD" = "0" ]; then rc=0; else rc=1; fi
