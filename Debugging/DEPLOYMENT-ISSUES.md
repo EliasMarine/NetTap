@@ -383,7 +383,11 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   and its datasources could never connect (http to HTTPS OpenSearch, no login, wrong indices,
   raw Zeek field names): off by default, nginx resolves it per request. Retention labels: alerts
   live in the hot index. Backup docs snapshotted indices that don't exist.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch16.sh.
+  Batch 17: OpenSearch Dashboards had no index pattern or dashboards since March: dashboards-
+  helper's programs were FATAL EACCES (NET-53 removed its PUSER_PRIV_DROP override, NET-54 only
+  restored logstash's), then it waited for Arkime's legacy template (Arkime off), then hit an
+  unbound ARKIME_INIT_SHARDS. All three fixed; refresh kept at 1 s.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch17.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1866,6 +1870,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 126. **Prove a performance refactor changed nothing but speed (Chain 25)** — before batching the device list's per-device queries into `_msearch`, the deploy saved `/api/devices` from the old daemon and compared it with the new one over one fixed `from`/`to` window (a relative "last 24 h" moves between the two calls). 53 of 53 devices matched field for field; only then does the 12× speed-up count.
 127. **A proxied tool's link is not working until a page loads through it (Chain 25)** — Grafana passed its container health check and `/grafana/api/*` answered through nginx, yet every page 301-looped: `proxy_pass http://grafana/;` strips the prefix while `GF_SERVER_SERVE_FROM_SUB_PATH=true` requires it. Check an HTML page through the proxy, and for an app with a datasource, its own datasource health endpoint.
 128. **nginx `upstream` blocks must resolve at start (Chain 25)** — a static `upstream` naming a container that a compose profile may leave out stops nginx, and with it the whole UI. For optional services use `resolver 127.0.0.11` and `set $u http://name:port; proxy_pass $u;`, and test the config with `docker compose run --rm --no-deps --entrypoint nginx <svc> -t` before recreating the front door.
+129. **"healthy" is not "working" for a supervisord container (Chain 25)** — dashboards-helper's healthcheck is `test -d /proc/1`, so it reported healthy for eight months while every program was FATAL. For any Malcolm container, check `supervisorctl -c /etc/supervisord.conf status`; and when a fix is reverted for one service (NET-53), re-check every service the original fix covered (NET-54 restored logstash only).
+130. **Waking a dormant job: read what it will do before you start it (Chain 25)** — the helper's cron had an index size-prune (no-op at limit `'0'`) and would re-stamp `malcolm_template` with a 60 s refresh. Reading the scripts first turned a silent freshness regression into a one-line env setting.
 
 ---
 
