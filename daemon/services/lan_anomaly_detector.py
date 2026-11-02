@@ -19,6 +19,11 @@ from storage.all_buckets import all_buckets
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+# an ARP record where the sender announces its own address (sender IP = target IP)
+GRATUITOUS_ARP = {"script": {"script": {"lang": "painless", "source": (
+    "doc['source.ip'].size() > 0 && doc['destination.ip'].size() > 0 "
+    "&& doc['source.ip'].value.equals(doc['destination.ip'].value)"
+)}}}
 DHCP_SERVER_PORT = 67
 # broadcast and "no address yet": a request to these names no server
 NOT_A_HOST = ["255.255.255.255", "0.0.0.0"]
@@ -393,7 +398,13 @@ class LANAnomalyDetector:
         #     logger.error("IP conflict detection failed: %s", exc)
         #     return []
         # OLD CODE END
-        buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
+        # OLD CODE START — every ARP record grouped by target IP, counting sender MACs: everyone
+        # who asked "who has 192.168.1.1?" made the router an "IP conflict"
+        # buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
+        # OLD CODE END
+        # gratuitous ARP only (a host announcing its own address: sender IP = target IP), by sender
+        announcements = {**bool_clause, "filter": [*bool_clause["filter"], GRATUITOUS_ARP]}
+        buckets = _ips_with_many_macs(self._client, announcements, "source.ip")
 
         alerts: list[dict[str, Any]] = []
         for b in buckets:

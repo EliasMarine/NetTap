@@ -376,6 +376,10 @@ class _ArpIndex:
 
     def search(self, index: str, body: dict) -> dict:
         ((name, agg),) = body["aggs"].items()
+        filters = body.get("query", {}).get("bool", {}).get("filter", [])
+        if any("script" in f for f in filters):  # GRATUITOUS_ARP: sender IP = target IP
+            return _ArpIndex([r for r in self.records if r["source.ip"] == r["destination.ip"]]).search(
+                index, {**body, "query": {}})
         if "composite" in agg:
             if "after" in agg["composite"]:
                 return {"aggregations": {name: {"buckets": []}}}
@@ -421,3 +425,15 @@ def test_conflict_on_an_ip_outside_the_busiest_500_is_found():
         "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
     )
     assert [(a["ip"], a["mac_count"]) for a in alerts] == [("10.9.9.9", 2)]
+
+
+def test_hosts_asking_for_the_router_are_not_an_ip_conflict():
+    """Grouped by target IP, every "who has 192.168.1.1?" counted its asker's MAC, so the router
+    was an IP conflict on any network; only announcements of one's own address count."""
+    asks = [{"source.ip": f"192.168.1.{n}", "destination.ip": "192.168.1.1", "source.mac": f"aa:00:00:00:00:{n:02x}"}
+            for n in range(10, 20)]
+    announce = [{"source.ip": "192.168.1.50", "destination.ip": "192.168.1.50", "source.mac": m}
+                for m in ("cc:cc:cc:cc:cc:01", "cc:cc:cc:cc:cc:02")]
+    alerts = LANAnomalyDetector(_ArpIndex(asks + announce)).detect_ip_conflicts(
+        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+    assert [a["ip"] for a in alerts] == ["192.168.1.50"]
