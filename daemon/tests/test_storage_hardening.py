@@ -315,6 +315,27 @@ class TestIlmPolicyVerification:
         assert result["nettap-cold-policy"] == "created"
         assert mgr._ilm_verified is True
 
+    def test_ilm_verification_keeps_ism_history_without_replicas(self):
+        """Single node: ISM history must ask for 0 replicas or the cluster stays yellow."""
+        mgr = _make_manager()
+        mgr._client = MagicMock()
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = {"nettap-hot-policy": "unchanged"}
+            mgr.verify_ilm_policy()
+
+        settings = mgr._client.cluster.put_settings.call_args.kwargs["body"]
+        assert (
+            settings["persistent"][
+                "plugins.index_state_management.history.number_of_replicas"
+            ]
+            == 0
+        )
+        index_call = mgr._client.indices.put_settings.call_args.kwargs
+        assert index_call["index"] == ".opendistro-ism-managed-index-history-*"
+        assert index_call["body"] == {"index": {"number_of_replicas": 0}}
+        assert index_call["expand_wildcards"] == "all"
+
     def test_ilm_policy_verification_passes_when_exists(self):
         """When policies already exist, verify_ilm_policy reports unchanged."""
         mgr = _make_manager()

@@ -1037,6 +1037,7 @@ class StorageManager:
                 http_auth=self._http_auth,
             )
             self._ilm_verified = True
+            self._keep_ism_history_single_copy()
 
             # Log summary
             for name, status in results.items():
@@ -1054,6 +1055,30 @@ class StorageManager:
         except Exception as exc:
             logger.error("ILM policy verification failed: %s", exc)
             return {"_error": f"error: {exc}"}
+
+    def _keep_ism_history_single_copy(self) -> None:
+        """Stop ISM's history index asking for a replica.
+
+        NetTap is a single-node cluster, so a replica can never be placed and
+        the cluster reports yellow even though every shard is healthy.
+        """
+        try:
+            self._client.cluster.put_settings(
+                body={
+                    "persistent": {
+                        "plugins.index_state_management.history.number_of_replicas": 0
+                    }
+                }
+            )
+            # History indices created before the setting keep their replica count
+            self._client.indices.put_settings(
+                index=".opendistro-ism-managed-index-history-*",
+                body={"index": {"number_of_replicas": 0}},
+                expand_wildcards="all",
+                allow_no_indices=True,
+            )
+        except Exception as exc:
+            logger.warning("Could not set ISM history replicas to 0: %s", exc)
 
     # ------------------------------------------------------------------
     # C4: Per-tier disk accounting
