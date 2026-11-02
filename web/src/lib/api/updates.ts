@@ -65,11 +65,16 @@ export interface AutoUpdateConfig {
 export async function getVersions(): Promise<{ versions: Record<string, ComponentVersion>; last_scan: string }> {
 	const res = await fetch('/api/system/versions');
 
+	// OLD CODE START — #96: a failed request read as "No version information available"
+	// if (!res.ok) {
+	// 	return {
+	// 		versions: {},
+	// 		last_scan: '',
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			versions: {},
-			last_scan: '',
-		};
+		throw new Error(`Installed versions request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -93,14 +98,19 @@ export async function scanVersions(): Promise<{ versions: Record<string, Compone
 /**
  * Get a list of available updates that have been previously checked.
  */
-export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[]; last_check: string }> {
+export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[]; last_check: string; failed_checks?: string[] }> {
 	const res = await fetch('/api/system/updates/available');
 
+	// OLD CODE START — #96: a failed request marked every component "Up to Date"
+	// if (!res.ok) {
+	// 	return {
+	// 		updates: [],
+	// 		last_check: '',
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			updates: [],
-			last_check: '',
-		};
+		throw new Error(`Available updates request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -109,13 +119,18 @@ export async function getAvailableUpdates(): Promise<{ updates: AvailableUpdate[
 /**
  * Check for new updates from upstream sources.
  */
-export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[] }> {
+export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[]; failed_checks?: string[] }> {
 	const res = await fetch('/api/system/updates/check', {
 		method: 'POST',
 	});
 
+	// OLD CODE START — #96: a failed check read as "Up to Date, last checked just now"
+	// if (!res.ok) {
+	// 	return { updates: [] };
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return { updates: [] };
+		throw new Error(`Update check failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -150,14 +165,19 @@ export async function applyUpdates(components: string[]): Promise<UpdateStatus> 
 export async function getUpdateStatus(): Promise<UpdateStatus> {
 	const res = await fetch('/api/system/updates/status');
 
+	// OLD CODE START — #96: a failed request read as "idle", which ended a running update as "Update Complete"
+	// if (!res.ok) {
+	// 	return {
+	// 		state: 'idle',
+	// 		current_component: null,
+	// 		progress_percent: 0,
+	// 		started_at: null,
+	// 		results: [],
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			state: 'idle',
-			current_component: null,
-			progress_percent: 0,
-			started_at: null,
-			results: [],
-		};
+		throw new Error(`Update status request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

@@ -29,6 +29,16 @@
 	let loading = $state(true);
 	let checking = $state(false);
 	let applying = $state(false);
+	// #96: a failed request never reads as "Up to Date" or a finished update
+	let versionsFailed = $state(false);
+	let updatesFailed = $state(false);
+	let actionError = $state('');
+	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
+	let failedChecks = $state<string[]>([]);
+
+	function checkFailed(key: string, name: string): boolean {
+		return updatesFailed || failedChecks.some((c) => c === key || c === name || c === 'component-versions');
+	}
 
 	// Update modal/panel state
 	let showUpdatePanel = $state(false);
@@ -201,32 +211,59 @@
 
 	async function fetchAll() {
 		loading = true;
-		try {
-			const [versionsRes, updatesRes, historyRes] = await Promise.all([
-				getVersions(),
-				getAvailableUpdates(),
-				getUpdateHistory(),
-			]);
-			versions = versionsRes.versions;
-			lastScan = versionsRes.last_scan;
-			availableUpdates = updatesRes.updates;
-			lastCheck = updatesRes.last_check;
-			updateHistory = historyRes;
-		} catch {
-			// Keep existing state on error
-		} finally {
-			loading = false;
+		// OLD CODE START — #96: the getters faked empty lists on failure (every row read
+		// "Up to Date"), and one failure blanked the rest; they now throw
+		// try {
+		// 	const [versionsRes, updatesRes, historyRes] = await Promise.all([
+		// 		getVersions(),
+		// 		getAvailableUpdates(),
+		// 		getUpdateHistory(),
+		// 	]);
+		// 	versions = versionsRes.versions;
+		// 	lastScan = versionsRes.last_scan;
+		// 	availableUpdates = updatesRes.updates;
+		// 	lastCheck = updatesRes.last_check;
+		// 	updateHistory = historyRes;
+		// } catch {
+		// 	// Keep existing state on error
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const [versionsRes, updatesRes, historyRes] = await Promise.allSettled([
+			getVersions(),
+			getAvailableUpdates(),
+			getUpdateHistory(),
+		]);
+		if (versionsRes.status === 'fulfilled') {
+			versions = versionsRes.value.versions;
+			lastScan = versionsRes.value.last_scan;
 		}
+		if (updatesRes.status === 'fulfilled') {
+			availableUpdates = updatesRes.value.updates;
+			lastCheck = updatesRes.value.last_check;
+			failedChecks = updatesRes.value.failed_checks ?? [];
+		}
+		if (historyRes.status === 'fulfilled') updateHistory = historyRes.value;
+		versionsFailed = versionsRes.status === 'rejected';
+		updatesFailed = updatesRes.status === 'rejected';
+		loading = false;
 	}
 
 	async function handleCheckForUpdates() {
 		checking = true;
+		actionError = '';
 		try {
 			const res = await checkForUpdates();
 			availableUpdates = res.updates;
 			lastCheck = new Date().toISOString();
+			updatesFailed = false;
+			failedChecks = res.failed_checks ?? [];
 		} catch {
-			// Keep existing state
+			// OLD CODE START — #96: a failed check was silent
+			// // Keep existing state
+			// OLD CODE END
+			actionError = "Couldn't check for updates: the request failed.";
 		} finally {
 			checking = false;
 		}
@@ -273,9 +310,18 @@
 		applying = true;
 		updateInProgress = true;
 		updateCompleted = false;
+		actionError = '';
 
 		try {
 			const status = await applyUpdates([...selectedComponents]);
+
+			// #96: the client answers a failed request with an empty 'error' status, which
+			// read as an "Update Complete" with no results
+			if (status.state === 'error' && status.results.length === 0) {
+				updateInProgress = false;
+				actionError = "Couldn't start the update: the request failed.";
+				return;
+			}
 			updateStatus = status;
 
 			// Poll for completion if in_progress
@@ -287,7 +333,10 @@
 			}
 		} catch {
 			updateInProgress = false;
-			updateCompleted = true;
+			// OLD CODE START — #96: a failed request read as a finished update
+			// updateCompleted = true;
+			// OLD CODE END
+			actionError = "Couldn't start the update: the request failed.";
 		} finally {
 			applying = false;
 		}
@@ -319,14 +368,24 @@
 
 		updateInProgress = false;
 		updateCompleted = true;
+		// #96: the loop gave up without seeing the update finish
+		actionError = "Couldn't confirm the update finished: its status didn't report completion within 2 minutes.";
 	}
 
 	async function handleRollback(component: string) {
+		actionError = '';
 		try {
-			await rollbackComponent(component);
+			// OLD CODE START — #96: a failed rollback ({ result: 'error' }) was ignored
+			// await rollbackComponent(component);
+			// OLD CODE END
+			const res = await rollbackComponent(component);
+			if (res.result === 'error') actionError = `Couldn't roll back ${component}: the request failed.`;
 			await fetchAll();
 		} catch {
-			// Keep existing state
+			// OLD CODE START — #96: a network error was swallowed
+			// // Keep existing state
+			// OLD CODE END
+			actionError = `Couldn't roll back ${component}: the request failed.`;
 		}
 	}
 
@@ -354,12 +413,17 @@
 			</div>
 			<h2>Software Updates</h2>
 			<p class="text-muted">
-				{#if lastCheck}
+				{#if updatesFailed}
+					Couldn't load the available updates: the request failed.
+				{:else if lastCheck}
 					Last checked: {timeAgo(lastCheck)}
 				{:else}
 					Updates have not been checked yet
 				{/if}
 			</p>
+			{#if failedChecks.length > 0}
+				<p class="text-warning">Couldn't check {failedChecks.join(', ')}: those sources didn't answer.</p>
+			{/if}
 		</div>
 		<div class="header-actions">
 			<button
@@ -383,6 +447,10 @@
 			<p class="text-muted">Loading version information...</p>
 		</div>
 	{:else}
+		{#if actionError}
+			<div class="alert alert-danger">{actionError}</div>
+		{/if}
+
 		<!-- Update Banner -->
 		{#if updatesAvailableCount > 0 && !showUpdatePanel}
 			<div class="update-banner">
@@ -681,6 +749,8 @@
 											<span class="badge badge-muted">Unknown</span>
 										{:else if update}
 											<span class="badge badge-warning">Update Available</span>
+										{:else if checkFailed(entry.key, entry.name)}
+											<span class="badge badge-muted">Unknown</span>
 										{:else}
 											<span class="badge badge-success">Up to Date</span>
 										{/if}
@@ -702,7 +772,9 @@
 				{/if}
 			{/each}
 
-			{#if Object.keys(versions).length === 0}
+			{#if versionsFailed}
+				<p class="text-muted empty-state">Couldn't load installed versions: the request failed.</p>
+			{:else if Object.keys(versions).length === 0}
 				<p class="text-muted empty-state">No version information available. Click "Check for Updates" to scan.</p>
 			{/if}
 		</div>

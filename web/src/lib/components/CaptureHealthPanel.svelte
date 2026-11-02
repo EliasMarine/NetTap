@@ -12,18 +12,29 @@
 	let health = $state<CaptureHealthResponse | null>(null);
 	let stats = $state<CaptureStatsResponse | null>(null);
 	let loading = $state(true);
+	// #96: a failed request must not read as link down / 0% drops
+	let healthFailed = $state(false);
+	let statsFailed = $state(false);
 
 	async function fetchData() {
 		loading = true;
-		try {
-			const [h, s] = await Promise.all([getCaptureHealth(), getCaptureStats()]);
-			health = h;
-			stats = s;
-		} catch {
-			// keep existing state
-		} finally {
-			loading = false;
-		}
+		// OLD CODE START — #96: the getters faked "down"/zeros on failure; they now throw
+		// try {
+		// 	const [h, s] = await Promise.all([getCaptureHealth(), getCaptureStats()]);
+		// 	health = h;
+		// 	stats = s;
+		// } catch {
+		// 	// keep existing state
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const [h, s] = await Promise.allSettled([getCaptureHealth(), getCaptureStats()]);
+		if (h.status === 'fulfilled') health = h.value;
+		if (s.status === 'fulfilled') stats = s.value;
+		healthFailed = h.status === 'rejected';
+		statsFailed = s.status === 'rejected';
+		loading = false;
 	}
 
 	$effect(() => {
@@ -112,7 +123,9 @@
 			</div>
 		</div>
 
-		{#if stats}
+		{#if statsFailed}
+			<p class="text-muted">Couldn't load capture counters: the request failed.</p>
+		{:else if stats}
 			<div class="stats-section">
 				<div class="stat-row">
 					<span class="stat-label">RX Packets</span>
@@ -154,6 +167,8 @@
 				{/each}
 			</div>
 		{/if}
+	{:else if healthFailed}
+		<p class="text-muted">Couldn't check capture health: the request failed.</p>
 	{:else}
 		<p class="text-muted">Capture health data unavailable</p>
 	{/if}

@@ -43,27 +43,55 @@
 		loadData();
 	});
 
+	// #96: the event request failed, so an empty list is not "no events"
+	let eventsFailed = $state(false);
+
+	// Events for the current filter; a failure clears them (they'd belong to another filter)
+	async function fetchEvents() {
+		try {
+			events = (await getChangelogEvents({ type: selectedType || undefined, limit: limitCount })).events;
+			eventsFailed = false;
+		} catch {
+			events = [];
+			eventsFailed = true;
+		}
+	}
+
+	// OLD CODE START — #96: getChangelogEvents now throws on failure
+	// async function loadData() {
+	// 	loading = true;
+	// 	const [eventsRes, typesRes] = await Promise.all([
+	// 		getChangelogEvents({
+	// 			type: selectedType || undefined,
+	// 			limit: limitCount,
+	// 		}),
+	// 		getEventTypes(),
+	// 	]);
+	// 	events = eventsRes.events;
+	// 	eventTypes = typesRes;
+	// 	loading = false;
+	// }
+	//
+	// async function handleFilter() {
+	// 	loading = true;
+	// 	const result = await getChangelogEvents({
+	// 		type: selectedType || undefined,
+	// 		limit: limitCount,
+	// 	});
+	// 	events = result.events;
+	// 	loading = false;
+	// }
+	// OLD CODE END
 	async function loadData() {
 		loading = true;
-		const [eventsRes, typesRes] = await Promise.all([
-			getChangelogEvents({
-				type: selectedType || undefined,
-				limit: limitCount,
-			}),
-			getEventTypes(),
-		]);
-		events = eventsRes.events;
+		const [, typesRes] = await Promise.all([fetchEvents(), getEventTypes()]);
 		eventTypes = typesRes;
 		loading = false;
 	}
 
 	async function handleFilter() {
 		loading = true;
-		const result = await getChangelogEvents({
-			type: selectedType || undefined,
-			limit: limitCount,
-		});
-		events = result.events;
+		await fetchEvents();
 		loading = false;
 	}
 
@@ -159,6 +187,10 @@
 	{#if loading}
 		<div class="card">
 			<p class="text-muted" style="padding: var(--space-lg);">Loading changelog events...</p>
+		</div>
+	{:else if eventsFailed}
+		<div class="card">
+			<p class="text-warning" style="padding: var(--space-lg);">Couldn't load changelog events: the request failed.</p>
 		</div>
 	{:else if events.length === 0}
 		<div class="card">

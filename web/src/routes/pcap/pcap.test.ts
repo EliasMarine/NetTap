@@ -300,6 +300,17 @@ describe('PCAP page — search polling', () => {
 
 		expect(screen.getByText(/No matching packets found/)).toBeInTheDocument();
 		expect(screen.queryByText(/were skipped/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/couldn't be searched/)).not.toBeInTheDocument();
+	});
+
+	it('says files tshark could not read were not searched, instead of "no match" (#96)', async () => {
+		stubSearch([searchBody({ files_checked: 53, complete: true, failed: 2, error: 'docker not found in PATH' })]);
+
+		await startSearch();
+
+		expect(screen.getByText("2 files couldn't be searched: docker not found in PATH")).toBeInTheDocument();
+		expect(screen.getByText('No matching packets in the files that could be searched.')).toBeInTheDocument();
+		expect(screen.queryByText('No matching packets found in any PCAP file.')).not.toBeInTheDocument();
 	});
 });
 
@@ -352,5 +363,42 @@ describe('PCAP page — preview time limit', () => {
 
 		expect(screen.getByText(/No packets to display/)).toBeInTheDocument();
 		expect(screen.queryByText(/within 45 seconds/)).not.toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rendered page: a failed file listing is not "No PCAP files" (#96)
+// ---------------------------------------------------------------------------
+
+describe('PCAP page — file list', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubFiles(reply: { ok: boolean; status: number; json: () => Promise<unknown> }) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.startsWith('/api/pcap/files') ? reply : { ok: false, status: 500, json: async () => ({}) },
+			),
+		);
+	}
+
+	it('says the list could not be loaded instead of "No PCAP files"', async () => {
+		stubFiles({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
+
+		render(PcapPage);
+
+		expect((await screen.findAllByText("Couldn't load the PCAP file list: the request failed.")).length).toBe(2);
+		expect(screen.queryByText(/No PCAP files/)).not.toBeInTheDocument();
+	});
+
+	it('still says there are no PCAP files when the list really is empty', async () => {
+		stubFiles({ ok: true, status: 200, json: async () => ({ count: 0, files: [] }) });
+
+		render(PcapPage);
+
+		expect(await screen.findByText('No PCAP files in this time range.')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load the PCAP file list/)).not.toBeInTheDocument();
 	});
 });

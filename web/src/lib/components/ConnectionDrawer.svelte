@@ -234,13 +234,19 @@
 
 	async function loadTSharkTab() {
 		// Check availability
-		if (!tsharkChecked) {
+		// OLD CODE START — #96: checked once ever, so a failed check was never retried
+		// if (!tsharkChecked) {
+		// OLD CODE END
+		if (tsharkAvailable === null) {
 			tsharkChecked = true;
 			try {
 				const status = await getTSharkStatus();
 				tsharkAvailable = status.available;
 			} catch {
-				tsharkAvailable = false;
+				// OLD CODE START — #96: a failed check read as "TShark is not available"
+				// tsharkAvailable = false;
+				// OLD CODE END
+				tsharkError = "Couldn't check whether TShark is available: the request failed.";
 			}
 		}
 

@@ -12,6 +12,7 @@
 	let sidebarCollapsed = $state(false);
 	let mobileOpen = $state(false);
 	let captureMode = $state<CaptureMode | null>(null);
+	let modeFailed = $state(false); // #96: say "Mode unknown" rather than guess Bridge
 
 	// Top-bar badge per capture mode; anything unknown shows as Bridge (the old default)
 	const MODE_BADGES: Record<string, { label: string; cls: string }> = {
@@ -25,7 +26,7 @@
 		getCaptureMode().then((mode) => {
 			captureMode = mode;
 		}).catch(() => {
-			// Silently fail — badge just won't show
+			modeFailed = true;
 		});
 		// Also populate the global store for drawer components
 		initCaptureMode();
@@ -197,6 +198,8 @@
 						<span class="mode-badge {modeBadge.cls}" title="Capture mode: {captureMode.mode}">
 							{modeBadge.label}
 						</span>
+					{:else if modeFailed}
+						<span class="mode-badge mode-unknown" title="Capture mode: couldn't be read">Mode unknown</span>
 					{/if}
 
 					<div class="status-indicator">
@@ -439,6 +442,11 @@
 	.mode-dhcp {
 		background-color: var(--purple-dim);
 		color: var(--purple);
+	}
+
+	.mode-unknown {
+		background-color: var(--bg-elevated);
+		color: var(--text-muted);
 	}
 
 	.desktop-only {

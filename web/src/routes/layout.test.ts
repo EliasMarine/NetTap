@@ -45,3 +45,29 @@ describe('layout capture mode badge', () => {
 		expect(badge).toHaveClass(cls);
 	});
 });
+
+describe('layout capture mode badge when the mode request fails (#96)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.clearAllMocks();
+	});
+
+	it('says the mode is unknown instead of guessing Bridge', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+		vi.stubGlobal(
+			'EventSource',
+			class {
+				addEventListener() {}
+				close() {}
+			}
+		);
+		const real = await vi.importActual<typeof import('$api/capture')>('$api/capture');
+		vi.mocked(captureApi.getCaptureMode).mockImplementation(real.getCaptureMode);
+
+		render(Layout, { props: { children } });
+
+		expect(await screen.findByText('Mode unknown')).toBeInTheDocument();
+		expect(screen.queryByText('Bridge')).not.toBeInTheDocument();
+		expect(screen.getByText('page body')).toBeInTheDocument();
+	});
+});

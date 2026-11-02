@@ -48,13 +48,16 @@
 	// Files
 	let files = $state<PcapFile[]>([]);
 	let filesLoading = $state(true);
+	let filesFailed = $state(false); // #96: a failed listing is not "No PCAP files"
 
 	// Search
 	let searchResults = $state<PcapSearchResult[]>([]);
 	let searchDone = $state(false);
-	let searchProgress = $state<{ checked: number; total: number; timedOut: number } | null>(null);
+	let searchProgress = $state<{ checked: number; total: number; timedOut: number; failed: number; error: string } | null>(null);
 	/** Bumped on every new search and on destroy so a stale poll loop exits. */
 	let searchRun = 0;
+	/** The scroll-to-preview timer; cleared on destroy, when `document` may be gone. */
+	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// Preview
 	let previewPackets = $state<PcapPacket[]>([]);
@@ -212,12 +215,14 @@
 
 	async function loadFiles() {
 		filesLoading = true;
+		filesFailed = false;
 		try {
 			const { from, to } = getTimeRange();
 			const response = await getPcapFiles({ from, to });
 			files = response.files;
 		} catch {
 			files = [];
+			filesFailed = true;
 		} finally {
 			filesLoading = false;
 		}
@@ -271,6 +276,9 @@
 					checked: response.files_checked,
 					total: response.files_total,
 					timedOut: response.timed_out,
+					// #96: files tshark couldn't read are not "no match"
+					failed: response.failed ?? 0,
+					error: response.error ?? '',
 				};
 				if (response.complete) {
 					searchDone = true;
@@ -302,7 +310,7 @@
 			error = e instanceof Error ? e.message : 'Preview failed';
 		} finally {
 			previewLoading = false;
-			setTimeout(() => {
+			scrollTimer = setTimeout(() => {
 				document.getElementById('preview-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			}, 50);
 		}
@@ -392,7 +400,7 @@
 	onMount(() => {
 		loadCaptureStatus();
 		loadFiles().then(() => { initialized = true; });
-		return () => { searchRun++; };
+		return () => { searchRun++; clearTimeout(scrollTimer); };
 	});
 </script>
 
@@ -449,11 +457,11 @@
 	<div class="stats-grid">
 		<button class="stat-card clickable" onclick={() => document.getElementById('files-section')?.scrollIntoView({ behavior: 'smooth' })}>
 			<span class="stat-label">PCAP Files</span>
-			<span class="stat-value text-primary">{totalFileCount}</span>
+			<span class="stat-value text-primary">{filesFailed ? '--' : totalFileCount}</span>
 		</button>
 		<div class="stat-card">
 			<span class="stat-label">Total Captured</span>
-			<span class="stat-value">{formatBytes(totalBytes)}</span>
+			<span class="stat-value">{filesFailed ? '--' : formatBytes(totalBytes)}</span>
 		</div>
 		<div class="stat-card">
 			<span class="stat-label">Newest Capture</span>
@@ -471,7 +479,9 @@
 	<!-- Capture Timeline -->
 	<section class="card">
 		<h2>Capture Timeline</h2>
-		{#if captureTimeline.length === 0 && !filesLoading}
+		{#if filesFailed && !filesLoading}
+			<p class="empty-state">Couldn't load the PCAP file list: the request failed.</p>
+		{:else if captureTimeline.length === 0 && !filesLoading}
 			<p class="empty-state">No PCAP files in this time range.</p>
 		{:else if captureTimeline.length > 0}
 			<div class="chart-wrapper" bind:clientWidth={chartWidth}>
@@ -573,8 +583,15 @@
 			{:else if searchProgress && searchProgress.timedOut > 0}
 				<p class="search-note">{timedOutNote(searchProgress.timedOut)}</p>
 			{/if}
+			{#if !loading && searchProgress && searchProgress.failed > 0}
+				<p class="search-note">
+					{searchProgress.failed === 1 ? "1 file couldn't be searched" : `${searchProgress.failed} files couldn't be searched`}{searchProgress.error ? `: ${searchProgress.error}` : '.'}
+				</p>
+			{/if}
 			{#if searchResults.length === 0}
-				{#if searchDone}
+				{#if searchDone && searchProgress && searchProgress.failed > 0}
+					<p class="empty-state">No matching packets in the files that could be searched.</p>
+				{:else if searchDone}
 					<p class="empty-state">No matching packets found in any PCAP file.</p>
 				{/if}
 			{:else}
@@ -675,10 +692,12 @@
 		<!-- Available Files -->
 		<section class="card">
 			<div class="card-header">
-				<h2>Available Files{!filesLoading ? ` (${files.length})` : ''}</h2>
+				<h2>Available Files{!filesLoading && !filesFailed ? ` (${files.length})` : ''}</h2>
 				{#if filesLoading}<span class="loading-indicator">Loading...</span>{/if}
 			</div>
-			{#if files.length === 0 && !filesLoading}
+			{#if filesFailed && !filesLoading}
+				<p class="empty-state">Couldn't load the PCAP file list: the request failed.</p>
+			{:else if files.length === 0 && !filesLoading}
 				<p class="empty-state">No PCAP files found in the selected time range.</p>
 			{:else}
 				<div class="table-container">

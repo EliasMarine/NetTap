@@ -73,11 +73,9 @@ describe('pcap API client', () => {
 			expect(result.files[0].name).toBe('capture_001.pcap');
 		});
 
-		it('returns empty on failure', async () => {
+		it('throws on failure instead of listing no files', async () => {
 			mockFetchFailure();
-			const result = await getPcapFiles();
-			expect(result.count).toBe(0);
-			expect(result.files).toEqual([]);
+			await expect(getPcapFiles()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes time range params', async () => {

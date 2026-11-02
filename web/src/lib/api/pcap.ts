@@ -33,6 +33,9 @@ export interface PcapSearchResponse {
 	complete: boolean;
 	/** Files too large to search within the per-file limit (counted in files_checked). */
 	timed_out: number;
+	/** Files tshark couldn't read (counted in files_checked), and the first reason (#96). */
+	failed?: number;
+	error?: string | null;
 }
 
 export interface PcapPacket {
@@ -82,8 +85,13 @@ export async function getPcapFiles(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/pcap/files${query}`);
 
+	// OLD CODE START — #96: a failed request read as "0 PCAP files / No PCAP files found"
+	// if (!res.ok) {
+	// 	return { count: 0, files: [] };
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return { count: 0, files: [] };
+		throw new Error(`PCAP file list request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

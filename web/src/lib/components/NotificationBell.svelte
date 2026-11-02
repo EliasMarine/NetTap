@@ -21,6 +21,8 @@
 	let unreadCount = $state(0);
 	let open = $state(false);
 	let loading = $state(false);
+	// #96: the last fetch failed, so an empty list is not "No notifications"
+	let fetchFailed = $state(false);
 
 	// Fetch notifications
 	async function fetchNotifications() {
@@ -29,8 +31,13 @@
 			const res = await getNotifications(15);
 			notifications = res.notifications;
 			unreadCount = res.unreadCount;
+			fetchFailed = false;
 		} catch {
-			// Silently fail — bell just shows 0
+			// OLD CODE START — #96: a failure was silent, so the bell said "No notifications"
+			// // Silently fail — bell just shows 0
+			// OLD CODE END
+			// Keep the last list; the dropdown says it couldn't refresh
+			fetchFailed = true;
 		} finally {
 			loading = false;
 		}
@@ -170,9 +177,19 @@
 			<div class="dropdown-list">
 				{#if loading && notifications.length === 0}
 					<div class="dropdown-empty">Loading...</div>
+				<!-- OLD CODE START — #96: a failed fetch read as "No notifications"
 				{:else if notifications.length === 0}
 					<div class="dropdown-empty">No notifications</div>
 				{:else}
+				OLD CODE END -->
+				{:else if fetchFailed && notifications.length === 0}
+					<div class="dropdown-empty">Couldn't load notifications: the request failed.</div>
+				{:else if notifications.length === 0}
+					<div class="dropdown-empty">No notifications</div>
+				{:else}
+					{#if fetchFailed}
+						<div class="dropdown-stale">Couldn't refresh notifications: showing the last ones.</div>
+					{/if}
 					{#each notifications as notification (notification.id)}
 						<button
 							class="notification-item"
@@ -299,6 +316,12 @@
 		text-align: center;
 		color: var(--text-muted);
 		font-size: var(--text-sm);
+	}
+
+	.dropdown-stale {
+		padding: var(--space-sm) var(--space-md);
+		color: var(--amber);
+		font-size: var(--text-xs);
 	}
 
 	.notification-item {

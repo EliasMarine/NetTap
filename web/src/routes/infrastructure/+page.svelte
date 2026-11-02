@@ -60,6 +60,20 @@
 	let logstashStats = $state<LogstashStats | null>(null);
 	let logstashPipelines = $state<LogstashPipeline[]>([]);
 	let showTemplates = $state(false);
+	// #96: sources whose last request failed; their figures are the last good reading or '--'
+	let failedSources = $state<Record<string, boolean>>({});
+	const failedNames = $derived(
+		Object.keys(failedSources).filter(
+			// a mirror or gateway box shows no bridge, so its bridge health is not news
+			(name) => failedSources[name] && !(name === 'bridge health' && (isMirror || isGateway)),
+		),
+	);
+
+	/** Apply a settled result: keep the old value on failure and record which source failed. */
+	function settle<T>(name: string, result: PromiseSettledResult<T>, apply: (value: T) => void) {
+		if (result.status === 'fulfilled') apply(result.value);
+		failedSources = { ...failedSources, [name]: result.status === 'rejected' };
+	}
 
 	// UniFi integration state
 	let unifiStatus = $state<UnifiStatus | null>(null);
@@ -120,54 +134,92 @@
 	}
 
 	// ─── Data fetching ──────────────────────────────────────────
+	// OLD CODE START — #96: the getters faked zeros/"red"/"down" on failure and one failure
+	// blanked its whole group; they now throw, so each result is settled on its own
+	// async function fetchBridgeAndCapture() {
+	// 	try {
+	// 		const [bh, cs, cm, ch] = await Promise.all([
+	// 			getBridgeHealth(),
+	// 			getCaptureStats(),
+	// 			getCaptureMode().catch(() => null),
+	// 			getCaptureHealth(),
+	// 		]);
+	// 		bridgeHealth = bh;
+	// 		captureStats = cs;
+	// 		if (cm) captureMode = cm;
+	// 		captureHealth = ch;
+	// 	} catch { /* swallow — individual calls have their own fallbacks */ }
+	// }
+	//
+	// async function fetchLogstash() {
+	// 	try {
+	// 		const [stats, pipelines] = await Promise.all([
+	// 			getLogstashStats(),
+	// 			getLogstashPipelines(),
+	// 		]);
+	// 		logstashStats = stats;
+	// 		logstashPipelines = pipelines;
+	// 	} catch { /* swallow */ }
+	// }
+	//
+	// async function fetchOpenSearch() {
+	// 	try {
+	// 		const [cl, idx, tmpl] = await Promise.all([
+	// 			getOpenSearchCluster(),
+	// 			getOpenSearchIndices(),
+	// 			getOpenSearchTemplates(),
+	// 		]);
+	// 		cluster = cl;
+	// 		indices = idx?.indices ?? [];
+	// 		templates = Array.isArray(tmpl) ? tmpl : [];
+	// 	} catch { /* swallow */ }
+	// }
+	//
+	// async function fetchStorage() {
+	// 	try {
+	// 		const [health, storage] = await Promise.all([
+	// 			getSystemHealth(),
+	// 			getStorageStatus(),
+	// 		]);
+	// 		systemHealth = health;
+	// 		storageStatus = storage;
+	// 	} catch { /* swallow */ }
+	// }
+	// OLD CODE END
 	async function fetchBridgeAndCapture() {
-		try {
-			const [bh, cs, cm, ch] = await Promise.all([
-				getBridgeHealth(),
-				getCaptureStats(),
-				getCaptureMode().catch(() => null),
-				getCaptureHealth(),
-			]);
-			bridgeHealth = bh;
-			captureStats = cs;
-			if (cm) captureMode = cm;
-			captureHealth = ch;
-		} catch { /* swallow — individual calls have their own fallbacks */ }
+		const [bh, cs, cm, ch] = await Promise.allSettled([
+			getBridgeHealth(),
+			getCaptureStats(),
+			getCaptureMode(),
+			getCaptureHealth(),
+		]);
+		settle('bridge health', bh, (v) => (bridgeHealth = v));
+		settle('capture counters', cs, (v) => (captureStats = v));
+		settle('capture mode', cm, (v) => (captureMode = v));
+		settle('capture health', ch, (v) => (captureHealth = v));
 	}
 
 	async function fetchLogstash() {
-		try {
-			const [stats, pipelines] = await Promise.all([
-				getLogstashStats(),
-				getLogstashPipelines(),
-			]);
-			logstashStats = stats;
-			logstashPipelines = pipelines;
-		} catch { /* swallow */ }
+		const [stats, pipelines] = await Promise.allSettled([getLogstashStats(), getLogstashPipelines()]);
+		settle('Logstash stats', stats, (v) => (logstashStats = v));
+		if (pipelines.status === 'fulfilled') logstashPipelines = pipelines.value;
 	}
 
 	async function fetchOpenSearch() {
-		try {
-			const [cl, idx, tmpl] = await Promise.all([
-				getOpenSearchCluster(),
-				getOpenSearchIndices(),
-				getOpenSearchTemplates(),
-			]);
-			cluster = cl;
-			indices = idx?.indices ?? [];
-			templates = Array.isArray(tmpl) ? tmpl : [];
-		} catch { /* swallow */ }
+		const [cl, idx, tmpl] = await Promise.allSettled([
+			getOpenSearchCluster(),
+			getOpenSearchIndices(),
+			getOpenSearchTemplates(),
+		]);
+		settle('OpenSearch cluster', cl, (v) => (cluster = v));
+		settle('OpenSearch indices', idx, (v) => (indices = v?.indices ?? []));
+		if (tmpl.status === 'fulfilled') templates = Array.isArray(tmpl.value) ? tmpl.value : [];
 	}
 
 	async function fetchStorage() {
-		try {
-			const [health, storage] = await Promise.all([
-				getSystemHealth(),
-				getStorageStatus(),
-			]);
-			systemHealth = health;
-			storageStatus = storage;
-		} catch { /* swallow */ }
+		const [health, storage] = await Promise.allSettled([getSystemHealth(), getStorageStatus()]);
+		settle('system health', health, (v) => (systemHealth = v));
+		settle('storage', storage, (v) => (storageStatus = v));
 	}
 
 	async function fetchToolRates() {
@@ -502,7 +554,9 @@
 			.then((j) => (grafanaUp = j?.database === 'ok'))
 			.catch(() => (grafanaUp = false));
 		fetchAll();
-		setTimeout(drawConnections, 100);
+		// cleared on unmount: it touches `document`, which is gone once the page is torn down
+		const drawTimer = setTimeout(drawConnections, 100);
+		return () => clearTimeout(drawTimer);
 	});
 
 	// Auto-poll with $effect
@@ -564,6 +618,12 @@
 			</button>
 		</div>
 	</header>
+
+	{#if failedNames.length > 0}
+		<div class="alert alert-warning">
+			Couldn't load {failedNames.join(', ')}: those figures show the last reading or "--".
+		</div>
+	{/if}
 
 	<!-- ═══════════════════════════════════════════════════════════
 	     PIPELINE TOPOLOGY (Hero)
@@ -634,11 +694,11 @@
 							{#if isMirror}
 							OLD CODE END -->
 							{#if isMirror || isGateway}
-								<span class="health-dot {captureHealth?.promisc_enabled ? 'green' : 'yellow'}"></span>
-								{captureHealth?.promisc_enabled ? 'Promiscuous' : 'Not promiscuous'}
+								<span class="health-dot {captureHealth ? (captureHealth.promisc_enabled ? 'green' : 'yellow') : ''}"></span>
+								{captureHealth ? (captureHealth.promisc_enabled ? 'Promiscuous' : 'Not promiscuous') : '--'}
 							{:else}
-								<span class="health-dot {bridgeHealth && !bridgeHealth.bypass_active ? 'green' : 'yellow'}"></span>
-								{bridgeHealth?.bypass_active ? 'Bypass' : 'Promiscuous'}
+								<span class="health-dot {bridgeHealth ? (bridgeHealth.bypass_active ? 'yellow' : 'green') : ''}"></span>
+								{bridgeHealth ? (bridgeHealth.bypass_active ? 'Bypass' : 'Promiscuous') : '--'}
 							{/if}
 						</div>
 						<div class="node-metric">Drop <span class="value">{captureStats ? captureStats.drop_rate_pct.toFixed(2) + '%' : '--'}</span></div>
@@ -693,8 +753,8 @@
 						</div>
 						<div class="node-name">Filebeat</div>
 						<div class="node-health">
-							<span class="health-dot {logstashStats && logstashStats.events_in > 0 ? 'green' : 'yellow'}"></span>
-							{logstashStats && logstashStats.events_in > 0 ? 'Shipping' : 'Idle'}
+							<span class="health-dot {logstashStats ? (logstashStats.events_in > 0 ? 'green' : 'yellow') : ''}"></span>
+							{logstashStats ? (logstashStats.events_in > 0 ? 'Shipping' : 'Idle') : '--'}
 						</div>
 						<div class="node-metric"><span class="value">{logstashStats ? formatNumber(logstashStats.events_in) : '--'}</span> evt</div>
 					</div>
@@ -770,27 +830,27 @@
 				<div class="detail-grid">
 					<div class="detail-stat">
 						<div class="detail-stat-label">Link</div>
-						<div class="detail-stat-value {captureHealth?.link_up ? 'green' : 'red'}">
-							{captureHealth?.link_up ? '\u25CF Connected' : '\u25CB Disconnected'}
+						<div class="detail-stat-value {captureHealth ? (captureHealth.link_up ? 'green' : 'red') : ''}">
+							{captureHealth ? (captureHealth.link_up ? '\u25CF Connected' : '\u25CB Disconnected') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Promisc Mode</div>
-						<div class="detail-stat-value {captureHealth?.promisc_enabled ? 'green' : 'red'}">
-							{captureHealth?.promisc_enabled ? 'Yes' : 'No'}
+						<div class="detail-stat-value {captureHealth ? (captureHealth.promisc_enabled ? 'green' : 'red') : ''}">
+							{captureHealth ? (captureHealth.promisc_enabled ? 'Yes' : 'No') : '--'}
 						</div>
 					</div>
 					{#if isGateway}
 						<div class="detail-stat">
 							<div class="detail-stat-label">Routing</div>
-							<div class="detail-stat-value {captureHealth?.routing_active ? 'green' : 'amber'}">
-								{captureHealth?.routing_active ? 'On' : 'Off'}
+							<div class="detail-stat-value {captureHealth ? (captureHealth.routing_active ? 'green' : 'amber') : ''}">
+								{captureHealth ? (captureHealth.routing_active ? 'On' : 'Off') : '--'}
 							</div>
 						</div>
 						<div class="detail-stat">
 							<div class="detail-stat-label">DHCP Server</div>
-							<div class="detail-stat-value {captureHealth?.dhcp_server_running ? 'green' : 'amber'}">
-								{captureHealth?.dhcp_server_running ? 'Running' : 'Stopped'}
+							<div class="detail-stat-value {captureHealth ? (captureHealth.dhcp_server_running ? 'green' : 'amber') : ''}">
+								{captureHealth ? (captureHealth.dhcp_server_running ? 'Running' : 'Stopped') : '--'}
 							</div>
 						</div>
 						<div class="detail-stat">
@@ -804,14 +864,19 @@
 					{:else}
 						<div class="detail-stat">
 							<div class="detail-stat-label">IP on Mirror Port</div>
-							<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : 'green'}">
-								{captureHealth?.has_ip === true ? 'Yes (should have none)' : 'None'}
+							<!-- OLD CODE START — #96: has_ip is null when the daemon couldn't run the IP check, which read as "None"
+							<div class="detail-stat-value {captureHealth ? (captureHealth.has_ip === true ? 'red' : 'green') : ''}">
+								{captureHealth ? (captureHealth.has_ip === true ? 'Yes (should have none)' : 'None') : '--'}
+							</div>
+							OLD CODE END -->
+							<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : captureHealth?.has_ip === false ? 'green' : ''}">
+								{captureHealth?.has_ip === true ? 'Yes (should have none)' : captureHealth?.has_ip === false ? 'None' : captureHealth?.has_ip === null ? "Couldn't check" : '--'}
 							</div>
 						</div>
 					{/if}
 					<div class="detail-stat">
 						<div class="detail-stat-label">Status</div>
-						<div class="detail-stat-value {captureHealth?.status === 'normal' ? 'green' : captureHealth?.status === 'degraded' ? 'amber' : 'red'}">
+						<div class="detail-stat-value {!captureHealth ? '' : captureHealth.status === 'normal' ? 'green' : captureHealth.status === 'degraded' ? 'amber' : 'red'}">
 							{captureHealth?.status?.toUpperCase() ?? '--'}
 						</div>
 					</div>
@@ -855,20 +920,20 @@
 				<div class="detail-grid">
 					<div class="detail-stat">
 						<div class="detail-stat-label">Bridge State</div>
-						<div class="detail-stat-value {bridgeHealth?.bridge_state === 'up' ? 'green' : 'red'}">
+						<div class="detail-stat-value {bridgeHealth ? (bridgeHealth.bridge_state === 'up' ? 'green' : 'red') : ''}">
 							{bridgeHealth?.bridge_state === 'up' ? 'UP' : bridgeHealth?.bridge_state?.toUpperCase() ?? '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">WAN Carrier</div>
-						<div class="detail-stat-value {bridgeHealth?.wan_link ? 'green' : 'red'}">
-							{bridgeHealth?.wan_link ? '\u25CF Connected' : '\u25CB Disconnected'}
+						<div class="detail-stat-value {bridgeHealth ? (bridgeHealth.wan_link ? 'green' : 'red') : ''}">
+							{bridgeHealth ? (bridgeHealth.wan_link ? '\u25CF Connected' : '\u25CB Disconnected') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">LAN Carrier</div>
-						<div class="detail-stat-value {bridgeHealth?.lan_link ? 'green' : 'red'}">
-							{bridgeHealth?.lan_link ? '\u25CF Connected' : '\u25CB Disconnected'}
+						<div class="detail-stat-value {bridgeHealth ? (bridgeHealth.lan_link ? 'green' : 'red') : ''}">
+							{bridgeHealth ? (bridgeHealth.lan_link ? '\u25CF Connected' : '\u25CB Disconnected') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
@@ -888,12 +953,12 @@
 					<div class="detail-stat">
 						<div class="detail-stat-label">Promisc Mode</div>
 						<div class="detail-stat-value {bridgeHealth && !bridgeHealth.bypass_active ? 'green' : ''}">
-							{bridgeHealth?.bypass_active ? 'No (Bypass)' : 'Yes'}
+							{bridgeHealth ? (bridgeHealth.bypass_active ? 'No (Bypass)' : 'Yes') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Bypass Mode</div>
-						<div class="detail-stat-value">{bridgeHealth?.bypass_active ? 'Active' : 'Inactive'}</div>
+						<div class="detail-stat-value">{bridgeHealth ? (bridgeHealth.bypass_active ? 'Active' : 'Inactive') : '--'}</div>
 					</div>
 				</div>
 			</div>
@@ -1076,8 +1141,8 @@
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Status</div>
-						<div class="detail-stat-value {logstashStats && logstashStats.events_in > 0 ? 'green' : 'amber'}">
-							{logstashStats && logstashStats.events_in > 0 ? 'Shipping' : 'Idle'}
+						<div class="detail-stat-value {logstashStats ? (logstashStats.events_in > 0 ? 'green' : 'amber') : ''}">
+							{logstashStats ? (logstashStats.events_in > 0 ? 'Shipping' : 'Idle') : '--'}
 						</div>
 					</div>
 				</div>
@@ -1193,7 +1258,13 @@
 					<div>
 						<div class="detail-title">OpenSearch Cluster</div>
 						<div class="detail-subtitle">
-							{cluster ? `Single-node cluster with ${indices.length} active indices` : 'Cluster status unknown'}
+							{#if !cluster}
+								Cluster status unknown
+							{:else if failedSources['OpenSearch indices']}
+								Single-node cluster; its index list couldn't be loaded
+							{:else}
+								Single-node cluster with {indices.length} active indices
+							{/if}
 						</div>
 					</div>
 				</div>

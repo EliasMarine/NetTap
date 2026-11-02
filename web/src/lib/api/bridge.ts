@@ -64,23 +64,28 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 export async function getBridgeHealth(): Promise<BridgeHealth> {
 	const res = await fetch('/api/bridge/health');
 
+	// OLD CODE START — #96: a failed request read as "Down" with both links down
+	// if (!res.ok) {
+	// 	return {
+	// 		bridge_state: 'unknown',
+	// 		wan_link: false,
+	// 		lan_link: false,
+	// 		bypass_active: false,
+	// 		watchdog_active: false,
+	// 		latency_us: 0,
+	// 		rx_bytes_delta: 0,
+	// 		tx_bytes_delta: 0,
+	// 		rx_packets_delta: 0,
+	// 		tx_packets_delta: 0,
+	// 		uptime_seconds: 0,
+	// 		health_status: 'down',
+	// 		issues: ['Unable to reach bridge health endpoint'],
+	// 		last_check: '',
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			bridge_state: 'unknown',
-			wan_link: false,
-			lan_link: false,
-			bypass_active: false,
-			watchdog_active: false,
-			latency_us: 0,
-			rx_bytes_delta: 0,
-			tx_bytes_delta: 0,
-			rx_packets_delta: 0,
-			tx_packets_delta: 0,
-			uptime_seconds: 0,
-			health_status: 'down',
-			issues: ['Unable to reach bridge health endpoint'],
-			last_check: '',
-		};
+		throw new Error(`Bridge health request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -158,14 +163,23 @@ export async function disableBypass(): Promise<{ result: string }> {
 export async function getBypassStatus(): Promise<BypassStatus> {
 	const res = await fetch('/api/bridge/bypass/status');
 
+	// OLD CODE START — #96: a failed request read as "Bypass inactive"
+	// if (!res.ok) {
+	// 	return {
+	// 		active: false,
+	// 		activated_at: null,
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			active: false,
-			activated_at: null,
-		};
+		throw new Error(`Bypass status request failed: HTTP ${res.status}`);
 	}
 
-	return res.json();
+	// OLD CODE START — the daemon sends `bypass_active`, so `active` was always undefined ("Inactive")
+	// return res.json();
+	// OLD CODE END
+	const data = await res.json();
+	return { active: data.active ?? data.bypass_active === true, activated_at: data.activated_at ?? null };
 }
 
 // ---------------------------------------------------------------------------
@@ -231,12 +245,17 @@ export async function createBridge(wan: string, lan: string): Promise<BridgeCrea
 export async function getBridgeReadiness(): Promise<BridgeReadiness> {
 	const res = await fetch('/api/bridge/readiness');
 
+	// OLD CODE START — #96: a failed request read as "the bridge has not been created yet"
+	// if (!res.ok) {
+	// 	return {
+	// 		ready: false,
+	// 		checks: [],
+	// 		message: 'Unable to reach readiness endpoint',
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			ready: false,
-			checks: [],
-			message: 'Unable to reach readiness endpoint',
-		};
+		throw new Error(`Bridge readiness check failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

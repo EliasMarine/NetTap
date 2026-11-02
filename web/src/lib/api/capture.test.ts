@@ -65,22 +65,16 @@ describe('capture API client', () => {
 			expect(result.interface).toBe('enp2s0');
 		});
 
-		it('returns bridge fallback on HTTP error', async () => {
+		it('throws on HTTP error instead of guessing bridge', async () => {
 			mockFetchFailure(503);
 
-			const result = await getCaptureMode();
-
-			expect(result.mode).toBe('bridge');
-			expect(result.interface).toBe('');
+			await expect(getCaptureMode()).rejects.toThrow('HTTP 503');
 		});
 
-		it('returns bridge fallback on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getCaptureMode();
-
-			expect(result.mode).toBe('bridge');
-			expect(result.interface).toBe('');
+			await expect(getCaptureMode()).rejects.toThrow();
 		});
 	});
 
@@ -176,22 +170,16 @@ describe('capture API client', () => {
 			expect(result.issues).toEqual([]);
 		});
 
-		it('returns down fallback on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting capture down', async () => {
 			mockFetchFailure(500);
 
-			const result = await getCaptureHealth();
-
-			expect(result.status).toBe('down');
-			expect(result.link_up).toBe(false);
-			expect(result.issues).toHaveLength(1);
+			await expect(getCaptureHealth()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns down fallback on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getCaptureHealth();
-
-			expect(result.status).toBe('down');
+			await expect(getCaptureHealth()).rejects.toThrow();
 		});
 	});
 
@@ -220,24 +208,16 @@ describe('capture API client', () => {
 			expect(result.drop_rate_pct).toBe(0.05);
 		});
 
-		it('returns zeros on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting zero drops', async () => {
 			mockFetchFailure(500);
 
-			const result = await getCaptureStats();
-
-			expect(result.rx_bytes).toBe(0);
-			expect(result.tx_bytes).toBe(0);
-			expect(result.rx_packets).toBe(0);
-			expect(result.rx_dropped).toBe(0);
+			await expect(getCaptureStats()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns zeros on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getCaptureStats();
-
-			expect(result.rx_bytes).toBe(0);
-			expect(result.capture_interface).toBe('');
+			await expect(getCaptureStats()).rejects.toThrow();
 		});
 	});
 
