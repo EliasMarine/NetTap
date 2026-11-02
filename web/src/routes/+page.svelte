@@ -178,8 +178,14 @@
 				getSystemHealth(),
 				getTrafficCategories(timeParams),
 				getDeviceCount(timeParams),
-				getTrafficSummary(prevTimeParams),
-				getAlertCount(prevTimeParams),
+				// OLD CODE START — with no range chosen (the default) prevTimeParams stayed {}, so this fetched
+				// the current 24 h again and each trend compared the period with itself
+				// getTrafficSummary(prevTimeParams),
+				// getAlertCount(prevTimeParams),
+				// OLD CODE END
+				// no range, no previous period: no trend rather than a comparison with itself
+				prevTimeParams.from ? getTrafficSummary(prevTimeParams) : Promise.resolve(null),
+				prevTimeParams.from ? getAlertCount(prevTimeParams) : Promise.resolve(null),
 			]);
 
 			// OLD CODE START — #96: a failure blanked each section, which read as "no data"
