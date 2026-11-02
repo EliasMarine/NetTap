@@ -343,18 +343,33 @@
 			requirements.nics = { ...requirements.nics, label: "Network interfaces: couldn't check", status: 'fail' };
 		}
 
-		// Check Docker — use the health endpoint
+		// OLD CODE START — every branch passed, a failed request included
+		// // Check Docker — use the health endpoint
+		// try {
+		// 	const healthRes = await fetch('/api/health');
+		// 	if (healthRes.ok) {
+		// 		requirements.docker = { ...requirements.docker, status: 'pass' };
+		// 	} else {
+		// 		// Health endpoint exists but returned non-ok — still means server is running
+		// 		requirements.docker = { ...requirements.docker, status: 'pass' };
+		// 	}
+		// } catch {
+		// 	// In development, if the health endpoint works, we consider Docker "available"
+		// 	requirements.docker = { ...requirements.docker, status: 'pass' };
+		// }
+		// OLD CODE END
+		// /api/health always answers 200 from the web container; whether the daemon (and so the
+		// Docker stack behind it) runs is in its `daemon` field
 		try {
 			const healthRes = await fetch('/api/health');
-			if (healthRes.ok) {
-				requirements.docker = { ...requirements.docker, status: 'pass' };
-			} else {
-				// Health endpoint exists but returned non-ok — still means server is running
-				requirements.docker = { ...requirements.docker, status: 'pass' };
-			}
+			if (!healthRes.ok) throw new Error(`HTTP ${healthRes.status}`);
+			const health = await healthRes.json();
+			const up = health?.daemon && health.daemon.status !== 'unreachable';
+			requirements.docker = up
+				? { ...requirements.docker, label: 'Docker is running', status: 'pass' }
+				: { ...requirements.docker, label: "Docker: the NetTap daemon isn't answering", status: 'fail' };
 		} catch {
-			// In development, if the health endpoint works, we consider Docker "available"
-			requirements.docker = { ...requirements.docker, status: 'pass' };
+			requirements.docker = { ...requirements.docker, label: "Docker: couldn't check", status: 'fail' };
 		}
 
 		// Check Disk via storage
