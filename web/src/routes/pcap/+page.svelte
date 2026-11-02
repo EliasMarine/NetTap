@@ -460,7 +460,10 @@
 			<span class="stat-value">{newestCapture ? formatRelativeTime(newestCapture) : '\u2014'}</span>
 		</div>
 		<div class="stat-card">
+			<!-- OLD CODE START — read as the top protocol of all captures, but it only counts the previewed packets (#63)
 			<span class="stat-label">Top Protocol</span>
+			OLD CODE END -->
+			<span class="stat-label" title="Most common protocol among the packets in the preview below">Top Protocol in Preview</span>
 			<span class="stat-value">{protocolBreakdown.length > 0 ? protocolBreakdown[0].protocol : '\u2014'}</span>
 		</div>
 	</div>
