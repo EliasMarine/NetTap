@@ -687,6 +687,17 @@ class TestBandwidthFiltersMatch(AioHTTPTestCase):
                 name,
             )
 
+    @unittest_run_loop
+    async def test_protocol_counts_leave_out_what_the_connection_count_leaves_out(self):
+        # Home's protocol total (516K) sat beside "Connections (24h)" (477K) on the G11
+        summary = await self._api_body("/api/traffic/summary")
+        protocols = await self._api_body("/api/traffic/protocols")
+
+        self.assertEqual(
+            protocols["query"]["bool"].get("must_not"),
+            summary["query"]["bool"]["must_not"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -388,12 +388,26 @@ async def handle_protocols(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        # OLD CODE START — counted the excluded IPs' connections, which Home's summary leaves
+        # out: the protocol total (516K) sat beside "Connections (24h)" (477K) on the G11
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_ZEEK_CONN_FILTERS,
+        #         ]
+        #     }
+        # },
+        # OLD CODE END
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
-                ]
+                ],
+                "must_not": build_excluded_ips_filter(
+                    request.app.get("excluded_ips", [])
+                ),
             }
         },
         "aggs": {
