@@ -412,6 +412,8 @@ class TestGetDeviceTraffic:
         assert aggs["inbound_bytes"] == {"sum": {"field": "destination.bytes", "missing": 0}}
         # ranked by the bytes the page draws, not by connection count
         assert aggs["top_destinations"]["terms"]["order"] == {"bytes": "desc"}
+        # #90: ranking by a sum is only exact when each shard returns every destination
+        assert aggs["top_destinations"]["terms"]["shard_size"] >= 10_000
 
     def test_get_device_traffic_error(self, registry, mock_client):
         """Should return empty summary on OpenSearch error."""

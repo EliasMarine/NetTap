@@ -84,6 +84,10 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
 # shortcut: only the newest 10,000 records can be paged to; use search_after if older pages are needed
 _RESULT_WINDOW = 10_000
 
+# #90: one device's terms lists are short, so asking each shard for all of them (instead of
+# OpenSearch's size * 1.5 + 10) makes the counts exact once a window spans several daily indices
+_ALL_TERMS = 10_000
+
 
 def _parse_int_param(request: web.Request, name: str, default: int) -> int:
     """Parse an integer query parameter with a fallback default."""
@@ -585,7 +589,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "total_resp_bytes": {"sum": {"field": "destination.bytes"}},
             "unique_destinations": {"cardinality": {"field": "destination.ip"}},
             "top_services": {
-                "terms": {"field": "destination.as.full", "size": 10},
+                "terms": {"field": "destination.as.full", "size": 10, "shard_size": _ALL_TERMS},
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -600,8 +604,14 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "protocols": {"terms": {"field": "network.transport", "size": 10}},
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
+            # OLD CODE START — #90: top 20 only; unique_destinations came from cardinality, an
+            # estimate (2,390 for 2,391 on the G11)
+            # "top_destinations": {
+            #     "terms": {"field": "destination.ip", "size": 20},
+            # OLD CODE END
+            # Every destination, so the top 20 and the unique count are exact
             "top_destinations": {
-                "terms": {"field": "destination.ip", "size": 20},
+                "terms": {"field": "destination.ip", "size": _ALL_TERMS},
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -660,6 +670,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     orig_bytes = int(aggs.get("total_orig_bytes", {}).get("value", 0) or 0)
     resp_bytes = int(aggs.get("total_resp_bytes", {}).get("value", 0) or 0)
     unique_dest_count = int(aggs.get("unique_destinations", {}).get("value", 0) or 0)
+    all_dests = aggs.get("top_destinations", {})
+    if all_dests.get("buckets") and not all_dests.get("sum_other_doc_count"):
+        unique_dest_count = len(all_dests["buckets"])  # #90: exact; the estimate stays past _ALL_TERMS
 
     # Top services: strip ASN prefix and merge duplicates
     svc_merged: dict[str, dict] = {}
@@ -684,7 +697,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     protocols = [pb["key"] for pb in proto_buckets]
 
     # Top destinations
-    dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])
+    dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])[:20]
     top_destinations = [
         {
             "ip": db["key"],
@@ -720,7 +733,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 "must_not": DNS_LOOKUP_EXCLUSION,
             }
         },
-        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50}}},
+        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50, "shard_size": _ALL_TERMS}}},
     }
 
     dns_queries = []
@@ -913,7 +926,10 @@ async def handle_device_categories(request: web.Request) -> web.Response:
         },
         "aggs": {
             "asn_breakdown": {
-                "terms": {"field": "destination.as.full", "size": 200},
+                # OLD CODE START — #90: 200 ASNs; a device with 395 lost 679 connections from its categories
+                # "terms": {"field": "destination.as.full", "size": 200},
+                # OLD CODE END
+                "terms": {"field": "destination.as.full", "size": _ALL_TERMS},
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -1069,7 +1085,7 @@ async def handle_device_ports(request: web.Request) -> web.Response:
         },
         "aggs": {
             "top_ports": {
-                "terms": {"field": "destination.port", "size": 20},
+                "terms": {"field": "destination.port", "size": 20, "shard_size": _ALL_TERMS},
             }
         },
     }

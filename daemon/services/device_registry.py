@@ -427,7 +427,8 @@ class DeviceRegistry:
                 # Ranked by bytes: the MAC page draws byte bars with ranks (by connection count
                 # its #1 read 673 KB and its #8 507 MB)
                 "top_destinations": {
-                    "terms": {"field": "destination.ip", "size": 20, "order": {"bytes": "desc"}},
+                    # #90: ordered by a sum, so each shard must return every destination to rank exactly
+                    "terms": {"field": "destination.ip", "size": 20, "order": {"bytes": "desc"}, "shard_size": 10_000},
                     "aggs": {
                         "bytes": {
                             "sum": {

@@ -1038,3 +1038,71 @@ class TestDeviceBandwidthInterval(AioHTTPTestCase):
         self.assertEqual(await self._interval("2026-11-01T00:00:00Z"), "5m")  # 24 h: 288 points
         self.assertEqual(await self._interval("2026-10-26T00:00:00Z"), "1h")  # 7 d: 168
         self.assertEqual(await self._interval("2026-10-03T00:00:00Z"), "3h")  # 30 d: 240
+
+
+class TestDeviceTermsAreExact(AioHTTPTestCase):
+    """#90: a terms top-N only counts exactly when each shard returns every term.
+
+    On the G11 a device's top destinations, ports and DNS lookups read low (106 for 112),
+    categories left out every ASN past the 200th (679 connections for 192.168.1.205), and
+    unique destinations was a cardinality estimate (2,390 for 2,391).
+    """
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        dests = [{"key": f"10.0.{i // 256}.{i % 256}", "doc_count": 100 - i % 90, "bytes": {"value": 10}} for i in range(25)]
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 2000}, "hits": []},
+            "aggregations": {
+                "unique_destinations": {"value": 24},  # the estimate, one short
+                "top_destinations": {"buckets": dests, "sum_other_doc_count": 0},
+            },
+        }
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_device_routes(app, self.storage)
+        return app
+
+    def _terms(self, body):
+        found = {}
+
+        def walk(aggs):
+            for name, agg in (aggs or {}).items():
+                if "terms" in agg:
+                    found[name] = agg["terms"]
+                walk(agg.get("aggs"))
+
+        walk(body.get("aggs"))
+        return found
+
+    def _bodies(self):
+        return [c.kwargs.get("body") or c[1].get("body") for c in self.mock_client.search.call_args_list]
+
+    @unittest_run_loop
+    async def test_detail_counts_every_destination(self):
+        resp = await self.client.request("GET", "/api/devices/192.168.1.44")
+        device = (await resp.json())["device"]
+        self.assertEqual(device["unique_destinations"], 25)
+        self.assertEqual(len(device["top_destinations"]), 20)
+        terms = self._terms(self._bodies()[0])
+        self.assertGreaterEqual(terms["top_destinations"]["size"], 10_000)
+        self.assertGreaterEqual(terms["top_services"]["shard_size"], 10_000)
+        dns = [t for b in self._bodies() for n, t in self._terms(b).items() if n == "dns_queries"]
+        self.assertGreaterEqual(dns[0]["shard_size"], 10_000)
+
+    @unittest_run_loop
+    async def test_unique_destinations_falls_back_past_the_list(self):
+        self.mock_client.search.return_value["aggregations"]["top_destinations"]["sum_other_doc_count"] = 5
+        resp = await self.client.request("GET", "/api/devices/192.168.1.44")
+        self.assertEqual((await resp.json())["device"]["unique_destinations"], 24)
+
+    @unittest_run_loop
+    async def test_categories_and_ports_read_every_term(self):
+        await self.client.request("GET", "/api/devices/192.168.1.205/categories")
+        await self.client.request("GET", "/api/devices/192.168.1.205/ports")
+        categories, ports = (self._terms(b) for b in self._bodies())
+        self.assertGreaterEqual(categories["asn_breakdown"]["size"], 10_000)
+        self.assertGreaterEqual(ports["top_ports"]["shard_size"], 10_000)
