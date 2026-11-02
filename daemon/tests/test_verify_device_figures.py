@@ -47,3 +47,17 @@ def test_same_reply_sum_allows_float_rounding_only():
     assert problems == []
     vdf.same_reply_sum("sum", 102, 100, problems)
     assert len(problems) == 1
+
+
+_SPLIT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "remote" / "verify_split_invariance.py"
+_split_spec = importlib.util.spec_from_file_location("verify_split_invariance", _SPLIT_PATH)
+vsi = importlib.util.module_from_spec(_split_spec)
+_split_spec.loader.exec_module(vsi)
+
+
+def test_first_difference_finds_the_changed_figure():
+    a = {"talkers": [{"ip": "1.1.1.1", "count": 40046}], "total": 3.0}
+    assert vsi.first_difference(a, {"talkers": [{"ip": "1.1.1.1", "count": 40046}], "total": 3.0 + 1e-12}) is None
+    assert vsi.first_difference(a, {"talkers": [{"ip": "1.1.1.1", "count": 38678}], "total": 3.0}) == ".talkers[0].count: 40046 vs 38678"
+    assert "2 vs 1 items" in vsi.first_difference({"x": [1, 2]}, {"x": [1]})
+    assert "only in one" in vsi.first_difference({"x": 1}, {"y": 1})
