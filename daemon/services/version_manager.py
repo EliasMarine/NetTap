@@ -521,11 +521,17 @@ class VersionManager:
         os_details: dict[str, Any] = {}
 
         opensearch_url = os.environ.get("OPENSEARCH_URL", "https://localhost:9200")
+        # OLD CODE START — no login: OpenSearch answered "Unauthorized", so the version was unknown
+        # output = await self._run_command(["curl", "-sk", opensearch_url, "--connect-timeout", "5"])
+        # OLD CODE END
+        creds = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE")  # Malcolm's curlrc (user: ...)
+        login = ["--config", creds] if creds else []
         try:
             output = await self._run_command(
                 [
                     "curl",
                     "-sk",
+                    *login,
                     opensearch_url,
                     "--connect-timeout",
                     "5",

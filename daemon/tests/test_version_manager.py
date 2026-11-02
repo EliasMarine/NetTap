@@ -8,6 +8,7 @@ missing.
 """
 
 import asyncio
+import json
 import os
 import sys
 import unittest
@@ -460,6 +461,33 @@ class TestDockerScanFailure(unittest.TestCase):
         vm._run_command = listing
         (zeek,) = asyncio.run(vm._scan_docker_images())
         self.assertEqual((zeek.name, zeek.current_version, zeek.status), ("zeek", "26.02.0", "ok"))
+
+
+class TestOpenSearchVersionLogsIn(unittest.TestCase):
+    """The G11 read "opensearch unknown": the version request had no login, so OpenSearch
+    answered "Unauthorized"."""
+
+    def test_reads_the_version_with_the_daemons_login(self):
+        from unittest.mock import patch
+
+        vm = VersionManager()
+        calls = []
+
+        async def run(cmd):
+            calls.append(cmd)
+            if cmd[0] == "curl":
+                if "--config" not in cmd:
+                    return "Unauthorized"
+                return json.dumps({"cluster_name": "malcolm", "version": {"number": "3.5.0", "distribution": "opensearch"}})
+            return ""
+
+        vm._run_command = run
+        with patch.dict(os.environ, {"OPENSEARCH_CREDS_CONFIG_FILE": "/var/local/curlrc/.opensearch.primary.curlrc"}):
+            rows = asyncio.run(vm._scan_databases())
+        row = next(r for r in rows if r.name == "opensearch")
+        self.assertEqual((row.current_version, row.status), ("3.5.0", "ok"))
+        curl = next(c for c in calls if c[0] == "curl")
+        self.assertEqual(curl[curl.index("--config") + 1], "/var/local/curlrc/.opensearch.primary.curlrc")
 
 
 class TestRulesVersionIsMeasured(unittest.TestCase):
