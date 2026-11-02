@@ -53,6 +53,8 @@ class UpdateChecker:
         self._available_updates: list[AvailableUpdate] = []
         self._last_check: str | None = None
         self._checking: bool = False
+        # Components the last check could not ask about (#96): unknown, not "up to date"
+        self._failed_checks: list[str] = []
         self._version_manager = None  # Set externally after init
 
         logger.info(
@@ -77,14 +79,16 @@ class UpdateChecker:
 
         Returns:
             Dict with "updates" (list of AvailableUpdate dicts),
-            "last_check" (ISO timestamp), "count" (int), and
-            "has_updates" (bool).
+            "last_check" (ISO timestamp), "count" (int),
+            "has_updates" (bool) and "failed_checks" (components that
+            could not be checked, so their update state is unknown).
         """
         if self._checking:
             return await self.get_available()
 
         self._checking = True
         now = datetime.now(timezone.utc).isoformat()
+        self._failed_checks = []
 
         try:
             all_updates: list[AvailableUpdate] = []
@@ -97,11 +101,22 @@ class UpdateChecker:
                     for v in versions_data.get("versions", []):
                         current_versions[v["name"]] = v["current_version"]
                 except Exception as exc:
-                    logger.debug("Could not get current versions: %s", exc)
+                    # OLD CODE START — #96: the container checks were skipped unseen
+                    # logger.debug("Could not get current versions: %s", exc)
+                    # OLD CODE END
+                    logger.warning("Could not get current versions: %s", exc)
+                    self._failed_checks.append("component-versions")
 
             # Check GitHub releases for NetTap core updates
-            github_updates = await self._check_github_releases()
-            all_updates.extend(github_updates)
+            # OLD CODE START — #96: a failed GitHub request read as "no NetTap update"
+            # github_updates = await self._check_github_releases()
+            # all_updates.extend(github_updates)
+            # OLD CODE END
+            try:
+                all_updates.extend(await self._check_github_releases())
+            except Exception as exc:
+                logger.warning("GitHub release check failed: %s", exc)
+                self._failed_checks.append("nettap-daemon")
 
             # Check Docker Hub for image updates
             docker_updates = await self._check_docker_updates(current_versions)
@@ -130,6 +145,7 @@ class UpdateChecker:
                 "last_check": self._last_check,
                 "count": len(all_updates),
                 "has_updates": len(all_updates) > 0,
+                "failed_checks": list(self._failed_checks),
             }
         finally:
             self._checking = False
@@ -139,13 +155,14 @@ class UpdateChecker:
 
         Returns:
             Dict with "updates" (list), "last_check" (ISO timestamp),
-            "count" (int), and "has_updates" (bool).
+            "count" (int), "has_updates" (bool) and "failed_checks" (list).
         """
         return {
             "updates": [u.to_dict() for u in self._available_updates],
             "last_check": self._last_check,
             "count": len(self._available_updates),
             "has_updates": len(self._available_updates) > 0,
+            "failed_checks": list(self._failed_checks),
         }
 
     async def get_update_for(self, component: str) -> dict | None:
@@ -174,43 +191,50 @@ class UpdateChecker:
 
         Returns:
             List of AvailableUpdate (0 or 1 items).
+
+        Raises:
+            Exception: if GitHub could not be asked (check_updates records it).
         """
         results: list[AvailableUpdate] = []
         url = f"https://api.github.com/repos/{self._github_repo}/releases/latest"
 
-        try:
-            data = await self._fetch_json(url)
-            if not data or "tag_name" not in data:
-                return results
+        # OLD CODE START — #96: any failure was logged at debug and read as "no update"
+        # try:
+        #     data = await self._fetch_json(url)
+        #     ...
+        # except Exception as exc:
+        #     logger.debug("GitHub release check failed: %s", exc)
+        # OLD CODE END
+        data = await self._fetch_json(url)
+        if not data or "tag_name" not in data:
+            return results
 
-            latest_tag = data["tag_name"]
-            # Strip leading 'v' for version comparison
-            latest_version = latest_tag.lstrip("v")
+        latest_tag = data["tag_name"]
+        # Strip leading 'v' for version comparison
+        latest_version = latest_tag.lstrip("v")
 
-            # Get current version from VersionManager or fallback
-            from services.version_manager import NETTAP_VERSION
+        # Get current version from VersionManager or fallback
+        from services.version_manager import NETTAP_VERSION
 
-            current = NETTAP_VERSION
+        current = NETTAP_VERSION
 
-            update_type = await self._compare_versions(current, latest_version)
-            if update_type == "same":
-                return results
+        update_type = await self._compare_versions(current, latest_version)
+        if update_type == "same":
+            return results
 
-            results.append(
-                AvailableUpdate(
-                    component="nettap-daemon",
-                    current_version=current,
-                    latest_version=latest_version,
-                    update_type=update_type,
-                    release_url=data.get("html_url", ""),
-                    release_date=data.get("published_at", ""),
-                    changelog=data.get("body", "")[:500],
-                    size_mb=self._estimate_release_size(data),
-                    requires_restart=True,
-                )
+        results.append(
+            AvailableUpdate(
+                component="nettap-daemon",
+                current_version=current,
+                latest_version=latest_version,
+                update_type=update_type,
+                release_url=data.get("html_url", ""),
+                release_date=data.get("published_at", ""),
+                changelog=(data.get("body") or "")[:500],
+                size_mb=self._estimate_release_size(data),
+                requires_restart=True,
             )
-        except Exception as exc:
-            logger.debug("GitHub release check failed: %s", exc)
+        )
 
         return results
 
@@ -292,7 +316,11 @@ class UpdateChecker:
                         )
                         break  # Only report the latest newer tag
             except Exception as exc:
-                logger.debug("Docker Hub check failed for %s: %s", component, exc)
+                # OLD CODE START — #96: a failed check read as "no update" for it
+                # logger.debug("Docker Hub check failed for %s: %s", component, exc)
+                # OLD CODE END
+                logger.warning("Docker Hub check failed for %s: %s", component, exc)
+                self._failed_checks.append(component)
 
         return results
 
@@ -435,27 +463,40 @@ class UpdateChecker:
             url: The URL to fetch.
 
         Returns:
-            Parsed JSON as a dict, or empty dict on failure.
+            Parsed JSON as a dict, or an empty dict on 404 (nothing published).
+
+        Raises:
+            RuntimeError: on any other non-200 status (rate limit, server error).
+            aiohttp.ClientError, asyncio.TimeoutError: if the request failed.
         """
-        try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    url,
-                    headers={"Accept": "application/json"},
-                    ssl=False,
-                ) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
-                    else:
-                        logger.debug("HTTP %d from %s", resp.status, url)
-                        return {}
-        except aiohttp.ClientError as exc:
-            logger.debug("HTTP request failed for %s: %s", url, exc)
-            return {}
-        except Exception as exc:
-            logger.debug("Unexpected error fetching %s: %s", url, exc)
-            return {}
+        # OLD CODE START — #96: every failure (offline, rate-limited) read as "no data",
+        # so the update page said "up to date"
+        # try:
+        #     ...
+        #             if resp.status == 200:
+        #                 return await resp.json()
+        #             else:
+        #                 logger.debug("HTTP %d from %s", resp.status, url)
+        #                 return {}
+        # except aiohttp.ClientError as exc:
+        #     logger.debug("HTTP request failed for %s: %s", url, exc)
+        #     return {}
+        # except Exception as exc:
+        #     logger.debug("Unexpected error fetching %s: %s", url, exc)
+        #     return {}
+        # OLD CODE END
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                url,
+                headers={"Accept": "application/json"},
+                ssl=False,
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                if resp.status == 404:
+                    return {}
+                raise RuntimeError(f"HTTP {resp.status} from {url}")
 
     @staticmethod
     def _parse_version(version_str: str) -> tuple[int, int, int] | None:

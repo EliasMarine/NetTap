@@ -368,18 +368,81 @@ class TestParseVersion(unittest.TestCase):
 class TestFetchJson(unittest.TestCase):
     """Tests for UpdateChecker._fetch_json() error handling."""
 
-    def test_fetch_json_handles_network_error(self):
-        """_fetch_json() should return empty dict on network error."""
+    def test_fetch_json_raises_on_network_error(self):
+        """#96: a failed request is an error, not an empty answer."""
         uc = UpdateChecker()
         # Use an unreachable URL to test error handling
-        result = asyncio.run(uc._fetch_json("http://192.0.2.1:99999/test"))
-        self.assertEqual(result, {})
+        with self.assertRaises(Exception):
+            asyncio.run(uc._fetch_json("http://192.0.2.1:99999/test"))
 
-    def test_fetch_json_handles_invalid_url(self):
-        """_fetch_json() should handle invalid URLs gracefully."""
+    def test_fetch_json_raises_on_invalid_url(self):
         uc = UpdateChecker()
-        result = asyncio.run(uc._fetch_json("not-a-url"))
-        self.assertEqual(result, {})
+        with self.assertRaises(Exception):
+            asyncio.run(uc._fetch_json("not-a-url"))
+
+
+class TestFailedChecksAreReported(unittest.TestCase):
+    """#96: a source that couldn't be asked is listed, never read as "up to date"."""
+
+    def _checker(self, fetch):
+        uc = UpdateChecker()
+        uc._fetch_json = fetch
+
+        async def none():
+            return None
+
+        uc._check_suricata_rules = none
+        uc._check_geoip_update = none
+        return uc
+
+    def test_github_failure_listed(self):
+        async def offline(url):
+            raise RuntimeError("HTTP 403 from github")
+
+        uc = self._checker(offline)
+        result = asyncio.run(uc.check_updates())
+        self.assertEqual(result["failed_checks"], ["nettap-daemon"])
+        self.assertEqual(
+            asyncio.run(uc.get_available())["failed_checks"], ["nettap-daemon"]
+        )
+
+    def test_no_release_published_is_not_a_failure(self):
+        async def not_found(url):
+            return {}
+
+        result = asyncio.run(self._checker(not_found).check_updates())
+        self.assertEqual(result["failed_checks"], [])
+        self.assertFalse(result["has_updates"])
+
+    def test_docker_hub_failure_listed(self):
+        async def fetch(url):
+            if "github" in url:
+                return {}
+            raise RuntimeError("HTTP 500")
+
+        uc = self._checker(fetch)
+
+        class VM:
+            async def get_versions(self):
+                return {"versions": [{"name": "zeek", "current_version": "6.0.0"}]}
+
+        uc.set_version_manager(VM())
+        result = asyncio.run(uc.check_updates())
+        self.assertEqual(result["failed_checks"], ["zeek"])
+
+    def test_version_lookup_failure_listed(self):
+        async def not_found(url):
+            return {}
+
+        uc = self._checker(not_found)
+
+        class VM:
+            async def get_versions(self):
+                raise OSError("docker unavailable")
+
+        uc.set_version_manager(VM())
+        result = asyncio.run(uc.check_updates())
+        self.assertEqual(result["failed_checks"], ["component-versions"])
 
 
 class TestEstimateReleaseSize(unittest.TestCase):
