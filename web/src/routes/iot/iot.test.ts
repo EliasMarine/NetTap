@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import * as iotApi from '$lib/api/iot';
 import IoTPage from './+page.svelte';
 
@@ -62,7 +62,62 @@ describe('IoT page — failed endpoints', () => {
 
 		expect(screen.queryByText('Failed to load IoT data.')).not.toBeInTheDocument();
 		expect(screen.getByText('Network Isolation')).toBeInTheDocument();
+		// OLD CODE START — #96: the failure read as a finding of no cross-segment traffic
+		// expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText(/Couldn't check for cross-segment IoT communication/)).toBeInTheDocument();
+		expect(screen.queryByText('No cross-segment IoT communication detected.')).not.toBeInTheDocument();
+	});
+
+	// #96: the findings feed is built from the privacy and protocol checks; when one failed it
+	// said "No findings -- all devices look healthy"
+	it('says the checks failed instead of "all devices look healthy"', async () => {
+		mockSections('ok', 'ok');
+		const fail = () => Promise.reject(new Error('Failed to load privacy report: 500'));
+		vi.mocked(iotApi.getPrivacyReport).mockImplementation(fail);
+		vi.mocked(iotApi.getManufacturerProfiles).mockImplementation(fail);
+
+		render(IoTPage);
+		await flush();
+
+		expect(screen.getByText(/Couldn't check privacy: the request failed/)).toBeInTheDocument();
+		expect(screen.queryByText('No findings -- all devices look healthy.')).not.toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load manufacturer profiles/)).toBeInTheDocument();
+	});
+
+	it('still says all devices look healthy when every check ran and found nothing', async () => {
+		mockSections('ok', 'ok');
+
+		render(IoTPage);
+		await flush();
+
+		expect(screen.getByText('No findings -- all devices look healthy.')).toBeInTheDocument();
 		expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+
+	// #96: a failed protocol audit showed a green "All protocols within expected parameters."
+	it('says the protocol audit failed in the device drawer', async () => {
+		mockSections('ok', 'ok');
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue({
+			...FLEET,
+			device_count: 1,
+			devices: [{
+				mac: 'AA:BB:CC:DD:EE:02', name: 'Doorbell', manufacturer: 'Ring', ip: '192.168.1.61',
+				score: 80, grade: 'B', privacy_score: 80, security_score: 80, behavior_score: 80,
+				anomaly_count: 0, encryption_pct: 90, tracker_count: 0, last_seen: null,
+			}],
+		} as never);
+		vi.mocked(iotApi.getProtocolAudit).mockRejectedValue(new Error('Failed to load protocol audit: 500'));
+
+		render(IoTPage);
+		await flush();
+		await fireEvent.click(screen.getByText('Doorbell'));
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Protocol' }));
+
+		expect(screen.getByText("Couldn't run the protocol audit: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('All protocols within expected parameters.')).not.toBeInTheDocument();
 	});
 });
 

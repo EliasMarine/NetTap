@@ -59,6 +59,9 @@
 	let activeTab = $state('overview');
 	let commMapData = $state<CommunicationMap | null>(null);
 	let timelineData = $state<ActivityTimeline | null>(null);
+	// #96: a failed request says so; once the page has loaded, a null section above means it failed
+	let commFailed = $state(false);
+	let timelineFailed = $state(false);
 	let drawerLoading = $state(false);
 
 	// ---------------------------------------------------------------------------
@@ -159,19 +162,30 @@
 		activeTab = 'overview';
 		drawerLoading = true;
 		const params = computeTimeParams(selectedRange);
-		try {
-			const [commMap, timeline] = await Promise.all([
-				getCommunicationMap(device.mac, params),
-				getActivityTimeline(device.mac, params),
-			]);
-			commMapData = commMap;
-			timelineData = timeline;
-		} catch {
-			commMapData = null;
-			timelineData = null;
-		} finally {
-			drawerLoading = false;
-		}
+		// OLD CODE START — #96: one failure blanked both tabs, and each read as "no data for this device"
+		// try {
+		// 	const [commMap, timeline] = await Promise.all([
+		// 		getCommunicationMap(device.mac, params),
+		// 		getActivityTimeline(device.mac, params),
+		// 	]);
+		// 	commMapData = commMap;
+		// 	timelineData = timeline;
+		// } catch {
+		// 	commMapData = null;
+		// 	timelineData = null;
+		// } finally {
+		// 	drawerLoading = false;
+		// }
+		// OLD CODE END
+		const [commMap, timeline] = await Promise.allSettled([
+			getCommunicationMap(device.mac, params),
+			getActivityTimeline(device.mac, params),
+		]);
+		commMapData = commMap.status === 'fulfilled' ? commMap.value : null;
+		commFailed = commMap.status === 'rejected';
+		timelineData = timeline.status === 'fulfilled' ? timeline.value : null;
+		timelineFailed = timeline.status === 'rejected';
+		drawerLoading = false;
 	}
 
 	function closeDrawer() {
@@ -716,6 +730,10 @@
 							showDot={true}
 							labelWidth={130}
 						/>
+					{:else if manufacturers === null}
+						<div class="empty-state-inline">
+							<p class="text-muted">Couldn't load manufacturer profiles: the request failed.</p>
+						</div>
 					{:else}
 						<div class="empty-state-inline">
 							<p class="text-muted">No manufacturer data available.</p>
@@ -733,6 +751,14 @@
 					{/if}
 				</div>
 				<div class="findings-list">
+					<!-- #96: findings come from the privacy and protocol checks; a failed one is not "healthy" -->
+					{#if privacy === null || protocol === null}
+						<div class="empty-state-inline">
+							<p class="text-muted">
+								Couldn't check {privacy === null && protocol === null ? 'privacy or protocols' : privacy === null ? 'privacy' : 'protocols'}: the request failed.
+							</p>
+						</div>
+					{/if}
 					{#if findings.length > 0}
 						{#each findings.slice(0, 20) as finding (finding.id)}
 							<div class="finding-item">
@@ -759,7 +785,7 @@
 								+{findings.length - 20} more findings
 							</div>
 						{/if}
-					{:else}
+					{:else if privacy !== null && protocol !== null}
 						<div class="empty-state-inline">
 							<p class="text-muted">No findings -- all devices look healthy.</p>
 						</div>
@@ -853,6 +879,10 @@
 						<p>{isolation.recommendation}</p>
 					</div>
 				{/if}
+			{:else if isolation === null}
+				<div class="empty-state-inline" style="padding: var(--space-lg);">
+					<p class="text-muted">Couldn't check for cross-segment IoT communication: the request failed.</p>
+				</div>
 			{:else}
 				<div class="empty-state-inline" style="padding: var(--space-lg);">
 					<p class="text-muted">No cross-segment IoT communication detected.</p>
@@ -938,6 +968,8 @@
 							showRank={true}
 							labelWidth={160}
 						/>
+					{:else if commFailed}
+						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't load this device's destinations: the request failed.</p>
 					{:else}
 						<p class="text-muted" style="font-size: var(--text-sm);">No communication data for this device.</p>
 					{/if}
@@ -979,6 +1011,10 @@
 							<span class="ph-label">requests/hour</span>
 						</div>
 					</DrawerSection>
+				{:else if privacy === null}
+					<div class="empty-state-inline">
+						<p class="text-muted">Couldn't load the privacy report: the request failed.</p>
+					</div>
 				{:else}
 					<div class="empty-state-inline">
 						<p class="text-muted">No privacy data available for this device.</p>
@@ -1038,6 +1074,10 @@
 							</table>
 						</div>
 					</DrawerSection>
+				{:else if protocol === null}
+					<DrawerSection title="Protocol Audit">
+						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't run the protocol audit: the request failed.</p>
+					</DrawerSection>
 				{:else}
 					<DrawerSection title="Protocol Audit">
 						<div class="proto-compliant">
@@ -1061,6 +1101,8 @@
 							label="Connections"
 							formatValue={(n) => formatNumber(Math.round(n))}
 						/>
+					{:else if timelineFailed}
+						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't load this device's activity: the request failed.</p>
 					{:else}
 						<p class="text-muted" style="font-size: var(--text-sm);">No activity data available.</p>
 					{/if}
