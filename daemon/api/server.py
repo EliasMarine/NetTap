@@ -985,7 +985,10 @@ def create_app(
 
     # Network tools (DNS Recon, MAC Lookup, Ping, Traceroute, SSL Cert)
     dns_recon = DnsReconService()
-    mac_lookup = MacLookupService()
+    # OLD CODE START — #26: no OpenSearch, so only the 208 bundled prefixes were known
+    # mac_lookup = MacLookupService()
+    # OLD CODE END
+    mac_lookup = MacLookupService(opensearch_client=storage._client)
     network_diag = NetworkDiagService()
     ssl_cert = SslCertService()
     register_tools_routes(app, dns_recon, mac_lookup, network_diag, ssl_cert)
