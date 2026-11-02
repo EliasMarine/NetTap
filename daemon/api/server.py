@@ -437,6 +437,15 @@ async def handle_indices(request: web.Request) -> web.Response:
         )
 
 
+def _host_uptime_seconds() -> float | None:
+    """Machine uptime; /proc/uptime isn't namespaced, so the container sees the host's."""
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 async def handle_system_health(request: web.Request) -> web.Response:
     """GET /api/system/health -- Combined system health check.
 
@@ -449,8 +458,14 @@ async def handle_system_health(request: web.Request) -> web.Response:
     # opensearch_url: str = request.app["opensearch_url"]
     # OLD CODE END
 
+    # OLD CODE START — replaced 2026-11-01: the System page shows "uptime" as the
+    # machine's, but this was the daemon's (minutes after any redeploy).
+    # result: dict = {
+    #     "uptime": round(uptime, 2),
+    # OLD CODE END
     result: dict = {
-        "uptime": round(uptime, 2),
+        "uptime": round(_host_uptime_seconds() or uptime, 2),
+        "daemon_uptime": round(uptime, 2),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "storage": None,
         "smart": None,
