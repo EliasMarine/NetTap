@@ -96,6 +96,25 @@ def _parse_int_param(request: web.Request, name: str, default: int) -> int:
     return default
 
 
+def _bandwidth_interval(from_ts: str, to_ts: str) -> str:
+    """Bucket size for the device bandwidth chart: about 170-290 points for any range.
+
+    5 minutes up to a day (as before), 1 hour up to 7 days, 3 hours beyond (#87: with
+    min_doc_count 0 and extended bounds, 30 days at 5 minutes was 8,640 buckets).
+    """
+    try:
+        t0 = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+        span = (t1 - t0).total_seconds()
+    except (ValueError, TypeError):
+        return "5m"
+    if span <= 86400:
+        return "5m"
+    if span <= 7 * 86400:
+        return "1h"
+    return "3h"
+
+
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
     """Build an OpenSearch range filter on the '@timestamp' field (ECS timestamp)."""
     return {
@@ -597,7 +616,10 @@ async def handle_device_detail(request: web.Request) -> web.Response:
             "bandwidth_series": {
                 "date_histogram": {
                     "field": "@timestamp",
-                    "fixed_interval": "5m",
+                    # OLD CODE START — #87: 5 minutes for every range
+                    # "fixed_interval": "5m",
+                    # OLD CODE END
+                    "fixed_interval": _bandwidth_interval(from_ts, to_ts),
                     "min_doc_count": 0,
                     "extended_bounds": {
                         "min": from_ts,

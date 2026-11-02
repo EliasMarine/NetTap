@@ -87,3 +87,47 @@ describe('Device detail — suppress smart alert', () => {
 		expect(screen.queryByText('Suppress failed. Try again.')).not.toBeInTheDocument();
 	});
 });
+
+describe('Device detail — time range (#87)', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const HOUR = 3_600_000;
+	function spanHours(opts: { from?: string; to?: string }): number {
+		return (Date.parse(opts.to ?? '') - Date.parse(opts.from ?? '')) / HOUR;
+	}
+
+	it('asks for the last 24 h by default and 7 days after clicking 7d, on every request', async () => {
+		const devices = await import('$api/devices');
+		render(Page);
+		await flush();
+		expect(spanHours(vi.mocked(devices.getDeviceDetail).mock.calls[0][1] as never)).toBe(24);
+
+		vi.clearAllMocks();
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+		for (const fn of [
+			devices.getDeviceDetail,
+			devices.getDeviceCategories,
+			devices.getDevicePorts,
+			devices.getDeviceRiskScore,
+			devices.getDeviceConnections,
+		]) {
+			expect(vi.mocked(fn)).toHaveBeenCalledTimes(1);
+			expect(spanHours(vi.mocked(fn).mock.calls[0][1] as never)).toBe(168);
+		}
+		expect(spanHours(vi.mocked(getSmartAlerts).mock.calls[0][0] as never)).toBe(168);
+		// Connection pages reuse the fetch's window instead of sliding with the clock
+		const detailOpts = vi.mocked(devices.getDeviceDetail).mock.calls[0][1] as { from: string };
+		const connOpts = vi.mocked(devices.getDeviceConnections).mock.calls[0][1] as { from: string };
+		expect(connOpts.from).toBe(detailOpts.from);
+	});
+});

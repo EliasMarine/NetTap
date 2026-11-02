@@ -1008,3 +1008,33 @@ class TestDeviceTotalsPast10000(AioHTTPTestCase):
         data = await resp.json()
         self.assertEqual(data["total"], 48158)
         self.assertEqual(data["total_pages"], 200)
+
+
+class TestDeviceBandwidthInterval(AioHTTPTestCase):
+    """#87: Device detail's 7d/30d buttons now work; 30 days at 5 minutes was 8,640 buckets."""
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        self.mock_client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_device_routes(app, self.storage)
+        return app
+
+    async def _interval(self, from_ts):
+        self.mock_client.search.reset_mock()
+        resp = await self.client.request(
+            "GET", "/api/devices/192.168.1.1", params={"from": from_ts, "to": "2026-11-02T00:00:00Z"}
+        )
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args_list[0].kwargs["body"]
+        return body["aggs"]["bandwidth_series"]["date_histogram"]["fixed_interval"]
+
+    @unittest_run_loop
+    async def test_interval_scales_with_the_range(self):
+        self.assertEqual(await self._interval("2026-11-01T00:00:00Z"), "5m")  # 24 h: 288 points
+        self.assertEqual(await self._interval("2026-10-26T00:00:00Z"), "1h")  # 7 d: 168
+        self.assertEqual(await self._interval("2026-10-03T00:00:00Z"), "3h")  # 30 d: 240

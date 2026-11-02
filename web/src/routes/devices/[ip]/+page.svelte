@@ -14,7 +14,7 @@
 
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
 	import DualSeriesChart from '$components/charts/DualSeriesChart.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
@@ -98,6 +98,20 @@
 
 	// UI state
 	let autoRefresh = $state(false);
+
+	// #87: the range pills had no handlers, so every request used the daemon's 24 h default
+	const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const;
+	type RangeKey = keyof typeof RANGE_HOURS;
+	const RANGE_KEYS = Object.keys(RANGE_HOURS) as RangeKey[];
+	let range = $state<RangeKey>('24h');
+	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
+	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
+
+	function rangeSpan(key: RangeKey): { from: string; to: string } {
+		const to = new Date();
+		const from = new Date(to.getTime() - RANGE_HOURS[key] * 3_600_000);
+		return { from: from.toISOString(), to: to.toISOString() };
+	}
 	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
 	let lastUpdated = $state(new Date());
 	let selectedConnection = $state<Record<string, unknown> | null>(null);
@@ -163,13 +177,23 @@
 
 	async function fetchAll() {
 		loading = true;
+		span = rangeSpan(range);
 		try {
+			// OLD CODE START — #87: no time range, so the pills changed nothing
+			// const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
+			// 	getDeviceDetail(deviceIp),
+			// 	getDeviceCategories(deviceIp),
+			// 	getSmartAlerts({ device_ip: deviceIp, limit: 10 }),
+			// 	getDevicePorts(deviceIp),
+			// 	getDeviceRiskScore(deviceIp),
+			// ]);
+			// OLD CODE END
 			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
-				getDeviceDetail(deviceIp),
-				getDeviceCategories(deviceIp),
-				getSmartAlerts({ device_ip: deviceIp, limit: 10 }),
-				getDevicePorts(deviceIp),
-				getDeviceRiskScore(deviceIp),
+				getDeviceDetail(deviceIp, span),
+				getDeviceCategories(deviceIp, span),
+				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }),
+				getDevicePorts(deviceIp, span),
+				getDeviceRiskScore(deviceIp, span),
 			]);
 			device = deviceRes.device;
 			categories = catRes.categories;
@@ -192,6 +216,7 @@
 		connectionsLoading = true;
 		try {
 			const res = await getDeviceConnections(deviceIp, {
+				...span,
 				page: pageNum,
 				size: connectionsPageSize,
 			});
@@ -208,7 +233,11 @@
 
 	$effect(() => {
 		const ip = deviceIp;
-		if (ip) fetchAll();
+		void range; // refetch when the range changes
+		// fetchAll writes and reads `span`; untracked so that write can't rerun this effect
+		untrack(() => {
+			if (ip) fetchAll();
+		});
 	});
 
 	// Auto-refresh
@@ -347,9 +376,14 @@
 				<button class="back-link" onclick={() => goto('/devices')}>&larr; Back to Devices</button>
 				<div class="header-controls">
 					<div class="pills">
+						<!-- OLD CODE START — #87: no handlers; 24h was always marked active
 						<button class="pill active">24h</button>
 						<button class="pill">7d</button>
 						<button class="pill">30d</button>
+						OLD CODE END -->
+						{#each RANGE_KEYS as key (key)}
+							<button class="pill" class:active={range === key} aria-pressed={range === key} onclick={() => (range = key)}>{key}</button>
+						{/each}
 					</div>
 					<button class="auto-btn" class:active={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 						<span class="auto-dot"></span> Auto
@@ -691,7 +725,7 @@
 						<tbody>
 							{#each filteredConnections as conn, i (`${conn._id}-${i}`)}
 								<tr class="conn-row" class:selected={selectedConnection === conn} onclick={() => openDrawer(conn)}>
-									<td class="mono td-sm">{new Date(asString(getField(conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+									<td class="mono td-sm">{range === '24h' ? new Date(asString(getField(conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(asString(getField(conn, '@timestamp'))).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
 									<td class="mono td-sm">{asString(getField(conn, 'destination.ip'))}:{asString(getField(conn, 'destination.port'))}</td>
 									<td><span class="proto-tag">{asString(getField(conn, 'network.transport'))}</span></td>
 									<td class="td-sm">{asString(getField(conn, 'network.protocol')) || asString(getField(conn, 'network.transport'))}</td>
