@@ -613,3 +613,34 @@ class TestCategoryFiltering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOsVersionIsTheHosts(unittest.TestCase):
+    """System → Updates said "os 12" on the G11 (Ubuntu 24.04): it read the daemon
+    container's own os-release, the Debian release its image is built on."""
+
+    def _scan(self, path: str) -> dict:
+        from unittest.mock import patch
+
+        vm = VersionManager()
+        vm._run_command = MagicMock(side_effect=lambda cmd: asyncio.sleep(0, result="6.8.0-147-generic"))
+        with patch.dict(os.environ, {"HOST_OS_RELEASE": path}):
+            rows = asyncio.run(vm._scan_os_info())
+        return next(r for r in rows if r.name == "os")
+
+    def test_reads_the_hosts_os_release(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix="os-release", delete=False) as fh:
+            fh.write('PRETTY_NAME="Ubuntu 24.04.5 LTS"\nVERSION_ID="24.04"\n')
+        try:
+            row = self._scan(fh.name)
+        finally:
+            os.unlink(fh.name)
+        self.assertEqual((row.current_version, row.status), ("24.04", "ok"))
+        self.assertEqual(row.details["pretty_name"], "Ubuntu 24.04.5 LTS")
+
+    def test_without_the_mount_it_is_unknown_not_the_containers(self):
+        row = self._scan("/nonexistent/host/etc/os-release")
+        self.assertEqual((row.current_version, row.status), ("unknown", "unknown"))
+        self.assertIn("isn't mounted", row.details["error"])

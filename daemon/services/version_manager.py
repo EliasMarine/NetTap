@@ -561,8 +561,8 @@ class VersionManager:
     async def _scan_os_info(self) -> list[ComponentVersion]:
         """Scan operating system information.
 
-        Reads Ubuntu version from /etc/os-release and kernel version
-        from ``uname -r``.
+        Reads the host's OS version from its os-release (mounted at /host/etc/os-release)
+        and the kernel version from ``uname -r`` (the host's kernel: containers share it).
         """
         now = datetime.now(timezone.utc).isoformat()
         results: list[ComponentVersion] = []
@@ -573,9 +573,18 @@ class VersionManager:
         os_status = "unknown"
         os_details: dict[str, Any] = {}
 
+        # OLD CODE START — read the daemon container's own file: the G11 (Ubuntu 24.04) showed "12",
+        # the Debian release the daemon image is built on
+        # try:
+        #     if os.path.exists("/etc/os-release"):
+        #         with open("/etc/os-release", "r") as f:
+        #             content = f.read()
+        #         ...
+        # OLD CODE END
+        host_file = os.environ.get("HOST_OS_RELEASE", "/host/etc/os-release")
         try:
-            if os.path.exists("/etc/os-release"):
-                with open("/etc/os-release", "r") as f:
+            if os.path.exists(host_file):
+                with open(host_file, "r") as f:
                     content = f.read()
                 for line in content.strip().split("\n"):
                     if line.startswith("VERSION_ID="):
@@ -584,6 +593,8 @@ class VersionManager:
                         os_name = line.split("=", 1)[1].strip().strip('"')
                 os_status = "ok"
                 os_details = {"pretty_name": os_name}
+            else:  # the container's own file would name the image's OS, not the host's
+                os_details = {"error": f"the host's os-release isn't mounted at {host_file}"}
         except (OSError, PermissionError) as exc:
             os_details = {"error": str(exc)}
 
