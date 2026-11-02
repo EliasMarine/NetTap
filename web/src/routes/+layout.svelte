@@ -32,6 +32,28 @@
 		initCaptureMode();
 	});
 
+	// Top-bar status: Online only while the daemon actually answers its liveness check
+	const DAEMON_CHECK_MS = 30_000;
+	const DAEMON_STATUS_TEXT = { checking: 'Checking…', online: 'Online', offline: "Can't reach NetTap" };
+	let daemonStatus = $state<keyof typeof DAEMON_STATUS_TEXT>('checking');
+
+	async function checkDaemon() {
+		try {
+			const res = await fetch('/api/system/ping');
+			// a lapsed session redirects to the login page, which is not the daemon answering
+			const body = res.ok ? await res.json() : null;
+			daemonStatus = body?.status === 'ok' ? 'online' : 'offline';
+		} catch {
+			daemonStatus = 'offline';
+		}
+	}
+
+	$effect(() => {
+		checkDaemon();
+		const timer = setInterval(checkDaemon, DAEMON_CHECK_MS);
+		return () => clearInterval(timer);
+	});
+
 	const navItems = [
 		{ href: '/', label: 'Home', icon: 'home' },
 		{ href: '/logs', label: 'Log Explorer', icon: 'search' },
@@ -202,9 +224,20 @@
 						<span class="mode-badge mode-unknown" title="Capture mode: couldn't be read">Mode unknown</span>
 					{/if}
 
+					<!-- OLD CODE START — always said Online, even with the daemon down
 					<div class="status-indicator">
 						<span class="health-dot green"></span>
 						<span class="status-text">Online</span>
+					</div>
+					OLD CODE END -->
+					<div class="status-indicator" title="Whether the NetTap service answers">
+						<span
+							class="health-dot"
+							class:green={daemonStatus === 'online'}
+							class:red={daemonStatus === 'offline'}
+							class:checking={daemonStatus === 'checking'}
+						></span>
+						<span class="status-text" class:offline={daemonStatus === 'offline'}>{DAEMON_STATUS_TEXT[daemonStatus]}</span>
 					</div>
 
 					<NotificationBell />
@@ -398,6 +431,14 @@
 		font-size: 11px;
 		color: var(--text-muted);
 		font-weight: 500;
+	}
+
+	.status-text.offline {
+		color: var(--red);
+	}
+
+	.health-dot.checking {
+		background: var(--text-dim);
 	}
 
 	.logout-form {
