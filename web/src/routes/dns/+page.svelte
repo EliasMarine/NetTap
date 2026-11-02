@@ -10,6 +10,7 @@
 		getDeviceDns,
 	} from '$lib/api/dns';
 	import { page } from '$app/stores';
+	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type {
 		DnsStats,
@@ -55,6 +56,10 @@
 	let queryTypes = $state<QueryTypeEntry[]>([]);
 	let timeline = $state<TimelineEntry[]>([]);
 	let suspicious = $state<SuspiciousEntry[]>([]);
+	// #96: a failed check must not read as "none detected"; a long list shows its first rows
+	let suspiciousFailed = $state(false);
+	let showAllSuspicious = $state(false);
+	const SUSPICIOUS_SHOWN = 50;
 
 	// Per-device
 	let deviceIpInput = $state('');
@@ -194,6 +199,7 @@
 		if (results[3].status === 'fulfilled') queryTypes = results[3].value.types;
 		if (results[4].status === 'fulfilled') timeline = results[4].value.series;
 		if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious;
+		suspiciousFailed = results[5].status === 'rejected';
 
 		loading = false;
 	}
@@ -620,11 +626,16 @@
 		<!-- Suspicious DNS Patterns -->
 		<section class="card">
 			<h2>Suspicious DNS Patterns</h2>
+			<!-- OLD CODE START — #96: a failed check showed "No suspicious DNS patterns detected"
 			{#if suspicious.length === 0 && !loading}
+			OLD CODE END -->
+			{#if suspiciousFailed && !loading}
+				<p class="empty-state">Couldn't check for suspicious DNS patterns: the request failed.</p>
+			{:else if suspicious.length === 0 && !loading}
 				<p class="empty-state ok-state">No suspicious DNS patterns detected.</p>
 			{:else}
 				<div class="suspicious-list">
-					{#each suspicious as s}
+					{#each showAllSuspicious ? suspicious : suspicious.slice(0, SUSPICIOUS_SHOWN) as s}
 						<div class="suspicious-item">
 							<div class="suspicious-header">
 								<span class="severity-badge" style="background: {SEVERITY_COLORS[s.severity] || 'var(--text-muted)'}">{s.severity}</span>
@@ -644,6 +655,14 @@
 						</div>
 					{/each}
 				</div>
+				{#if suspicious.length > SUSPICIOUS_SHOWN}
+					<div class="suspicious-more">
+						<span class="text-muted">Showing {partOfWhole(showAllSuspicious ? suspicious.length : SUSPICIOUS_SHOWN, suspicious.length)}</span>
+						<button class="btn btn-secondary btn-sm" onclick={() => (showAllSuspicious = !showAllSuspicious)}>
+							{showAllSuspicious ? 'Show fewer' : `Show all ${suspicious.length.toLocaleString('en-US')}`}
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 	</div>
@@ -1053,6 +1072,15 @@
 	.ip-link:hover { color: var(--cyan); }
 
 	/* Suspicious DNS */
+	.suspicious-more {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		margin-top: var(--space-md);
+		font-size: var(--text-sm);
+	}
+
 	.suspicious-list {
 		display: flex;
 		flex-direction: column;

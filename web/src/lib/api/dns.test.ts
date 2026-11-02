@@ -156,10 +156,10 @@ describe('DNS API client', () => {
 			expect(result.suspicious[0].type).toBe('long_domain');
 		});
 
-		it('returns empty on failure', async () => {
-			mockFetchFailure();
-			const result = await getSuspiciousDns();
-			expect(result.suspicious).toEqual([]);
+		// #96: an empty list on failure read as "No suspicious DNS patterns detected"
+		it('throws on failure so the page can say the check failed', async () => {
+			mockFetchFailure(500);
+			await expect(getSuspiciousDns()).rejects.toThrow('HTTP 500');
 		});
 	});
 

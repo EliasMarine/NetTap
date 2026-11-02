@@ -142,8 +142,13 @@ export async function getSuspiciousDns(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/suspicious${query}`);
 
+	// OLD CODE START — #96: a failed check read as "No suspicious DNS patterns detected"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', suspicious: [] };
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return { from: '', to: '', suspicious: [] };
+		throw new Error(`Suspicious DNS check failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
