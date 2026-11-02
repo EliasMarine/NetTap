@@ -53,15 +53,18 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 export async function getInternetHealth(): Promise<HealthCheck> {
 	const res = await fetch('/api/internet/health');
 
-	if (!res.ok) {
-		return {
-			timestamp: '',
-			latency_ms: null,
-			dns_resolve_ms: null,
-			packet_loss_pct: 100,
-			status: 'down',
-		};
-	}
+	// OLD CODE START — #96: a failed request read as the internet being down
+	// if (!res.ok) {
+	// 	return {
+	// 		timestamp: '',
+	// 		latency_ms: null,
+	// 		dns_resolve_ms: null,
+	// 		packet_loss_pct: 100,
+	// 		status: 'down',
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Internet health failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -75,9 +78,12 @@ export async function getInternetHistory(
 	const query = buildQuery({ limit });
 	const res = await fetch(`/api/internet/history${query}`);
 
-	if (!res.ok) {
-		return { history: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no history
+	// if (!res.ok) {
+	// 	return { history: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Internet health history failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -88,19 +94,22 @@ export async function getInternetHistory(
 export async function getInternetStats(): Promise<HealthStats> {
 	const res = await fetch('/api/internet/stats');
 
-	if (!res.ok) {
-		return {
-			avg_latency_ms: 0,
-			p95_latency_ms: 0,
-			min_latency_ms: 0,
-			max_latency_ms: 0,
-			avg_dns_ms: 0,
-			avg_packet_loss_pct: 100,
-			uptime_pct: 0,
-			total_checks: 0,
-			history_span_hours: 0,
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0% uptime
+	// if (!res.ok) {
+	// 	return {
+	// 		avg_latency_ms: 0,
+	// 		p95_latency_ms: 0,
+	// 		min_latency_ms: 0,
+	// 		max_latency_ms: 0,
+	// 		avg_dns_ms: 0,
+	// 		avg_packet_loss_pct: 100,
+	// 		uptime_pct: 0,
+	// 		total_checks: 0,
+	// 		history_span_hours: 0,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Internet health stats failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -113,15 +122,18 @@ export async function triggerHealthCheck(): Promise<HealthCheck> {
 		method: 'POST',
 	});
 
-	if (!res.ok) {
-		return {
-			timestamp: '',
-			latency_ms: null,
-			dns_resolve_ms: null,
-			packet_loss_pct: 100,
-			status: 'down',
-		};
-	}
+	// OLD CODE START — #96: a failed request read as the internet being down
+	// if (!res.ok) {
+	// 	return {
+	// 		timestamp: '',
+	// 		latency_ms: null,
+	// 		dns_resolve_ms: null,
+	// 		packet_loss_pct: 100,
+	// 		status: 'down',
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Internet health check failed: HTTP ${res.status}`);
 
 	return res.json();
 }
