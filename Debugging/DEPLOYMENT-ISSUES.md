@@ -376,7 +376,10 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 14: TShark tool filter searched only the first N packets (tshark -c counts packets
   read; the #50 bug in a second place) and Analyze ignored the typed filter; PCAP path
   containment by string prefix; PCAP end to end verified (capture, preview, analysis, download).
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch14.sh.
+  Batch 15: device list made 4 OpenSearch queries per device (N+1) -> one _msearch
+  (1,335 -> 107 ms, identical fields); Windows/console categories; full-width settings pages;
+  README/docs still described Arkime. A 1.7 GB download through the web proxy arrived whole.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch15.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1856,6 +1859,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 123. **Look for Malcolm's enrichment before bundling data (Chain 25)** — the daemon carried 208/500-prefix OUI tables while every record already had Malcolm's full IEEE vendor in `source.oui`. Check what logstash adds to the documents first.
 124. **Two pages showing the same thing must share the rule (Chain 25)** — Home (registry) and Devices (live query) categorised devices by different inputs and disagreed 29 vs 15 Unknown. Reuse the one function, and make the deploy check compare the two pages.
 125. **When a bug is a tool's semantics, grep for every caller of that tool (Chain 25)** — tshark's `-c` counts packets read, not matches. It was fixed for PCAP preview (#50), but the TShark tool built the same `-c N -Y filter` command and returned 0 DNS packets for a busy capture (#64). After such a fix, grep the repo for the same flags.
+126. **Prove a performance refactor changed nothing but speed (Chain 25)** — before batching the device list's per-device queries into `_msearch`, the deploy saved `/api/devices` from the old daemon and compared it with the new one over one fixed `from`/`to` window (a relative "last 24 h" moves between the two calls). 53 of 53 devices matched field for field; only then does the 12× speed-up count.
 
 ---
 
