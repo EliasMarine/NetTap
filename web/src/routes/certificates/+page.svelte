@@ -87,32 +87,69 @@
 		loadData();
 	});
 
+	// OLD CODE START — #96: the getters returned [] on failure, read as "No certificates found"
+	// and no MITM warning; they now throw
+	// async function loadData() {
+	// 	loading = true;
+	// 	const [certsRes, statsRes, changesRes] = await Promise.all([
+	// 		getCertificates(),
+	// 		getCertStats(),
+	// 		getIssuerChanges(),
+	// 	]);
+	// 	certificates = certsRes.certificates;
+	// 	stats = statsRes;
+	// 	issuerChanges = changesRes.changes;
+	// 	loading = false;
+	// }
+	//
+	// async function filterByStatus(filter: string) {
+	// 	statusFilter = filter;
+	// 	loading = true;
+	//
+	// 	if (filter === 'expiring') {
+	// 		const res = await getExpiringCerts(30);
+	// 		certificates = res.certificates;
+	// 	} else if (filter === 'self-signed') {
+	// 		const res = await getSelfSignedCerts();
+	// 		certificates = res.certificates;
+	// 	} else {
+	// 		const res = await getCertificates();
+	// 		certificates = res.certificates;
+	// 	}
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	let certsFailed = $state(false);
+	let changesFailed = $state(false);
+
 	async function loadData() {
 		loading = true;
-		const [certsRes, statsRes, changesRes] = await Promise.all([
+		const [certsRes, statsRes, changesRes] = await Promise.allSettled([
 			getCertificates(),
 			getCertStats(),
 			getIssuerChanges(),
 		]);
-		certificates = certsRes.certificates;
-		stats = statsRes;
-		issuerChanges = changesRes.changes;
+		certificates = certsRes.status === 'fulfilled' ? certsRes.value.certificates : [];
+		certsFailed = certsRes.status === 'rejected';
+		stats = statsRes.status === 'fulfilled' ? statsRes.value : null;
+		issuerChanges = changesRes.status === 'fulfilled' ? changesRes.value.changes : [];
+		changesFailed = changesRes.status === 'rejected';
 		loading = false;
 	}
 
 	async function filterByStatus(filter: string) {
 		statusFilter = filter;
 		loading = true;
-
-		if (filter === 'expiring') {
-			const res = await getExpiringCerts(30);
+		try {
+			const res =
+				filter === 'expiring' ? await getExpiringCerts(30)
+				: filter === 'self-signed' ? await getSelfSignedCerts()
+				: await getCertificates();
 			certificates = res.certificates;
-		} else if (filter === 'self-signed') {
-			const res = await getSelfSignedCerts();
-			certificates = res.certificates;
-		} else {
-			const res = await getCertificates();
-			certificates = res.certificates;
+			certsFailed = false;
+		} catch {
+			certificates = [];
+			certsFailed = true;
 		}
 		loading = false;
 	}
@@ -177,6 +214,9 @@
 	</div>
 
 	<!-- Issuer Change Alerts -->
+	{#if changesFailed}
+		<div class="alert alert-warning">Couldn't check for issuer changes (possible MITM): the request failed.</div>
+	{/if}
 	{#if issuerChanges.length > 0}
 		<div class="alert alert-danger">
 			<strong>Potential MITM Warning:</strong> {issuerChanges.length} domain{issuerChanges.length !== 1 ? 's have' : ' has'} multiple certificate issuers.
@@ -199,6 +239,10 @@
 	{#if loading}
 		<div class="card">
 			<p class="text-muted" style="padding: var(--space-lg);">Loading certificates...</p>
+		</div>
+	{:else if certsFailed}
+		<div class="card">
+			<p class="text-muted" style="padding: var(--space-lg);">Couldn't load certificates: the request failed.</p>
 		</div>
 	{:else if certificates.length === 0}
 		<div class="card">
