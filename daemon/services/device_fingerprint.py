@@ -59,6 +59,129 @@ def _oui_from_hit(hit: dict) -> str | None:
     return oui or None
 
 
+# --- Per-IP lookup queries and parsers, shared by the get_* methods and lookup_many ---
+_MSEARCH_IPS = 100  # 4 searches per IP: at most 400 in one _msearch request
+
+
+def _in_range(from_ts: str, to_ts: str) -> dict:
+    return {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}}
+
+
+def _hostname_query(ip: str, from_ts: str, to_ts: str) -> dict:
+    """Most common DNS name answered with this IP."""
+    return {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _in_range(from_ts, to_ts),
+                    {"term": {"dns.ip": ip}},
+                    {"term": {"network.protocol": "dns"}},
+                ]
+            }
+        },
+        "aggs": {"top_hostname": {"terms": {"field": "dns.host", "size": 1}}},
+    }
+
+
+def _dhcp_mac_query(ip: str, from_ts: str, to_ts: str) -> dict:
+    """Strategy 1: DHCP logs — source.ip == ip, newest record's source.mac."""
+    return {
+        "size": 1,
+        "query": {
+            "bool": {
+                "filter": [
+                    _in_range(from_ts, to_ts),
+                    {"term": {"source.ip": ip}},
+                    {"exists": {"field": "dhcp.id"}},
+                ]
+            }
+        },
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "_source": ["source.mac", "source.oui"],
+    }
+
+
+def _conn_mac_query(ip: str, from_ts: str, to_ts: str) -> dict:
+    """Strategy 2: Connection logs — the MAC most of this IP's conn records carry.
+
+    OLD CODE START — the newest record's MAC: on a mirrored uplink, traffic routed
+    between VLANs carries the router's MAC, so IoT devices could read as the UDM (#26)
+    conn_query = {"size": 1, ..., "sort": [{"@timestamp": {"order": "desc"}}], ...}
+    OLD CODE END
+    Every routed flow also has a leg on the device's own VLAN with its real MAC, and
+    internet traffic has only that leg, so the device's own MAC is the most common.
+    """
+    return {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _in_range(from_ts, to_ts),
+                    {"term": {"source.ip": ip}},
+                    {"exists": {"field": "source.mac"}},
+                ]
+            }
+        },
+        "aggs": {
+            "mac": {
+                "terms": {"field": "source.mac", "size": 1},
+                "aggs": {"hit": {"top_hits": {"size": 1, "_source": ["source.mac", "source.oui"]}}},
+            }
+        },
+    }
+
+
+def _user_agent_query(ip: str, from_ts: str, to_ts: str) -> dict:
+    """Strategy 1 of the OS hint: HTTP User-Agent strings from this IP."""
+    return {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _in_range(from_ts, to_ts),
+                    {"term": {"source.ip": ip}},
+                    {"exists": {"field": "http.useragent"}},
+                    {"term": {"network.protocol": "http"}},
+                ]
+            }
+        },
+        "aggs": {"top_ua": {"terms": {"field": "http.useragent", "size": 5}}},
+    }
+
+
+def _hostname_from(result: dict) -> str | None:
+    buckets = result.get("aggregations", {}).get("top_hostname", {}).get("buckets", [])
+    return buckets[0]["key"] if buckets else None
+
+
+def _dhcp_hit(result: dict) -> dict | None:
+    """The DHCP hit, if it carries a MAC.
+
+    OLD CODE START — replaced 2026-11-01: _source is nested, the flat "source.mac" key never exists
+    mac = hits[0].get("_source", {}).get("source.mac")
+    OLD CODE END
+    """
+    hits = result.get("hits", {}).get("hits", [])
+    return hits[0] if hits and _mac_from_hit(hits[0]) else None
+
+
+def _conn_hit(result: dict) -> dict | None:
+    """A hit carrying the IP's most common conn MAC (same OLD CODE note as _dhcp_hit)."""
+    buckets = result.get("aggregations", {}).get("mac", {}).get("buckets", [])
+    hits = buckets[0].get("hit", {}).get("hits", {}).get("hits", []) if buckets else []
+    return hits[0] if hits and _mac_from_hit(hits[0]) else None
+
+
+def _os_from(result: dict) -> str | None:
+    for bucket in result.get("aggregations", {}).get("top_ua", {}).get("buckets", []):
+        ua_string = bucket.get("key", "")
+        for pattern, os_name in _OS_PATTERNS:
+            if pattern.search(ua_string):
+                return os_name
+    return None
+
+
 class DeviceFingerprint:
     """Passive device fingerprinting from Arkime session data."""
 
@@ -134,6 +257,13 @@ class DeviceFingerprint:
         if oui:
             self._learned_oui[mac.upper().replace("-", ":")[:8]] = oui
 
+    def _take_mac(self, hit: dict) -> str | None:
+        """The hit's MAC, remembering Malcolm's vendor for its prefix."""
+        mac = _mac_from_hit(hit)
+        if mac:
+            self._learn_oui(hit, mac)
+        return mac
+
     def get_hostname_for_ip(
         self, client, ip: str, from_ts: str, to_ts: str
     ) -> str | None:
@@ -142,40 +272,10 @@ class DeviceFingerprint:
         Looks at DNS answer records where the resolved IP matches the target.
         Returns the most frequently seen domain name, or None.
         """
-        query = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        },
-                        {"term": {"dns.ip": ip}},
-                        {"term": {"network.protocol": "dns"}},
-                    ]
-                }
-            },
-            "aggs": {"top_hostname": {"terms": {"field": "dns.host", "size": 1}}},
-        }
-
         try:
-            result = client.search(index=NETWORK_INDEX, body=query)
-            buckets = (
-                result.get("aggregations", {})
-                .get("top_hostname", {})
-                .get("buckets", [])
-            )
-            if buckets:
-                return buckets[0]["key"]
+            return _hostname_from(client.search(index=NETWORK_INDEX, body=_hostname_query(ip, from_ts, to_ts)))
         except Exception as exc:
             logger.debug("Hostname lookup failed for %s: %s", ip, exc)
-
         return None
 
     def get_mac_for_ip(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
@@ -184,93 +284,18 @@ class DeviceFingerprint:
         Checks DHCP logs first (most reliable), then falls back to the
         source.mac field in connection logs.
         """
-        # Strategy 1: DHCP logs — source.ip == ip, grab source.mac field
-        dhcp_query = {
-            "size": 1,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        },
-                        {"term": {"source.ip": ip}},
-                        {"exists": {"field": "dhcp.id"}},
-                    ]
-                }
-            },
-            "sort": [{"@timestamp": {"order": "desc"}}],
-            "_source": ["source.mac", "source.oui"],
-        }
-
         try:
-            result = client.search(index=NETWORK_INDEX, body=dhcp_query)
-            hits = result.get("hits", {}).get("hits", [])
-            if hits:
-                # OLD CODE START — replaced 2026-11-01: _source is nested, the flat "source.mac" key never exists
-                # mac = hits[0].get("_source", {}).get("source.mac")
-                # OLD CODE END
-                mac = _mac_from_hit(hits[0])
-                if mac:
-                    self._learn_oui(hits[0], mac)
-                    return mac
+            hit = _dhcp_hit(client.search(index=NETWORK_INDEX, body=_dhcp_mac_query(ip, from_ts, to_ts)))
+            if hit:
+                return self._take_mac(hit)
         except Exception as exc:
             logger.debug("DHCP MAC lookup failed for %s: %s", ip, exc)
-
-        # Strategy 2: Connection logs — the MAC most of this IP's conn records carry.
-        # OLD CODE START — the newest record's MAC: on a mirrored uplink, traffic routed
-        # between VLANs carries the router's MAC, so IoT devices could read as the UDM (#26)
-        # conn_query = {"size": 1, ..., "sort": [{"@timestamp": {"order": "desc"}}], ...}
-        # OLD CODE END
-        # Every routed flow also has a leg on the device's own VLAN with its real MAC, and
-        # internet traffic has only that leg, so the device's own MAC is the most common.
-        conn_query = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        },
-                        {"term": {"source.ip": ip}},
-                        {"exists": {"field": "source.mac"}},
-                    ]
-                }
-            },
-            "aggs": {
-                "mac": {
-                    "terms": {"field": "source.mac", "size": 1},
-                    "aggs": {"hit": {"top_hits": {"size": 1, "_source": ["source.mac", "source.oui"]}}},
-                }
-            },
-        }
-
         try:
-            result = client.search(index=NETWORK_INDEX, body=conn_query)
-            buckets = result.get("aggregations", {}).get("mac", {}).get("buckets", [])
-            hits = buckets[0].get("hit", {}).get("hits", {}).get("hits", []) if buckets else []
-            if hits:
-                # OLD CODE START — replaced 2026-11-01: _source is nested, the flat "source.mac" key never exists
-                # mac = hits[0].get("_source", {}).get("source.mac")
-                # OLD CODE END
-                mac = _mac_from_hit(hits[0])
-                if mac:
-                    self._learn_oui(hits[0], mac)
-                    return mac
+            hit = _conn_hit(client.search(index=NETWORK_INDEX, body=_conn_mac_query(ip, from_ts, to_ts)))
+            if hit:
+                return self._take_mac(hit)
         except Exception as exc:
             logger.debug("Conn MAC lookup failed for %s: %s", ip, exc)
-
         return None
 
     def get_os_hint(self, client, ip: str, from_ts: str, to_ts: str) -> str | None:
@@ -280,40 +305,8 @@ class DeviceFingerprint:
         matches against known OS patterns.  JA3 fingerprint analysis is not
         currently available in Arkime native sessions.
         """
-        # Strategy 1: HTTP User-Agent
-        ua_query = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        },
-                        {"term": {"source.ip": ip}},
-                        {"exists": {"field": "http.useragent"}},
-                        {"term": {"network.protocol": "http"}},
-                    ]
-                }
-            },
-            "aggs": {"top_ua": {"terms": {"field": "http.useragent", "size": 5}}},
-        }
-
         try:
-            result = client.search(index=NETWORK_INDEX, body=ua_query)
-            buckets = (
-                result.get("aggregations", {}).get("top_ua", {}).get("buckets", [])
-            )
-            for bucket in buckets:
-                ua_string = bucket.get("key", "")
-                for pattern, os_name in _OS_PATTERNS:
-                    if pattern.search(ua_string):
-                        return os_name
+            return _os_from(client.search(index=NETWORK_INDEX, body=_user_agent_query(ip, from_ts, to_ts)))
         except Exception as exc:
             logger.debug("User-Agent lookup failed for %s: %s", ip, exc)
 
@@ -323,3 +316,38 @@ class DeviceFingerprint:
         # Future: check for tls.ja3.hash or ja3.string if available.
 
         return None
+
+    def lookup_many(
+        self, client, ips: list[str], from_ts: str, to_ts: str
+    ) -> dict[str, tuple[str | None, str | None, str | None]]:
+        """{ip: (mac, hostname, os_hint)}: the get_* queries, batched into _msearch requests.
+
+        The device list sent 4 searches per device one at a time: 2.9 s for 53 devices
+        on the G11 (#21). A failed batch falls back to the per-IP methods.
+        """
+        builders = (_dhcp_mac_query, _conn_mac_query, _hostname_query, _user_agent_query)
+        found: dict[str, tuple[str | None, str | None, str | None]] = {}
+        for start in range(0, len(ips), _MSEARCH_IPS):
+            chunk = ips[start : start + _MSEARCH_IPS]
+            body: list[dict] = []
+            for ip in chunk:
+                for build in builders:
+                    body += [{"index": NETWORK_INDEX}, build(ip, from_ts, to_ts)]
+            try:
+                responses = client.msearch(body=body)["responses"]
+                if not isinstance(responses, list) or len(responses) != len(chunk) * len(builders):
+                    raise ValueError(f"msearch returned {type(responses).__name__}, expected {len(body) // 2} responses")
+            except Exception as exc:
+                logger.warning("Batched device lookup failed, querying one IP at a time: %s", exc)
+                for ip in chunk:
+                    found[ip] = (
+                        self.get_mac_for_ip(client, ip, from_ts, to_ts),
+                        self.get_hostname_for_ip(client, ip, from_ts, to_ts),
+                        self.get_os_hint(client, ip, from_ts, to_ts),
+                    )
+                continue
+            for i, ip in enumerate(chunk):
+                dhcp, conn, dns, ua = responses[i * 4 : i * 4 + 4]
+                hit = _dhcp_hit(dhcp) or _conn_hit(conn)  # DHCP first, as get_mac_for_ip
+                found[ip] = (self._take_mac(hit) if hit else None, _hostname_from(dns), _os_from(ua))
+        return found

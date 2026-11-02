@@ -421,6 +421,10 @@ async def handle_device_list(request: web.Request) -> web.Response:
             logger.warning("Alert count query failed: %s", exc)
 
     # Build device list with enrichment — skip broadcast/gateway IPs
+    # Fingerprint lookups for every device at once (#21: 4 round trips per device before)
+    lookups = fingerprint.lookup_many(
+        client, [b["key"] for b in buckets if not _is_skipped_device_ip(b["key"])], from_ts, to_ts
+    )
     devices = []
     for b in buckets:
         ip = b["key"]
@@ -444,10 +448,13 @@ async def handle_device_list(request: web.Request) -> web.Response:
         alert_count = alert_counts.get(ip, 0)
 
         # Passive fingerprinting enrichment
-        mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
-        hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
+        # OLD CODE START — one search per lookup per device (#21); now batched above
+        # mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
+        # hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
+        # os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
+        # OLD CODE END
+        mac, hostname, os_hint = lookups.get(ip, (None, None, None))
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
-        os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 
         # Clean up mDNS service names and reverse DNS that aren't real hostnames
         if hostname:
