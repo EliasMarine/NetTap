@@ -7,10 +7,18 @@ order, so the home Alert Summary said 394 while the Alerts card said 2.2K.
 import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from services import alert_intelligence
 from services.alert_intelligence import get_smart_alert_summary, get_smart_alerts
 
 _FROM, _TO = "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+
+
+@pytest.fixture(autouse=True)
+def _pages_of_200(monkeypatch):
+    """The fake pages below hold 200 groups; a shorter page than asked for ends the paging."""
+    monkeypatch.setattr(alert_intelligence, "_GROUP_PAGE_SIZE", 200)
 
 
 def _bucket(n: int) -> dict:

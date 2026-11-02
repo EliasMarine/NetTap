@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
+from storage.all_buckets import MAX_BUCKETS
+
 logger = logging.getLogger("nettap.services.alert_intelligence")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -1206,8 +1208,16 @@ def _cap_level(level: str, worst_severity: int) -> str:
     return min(level, ceiling, key=_THREAT_LEVELS.index)
 
 
-# shortcut: stops at 25 pages (5,000 alert groups) per range; raise it if a box ever has more
-_MAX_GROUP_PAGES = 25
+# OLD CODE START — #96: 25 pages of 200 cut the groups whose signatures sort last from the summary
+# # shortcut: stops at 25 pages (5,000 alert groups) per range; raise it if a box ever has more
+# _MAX_GROUP_PAGES = 25
+# OLD CODE END
+# Each page re-reads every alert in the range, so fewer, larger pages cost less
+_GROUP_PAGE_SIZE = 1_000
+# shortcut: stops with a warning at all_buckets' MAX_BUCKETS (500,000 groups); raise both together
+_MAX_GROUP_PAGES = MAX_BUCKETS // _GROUP_PAGE_SIZE
+# Sample fields read by _normalize_alert_source and get_smart_alerts; the rest is not fetched
+_SAMPLE_FIELDS = ["alert", "rule", "suricata.alert", "suricata.severity", "destination.port"]
 
 
 def _all_composite_buckets(client, query: dict) -> list[dict] | None:
@@ -1291,7 +1301,10 @@ async def get_smart_alerts(
         "aggs": {
             "grouped": {
                 "composite": {
-                    "size": 200,
+                    # OLD CODE START — #96: 200 per page meant one full re-read per 200 groups
+                    # "size": 200,
+                    # OLD CODE END
+                    "size": _GROUP_PAGE_SIZE,
                     "sources": [
                         {
                             "sig_name": {
@@ -1326,6 +1339,7 @@ async def get_smart_alerts(
                         "top_hits": {
                             "size": 1,
                             "sort": [{"@timestamp": {"order": "desc"}}],
+                            "_source": _SAMPLE_FIELDS,
                         }
                     },
                 },
