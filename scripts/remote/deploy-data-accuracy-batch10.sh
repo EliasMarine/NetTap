@@ -129,8 +129,21 @@ check "#58 rules page figures = what Suricata runs" "$rc" "HTTP $CODE: enabled=$
 
 BEFORE=$(rules_mtime)
 echo "   running Update Rules Now (downloads the rule feeds, up to ~5 min)..."
-read -r CODE UPD <<<"$(api POST /api/suricata/rules/update 420)"
-OK=$(field "$UPD" success)
+# The reply carries suricata-update's whole output: too big to pass back as an argument,
+# so read just the status and the success flag inside the daemon container.
+read -r CODE OK <<<"$(sudo docker exec nettap-storage-daemon python3 -c "
+import json, urllib.error, urllib.request
+token = open('/run/nettap-auth/daemon-token').read().strip()
+req = urllib.request.Request('http://localhost:8880/api/suricata/rules/update', method='POST', data=b'',
+    headers={'X-NetTap-Daemon-Token': token})
+try:
+    resp = urllib.request.urlopen(req, timeout=420)
+    print(resp.status, json.load(resp).get('success'))
+except urllib.error.HTTPError as e:
+    print(e.code, 'False')
+except Exception as e:
+    print('ERR', type(e).__name__)
+")"
 AFTER=$(rules_mtime)
 if [ "$CODE" = "200" ] && [ "$OK" = "True" ] && [ -n "$AFTER" ] && [ "${AFTER}" != "${BEFORE:-x}" ]; then rc=0; else rc=1; fi
 check "#58 Update Rules Now refreshes the rules" "$rc" "HTTP $CODE success=${OK:-?}, rules file $(date -u -d "@${BEFORE:-0}" +%T) → $(date -u -d "@${AFTER:-0}" +%T)"
