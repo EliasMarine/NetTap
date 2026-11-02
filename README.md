@@ -10,7 +10,7 @@ NetTap sits transparently between your ISP modem and router, passively capturing
 
 - **Full traffic visibility** — Zeek extracts structured metadata for every connection, DNS query, TLS handshake, HTTP request, and file transfer
 - **Intrusion detection** — Suricata runs continuously with the Emerging Threats Open ruleset, surfacing alerts in under 10 seconds
-- **Forensic replay** — Arkime stores full packet captures (triggered by alerts) with session-level search and raw packet replay
+- **Forensic replay** — netsniff-ng records full packet captures (capped at a share of the disk, oldest first); search, preview and download them on the PCAP Search page and dig in with the built-in TShark and CyberChef tools
 - **GeoIP mapping** — See where your traffic is going, enriched with geography, ASN, and hostname data
 - **Intelligent storage** — Three-tier rolling retention with automatic disk management so the drive never fills up
 - **No cloud, no subscription** — Fully self-contained. No data leaves your network
@@ -75,7 +75,7 @@ The installer auto-detects your NICs (with LED blink to identify ports), assigns
 | Orchestration | Docker + Docker Compose | Container management |
 | Traffic Analysis | [Zeek](https://zeek.org/) 6.x | Network metadata extraction |
 | IDS | [Suricata](https://suricata.io/) 7.x | Signature-based intrusion detection |
-| Packet Archive | [Arkime](https://arkime.com/) 5.x | Full PCAP storage + session replay |
+| Packet Archive | [netsniff-ng](http://netsniff-ng.org/) (Malcolm `pcap-capture`) | Full PCAP storage, capped by `PCAP_MAX_DISK_PCT`; Arkime is off by default (compose profile `arkime`) |
 | Data Store | [OpenSearch](https://opensearch.org/) 2.x | Indexed log storage + dashboards |
 | Visualization | [Grafana](https://grafana.com/) 10.x | Custom bandwidth and alert dashboards |
 | Core Framework | [Malcolm](https://github.com/cisagov/Malcolm) (CISA) | Bundles the above into a cohesive stack |
