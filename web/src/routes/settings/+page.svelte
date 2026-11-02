@@ -1018,7 +1018,10 @@
 							<input class="input" id="cold-days" type="number" bind:value={retentionConfig.cold_days} min={1} max={365} />
 							<span class="input-unit">days</span>
 						</div>
+						<!-- OLD CODE START — 2026-11-02: capture is continuous, not alert-triggered
 						<p class="field-help">Raw packet captures (alert-triggered).</p>
+						OLD CODE END -->
+						<p class="field-help">Raw packet captures of all traffic. The oldest files also go once PCAP passes its share of the disk.</p>
 					</div>
 				</div>
 

@@ -127,6 +127,16 @@ describe('Settings — retention save', () => {
 		expect(screen.queryByText(/settings saved/i)).not.toBeInTheDocument();
 	});
 
+	it('describes PCAP as continuous capture, not alert-triggered', async () => {
+		stubFetch({});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText(/Raw packet captures of all traffic/)).toBeInTheDocument();
+		expect(screen.queryByText(/alert-triggered/)).not.toBeInTheDocument();
+	});
+
 	it('will not save the built-in defaults when the daemon did not answer', async () => {
 		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
 		render(Page);
