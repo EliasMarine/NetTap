@@ -18,6 +18,7 @@
 	// import ProtocolTree from './ProtocolTree.svelte';
 	// OLD CODE END
 	import PanelManager from './PanelManager.svelte';
+	import { getRawHex } from '$lib/utils/tshark-helpers';
 	import {
 		analyzePcap,
 		getTSharkStatus,
@@ -141,6 +142,8 @@
 				display_filter: displayFilter || undefined,
 				max_packets: maxPackets,
 				output_format: outputFormat,
+				// raw bytes for the hex dump pane (frame_raw); only JSON carries them per packet
+				include_hex: outputFormat === 'json',
 			});
 
 			if (res.error) {
@@ -407,6 +410,7 @@
 			selectedPacket={selectedPacket}
 			{selectedPacketIndex}
 			onPacketSelect={handlePacketSelect}
+			rawHex={getRawHex(selectedPacket)}
 		/>
 	</div>
 </div>
