@@ -74,6 +74,11 @@ def _is_rfc1918(a: int, b: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# A /24 counts as LAN when it makes at least this share of all outbound connections from
+# private addresses. G11 (#47): real subnets 85%, 10.7% and 4%; stray sources 0.06% or less.
+_MIN_SUBNET_SHARE = 0.01
+
+
 def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
     """Auto-detect LAN subnets by querying OpenSearch for common source IPs.
 
@@ -170,9 +175,15 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         # Sort by connection count descending, take top subnets
         sorted_subnets = sorted(subnet_counts.items(), key=lambda x: x[1], reverse=True)
 
-        # Only keep subnets with meaningful traffic (>10% of the top subnet's traffic)
-        top_count = sorted_subnets[0][1]
-        threshold = top_count * 0.10
+        # OLD CODE START — #47: 10% of the busiest subnet dropped quiet real LANs (an IoT
+        # VLAN at ~11% flipped in and out between restarts; a one-device VLAN at 5% never got in)
+        # # Only keep subnets with meaningful traffic (>10% of the top subnet's traffic)
+        # top_count = sorted_subnets[0][1]
+        # threshold = top_count * 0.10
+        # OLD CODE END
+        # Keep every subnet with a real share of all LAN traffic; stray RFC1918 sources
+        # (a VPN client, a host's container network) stay far below it
+        threshold = sum(subnet_counts.values()) * _MIN_SUBNET_SHARE
         detected = [s for s, c in sorted_subnets if c >= threshold]
 
         logger.info(
