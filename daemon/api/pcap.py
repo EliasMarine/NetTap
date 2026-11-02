@@ -54,21 +54,33 @@ async def handle_pcap_search(request: web.Request) -> web.Response:
     if not bpf_filter:
         return web.json_response({"error": "filter parameter is required"}, status=400)
 
+    # OLD CODE START — 2026-11-02: one blocking request read every file in the range
+    # (~45 s per 240 MB); the web proxy gave up after 10 s
+    # try:
+    #     results = await pcap_service.search(bpf_filter, from_ts, to_ts)
+    # except ValueError as exc:
+    #     return web.json_response({"error": str(exc)}, status=400)
+    # except Exception as exc:
+    #     logger.error("Error searching PCAPs: %s", exc)
+    #     return web.json_response({"error": f"PCAP search failed: {exc}"}, status=500)
+    #
+    # return web.json_response(
+    #     {
+    #         "filter": bpf_filter,
+    #         "count": len(results),
+    #         "results": results,
+    #     }
+    # )
+    # OLD CODE END
     try:
-        results = await pcap_service.search(bpf_filter, from_ts, to_ts)
+        progress = await pcap_service.search_progress(bpf_filter, from_ts, to_ts)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except Exception as exc:
         logger.error("Error searching PCAPs: %s", exc)
         return web.json_response({"error": f"PCAP search failed: {exc}"}, status=500)
 
-    return web.json_response(
-        {
-            "filter": bpf_filter,
-            "count": len(results),
-            "results": results,
-        }
-    )
+    return web.json_response(progress)
 
 
 async def handle_pcap_preview(request: web.Request) -> web.Response:

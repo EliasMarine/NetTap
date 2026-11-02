@@ -44,6 +44,19 @@ _PCAP_EXTENSIONS = {".pcap", ".pcapng", ".cap"}
 # low to avoid thrashing the CPU budget and hitting timeouts.
 _MAX_CONCURRENT_TSHARK = 2
 
+# A search reads whole files (~45 s per 240 MB at the container's 0.5 CPU), so it runs
+# as a background job; each file gets this long before it counts as timed out.
+_SEARCH_FILE_TIMEOUT = 300
+_TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
+
+# -c counts packets read, not matches, so a filtered preview pipes through head instead.
+# User values reach tshark only as positional args ($1 file, $2 filter, $3 limit).
+_FILTERED_PREVIEW_SCRIPT = (
+    'tshark -r "$1" -Y "$2" -T fields -e frame.number -e frame.time -e ip.src '
+    "-e ip.dst -e frame.protocols -e frame.len -e _ws.col.Info -E separator='|' "
+    '| head -n "$3"'
+)
+
 
 class PcapSearchService:
     """Search and filter captured PCAP files."""
@@ -51,6 +64,9 @@ class PcapSearchService:
     def __init__(self, pcap_dir: str | None = None) -> None:
         self._pcap_dir = Path(pcap_dir or _DEFAULT_PCAP_DIR)
         self._semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TSHARK)
+        self._search_seq = 0
+        self._search_job: dict[str, Any] | None = None
+        self._search_task: asyncio.Task | None = None
 
     def _to_container_path(self, daemon_path: str) -> str:
         """Translate a daemon-side PCAP path to the tshark container path.
@@ -161,7 +177,7 @@ class PcapSearchService:
         matching = []
         for pcap in pcaps:
             count = await self._count_matching_packets(pcap["file"], bpf_filter)
-            if count > 0:
+            if count:
                 matching.append(
                     {
                         **pcap,
@@ -171,8 +187,78 @@ class PcapSearchService:
 
         return matching
 
-    async def _count_matching_packets(self, pcap_file: str, bpf_filter: str) -> int:
-        """Count packets matching BPF filter in a PCAP file.
+    async def search_progress(
+        self,
+        bpf_filter: str,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> dict[str, Any]:
+        """Start a background search for these params, or report the one running.
+
+        A call with different params replaces the running job. Files are checked
+        newest first and matches appear as they are found.
+        """
+        key = (bpf_filter, from_ts, to_ts)
+        if self._search_job is None or self._search_job["key"] != key:
+            valid, err = self.validate_bpf_filter(bpf_filter)
+            if not valid:
+                raise ValueError(f"Invalid display filter: {err}")
+            if self._search_task is not None:
+                self._search_task.cancel()
+            pcaps = self.get_available_pcaps(from_ts, to_ts)
+            self._search_seq += 1
+            self._search_job = {
+                "id": self._search_seq,
+                "key": key,
+                "results": (),
+                "files_checked": 0,
+                "files_total": len(pcaps),
+                "timed_out": 0,
+                "complete": not pcaps,
+            }
+            self._search_task = (
+                asyncio.create_task(
+                    self._run_search_job(self._search_seq, pcaps, bpf_filter)
+                )
+                if pcaps
+                else None
+            )
+        job = self._search_job
+        return {
+            "filter": bpf_filter,
+            "count": len(job["results"]),
+            "results": list(job["results"]),
+            "files_checked": job["files_checked"],
+            "files_total": job["files_total"],
+            "complete": job["complete"],
+            "timed_out": job["timed_out"],
+        }
+
+    async def _run_search_job(
+        self, job_id: int, pcaps: list[dict[str, Any]], bpf_filter: str
+    ) -> None:
+        for pcap in pcaps:
+            count = await self._count_matching_packets(
+                pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+            )
+            job = self._search_job
+            if job is None or job["id"] != job_id:
+                return  # replaced by a newer search
+            found = ({**pcap, "matching_packets": count},) if count else ()
+            self._search_job = {
+                **job,
+                "results": job["results"] + found,
+                "files_checked": job["files_checked"] + 1,
+                "timed_out": job["timed_out"] + (count is None),
+            }
+        job = self._search_job
+        if job is not None and job["id"] == job_id:
+            self._search_job = {**job, "complete": True}
+
+    async def _count_matching_packets(
+        self, pcap_file: str, bpf_filter: str, timeout: int = 45
+    ) -> int | None:
+        """Count packets matching BPF filter in a PCAP file; None if it timed out.
 
         Runs tshark inside the nettap-tshark container via docker exec.
         Uses asyncio.create_subprocess_exec (argument-list form, no shell).
@@ -197,26 +283,32 @@ class PcapSearchService:
             async with self._semaphore:
                 logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
                 proc = await asyncio.create_subprocess_exec(
-                    *bounded_exec(cmd, 45),
+                    *bounded_exec(cmd, timeout),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout + 10
+                )
 
-            if proc.returncode != 0:
+            if proc.returncode in _TIMEOUT_EXIT_CODES:
+                logger.warning("tshark timed out counting packets in %s", pcap_file)
+                return None
+
+            lines = stdout.decode(errors="replace").strip().split("\n")
+            count = len([line for line in lines if line.strip()])
+            # a file still being written can end mid-packet: keep what tshark printed
+            if proc.returncode != 0 and not count:
                 logger.debug(
                     "tshark filter count failed for %s: %s",
                     pcap_file,
                     stderr.decode(errors="replace").strip(),
                 )
-                return 0
-
-            lines = stdout.decode(errors="replace").strip().split("\n")
-            return len([line for line in lines if line.strip()])
+            return count
 
         except asyncio.TimeoutError:
             logger.warning("tshark timed out counting packets in %s", pcap_file)
-            return 0
+            return None
         except FileNotFoundError:
             logger.error("docker not found in PATH")
             return 0
@@ -282,7 +374,22 @@ class PcapSearchService:
             valid, err = self.validate_bpf_filter(bpf_filter)
             if not valid:
                 raise ValueError(f"Invalid display filter: {err}")
-            cmd.extend(["-Y", bpf_filter])
+            # OLD CODE START — 2026-11-02: with -c, only matches among the first
+            # `limit` packets read were shown (often none)
+            # cmd.extend(["-Y", bpf_filter])
+            # OLD CODE END
+            cmd = [
+                "docker",
+                "exec",
+                _TSHARK_CONTAINER,
+                "sh",
+                "-c",
+                _FILTERED_PREVIEW_SCRIPT,
+                "sh",
+                container_path,
+                bpf_filter,
+                str(limit),
+            ]
 
         try:
             async with self._semaphore:
@@ -294,7 +401,8 @@ class PcapSearchService:
                 )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
 
-            if proc.returncode != 0:
+            # a file still being written can end mid-packet: keep what tshark printed
+            if proc.returncode != 0 and not stdout.strip():
                 err_msg = stderr.decode(errors="replace").strip()
                 logger.error("tshark preview failed: %s", err_msg)
                 return []
