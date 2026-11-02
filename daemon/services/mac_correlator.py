@@ -238,9 +238,14 @@ class MACCorrelator:
             pages, complete = all_buckets(
                 self._client, NETWORK_INDEX, _in_range(from_ts, to_ts), _BY_MAC, _RANDOMIZED_AGGS
             )
+        # OLD CODE START — #96: [] read as "no randomized MACs on this network"
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error detecting randomized MACs: %s", exc)
+        #     return []
+        # OLD CODE END
         except OpenSearchException as exc:
             logger.error("OpenSearch error detecting randomized MACs: %s", exc)
-            return []
+            raise
         if not complete:
             logger.warning("MAC scan stopped at %d MACs; the list is partial", len(pages))
         buckets = _busiest_first(pages)
@@ -394,8 +399,13 @@ class MACCorrelator:
                 ),
             }
 
+        # OLD CODE START — #96: an empty fingerprint read as a device with no DNS, TLS or traffic
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error building fingerprint for %s: %s", mac, exc)
+        # OLD CODE END
         except OpenSearchException as exc:
             logger.error("OpenSearch error building fingerprint for %s: %s", mac, exc)
+            raise
 
         return fingerprint
 
@@ -460,7 +470,7 @@ class MACCorrelator:
         return sum(s * w for s, w in scores) / total_weight
 
     def _fingerprints(self, from_ts: str, to_ts: str) -> dict[str, dict[str, Any]]:
-        """Similarity fingerprint of every MAC in range, busiest first; {} (logged) on failure."""
+        """Similarity fingerprint of every MAC in range, busiest first; raises (logged) on failure."""
         try:
             pages, complete = all_buckets(
                 self._client,
@@ -470,9 +480,14 @@ class MACCorrelator:
                 _SIMILARITY_AGGS,
                 page_size=_FINGERPRINT_PAGE,
             )
+        # OLD CODE START — #96: {} read as "no merge suggestions"
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error fingerprinting MACs: %s", exc)
+        #     return {}
+        # OLD CODE END
         except OpenSearchException as exc:
             logger.error("OpenSearch error fingerprinting MACs: %s", exc)
-            return {}
+            raise
         if not complete:
             logger.warning("MAC fingerprints stopped at %d MACs; suggestions are partial", len(pages))
         return {b["key"]: _similarity_fingerprint(b) for b in _busiest_first(pages)}

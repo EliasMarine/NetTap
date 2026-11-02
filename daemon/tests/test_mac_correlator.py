@@ -115,16 +115,27 @@ class TestDetectRandomizedMacs:
         )
         assert result == []
 
-    def test_opensearch_error(self, correlator, mock_client):
-        """Should return empty list on OpenSearch error."""
+    def test_opensearch_error_raises(self, correlator, mock_client):
+        """#96: a failed query raises; [] read as "no randomized MACs"."""
         from opensearchpy import OpenSearchException
 
         mock_client.search.side_effect = OpenSearchException("connection error")
 
-        result = correlator.detect_randomized_macs(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-        )
-        assert result == []
+        with pytest.raises(OpenSearchException):
+            correlator.detect_randomized_macs("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+
+    def test_fingerprint_and_merge_suggestions_raise_on_error(self, correlator, mock_client):
+        """#96: an empty fingerprint or suggestion list read as facts about the device."""
+        from opensearchpy import OpenSearchException
+
+        mock_client.search.side_effect = OpenSearchException("connection error")
+
+        with pytest.raises(OpenSearchException):
+            correlator.get_behavioral_fingerprint(
+                "aa:bb:cc:dd:ee:ff", "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+            )
+        with pytest.raises(OpenSearchException):
+            correlator.suggest_merges("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
 
 
 # ---------------------------------------------------------------------------
