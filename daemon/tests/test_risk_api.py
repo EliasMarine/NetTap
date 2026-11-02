@@ -21,6 +21,16 @@ from api.risk import register_risk_routes
 from services.risk_scoring import RiskScorer
 
 
+def _alert_bodies(mock_search):
+    """Search bodies that count Suricata alerts (filter has event.dataset == alert)."""
+    bodies = []
+    for c in mock_search.call_args_list:
+        body = c.kwargs.get("body") or c[1].get("body")
+        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"].get("filter", []):
+            bodies.append(body)
+    return bodies
+
+
 def _make_mock_storage():
     """Create a mock StorageManager with a mock OpenSearch client."""
     storage = MagicMock()
@@ -150,6 +160,10 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
             self.assertGreaterEqual(
                 data["devices"][0]["score"], data["devices"][1]["score"]
             )
+        # Suricata engine events are sensor noise, not the device's alerts (#60)
+        bodies = _alert_bodies(self.mock_storage._client.search)
+        self.assertEqual(len(bodies), 1)
+        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, bodies[0]["query"]["bool"]["must_not"])
 
     @unittest_run_loop
     async def test_scores_contain_required_fields(self):
@@ -292,6 +306,9 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
         self.assertIn("score", data)
         self.assertIn("level", data)
         self.assertIn("factors", data)
+        bodies = _alert_bodies(self.mock_storage._client.search)
+        self.assertEqual(len(bodies), 1)
+        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, bodies[0]["query"]["bool"]["must_not"])  # (#60)
 
     @unittest_run_loop
     async def test_single_device_not_found(self):

@@ -17,6 +17,7 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from storage.manager import StorageManager
+from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
@@ -356,7 +357,8 @@ async def handle_device_list(request: web.Request) -> web.Response:
                         {"terms": {"source.ip": device_ips}},
                         {"term": {"event.provider": "suricata"}},
                         {"term": {"event.dataset": "alert"}},
-                    ]
+                    ],
+                    "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
             "aggs": {
@@ -662,7 +664,8 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "suricata"}},
                     {"term": {"event.dataset": "alert"}},
-                ]
+                ],
+                "must_not": SURICATA_NOISE_EXCLUSION,
             }
         },
     }
@@ -891,7 +894,8 @@ async def handle_device_alerts(request: web.Request) -> web.Response:
                     },
                     {"term": {"event.provider": "suricata"}},
                     {"term": {"event.dataset": "alert"}},
-                ]
+                ],
+                "must_not": SURICATA_NOISE_EXCLUSION,
             }
         },
         "sort": [{"@timestamp": {"order": "desc"}}],

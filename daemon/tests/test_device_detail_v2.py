@@ -328,6 +328,8 @@ class TestDeviceAlertsHandler(AioHTTPTestCase):
             for s in should_clause
         ]
         self.assertIn("192.168.1.100", ips)
+        # the same alerts the Alerts page lists: no Suricata engine events (#60)
+        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, body["query"]["bool"]["must_not"])
 
 
 # ---------------------------------------------------------------------------

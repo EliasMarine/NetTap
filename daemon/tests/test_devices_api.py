@@ -23,6 +23,16 @@ from api.devices import register_device_routes
 from storage.manager import StorageManager, RetentionConfig
 
 
+def _alert_bodies(mock_search):
+    """Search bodies that count Suricata alerts (filter has event.dataset == alert)."""
+    bodies = []
+    for c in mock_search.call_args_list:
+        body = c.kwargs.get("body") or c[1].get("body")
+        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"].get("filter", []):
+            bodies.append(body)
+    return bodies
+
+
 def _make_mock_storage():
     """Create a mock StorageManager with a mock OpenSearch client."""
     config = RetentionConfig()
@@ -339,6 +349,10 @@ class TestDeviceListHandler(AioHTTPTestCase):
         device_101 = next(d for d in data["devices"] if d["ip"] == "192.168.1.101")
         self.assertEqual(device_100["alert_count"], 5)
         self.assertEqual(device_101["alert_count"], 0)
+        # Suricata engine events are sensor noise, not the device's alerts (#60)
+        bodies = _alert_bodies(self.mock_client.search)
+        self.assertEqual(len(bodies), 1)
+        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, bodies[0]["query"]["bool"]["must_not"])
 
 
 class TestDeviceDetailHandler(AioHTTPTestCase):
@@ -525,6 +539,9 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         self.assertEqual(device["hostname"], "myphone.local")
         self.assertEqual(device["os_hint"], "iOS")
         self.assertEqual(device["alert_count"], 2)
+        alert_bodies = _alert_bodies(self.mock_client.search)
+        self.assertEqual(len(alert_bodies), 1)
+        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, alert_bodies[0]["query"]["bool"]["must_not"])  # (#60)
         self.assertEqual(len(device["dns_queries"]), 1)
         self.assertEqual(device["dns_queries"][0]["domain"], "example.com")
         # Malcolm's own pcap-monitor lookups are not the device's DNS

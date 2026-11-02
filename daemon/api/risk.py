@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.risk_scoring import RiskScorer
 from storage.manager import StorageManager
@@ -237,7 +238,8 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                         {"terms": {"source.ip": device_ips}},
                         {"term": {"event.provider": "suricata"}},
                         {"term": {"event.dataset": "alert"}},
-                    ]
+                    ],
+                    "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
             "aggs": {
@@ -449,7 +451,8 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "suricata"}},
                     {"term": {"event.dataset": "alert"}},
-                ]
+                ],
+                "must_not": SURICATA_NOISE_EXCLUSION,
             }
         },
     }

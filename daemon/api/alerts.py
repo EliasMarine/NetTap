@@ -50,6 +50,9 @@ _SURICATA_ALERT_FILTERS: list[dict] = [
 _SURICATA_NOISE_EXCLUSION: list[dict] = [
     {"prefix": {"rule.name": "SURICATA "}},
 ]
+# Shared with the per-device alert counts (Devices, Risk) so every page counts alerts the
+# same way (dashboard data accuracy #60)
+SURICATA_NOISE_EXCLUSION = _SURICATA_NOISE_EXCLUSION
 
 # Path for storing acknowledgement data (local JSON file)
 _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
