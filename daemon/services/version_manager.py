@@ -415,8 +415,10 @@ class VersionManager:
                 ["suricata-update", "list-sources", "--free"]
             )
             if output:
-                rules_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                rules_status = "ok"
+                # OLD CODE START — #96: suricata-update answering is not a ruleset date
+                # rules_version = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                # rules_status = "ok"
+                # OLD CODE END
                 rules_details = {"source": "suricata-update"}
         except Exception:
             pass

@@ -462,6 +462,35 @@ class TestDockerScanFailure(unittest.TestCase):
         self.assertEqual((zeek.name, zeek.current_version, zeek.status), ("zeek", "26.02.0", "ok"))
 
 
+class TestRulesVersionIsMeasured(unittest.TestCase):
+    """#96: with no rules file the ruleset date is unknown, not today's date."""
+
+    def _rules(self, rule_file_exists):
+        from unittest.mock import patch
+
+        vm = VersionManager()
+
+        async def suricata_update_answers(cmd):
+            return "et/open  Emerging Threats Open\n" if cmd[0] == "suricata-update" else ""
+
+        vm._run_command = suricata_update_answers
+        month_old = datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp()
+        with (
+            patch("os.path.exists", return_value=rule_file_exists),
+            patch("os.path.getmtime", return_value=month_old),
+        ):
+            rows = asyncio.run(vm._scan_databases())
+        return next(r for r in rows if r.name == "suricata-rules")
+
+    def test_no_rules_file_is_unknown(self):
+        rules = self._rules(rule_file_exists=False)
+        self.assertEqual((rules.current_version, rules.status), ("unknown", "unknown"))
+
+    def test_rules_file_date_is_reported(self):
+        rules = self._rules(rule_file_exists=True)
+        self.assertEqual((rules.current_version, rules.status), ("2026-10-01", "ok"))
+
+
 class TestCacheStaleness(unittest.TestCase):
     """Tests for VersionManager._is_cache_stale()."""
 
