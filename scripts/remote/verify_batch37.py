@@ -55,9 +55,20 @@ def heatmap(client, window: dict, tz: str, excluded: list[str]) -> None:
                               {"range": {"@timestamp": {"gte": window["from"], "lte": window["to"]}}}]}
     if excluded:
         bool_clause["must_not"] = build_excluded_ips_filter(excluded)
+    # OLD CODE START — the truth side was itself a 15 min date_histogram, which on OpenSearch 3.5
+    # sometimes bucketed records by a stale (rewritten, not yet merged away) copy: 3 GB moved
+    # between 02:30 and 02:45 while range filters, the daemon and later reads agreed (lesson 155)
+    # body = {"size": 0, "query": {"bool": bool_clause}, "aggs": {"h": {
+    #     "date_histogram": {"field": "@timestamp", "fixed_interval": "15m"},
+    #     "aggs": {"o": {"sum": ...}, "r": {"sum": ...}}}}}
+    # OLD CODE END
+    # 15 min range filters (one per slot, honouring deletes) map exactly into every zone's local
+    # hours (India +5:30, Nepal +5:45); no date_histogram on this side
+    start = datetime.fromisoformat(window["from"].replace("Z", "+00:00"))
+    slots = [start + timedelta(minutes=15 * i) for i in range(96)]
     body = {"size": 0, "query": {"bool": bool_clause}, "aggs": {"h": {
-        # 15 min buckets map exactly into every zone's local hours (India +5:30, Nepal +5:45)
-        "date_histogram": {"field": "@timestamp", "fixed_interval": "15m"},
+        "filters": {"filters": {s.isoformat(): {"range": {"@timestamp": {"gte": s.isoformat(), "lt": (s + timedelta(minutes=15)).isoformat()}}}
+                                for s in slots}},
         "aggs": {"o": {"sum": {"field": "source.bytes", "missing": 0}}, "r": {"sum": {"field": "destination.bytes", "missing": 0}}}}}}
     zone = ZoneInfo(tz)
 
@@ -68,8 +79,8 @@ def heatmap(client, window: dict, tz: str, excluded: list[str]) -> None:
         got = api("/api/bandwidth/heatmap", **window, tz=tz)[0]
         raw = client.search(index="arkime_sessions3-*", body=body, request_cache=False)
         want = [[0] * 24 for _ in range(7)]
-        for b in raw["aggregations"]["h"]["buckets"]:
-            local = datetime.fromtimestamp(b["key"] / 1000, UTC).astimezone(zone)
+        for key, b in raw["aggregations"]["h"]["buckets"].items():
+            local = datetime.fromisoformat(key).astimezone(zone)
             want[local.weekday()][local.hour] += int(b["o"]["value"] + b["r"]["value"])
         return got, want
 
