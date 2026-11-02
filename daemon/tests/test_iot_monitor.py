@@ -841,30 +841,6 @@ class TestProtocolAudit:
         mock_client.search.side_effect = [
             # OUI discovery (devices already registered)
             {"aggregations": {"by_mac": {"buckets": []}}},
-            # Conn stats batch
-            {
-                "aggregations": {
-                    "by_mac": {
-                        "buckets": [
-                            {
-                                "key": "AA:BB:CC:DD:EE:FF",
-                                "doc_count": 100,
-                                "total_bytes": {"value": 50000},
-                                "dest_ports": {
-                                    "buckets": [
-                                        {"key": 443, "doc_count": 90},
-                                        {"key": 8888, "doc_count": 10},
-                                    ]
-                                },
-                                "encrypted": {"doc_count": 90},
-                                "third_party_orgs": {"value": 1},
-                            }
-                        ]
-                    }
-                },
-            },
-            # Alert counts
-            {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch
             {
                 "aggregations": {
@@ -902,27 +878,6 @@ class TestProtocolAudit:
         self._setup_devices(iot)
         mock_client.search.side_effect = [
             # OUI discovery (devices already registered)
-            {"aggregations": {"by_mac": {"buckets": []}}},
-            # Conn stats batch - all traffic on expected ports, all encrypted
-            {
-                "aggregations": {
-                    "by_mac": {
-                        "buckets": [
-                            {
-                                "key": "AA:BB:CC:DD:EE:FF",
-                                "doc_count": 100,
-                                "total_bytes": {"value": 50000},
-                                "dest_ports": {
-                                    "buckets": [{"key": 443, "doc_count": 100}]
-                                },
-                                "encrypted": {"doc_count": 100},
-                                "third_party_orgs": {"value": 1},
-                            }
-                        ]
-                    }
-                },
-            },
-            # Alert counts
             {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch - only port 443
             {

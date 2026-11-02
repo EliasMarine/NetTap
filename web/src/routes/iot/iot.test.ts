@@ -66,6 +66,47 @@ describe('IoT page — failed endpoints', () => {
 	});
 });
 
+// A device that only does local chatter (DNS, NTP, mDNS) has nothing to encrypt:
+// the page must say N/A, not "0%", and must not raise a low-encryption finding.
+describe('IoT page — encryption not applicable', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('shows N/A and no encryption finding when encryption_applicable is false', async () => {
+		const device = {
+			mac: 'AA:BB:CC:DD:EE:01', name: 'Smart Plug', manufacturer: 'TP-Link', ip: '192.168.1.60',
+			score: 90, grade: 'A', privacy_score: 90, security_score: 90, behavior_score: 90,
+			anomaly_count: 0, encryption_pct: 0, encryption_applicable: false, tracker_count: 0, last_seen: null,
+		};
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue({
+			health_score: 90, health_grade: 'A', privacy_score: 90, security_score: 90, behavior_score: 90,
+			device_count: 1, anomaly_count: 0, privacy_concerns: 0, unencrypted_count: 0, subtitle: '',
+			devices: [device],
+		});
+		vi.mocked(iotApi.getPrivacyReport).mockResolvedValue({
+			devices: [{
+				mac: device.mac, name: device.name, privacy_grade: 'A', privacy_score: 90,
+				tracker_domains: [], tracker_count: 0, telemetry_bytes: 0, third_party_orgs: 0,
+				encryption_ratio: 0, encryption_applicable: false, phone_home_per_hour: 0,
+			}],
+		});
+		vi.mocked(iotApi.getProtocolAudit).mockResolvedValue({ devices: [] });
+		vi.mocked(iotApi.getNetworkIsolation).mockResolvedValue({
+			segmentation_score: 100, segmentation_grade: 'A', pairs: [], recommendation: '',
+		});
+		vi.mocked(iotApi.getManufacturerProfiles).mockResolvedValue({ manufacturers: [] });
+
+		render(IoTPage);
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(screen.getByText('Smart Plug')).toBeInTheDocument();
+		expect(screen.getByText('N/A')).toBeInTheDocument();
+		expect(screen.queryByText(/has only \d+% encrypted/)).not.toBeInTheDocument();
+	});
+});
+
 /**
  * Tests for the IoT Trust Score page (/iot).
  *

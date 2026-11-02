@@ -267,7 +267,10 @@
 						timestamp: '',
 					});
 				}
-				if (dev.encryption_ratio < 0.9) {
+				// OLD CODE START — 2026-11-01: fired for devices with only local chatter (N/A)
+				// if (dev.encryption_ratio < 0.9) {
+				// OLD CODE END
+				if (dev.encryption_applicable !== false && dev.encryption_ratio < 0.9) {
 					const pct = Math.round(dev.encryption_ratio * 100);
 					items.push({
 						id: `unenc-${idx++}`,
@@ -667,7 +670,7 @@
 								</div>
 								<div class="tc-indicator">
 									<span class="tc-ind-label">Encrypted</span>
-									<span class="tc-ind-value mono">{device.encryption_pct}%</span>
+									<span class="tc-ind-value mono">{device.encryption_applicable === false ? 'N/A' : `${device.encryption_pct}%`}</span>
 								</div>
 								<div class="tc-indicator">
 									<span class="tc-ind-label">Anomalies</span>
@@ -921,7 +924,7 @@
 				</DrawerSection>
 
 				<DrawerSection title="Quick Stats">
-					<KVRow label="Encryption" value={`${selectedDevice.encryption_pct}%`} mono />
+					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
 					<KVRow label="Trackers" value={String(selectedDevice.tracker_count)} mono />
 					<KVRow label="Anomalies" value={String(selectedDevice.anomaly_count)} mono />
 				</DrawerSection>

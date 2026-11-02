@@ -17,12 +17,27 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
 
 logger = logging.getLogger("nettap.services.iot_monitor")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# Zeek writes the ICMP type/code into the port fields (destination.port 0/3/8/11)
+ICMP_TRANSPORTS = ["icmp", "icmp6", "ipv6-icmp"]
+# DNS, DHCP, NTP, SSDP, NetBIOS datagram, plus mDNS/LLMNR/NetBIOS name service
+LOCAL_SERVICE_PORTS = sorted({53, 67, 68, 123, 138, 1900, *LOCAL_NAME_SERVICE_PORTS})
+MULTICAST_BROADCAST = ["224.0.0.0/4", "ff00::/8", "255.255.255.255"]
+# Plumbing every device does (G11 false findings 2026-11-01): never an unexpected
+# port, an isolation risk, or part of the encryption share. Dedicated checks such
+# as hardcoded DNS query port 53 themselves, so they still see it.
+LOCAL_CHATTER_EXCLUSION: list[dict] = [
+    {"terms": {"network.transport": ICMP_TRANSPORTS}},
+    {"terms": {"destination.port": LOCAL_SERVICE_PORTS}},
+    {"terms": {"destination.ip": MULTICAST_BROADCAST}},
+]
 
 # Path to tracker domains list (suffix-matched against DNS queries)
 _TRACKER_DOMAINS_FILE = os.path.join(
@@ -412,6 +427,7 @@ class IoTMonitor:
                     "behavior_score": score_result["behavior_score"],
                     "anomaly_count": anomaly_count,
                     "encryption_pct": encryption_pct,
+                    "encryption_applicable": stats["encryption_applicable"],
                     "tracker_count": tracker_count,
                     "last_seen": dev_info.get("classified_at", ""),
                 }
@@ -525,6 +541,10 @@ class IoTMonitor:
     ) -> dict[str, dict[str, Any]]:
         """Query connection stats for all devices in one OpenSearch call.
 
+        Local chatter (ICMP, DNS/DHCP/NTP/discovery, multicast/broadcast) is
+        left out, so every count below covers only traffic where encryption
+        and destination ports mean something.
+
         Returns dict keyed by MAC with:
             total_connections, encrypted_connections, total_bytes,
             dest_ports (set), alert_count, third_party_orgs (int)
@@ -540,10 +560,13 @@ class IoTMonitor:
             "filter": [
                 _time_range_filter(from_ts, to_ts),
                 {"terms": {"source.mac": mac_terms}},
-            ]
+            ],
+            "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — 2026-11-01: counted ICMP types as ports and DNS/mDNS as unencrypted
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,
@@ -801,6 +824,8 @@ class IoTMonitor:
             "telemetry_bytes": 0,  # Would need IP-to-tracker resolution; simplified for now
             "third_party_orgs": third_party_orgs,
             "encryption_ratio": min(1.0, max(0.0, encryption_ratio)),
+            # False when only local chatter was seen: the ratio is then N/A, not 100%
+            "encryption_applicable": total_conns > 0,
             "protocol_violations": protocol_violations,
             "alert_count": alert_count,
             "firmware_age_signal": "unknown",
@@ -1242,6 +1267,8 @@ class IoTMonitor:
                     "telemetry_bytes": telemetry_bytes,
                     "third_party_orgs": third_party_orgs,
                     "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
+                    # Only local chatter seen: ratio stays 1.0 so nothing is penalised
+                    "encryption_applicable": total_conns > 0,
                     "phone_home_per_hour": phone_home_per_hour,
                 }
             )
@@ -1665,8 +1692,8 @@ class IoTMonitor:
         """Audit IoT devices for protocol compliance violations.
 
         Checks each device's traffic against expected protocol profiles
-        based on device category. Flags unexpected ports, unencrypted
-        external connections, and hardcoded DNS.
+        based on device category. Flags unexpected ports and hardcoded DNS
+        (encryption is reported once, by the privacy report).
 
         Returns dict with 'devices' list.
         """
@@ -1680,8 +1707,10 @@ class IoTMonitor:
         excluded = build_excluded_ips_filter(excluded_ips or [])
         macs = list(devices.keys())
 
-        # Batch query connection stats (includes dest_ports)
-        conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+        # OLD CODE START — 2026-11-01: only fed the unencrypted finding removed below
+        # # Batch query connection stats (includes dest_ports)
+        # conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+        # OLD CODE END
 
         # Query per-device port usage with connection counts
         port_detail = self._query_port_detail_batch(macs, from_ts, to_ts, excluded)
@@ -1700,7 +1729,9 @@ class IoTMonitor:
             )
             category_label = profile.get("label", "Unknown")
 
-            cs = conn_stats.get(mac, {})
+            # OLD CODE START — 2026-11-01: conn stats no longer queried here
+            # cs = conn_stats.get(mac, {})
+            # OLD CODE END
             pd = port_detail.get(mac, {})
             hd = hardcoded_dns.get(mac, [])
 
@@ -1727,25 +1758,29 @@ class IoTMonitor:
                         }
                     )
 
-            # Check for unencrypted external connections
-            total_conns = cs.get("total_connections", 0)
-            encrypted_conns = cs.get("encrypted_connections", 0)
-            unencrypted = total_conns - encrypted_conns
-            if total_conns > 0 and unencrypted > 0:
-                ratio = encrypted_conns / total_conns
-                if ratio < 0.9:
-                    findings.append(
-                        {
-                            "type": "unencrypted_traffic",
-                            "severity": "high" if ratio < 0.5 else "medium",
-                            "port": 0,
-                            "connection_count": unencrypted,
-                            "description": (
-                                f"{int((1 - ratio) * 100)}% of connections are unencrypted "
-                                f"({unencrypted} of {total_conns})"
-                            ),
-                        }
-                    )
+            # OLD CODE START — 2026-11-01: duplicated the findings feed's "has only N%
+            # encrypted connections", which /iot builds from the privacy report's
+            # encryption_ratio; the same fact was listed twice per device.
+            # # Check for unencrypted external connections
+            # total_conns = cs.get("total_connections", 0)
+            # encrypted_conns = cs.get("encrypted_connections", 0)
+            # unencrypted = total_conns - encrypted_conns
+            # if total_conns > 0 and unencrypted > 0:
+            #     ratio = encrypted_conns / total_conns
+            #     if ratio < 0.9:
+            #         findings.append(
+            #             {
+            #                 "type": "unencrypted_traffic",
+            #                 "severity": "high" if ratio < 0.5 else "medium",
+            #                 "port": 0,
+            #                 "connection_count": unencrypted,
+            #                 "description": (
+            #                     f"{int((1 - ratio) * 100)}% of connections are unencrypted "
+            #                     f"({unencrypted} of {total_conns})"
+            #                 ),
+            #             }
+            #         )
+            # OLD CODE END
 
             # Check for hardcoded DNS
             for dns_entry in hd:
@@ -1800,10 +1835,13 @@ class IoTMonitor:
             "filter": [
                 _time_range_filter(from_ts, to_ts),
                 {"terms": {"source.mac": mac_terms}},
-            ]
+            ],
+            "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — 2026-11-01: ICMP type/code showed up as "Uses port 0/3"
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,
@@ -1990,10 +2028,14 @@ class IoTMonitor:
                         }
                     }
                 },
-            ]
+            ],
+            # DNS/DHCP/NTP/discovery to a LAN server and pings are expected, not lateral movement
+            "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — 2026-11-01: flagged DNS/DHCP to the gateway as an isolation risk
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,

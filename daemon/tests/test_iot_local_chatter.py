@@ -1,0 +1,250 @@
+"""
+IoT findings must not count local network chatter (G11 false findings, 2026-11-01).
+
+Covers: ICMP type/code read as ports, DNS/DHCP to the gateway flagged as an
+isolation risk, DNS/mDNS counted as unencrypted traffic, and the encryption
+finding listed twice per device. OpenSearch is mocked; the fake routes each
+query by its aggregation names so the tests don't depend on query order.
+"""
+
+import os
+import sys
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from services.iot_monitor import IoTMonitor  # noqa: E402
+
+FROM_TS = "2026-11-01T00:00:00Z"
+TO_TS = "2026-11-01T12:00:00Z"
+HUE_MAC = "EC:B5:FA:00:00:01"
+ICMP_CLAUSE = {"terms": {"network.transport": ["icmp", "icmp6", "ipv6-icmp"]}}
+MULTICAST_CLAUSE = {
+    "terms": {"destination.ip": ["224.0.0.0/4", "ff00::/8", "255.255.255.255"]}
+}
+
+
+def _empty() -> dict[str, Any]:
+    return {"aggregations": {"by_mac": {"buckets": []}}}
+
+
+def _fake_search(
+    conn: list[dict] | None = None,
+    ports: list[dict] | None = None,
+    isolation: list[dict] | None = None,
+):
+    """Return a search() that answers each IoT query by its aggregation names."""
+
+    def search(index: str, body: dict) -> dict[str, Any]:
+        aggs = body.get("aggs", {})
+        if "by_source_mac" in aggs:
+            return {"aggregations": {"by_source_mac": {"buckets": isolation or []}}}
+        sub = aggs.get("by_mac", {}).get("aggs", {})
+        if "encrypted" in sub:
+            return {"aggregations": {"by_mac": {"buckets": conn or []}}}
+        if "ports" in sub:
+            return {"aggregations": {"by_mac": {"buckets": ports or []}}}
+        return _empty()
+
+    return search
+
+
+def _bodies(client: MagicMock) -> list[dict]:
+    return [c.kwargs["body"] for c in client.search.call_args_list]
+
+
+def _body_with_agg(client: MagicMock, agg_name: str) -> dict:
+    for body in _bodies(client):
+        aggs = body.get("aggs", {})
+        if agg_name in aggs or agg_name in aggs.get("by_mac", {}).get("aggs", {}):
+            return body
+    raise AssertionError(f"no query with aggregation {agg_name!r}")
+
+
+def _must_not(body: dict) -> list[dict]:
+    return body["query"]["bool"].get("must_not", [])
+
+
+def _excluded_ports(body: dict) -> set[int]:
+    for clause in _must_not(body):
+        ports = clause.get("terms", {}).get("destination.port")
+        if ports:
+            return set(ports)
+    return set()
+
+
+@pytest.fixture
+def client() -> MagicMock:
+    return MagicMock()
+
+
+@pytest.fixture
+def iot(client: MagicMock) -> IoTMonitor:
+    monitor = IoTMonitor(client=client)
+    monitor._iot_devices = {
+        HUE_MAC: {
+            "mac": HUE_MAC,
+            "manufacturer": "Philips Lighting BV",
+            "hostname": None,
+            "ip": "192.168.1.40",
+            "classified_at": FROM_TS,
+        }
+    }
+    return monitor
+
+
+# ---------------------------------------------------------------------------
+# 1. ICMP type/code is not a destination port
+# ---------------------------------------------------------------------------
+
+
+class TestIcmpIsNotAPort:
+    def test_port_audit_query_skips_icmp(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_protocol_audit(FROM_TS, TO_TS)
+        assert ICMP_CLAUSE in _must_not(_body_with_agg(client, "ports"))
+
+    def test_trust_score_port_query_skips_icmp(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_fleet_summary(FROM_TS, TO_TS)
+        assert ICMP_CLAUSE in _must_not(_body_with_agg(client, "dest_ports"))
+
+    def test_excluded_ips_are_still_applied(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_protocol_audit(FROM_TS, TO_TS, excluded_ips=["192.168.1.2"])
+        must_not = _must_not(_body_with_agg(client, "ports"))
+        assert {"terms": {"source.ip": ["192.168.1.2"]}} in must_not
+        assert ICMP_CLAUSE in must_not
+
+    def test_hardcoded_dns_check_still_sees_port_53(self, iot, client):
+        """'Sends DNS queries directly to 9.9.9.9' is a real finding; keep it."""
+        client.search.side_effect = _fake_search()
+        iot.get_protocol_audit(FROM_TS, TO_TS)
+        body = _body_with_agg(client, "dns_servers")
+        assert {"term": {"destination.port": 53}} in body["query"]["bool"]["filter"]
+        assert _excluded_ports(body) == set()
+
+
+# ---------------------------------------------------------------------------
+# 2. Expected LAN services are not an isolation risk
+# ---------------------------------------------------------------------------
+
+
+class TestIsolationIgnoresLanServices:
+    def test_query_excludes_dns_dhcp_ntp_and_discovery(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_network_isolation(FROM_TS, TO_TS)
+        body = _body_with_agg(client, "by_source_mac")
+        excluded = _excluded_ports(body)
+        assert {53, 67, 68, 123, 137, 138, 1900, 5353, 5355} <= excluded
+        assert ICMP_CLAUSE in _must_not(body)
+
+    def test_lateral_movement_ports_stay_in(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_network_isolation(FROM_TS, TO_TS)
+        excluded = _excluded_ports(_body_with_agg(client, "by_source_mac"))
+        assert not excluded & {22, 23, 80, 139, 443, 445, 3389, 5900, 8080}
+
+    def test_iot_to_lan_ssh_is_still_critical(self, iot, client):
+        client.search.side_effect = _fake_search(
+            isolation=[
+                {
+                    "key": HUE_MAC,
+                    "by_dest_ip": {
+                        "buckets": [
+                            {
+                                "key": "192.168.1.20",
+                                "doc_count": 4,
+                                "ports": {"buckets": [{"key": 22, "doc_count": 4}]},
+                                "source_ip": {"buckets": [{"key": "192.168.1.40"}]},
+                            }
+                        ]
+                    },
+                }
+            ]
+        )
+        result = iot.get_network_isolation(FROM_TS, TO_TS)
+        assert [p["risk"] for p in result["pairs"]] == ["critical"]
+        assert result["segmentation_score"] == 75
+
+
+# ---------------------------------------------------------------------------
+# 3. Encryption share covers only traffic where encryption is meaningful
+# ---------------------------------------------------------------------------
+
+
+class TestEncryptionShare:
+    def test_conn_stats_query_excludes_local_chatter(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_privacy_report(FROM_TS, TO_TS)
+        body = _body_with_agg(client, "encrypted")
+        must_not = _must_not(body)
+        assert ICMP_CLAUSE in must_not
+        assert MULTICAST_CLAUSE in must_not
+        assert {53, 67, 68, 123, 137, 138, 1900, 5353, 5355} <= _excluded_ports(body)
+        assert 80 not in _excluded_ports(body)
+
+    def test_only_local_chatter_is_not_applicable(self, iot, client):
+        """All traffic excluded -> no bucket: N/A, never 0% or a penalty."""
+        client.search.side_effect = _fake_search(conn=[])
+        privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
+        assert privacy["encryption_applicable"] is False
+        # 1.0 keeps /iot from listing "has only 0% encrypted connections"
+        assert privacy["encryption_ratio"] == 1.0
+
+        fleet = iot.get_fleet_summary(FROM_TS, TO_TS)
+        assert fleet["devices"][0]["encryption_applicable"] is False
+        assert fleet["unencrypted_count"] == 0
+
+    def test_not_applicable_keeps_full_encryption_points(self, iot):
+        stats = iot._build_device_stats(HUE_MAC, {}, {}, None, set())
+        assert stats["encryption_applicable"] is False
+        scored = iot._scorer.score_device(stats)
+        assert scored["security_breakdown"]["encryption_ratio"] == 15
+
+    def test_relevant_traffic_still_measured(self, iot, client):
+        conn = [
+            {
+                "key": HUE_MAC,
+                "doc_count": 10,
+                "total_bytes": {"value": 5000},
+                "dest_ports": {"buckets": [{"key": 443, "doc_count": 9}]},
+                "encrypted": {"doc_count": 9},
+                "third_party_orgs": {"value": 1},
+            }
+        ]
+        client.search.side_effect = _fake_search(conn=conn)
+        privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
+        assert privacy["encryption_applicable"] is True
+        assert privacy["encryption_ratio"] == 0.9
+
+
+# ---------------------------------------------------------------------------
+# 4. One finding per fact
+# ---------------------------------------------------------------------------
+
+
+class TestNoDuplicateEncryptionFinding:
+    def test_protocol_audit_leaves_encryption_to_privacy_report(self, iot, client):
+        """194 of 194 unencrypted was listed by both the audit and the privacy feed."""
+        conn = [
+            {
+                "key": HUE_MAC,
+                "doc_count": 194,
+                "total_bytes": {"value": 1000},
+                "dest_ports": {"buckets": [{"key": 80, "doc_count": 194}]},
+                "encrypted": {"doc_count": 0},
+                "third_party_orgs": {"value": 1},
+            }
+        ]
+        client.search.side_effect = _fake_search(conn=conn)
+
+        audit = iot.get_protocol_audit(FROM_TS, TO_TS)["devices"][0]
+        assert [f for f in audit["findings"] if "encrypt" in f["description"]] == []
+
+        # The privacy report is now the single source the /iot feed reads
+        privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
+        assert privacy["encryption_ratio"] == 0.0
