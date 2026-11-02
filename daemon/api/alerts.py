@@ -656,6 +656,8 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": excluded,
                 # OLD CODE END
+                # Same engine-event rule as the alert count, so the panels add up to the total
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
@@ -738,6 +740,8 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": excluded,
                 # OLD CODE END
+                # Same engine-event rule as the alert count, so the panels add up to the total
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
@@ -819,6 +823,8 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": excluded,
                 # OLD CODE END
+                # Same engine-event rule as the alert count, so the panels add up to the total
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {"top_ips": {"terms": {"field": field, "size": limit}}},

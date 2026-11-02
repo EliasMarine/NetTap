@@ -522,3 +522,49 @@ class TestAlertAcknowledgeHandler(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAlertPanelsMatchTheTotal(AioHTTPTestCase):
+    """Timeline, top signatures and top IPs leave out engine events like the count.
+
+    On the G11 the Alerts page total said 2,978 while Top Signatures listed
+    "SURICATA Ethertype unknown" (2,651) and the timeline axis reached 6,019.
+    """
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_alert_routes(app, self.storage)
+        return app
+
+    async def _must_not(self, path: str) -> list:
+        self.mock_client.search.return_value = {"aggregations": {}}
+        resp = await self.client.request("GET", path)
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        return body["query"]["bool"].get("must_not", [])
+
+    @unittest_run_loop
+    async def test_timeline(self):
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            await self._must_not("/api/alerts/timeline"),
+        )
+
+    @unittest_run_loop
+    async def test_top_signatures(self):
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            await self._must_not("/api/alerts/top-signatures"),
+        )
+
+    @unittest_run_loop
+    async def test_top_ips(self):
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            await self._must_not("/api/alerts/top-ips"),
+        )
