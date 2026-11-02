@@ -234,9 +234,16 @@ def _device_category(
     os_lower = os_hint.lower()
     if os_lower in ("ios", "android"):
         return "phone"
-    if os_lower in ("windows", "macos", "linux", "chromeos"):
+    # OLD CODE START — the OS hints are "Windows 10/11", "Windows 8.1"..., never plain
+    # "windows", so Windows PCs fell through; consoles matched nothing
+    # if os_lower in ("windows", "macos", "linux", "chromeos"):
+    #     return "computer"
+    # if os_lower in ("smart tv", "roku", "fire tv"):
+    #     return "media"
+    # OLD CODE END
+    if os_lower.startswith("windows") or os_lower in ("macos", "linux", "chromeos"):
         return "computer"
-    if os_lower in ("smart tv", "roku", "fire tv"):
+    if os_lower in ("smart tv", "roku", "fire tv", "xbox", "playstation", "nintendo"):
         return "media"
     # Check hostname for IoT indicators
     if hostname:

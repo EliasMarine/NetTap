@@ -930,6 +930,10 @@ class TestDeviceCategoryFallbacks:
         from api.devices import _device_category
 
         assert _device_category("Android", None, "Ubiquiti Inc") == "phone"
+        # the fingerprint's real labels (#21 found these never matched)
+        assert _device_category("Windows 10/11", None, None) == "computer"
+        assert _device_category("Windows 8.1", None, None) == "computer"
+        assert _device_category("Xbox", None, None) == "media"
         assert _device_category(None, "living-room-smart-plug", "Ubiquiti Inc") == "iot"
 
     def test_phone_and_computer_hostnames(self):
