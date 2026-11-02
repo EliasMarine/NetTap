@@ -9,16 +9,18 @@ telemetry data from OpenSearch indices.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from itertools import groupby
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from api.alerts import SURICATA_NOISE_EXCLUSION
-from api.devices import _lan_device_buckets
+from api.devices import _lan_device_bool_query, _lan_device_buckets
 # OLD CODE START — #96: the population's filters come from api.devices._lan_device_bool_query now
 # from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 # OLD CODE END
 from services.risk_scoring import RiskScorer
+from storage.all_buckets import all_buckets
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.risk")
@@ -84,14 +86,52 @@ def _get_client(request: web.Request):
     return storage._client
 
 
+def _ports_cut_short(conn_bucket: dict) -> bool:
+    """True if the device used more ports than its top-50 ports_used list holds."""
+    return bool(conn_bucket.get("ports_used", {}).get("sum_other_doc_count", 0))
+
+
+def _all_unsafe_ports(client, bool_query: dict, ips: list[str]) -> dict[str, list[int]]:
+    """Every port outside SAFE_PORTS that each of `ips` connected to (#96).
+
+    For devices whose ports_used list was cut short: the scorer flags any port outside
+    SAFE_PORTS, so a single connection to 4444 must not fall off the end of a top-50 list.
+    """
+    if not ips:
+        return {}
+    query = {
+        "bool": {
+            **bool_query,
+            "filter": [*bool_query["filter"], {"terms": {"source.ip": ips}}],
+            "must_not": [
+                *bool_query.get("must_not", []),
+                {"terms": {"destination.port": sorted(RiskScorer.SAFE_PORTS)}},
+            ],
+        }
+    }
+    sources = [{"ip": {"terms": {"field": "source.ip"}}}, {"port": {"terms": {"field": "destination.port"}}}]
+    buckets, complete = all_buckets(client, NETWORK_INDEX, query, sources)
+    if not complete:
+        logger.warning("Port lists stopped at %d device ports; scores cover those only", len(buckets))
+    # Composite buckets come in key order, so each IP's ports are together
+    return {
+        ip: [int(b["key"]["port"]) for b in group]
+        for ip, group in groupby(buckets, key=lambda b: b["key"]["ip"])
+    }
+
+
 def _build_device_stats(
     ip: str,
     conn_bucket: dict,
     alert_count: int,
     network_avg: float,
     network_stddev: float,
+    more_ports: list[int] | None = None,
 ) -> dict:
-    """Build a device_stats dict from OpenSearch aggregation bucket data."""
+    """Build a device_stats dict from OpenSearch aggregation bucket data.
+
+    more_ports: the device's ports beyond its ports_used list (see _all_unsafe_ports).
+    """
     total_conn = conn_bucket.get("doc_count", 0)
     external_count = conn_bucket.get("external_conns", {}).get("doc_count", 0)
     orig_bytes = int(conn_bucket.get("total_orig_bytes", {}).get("value", 0) or 0)
@@ -99,7 +139,10 @@ def _build_device_stats(
 
     # Extract ports used
     port_buckets = conn_bucket.get("ports_used", {}).get("buckets", [])
-    ports = [int(pb["key"]) for pb in port_buckets]
+    # OLD CODE START — #96: the top 50 ports only, so a busy device's rare port 4444 went unseen
+    # ports = [int(pb["key"]) for pb in port_buckets]
+    # OLD CODE END
+    ports = list(dict.fromkeys([*(int(pb["key"]) for pb in port_buckets), *(more_ports or [])]))
 
     return {
         "ip": ip,
@@ -275,6 +318,11 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
         device_buckets = _lan_device_buckets(
             client, request.app, from_ts, to_ts, aggs=_device_score_aggs(), page_size=_SCORE_PAGE_SIZE
         )
+        more_ports = _all_unsafe_ports(
+            client,
+            _lan_device_bool_query(request.app, from_ts, to_ts),
+            [b["key"] for b in device_buckets if _ports_cut_short(b)],
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in risk scores: %s", exc)
         return web.json_response(
@@ -333,6 +381,7 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
             alert_count=alert_counts.get(ip, 0),
             network_avg=network_avg,
             network_stddev=network_stddev,
+            more_ports=more_ports.get(ip),
         )
         score_result = risk_scorer.score_device(device_stats)
         scored_devices.append(
@@ -461,6 +510,16 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
         "external_conns": aggs.get("external_conns", {}),
     }
 
+    more_ports: list[int] = []
+    if _ports_cut_short(pseudo_bucket):
+        try:
+            more_ports = _all_unsafe_ports(client, conn_query["query"]["bool"], [ip]).get(ip, [])
+        except OpenSearchException as exc:
+            logger.error("OpenSearch error in single risk score ports: %s", exc)
+            return web.json_response(
+                {"error": f"OpenSearch query failed: {exc}"}, status=502
+            )
+
     # OLD CODE START — #96: the baseline came from the busiest 500 devices
     # # Get network-wide stats for anomaly detection
     # net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
@@ -558,6 +617,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
         alert_count=alert_count,
         network_avg=network_avg,
         network_stddev=network_stddev,
+        more_ports=more_ports,
     )
     score_result = risk_scorer.score_device(device_stats)
 

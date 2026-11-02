@@ -639,6 +639,108 @@ class TestRiskCoversEveryDevice(AioHTTPTestCase):
         self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.9.7"])
 
 
+def _port_search(ports_by_ip: dict[str, dict[int, int]]):
+    """search() side effect over each IP's destination-port connection counts.
+
+    ports_used is the top 50 by count with sum_other_doc_count, like OpenSearch; the
+    (ip, port) composite has every port outside the must_not port list for the IPs asked.
+    """
+
+    def ports_used(ports):
+        top = sorted(ports, key=lambda port: -ports[port])[:50]
+        return {
+            "buckets": [{"key": port, "doc_count": ports[port]} for port in top],
+            "sum_other_doc_count": sum(n for port, n in ports.items() if port not in top),
+        }
+
+    def device(ip, key):
+        ports = ports_by_ip[ip]
+        return {**_make_device_bucket(ip, doc_count=sum(ports.values())), "key": key, "ports_used": ports_used(ports)}
+
+    def composite_page(body):
+        composite = body["aggs"]["all"]["composite"]
+        names = [next(iter(source)) for source in composite["sources"]]
+        bool_query = body["query"]["bool"]
+        if names == ["ip"]:
+            keys = [{"ip": ip} for ip in sorted(ports_by_ip)]
+            make = lambda key: device(key["ip"], key)  # noqa: E731
+        else:
+            ips = [c["terms"]["source.ip"] for c in bool_query["filter"] if "source.ip" in c.get("terms", {})][-1]
+            safe = [c["terms"]["destination.port"] for c in bool_query["must_not"] if "destination.port" in c.get("terms", {})][0]
+            keys = [{"ip": ip, "port": port} for ip in sorted(ips) for port in sorted(ports_by_ip[ip]) if port not in safe]
+            make = lambda key: {"key": key, "doc_count": ports_by_ip[key["ip"]][key["port"]]}  # noqa: E731
+        after = composite.get("after")
+        start = keys.index(after) + 1 if after else 0
+        page = keys[start : start + composite["size"]]
+        return {"aggregations": {"all": {"buckets": [make(k) for k in page], **({"after_key": page[-1]} if page else {})}}}
+
+    def search(index=None, body=None, **_kwargs):
+        aggs = body.get("aggs", {})
+        if "all" in aggs:
+            return composite_page(body)
+        if "by_ip" in aggs:
+            return _make_alert_search_result({})
+        filters = body["query"]["bool"]["filter"]
+        if {"term": {"event.dataset": "alert"}} in filters:
+            return _make_single_alert_result(total=0)
+        ip = next(c["term"]["source.ip"] for c in filters if "source.ip" in c.get("term", {}))
+        ports = ports_by_ip[ip]
+        single = _make_single_conn_result(total=sum(ports.values()))
+        return {**single, "aggregations": {**single["aggregations"], "ports_used": ports_used(ports)}}
+
+    return search
+
+
+class TestRiskPortsAreComplete(AioHTTPTestCase):
+    """#96: the scorer sees every port a device used outside the safe ports, not the top 50."""
+
+    # A console: 443 plus 59 game ports at 10 connections each, and one connection to 4444
+    CONSOLE = {443: 500, **{20_000 + i: 10 for i in range(59)}, 4444: 1}
+    # A torrent host: 70 peer ports, none on the suspicious list
+    TORRENT = {443: 500, **{40_000 + i: 10 for i in range(70)}}
+    PORTS = {"192.168.1.20": CONSOLE, "192.168.1.30": TORRENT, "192.168.1.40": {443: 100, 53: 20}}
+
+    def setUp(self):
+        self.mock_storage = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.mock_storage
+        register_risk_routes(app, RiskScorer(), self.mock_storage)
+        return app
+
+    def _port_factor(self, device):
+        return next(f for f in device["factors"] if f["name"] == "suspicious_ports")
+
+    @unittest_run_loop
+    async def test_list_sees_a_rare_suspicious_port(self):
+        self.mock_storage._client.search.side_effect = _port_search(self.PORTS)
+
+        data = await (await self.client.request("GET", "/api/risk/scores")).json()
+
+        by_ip = {d["ip"]: self._port_factor(d) for d in data["devices"]}
+        # The top 50 left 4444 out: 8 points and "49 unusual port(s) detected"
+        self.assertEqual(by_ip["192.168.1.20"]["score"], 15)
+        self.assertEqual(by_ip["192.168.1.20"]["description"], "Known suspicious ports used: 4444")
+        self.assertEqual(by_ip["192.168.1.30"]["description"], "70 unusual port(s) detected")
+        self.assertEqual(by_ip["192.168.1.40"]["description"], "Only common protocols/ports used")
+        # Only the two devices whose list was cut short are read in full
+        port_bodies = [
+            c.kwargs["body"] for c in self.mock_storage._client.search.call_args_list
+            if len(c.kwargs["body"].get("aggs", {}).get("all", {}).get("composite", {}).get("sources", [])) == 2
+        ]
+        self.assertIn({"terms": {"source.ip": ["192.168.1.20", "192.168.1.30"]}}, port_bodies[0]["query"]["bool"]["filter"])
+
+    @unittest_run_loop
+    async def test_single_sees_a_rare_suspicious_port(self):
+        self.mock_storage._client.search.side_effect = _port_search(self.PORTS)
+
+        data = await (await self.client.request("GET", "/api/risk/scores/192.168.1.20")).json()
+
+        self.assertEqual(self._port_factor(data)["description"], "Known suspicious ports used: 4444")
+
+
 class TestRiskRouteRegistration(AioHTTPTestCase):
     """Tests for route registration."""
 
