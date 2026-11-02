@@ -386,8 +386,16 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 17: OpenSearch Dashboards had no index pattern or dashboards since March: dashboards-
   helper's programs were FATAL EACCES (NET-53 removed its PUSER_PRIV_DROP override, NET-54 only
   restored logstash's), then it waited for Arkime's legacy template (Arkime off), then hit an
-  unbound ARKIME_INIT_SHARDS. All three fixed; refresh kept at 1 s.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch17.sh.
+  unbound ARKIME_INIT_SHARDS. All three fixed; refresh kept at 1 s. A rerun found a fourth
+  (unbound MALCOLM_NETWORK_INDEX_PATTERN before detectors/alerting); now "job succeeded".
+  Batch 18: registry refresh took 62 s (refresh="wait_for" on every write): 0.9 s, each
+  listing pass refreshes once. Console/streamer hostnames are media.
+  Batch 19: backup guide run on the box: host curl got 401, wrong .env, appdata path was a
+  volume, volume names lacked docker_. Rewritten; snapshot + rename restore pass. DHCP gateway
+  mode's Infrastructure node no longer shows br0.
+  Batch 20: LAN detection kept a /24 only at 10% of the busiest one (IoT VLAN flipped, one-
+  device VLAN dropped); now 1% of all private-source traffic. Compose never passed LAN_SUBNETS.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch20.sh.
   Each checks its fixes against the live APIs.
 ```
 
@@ -1872,6 +1880,10 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 128. **nginx `upstream` blocks must resolve at start (Chain 25)** — a static `upstream` naming a container that a compose profile may leave out stops nginx, and with it the whole UI. For optional services use `resolver 127.0.0.11` and `set $u http://name:port; proxy_pass $u;`, and test the config with `docker compose run --rm --no-deps --entrypoint nginx <svc> -t` before recreating the front door.
 129. **"healthy" is not "working" for a supervisord container (Chain 25)** — dashboards-helper's healthcheck is `test -d /proc/1`, so it reported healthy for eight months while every program was FATAL. For any Malcolm container, check `supervisorctl -c /etc/supervisord.conf status`; and when a fix is reverted for one service (NET-53), re-check every service the original fix covered (NET-54 restored logstash only).
 130. **Waking a dormant job: read what it will do before you start it (Chain 25)** — the helper's cron had an index size-prune (no-op at limit `'0'`) and would re-stamp `malcolm_template` with a 60 s refresh. Reading the scripts first turned a silent freshness regression into a one-line env setting.
+131. **`refresh="wait_for"` on every write makes a batch job O(n) seconds (Chain 25)** — the device registry waited ~1 s per write, so ~50 devices took 62 s. Write without it; refresh once before any pass that searches what was just written (get by id is realtime). A test fake that models search visibility catches a missing refresh: the stale doc gets written back over the fresh one.
+132. **Run a docs procedure on a real box before calling it fixed (Chain 25)** — the backup guide's index names were fixed (#72), but running it showed the rest failed silently: no login (401), the `.env` Compose doesn't read, a host path that is really a container volume behind `|| true`, and volume names without Compose's `docker_` prefix (which creates an empty volume). Check each step's output, not its exit code.
+133. **A "top N%" threshold relative to the biggest item flips for items near the line (Chain 25)** — LAN detection kept /24s at ≥10% of the busiest subnet; the IoT VLAN sat at 12.6% and moved in and out between restarts, and a real one-device VLAN at 4.7% never counted. Pull the real distribution first, then pick a cut (here 1% of the total) with wide margins on both sides.
+134. **An override env var documented in code is not an override until compose passes it (Chain 25)** — the daemon read `LAN_SUBNETS`, and the plan was "owner sets it in docker/.env", but the compose `environment:` block never listed it. Add a compose bats check for every env var the code treats as configuration.
 
 ---
 
