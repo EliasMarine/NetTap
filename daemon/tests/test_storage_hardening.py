@@ -351,6 +351,29 @@ class TestIlmPolicyVerification:
         assert all(v == "unchanged" for v in result.values())
         assert mgr._ilm_verified is True
 
+    def test_startup_verification_marks_the_health_card_synced(self):
+        """Startup apply records its result, so Settings stops saying "Out of sync"."""
+        mgr = _make_manager()
+        mgr._retention_config_manager = MagicMock()
+        mgr._retention_config_manager.get_ilm_status.return_value = {}
+        results = {"nettap-hot-policy": "updated", "nettap-warm-policy": "unchanged"}
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = results
+            mgr.verify_ilm_policy()
+
+        mgr._retention_config_manager.mark_ilm_applied.assert_called_once_with(results)
+
+    def test_startup_verification_with_errors_does_not_mark_synced(self):
+        mgr = _make_manager()
+        mgr._retention_config_manager = MagicMock()
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = {"nettap-hot-policy": "error: 403"}
+            mgr.verify_ilm_policy()
+
+        mgr._retention_config_manager.mark_ilm_applied.assert_not_called()
+
     def test_ilm_policy_verification_handles_missing_file(self):
         """When OpenSearch is unreachable, returns error dict."""
         mgr = _make_manager()

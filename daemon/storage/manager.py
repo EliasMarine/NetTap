@@ -1111,6 +1111,16 @@ class StorageManager:
                 else:
                     logger.info("ILM policy '%s': %s", name, status)
 
+            # The Settings health card reads this record; before, only a retention
+            # save wrote it, so a box that never saved showed "Out of sync" forever.
+            clean = not any(str(v).startswith("error") for v in results.values())
+            config_manager = getattr(self, "_retention_config_manager", None)
+            if clean and config_manager is not None:
+                try:
+                    config_manager.mark_ilm_applied(results)
+                except Exception as exc:  # the policies are applied either way
+                    logger.warning("Could not record ILM status: %s", exc)
+
             return results
 
         except Exception as exc:
