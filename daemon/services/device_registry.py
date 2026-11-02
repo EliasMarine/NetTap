@@ -199,7 +199,10 @@ class DeviceRegistry:
                 index=DEVICES_INDEX,
                 id=mac,
                 body=doc,
-                refresh="wait_for",
+                # OLD CODE START — every write waited ~1 s for a refresh, so a registry refresh
+                # took ~1 min; readers of the search side call refresh_index() once per pass
+                # refresh="wait_for",
+                # OLD CODE END
             )
         except OpenSearchException as exc:
             logger.error("Failed to upsert device %s: %s", mac, exc)
@@ -215,9 +218,12 @@ class DeviceRegistry:
         if category not in VALID_CATEGORIES or device.get("category") == category:
             return False
         try:
-            self._client.index(
-                index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category}, refresh="wait_for"
-            )
+            # OLD CODE START — wait_for per write (see register_device)
+            # self._client.index(
+            #     index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category}, refresh="wait_for"
+            # )
+            # OLD CODE END
+            self._client.index(index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category})
             return True
         except OpenSearchException as exc:
             logger.error("Failed to set category on %s: %s", device["mac"], exc)
@@ -235,17 +241,32 @@ class DeviceRegistry:
         """
         owner = {ip: self._normalize_mac(mac) for ip, mac in assigned.items()}
         count = 0
+        self.refresh_index()  # the devices registered just before must be searchable
         for device in self.get_all_devices(limit=1000):
             mac, ips = device.get("mac"), device.get("ips") or []
             keep = [ip for ip in ips if ip != "0.0.0.0" and owner.get(ip, mac) == mac]
             if len(keep) == len(ips):
                 continue
             try:
-                self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}, refresh="wait_for")
+                # OLD CODE START — wait_for per write (see register_device)
+                # self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}, refresh="wait_for")
+                # OLD CODE END
+                self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep})
                 count += 1
             except OpenSearchException as exc:
                 logger.error("Failed to drop moved IPs from %s: %s", mac, exc)
         return count
+
+    def refresh_index(self) -> None:
+        """Make every write so far visible to searches (get by id never needs this).
+
+        Writes don't wait for a refresh, so a pass that lists devices calls this once first.
+        """
+        try:
+            self._client.indices.refresh(index=DEVICES_INDEX)
+        except OpenSearchException as exc:
+            # The index refreshes itself within a second anyway; the pass just reads older data
+            logger.warning("Failed to refresh %s: %s", DEVICES_INDEX, exc)
 
     def _get_existing(self, mac: str) -> dict | None:
         """The stored device doc, or None only when OpenSearch says it does not exist.
@@ -787,6 +808,7 @@ class DeviceRegistry:
         Returns:
             Number of devices enriched.
         """
+        self.refresh_index()  # names and IPs from this refresh's enrichers must be searchable
         devices = self.get_all_devices(limit=1000)
         count = 0
 

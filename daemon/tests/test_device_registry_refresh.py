@@ -39,30 +39,41 @@ def _bucket(ip: str, mac: str | list[str] | None, oui: str | None = None) -> dic
 
 
 def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
-    """OpenSearch client mock: get/index use an in-memory store, search serves conn buckets."""
+    """OpenSearch client mock: get/index use an in-memory store, search serves conn buckets.
+
+    Like OpenSearch, get by id sees every write but a search sees the store only as of
+    the last refresh (indices.refresh or a refresh= write).
+    """
     client = MagicMock()
     client.indices.exists.return_value = True
     client.store = {} if store is None else store
+    client.searchable = copy.deepcopy(client.store)
+
+    def make_searchable(**_kwargs) -> None:
+        client.searchable = copy.deepcopy(client.store)
 
     def get(index: str, id: str) -> dict:
         if id not in client.store:
             raise NotFoundError(404, "not_found", {})
         return {"_source": copy.deepcopy(client.store[id])}
 
-    def index(index: str, id: str, body: dict, refresh: str) -> dict:
+    def index(index: str, id: str, body: dict, refresh: str | None = None) -> dict:
         client.store[id] = copy.deepcopy(body)
+        if refresh:
+            make_searchable()
         return {"result": "created"}
 
     def search(index: str, body: dict) -> dict:
         if "devices" in body.get("aggs", {}):
             return {"aggregations": {"devices": {"buckets": buckets}}}
         if "match_all" in body.get("query", {}):  # registry listing
-            return {"hits": {"hits": [{"_source": copy.deepcopy(d)} for d in client.store.values()]}}
+            return {"hits": {"hits": [{"_source": copy.deepcopy(d)} for d in client.searchable.values()]}}
         return {"hits": {"hits": []}}
 
     client.get.side_effect = get
     client.index.side_effect = index
     client.search.side_effect = search
+    client.indices.refresh.side_effect = make_searchable
     return client
 
 
@@ -347,3 +358,30 @@ class TestCategoryLikeDevicesPage:
         assert client.store["CE:BD:0E:FA:4D:42"]["category"] == "unknown"
         assert client.store["70:A7:41:3F:1B:59"]["category"] == "infrastructure"
         assert client.store["70:A7:41:3F:1B:59"]["last_seen"] == quiet["last_seen"]
+
+
+class TestRefreshSpeed:
+    """The refresh took ~1 min because every device write waited ~1 s for an index refresh."""
+
+    def test_writes_skip_wait_for_and_each_pass_still_reads_fresh_docs(self):
+        old = "2026-11-01T00:00:00+00:00"
+        mac = "00:17:88:48:3C:07"
+        # Known device that held .154 and .155; this hour it is seen on .154 only
+        store = {mac: {"mac": mac, "ips": ["192.168.1.154", "192.168.1.155"], "category": "unknown",
+                       "manufacturer": None, "first_seen": old, "last_seen": old, "enrichment_sources": {}}}
+        client = _fake_client(
+            [_bucket("192.168.1.154", "00:17:88:48:3c:07", "Philips Lighting BV"),
+             _bucket("192.168.1.155", "cc:f4:11:b4:7f:68")],
+            store,
+        )
+        mac_lookup = MagicMock()
+        mac_lookup.lookup.return_value = {"found": False}
+
+        refresh_device_registry({**_app(client), "mac_lookup": mac_lookup})
+
+        assert all(not c.kwargs.get("refresh") for c in client.index.call_args_list)
+        doc = client.store[mac]
+        # A pass that read a stale listing would write the old doc back over this refresh's
+        assert doc["last_seen"] > old
+        assert doc["ips"] == ["192.168.1.154"]
+        assert (doc["manufacturer"], doc["category"]) == ("Philips Lighting BV", "iot")

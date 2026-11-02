@@ -29,6 +29,7 @@ Endpoints:
 """
 
 import logging
+import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -159,6 +160,7 @@ def _categorize_unknown(app: Mapping[str, Any], registry: DeviceRegistry, from_t
     """
     fingerprint = app.get("device_fingerprint")
     count = 0
+    registry.refresh_index()  # vendors from enrich_with_oui must be searchable
     for device in registry.get_all_devices(limit=1000):
         if device.get("category", "unknown") != "unknown":
             continue
@@ -186,6 +188,7 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     registry: DeviceRegistry | None = app.get("device_registry")
     if registry is None:
         return 0
+    started = time.monotonic()
     # The daemon often starts before OpenSearch; never let a write auto-create the index unmapped
     registry._ensure_index()
 
@@ -213,7 +216,12 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     hint_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
     _categorize_unknown(app, registry, hint_from, to_ts)
 
-    logger.info("Device registry refresh: %d LAN devices from conn traffic", count)
+    # OLD CODE START — no duration; it took ~1 min before writes stopped waiting for refreshes
+    # logger.info("Device registry refresh: %d LAN devices from conn traffic", count)
+    # OLD CODE END
+    logger.info(
+        "Device registry refresh: %d LAN devices from conn traffic in %.1f s", count, time.monotonic() - started
+    )
     return count
 
 
