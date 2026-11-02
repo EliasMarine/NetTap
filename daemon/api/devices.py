@@ -537,6 +537,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     # Main device aggregation query
     device_query = {
         "size": 0,
+        "track_total_hits": True,  # #84: hits.total stops at 10,000 without it (the router read 10,000)
         "query": {
             "bool": {
                 "filter": [
@@ -710,6 +711,7 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     # Alert count from unified index (suricata alert events)
     alert_query = {
         "size": 0,
+        "track_total_hits": True,  # #84: same 10,000 cap on the alert count
         "query": {
             "bool": {
                 "filter": [
@@ -800,6 +802,7 @@ async def handle_device_connections(request: web.Request) -> web.Response:
 
     query = {
         "size": size,
+        "track_total_hits": True,  # #84: the list total stopped at 10,000
         "from": offset,
         "query": {
             "bool": {
@@ -940,6 +943,7 @@ async def handle_device_alerts(request: web.Request) -> web.Response:
 
     query = {
         "size": limit,
+        "track_total_hits": True,  # #84: the alert total stopped at 10,000
         "query": {
             "bool": {
                 "filter": [

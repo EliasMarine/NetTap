@@ -953,3 +953,50 @@ class TestDeviceCategoryFallbacks:
         assert _device_category(None, "ipad-2.local", None) == "phone"
         assert _device_category(None, "saras-macbook-air-2.local", None) == "computer"
         assert _device_category(None, "elias-mac-studio.local", None) == "computer"
+
+
+class TestDeviceTotalsPast10000(AioHTTPTestCase):
+    """#84: hits.total stops at 10,000 unless the query sets track_total_hits.
+
+    On the G11 the router's detail page read 10,000 connections (the device list: 48,158) and
+    192.168.1.202's alerts total read 10,000 (the device list: 15,360).
+    """
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 48158}, "hits": []},
+            "aggregations": {},
+        }
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_device_routes(app, self.storage)
+        return app
+
+    def _bodies(self):
+        return [c.kwargs.get("body") or c[1].get("body") for c in self.mock_client.search.call_args_list]
+
+    @unittest_run_loop
+    async def test_detail_counts_connections_and_alerts_exactly(self):
+        resp = await self.client.request("GET", "/api/devices/192.168.1.1")
+        self.assertEqual(resp.status, 200)
+        self.assertIs(self._bodies()[0].get("track_total_hits"), True)
+        alert_bodies = _alert_bodies(self.mock_client.search)
+        self.assertTrue(alert_bodies)
+        self.assertTrue(all(b.get("track_total_hits") is True for b in alert_bodies))
+
+    @unittest_run_loop
+    async def test_connections_total_is_exact(self):
+        resp = await self.client.request("GET", "/api/devices/192.168.1.1/connections")
+        self.assertEqual(resp.status, 200)
+        self.assertIs(self._bodies()[0].get("track_total_hits"), True)
+        self.assertEqual((await resp.json())["total"], 48158)
+
+    @unittest_run_loop
+    async def test_alerts_total_is_exact(self):
+        resp = await self.client.request("GET", "/api/devices/192.168.1.202/alerts")
+        self.assertEqual(resp.status, 200)
+        self.assertIs(self._bodies()[0].get("track_total_hits"), True)
