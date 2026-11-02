@@ -108,7 +108,8 @@ for i in $(seq 1 30); do
 done
 LAST_ERR=$(sudo docker logs --since 10m nettap-dashboards-helper 2>&1 | grep -o 'line [0-9]*: [A-Z_]*: unbound variable' | tail -1)
 if [ "$OK_RUN" = "yes" ]; then rc=0; else rc=1; fi
-check "#73 the object loader completes a run" "$rc" "${OK_RUN:+job succeeded}${OK_RUN:-${LAST_ERR:-no clean run yet}}"
+if [ "$OK_RUN" = "yes" ]; then RUN_NOTE="job succeeded"; else RUN_NOTE="${LAST_ERR:-no clean run yet}"; fi
+check "#73 the object loader completes a run" "$rc" "$RUN_NOTE"
 echo ""
 
 echo "→ Step 6: Nothing else changed..."
