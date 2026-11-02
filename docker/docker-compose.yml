@@ -323,7 +323,19 @@ services:
   # fails with no-new-privileges. cap_add provides the capture capabilities needed.
 
   zeek-live:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # OLD CODE START — replaced 2026-11-01: the stock image takes Broker
+    # endpoint IDs from RDRAND, which is constant on some AMD CPUs, so the
+    # zeekctl cluster never connected and Zeek wrote no logs (Chain 23).
+    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # OLD CODE END
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.zeek-live
+      args:
+        MALCOLM_IMAGE_REGISTRY: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}"
+        MALCOLM_IMAGE_TAG: "${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # Keeps the Malcolm tag, so the version page still reports it
+    image: "nettap/zeek-live:${MALCOLM_IMAGE_TAG:-26.02.0}"
     container_name: nettap-zeek-live
     restart: unless-stopped
     network_mode: host

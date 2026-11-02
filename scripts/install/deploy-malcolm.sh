@@ -155,7 +155,7 @@ start_services() {
     # Build custom images first (with visible progress)
     # BuildKit hides output by default — use plain progress so users can
     # see what npm/pip/apt are doing during long builds.
-    log "Building custom NetTap images (web, daemon, tshark, cyberchef)..."
+    log "Building custom NetTap images (web, daemon, tshark, cyberchef, zeek-live)..."
     BUILDKIT_PROGRESS=plain run docker compose -f "$COMPOSE_FILE" build
 
     # ---------------------------------------------------------------------------

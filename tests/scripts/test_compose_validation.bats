@@ -583,8 +583,25 @@ print('All services use restart: unless-stopped')
     local capture_services=(zeek-live suricata-live pcap-capture arkime-live)
 
     for svc in "${capture_services[@]}"; do
-        grep -A5 "^  ${svc}:" "$COMPOSE_FILE" | grep -q "network_mode: host"
+        # Whole service block: zeek-live's build: section pushes network_mode past a fixed -A window
+        sed -n "/^  ${svc}:/,/^  [^ ]/p" "$COMPOSE_FILE" | grep -q "network_mode: host"
     done
+}
+
+@test "compose: zeek-live is built with the RDRAND fix (Chain 23)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['zeek-live']
+assert svc['build']['dockerfile'] == 'docker/Dockerfile.zeek-live', svc.get('build')
+assert svc['image'].startswith('nettap/zeek-live:'), svc['image']
+print('zeek-live build: OK')
+"
+    [ "$status" -eq 0 ]
+    grep -q '^RUN echo /usr/local/lib/nettap/libnettap_urandom.so >> /etc/ld.so.preload' \
+        "${REPO_ROOT}/docker/Dockerfile.zeek-live"
 }
 
 @test "compose: non-capture services do NOT use host network" {
