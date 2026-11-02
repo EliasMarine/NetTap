@@ -20,6 +20,8 @@ from datetime import UTC, datetime, timedelta
 MODE = "search.concurrent_segment_search.mode"
 # A float sum merged in another order may differ in its last bits
 REL_TOL = 1e-9
+# The time of the request, not a figure (LAN anomaly checks stamp it; no page shows it)
+VOLATILE_KEYS = frozenset({"detected_at"})
 ENDPOINTS = [
     "/api/alerts/categories", "/api/alerts/count", "/api/alerts/smart/summary", "/api/alerts/timeline",
     "/api/alerts/top-ips", "/api/alerts/top-signatures",
@@ -44,7 +46,7 @@ ENDPOINTS = [
 def first_difference(a, b, path: str = "") -> str | None:
     """Where two replies differ (None if equal; floats within REL_TOL)."""
     if isinstance(a, dict) and isinstance(b, dict):
-        for k in sorted(set(a) | set(b), key=str):
+        for k in sorted((set(a) | set(b)) - VOLATILE_KEYS, key=str):
             if k not in a or k not in b:
                 return f"{path}.{k} only in one"
             d = first_difference(a[k], b[k], f"{path}.{k}")

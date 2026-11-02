@@ -101,3 +101,14 @@ def test_msearch_is_counted_again_too():
         reply = client.msearch(body=[{"index": "x-*"}, {"size": 0, "aggs": {"t": {"terms": {"field": "f"}}}}])
     assert msearch.call_count == 2
     assert reply == second
+
+
+def test_longer_lists_never_pass_the_cap(monkeypatch):
+    from storage import exact_terms
+
+    monkeypatch.setattr(exact_terms, "EXACT_SHARD_SIZE", 5)
+    client = ExactTermsOpenSearch(hosts=[{"host": "localhost", "port": 9200}])
+    with patch.object(OpenSearch, "search", return_value=_reply(-1)) as search:
+        client.search(index="x-*", body={"size": 0, "aggs": {"t": {"terms": {"field": "f"}}}})
+    sizes = [c.kwargs["body"]["aggs"]["t"]["terms"]["shard_size"] for c in search.call_args_list]
+    assert sizes == [10, 50, 500, 5000, 50_000, MAX_SHARD_SIZE]  # size 10 floors the first

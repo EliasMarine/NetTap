@@ -84,7 +84,7 @@ class ExactTermsOpenSearch(OpenSearch):
                     kwargs.get("index", "?"), shard_size,
                 )
                 return reply
-            shard_size *= 10
+            shard_size = min(shard_size * 10, MAX_SHARD_SIZE)
 
     def search(self, *, body: Any = None, **kwargs: Any) -> Any:
         def send(body: Any, shard_size: int, **kw: Any) -> Any:

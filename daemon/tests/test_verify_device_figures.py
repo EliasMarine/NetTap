@@ -61,3 +61,7 @@ def test_first_difference_finds_the_changed_figure():
     assert vsi.first_difference(a, {"talkers": [{"ip": "1.1.1.1", "count": 38678}], "total": 3.0}) == ".talkers[0].count: 40046 vs 38678"
     assert "2 vs 1 items" in vsi.first_difference({"x": [1, 2]}, {"x": [1]})
     assert "only in one" in vsi.first_difference({"x": 1}, {"y": 1})
+
+
+def test_first_difference_skips_request_times():
+    assert vsi.first_difference({"detected_at": "19:26:24.33", "n": 1}, {"detected_at": "19:26:24.47", "n": 1}) is None
