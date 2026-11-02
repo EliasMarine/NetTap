@@ -11,6 +11,7 @@ import {
 	getCustomRules,
 	configureCommercial,
 	getCommercialConfig,
+	getLiveRuleStatus,
 } from './suricata-rules';
 
 // ---------------------------------------------------------------------------
@@ -290,5 +291,41 @@ describe('suricata-rules API client', () => {
 
 			expect(result.configured).toBe(false);
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getLiveRuleStatus (#58)
+// ---------------------------------------------------------------------------
+
+describe('getLiveRuleStatus', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const LIVE = {
+		available: true,
+		enabled_rules: 64307,
+		disabled_rules: 15954,
+		last_updated: '2026-11-02T00:00:36+00:00',
+		sources: ['https://sslbl.abuse.ch/blacklist/sslblacklist.rules'],
+		schedule: '0 0 * * *',
+		error: null,
+	};
+
+	it('returns what Suricata runs', async () => {
+		mockFetchSuccess(LIVE);
+		await expect(getLiveRuleStatus()).resolves.toEqual(LIVE);
+		expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/live');
+	});
+
+	it('throws the daemon error instead of reporting 0 rules', async () => {
+		mockFetchSuccess({ available: false, error: 'Could not reach the Suricata container.' }, 502);
+		await expect(getLiveRuleStatus()).rejects.toThrow('Could not reach the Suricata container.');
+	});
+
+	it('throws HTTP <status> when the body is not JSON', async () => {
+		mockFetchFailure(503);
+		await expect(getLiveRuleStatus()).rejects.toThrow('HTTP 503');
 	});
 });

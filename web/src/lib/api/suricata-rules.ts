@@ -8,6 +8,17 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/** What Suricata really runs, read from its container (GET /api/suricata/rules/live). */
+export interface LiveRuleStatus {
+	available: boolean;
+	enabled_rules: number;
+	disabled_rules: number;
+	last_updated: string | null;
+	sources: string[];
+	schedule: string | null; // cron expression, container time (UTC)
+	error: string | null;
+}
+
 export interface RuleSource {
 	id: string;
 	enabled: boolean;
@@ -211,4 +222,18 @@ export async function getCommercialConfig(): Promise<CommercialConfig> {
 	}
 
 	return res.json();
+}
+
+/**
+ * Rule counts, last refresh, sources and schedule Suricata really uses.
+ * Throws with the daemon's error text when Suricata could not be read, so the
+ * page never shows 0 rules for "unknown".
+ */
+export async function getLiveRuleStatus(): Promise<LiveRuleStatus> {
+	const res = await fetch('/api/suricata/rules/live');
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.available !== true) {
+		throw new Error(typeof data?.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
+	}
+	return data as LiveRuleStatus;
 }
