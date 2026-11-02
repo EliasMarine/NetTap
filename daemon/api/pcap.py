@@ -15,6 +15,7 @@ import os
 
 from aiohttp import web
 
+from api.time_range import iso_param
 from services.pcap_search import PcapSearchService
 
 logger = logging.getLogger("nettap.api.pcap")
@@ -24,8 +25,12 @@ async def handle_pcap_files(request: web.Request) -> web.Response:
     """GET /api/pcap/files?from=&to= — List available PCAP files."""
     pcap_service: PcapSearchService = request.app["pcap_search"]
 
-    from_ts = request.query.get("from")
-    to_ts = request.query.get("to")
+    # OLD CODE START — an unreadable bound was dropped downstream, so a bad from searched every file
+    # from_ts = request.query.get("from")
+    # to_ts = request.query.get("to")
+    # OLD CODE END
+    from_ts = iso_param(request, "from")
+    to_ts = iso_param(request, "to")
 
     try:
         files = pcap_service.get_available_pcaps(from_ts, to_ts)
@@ -48,8 +53,12 @@ async def handle_pcap_search(request: web.Request) -> web.Response:
     pcap_service: PcapSearchService = request.app["pcap_search"]
 
     bpf_filter = request.query.get("filter", "").strip()
-    from_ts = request.query.get("from")
-    to_ts = request.query.get("to")
+    # OLD CODE START — an unreadable bound was dropped downstream, so a bad from searched every file
+    # from_ts = request.query.get("from")
+    # to_ts = request.query.get("to")
+    # OLD CODE END
+    from_ts = iso_param(request, "from")
+    to_ts = iso_param(request, "to")
 
     if not bpf_filter:
         return web.json_response({"error": "filter parameter is required"}, status=400)
@@ -159,8 +168,12 @@ async def handle_pcap_download(request: web.Request) -> web.Response:
     pcap_service: PcapSearchService = request.app["pcap_search"]
 
     bpf_filter = request.query.get("filter", "").strip()
-    from_ts = request.query.get("from")
-    to_ts = request.query.get("to")
+    # OLD CODE START — an unreadable bound was dropped downstream, so a bad from searched every file
+    # from_ts = request.query.get("from")
+    # to_ts = request.query.get("to")
+    # OLD CODE END
+    from_ts = iso_param(request, "from")
+    to_ts = iso_param(request, "to")
 
     if not bpf_filter:
         return web.json_response({"error": "filter parameter is required"}, status=400)

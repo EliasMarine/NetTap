@@ -27,10 +27,25 @@ class TestPcapSearchEndpoint(AioHTTPTestCase):
             "timed_out": 0,
         }
         self.svc.search_progress = AsyncMock(return_value=progress)
-        resp = await self.client.get("/api/pcap/search?filter=dns&from=a&to=b")
+        # OLD CODE START — unreadable times were passed on (and dropped downstream); now a 400
+        # resp = await self.client.get("/api/pcap/search?filter=dns&from=a&to=b")
+        # self.svc.search_progress.assert_awaited_once_with("dns", "a", "b")
+        # OLD CODE END
+        resp = await self.client.get("/api/pcap/search?filter=dns&from=2026-11-02T21:00:00Z&to=2026-11-02T22:00:00Z")
         self.assertEqual(resp.status, 200)
         self.assertEqual(await resp.json(), progress)
-        self.svc.search_progress.assert_awaited_once_with("dns", "a", "b")
+        self.svc.search_progress.assert_awaited_once_with("dns", "2026-11-02T21:00:00Z", "2026-11-02T22:00:00Z")
+
+    async def test_an_unreadable_time_is_400_not_every_file(self):
+        # the service dropped an unreadable bound, so from=now-5m searched every capture
+        for path in ("/api/pcap/files?from=now-5m", "/api/pcap/search?filter=dns&from=now-5m",
+                     "/api/pcap/download?filter=dns&to=yesterday"):
+            resp = await self.client.get(path)
+            self.assertEqual(resp.status, 400, path)
+            self.assertIn("ISO 8601", (await resp.json())["error"], path)
+        self.svc.get_available_pcaps.assert_not_called()
+        self.svc.search_progress.assert_not_called()
+        self.svc.download_filtered.assert_not_called()
 
     async def test_invalid_filter_is_400(self):
         self.svc.search_progress = AsyncMock(
