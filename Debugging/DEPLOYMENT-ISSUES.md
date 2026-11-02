@@ -404,7 +404,11 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   Batch 24: the excluded-IP list held the .env.example MGMT_IP placeholder while NetTap's own
   address was counted everywhere; MGMT_IP must be a local address, else the management NIC's.
   Batch 25: Top Destinations now also leaves out what excluded IPs send.
-  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch25.sh.
+  Batch 26: the Security Posture page crashed on every visit (client read `scores`, the daemon
+  sends `devices`); it loads again.
+  Batch 27: IoT trust scores counted Suricata engine events as alerts (the one count batch 11
+  missed); three devices' security scores 68/60/68 -> 92/85/92.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch27.sh.
   Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
   page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (11 checks).
   Each checks its fixes against the live APIs.
@@ -1903,6 +1907,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 140. **Zeek windows are never closed (Chain 25)** — a connection is logged when it ends but stamped with its start, so a past time window keeps gaining records. Compare an API figure against OpenSearch by bracketing it between a raw read just before and one just after, not one read taken at another moment.
 141. **Never trust a placeholder from an example env file (Chain 25, #79)** — `.env.example`'s `MGMT_IP=192.168.1.100` was taken as NetTap's own address, excluded, and saved into the owner's list, while the real address was counted. Validate configured addresses against the host (`ip -j -4 addr show`), and keep auto-detected values out of user-owned settings so a wrong one can't stick.
 142. **`sudo -S` eats stdin (Chain 25)** — piping JSON into `sudo docker exec -i` under a password-on-stdin wrapper delivers nothing. Pass data as an argument; it also works with a cached sudo.
+143. **When you fix a filter, grep for every query over the same records (Chain 25, #82)** — batch 11 put the Suricata engine-event exclusion on the per-device alert counts and risk scores. The IoT fleet summary has its own alert-count query, and it never got the exclusion. `grep -rn 'suricata.alert.severity' daemon/` would have found it. The same check also showed that a test must use the scale the API reports: the IoT pillars are percentages of 40 points, so 10 points read as +25, not +10.
 
 ---
 
