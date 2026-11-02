@@ -132,8 +132,11 @@ async def handle_pcap_download_file(request: web.Request) -> web.Response:
 
     # Security: ensure file is within pcap directory
     pcap_path = os.path.abspath(pcap_file)
-    pcap_dir = os.path.abspath(str(pcap_service._pcap_dir))
-    if not pcap_path.startswith(pcap_dir):
+    # OLD CODE START — string prefix: ".." was resolved, but "/opt/nettap/pcap-old/..." passed
+    # pcap_dir = os.path.abspath(str(pcap_service._pcap_dir))
+    # if not pcap_path.startswith(pcap_dir):
+    # OLD CODE END
+    if not pcap_service.contains(pcap_path):
         return web.json_response(
             {"error": "File must be within the PCAP directory"}, status=400
         )

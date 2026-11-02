@@ -68,6 +68,15 @@ class PcapSearchService:
         self._search_job: dict[str, Any] | None = None
         self._search_task: asyncio.Task | None = None
 
+    def contains(self, path: str) -> bool:
+        """True when path, with ".." and symlinks resolved, is inside the PCAP directory.
+
+        A string-prefix test let "/opt/nettap/pcap/../../etc/passwd" and sibling
+        directories such as "/opt/nettap/pcap-old" through.
+        """
+        root = os.path.realpath(self._pcap_dir)
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+
     def _to_container_path(self, daemon_path: str) -> str:
         """Translate a daemon-side PCAP path to the tshark container path.
 
@@ -353,7 +362,10 @@ class PcapSearchService:
         """
         # Security: ensure file is within pcap directory
         pcap_path = Path(pcap_file)
-        if not str(pcap_path).startswith(str(self._pcap_dir)):
+        # OLD CODE START — string prefix: ".." and sibling directories passed
+        # if not str(pcap_path).startswith(str(self._pcap_dir)):
+        # OLD CODE END
+        if not self.contains(pcap_file):
             raise ValueError("PCAP file must be within the configured PCAP directory")
         if not pcap_path.exists():
             raise FileNotFoundError(f"PCAP file not found: {pcap_file}")

@@ -459,3 +459,25 @@ class TestPreviewTimedOut:
         fake_tshark.result = (b"1|t|a|b|eth:ip:tcp|60|x\n", 0)
         result = await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
         assert result["timed_out"] is False
+
+
+class TestContains:
+    """The PCAP directory check resolves ".." and symlinks and rejects sibling directories."""
+
+    def test_paths(self, tmp_path):
+        root = tmp_path / "pcap"
+        root.mkdir()
+        (tmp_path / "pcap-old").mkdir()
+        (root / "a.pcap").write_bytes(b"")
+        (root / "link.pcap").symlink_to(tmp_path / "pcap-old")
+        svc = PcapSearchService(pcap_dir=str(root))
+
+        assert svc.contains(str(root / "a.pcap"))
+        assert not svc.contains(str(tmp_path / "pcap-old" / "x.pcap"))  # sibling with the same prefix
+        assert not svc.contains(str(root / ".." / ".." / "etc" / "passwd"))
+        assert not svc.contains(str(root / "link.pcap"))  # symlink out of the directory
+
+    @pytest.mark.asyncio
+    async def test_preview_rejects_dot_dot(self, service, pcap_dir):
+        with pytest.raises(ValueError, match="within the configured"):
+            await service.preview(str(pcap_dir / ".." / ".." / "etc" / "passwd"))
