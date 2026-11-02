@@ -1127,6 +1127,9 @@ def enrich_device_context(client, ip: str) -> dict | None:
 # Smart Alert Aggregation
 # ---------------------------------------------------------------------------
 
+# reclassify_severity() gives this to alerts that are context, not threats (STUN, DoH, ...)
+_INFO_SEVERITY = 5
+
 # shortcut: stops at 25 pages (5,000 alert groups) per range; raise it if a box ever has more
 _MAX_GROUP_PAGES = 25
 
@@ -1317,7 +1320,7 @@ async def get_smart_alerts(
             signature, original_severity, dst_port, dst_ip
         )
 
-        if new_severity >= 5 and not include_info:
+        if new_severity >= _INFO_SEVERITY and not include_info:
             continue
 
         smart_category = categorize_alert(signature)
@@ -1366,17 +1369,25 @@ async def get_smart_alert_summary(
     excluded_ips: list[dict] | None = None,
 ) -> dict:
     """Get high-level threat summary with kill chains and baseline deviation."""
-    alerts = await get_smart_alerts(
+    # OLD CODE START — replaced 2026-11-01: totals came from the top 200 groups only, and
+    # the hidden informational alerts were not counted, so "394 total" sat next to "2.2K"
+    # alerts = await get_smart_alerts(
+    #     client, from_ts, to_ts, device_ip, include_info=False, limit=200,
+    #     excluded_ips=excluded_ips,
+    # )
+    # OLD CODE END
+    every_group = await get_smart_alerts(
         client,
         from_ts,
         to_ts,
         device_ip,
-        include_info=False,
-        # OLD CODE START — replaced 2026-11-01: totals came from the top 200 groups only
-        # limit=200,
-        # OLD CODE END
+        include_info=True,
         limit=None,
         excluded_ips=excluded_ips,
+    )
+    alerts = [a for a in every_group if a["severity"] < _INFO_SEVERITY]
+    informational_events = sum(
+        a["count"] for a in every_group if a["severity"] >= _INFO_SEVERITY
     )
 
     if not alerts:
@@ -1385,6 +1396,7 @@ async def get_smart_alert_summary(
             "threat_level": "none",
             "total_groups": 0,
             "total_events": 0,
+            "informational_events": informational_events,
             "categories": {},
             "top_threats": [],
             "kill_chains": [],
@@ -1453,6 +1465,7 @@ async def get_smart_alert_summary(
         "threat_level": threat_level,
         "total_groups": len(alerts),
         "total_events": total_events,
+        "informational_events": informational_events,
         "categories": categories,
         "top_threats": alerts[:5],
         "kill_chains": kill_chains,

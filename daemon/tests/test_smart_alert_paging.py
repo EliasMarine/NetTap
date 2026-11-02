@@ -110,3 +110,26 @@ def test_later_page_failure_keeps_what_was_read():
             get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
         )
     assert len(groups) == 200
+
+
+def test_summary_reports_the_informational_alerts_it_hides():
+    """The home card read "394 total" next to "2.2K alerts" with no hint why."""
+    client = _two_page_client()
+
+    def every_other_is_info(signature, *_args):
+        return 5 if int(signature[-4:]) % 2 == 0 else 3
+
+    with (
+        patch.object(alert_intelligence, "is_suppressed", return_value=False),
+        patch.object(alert_intelligence, "update_baseline", return_value=None),
+        patch.object(
+            alert_intelligence, "reclassify_severity", side_effect=every_other_is_info
+        ),
+    ):
+        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
+
+    # 203 groups of 2 events: 102 even (informational), 101 odd
+    assert summary["total_groups"] == 101
+    assert summary["total_events"] == 202
+    assert summary["informational_events"] == 204
+    assert all(t["severity"] < 5 for t in summary["top_threats"])
