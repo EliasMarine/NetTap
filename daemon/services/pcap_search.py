@@ -331,7 +331,20 @@ class PcapSearchService:
         bpf_filter: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Extract matching packets for preview.
+        """Packets only; see preview_with_status()."""
+        return (await self.preview_with_status(pcap_file, bpf_filter, limit))["packets"]
+
+    async def preview_with_status(
+        self,
+        pcap_file: str,
+        bpf_filter: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Extract matching packets for preview: {"packets": [...], "timed_out": bool}.
+
+        timed_out means tshark ran out of time before reading the whole file or
+        finding `limit` matches (a busy multi-GB file at 0.5 CPU), so an empty or
+        short list is not proof the file has no more matches.
 
         Runs tshark inside the nettap-tshark container via docker exec.
         Uses asyncio.create_subprocess_exec (argument-list form, no shell).
@@ -404,13 +417,16 @@ class PcapSearchService:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
+                # the in-container timeout fires first, so partial output survives
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=55)
 
+            timed_out = proc.returncode in _TIMEOUT_EXIT_CODES
             # a file still being written can end mid-packet: keep what tshark printed
             if proc.returncode != 0 and not stdout.strip():
                 err_msg = stderr.decode(errors="replace").strip()
-                logger.error("tshark preview failed: %s", err_msg)
-                return []
+                if not timed_out:
+                    logger.error("tshark preview failed: %s", err_msg)
+                return {"packets": [], "timed_out": timed_out}
 
             packets = []
             for line in stdout.decode(errors="replace").strip().split("\n"):
@@ -430,14 +446,14 @@ class PcapSearchService:
                         }
                     )
 
-            return packets
+            return {"packets": packets, "timed_out": timed_out}
 
         except asyncio.TimeoutError:
             logger.warning("tshark preview timed out for %s", pcap_file)
-            return []
+            return {"packets": [], "timed_out": True}
         except FileNotFoundError:
             logger.error("docker not found in PATH")
-            return []
+            return {"packets": [], "timed_out": False}
 
     # ------------------------------------------------------------------
     # Download (merge + filter)

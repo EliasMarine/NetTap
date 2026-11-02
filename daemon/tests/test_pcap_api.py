@@ -42,3 +42,15 @@ class TestPcapSearchEndpoint(AioHTTPTestCase):
     async def test_missing_filter_is_400(self):
         resp = await self.client.get("/api/pcap/search")
         self.assertEqual(resp.status, 400)
+
+    async def test_preview_reports_timed_out(self):
+        self.svc.preview_with_status = AsyncMock(
+            return_value={"packets": [], "timed_out": True}
+        )
+        resp = await self.client.get(
+            "/api/pcap/preview?file=/opt/nettap/pcap/a.pcap&filter=dns"
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["timed_out"])
+        self.assertEqual(body["count"], 0)

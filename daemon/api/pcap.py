@@ -100,7 +100,8 @@ async def handle_pcap_preview(request: web.Request) -> web.Response:
         limit = 100
 
     try:
-        packets = await pcap_service.preview(pcap_file, bpf_filter, limit)
+        result = await pcap_service.preview_with_status(pcap_file, bpf_filter, limit)
+        packets = result["packets"]
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except FileNotFoundError as exc:
@@ -115,6 +116,8 @@ async def handle_pcap_preview(request: web.Request) -> web.Response:
             "filter": bpf_filter,
             "count": len(packets),
             "packets": packets,
+            # ran out of time before the end of the file: fewer matches is not "none"
+            "timed_out": result["timed_out"],
         }
     )
 

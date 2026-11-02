@@ -428,3 +428,34 @@ async def test_search_reads_run_at_lowest_priority(service, fake_tshark):
     await service._search_task
     for argv in fake_tshark.calls:
         assert argv[7:10] == ["nice", "-n", "19"], argv
+
+
+class TestPreviewTimedOut:
+    """A busy 3.5 GB file can hold no match in the part 0.5 CPU reads (G11, #52)."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_reported_with_partial_matches(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"5|t|a|b|eth:ip:udp:dns|80|q\n", 124)
+        result = await service.preview_with_status(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
+        )
+        assert result["timed_out"] is True
+        assert len(result["packets"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_no_matches(self, service, pcap_dir, fake_tshark):
+        fake_tshark.result = (b"", 124)
+        result = await service.preview_with_status(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
+        )
+        assert result == {"packets": [], "timed_out": True}
+
+    @pytest.mark.asyncio
+    async def test_normal_preview_is_not_timed_out(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"1|t|a|b|eth:ip:tcp|60|x\n", 0)
+        result = await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
+        assert result["timed_out"] is False
