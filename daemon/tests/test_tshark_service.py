@@ -631,6 +631,11 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
         self.assertEqual((result.packet_count, len(calls)), (0, 1))
         self.assertIsNone(result.error)
 
+    def test_failed_scan_is_an_error_not_no_match(self):
+        """#96: docker exec failing (container down) is not "0 matches"."""
+        with self.assertRaises(RuntimeError):
+            self._run([("", "Error: container nettap-tshark is not running", 1)])
+
     def test_scan_cut_short_by_time_is_flagged(self):
         with patch("services.tshark_service.MATCH_SCAN_SECONDS", 0):
             result, _ = self._run([("7 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100)
@@ -653,3 +658,41 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
         from services.tshark_service import _LAST_MATCH_SCRIPT
 
         self.assertIn("tshark -l -r", _LAST_MATCH_SCRIPT)
+
+
+class TestFailuresAreErrors(unittest.TestCase):
+    """#96: a failed tshark call is an error, never an empty list or 0 packets."""
+
+    def setUp(self):
+        self.svc = TSharkService()
+
+    def _with_exec(self, result, coro_fn):
+        async def run():
+            with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
+                ex.return_value = result
+                return await coro_fn()
+
+        return asyncio.run(run())
+
+    def test_protocols_failure_raises(self):
+        with self.assertRaises(RuntimeError):
+            self._with_exec(("", "no such container", 1), self.svc.get_protocols)
+        self.assertIsNone(self.svc._protocols_cache)
+
+    def test_fields_failure_raises(self):
+        with self.assertRaises(RuntimeError):
+            self._with_exec(("", "no such container", 1), self.svc.get_fields)
+        self.assertEqual(self.svc._fields_cache, {})
+
+    def test_protocols_exec_error_raises(self):
+        async def run():
+            with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
+                ex.side_effect = TSharkValidationError("timed out")
+                await self.svc.get_protocols()
+
+        with self.assertRaises(TSharkValidationError):
+            asyncio.run(run())
+
+    def test_unparsable_json_raises(self):
+        with self.assertRaises(RuntimeError):
+            self.svc._parse_json_output('[{"_index": "packets", "lay')

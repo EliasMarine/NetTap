@@ -348,7 +348,10 @@ class TSharkService:
             return [data]
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse TShark JSON output: %s", e)
-            return []
+            # OLD CODE START — #96: unparsable output (e.g. cut at the size limit) read as 0 packets
+            # return []
+            # OLD CODE END
+            raise RuntimeError(f"TShark output could not be parsed: {e}") from e
 
     def _info_column_command(self, request: TSharkRequest) -> list[str]:
         """Same packets as the JSON pass, printing only frame number and Info."""
@@ -400,7 +403,13 @@ class TSharkService:
         ]
         loop = asyncio.get_running_loop()
         started = loop.time()
-        stdout, _, _ = await self._exec_tshark(cmd)
+        # OLD CODE START — #96: a failed docker exec (container down) read as "no matches"
+        # stdout, _, _ = await self._exec_tshark(cmd)
+        # OLD CODE END
+        # The pipeline's status is awk's, so non-zero means docker exec itself failed
+        stdout, stderr, rc = await self._exec_tshark(cmd)
+        if rc != 0:
+            raise RuntimeError(stderr.strip() or f"TShark scan exited with code {rc}")
         found, _, last = stdout.strip().partition(" ")
         found_n = int(found) if found.isdigit() else 0
         # Cut short = fewer than N matches and the whole time budget used. shortcut: a file
@@ -515,57 +524,68 @@ class TSharkService:
         """Get supported protocol dissectors (cached)."""
         if self._protocols_cache is not None:
             return self._protocols_cache
-        try:
-            cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "protocols"]
-            stdout, _, rc = await self._exec_tshark(cmd)
-            if rc == 0:
-                protocols = []
-                for line in stdout.strip().split("\n"):
-                    parts = line.split("\t")
-                    if len(parts) >= 3:
-                        protocols.append(
-                            {
-                                "name": parts[0],
-                                "short_name": parts[1],
-                                "filter_name": parts[2],
-                            }
-                        )
-                self._protocols_cache = protocols
-                return protocols
-        except Exception as e:
-            logger.error("Failed to get protocols: %s", e)
-        return []
+        # OLD CODE START — #96: a failure (container down) read as "no protocols"
+        # try:
+        #     ...
+        #     if rc == 0:
+        #         ...
+        #         return protocols
+        # except Exception as e:
+        #     logger.error("Failed to get protocols: %s", e)
+        # return []
+        # OLD CODE END
+        cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "protocols"]
+        stdout, stderr, rc = await self._exec_tshark(cmd)
+        if rc != 0:
+            raise RuntimeError(stderr.strip() or f"tshark -G exited with code {rc}")
+        protocols = []
+        for line in stdout.strip().split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                protocols.append(
+                    {
+                        "name": parts[0],
+                        "short_name": parts[1],
+                        "filter_name": parts[2],
+                    }
+                )
+        self._protocols_cache = protocols
+        return protocols
 
     async def get_fields(self, protocol: str = "") -> list[dict]:
         """Get display filter fields, optionally filtered by protocol (cached)."""
         cache_key = protocol or "__all__"
         if cache_key in self._fields_cache:
             return self._fields_cache[cache_key]
-        try:
-            cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "fields"]
-            stdout, _, rc = await self._exec_tshark(cmd)
-            if rc == 0:
-                fields = []
-                for line in stdout.strip().split("\n"):
-                    parts = line.split("\t")
-                    if len(parts) >= 4:
-                        entry = {
-                            "name": parts[2] if len(parts) > 2 else "",
-                            "filter_name": parts[2] if len(parts) > 2 else "",
-                            "type": parts[3] if len(parts) > 3 else "",
-                            "protocol": parts[1] if len(parts) > 1 else "",
-                            "description": parts[0] if len(parts) > 0 else "",
-                        }
-                        if (
-                            not protocol
-                            or entry["protocol"].lower() == protocol.lower()
-                        ):
-                            fields.append(entry)
-                self._fields_cache[cache_key] = fields
-                return fields
-        except Exception as e:
-            logger.error("Failed to get fields: %s", e)
-        return []
+        # OLD CODE START — #96: a failure (container down) read as "no fields"
+        # try:
+        #     ...
+        #     if rc == 0:
+        #         ...
+        #         return fields
+        # except Exception as e:
+        #     logger.error("Failed to get fields: %s", e)
+        # return []
+        # OLD CODE END
+        cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "fields"]
+        stdout, stderr, rc = await self._exec_tshark(cmd)
+        if rc != 0:
+            raise RuntimeError(stderr.strip() or f"tshark -G exited with code {rc}")
+        fields = []
+        for line in stdout.strip().split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                entry = {
+                    "name": parts[2] if len(parts) > 2 else "",
+                    "filter_name": parts[2] if len(parts) > 2 else "",
+                    "type": parts[3] if len(parts) > 3 else "",
+                    "protocol": parts[1] if len(parts) > 1 else "",
+                    "description": parts[0] if len(parts) > 0 else "",
+                }
+                if not protocol or entry["protocol"].lower() == protocol.lower():
+                    fields.append(entry)
+        self._fields_cache[cache_key] = fields
+        return fields
 
     async def is_available(self) -> dict:
         """Check if TShark container is running and accessible."""
