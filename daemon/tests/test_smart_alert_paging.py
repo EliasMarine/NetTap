@@ -114,23 +114,25 @@ def test_a_device_summary_has_no_network_baseline():
     assert summary["baseline"] is None
 
 
-def test_first_page_failure_returns_nothing():
+def test_first_page_failure_raises():
+    """#96: it returned [], and the summary read threat level "none" with 0 events."""
     client = MagicMock()
     client.search.side_effect = RuntimeError("opensearch down")
-    assert asyncio.run(get_smart_alerts(client, _FROM, _TO)) == []
+    with pytest.raises(RuntimeError):
+        asyncio.run(get_smart_alerts(client, _FROM, _TO))
+    with pytest.raises(RuntimeError):
+        asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
 
 
-def test_later_page_failure_keeps_what_was_read():
+def test_later_page_failure_raises():
+    """#96: it kept the pages read so far, so totals read low with no sign of it."""
     client = MagicMock()
     client.search.side_effect = [
-        _page([_bucket(n) for n in range(200)], {"sig_name": "x"}),
+        _page([_bucket(n) for n in range(1_000)], {"sig_name": "x"}),
         RuntimeError("timeout"),
     ]
-    with patch.object(alert_intelligence, "is_suppressed", return_value=False):
-        groups = asyncio.run(
-            get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
-        )
-    assert len(groups) == 200
+    with patch.object(alert_intelligence, "is_suppressed", return_value=False), pytest.raises(RuntimeError):
+        asyncio.run(get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True))
 
 
 def test_summary_reports_the_informational_alerts_it_hides():

@@ -1220,19 +1220,23 @@ _MAX_GROUP_PAGES = MAX_BUCKETS // _GROUP_PAGE_SIZE
 _SAMPLE_FIELDS = ["alert", "rule", "suricata.alert", "suricata.severity", "destination.port"]
 
 
-def _all_composite_buckets(client, query: dict) -> list[dict] | None:
-    """Page through the 'grouped' composite agg; None if the first page fails."""
+def _all_composite_buckets(client, query: dict) -> list[dict]:
+    """Page through the 'grouped' composite agg. A failed page raises (#96): an empty or
+    partial list would read as "no threats" or as lower totals."""
     grouped = query["aggs"]["grouped"]
     buckets: list[dict] = []
     after = None
     for page in range(_MAX_GROUP_PAGES):
         composite = {**grouped["composite"], **({"after": after} if after else {})}
         body = {**query, "aggs": {"grouped": {**grouped, "composite": composite}}}
-        try:
-            result = client.search(index=NETWORK_INDEX, body=body)
-        except Exception:
-            logger.error("Smart alerts query failed (page %d)", page + 1, exc_info=True)
-            return None if page == 0 else buckets
+        # OLD CODE START — #96: a first-page failure read as threat level "none", a later one as lower totals
+        # try:
+        #     result = client.search(index=NETWORK_INDEX, body=body)
+        # except Exception:
+        #     logger.error("Smart alerts query failed (page %d)", page + 1, exc_info=True)
+        #     return None if page == 0 else buckets
+        # OLD CODE END
+        result = client.search(index=NETWORK_INDEX, body=body)
         agg = result.get("aggregations", {}).get("grouped", {})
         buckets.extend(agg.get("buckets", []))
         after = agg.get("after_key")
@@ -1355,9 +1359,12 @@ async def get_smart_alerts(
     #     logger.error("Smart alerts query failed", exc_info=True)
     #     return []
     # OLD CODE END
+    # OLD CODE START — #96: failures raise now instead of returning None
+    # buckets = _all_composite_buckets(client, query)
+    # if buckets is None:
+    #     return []
+    # OLD CODE END
     buckets = _all_composite_buckets(client, query)
-    if buckets is None:
-        return []
 
     # Optionally enrich device context
     device_context = None
