@@ -27,6 +27,12 @@ export interface PcapSearchResponse {
 	filter: string;
 	count: number;
 	results: PcapSearchResult[];
+	/** The daemon searches in the background: poll until `complete`. */
+	files_checked: number;
+	files_total: number;
+	complete: boolean;
+	/** Files too large to search within the per-file limit (counted in files_checked). */
+	timed_out: number;
 }
 
 export interface PcapPacket {

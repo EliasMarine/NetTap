@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import { getPcapFiles, searchPcaps, previewPcap, getDownloadUrl, formatBytes } from '$lib/api/pcap';
 import PcapPage from './+page.svelte';
 
@@ -47,6 +47,10 @@ describe('PCAP search page integration', () => {
 		mockFetchSuccess({
 			filter: 'tcp port 80',
 			count: 1,
+			files_checked: 1,
+			files_total: 1,
+			complete: true,
+			timed_out: 0,
 			results: [
 				{
 					file: '/data/pcap/test.pcap',
@@ -146,5 +150,155 @@ describe('PCAP page — capture status', () => {
 
 		expect(screen.getByText('Capture Status Unknown')).toBeInTheDocument();
 		expect(screen.queryByText('Capture Active')).not.toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rendered page: background search polling
+// ---------------------------------------------------------------------------
+
+const MATCH = {
+	file: '/data/pcap/a.pcap',
+	name: 'a.pcap',
+	size_bytes: 2048,
+	modified: '2026-03-08T00:00:00Z',
+	relative_path: 'a.pcap',
+	matching_packets: 7,
+};
+
+function searchBody(over: Record<string, unknown> = {}) {
+	return {
+		filter: 'dns',
+		count: 0,
+		results: [],
+		files_checked: 0,
+		files_total: 53,
+		complete: false,
+		timed_out: 0,
+		...over,
+	};
+}
+
+describe('PCAP page — search polling', () => {
+	/** Each /api/pcap/search call takes the next queued step (the last one repeats); the rest 500. */
+	function stubSearch(steps: Array<Record<string, unknown> | Error>) {
+		const searchUrls: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (!url.startsWith('/api/pcap/search')) return { ok: false, status: 500, json: async () => ({}) };
+				const step = steps[Math.min(searchUrls.length, steps.length - 1)];
+				searchUrls.push(url);
+				if (step instanceof Error) return { ok: false, status: 400, json: async () => ({ error: step.message }) };
+				return { ok: true, status: 200, json: async () => step };
+			}),
+		);
+		return searchUrls;
+	}
+
+	async function startSearch() {
+		render(PcapPage);
+		await vi.advanceTimersByTimeAsync(0);
+		await fireEvent.input(screen.getByPlaceholderText(/display filter/i), { target: { value: 'dns' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+		await vi.advanceTimersByTimeAsync(0);
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('polls with the same range until complete, showing progress then results', async () => {
+		const urls = stubSearch([
+			searchBody({ files_checked: 5, results: [], count: 0 }),
+			searchBody({ files_checked: 53, complete: true, count: 1, results: [MATCH] }),
+		]);
+
+		await startSearch();
+
+		expect(screen.getByText(/Checked 5 of 53 files, newest first/)).toBeInTheDocument();
+		expect(screen.queryByText('a.pcap')).not.toBeInTheDocument();
+		expect(screen.queryByText(/No matching packets/)).not.toBeInTheDocument();
+
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(screen.getByText('a.pcap')).toBeInTheDocument();
+		expect(screen.getByText('Search Results (1 files match)')).toBeInTheDocument();
+		expect(screen.queryByText(/Checked \d+ of/)).not.toBeInTheDocument();
+		expect(urls).toHaveLength(2);
+		expect(urls[1]).toBe(urls[0]); // identical filter/from/to or the daemon restarts the job
+
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(urls).toHaveLength(2); // stopped polling once complete
+	});
+
+	it('a new search replaces a running one', async () => {
+		const urls = stubSearch([searchBody({ files_checked: 1 })]);
+
+		await startSearch();
+		await fireEvent.input(screen.getByPlaceholderText(/display filter/i), { target: { value: 'http' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Searching...' }));
+		await vi.advanceTimersByTimeAsync(0);
+		const startedAt = urls.length;
+		await vi.advanceTimersByTimeAsync(9000);
+
+		const later = urls.slice(startedAt - 1);
+		expect(later.length).toBeGreaterThan(1);
+		expect(later.every((u) => u.includes('filter=http'))).toBe(true); // the dns loop stopped
+	});
+
+	it('stops polling and shows the error when a poll fails', async () => {
+		const urls = stubSearch([searchBody({ files_checked: 1 }), new Error('Daemon unreachable: boom')]);
+
+		await startSearch();
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(screen.getByText('Daemon unreachable: boom')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled();
+
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(urls).toHaveLength(2);
+	});
+
+	it('stops polling when the page is destroyed', async () => {
+		const urls = stubSearch([searchBody({ files_checked: 1 })]);
+
+		const { unmount } = render(PcapPage);
+		await vi.advanceTimersByTimeAsync(0);
+		await fireEvent.input(screen.getByPlaceholderText(/display filter/i), { target: { value: 'dns' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(urls).toHaveLength(1);
+
+		unmount();
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(urls).toHaveLength(1);
+	});
+
+	it('explains files skipped for taking too long', async () => {
+		stubSearch([searchBody({ files_checked: 53, complete: true, timed_out: 2, count: 1, results: [MATCH] })]);
+
+		await startSearch();
+
+		expect(
+			screen.getByText(
+				'2 large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.',
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText('a.pcap')).toBeInTheDocument();
+	});
+
+	it('does not show the skipped-files note when nothing timed out', async () => {
+		stubSearch([searchBody({ files_checked: 53, complete: true, timed_out: 0 })]);
+
+		await startSearch();
+
+		expect(screen.getByText(/No matching packets found/)).toBeInTheDocument();
+		expect(screen.queryByText(/were skipped/)).not.toBeInTheDocument();
 	});
 });

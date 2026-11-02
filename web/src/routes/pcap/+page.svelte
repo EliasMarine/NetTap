@@ -31,6 +31,8 @@
 		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
 	];
 
+	const SEARCH_POLL_MS = 3000;
+
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
@@ -50,6 +52,9 @@
 	// Search
 	let searchResults = $state<PcapSearchResult[]>([]);
 	let searchDone = $state(false);
+	let searchProgress = $state<{ checked: number; total: number; timedOut: number } | null>(null);
+	/** Bumped on every new search and on destroy so a stale poll loop exits. */
+	let searchRun = 0;
 
 	// Preview
 	let previewPackets = $state<PcapPacket[]>([]);
@@ -190,6 +195,12 @@
 		} catch { return ts; }
 	}
 
+	function timedOutNote(n: number): string {
+		return n === 1
+			? '1 large file took longer than 5 minutes and was skipped \u2014 pick a shorter time range to search it.'
+			: `${n} large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.`;
+	}
+
 	function sortIndicator(active: boolean, dir: 'asc' | 'desc'): string {
 		return active ? (dir === 'asc' ? ' \u2191' : ' \u2193') : '';
 	}
@@ -211,24 +222,65 @@
 		}
 	}
 
+	// OLD CODE START — 2026-11-02: one request that waited for the daemon to tshark every file,
+	// which could never finish inside the 10 s web proxy timeout on a 24 h range
+	// async function runSearch() {
+	// 	if (!bpfFilter.trim()) {
+	// 		error = 'Enter a display filter to search';
+	// 		return;
+	// 	}
+	// 	loading = true;
+	// 	error = '';
+	// 	searchDone = false;
+	// 	searchResults = [];
+	// 	try {
+	// 		const { from, to } = getTimeRange();
+	// 		const response = await searchPcaps(bpfFilter, { from, to });
+	// 		searchResults = response.results;
+	// 		searchDone = true;
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : 'Search failed';
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// }
+	// OLD CODE END
+
 	async function runSearch() {
 		if (!bpfFilter.trim()) {
 			error = 'Enter a display filter to search';
 			return;
 		}
+		const run = ++searchRun;
+		// Filter and range are captured once: the daemon keys its background job on the exact
+		// (filter, from, to), so changing any of them mid-poll would cancel and restart it.
+		const filter = bpfFilter;
+		const { from, to } = getTimeRange();
 		loading = true;
 		error = '';
 		searchDone = false;
 		searchResults = [];
+		searchProgress = null;
 		try {
-			const { from, to } = getTimeRange();
-			const response = await searchPcaps(bpfFilter, { from, to });
-			searchResults = response.results;
-			searchDone = true;
+			while (run === searchRun) {
+				const response = await searchPcaps(filter, { from, to });
+				if (run !== searchRun) return;
+				searchResults = response.results;
+				searchProgress = {
+					checked: response.files_checked,
+					total: response.files_total,
+					timedOut: response.timed_out,
+				};
+				if (response.complete) {
+					searchDone = true;
+					return;
+				}
+				await new Promise((resolve) => setTimeout(resolve, SEARCH_POLL_MS));
+			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Search failed';
+			if (run === searchRun) error = e instanceof Error ? e.message : 'Search failed';
 		} finally {
-			loading = false;
+			if (run === searchRun) loading = false;
 		}
 	}
 
@@ -336,6 +388,7 @@
 	onMount(() => {
 		loadCaptureStatus();
 		loadFiles().then(() => { initialized = true; });
+		return () => { searchRun++; };
 	});
 </script>
 
@@ -465,7 +518,11 @@
 				bind:value={bpfFilter}
 				onkeydown={(e) => e.key === 'Enter' && runSearch()}
 			/>
+			<!-- OLD CODE START — 2026-11-02: disabled for the whole run; a background search
+			     can take many minutes, so a new filter or range must be able to replace it
 			<button class="btn btn-primary" onclick={runSearch} disabled={loading}>
+			OLD CODE END -->
+			<button class="btn btn-primary" onclick={runSearch}>
 				{loading ? 'Searching...' : 'Search'}
 			</button>
 			<button class="btn btn-secondary" onclick={downloadFiltered} disabled={!bpfFilter.trim()}>
@@ -495,11 +552,24 @@
 	{/if}
 
 	<!-- Search Results -->
-	{#if searchDone}
+	{#if searchDone || loading}
 		<section class="card">
 			<h2>Search Results ({searchResults.length} files match)</h2>
+			{#if loading}
+				<p class="search-progress">
+					{#if searchProgress}
+						Checked {searchProgress.checked} of {searchProgress.total} files, newest first&hellip;
+					{:else}
+						Starting search&hellip;
+					{/if}
+				</p>
+			{:else if searchProgress && searchProgress.timedOut > 0}
+				<p class="search-note">{timedOutNote(searchProgress.timedOut)}</p>
+			{/if}
 			{#if searchResults.length === 0}
-				<p class="empty-state">No matching packets found in any PCAP file.</p>
+				{#if searchDone}
+					<p class="empty-state">No matching packets found in any PCAP file.</p>
+				{/if}
 			{:else}
 				<div class="table-container">
 					<table class="data-table">
@@ -805,6 +875,8 @@
 	.path-cell { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 	/* Empty states */
+	.search-progress { color: var(--text-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-md); }
+	.search-note { color: var(--warning); font-size: var(--text-sm); margin: 0 0 var(--space-md); }
 	.empty-state { color: var(--text-muted); font-size: var(--text-base); text-align: center; padding: var(--space-xl) var(--space-md); }
 
 	/* Capture toggle */
