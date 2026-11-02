@@ -21,6 +21,7 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
+from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.iot_monitor")
 
@@ -147,6 +148,17 @@ ANOMALY_NEW_PORT = "NEW_PORT"
 ANOMALY_UNUSUAL_TIME = "UNUSUAL_TIME"
 ANOMALY_VOLUME_SPIKE = "VOLUME_SPIKE"
 ANOMALY_PROTOCOL_CHANGE = "PROTOCOL_CHANGE"
+
+# The baseline's "known" sets: anything outside them is flagged as new, so each holds
+# every value of the window, not a top N (#96)
+BASELINE_KNOWN_SOURCES: dict[str, dict] = {
+    "known_destinations": {"terms": {"field": "destination.ip"}},
+    "known_ports": {"terms": {"field": "destination.port"}},
+    "known_protocols": {"terms": {"field": "network.protocol"}},
+    "known_countries": {
+        "terms": {"field": "destination.geo.country_name", "missing_bucket": True}
+    },
+}
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
@@ -971,9 +983,11 @@ class IoTMonitor:
             "track_total_hits": True,
             "query": {"bool": bool_clause},
             "aggs": {
-                "destinations": {"terms": {"field": "destination.ip", "size": 100}},
-                "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
-                "protocols": {"terms": {"field": "network.protocol", "size": 10}},
+                # OLD CODE START — #96: top 100/50/10/20 only; the rest read as "new" every hour
+                # "destinations": {"terms": {"field": "destination.ip", "size": 100}},
+                # "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
+                # "protocols": {"terms": {"field": "network.protocol", "size": 10}},
+                # OLD CODE END
                 "hourly_activity": {
                     "date_histogram": {
                         "field": "@timestamp",
@@ -981,37 +995,42 @@ class IoTMonitor:
                     }
                 },
                 "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                "countries": {
-                    "terms": {
-                        "field": "destination.geo.country_name",
-                        "size": 20,
-                        "missing": "Unknown",
-                    }
-                },
+                # OLD CODE START — #96: see above
+                # "countries": {
+                #     "terms": {
+                #         "field": "destination.geo.country_name",
+                #         "size": 20,
+                #         "missing": "Unknown",
+                #     }
+                # },
+                # OLD CODE END
             },
         }
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            known = self._baseline_known_sets({"bool": bool_clause}, mac)
         except Exception as exc:
             logger.error("Failed to build baseline for %s: %s", mac, exc)
             return {"error": str(exc)}
 
         aggs = result.get("aggregations", {})
 
-        # Extract known destinations
-        destinations = [
-            b["key"] for b in aggs.get("destinations", {}).get("buckets", [])
-        ]
-
-        # Extract known ports
-        ports = [b["key"] for b in aggs.get("dest_ports", {}).get("buckets", [])]
-
-        # Extract known protocols
-        protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
-
-        # Extract known countries
-        countries = [b["key"] for b in aggs.get("countries", {}).get("buckets", [])]
+        # OLD CODE START — #96: top-N lists treated as every known value
+        # # Extract known destinations
+        # destinations = [
+        #     b["key"] for b in aggs.get("destinations", {}).get("buckets", [])
+        # ]
+        #
+        # # Extract known ports
+        # ports = [b["key"] for b in aggs.get("dest_ports", {}).get("buckets", [])]
+        #
+        # # Extract known protocols
+        # protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
+        #
+        # # Extract known countries
+        # countries = [b["key"] for b in aggs.get("countries", {}).get("buckets", [])]
+        # OLD CODE END
 
         # Calculate active hours from histogram
         hourly = aggs.get("hourly_activity", {}).get("buckets", [])
@@ -1037,10 +1056,13 @@ class IoTMonitor:
             "mac": mac,
             "built_at": now.isoformat(),
             "period_days": days,
-            "known_destinations": destinations,
-            "known_ports": ports,
-            "known_protocols": protocols,
-            "known_countries": countries,
+            # OLD CODE START — #96: top-N lists
+            # "known_destinations": destinations,
+            # "known_ports": ports,
+            # "known_protocols": protocols,
+            # "known_countries": countries,
+            # OLD CODE END
+            **known,
             "active_hours": sorted(active_hours),
             "total_bytes": total_bytes,
             "daily_avg_bytes": daily_avg_bytes,
@@ -1049,6 +1071,26 @@ class IoTMonitor:
 
         self._baselines[mac] = baseline
         return baseline
+
+    def _baseline_known_sets(self, query: dict, mac: str) -> dict[str, list]:
+        """Every destination, port, protocol and country the device used in `query`.
+
+        A missing country reads as "Unknown", as the terms aggregation's `missing` did.
+        """
+        known: dict[str, list] = {}
+        for name, source in BASELINE_KNOWN_SOURCES.items():
+            buckets, complete = all_buckets(
+                self._client, NETWORK_INDEX, query, [{"value": source}]
+            )
+            if not complete:
+                logger.warning(
+                    "Baseline %s for %s stopped at %d values", name, mac, len(buckets)
+                )
+            known[name] = [
+                "Unknown" if b["key"]["value"] is None else b["key"]["value"]
+                for b in buckets
+            ]
+        return known
 
     def check_anomalies(
         self,

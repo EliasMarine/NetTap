@@ -32,6 +32,34 @@ def iot(mock_client):
     return IoTMonitor(client=mock_client)
 
 
+BASELINE_AGG_FIELDS = {
+    "destination.ip": "destinations",
+    "destination.port": "dest_ports",
+    "network.protocol": "protocols",
+    "destination.geo.country_name": "countries",
+}
+
+
+def _baseline_search(reply: dict):
+    """search() for build_baseline: `reply` for the main query; each paged known set (#96)
+    gets the values of the matching terms list in `reply`, in one page."""
+
+    def search(index, body):
+        composite = body["aggs"].get("all", {}).get("composite")
+        if not composite:
+            return reply
+        [(name, spec)] = composite["sources"][0].items()
+        agg = BASELINE_AGG_FIELDS[spec["terms"]["field"]]
+        buckets = reply["aggregations"].get(agg, {}).get("buckets", [])
+        return {
+            "aggregations": {
+                "all": {"buckets": [{**b, "key": {name: b["key"]}} for b in buckets]}
+            }
+        }
+
+    return search
+
+
 # ---------------------------------------------------------------------------
 # classify_as_iot
 # ---------------------------------------------------------------------------
@@ -80,7 +108,7 @@ class TestClassifyAsIot:
 
 class TestBuildBaseline:
     def test_builds_baseline_from_opensearch(self, iot, mock_client):
-        mock_client.search.return_value = {
+        mock_client.search.side_effect = _baseline_search({
             "hits": {"total": {"value": 1000}},
             "aggregations": {
                 "destinations": {
@@ -100,7 +128,7 @@ class TestBuildBaseline:
                 "total_bytes": {"value": 5000000},
                 "countries": {"buckets": [{"key": "United States", "doc_count": 900}]},
             },
-        }
+        })
 
         baseline = iot.build_baseline("AA:BB:CC:DD:EE:FF", days=7)
 
@@ -143,7 +171,7 @@ class TestBuildBaseline:
 class TestCheckAnomalies:
     def _setup_baseline(self, iot, mock_client):
         """Pre-populate a baseline for testing anomaly detection."""
-        mock_client.search.return_value = {
+        mock_client.search.side_effect = _baseline_search({
             "hits": {"total": {"value": 1000}},
             "aggregations": {
                 "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 100}]},
@@ -153,8 +181,10 @@ class TestCheckAnomalies:
                 "total_bytes": {"value": 240000},  # ~10K/hr average
                 "countries": {"buckets": [{"key": "United States", "doc_count": 900}]},
             },
-        }
+        })
         iot.build_baseline("AA:BB:CC:DD:EE:FF")
+        # the tests set return_value for the hourly check, which a side_effect would override
+        mock_client.search.side_effect = None
 
     def test_detects_new_destination(self, iot, mock_client):
         self._setup_baseline(iot, mock_client)
