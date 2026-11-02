@@ -87,6 +87,10 @@ INTERNAL_PREFIXES = (
 )
 
 
+# INTERNAL_PREFIXES as ranges, for OpenSearch ip-field queries
+INTERNAL_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+
 def _is_internal(ip: str) -> bool:
     return ip.startswith(INTERNAL_PREFIXES)
 
@@ -355,6 +359,9 @@ def detect_lateral_movement(
             {"term": {"event.provider": "zeek"}},
             {"term": {"event.dataset": "conn"}},
             {"bool": {"should": port_filters, "minimum_should_match": 1}},
+            # only internal-to-internal pairs can be lateral movement; inbound scans aren't paged
+            {"terms": {"source.ip": INTERNAL_CIDRS}},
+            {"terms": {"destination.ip": INTERNAL_CIDRS}},
         ]
     }
     # OLD CODE START — excluded IPs stay visible in threat detections
@@ -362,35 +369,57 @@ def detect_lateral_movement(
     #     bool_clause["must_not"] = excluded
     # OLD CODE END
 
-    query = {
-        "size": 0,
-        "query": {"bool": bool_clause},
-        "aggs": {
-            "by_pair": {
-                "composite": {
-                    "size": 300,
-                    "sources": [
-                        {"src": {"terms": {"field": "source.ip"}}},
-                        {"dst": {"terms": {"field": "destination.ip"}}},
-                        {"port": {"terms": {"field": "destination.port"}}},
-                    ],
-                },
-                "aggs": {
-                    "first_seen": {"min": {"field": "@timestamp"}},
-                    "last_seen": {"max": {"field": "@timestamp"}},
-                },
-            }
-        },
-    }
-
+    # OLD CODE START — #96: one 300-pair page in key order; inbound scans from public IPs on
+    # 22/445/3389 sort before 192.168.x and filled it, so internal pairs and fan-out went unseen
+    # query = {
+    #     "size": 0,
+    #     "query": {"bool": bool_clause},
+    #     "aggs": {
+    #         "by_pair": {
+    #             "composite": {
+    #                 "size": 300,
+    #                 "sources": [
+    #                     {"src": {"terms": {"field": "source.ip"}}},
+    #                     {"dst": {"terms": {"field": "destination.ip"}}},
+    #                     {"port": {"terms": {"field": "destination.port"}}},
+    #                 ],
+    #             },
+    #             "aggs": {
+    #                 "first_seen": {"min": {"field": "@timestamp"}},
+    #                 "last_seen": {"max": {"field": "@timestamp"}},
+    #             },
+    #         }
+    #     },
+    # }
+    #
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error("Lateral movement detection query failed", exc_info=True)
+    #     return []
+    #
+    # suspicious = []
+    # for bucket in result.get("aggregations", {}).get("by_pair", {}).get("buckets", []):
+    # OLD CODE END
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        pairs, complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            {"bool": bool_clause},
+            _PAIR_SOURCES,
+            aggs={
+                "first_seen": {"min": {"field": "@timestamp"}},
+                "last_seen": {"max": {"field": "@timestamp"}},
+            },
+        )
     except Exception:
         logger.error("Lateral movement detection query failed", exc_info=True)
         return []
+    if not complete:
+        logger.warning("Lateral movement: the scan hit its bucket cap; pairs past it were not checked")
 
     suspicious = []
-    for bucket in result.get("aggregations", {}).get("by_pair", {}).get("buckets", []):
+    for bucket in pairs:
         src = bucket["key"]["src"]
         dst = bucket["key"]["dst"]
         port = bucket["key"]["port"]

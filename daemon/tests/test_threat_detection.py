@@ -252,3 +252,22 @@ class TestBeaconingSeesEveryPair:
         from services.threat_detection import HISTOGRAM_BUCKETS_PER_REQUEST
 
         assert HISTOGRAM_BUCKETS_PER_REQUEST < 65_535
+
+
+class TestLateralMovementSeesEveryPair:
+    def test_internal_fan_out_behind_400_inbound_scans_is_found(self):
+        """Public scanners on 22 sort before 192.168.x and filled the one 300-pair page."""
+        from services.threat_detection import detect_lateral_movement
+        from tests.fake_opensearch import FakeOpenSearch
+
+        scans = [_conn(f"1.2.{i // 200}.{i % 200}", "192.168.1.10", 22, _T0) for i in range(400)]
+        fan_out = [_conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)]
+        client = FakeOpenSearch(scans + fan_out)
+
+        moves = detect_lateral_movement(client, *_DAY)
+
+        assert sorted((m["source_ip"], m["destination_ip"], m.get("fan_out")) for m in moves) == [
+            ("192.168.1.66", "192.168.1.10", 3),
+            ("192.168.1.66", "192.168.1.11", 3),
+            ("192.168.1.66", "192.168.1.12", 3),
+        ]
