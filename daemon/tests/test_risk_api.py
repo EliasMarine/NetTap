@@ -498,6 +498,40 @@ class TestRiskQueryConsistency(AioHTTPTestCase):
         self.assertEqual(baseline_bool, list_bool)
 
 
+    @unittest_run_loop
+    async def test_single_counts_past_10000(self):
+        """#83: without track_total_hits, hits.total stops at 10,000 (busy devices read 10,000)."""
+        self.mock_storage._client.search.side_effect = [
+            _make_single_conn_result(total=34401),
+            _make_network_stats_result(),
+            _make_single_alert_result(total=0),
+        ]
+        resp = await self.client.request("GET", "/api/risk/scores/192.168.1.188")
+        self.assertEqual(resp.status, 200)
+        conn_body, _, alert_body = self._bodies()
+        self.assertIs(conn_body.get("track_total_hits"), True)
+        self.assertIs(alert_body.get("track_total_hits"), True)
+
+    @unittest_run_loop
+    async def test_list_baseline_covers_more_devices_than_it_lists(self):
+        """#83: the list's baseline came from the top `limit` devices; the single view's from 500."""
+        buckets = [
+            _make_device_bucket("192.168.1.10", doc_count=600),
+            _make_device_bucket("192.168.1.20", doc_count=200),
+            _make_device_bucket("192.168.1.30", doc_count=100),
+        ]
+        self.mock_storage._client.search.side_effect = [
+            _make_conn_search_result(buckets=buckets, total=900),
+            _make_alert_search_result({}),
+        ]
+        resp = await self.client.request("GET", "/api/risk/scores?limit=1")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.1.10"])
+        self.assertEqual(data["network_avg_connections"], 300.0)
+        self.assertEqual(self._bodies()[0]["aggs"]["devices"]["terms"]["size"], 500)
+
+
 class TestRiskRouteRegistration(AioHTTPTestCase):
     """Tests for route registration."""
 

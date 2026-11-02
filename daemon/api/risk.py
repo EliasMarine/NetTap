@@ -35,6 +35,10 @@ _DEFAULT_RANGE_HOURS = 24
 # ---------------------------------------------------------------------------
 
 
+# Devices the network baseline (mean and stddev of connections) is taken over, in both views
+_BASELINE_DEVICES = 500
+
+
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
     """Extract 'from' and 'to' query parameters as ISO timestamps."""
     now = datetime.now(timezone.utc)
@@ -143,7 +147,10 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
             "devices": {
                 "terms": {
                     "field": "source.ip",
-                    "size": limit,
+                    # OLD CODE START — #83: the baseline came from the top `limit` devices only
+                    # "size": limit,
+                    # OLD CODE END
+                    "size": _BASELINE_DEVICES,
                 },
                 "aggs": {
                     # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
@@ -214,6 +221,9 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     else:
         network_avg = 0.0
         network_stddev = 0.0
+
+    # Buckets come busiest first: the baseline used all of them, the list shows the top `limit`
+    device_buckets = device_buckets[:limit]
 
     # Collect all device IPs for batch alert count query
     device_ips = [b["key"] for b in device_buckets]
@@ -305,6 +315,8 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     # Query for this device's connection stats
     conn_query = {
         "size": 0,
+        # #83: hits.total stops at 10,000 without this; busy devices showed exactly 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
@@ -413,7 +425,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     network_query = {
         "size": 0,
         "query": {"bool": net_bool},
-        "aggs": {"devices": {"terms": {"field": "source.ip", "size": 500}}},
+        "aggs": {"devices": {"terms": {"field": "source.ip", "size": _BASELINE_DEVICES}}},
     }
 
     network_avg = 0.0
@@ -436,6 +448,7 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     alert_count = 0
     alert_query = {
         "size": 0,
+        "track_total_hits": True,  # #83: same 10,000 cap as the connection count
         "query": {
             "bool": {
                 "filter": [
