@@ -34,10 +34,10 @@ class TestDetectArpSpoofing:
     def test_detects_multiple_macs_for_one_ip(self, detector, mock_client):
         mock_client.search.return_value = {
             "aggregations": {
-                "by_ip": {
+                "all": {
                     "buckets": [
                         {
-                            "key": "192.168.1.1",
+                            "key": {"ip": "192.168.1.1"},
                             "doc_count": 100,
                             "mac_count": {"value": 2},
                             "macs": {
@@ -65,10 +65,10 @@ class TestDetectArpSpoofing:
     def test_no_spoofing_when_single_mac(self, detector, mock_client):
         mock_client.search.return_value = {
             "aggregations": {
-                "by_ip": {
+                "all": {
                     "buckets": [
                         {
-                            "key": "192.168.1.1",
+                            "key": {"ip": "192.168.1.1"},
                             "doc_count": 50,
                             "mac_count": {"value": 1},
                             "macs": {
@@ -89,7 +89,7 @@ class TestDetectArpSpoofing:
         assert len(alerts) == 0
 
     def test_empty_results(self, detector, mock_client):
-        mock_client.search.return_value = {"aggregations": {"by_ip": {"buckets": []}}}
+        mock_client.search.return_value = {"aggregations": {"all": {"buckets": []}}}
 
         alerts = detector.detect_arp_spoofing(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
@@ -202,13 +202,13 @@ class TestDetectIpConflicts:
     def test_detects_ip_conflict(self, detector, mock_client):
         mock_client.search.return_value = {
             "aggregations": {
-                "by_dest_ip": {
+                "all": {
                     "buckets": [
                         {
-                            "key": "192.168.1.50",
+                            "key": {"ip": "192.168.1.50"},
                             "doc_count": 20,
-                            "src_mac_count": {"value": 2},
-                            "src_macs": {
+                            "mac_count": {"value": 2},
+                            "macs": {
                                 "buckets": [
                                     {"key": "AA:BB:CC:11:22:33", "doc_count": 12},
                                     {"key": "DD:EE:FF:44:55:66", "doc_count": 8},
@@ -233,13 +233,13 @@ class TestDetectIpConflicts:
     def test_no_conflict_single_mac(self, detector, mock_client):
         mock_client.search.return_value = {
             "aggregations": {
-                "by_dest_ip": {
+                "all": {
                     "buckets": [
                         {
-                            "key": "192.168.1.50",
+                            "key": {"ip": "192.168.1.50"},
                             "doc_count": 20,
-                            "src_mac_count": {"value": 1},
-                            "src_macs": {
+                            "mac_count": {"value": 1},
+                            "macs": {
                                 "buckets": [
                                     {"key": "AA:BB:CC:11:22:33", "doc_count": 20}
                                 ]
@@ -278,10 +278,10 @@ class TestGetAllAnomalies:
             # ARP: one spoofing alert
             {
                 "aggregations": {
-                    "by_ip": {
+                    "all": {
                         "buckets": [
                             {
-                                "key": "192.168.1.1",
+                                "key": {"ip": "192.168.1.1"},
                                 "doc_count": 50,
                                 "mac_count": {"value": 2},
                                 "macs": {
@@ -300,13 +300,13 @@ class TestGetAllAnomalies:
             # IP conflict: one conflict
             {
                 "aggregations": {
-                    "by_dest_ip": {
+                    "all": {
                         "buckets": [
                             {
-                                "key": "192.168.1.50",
+                                "key": {"ip": "192.168.1.50"},
                                 "doc_count": 10,
-                                "src_mac_count": {"value": 2},
-                                "src_macs": {
+                                "mac_count": {"value": 2},
+                                "macs": {
                                     "buckets": [
                                         {"key": "CC:CC:CC:CC:CC:CC", "doc_count": 6},
                                         {"key": "DD:DD:DD:DD:DD:DD", "doc_count": 4},
@@ -333,10 +333,10 @@ class TestGetAllAnomalies:
             # ARP: medium severity (ip_conflict) + high (arp_spoofing)
             {
                 "aggregations": {
-                    "by_ip": {
+                    "all": {
                         "buckets": [
                             {
-                                "key": "10.0.0.1",
+                                "key": {"ip": "10.0.0.1"},
                                 "doc_count": 20,
                                 "mac_count": {"value": 2},
                                 "macs": {
@@ -374,7 +374,7 @@ class TestGetAllAnomalies:
                 }
             },
             # No IP conflicts
-            {"aggregations": {"by_dest_ip": {"buckets": []}}},
+            {"aggregations": {"all": {"buckets": []}}},
         ]
 
         anomalies = detector.get_all_anomalies(
@@ -384,3 +384,75 @@ class TestGetAllAnomalies:
         assert len(anomalies) >= 2
         # Critical should come first
         assert anomalies[0]["severity"] == "critical"
+
+
+# ---------------------------------------------------------------------------
+# Every IP is checked, not just the busiest (#96)
+# ---------------------------------------------------------------------------
+
+
+class _ArpIndex:
+    """ARP records answering per-IP aggregations the way OpenSearch does: a terms list keeps
+    its top `size` IPs and only then runs bucket_selector; a composite pages every IP."""
+
+    def __init__(self, records: list[dict]):
+        self.records = records
+
+    def _bucket(self, ip: str, field: str, sub_aggs: dict) -> dict:
+        macs = [r["source.mac"] for r in self.records if r[field] == ip]
+        bucket: dict = {"doc_count": len(macs)}
+        for name, agg in sub_aggs.items():
+            if "cardinality" in agg:
+                bucket[name] = {"value": len(set(macs))}
+            elif "terms" in agg:
+                top = sorted(sorted(set(macs)), key=macs.count, reverse=True)[: agg["terms"]["size"]]
+                bucket[name] = {"buckets": [{"key": m, "doc_count": macs.count(m)} for m in top]}
+        return bucket
+
+    def search(self, index: str, body: dict) -> dict:
+        ((name, agg),) = body["aggs"].items()
+        if "composite" in agg:
+            if "after" in agg["composite"]:
+                return {"aggregations": {name: {"buckets": []}}}
+            field = agg["composite"]["sources"][0]["ip"]["terms"]["field"]
+            ips = sorted({r[field] for r in self.records})
+            buckets = [{"key": {"ip": ip}, **self._bucket(ip, field, agg["aggs"])} for ip in ips]
+            return {"aggregations": {name: {"buckets": buckets, "after_key": buckets[-1]["key"]}}}
+        field = agg["terms"]["field"]
+        ips = sorted({r[field] for r in self.records})
+        buckets = [{"key": ip, **self._bucket(ip, field, agg["aggs"])} for ip in ips]
+        top = sorted(buckets, key=lambda b: b["doc_count"], reverse=True)[: agg["terms"]["size"]]
+        count = next(k for k, v in agg["aggs"].items() if "cardinality" in v)
+        return {"aggregations": {name: {"buckets": [b for b in top if b[count]["value"] > 1]}}}
+
+
+def _arp_records() -> list[dict]:
+    """500 busy IPs with one MAC each, then one quiet IP that two MACs used."""
+    busy = [
+        {"source.ip": ip, "destination.ip": ip, "source.mac": f"00:00:00:00:{i // 256:02x}:{i % 256:02x}"}
+        for i in range(500)
+        for ip in [f"10.0.{i // 250}.{i % 250}"]
+        for _ in range(3)
+    ]
+    quiet = [
+        {"source.ip": "10.9.9.9", "destination.ip": "10.9.9.9", "source.mac": mac}
+        for mac in ("aa:aa:aa:aa:aa:aa", "bb:bb:bb:bb:bb:bb")
+    ]
+    return busy + quiet
+
+
+def test_spoofing_of_an_ip_outside_the_busiest_500_is_found():
+    """#96: the >1-MAC filter ran after a 500-IP cut, so this returned []."""
+    alerts = LANAnomalyDetector(_ArpIndex(_arp_records())).detect_arp_spoofing(
+        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+    )
+    assert [(a["ip"], a["mac_count"]) for a in alerts] == [("10.9.9.9", 2)]
+    assert alerts[0]["mac_addresses"] == ["aa:aa:aa:aa:aa:aa", "bb:bb:bb:bb:bb:bb"]
+
+
+def test_conflict_on_an_ip_outside_the_busiest_500_is_found():
+    """#96: same cut on destination.ip."""
+    alerts = LANAnomalyDetector(_ArpIndex(_arp_records())).detect_ip_conflicts(
+        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+    )
+    assert [(a["ip"], a["mac_count"]) for a in alerts] == [("10.9.9.9", 2)]

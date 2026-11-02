@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
+from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
@@ -31,6 +32,32 @@ def _time_range_filter(from_ts: str, to_ts: str) -> dict:
             }
         }
     }
+
+
+# Per IP: how many MACs used it and the 10 busiest of them
+_MAC_AGGS = {
+    "mac_count": {"cardinality": {"field": "source.mac"}},
+    "macs": {"terms": {"field": "source.mac", "size": 10}},
+}
+
+
+def _ips_with_many_macs(client: Any, bool_clause: dict, ip_field: str) -> list[dict]:
+    """Every IP of the matching ARP records that more than one MAC used, busiest first."""
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        {"bool": bool_clause},
+        [{"ip": {"terms": {"field": ip_field}}}],
+        _MAC_AGGS,
+    )
+    if not complete:
+        logger.warning("ARP scan by %s stopped at %d IPs; result is partial", ip_field, len(buckets))
+    many = [
+        {**b, "key": b["key"]["ip"]}
+        for b in buckets
+        if (b.get("mac_count") or {}).get("value", 0) > 1
+    ]
+    return sorted(many, key=lambda b: b.get("doc_count", 0), reverse=True)
 
 
 class LANAnomalyDetector:
@@ -61,45 +88,52 @@ class LANAnomalyDetector:
         if excluded:
             bool_clause["must_not"] = excluded
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_ip": {
-                    "terms": {
-                        "field": "source.ip",
-                        "size": 500,
-                    },
-                    "aggs": {
-                        "mac_count": {
-                            "cardinality": {
-                                "field": "source.mac",
-                            }
-                        },
-                        "macs": {
-                            "terms": {
-                                "field": "source.mac",
-                                "size": 10,
-                            }
-                        },
-                        "mac_filter": {
-                            "bucket_selector": {
-                                "buckets_path": {"count": "mac_count"},
-                                "script": "params.count > 1",
-                            }
-                        },
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: the >1-MAC filter only saw the 500 busiest IPs
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_ip": {
+        #             "terms": {
+        #                 "field": "source.ip",
+        #                 "size": 500,
+        #             },
+        #             "aggs": {
+        #                 "mac_count": {
+        #                     "cardinality": {
+        #                         "field": "source.mac",
+        #                     }
+        #                 },
+        #                 "macs": {
+        #                     "terms": {
+        #                         "field": "source.mac",
+        #                         "size": 10,
+        #                     }
+        #                 },
+        #                 "mac_filter": {
+        #                     "bucket_selector": {
+        #                         "buckets_path": {"count": "mac_count"},
+        #                         "script": "params.count > 1",
+        #                     }
+        #                 },
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("ARP spoofing detection failed: %s", exc)
+        #     return []
+        #
+        # buckets = result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            buckets = _ips_with_many_macs(self._client, bool_clause, "source.ip")
         except Exception as exc:
             logger.error("ARP spoofing detection failed: %s", exc)
             return []
-
-        buckets = result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
 
         alerts: list[dict[str, Any]] = []
         for b in buckets:
@@ -237,54 +271,61 @@ class LANAnomalyDetector:
         if excluded:
             bool_clause["must_not"] = excluded
 
-        # Query for gratuitous ARP (where source and dest IP match)
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_dest_ip": {
-                    "terms": {
-                        "field": "destination.ip",
-                        "size": 500,
-                    },
-                    "aggs": {
-                        "src_mac_count": {
-                            "cardinality": {
-                                "field": "source.mac",
-                            }
-                        },
-                        "src_macs": {
-                            "terms": {
-                                "field": "source.mac",
-                                "size": 10,
-                            }
-                        },
-                        "conflict_filter": {
-                            "bucket_selector": {
-                                "buckets_path": {"count": "src_mac_count"},
-                                "script": "params.count > 1",
-                            }
-                        },
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: the >1-MAC filter only saw the 500 busiest IPs
+        # # Query for gratuitous ARP (where source and dest IP match)
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_dest_ip": {
+        #             "terms": {
+        #                 "field": "destination.ip",
+        #                 "size": 500,
+        #             },
+        #             "aggs": {
+        #                 "src_mac_count": {
+        #                     "cardinality": {
+        #                         "field": "source.mac",
+        #                     }
+        #                 },
+        #                 "src_macs": {
+        #                     "terms": {
+        #                         "field": "source.mac",
+        #                         "size": 10,
+        #                     }
+        #                 },
+        #                 "conflict_filter": {
+        #                     "bucket_selector": {
+        #                         "buckets_path": {"count": "src_mac_count"},
+        #                         "script": "params.count > 1",
+        #                     }
+        #                 },
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("IP conflict detection failed: %s", exc)
+        #     return []
+        #
+        # buckets = (
+        #     result.get("aggregations", {}).get("by_dest_ip", {}).get("buckets", [])
+        # )
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
         except Exception as exc:
             logger.error("IP conflict detection failed: %s", exc)
             return []
 
-        buckets = (
-            result.get("aggregations", {}).get("by_dest_ip", {}).get("buckets", [])
-        )
-
         alerts: list[dict[str, Any]] = []
         for b in buckets:
             ip = b["key"]
-            macs = [m["key"] for m in b.get("src_macs", {}).get("buckets", [])]
-            mac_count = b.get("src_mac_count", {}).get("value", 0)
+            macs = [m["key"] for m in b.get("macs", {}).get("buckets", [])]
+            mac_count = b.get("mac_count", {}).get("value", 0)
 
             if mac_count > 1:
                 alerts.append(
