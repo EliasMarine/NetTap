@@ -287,6 +287,9 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     if excluded_ips:
         # Exclude from both source and destination for top-destinations
         must_not.append({"terms": {"destination.ip": excluded_ips}})
+        # #80: the source side was missing, so NetTap's own lookups (G11: 37,121 a day to
+        # 9.9.9.9) counted as LAN traffic to those destinations
+        must_not.extend(build_excluded_ips_filter(excluded_ips))
 
     bool_query: dict = {
         "filter": [
