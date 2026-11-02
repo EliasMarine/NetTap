@@ -93,6 +93,19 @@ def test_summary_totals_cover_every_group():
     assert summary["total_events"] == 406
 
 
+def test_a_device_summary_has_no_network_baseline():
+    """#95: one device's alerts were compared with, and added to, the network's history."""
+    client = _two_page_client()
+    with (
+        patch.object(alert_intelligence, "is_suppressed", return_value=False),
+        patch.object(alert_intelligence, "update_baseline") as update,
+        patch.object(alert_intelligence, "reclassify_severity", return_value=3),
+    ):
+        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO, "192.168.1.44"))
+    update.assert_not_called()
+    assert summary["baseline"] is None
+
+
 def test_first_page_failure_returns_nothing():
     client = MagicMock()
     client.search.side_effect = RuntimeError("opensearch down")
