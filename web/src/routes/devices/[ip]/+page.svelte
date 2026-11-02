@@ -23,11 +23,12 @@
 	import {
 		getDeviceDetail,
 		getDeviceConnections,
-		getDeviceCategories,
-		getDevicePorts,
+		getDeviceCategories as fetchDeviceCategories,
+		getDevicePorts as fetchDevicePorts,
 		getDeviceRiskScore,
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import type { SmartAlert } from '$api/alerts';
 	import type {
 		DeviceDetail,
@@ -87,6 +88,42 @@
 	let riskScore = $state(0);
 	let riskLevel = $state('low');
 	let riskFactors = $state<RiskFactor[]>([]);
+
+	// #96: a failed section says so instead of "No ... data", a risk of 0 LOW, or "Device not found"
+	let deviceFailed = $state(false);
+	let categoriesFailed = $state(false);
+	let portsFailed = $state(false);
+	let riskFailed = $state(false);
+	/** a risk score has loaded for this device and range (riskScore 0 is otherwise a placeholder) */
+	let riskLoaded = $state(false);
+	let connectionsFailed = $state(false);
+	/** ip|range of the figures on screen (not reactive: only fetchAll reads it) */
+	let loadedView = '';
+
+	// #96: these mark their own card and keep its last good list when the request fails, instead of
+	// rejecting fetchAll's Promise.all and blanking the page. They take the API names so fetchAll
+	// still reads the same.
+	async function getDeviceCategories(ip: string, s: { from: string; to: string }): Promise<{ categories: DeviceCategory[] }> {
+		try {
+			const res = await fetchDeviceCategories(ip, s);
+			categoriesFailed = false;
+			return res;
+		} catch {
+			categoriesFailed = true;
+			return { categories };
+		}
+	}
+
+	async function getDevicePorts(ip: string, s: { from: string; to: string }): Promise<{ ports: DevicePort[] }> {
+		try {
+			const res = await fetchDevicePorts(ip, s);
+			portsFailed = false;
+			return res;
+		} catch {
+			portsFailed = true;
+			return { ports };
+		}
+	}
 
 	// Connections
 	let connections = $state<DeviceConnection[]>([]);
@@ -179,6 +216,14 @@
 	async function fetchAll() {
 		loading = true;
 		span = rangeSpan(range);
+		// A refresh of the same view keeps its last good figures; another view must not show them
+		const view = `${deviceIp}|${range}`;
+		if (view !== loadedView) {
+			device = null;
+			categories = [];
+			ports = [];
+			riskLoaded = false;
+		}
 		try {
 			// OLD CODE START — #87: no time range, so the pills changed nothing
 			// const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
@@ -190,14 +235,27 @@
 			// ]);
 			// OLD CODE END
 			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
-				getDeviceDetail(deviceIp, span),
+				// OLD CODE START — #96: a failure rejected the whole Promise.all, so the page said "Device not found"
+				// getDeviceDetail(deviceIp, span),
+				// OLD CODE END
+				getDeviceDetail(deviceIp, span).catch(() => null),
 				getDeviceCategories(deviceIp, span),
 				// #96: a failed alert lookup marks its card only, not the whole device page
 				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }).catch(() => null),
 				getDevicePorts(deviceIp, span),
-				getDeviceRiskScore(deviceIp, span),
+				// OLD CODE START — #96: see getDeviceDetail
+				// getDeviceRiskScore(deviceIp, span),
+				// OLD CODE END
+				getDeviceRiskScore(deviceIp, span).catch(() => null),
 			]);
-			device = deviceRes.device;
+			// OLD CODE START — #96: a failed detail is not "Device not found"; a refresh keeps the last one
+			// device = deviceRes.device;
+			// OLD CODE END
+			if (deviceRes) {
+				device = deviceRes.device;
+				loadedView = view;
+			}
+			deviceFailed = deviceRes === null;
 			categories = catRes.categories;
 			// OLD CODE START — #96: getSmartAlerts now throws instead of returning no alerts
 			// smartAlerts = smartRes.alerts;
@@ -207,12 +265,24 @@
 			smartAlertsTotal = smartRes?.total ?? 0;
 			smartAlertsFailed = smartRes === null;
 			ports = portRes.ports;
-			riskScore = riskRes.score;
-			riskLevel = riskRes.level;
-			riskFactors = riskRes.factors;
-			lastUpdated = new Date();
+			// OLD CODE START — #96: a failed risk score read as 0, LOW
+			// riskScore = riskRes.score;
+			// riskLevel = riskRes.level;
+			// riskFactors = riskRes.factors;
+			// lastUpdated = new Date();
+			// OLD CODE END
+			if (riskRes) {
+				riskScore = riskRes.score;
+				riskLevel = riskRes.level;
+				riskFactors = riskRes.factors;
+				riskLoaded = true;
+			}
+			riskFailed = riskRes === null;
+			if (deviceRes) lastUpdated = new Date();
 		} catch {
+			// only a network error on the alerts lookup reaches here; it is not "Device not found"
 			device = null;
+			deviceFailed = true;
 		} finally {
 			loading = false;
 		}
@@ -231,8 +301,12 @@
 			connectionsPage = res.page;
 			connectionsTotalPages = res.total_pages;
 			connectionsTotal = res.total;
+			connectionsFailed = false;
 		} catch {
+			// rows are specific to this page of results, so they are not kept as stale
 			connections = [];
+			connectionsTotalPages = 0;
+			connectionsFailed = true;
 		} finally {
 			connectionsLoading = false;
 		}
@@ -369,12 +443,20 @@
 			<div class="loading-spinner"></div>
 			<span class="text-muted">Loading device data...</span>
 		</div>
+	{:else if deviceFailed && !device}
+		<div class="empty-state">
+			<p class="empty-text">{loadFailed(`device ${deviceIp}`)}</p>
+			<button class="btn-back" onclick={() => fetchAll()}>Try again</button>
+		</div>
 	{:else if !device || !device.ip}
 		<div class="empty-state">
 			<p class="empty-text">Device not found: {deviceIp}</p>
 			<button class="btn-back" onclick={() => goto('/devices')}>Return to Devices</button>
 		</div>
 	{:else}
+		{#if deviceFailed}
+			<p class="text-warning load-note">{loadFailed('this device', true)}</p>
+		{/if}
 		<!-- ============================================================
 		     Section 1: Device Identity Header
 		     ============================================================ -->
@@ -435,11 +517,21 @@
 						<svg viewBox="0 0 120 70">
 							<path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="var(--bg-tertiary)" stroke-width="10" stroke-linecap="round" />
 							<path d={riskArcPath} fill="none" stroke={riskColor(riskLevel)} stroke-width="10" stroke-linecap="round" />
+							<!-- OLD CODE START — #96: with no score loaded this read "0" in green, LOW
 							<text x="60" y="52" text-anchor="middle" fill={riskColor(riskLevel)} font-family="var(--font-mono)" font-size="22" font-weight="700">{riskScore}</text>
+							OLD CODE END -->
+							<text x="60" y="52" text-anchor="middle" fill={riskLoaded ? riskColor(riskLevel) : 'var(--text-muted)'} font-family="var(--font-mono)" font-size="22" font-weight="700">{riskLoaded ? riskScore : '—'}</text>
 							<text x="60" y="66" text-anchor="middle" fill="var(--text-muted)" font-size="9" font-weight="600" letter-spacing="0.08em">RISK</text>
 						</svg>
 					</div>
+					<!-- OLD CODE START — #96: see the gauge
 					<span class="risk-badge" style="color: {riskColor(riskLevel)}; background: color-mix(in srgb, {riskColor(riskLevel)} 12%, transparent);">{riskLevel.toUpperCase()}</span>
+					OLD CODE END -->
+					{#if riskLoaded}
+						<span class="risk-badge" style="color: {riskColor(riskLevel)}; background: color-mix(in srgb, {riskColor(riskLevel)} 12%, transparent);">{riskLevel.toUpperCase()}</span>
+					{:else if riskFailed}
+						<span class="risk-badge text-warning">UNKNOWN</span>
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -516,8 +608,11 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Traffic Categories</span>
-					<span class="card-badge">{categories.length} categories</span>
+					<span class="card-badge">{categoriesFailed && categories.length === 0 ? 'load failed' : `${categories.length} categories`}</span>
 				</div>
+				{#if categoriesFailed}
+					<p class="empty-msg">{loadFailed('traffic categories', categories.length > 0)}</p>
+				{/if}
 				{#if categories.length > 0}
 					<HorizontalBarList
 						items={categories.map((c, i) => ({
@@ -532,7 +627,7 @@
 						labelWidth={130}
 						barHeight={10}
 					/>
-				{:else}
+				{:else if !categoriesFailed}
 					<p class="empty-msg">No category data available.</p>
 				{/if}
 			</div>
@@ -564,9 +659,12 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Risk Factor Breakdown</span>
-					<span class="card-badge">{riskScore} / 100</span>
+					<span class="card-badge">{riskLoaded ? `${riskScore} / 100` : '—'}</span>
 				</div>
-				{#if riskFactors.length > 0}
+				{#if riskFailed}
+					<p class="empty-msg">{loadFailed('the risk score', riskLoaded)}</p>
+				{/if}
+				{#if riskLoaded && riskFactors.length > 0}
 					<div class="risk-factor-list">
 						{#each riskFactors as factor, i (`${factor.name}-${i}`)}
 							{@const pct = factor.max > 0 ? (factor.score / factor.max) * 100 : 0}
@@ -578,7 +676,7 @@
 							</div>
 						{/each}
 					</div>
-				{:else}
+				{:else if !riskFailed}
 					<p class="empty-msg">No risk data available.</p>
 				{/if}
 			</div>
@@ -687,6 +785,9 @@
 			<!-- Top Ports -->
 			<div class="card">
 				<div class="card-header"><span class="card-title">Top Ports Used</span></div>
+				{#if portsFailed}
+					<p class="empty-msg">{loadFailed('ports', ports.length > 0)}</p>
+				{/if}
 				{#if ports.length > 0}
 					<div class="table-wrap">
 						<table class="data-table">
@@ -702,7 +803,7 @@
 							</tbody>
 						</table>
 					</div>
-				{:else}
+				{:else if !portsFailed}
 					<p class="empty-msg">No port data.</p>
 				{/if}
 			</div>
@@ -714,7 +815,7 @@
 		<div class="card">
 			<div class="card-header">
 				<span class="card-title">Recent Connections</span>
-				<span class="card-badge">{formatNumber(connectionsTotal)} total</span>
+				<span class="card-badge">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
 			</div>
 			<div class="conn-toolbar">
 				<div class="proto-pills">
@@ -725,6 +826,8 @@
 			</div>
 			{#if connectionsLoading}
 				<div class="loading-inline"><span class="text-muted">Loading connections...</span></div>
+			{:else if connectionsFailed}
+				<p class="empty-msg">{loadFailed('connections')}</p>
 			{:else}
 				<div class="table-wrap">
 					<table class="data-table">
@@ -774,6 +877,7 @@
 	.empty-state { text-align: center; padding: var(--space-3xl); }
 	.empty-text { font-size: var(--text-lg); color: var(--text-primary); margin-bottom: var(--space-md); }
 	.empty-msg { padding: var(--space-lg); text-align: center; font-size: var(--text-sm); color: var(--text-muted); }
+	.load-note { margin: 0; font-size: var(--text-sm); }
 	.btn-back { padding: 6px 14px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; }
 
 	/* ---------------------------------------------------------------- Header */

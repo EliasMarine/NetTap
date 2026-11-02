@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getLiveDashboard, getLiveConnectionDetail } from '$lib/api/live';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import type {
 		LiveConnection,
 		LiveDashboardResponse,
@@ -58,6 +59,8 @@
 	let drawerTab = $state('details');
 	let drawerDetail = $state<ConnectionDetailResponse | null>(null);
 	let drawerDetailLoading = $state(false);
+	// #96: a failed detail must not read as "No alerts for this connection"
+	let drawerDetailFailed = $state(false);
 
 	// ---------------------------------------------------------------------------
 	// Derived — filtered connections
@@ -140,8 +143,12 @@
 			if (dashboard._error) {
 				error = dashboard._error;
 			}
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch live data';
+		} catch {
+			// OLD CODE START — #96: the getter now throws instead of returning a zero dashboard
+			// error = e instanceof Error ? e.message : 'Failed to fetch live data';
+			// OLD CODE END
+			// The last good dashboard stays on screen; the status bar says it is stale
+			error = loadFailed('live data', dashboard !== null);
 		} finally {
 			loading = false;
 		}
@@ -183,9 +190,10 @@
 		drawerTab = 'details';
 		drawerDetail = null;
 		drawerDetailLoading = true;
+		drawerDetailFailed = false;
 		getLiveConnectionDetail(conn.source_ip, conn.dest_ip, conn.dest_port)
 			.then((d) => { drawerDetail = d; })
-			.catch(() => { drawerDetail = null; })
+			.catch(() => { drawerDetail = null; drawerDetailFailed = true; })
 			.finally(() => { drawerDetailLoading = false; });
 	}
 
@@ -389,6 +397,7 @@
 				connection={drawerConn}
 				detail={drawerDetail}
 				detailLoading={drawerDetailLoading}
+				detailFailed={drawerDetailFailed}
 				activeTab={drawerTab}
 			/>
 		{/if}

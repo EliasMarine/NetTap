@@ -3,6 +3,7 @@
 	import { fetchCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 	import { getUnifiStatus } from '$lib/api/unifi';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
@@ -99,6 +100,8 @@
 	let unifiCacheCounts = $state<{ clients: number; devices: number } | null>(null);
 	let unifiLastPoll = $state<string | null>(null);
 	let unifiLoading = $state(true);
+	// #96: a failed status read used to show the form as "not configured"
+	let unifiStatusFailed = $state(false);
 	let unifiSaving = $state(false);
 	let unifiTesting = $state(false);
 	let unifiMessage = $state('');
@@ -462,6 +465,9 @@
 				: null;
 			unifiLastPoll = unifiPollIso(status.last_poll_time);
 			if (status.site_id) unifiSiteId = status.site_id;
+			unifiStatusFailed = false;
+		} catch {
+			unifiStatusFailed = true;
 		} finally {
 			unifiLoading = false;
 		}
@@ -1587,6 +1593,9 @@
 				{#if unifiLoading}
 					<p class="text-muted">Loading UniFi status...</p>
 				{:else}
+					{#if unifiStatusFailed}
+						<p class="text-warning">{loadFailed('the UniFi status')} The controller may already be set up.</p>
+					{/if}
 					<!-- Connection Status Card (only shown when configured) -->
 					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
 						<div class="unifi-status-card">

@@ -48,10 +48,10 @@ describe('DNS API client', () => {
 			expect(result.domains[0].domain).toBe('google.com');
 		});
 
-		it('returns empty on failure', async () => {
-			mockFetchFailure();
-			const result = await getTopDomains();
-			expect(result.domains).toEqual([]);
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchFailure(500);
+			await expect(getTopDomains()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes limit parameter', async () => {
@@ -75,10 +75,10 @@ describe('DNS API client', () => {
 			expect(result.device_ip).toBe('192.168.1.100');
 		});
 
-		it('returns empty on failure', async () => {
-			mockFetchFailure();
-			const result = await getDeviceDns('10.0.0.1');
-			expect(result.domains).toEqual([]);
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchFailure(500);
+			await expect(getDeviceDns('10.0.0.1')).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -93,10 +93,10 @@ describe('DNS API client', () => {
 			expect(result.nxdomains).toHaveLength(1);
 		});
 
-		it('returns empty on failure', async () => {
-			mockFetchFailure();
-			const result = await getNxdomains();
-			expect(result.nxdomains).toEqual([]);
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchFailure(500);
+			await expect(getNxdomains()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -114,10 +114,10 @@ describe('DNS API client', () => {
 			expect(result.types).toHaveLength(2);
 		});
 
-		it('returns empty on failure', async () => {
-			mockFetchFailure();
-			const result = await getQueryTypes();
-			expect(result.types).toEqual([]);
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchFailure(500);
+			await expect(getQueryTypes()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -135,10 +135,10 @@ describe('DNS API client', () => {
 			expect(result.series).toHaveLength(2);
 		});
 
-		it('returns empty on failure', async () => {
-			mockFetchFailure();
-			const result = await getDnsTimeline();
-			expect(result.series).toEqual([]);
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchFailure(500);
+			await expect(getDnsTimeline()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -177,10 +177,10 @@ describe('DNS API client', () => {
 			expect(result.unique_domains).toBe(500);
 		});
 
-		it('returns zero defaults on failure', async () => {
-			mockFetchFailure();
-			const result = await getDnsStats();
-			expect(result.total_queries).toBe(0);
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchFailure(500);
+			await expect(getDnsStats()).rejects.toThrow('HTTP 500');
 		});
 	});
 });

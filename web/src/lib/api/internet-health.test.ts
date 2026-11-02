@@ -78,14 +78,10 @@ describe('internet-health API client', () => {
 			expect(result.latency_ms).toBe(12.5);
 		});
 
-		it('returns down status on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getInternetHealth();
-
-			expect(result.status).toBe('down');
-			expect(result.latency_ms).toBeNull();
-			expect(result.packet_loss_pct).toBe(100);
+			await expect(getInternetHealth()).rejects.toThrow('HTTP 502');
 		});
 
 		it('returns dns_resolve_ms from the check', async () => {
@@ -120,12 +116,10 @@ describe('internet-health API client', () => {
 			expect(url).toContain('limit=100');
 		});
 
-		it('returns empty history on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getInternetHistory();
-
-			expect(result.history).toEqual([]);
+			await expect(getInternetHistory()).rejects.toThrow('HTTP 500');
 		});
 
 		it('returns multiple history entries', async () => {
@@ -152,15 +146,10 @@ describe('internet-health API client', () => {
 			expect(result.total_checks).toBe(1440);
 		});
 
-		it('returns zeroed stats on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getInternetStats();
-
-			expect(result.avg_latency_ms).toBe(0);
-			expect(result.uptime_pct).toBe(0);
-			expect(result.total_checks).toBe(0);
-			expect(result.avg_packet_loss_pct).toBe(100);
+			await expect(getInternetStats()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes p95 and min/max latency', async () => {
@@ -187,13 +176,10 @@ describe('internet-health API client', () => {
 			expect(result.latency_ms).toBe(12.5);
 		});
 
-		it('returns down status on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await triggerHealthCheck();
-
-			expect(result.status).toBe('down');
-			expect(result.packet_loss_pct).toBe(100);
+			await expect(triggerHealthCheck()).rejects.toThrow('HTTP 500');
 		});
 	});
 });

@@ -12,9 +12,12 @@
 	let {
 		buckets = [],
 		loading = false,
+		emptyMessage = 'No timeline data available',
 	}: {
 		buckets: ConnectionTimelineBucket[];
 		loading?: boolean;
+		/** #96: lets the page say the request failed instead of "no data" */
+		emptyMessage?: string;
 	} = $props();
 
 	// ---------------------------------------------------------------------------
@@ -178,7 +181,7 @@
 				</div>
 			{/if}
 		{:else if !loading}
-			<p class="text-muted" style="padding: 2rem; text-align: center;">No timeline data available</p>
+			<p class="text-muted" style="padding: 2rem; text-align: center;">{emptyMessage}</p>
 		{/if}
 	</div>
 </div>

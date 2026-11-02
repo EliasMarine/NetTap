@@ -65,3 +65,25 @@ describe('Device by MAC page', () => {
 		expect(document.querySelector('.loading-state')).toBeNull();
 	});
 });
+
+// #96: every failure read as "Device not found"
+describe('Device by MAC page — failed request', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	function stubStatus(status: number): void {
+		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, json: async () => ({}) })));
+	}
+
+	it('says the device failed to load when the daemon errors', async () => {
+		stubStatus(503);
+		render(Page);
+		expect(await screen.findByText(`Couldn't load device ${MAC}: the request failed.`)).toBeInTheDocument();
+		expect(screen.queryByText('Device not found')).not.toBeInTheDocument();
+	});
+
+	it('still says "Device not found" when the registry has no such device', async () => {
+		stubStatus(404);
+		render(Page);
+		expect(await screen.findByText('Device not found')).toBeInTheDocument();
+	});
+});
