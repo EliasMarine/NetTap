@@ -74,10 +74,14 @@
 			maxBoundsViscosity: 1.0,
 		});
 
-		L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-			subdomains: 'abcd',
-			maxZoom: 19,
-		}).addTo(map);
+		// OLD CODE START — 2026-11-02: CARTO now answers every tile with an "API KEY
+		// REQUIRED" image, and remote tiles break NetTap's no-cloud-dependency rule.
+		// L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+		// 	subdomains: 'abcd',
+		// 	maxZoom: 19,
+		// }).addTo(map);
+		// OLD CODE END
+		addCountryOutlines(map);
 
 		homeMarkerGroup = L.layerGroup().addTo(map);
 		destLayerGroup = L.layerGroup().addTo(map);
@@ -103,6 +107,33 @@
 			}
 		};
 	});
+
+	// ---------------------------------------------------------------------------
+	// Base map — bundled country outlines, no tile server
+	// ---------------------------------------------------------------------------
+
+	// Natural Earth 1:110m countries (public domain), from world-atlas 2.0.2 (ISC),
+	// converted to GeoJSON and served from web/static/geo.
+	const COUNTRY_OUTLINES_URL = '/geo/countries-110m.geojson';
+
+	async function addCountryOutlines(target: L.Map) {
+		try {
+			const res = await fetch(COUNTRY_OUTLINES_URL);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const outlines = await res.json();
+			if (map !== target) return; // unmounted while loading
+			target.createPane('countries').style.zIndex = '250'; // above tiles, below markers
+			L.geoJSON(outlines, {
+				pane: 'countries',
+				interactive: false,
+				// SVG, not the map's canvas renderer, so CSS theme variables can style it
+				style: { className: 'geo-country', renderer: L.svg({ pane: 'countries' }) },
+			}).addTo(target);
+		} catch (err) {
+			// Arcs and markers still work on the plain background
+			console.warn('Live map: country outlines unavailable', err);
+		}
+	}
 
 	// ---------------------------------------------------------------------------
 	// Canvas sizing — retina-aware
@@ -315,6 +346,16 @@
 		inset: 0;
 		pointer-events: none;
 		z-index: 450;
+	}
+
+	/* ----- Base map: bundled country outlines (CSS overrides Leaflet's SVG attributes) ----- */
+
+	:global(.geo-map .geo-country) {
+		fill: var(--bg-elevated);
+		fill-opacity: 1;
+		stroke: var(--border-bright);
+		stroke-width: 0.6;
+		stroke-opacity: 1;
 	}
 
 	/* ----- Leaflet control overrides ----- */

@@ -113,6 +113,8 @@ export interface DashboardStats {
 	bandwidth_bytes_per_second: number;
 	active_devices: number;
 	top_country: string;
+	/** Connections in the 5-minute window (the protocol donut's total) */
+	connections_in_window?: number;
 }
 
 export interface GeoArc {

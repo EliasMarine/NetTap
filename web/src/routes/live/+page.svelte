@@ -289,6 +289,7 @@
 					protocols={hasActiveFilter ? filteredProtocols : (dashboard?.protocols ?? {})}
 					activeProtocol={protocolFilter}
 					onclick={setProtocolFilter}
+					connections={hasActiveFilter ? filteredConnections.length : (dashboard?.stats.connections_in_window ?? null)}
 				/>
 			</div>
 		</div>

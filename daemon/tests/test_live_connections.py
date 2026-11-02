@@ -297,6 +297,27 @@ class TestLiveDashboardQueries(unittest.TestCase):
         self.assertIn("total_bytes", agg["aggs"])
         self.assertNotIn("bucket_sort", agg["aggs"])
 
+    def test_active_devices_counts_lan_sources_only(self):
+        """79 "devices" for 38 on the G11: each device's IPv6 link-local counted too."""
+        client = MagicMock()
+        client.search.side_effect = [
+            {
+                "hits": {"total": {"value": 1690}, "hits": []},
+                "aggregations": {
+                    "active_devices": {"doc_count": 900, "n": {"value": 38}}
+                },
+            },
+            {"aggregations": {"alert_pairs": {"buckets": []}}},
+        ]
+        lan = {"terms": {"source.ip": ["192.168.1.0/24"]}}
+        result = LiveConnectionTracker(client=client).fetch_dashboard_data(
+            lan_filter=lan
+        )
+        agg = client.search.call_args_list[0].kwargs["body"]["aggs"]["active_devices"]
+        self.assertEqual(agg["filter"], lan)
+        self.assertEqual(result["stats"]["active_devices"], 38)
+        self.assertEqual(result["stats"]["connections_in_window"], 1690)
+
 
 if __name__ == "__main__":
     unittest.main()

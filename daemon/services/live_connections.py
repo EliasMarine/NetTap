@@ -20,6 +20,8 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from services.excluded_ips import RFC1918_SOURCE_FILTER
+
 logger = logging.getLogger("nettap.services.live_connections")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -330,6 +332,7 @@ class LiveConnectionTracker:
         country: str | None = None,
         limit: int = 100,
         excluded_ips: list[str] | None = None,
+        lan_filter: dict | None = None,
     ) -> dict[str, Any]:
         """Fetch complete live dashboard payload with connections + aggregations.
 
@@ -499,7 +502,15 @@ class LiveConnectionTracker:
                 "total_bytes_out": {
                     "sum": {"field": "destination.bytes", "missing": 0}
                 },
-                "active_devices": {"cardinality": {"field": "source.ip"}},
+                # OLD CODE START — 2026-11-02: every source.ip, so each device counted
+                # twice (IPv4 + IPv6 link-local): 79 "devices" for 38 on the G11
+                # "active_devices": {"cardinality": {"field": "source.ip"}},
+                # OLD CODE END
+                # LAN sources only, the same rule as the Devices page
+                "active_devices": {
+                    "filter": lan_filter or RFC1918_SOURCE_FILTER,
+                    "aggs": {"n": {"cardinality": {"field": "source.ip"}}},
+                },
                 "top_country": {
                     "terms": {
                         "field": "destination.geo.country_name",
@@ -617,7 +628,9 @@ class LiveConnectionTracker:
         window_seconds = 300.0
 
         # Active devices
-        active_devices = aggs.get("active_devices", {}).get("value", 0) or 0
+        active_devices = (
+            aggs.get("active_devices", {}).get("n", {}).get("value", 0) or 0
+        )
 
         # Top country
         top_country_buckets = aggs.get("top_country", {}).get("buckets", [])
@@ -744,6 +757,7 @@ class LiveConnectionTracker:
             "count": len(connections),
             "stats": {
                 "connections_per_second": round(total_hits / window_seconds, 2),
+                "connections_in_window": total_hits,
                 "bandwidth_bytes_per_second": round(
                     (bytes_in + bytes_out) / window_seconds, 2
                 ),
