@@ -811,9 +811,26 @@ svc = data['services']['arkime-live']
 assert svc.get('profiles') == ['arkime'], 'arkime-live must only start with --profile arkime: ' + repr(svc.get('profiles'))
 deps = [name for name, s in data['services'].items() if 'arkime-live' in (s.get('depends_on') or {})]
 assert not deps, 'these services depend on arkime-live: ' + str(deps)
-others = [name for name, s in data['services'].items() if name != 'arkime-live' and s.get('profiles')]
-assert not others, 'only arkime-live is profiled out of the default stack: ' + str(others)
+others = [name for name, s in data['services'].items() if name not in ('arkime-live', 'nettap-grafana') and s.get('profiles')]
+assert not others, 'only arkime-live and nettap-grafana are profiled out of the default stack: ' + str(others)
 print('arkime profile: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: nettap-grafana is off by default and nothing depends on it (#71)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Its dashboards never showed data (dashboard data accuracy #71). nginx resolves it
+    # per request, so it must not be a depends_on of nginx or anything else.
+    run _compose_query "
+svc = data['services']['nettap-grafana']
+assert svc.get('profiles') == ['grafana'], 'nettap-grafana must only start with --profile grafana: ' + repr(svc.get('profiles'))
+deps = [name for name, s in data['services'].items() if 'nettap-grafana' in (s.get('depends_on') or {})]
+assert not deps, 'these services depend on nettap-grafana: ' + str(deps)
+print('grafana profile: OK')
 "
     [ "$status" -eq 0 ]
 }

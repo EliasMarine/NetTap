@@ -47,3 +47,14 @@ _location() {
     csp=$(grep -v '^\s*#' "$NGINX_CONF" | grep 'add_header Content-Security-Policy')
     echo "$csp" | grep -q "worker-src 'self' blob:"
 }
+
+@test "nginx: /grafana/ keeps its path and starts without Grafana (#71)" {
+    run _location '/grafana/'
+    [ "$status" -eq 0 ]
+    # The full /grafana/... path reaches Grafana (it serves from that sub-path)
+    echo "$output" | grep -Eq '^[[:space:]]*proxy_pass \$grafana_upstream;'
+    ! echo "$output" | grep -Eq '^[[:space:]]*proxy_pass http://grafana/;'
+    # Resolved per request, so a missing container can't stop nginx starting
+    echo "$output" | grep -Eq '^[[:space:]]*resolver 127\.0\.0\.11'
+    ! grep -Eq '^[[:space:]]*upstream grafana' "$NGINX_CONF"
+}

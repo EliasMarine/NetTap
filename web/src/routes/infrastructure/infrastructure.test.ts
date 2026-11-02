@@ -179,3 +179,48 @@ describe('Infrastructure index count', () => {
 		expect(screen.queryByText('42')).not.toBeInTheDocument();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Grafana link only when Grafana answers (off by default, #71)
+// ---------------------------------------------------------------------------
+
+describe('Infrastructure Grafana link', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubFetch(grafana: { ok: boolean; status: number; json: () => Promise<unknown> }) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => (url === '/grafana/api/health' ? grafana : { ok: false, status: 503, json: async () => ({}) })),
+		);
+	}
+
+	async function renderPage() {
+		render(InfrastructurePage);
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/grafana/api/health'));
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('links Grafana when its health check answers', async () => {
+		stubFetch({ ok: true, status: 200, json: async () => ({ database: 'ok', version: '10.4.2' }) });
+		await renderPage();
+
+		await vi.waitFor(() => expect(screen.getByText('Grafana')).toBeInTheDocument());
+	});
+
+	it('hides Grafana when it is off (nginx answers 503)', async () => {
+		stubFetch({ ok: false, status: 503, json: async () => ({}) });
+		await renderPage();
+
+		expect(screen.queryByText('Grafana')).not.toBeInTheDocument();
+		expect(screen.getByText('CyberChef')).toBeInTheDocument();
+	});
+
+	it('hides Grafana when the reply is the login page, not Grafana', async () => {
+		stubFetch({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } });
+		await renderPage();
+
+		expect(screen.queryByText('Grafana')).not.toBeInTheDocument();
+	});
+});

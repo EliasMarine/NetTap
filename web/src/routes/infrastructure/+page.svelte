@@ -489,7 +489,15 @@
 	}
 
 	// ─── Lifecycle & auto-polling ───────────────────────────────
+	// Grafana is off by default (compose profile "grafana"); link it only when it answers
+	let grafanaUp = $state(false);
+
 	onMount(() => {
+		// A logged-out request is redirected to the login page (HTML, 200), so check the JSON
+		fetch('/grafana/api/health')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((j) => (grafanaUp = j?.database === 'ok'))
+			.catch(() => (grafanaUp = false));
 		fetchAll();
 		setTimeout(drawConnections, 100);
 	});
@@ -1318,16 +1326,18 @@
 			</div>
 			<span class="service-arrow">&rarr;</span>
 		</a>
-		<a href="/grafana/" class="service-link" target="_blank" rel="noopener">
-			<div class="service-icon-box grafana">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-			</div>
-			<div class="service-info-text">
-				<div class="service-name">Grafana</div>
-				<div class="service-desc">Advanced dashboards &amp; graphs</div>
-			</div>
-			<span class="service-arrow">&rarr;</span>
-		</a>
+		{#if grafanaUp}
+			<a href="/grafana/" class="service-link" target="_blank" rel="noopener">
+				<div class="service-icon-box grafana">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+				</div>
+				<div class="service-info-text">
+					<div class="service-name">Grafana</div>
+					<div class="service-desc">Advanced dashboards &amp; graphs</div>
+				</div>
+				<span class="service-arrow">&rarr;</span>
+			</a>
+		{/if}
 		<a href="/cyberchef/" class="service-link" target="_blank" rel="noopener">
 			<div class="service-icon-box cyberchef">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
