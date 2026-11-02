@@ -185,7 +185,7 @@ export interface DeviceCountResponse {
 }
 
 /**
- * Get count of unique DHCP-leased devices on the network.
+ * Get the number of devices seen on the network (same rule as the device list).
  */
 export async function getDeviceCount(
 	opts: TimeRangeParams = {}

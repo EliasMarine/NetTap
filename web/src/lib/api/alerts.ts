@@ -387,6 +387,8 @@ export interface SmartAlertSummary {
 	threat_level: string;
 	total_groups: number;
 	total_events: number;
+	/** Alerts rated informational (STUN, DoH, ...) and left out of the groups above */
+	informational_events?: number;
 	categories: Record<string, { label: string; groups: number; events: number }>;
 	top_threats: SmartAlert[];
 }

@@ -2,7 +2,7 @@
 	/**
 	 * Device Inventory v2 — Card-based network device dashboard.
 	 *
-	 * Shows only DHCP-leased devices grouped by category (computer, phone, IoT,
+	 * Shows devices seen in network traffic, grouped by category (computer, phone, IoT,
 	 * infrastructure, unknown) with hero stats, search, and category filters.
 	 */
 
@@ -207,7 +207,9 @@
 	<div class="page-header">
 		<div>
 			<h1>Device Inventory</h1>
-			<p class="subtitle">{devices.length} DHCP-leased devices{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+			<!-- OLD CODE START — 2026-11-01: devices come from observed traffic, not DHCP leases ("DHCP-leased devices") -->
+			<!-- OLD CODE END -->
+			<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
 		</div>
 		<div class="header-controls">
 			<button class="auto-btn" class:active={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
@@ -228,7 +230,7 @@
 			<div class="stat-card stat-accent">
 				<div class="stat-label">Total Devices</div>
 				<div class="stat-value accent">{devices.length}</div>
-				<div class="stat-sub">DHCP-leased</div>
+				<div class="stat-sub">Seen on the network</div>
 			</div>
 			<div class="stat-card">
 				<div class="stat-label">Online Now</div>
@@ -280,8 +282,10 @@
 					<p class="empty-text">No devices matching your filter.</p>
 					<button class="reset-btn" onclick={() => { searchQuery = ''; categoryFilter = 'all'; }}>Reset filters</button>
 				{:else}
-					<p class="empty-text">No DHCP-leased devices found.</p>
-					<p class="empty-hint">Devices appear when they obtain an IP from the network's DHCP server.</p>
+					<!-- OLD CODE START — 2026-11-01: "No DHCP-leased devices found." / "...obtain an IP from the network's DHCP server." -->
+					<!-- OLD CODE END -->
+					<p class="empty-text">No devices seen yet.</p>
+					<p class="empty-hint">Devices appear once they make a few connections through the monitored link.</p>
 				{/if}
 			</div>
 		{:else if viewMode === 'grid'}

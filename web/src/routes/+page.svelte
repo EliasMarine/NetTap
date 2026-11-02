@@ -684,8 +684,11 @@
 					{deviceCount > 0 ? formatNumber(deviceCount) : '--'}
 				</div>
 			{/if}
+			<!-- OLD CODE START — 2026-11-01: the count comes from observed traffic, not DHCP leases -->
+			<!-- DHCP-leased devices on network -->
+			<!-- OLD CODE END -->
 			<p class="card-description">
-				DHCP-leased devices on network
+				Devices seen on the network
 			</p>
 		</a>
 	</div>
@@ -851,7 +854,10 @@
 		<div class="card table-card">
 			<div class="card-header">
 				<span class="card-title">Alert Summary</span>
-				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span>
+				<!-- OLD CODE START — 2026-11-01: "394 total" beside "2.2K alerts" read as a contradiction; the summary hides informational alerts -->
+				<!-- <span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span> -->
+				<!-- OLD CODE END -->
+				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review{#if smartAlertSummary?.informational_events} · {formatNumber(smartAlertSummary.informational_events)} informational{/if}</span>
 			</div>
 			{#if smartAlerts.length > 0}
 				<!-- Severity summary bar -->
