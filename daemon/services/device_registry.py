@@ -23,6 +23,7 @@ from typing import Any
 from opensearchpy import NotFoundError, OpenSearchException
 
 from services.device_fingerprint import _mac_from_hit
+from services.excluded_ips import CONN_RECORDS
 
 logger = logging.getLogger("nettap.services.device_registry")
 
@@ -295,6 +296,8 @@ class DeviceRegistry:
                                 }
                             }
                         },
+                        # connection_count counts connections, not DNS/SSL logs or alerts
+                        CONN_RECORDS,
                     ],
                     "should": should_clauses,
                     "minimum_should_match": 1,

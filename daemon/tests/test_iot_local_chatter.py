@@ -273,6 +273,82 @@ class TestEncryptionShare:
         assert privacy["encryption_applicable"] is True
         assert privacy["encryption_ratio"] == 0.9
 
+    def test_encrypted_means_tls_ports_or_zeek_encrypted_protocol(self, iot, client):
+        """DNS-over-TLS on 853 and Zeek-identified TLS/SSH/QUIC count as encrypted."""
+        client.search.side_effect = _fake_search()
+        iot.get_privacy_report(FROM_TS, TO_TS)
+        agg = _body_with_agg(client, "encrypted")["aggs"]["by_mac"]["aggs"]
+        should = agg["encrypted"]["filter"]["bool"]["should"]
+        ports = next(
+            c["terms"]["destination.port"]
+            for c in should
+            if "terms" in c and "destination.port" in c["terms"]
+        )
+        protocols = next(
+            c["terms"]["network.protocol"]
+            for c in should
+            if "network.protocol" in c.get("terms", {})
+        )
+        assert {443, 853, 8883} <= set(ports)
+        assert {"ssl", "ssh", "quic"} <= set(protocols)
+
+    def test_stun_only_device_is_not_applicable(self, iot, client):
+        """192.168.1.149 on the G11: 591 STUN keepalives and nothing else read as 0%."""
+        conn = [
+            {
+                "key": HUE_MAC,
+                "doc_count": 591,
+                "total_bytes": {"value": 60000},
+                "dest_ports": {"buckets": [{"key": 19302, "doc_count": 591}]},
+                "encrypted": {"doc_count": 0},
+                "no_payload": {"doc_count": 591},
+                "third_party_orgs": {"value": 1},
+            }
+        ]
+        client.search.side_effect = _fake_search(conn=conn)
+        privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
+        assert privacy["encryption_applicable"] is False
+        assert privacy["encryption_ratio"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# 3b. Connection stats count connection records, not alerts or DNS/SSL logs
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionRecordsOnly:
+    CONN_ONLY = {"term": {"event.dataset": "conn"}}
+
+    def _filters(self, body: dict) -> list[dict]:
+        return body["query"]["bool"]["filter"]
+
+    def _is_conn_only(self, body: dict) -> bool:
+        return any(
+            self.CONN_ONLY in f.get("bool", {}).get("should", [])
+            for f in self._filters(body)
+        )
+
+    def test_connection_queries_skip_alerts_and_other_logs(self, iot, client):
+        """An ESP device read 1% encrypted: 162 alert records + 2 TLS connections."""
+        client.search.side_effect = _fake_search()
+        iot.get_privacy_report(FROM_TS, TO_TS)
+        iot.get_protocol_audit(FROM_TS, TO_TS)
+        iot.get_network_isolation(FROM_TS, TO_TS)
+        for agg in ("encrypted", "ports", "by_source_mac"):
+            assert self._is_conn_only(_body_with_agg(client, agg)), agg
+
+    def test_arkime_sessions_without_a_dataset_still_count(self, iot, client):
+        client.search.side_effect = _fake_search()
+        iot.get_privacy_report(FROM_TS, TO_TS)
+        conn_clause = next(
+            f
+            for f in self._filters(_body_with_agg(client, "encrypted"))
+            if self.CONN_ONLY in f.get("bool", {}).get("should", [])
+        )
+        assert {
+            "bool": {"must_not": [{"exists": {"field": "event.dataset"}}]}
+        } in conn_clause["bool"]["should"]
+
 
 # ---------------------------------------------------------------------------
 # 4. One finding per fact

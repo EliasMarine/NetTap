@@ -324,6 +324,21 @@ def detect_and_build_lan_filter(client) -> dict:
 RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
 
 
+# Connection records only: Zeek conn, or Arkime sessions (no event.dataset). The
+# index also holds dns/ssl/files/http records and Suricata alerts that share
+# source.mac; counting those as connections made an ESP device 1% "encrypted"
+# (162 alerts + 2 TLS connections) on the G11, 2026-11-02.
+CONN_RECORDS: dict = {
+    "bool": {
+        "should": [
+            {"term": {"event.dataset": "conn"}},
+            {"bool": {"must_not": [{"exists": {"field": "event.dataset"}}]}},
+        ],
+        "minimum_should_match": 1,
+    }
+}
+
+
 def detect_appliance_ip() -> str | None:
     """Auto-detect the appliance's management interface IPv4 address.
 

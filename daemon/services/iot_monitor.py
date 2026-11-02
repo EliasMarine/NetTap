@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
-from services.excluded_ips import build_excluded_ips_filter
+from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
 
 logger = logging.getLogger("nettap.services.iot_monitor")
@@ -38,6 +38,12 @@ LOCAL_CHATTER_EXCLUSION: list[dict] = [
     {"terms": {"destination.port": LOCAL_SERVICE_PORTS}},
     {"terms": {"destination.ip": MULTICAST_BROADCAST}},
 ]
+# HTTPS/QUIC, DNS-over-TLS, alt-HTTPS, MQTT over TLS, plus whatever Zeek itself
+# identified as an encrypted protocol (network.protocol is Zeek's conn service)
+ENCRYPTED_PORTS = [443, 853, 8443, 8883]
+ENCRYPTED_PROTOCOLS = ["ssl", "ssh", "quic", "dtls", "ipsec", "wireguard", "openvpn"]
+# NAT discovery carries no user data, so it is left out of the encryption share
+NO_PAYLOAD_PROTOCOLS = ["stun"]
 # Isolation is a security check, so it drops only UDP DNS/DHCP/NTP/discovery and
 # multicast/broadcast. TCP on those ports and pings to LAN hosts stay visible.
 ISOLATION_NOISE_EXCLUSION: list[dict] = [
@@ -572,6 +578,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
             ],
             "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
@@ -592,8 +599,35 @@ class IoTMonitor:
                         "dest_ports": {
                             "terms": {"field": "destination.port", "size": 100}
                         },
+                        # OLD CODE START — 2026-11-02: port list only; DNS-over-TLS (853),
+                        # SSH and Zeek-identified TLS on other ports counted as plaintext
+                        # "encrypted": {
+                        #     "filter": {"terms": {"destination.port": [443, 8443, 8883]}}
+                        # },
+                        # OLD CODE END
                         "encrypted": {
-                            "filter": {"terms": {"destination.port": [443, 8443, 8883]}}
+                            "filter": {
+                                "bool": {
+                                    "should": [
+                                        {
+                                            "terms": {
+                                                "destination.port": ENCRYPTED_PORTS
+                                            }
+                                        },
+                                        {
+                                            "terms": {
+                                                "network.protocol": ENCRYPTED_PROTOCOLS
+                                            }
+                                        },
+                                    ],
+                                    "minimum_should_match": 1,
+                                }
+                            }
+                        },
+                        "no_payload": {
+                            "filter": {
+                                "terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}
+                            }
                         },
                         "third_party_orgs": {
                             "cardinality": {
@@ -616,7 +650,9 @@ class IoTMonitor:
 
         for bucket in buckets:
             raw_mac = bucket["key"].upper()
-            total_conns = bucket.get("doc_count", 0)
+            no_payload = bucket.get("no_payload", {}).get("doc_count", 0)
+            # connections where encryption means something (the ratio's denominator)
+            total_conns = bucket.get("doc_count", 0) - no_payload
             encrypted_conns = bucket.get("encrypted", {}).get("doc_count", 0)
             total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
             ports = {b["key"] for b in bucket.get("dest_ports", {}).get("buckets", [])}
@@ -901,6 +937,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
+                CONN_RECORDS,
                 {
                     "bool": {
                         "should": [
@@ -1026,6 +1063,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
+                CONN_RECORDS,
                 {
                     "bool": {
                         "should": [
@@ -1422,6 +1460,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 mac_filter,
             ]
         }
@@ -1601,6 +1640,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 mac_filter,
             ]
         }
@@ -1847,6 +1887,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
             ],
             "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
@@ -1922,6 +1963,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
                 {"term": {"destination.port": 53}},
                 {"terms": {"destination.ip": well_known_dns}},
@@ -2020,6 +2062,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
                 # Destination is RFC1918 (internal) — use script filter
                 {
