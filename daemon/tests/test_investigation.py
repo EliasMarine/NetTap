@@ -70,3 +70,22 @@ def test_threat_report_names_failed_and_partial_checks():
     assert report["lateral_movement"] == [move]
     assert report["dns_anomalies"]["dga_suspects"] == [{"domain": "x"}]
     assert "complete" not in report["dns_anomalies"]
+
+
+def test_failed_investigation_is_a_failed_check_not_zero_counts():
+    """#96: a failed section query left {"error": ...}, which the page showed as 0 connections."""
+    critical = {"severity": 1, "signature": "ET MALWARE x", "source_ip": "192.168.1.66",
+                "destination_ip": "203.0.113.9"}
+    client = MagicMock()
+    client.search.side_effect = ConnectionError("down")
+    with (
+        patch("services.alert_intelligence.get_smart_alert_summary", AsyncMock(return_value={})),
+        patch("services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[critical])),
+        patch("services.threat_detection.detect_beaconing", return_value=([], True)),
+        patch("services.threat_detection.detect_lateral_movement", return_value=([], True)),
+        patch("services.threat_detection.analyze_dns_anomalies", return_value={"complete": True}),
+    ):
+        report = asyncio.run(generate_threat_report(client, "now-1h", "now"))
+
+    assert report["investigations"] == []
+    assert report["failed_checks"] == ["investigations"]

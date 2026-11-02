@@ -74,10 +74,13 @@ def _get_host_profile(client, ip: str) -> dict:
         },
     }
 
-    try:
-        result = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        return {"ip": ip, "error": "Query failed"}
+    # OLD CODE START — #96: the page read the missing counts as 0 connections and 0 bytes
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     return {"ip": ip, "error": "Query failed"}
+    # OLD CODE END
+    result = client.search(index=NETWORK_INDEX, body=query)
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
@@ -133,10 +136,13 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
         },
     }
 
-    try:
-        result = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        return {"error": "Query failed"}
+    # OLD CODE START — #96: the page read the missing history as no connections
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     return {"error": "Query failed"}
+    # OLD CODE END
+    result = client.search(index=NETWORK_INDEX, body=query)
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
@@ -275,11 +281,17 @@ async def generate_threat_report(
         try:
             inv = await auto_investigate(client, alert)
             report["investigations"].append(inv)
+        # OLD CODE START — #96: a failed investigation just left the list shorter
+        # except Exception:
+        #     logger.warning("Auto-investigation failed for alert %s", alert.get("signature"), exc_info=True)
+        # OLD CODE END
         except Exception:
             logger.warning(
                 "Auto-investigation failed for alert %s",
                 alert.get("signature"),
                 exc_info=True,
             )
+            if "investigations" not in report["failed_checks"]:
+                report["failed_checks"] = [*report["failed_checks"], "investigations"]
 
     return report
