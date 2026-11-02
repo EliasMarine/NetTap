@@ -146,7 +146,7 @@ if [ -z "$ERRS" ]; then
     check "daemon log" 0 "no errors or tracebacks since $STARTED"
 else
     check "daemon log" 1 "errors since $STARTED:"
-    echo "$ERRS" | sed 's/^/      /'
+    echo "      ${ERRS//$'\n'/$'\n'      }"
 fi
 echo ""
 
