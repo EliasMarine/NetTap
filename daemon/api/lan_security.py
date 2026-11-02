@@ -40,6 +40,19 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
     return (raw_from or default_from, raw_to or default_to)
 
 
+NO_ARP_NOTE = (
+    "This box recorded no ARP traffic in this period, so ARP spoofing and IP conflicts were "
+    "not checked. A count of 0 here means not checked, not none found."
+)
+
+
+def _arp_coverage(detector: LANAnomalyDetector, from_ts: str, to_ts: str) -> dict:
+    """{"arp_recorded": bool} plus a plain note when the ARP checks had nothing to look at."""
+    if detector.arp_recorded(from_ts, to_ts):
+        return {"arp_recorded": True}
+    return {"arp_recorded": False, "note": NO_ARP_NOTE}
+
+
 async def handle_all_anomalies(request: web.Request) -> web.Response:
     """GET /api/lan/anomalies?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
@@ -51,6 +64,7 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
 
     try:
         anomalies = detector.get_all_anomalies(from_ts, to_ts)
+        coverage = _arp_coverage(detector, from_ts, to_ts)
     except Exception as exc:
         logger.error("LAN anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -61,6 +75,7 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
             "to": to_ts,
             "anomalies": anomalies,
             "count": len(anomalies),
+            **coverage,
         }
     )
 
@@ -76,6 +91,7 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
 
     try:
         alerts = detector.detect_arp_spoofing(from_ts, to_ts)
+        coverage = _arp_coverage(detector, from_ts, to_ts)
     except Exception as exc:
         logger.error("ARP spoofing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -86,6 +102,7 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
             "to": to_ts,
             "alerts": alerts,
             "count": len(alerts),
+            **coverage,
         }
     )
 

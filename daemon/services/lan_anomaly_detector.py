@@ -13,12 +13,15 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from services.excluded_ips import build_excluded_ips_filter
-from storage.all_buckets import all_buckets, complete_terms
+from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
+from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+DHCP_SERVER_PORT = 67
+# broadcast and "no address yet": a request to these names no server
+NOT_A_HOST = ["255.255.255.255", "0.0.0.0"]
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
@@ -169,98 +172,152 @@ class LANAnomalyDetector:
         to_ts: str,
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Detect rogue DHCP servers: DHCP offers from unexpected sources.
+        """Detect rogue DHCP servers: more than one device answering DHCP in the time range.
 
-        Looks for multiple DHCP server IPs in the time range. In a typical
-        home/small-office network, there should be exactly one DHCP server.
+        A home or small-office network should have exactly one DHCP server. A device is a
+        server if it sends from UDP port 67, or answers a unicast request on it; one device
+        serving several networks (one address per VLAN) is one server, so they group by MAC.
         """
-        excluded = build_excluded_ips_filter(excluded_ips or [])
-        bool_clause: dict = {
-            "filter": [
-                _time_range_filter(from_ts, to_ts),
-                {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "dhcp"}},
-            ]
-        }
-        if excluded:
-            bool_clause["must_not"] = excluded
-
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "dhcp_servers": {
-                    "terms": {
-                        "field": "source.ip",
-                        "size": 20,
-                    },
-                    "aggs": {
-                        "server_mac": {
-                            "terms": {
-                                "field": "source.mac",
-                                "size": 5,
-                            }
-                        },
-                        "first_seen": {"min": {"field": "@timestamp"}},
-                        "last_seen": {"max": {"field": "@timestamp"}},
-                    },
-                }
-            },
-        }
-
-        # OLD CODE START — #96: a failed query read as "no rogue DHCP server"
-        # try:
-        #     result = self._client.search(index=NETWORK_INDEX, body=query)
-        # except Exception as exc:
-        #     logger.error("Rogue DHCP detection failed: %s", exc)
-        #     return []
-        # OLD CODE END
-        result = self._client.search(index=NETWORK_INDEX, body=query)
-
-        # OLD CODE START — #96: the top 20 servers only; a 21st DHCP server went unreported
-        # buckets = (
-        #     result.get("aggregations", {}).get("dhcp_servers", {}).get("buckets", [])
+        # OLD CODE START — Zeek's DHCP records name the client, not the server (source.ip is the
+        # address the client was given), so every device that renewed a lease, except the
+        # busiest, was a "critical" rogue DHCP server (the G11: 192.168.1.89, 10.10.0.108, ...)
+        # excluded = build_excluded_ips_filter(excluded_ips or [])
+        # bool_clause: dict = {
+        #     "filter": [
+        #         _time_range_filter(from_ts, to_ts),
+        #         {"term": {"event.provider": "zeek"}},
+        #         {"term": {"event.dataset": "dhcp"}},
+        #     ]
+        # }
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        #
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "dhcp_servers": {
+        #             "terms": {
+        #                 "field": "source.ip",
+        #                 "size": 20,
+        #             },
+        #             "aggs": {
+        #                 "server_mac": {
+        #                     "terms": {
+        #                         "field": "source.mac",
+        #                         "size": 5,
+        #                     }
+        #                 },
+        #                 "first_seen": {"min": {"field": "@timestamp"}},
+        #                 "last_seen": {"max": {"field": "@timestamp"}},
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # # OLD CODE START — #96: a failed query read as "no rogue DHCP server"
+        # # try:
+        # #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # # except Exception as exc:
+        # #     logger.error("Rogue DHCP detection failed: %s", exc)
+        # #     return []
+        # # OLD CODE END
+        # result = self._client.search(index=NETWORK_INDEX, body=query)
+        #
+        # # OLD CODE START — #96: the top 20 servers only; a 21st DHCP server went unreported
+        # # buckets = (
+        # #     result.get("aggregations", {}).get("dhcp_servers", {}).get("buckets", [])
+        # # )
+        # # OLD CODE END
+        # servers = query["aggs"]["dhcp_servers"]
+        # buckets = complete_terms(
+        #     self._client, NETWORK_INDEX, query["query"],
+        #     result.get("aggregations", {}).get("dhcp_servers", {}),
+        #     {"terms": {"field": servers["terms"]["field"]}}, aggs=servers["aggs"],
         # )
+        #
+        # alerts: list[dict[str, Any]] = []
+        #
+        # if len(buckets) > 1:
+        #     # Multiple DHCP servers detected — flag all but the most active
+        #     # as potentially rogue
+        #     buckets_sorted = sorted(
+        #         buckets, key=lambda x: x.get("doc_count", 0), reverse=True
+        #     )
+        #     legitimate = buckets_sorted[0]["key"]
+        #
+        #     for b in buckets_sorted[1:]:
+        #         server_ip = b["key"]
+        #         server_macs = [
+        #             m["key"] for m in b.get("server_mac", {}).get("buckets", [])
+        #         ]
+        #         alerts.append(
+        #             {
+        #                 "type": "rogue_dhcp",
+        #                 "server_ip": server_ip,
+        #                 "server_mac": server_macs[0] if server_macs else "unknown",
+        #                 "offer_count": b.get("doc_count", 0),
+        #                 "legitimate_server": legitimate,
+        #                 "severity": "critical",
+        #                 "description": (
+        #                     f"Rogue DHCP server detected at {server_ip} "
+        #                     f"(legitimate: {legitimate}) — "
+        #                     f"{b.get('doc_count', 0)} offers sent"
+        #                 ),
+        #                 "detected_at": datetime.now(timezone.utc).isoformat(),
+        #             }
+        #         )
+        #
         # OLD CODE END
-        servers = query["aggs"]["dhcp_servers"]
-        buckets = complete_terms(
-            self._client, NETWORK_INDEX, query["query"],
-            result.get("aggregations", {}).get("dhcp_servers", {}),
-            {"terms": {"field": servers["terms"]["field"]}}, aggs=servers["aggs"],
-        )
+        excluded = build_excluded_ips_filter(excluded_ips or [])
+        servers: dict[str, dict[str, Any]] = {}
+        for side, answered in (("source", []), ("destination", [{"range": {"destination.packets": {"gt": 0}}}])):
+            query = {"bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    CONN_RECORDS,
+                    {"term": {"network.transport": "udp"}},
+                    {"term": {f"{side}.port": DHCP_SERVER_PORT}},
+                    *answered,
+                ],
+                "must_not": [*excluded, {"terms": {f"{side}.ip": NOT_A_HOST}}],
+            }}
+            pairs, complete = all_buckets(self._client, NETWORK_INDEX, query, [
+                {"mac": {"terms": {"field": f"{side}.mac", "missing_bucket": True}}},
+                {"ip": {"terms": {"field": f"{side}.ip"}}},
+            ])
+            if not complete:
+                logger.warning("Rogue DHCP: %s scan stopped at %d MAC/IP pairs", side, len(pairs))
+            for b in pairs:
+                mac, ip = b["key"]["mac"], b["key"]["ip"]
+                seen = servers.get(mac or ip, {"mac": mac, "ips": set(), "count": 0})
+                servers[mac or ip] = {**seen, "ips": seen["ips"] | {ip}, "count": seen["count"] + b["doc_count"]}
 
         alerts: list[dict[str, Any]] = []
-
-        if len(buckets) > 1:
-            # Multiple DHCP servers detected — flag all but the most active
-            # as potentially rogue
-            buckets_sorted = sorted(
-                buckets, key=lambda x: x.get("doc_count", 0), reverse=True
-            )
-            legitimate = buckets_sorted[0]["key"]
-
-            for b in buckets_sorted[1:]:
-                server_ip = b["key"]
-                server_macs = [
-                    m["key"] for m in b.get("server_mac", {}).get("buckets", [])
-                ]
+        if len(servers) > 1:
+            # the busiest is taken as the network's own; every other one is flagged
+            main, *others = sorted(servers.values(), key=lambda v: v["count"], reverse=True)
+            legitimate = sorted(main["ips"])[0]
+            for v in others:
+                ips = sorted(v["ips"])
                 alerts.append(
                     {
                         "type": "rogue_dhcp",
-                        "server_ip": server_ip,
-                        "server_mac": server_macs[0] if server_macs else "unknown",
-                        "offer_count": b.get("doc_count", 0),
+                        "server_ip": ips[0],
+                        "server_ips": ips,
+                        "server_mac": v["mac"] or "unknown",
+                        "offer_count": v["count"],
                         "legitimate_server": legitimate,
                         "severity": "critical",
                         "description": (
-                            f"Rogue DHCP server detected at {server_ip} "
-                            f"(legitimate: {legitimate}) — "
-                            f"{b.get('doc_count', 0)} offers sent"
+                            f"A second DHCP server is answering on your network: {', '.join(ips)}"
+                            f" ({v['mac'] or 'MAC unknown'}), {v['count']} DHCP exchanges. "
+                            f"Your network's own is {legitimate}. Devices that take an address "
+                            f"from it can be sent the wrong gateway or DNS."
                         ),
                         "detected_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-
         return alerts
 
     def detect_ip_conflicts(
@@ -362,6 +419,16 @@ class LANAnomalyDetector:
                 )
 
         return alerts
+
+    def arp_recorded(self, from_ts: str, to_ts: str) -> bool:
+        """Whether any ARP record exists in the range. Zeek logs no ARP unless a package adds
+        it; without records, ARP spoofing and IP conflicts can't be seen, only not found."""
+        reply = self._client.count(index=NETWORK_INDEX, body={"query": {"bool": {"filter": [
+            _time_range_filter(from_ts, to_ts),
+            {"term": {"event.provider": "zeek"}},
+            {"term": {"event.dataset": "arp"}},
+        ]}}})
+        return reply.get("count", 0) > 0
 
     def get_all_anomalies(
         self,

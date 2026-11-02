@@ -108,99 +108,62 @@ class TestDetectArpSpoofing:
 # ---------------------------------------------------------------------------
 
 
+def _pairs(*pairs):
+    """One composite page of (mac, ip, count) buckets."""
+    return {"aggregations": {"all": {"buckets": [
+        {"key": {"mac": m, "ip": ip}, "doc_count": n} for m, ip, n in pairs]}}}
+
+
+GATEWAY = "d0:21:f9:5e:35:32"
+
+
 class TestDetectRogueDhcp:
-    def test_detects_multiple_dhcp_servers(self, detector, mock_client):
-        mock_client.search.return_value = {
-            "aggregations": {
-                "dhcp_servers": {
-                    "buckets": [
-                        {
-                            "key": "192.168.1.1",
-                            "doc_count": 500,
-                            "server_mac": {
-                                "buckets": [
-                                    {"key": "AA:BB:CC:DD:EE:01", "doc_count": 500}
-                                ]
-                            },
-                            "first_seen": {"value": 1704067200000},
-                            "last_seen": {"value": 1704153600000},
-                        },
-                        {
-                            "key": "192.168.1.99",
-                            "doc_count": 10,
-                            "server_mac": {
-                                "buckets": [
-                                    {"key": "FF:FF:FF:FF:FF:FF", "doc_count": 10}
-                                ]
-                            },
-                            "first_seen": {"value": 1704100000000},
-                            "last_seen": {"value": 1704110000000},
-                        },
-                    ]
-                }
-            }
-        }
+    def _detect(self, detector, mock_client, sent_from_67, answered_on_67):
+        mock_client.search.side_effect = [_pairs(*sent_from_67), _pairs(*answered_on_67)]
+        return detector.detect_rogue_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
 
-        alerts = detector.detect_rogue_dhcp(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
-
-        assert len(alerts) == 1
-        assert alerts[0]["type"] == "rogue_dhcp"
-        assert alerts[0]["server_ip"] == "192.168.1.99"
-        assert alerts[0]["legitimate_server"] == "192.168.1.1"
-        assert alerts[0]["severity"] == "critical"
-
-    def test_no_rogue_with_single_server(self, detector, mock_client):
-        mock_client.search.return_value = {
-            "aggregations": {
-                "dhcp_servers": {
-                    "buckets": [
-                        {
-                            "key": "192.168.1.1",
-                            "doc_count": 500,
-                            "server_mac": {"buckets": []},
-                            "first_seen": {"value": 1704067200000},
-                            "last_seen": {"value": 1704153600000},
-                        }
-                    ]
-                }
-            }
-        }
-
-        alerts = detector.detect_rogue_dhcp(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
-        )
-
-        assert len(alerts) == 0
-
-    def test_empty_results(self, detector, mock_client):
-        mock_client.search.return_value = {
-            "aggregations": {"dhcp_servers": {"buckets": []}}
-        }
-
-        alerts = detector.detect_rogue_dhcp(
-            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+    def test_one_gateway_on_three_networks_is_one_server(self, detector, mock_client):
+        """The G11: Zeek's DHCP records name clients, and 192.168.1.89 and 10.10.0.108 (devices
+        renewing leases) were reported as critical rogue servers."""
+        alerts = self._detect(
+            detector, mock_client,
+            [(GATEWAY, "192.168.1.1", 1), (GATEWAY, "192.168.40.1", 1)],
+            [(GATEWAY, "10.10.0.1", 47), (GATEWAY, "192.168.1.1", 180), (GATEWAY, "192.168.40.1", 4)],
         )
         assert alerts == []
 
-    def test_a_server_past_the_top_list_is_reported(self, detector, mock_client):
-        """#96: only the top 20 servers were read; one ranked past them went unreported."""
-        top = [{"key": f"10.0.0.{i}", "doc_count": 100 - i, "server_mac": {"buckets": []},
-                "first_seen": {"value": 1}, "last_seen": {"value": 2}} for i in range(1, 21)]
-        every = [{**b, "key": {"value": b["key"]}} for b in top] + [
-            {"key": {"value": "10.0.0.99"}, "doc_count": 3, "server_mac": {"buckets": []},
-             "first_seen": {"value": 1}, "last_seen": {"value": 2}}]
-        mock_client.search.side_effect = [
-            {"aggregations": {"dhcp_servers": {"buckets": top, "sum_other_doc_count": 3}}},
-            {"aggregations": {"all": {"buckets": every}}},
-        ]
-        alerts = detector.detect_rogue_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
-        assert "10.0.0.99" in {a["server_ip"] for a in alerts}
-        assert len(alerts) == 20
-        page = mock_client.search.call_args_list[1].kwargs["body"]["aggs"]["all"]
-        assert page["composite"]["sources"] == [{"value": {"terms": {"field": "source.ip"}}}]
-        assert set(page["aggs"]) == {"server_mac", "first_seen", "last_seen"}
+    def test_a_second_server_device_is_flagged(self, detector, mock_client):
+        alerts = self._detect(
+            detector, mock_client,
+            [(GATEWAY, "192.168.1.1", 2), ("aa:bb:cc:00:00:99", "192.168.1.99", 3)],
+            [(GATEWAY, "192.168.1.1", 180), (GATEWAY, "10.10.0.1", 40)],
+        )
+        assert len(alerts) == 1
+        a = alerts[0]
+        assert (a["type"], a["server_ip"], a["server_mac"], a["offer_count"]) == (
+            "rogue_dhcp", "192.168.1.99", "aa:bb:cc:00:00:99", 3)
+        assert a["legitimate_server"] == "10.10.0.1"  # lowest of the main server's addresses
+        assert a["severity"] == "critical"
+        assert "192.168.1.99" in a["description"]
+
+    def test_clients_only_means_no_alert(self, detector, mock_client):
+        assert self._detect(detector, mock_client, [], []) == []
+
+    def test_a_server_without_a_recorded_mac_counts_by_address(self, detector, mock_client):
+        alerts = self._detect(
+            detector, mock_client, [], [(GATEWAY, "192.168.1.1", 100), (None, "192.168.1.250", 4)])
+        assert [(a["server_ip"], a["server_mac"]) for a in alerts] == [("192.168.1.250", "unknown")]
+
+    def test_reads_who_sent_from_and_answered_on_udp_67(self, detector, mock_client):
+        self._detect(detector, mock_client, [], [])
+        sent, answered = [c.kwargs["body"] for c in mock_client.search.call_args_list]
+        for body, side in ((sent, "source"), (answered, "destination")):
+            q = body["query"]["bool"]
+            assert {"term": {f"{side}.port": 67}} in q["filter"]
+            assert {"term": {"event.dataset": "conn"}} in q["filter"]
+            assert {"terms": {f"{side}.ip": ["255.255.255.255", "0.0.0.0"]}} in q["must_not"]
+            assert [list(src) for src in body["aggs"]["all"]["composite"]["sources"]] == [["mac"], ["ip"]]
+        assert {"range": {"destination.packets": {"gt": 0}}} in answered["query"]["bool"]["filter"]
 
     def test_opensearch_error_raises(self, detector, mock_client):
         """#96: [] read as "no rogue DHCP server"."""
@@ -316,8 +279,9 @@ class TestGetAllAnomalies:
                     }
                 }
             },
-            # DHCP: no rogue
-            {"aggregations": {"dhcp_servers": {"buckets": []}}},
+            # DHCP: one server (who sent from UDP 67, who answered on it)
+            _pairs(),
+            _pairs((GATEWAY, "192.168.1.1", 100)),
             # IP conflict: one conflict
             {
                 "aggregations": {
@@ -371,29 +335,9 @@ class TestGetAllAnomalies:
                     }
                 }
             },
-            # Rogue DHCP: critical severity
-            {
-                "aggregations": {
-                    "dhcp_servers": {
-                        "buckets": [
-                            {
-                                "key": "192.168.1.1",
-                                "doc_count": 100,
-                                "server_mac": {"buckets": []},
-                                "first_seen": {"value": 0},
-                                "last_seen": {"value": 0},
-                            },
-                            {
-                                "key": "192.168.1.99",
-                                "doc_count": 5,
-                                "server_mac": {"buckets": []},
-                                "first_seen": {"value": 0},
-                                "last_seen": {"value": 0},
-                            },
-                        ]
-                    }
-                }
-            },
+            # Rogue DHCP: critical severity (a second device answers DHCP)
+            _pairs(("aa:bb:cc:00:00:99", "192.168.1.99", 5)),
+            _pairs((GATEWAY, "192.168.1.1", 100)),
             # No IP conflicts
             {"aggregations": {"all": {"buckets": []}}},
         ]
