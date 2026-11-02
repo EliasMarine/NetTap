@@ -69,10 +69,10 @@ class TestDetectRandomizedMacs:
         """Should filter out non-randomized MACs from aggregation results."""
         mock_client.search.return_value = {
             "aggregations": {
-                "macs": {
+                "all": {
                     "buckets": [
                         {
-                            "key": "02:aa:bb:cc:dd:ee",  # randomized
+                            "key": {"mac": "02:aa:bb:cc:dd:ee"},  # randomized
                             "doc_count": 100,
                             "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
                             "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
@@ -84,7 +84,7 @@ class TestDetectRandomizedMacs:
                             },
                         },
                         {
-                            "key": "00:11:22:33:44:55",  # real
+                            "key": {"mac": "00:11:22:33:44:55"},  # real
                             "doc_count": 200,
                             "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
                             "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
@@ -108,7 +108,7 @@ class TestDetectRandomizedMacs:
 
     def test_empty_results(self, correlator, mock_client):
         """Should return empty list when no MACs found."""
-        mock_client.search.return_value = {"aggregations": {"macs": {"buckets": []}}}
+        mock_client.search.return_value = {"aggregations": {"all": {"buckets": []}}}
 
         result = correlator.detect_randomized_macs(
             "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
@@ -342,7 +342,7 @@ class TestMerge:
 class TestMergeSuggestions:
     def test_no_randomized_macs(self, correlator, mock_client):
         """Should return empty list when no randomized MACs exist."""
-        mock_client.search.return_value = {"aggregations": {"macs": {"buckets": []}}}
+        mock_client.search.return_value = {"aggregations": {"all": {"buckets": []}}}
 
         suggestions = correlator.suggest_merges(
             "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
@@ -351,41 +351,104 @@ class TestMergeSuggestions:
 
     def test_no_known_macs(self, correlator, mock_client):
         """Should return empty when all MACs are randomized."""
-        # First call: detect_randomized_macs
-        # Second call: all_macs_query (only randomized MACs)
-        mock_client.search.side_effect = [
-            {
-                "aggregations": {
-                    "macs": {
-                        "buckets": [
-                            {
-                                "key": "02:aa:bb:cc:dd:ee",
-                                "doc_count": 100,
-                                "first_seen": {
-                                    "value_as_string": "2026-03-01T00:00:00Z"
-                                },
-                                "last_seen": {
-                                    "value_as_string": "2026-03-08T00:00:00Z"
-                                },
-                                "total_bytes": {"value": 5000},
-                                "top_dests": {"buckets": []},
-                            }
-                        ]
-                    }
+        # One composite page of fingerprints, holding only a randomized MAC
+        mock_client.search.return_value = {
+            "aggregations": {
+                "all": {
+                    "buckets": [
+                        {"key": {"mac": "02:aa:bb:cc:dd:ee"}, "doc_count": 100},
+                    ]
                 }
-            },
-            {
-                "aggregations": {
-                    "macs": {
-                        "buckets": [
-                            {"key": "02:aa:bb:cc:dd:ee", "doc_count": 100},
-                        ]
-                    }
-                }
-            },
-        ]
+            }
+        }
 
         suggestions = correlator.suggest_merges(
             "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
         )
         assert suggestions == []
+
+
+# ---------------------------------------------------------------------------
+# Every MAC counts, not just the busiest 500 (#96)
+# ---------------------------------------------------------------------------
+
+
+class _MacIndex:
+    """Per-MAC traffic answering the way OpenSearch does: a terms list keeps its top `size`
+    MACs, a composite pages every MAC, and a source.mac term query gets that MAC's aggs."""
+
+    def __init__(self, macs: dict[str, dict]):
+        self.macs = macs
+        self.calls = 0
+
+    def _aggs(self, mac: str) -> dict:
+        m = self.macs[mac]
+
+        def terms(keys):
+            return {"buckets": [{"key": k, "doc_count": 1} for k in keys]}
+
+        return {
+            "doc_count": m["docs"],
+            "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
+            "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
+            "total_bytes": {"value": m["bytes"]},
+            "top_dests": terms(m["dest"][:5]),
+            "dns_domains": terms(m["dns"]),
+            "dest_ips": terms(m["dest"]),
+            "ja3_hashes": terms(m["ja3"]),
+            "total_orig_bytes": {"value": m["bytes"]},
+            "total_resp_bytes": {"value": 0},
+        }
+
+    def search(self, index: str, body: dict) -> dict:
+        self.calls += 1
+        aggs = body["aggs"]
+        if "all" in aggs:
+            if "after" in aggs["all"]["composite"]:
+                return {"aggregations": {"all": {"buckets": []}}}
+            buckets = [{"key": {"mac": m}, **self._aggs(m)} for m in sorted(self.macs)]
+            return {"aggregations": {"all": {"buckets": buckets, "after_key": buckets[-1]["key"]}}}
+        if "macs" in aggs:
+            busiest = sorted(self.macs, key=lambda m: self.macs[m]["docs"], reverse=True)
+            top = busiest[: aggs["macs"]["terms"]["size"]]
+            return {"aggregations": {"macs": {"buckets": [{"key": m, **self._aggs(m)} for m in top]}}}
+        mac = body["query"]["bool"]["filter"][1]["term"]["source.mac"]
+        return {"aggregations": self._aggs(mac)}
+
+
+def _device(docs: int, dns: str, dest: str, ja3: str, total: int) -> dict:
+    return {"docs": docs, "dns": [dns], "dest": [dest], "ja3": [ja3], "bytes": total}
+
+
+def _busy(n: int) -> dict[str, dict]:
+    """n busy hardware MACs that all look alike."""
+    return {
+        f"00:00:00:00:{i // 256:02x}:{i % 256:02x}": _device(1000, "busy.example", "9.9.9.9", "B", 10**6)
+        for i in range(n)
+    }
+
+
+def test_quiet_randomized_mac_outside_the_busiest_500_is_listed(tmp_path):
+    """#96: only the 500 busiest MACs were checked, so this listed none."""
+    index = _MacIndex({**_busy(500), "02:aa:bb:cc:dd:ee": _device(1, "a.example", "1.2.3.4", "J", 10)})
+    macs = MACCorrelator(index, merge_file=str(tmp_path / "m.json")).detect_randomized_macs(
+        "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    )
+    assert [m["mac"] for m in macs] == ["02:aa:bb:cc:dd:ee"]
+
+
+def test_real_device_outside_the_busiest_500_is_suggested(tmp_path):
+    """#96: candidates were the 500 busiest MACs, and every pair cost a query."""
+    phone = _device(2000, "phone.example", "1.2.3.4", "J", 5000)
+    index = _MacIndex({
+        **_busy(499),
+        "02:aa:bb:cc:dd:ee": phone,  # randomized, busy
+        "00:11:22:33:44:55": {**phone, "docs": 1},  # the same phone's hardware MAC, quiet
+    })
+    suggestions = MACCorrelator(index, merge_file=str(tmp_path / "m.json")).suggest_merges(
+        "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    )
+    assert [(s["mac_randomized"], s["mac_real"], s["confidence"]) for s in suggestions] == [
+        ("02:aa:bb:cc:dd:ee", "00:11:22:33:44:55", 1.0)
+    ]
+    assert index.calls <= 2  # one composite page (and the empty end page), not one per pair
