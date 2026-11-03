@@ -1,4 +1,222 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/svelte';
+import * as bridgeApi from '$lib/api/bridge.js';
+import * as captureApi from '$lib/api/capture.js';
+import * as dhcpApi from '$lib/api/dhcpGateway';
+import GoLivePage from './+page.svelte';
+
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+
+// fetchCaptureMode stays real: the page reads the mode through a stubbed fetch
+vi.mock('$lib/api/capture.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/api/capture.js')>()),
+	getCaptureMode: vi.fn(),
+}));
+
+/** Stub fetch for /api/capture/mode (the page's only unmocked request). */
+function stubModeFetch(reply: () => Promise<Response>) {
+	const fn = vi.fn((input: RequestInfo | URL) =>
+		String(input) === '/api/capture/mode' ? reply() : Promise.reject(new Error(`unexpected fetch ${String(input)}`)),
+	);
+	vi.stubGlobal('fetch', fn);
+	return fn;
+}
+
+function jsonResponse(status: number, body: unknown) {
+	return Promise.resolve(new Response(JSON.stringify(body), { status }));
+}
+
+vi.mock('$lib/api/bridge.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/api/bridge.js')>()),
+	getBridgeReadiness: vi.fn(),
+	getBridgeHealth: vi.fn(),
+	createBridge: vi.fn(),
+}));
+
+vi.mock('$lib/api/dhcpGateway', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/api/dhcpGateway')>()),
+	getDhcpStatus: vi.fn(),
+	getDhcpPreflight: vi.fn(),
+}));
+
+// ---------------------------------------------------------------------------
+// Rendered page: the capture mode picks the flow, bridge polling waits for it
+// ---------------------------------------------------------------------------
+
+describe('GoLive page — capture mode switch', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	function mockMode(mode: string) {
+		stubModeFetch(() => jsonResponse(200, { mode, interface: '' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue({ ready: false, checks: [], message: '' });
+		vi.mocked(dhcpApi.getDhcpStatus).mockReturnValue(new Promise(() => {}));
+	}
+
+	it('renders the DHCP go-live flow and never polls the bridge in dhcp_gateway mode', async () => {
+		vi.useFakeTimers();
+		mockMode('dhcp_gateway');
+
+		render(GoLivePage);
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(screen.getByText(/Checking your network/)).toBeInTheDocument();
+		expect(screen.queryByText('Readiness')).not.toBeInTheDocument();
+		expect(bridgeApi.getBridgeReadiness).not.toHaveBeenCalled();
+		expect(bridgeApi.getBridgeHealth).not.toHaveBeenCalled();
+	});
+
+	it('does not poll the bridge before the mode is known', async () => {
+		vi.useFakeTimers();
+		stubModeFetch(() => new Promise(() => {}));
+
+		render(GoLivePage);
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(bridgeApi.getBridgeReadiness).not.toHaveBeenCalled();
+		expect(dhcpApi.getDhcpStatus).not.toHaveBeenCalled();
+	});
+
+	it('shows the error and Retry, not the bridge flow, when the mode request fails', async () => {
+		vi.useFakeTimers();
+		const fetchMock = stubModeFetch(() => jsonResponse(502, { error: 'Daemon unreachable: ECONNREFUSED' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue({ ready: false, checks: [], message: '' });
+
+		render(GoLivePage);
+		await vi.advanceTimersByTimeAsync(10_000);
+
+		expect(screen.getByText(/Could not read the capture mode: Daemon unreachable: ECONNREFUSED/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Create Bridge/ })).not.toBeInTheDocument();
+		expect(screen.queryByText('Readiness')).not.toBeInTheDocument();
+		expect(bridgeApi.getBridgeReadiness).not.toHaveBeenCalled();
+		expect(bridgeApi.getBridgeHealth).not.toHaveBeenCalled();
+		expect(captureApi.getCaptureMode).not.toHaveBeenCalled();
+
+		// Retry reads the mode again and then picks the flow
+		fetchMock.mockImplementation(() => jsonResponse(200, { mode: 'dhcp_gateway', interface: 'enp1s0' }));
+		vi.mocked(dhcpApi.getDhcpStatus).mockReturnValue(new Promise(() => {}));
+		await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(screen.getByText(/Checking your network/)).toBeInTheDocument();
+		expect(bridgeApi.getBridgeReadiness).not.toHaveBeenCalled();
+	});
+
+	it('renders the bridge flow and polls readiness in bridge mode', async () => {
+		vi.useFakeTimers();
+		mockMode('bridge');
+
+		render(GoLivePage);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(bridgeApi.getBridgeReadiness).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(3000);
+		expect(bridgeApi.getBridgeReadiness).toHaveBeenCalledTimes(2);
+
+		expect(screen.getByText('Readiness')).toBeInTheDocument();
+		expect(dhcpApi.getDhcpStatus).not.toHaveBeenCalled();
+	});
+
+	it('keeps the bridge flow for mirror mode', async () => {
+		mockMode('mirror');
+
+		render(GoLivePage);
+		await vi.waitFor(() => expect(bridgeApi.getBridgeReadiness).toHaveBeenCalled());
+
+		expect(screen.getByText('Readiness')).toBeInTheDocument();
+		expect(dhcpApi.getDhcpStatus).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rendered page: a failed readiness check is not "the bridge does not exist" (#96)
+// ---------------------------------------------------------------------------
+
+describe('GoLive page — failed readiness check', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	/** Bridge mode, with the real getBridgeReadiness reading /api/bridge/readiness. */
+	async function renderWithReadiness(reply: () => Promise<Response>) {
+		const real = await vi.importActual<typeof import('$lib/api/bridge.js')>('$lib/api/bridge.js');
+		vi.mocked(bridgeApi.getBridgeReadiness).mockImplementation(real.getBridgeReadiness);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url === '/api/capture/mode') return jsonResponse(200, { mode: 'bridge', interface: '' });
+				if (url === '/api/bridge/readiness') return reply();
+				return Promise.reject(new Error(`unexpected fetch ${url}`));
+			}),
+		);
+		render(GoLivePage);
+		await vi.waitFor(() => expect(bridgeApi.getBridgeReadiness).toHaveBeenCalled());
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('says the check failed, not that the bridge has not been created', async () => {
+		await renderWithReadiness(() => jsonResponse(500, { error: 'boom' }));
+
+		expect(await screen.findByText('Failed to check readiness')).toBeInTheDocument();
+		expect(screen.getByText('Unknown')).toBeInTheDocument();
+		expect(screen.queryByText(/has not been created yet/)).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Create Bridge' })).not.toBeInTheDocument();
+	});
+
+	it('still offers Create Bridge when the bridge really is missing', async () => {
+		await renderWithReadiness(() =>
+			jsonResponse(200, { ready: false, checks: [{ name: 'bridge_exists', passed: false, detail: '' }], message: '' }),
+		);
+
+		expect(await screen.findByText(/has not been created yet/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Create Bridge' })).toBeInTheDocument();
+	});
+});
+
+// The daemon now sends latency_us: null (with latency_note); the page read "null us".
+describe('GoLive page — bridge latency', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	const NOTE = "Not measured: NetTap can't time packets through the bridge";
+	const LIVE = {
+		ready: true,
+		message: '',
+		checks: ['bridge_exists', 'wan_carrier', 'lan_carrier'].map((name) => ({ name, passed: true, detail: '' })),
+	};
+	const HEALTH = {
+		bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, watchdog_active: true,
+		rx_bytes_delta: 0, tx_bytes_delta: 0, rx_packets_delta: 10, tx_packets_delta: 5, uptime_seconds: 60,
+		health_status: 'normal', issues: [], last_check: '',
+	};
+
+	async function renderLive(health: Record<string, unknown>) {
+		stubModeFetch(() => jsonResponse(200, { mode: 'bridge', interface: '' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue(LIVE as never);
+		vi.mocked(bridgeApi.getBridgeHealth).mockResolvedValue(health as never);
+		render(GoLivePage);
+		await vi.waitFor(() => expect(bridgeApi.getBridgeHealth).toHaveBeenCalled());
+	}
+
+	it('says Not measured, never "null us"', async () => {
+		await renderLive({ ...HEALTH, latency_us: null, latency_note: NOTE });
+
+		expect(await screen.findByText('Not measured')).toHaveAttribute('title', NOTE);
+		expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+	});
+
+	it('still shows a measured latency', async () => {
+		await renderLive({ ...HEALTH, latency_us: 42 });
+
+		expect(await screen.findByText('42 us')).toBeInTheDocument();
+	});
+});
 
 /**
  * Tests for Go Live page logic.

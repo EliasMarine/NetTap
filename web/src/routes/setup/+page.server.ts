@@ -5,7 +5,16 @@
 
 import type { Actions } from './$types.js';
 import { fail, redirect } from '@sveltejs/kit';
-import { createUser, hasUsers } from '$lib/server/auth.js';
+// OLD CODE START — createUser had no first-admin race protection (2026-10-29)
+// import { createUser, hasUsers } from '$lib/server/auth.js';
+// OLD CODE END
+import {
+	createFirstAdmin,
+	generateToken,
+	hasUsers,
+	SetupAlreadyComplete,
+} from '$lib/server/auth.js';
+import { setAuthCookie } from '$lib/server/middleware.js';
 
 export const actions: Actions = {
 	/**
@@ -80,15 +89,31 @@ export const actions: Actions = {
 			});
 		}
 
+		// OLD CODE START — check-then-create raced: two requests could both create an admin (2026-10-29)
+		// try {
+		// 	await createUser(username, password, 'admin');
+		// } catch (err) {
+		// 	return fail(500, {
+		// 		error: err instanceof Error ? err.message : 'Failed to create user.',
+		// 		username,
+		// 	});
+		// }
+		// OLD CODE END
 		try {
-			await createUser(username, password, 'admin');
+			await createFirstAdmin(username, password);
 		} catch (err) {
+			if (err instanceof SetupAlreadyComplete) {
+				throw redirect(302, '/login');
+			}
 			return fail(500, {
 				error: err instanceof Error ? err.message : 'Failed to create user.',
 				username,
 			});
 		}
 
+		// Sign in only the winner, so the rest of the wizard and Go Live run
+		// with a session once the setup and bridge routes stop being public.
+		setAuthCookie(event, generateToken({ username, role: 'admin' }));
 		return { success: true, username };
 	},
 };

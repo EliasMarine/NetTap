@@ -14,15 +14,20 @@ from unittest.mock import MagicMock
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.traffic_classifier import get_category_stats, CATEGORIES
+from services.traffic_classifier import get_category_stats
 
 
 def _mock_os_response(asn_buckets):
+    # #96: one composite page (no after_key), as all_buckets reads it
     return {
         "aggregations": {
-            "asn_breakdown": {
+            "all": {
                 "buckets": [
-                    {"key": name, "doc_count": count, "total_bytes": {"value": bytes_val}}
+                    {
+                        "key": {"asn": name},
+                        "doc_count": count,
+                        "total_bytes": {"value": bytes_val},
+                    }
                     for name, count, bytes_val in asn_buckets
                 ]
             }
@@ -44,9 +49,13 @@ class TestCategoryStats(unittest.TestCase):
 
     def test_single_asn_maps_to_category(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_os_response([
-            ("AS2906 Netflix Inc", 1000, 5_000_000_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_os_response(
+                [
+                    ("AS2906 Netflix Inc", 1000, 5_000_000_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
@@ -58,10 +67,14 @@ class TestCategoryStats(unittest.TestCase):
 
     def test_multiple_asns_same_category_aggregate(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_os_response([
-            ("AS2906 Netflix Inc", 500, 3_000_000_000),
-            ("AS15169 Google LLC", 300, 2_000_000_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_os_response(
+                [
+                    ("AS2906 Netflix Inc", 500, 3_000_000_000),
+                    ("AS15169 Google LLC", 300, 2_000_000_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
@@ -73,9 +86,13 @@ class TestCategoryStats(unittest.TestCase):
 
     def test_unknown_asn_goes_to_other(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_os_response([
-            ("AS99999 Unknown ISP", 100, 500_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_os_response(
+                [
+                    ("AS99999 Unknown ISP", 100, 500_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
@@ -86,10 +103,14 @@ class TestCategoryStats(unittest.TestCase):
 
     def test_results_sorted_by_bytes_descending(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_os_response([
-            ("AS32934 Meta Platforms", 200, 1_000_000),
-            ("AS2906 Netflix Inc", 500, 5_000_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_os_response(
+                [
+                    ("AS32934 Meta Platforms", 200, 1_000_000),
+                    ("AS2906 Netflix Inc", 500, 5_000_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
@@ -98,10 +119,14 @@ class TestCategoryStats(unittest.TestCase):
 
     def test_result_includes_top_services(self):
         client = MagicMock()
-        client.search = MagicMock(return_value=_mock_os_response([
-            ("AS2906 Netflix Inc", 500, 3_000_000_000),
-            ("AS15169 Google LLC", 300, 2_000_000_000),
-        ]))
+        client.search = MagicMock(
+            return_value=_mock_os_response(
+                [
+                    ("AS2906 Netflix Inc", 500, 3_000_000_000),
+                    ("AS15169 Google LLC", 300, 2_000_000_000),
+                ]
+            )
+        )
 
         result = asyncio.run(
             get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
@@ -110,14 +135,17 @@ class TestCategoryStats(unittest.TestCase):
         self.assertGreaterEqual(len(streaming["top_services"]), 1)
         self.assertEqual(streaming["top_services"][0]["name"], "Netflix Inc")
 
-    def test_opensearch_error_returns_empty(self):
+    def test_opensearch_error_raises(self):
+        """#96: a failed query raises; [] would read as no traffic in any category."""
         client = MagicMock()
         client.search = MagicMock(side_effect=Exception("Connection refused"))
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
-        )
-        self.assertEqual(result, [])
+        with self.assertRaises(Exception):
+            asyncio.run(
+                get_category_stats(
+                    client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                )
+            )
 
 
 if __name__ == "__main__":

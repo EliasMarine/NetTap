@@ -29,8 +29,19 @@ MIN_HOPS = 1
 MAX_HOPS = 30
 
 
+def _tool_error(returncode: int | None, stdout: str, stderr: bytes) -> str | None:
+    """The tool's own message when it failed and printed nothing to parse, else None."""
+    if not returncode or stdout.strip():
+        return None
+    return (
+        stderr.decode("utf-8", errors="replace").strip()
+        or f"exited with code {returncode}"
+    )
+
+
 class NetworkDiagValidationError(Exception):
     """Raised when network diagnostic input validation fails."""
+
     pass
 
 
@@ -84,13 +95,15 @@ class NetworkDiagService:
                 line.strip(),
             )
             if reply_match:
-                replies.append({
-                    "bytes": int(reply_match.group(1)),
-                    "from": reply_match.group(2),
-                    "icmp_seq": int(reply_match.group(3)),
-                    "ttl": int(reply_match.group(4)),
-                    "time_ms": float(reply_match.group(5)),
-                })
+                replies.append(
+                    {
+                        "bytes": int(reply_match.group(1)),
+                        "from": reply_match.group(2),
+                        "icmp_seq": int(reply_match.group(3)),
+                        "ttl": int(reply_match.group(4)),
+                        "time_ms": float(reply_match.group(5)),
+                    }
+                )
                 continue
 
             # Match packet loss line: "4 packets transmitted, 4 received, 0% packet loss, ..."
@@ -139,12 +152,14 @@ class NetworkDiagService:
             rest = hop_match.group(2)
 
             if rest.strip() == "* * *":
-                hops.append({
-                    "hop": hop_num,
-                    "host": "*",
-                    "ip": None,
-                    "rtt_ms": [],
-                })
+                hops.append(
+                    {
+                        "hop": hop_num,
+                        "host": "*",
+                        "ip": None,
+                        "rtt_ms": [],
+                    }
+                )
                 continue
 
             # Extract host, IP, and RTT values
@@ -162,12 +177,14 @@ class NetworkDiagService:
             rtt_matches = re.findall(r"([0-9.]+)\s+ms", rest)
             rtts = [float(r) for r in rtt_matches]
 
-            hops.append({
-                "hop": hop_num,
-                "host": host or "*",
-                "ip": ip,
-                "rtt_ms": rtts,
-            })
+            hops.append(
+                {
+                    "hop": hop_num,
+                    "host": host or "*",
+                    "ip": ip,
+                    "rtt_ms": rtts,
+                }
+            )
 
         return hops
 
@@ -185,7 +202,12 @@ class NetworkDiagService:
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ping", "-c", str(count), "-W", "3", target,
+                "ping",
+                "-c",
+                str(count),
+                "-W",
+                "3",
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -201,7 +223,11 @@ class NetworkDiagService:
                 "output": stdout,
                 "replies": parsed["replies"],
                 "stats": parsed["stats"],
-                "error": None,
+                # OLD CODE START — #96: ping's own error (unknown host, no permission)
+                # was dropped, so it read as a host that gave no replies
+                # "error": None,
+                # OLD CODE END
+                "error": _tool_error(proc.returncode, stdout, stderr_bytes),
             }
 
         except asyncio.TimeoutError:
@@ -244,7 +270,12 @@ class NetworkDiagService:
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "traceroute", "-m", str(max_hops), "-w", "3", target,
+                "traceroute",
+                "-m",
+                str(max_hops),
+                "-w",
+                "3",
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -259,7 +290,10 @@ class NetworkDiagService:
                 "max_hops": max_hops,
                 "output": stdout,
                 "hops": hops,
-                "error": None,
+                # OLD CODE START — #96: traceroute's own error was dropped (empty result)
+                # "error": None,
+                # OLD CODE END
+                "error": _tool_error(proc.returncode, stdout, stderr_bytes),
             }
 
         except asyncio.TimeoutError:

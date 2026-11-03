@@ -28,6 +28,7 @@ QUERY_TIMEOUT = 10  # seconds
 
 class DnsReconValidationError(Exception):
     """Raised when DNS recon input validation fails."""
+
     pass
 
 
@@ -101,13 +102,15 @@ class DnsReconService:
             if in_answer and stripped:
                 parts = stripped.split(None, 4)
                 if len(parts) >= 5:
-                    records.append({
-                        "name": parts[0],
-                        "ttl": int(parts[1]) if parts[1].isdigit() else parts[1],
-                        "class": parts[2],
-                        "type": parts[3],
-                        "value": parts[4],
-                    })
+                    records.append(
+                        {
+                            "name": parts[0],
+                            "ttl": int(parts[1]) if parts[1].isdigit() else parts[1],
+                            "class": parts[2],
+                            "type": parts[3],
+                            "value": parts[4],
+                        }
+                    )
 
         return records
 
@@ -129,8 +132,13 @@ class DnsReconService:
         for rtype in record_types:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "dig", "+noall", "+answer", "+authority", "+comments",
-                    domain, rtype,
+                    "dig",
+                    "+noall",
+                    "+answer",
+                    "+authority",
+                    "+comments",
+                    domain,
+                    rtype,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )

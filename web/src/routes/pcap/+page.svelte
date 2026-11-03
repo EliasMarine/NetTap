@@ -16,6 +16,12 @@
 		PcapSearchResult,
 		PcapPacket,
 	} from '$lib/api/pcap';
+	import { formatDuration } from '$lib/utils/tshark-helpers';
+	// OLD CODE START — getCaptureStatus fakes enabled: true when the request fails
+	// import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
+	// OLD CODE END
+	import { fetchCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
+	import type { CaptureStatus } from '$lib/api/capture';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -29,11 +35,16 @@
 		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
 	];
 
+	const SEARCH_POLL_MS = 3000;
+
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
 
-	let selectedTimeRange = $state('24h');
+	// OLD CODE START — #137: a whole day is ~185 GB on a busy network, hours to search
+	// let selectedTimeRange = $state('24h');
+	// OLD CODE END
+	let selectedTimeRange = $state('1h');
 	let initialized = $state(false);
 
 	// Filter
@@ -44,13 +55,29 @@
 	// Files
 	let files = $state<PcapFile[]>([]);
 	let filesLoading = $state(true);
+	let filesFailed = $state(false); // #96: a failed listing is not "No PCAP files"
 
 	// Search
 	let searchResults = $state<PcapSearchResult[]>([]);
 	let searchDone = $state(false);
+	let searchProgress = $state<{
+		checked: number;
+		total: number;
+		timedOut: number;
+		failed: number;
+		error: string;
+		bytesChecked: number;
+		bytesTotal: number;
+		secondsElapsed: number;
+	} | null>(null);
+	/** Bumped on every new search and on destroy so a stale poll loop exits. */
+	let searchRun = 0;
+	/** The scroll-to-preview timer; cleared on destroy, when `document` may be gone. */
+	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// Preview
 	let previewPackets = $state<PcapPacket[]>([]);
+	let previewTimedOut = $state(false);
 	let previewFile = $state('');
 	let previewLoading = $state(false);
 
@@ -63,6 +90,16 @@
 	type ResultSortKey = 'name' | 'matching_packets' | 'size_bytes' | 'modified';
 	let resultSortKey = $state<ResultSortKey>('matching_packets');
 	let resultSortDir = $state<'asc' | 'desc'>('desc');
+
+	// Capture control
+	// OLD CODE START — assumed on, so an unread state showed the toggle on and a click turned capture off
+	// let captureEnabled = $state(true);
+	// OLD CODE END
+	let captureEnabled = $state<boolean | null>(null); // null until the daemon says
+	let captureLoading = $state(false);
+	let captureStatus = $state<CaptureStatus | null>(null);
+	let captureView = $derived(captureState(captureStatus));
+	const CAPTURE_LABELS = { active: 'Capture Active', stopped: 'Capture Stopped', unknown: 'Capture Status Unknown' };
 
 	// Timeline
 	let hoveredBarIndex = $state<number | null>(null);
@@ -181,6 +218,26 @@
 		} catch { return ts; }
 	}
 
+	// OLD CODE START — #137: a shorter range doesn't make a large file any faster
+	// function timedOutNote(n: number): string {
+	// 	return n === 1
+	// 		? '1 large file took longer than 5 minutes and was skipped \u2014 pick a shorter time range to search it.'
+	// 		: `${n} large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.`;
+	// }
+	// OLD CODE END
+	function timedOutNote(n: number): string {
+		return n === 1
+			? "1 file took longer than 5 minutes and wasn't searched: any matches in it aren't counted."
+			: `${n} files took longer than 5 minutes each and weren't searched: any matches in them aren't counted.`;
+	}
+
+	/** Time left at this box's own pace so far (#137); none before the first file is done. */
+	function searchEta(p: { bytesChecked: number; bytesTotal: number; secondsElapsed: number }): string {
+		if (p.bytesChecked <= 0 || p.secondsElapsed <= 0) return '';
+		const left = (p.secondsElapsed * (p.bytesTotal - p.bytesChecked)) / p.bytesChecked;
+		return `, about ${formatDuration(Math.round(left))} left`;
+	}
+
 	function sortIndicator(active: boolean, dir: 'asc' | 'desc'): string {
 		return active ? (dir === 'asc' ? ' \u2191' : ' \u2193') : '';
 	}
@@ -191,35 +248,84 @@
 
 	async function loadFiles() {
 		filesLoading = true;
+		filesFailed = false;
 		try {
 			const { from, to } = getTimeRange();
 			const response = await getPcapFiles({ from, to });
 			files = response.files;
 		} catch {
 			files = [];
+			filesFailed = true;
 		} finally {
 			filesLoading = false;
 		}
 	}
+
+	// OLD CODE START — 2026-11-02: one request that waited for the daemon to tshark every file,
+	// which could never finish inside the 10 s web proxy timeout on a 24 h range
+	// async function runSearch() {
+	// 	if (!bpfFilter.trim()) {
+	// 		error = 'Enter a display filter to search';
+	// 		return;
+	// 	}
+	// 	loading = true;
+	// 	error = '';
+	// 	searchDone = false;
+	// 	searchResults = [];
+	// 	try {
+	// 		const { from, to } = getTimeRange();
+	// 		const response = await searchPcaps(bpfFilter, { from, to });
+	// 		searchResults = response.results;
+	// 		searchDone = true;
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : 'Search failed';
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// }
+	// OLD CODE END
 
 	async function runSearch() {
 		if (!bpfFilter.trim()) {
 			error = 'Enter a display filter to search';
 			return;
 		}
+		const run = ++searchRun;
+		// Filter and range are captured once: the daemon keys its background job on the exact
+		// (filter, from, to), so changing any of them mid-poll would cancel and restart it.
+		const filter = bpfFilter;
+		const { from, to } = getTimeRange();
 		loading = true;
 		error = '';
 		searchDone = false;
 		searchResults = [];
+		searchProgress = null;
 		try {
-			const { from, to } = getTimeRange();
-			const response = await searchPcaps(bpfFilter, { from, to });
-			searchResults = response.results;
-			searchDone = true;
+			while (run === searchRun) {
+				const response = await searchPcaps(filter, { from, to });
+				if (run !== searchRun) return;
+				searchResults = response.results;
+				searchProgress = {
+					checked: response.files_checked,
+					total: response.files_total,
+					timedOut: response.timed_out,
+					// #96: files tshark couldn't read are not "no match"
+					failed: response.failed ?? 0,
+					error: response.error ?? '',
+					bytesChecked: response.bytes_checked ?? 0,
+					bytesTotal: response.bytes_total ?? 0,
+					secondsElapsed: response.seconds_elapsed ?? 0,
+				};
+				if (response.complete) {
+					searchDone = true;
+					return;
+				}
+				await new Promise((resolve) => setTimeout(resolve, SEARCH_POLL_MS));
+			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Search failed';
+			if (run === searchRun) error = e instanceof Error ? e.message : 'Search failed';
 		} finally {
-			loading = false;
+			if (run === searchRun) loading = false;
 		}
 	}
 
@@ -227,6 +333,7 @@
 		previewLoading = true;
 		previewFile = file;
 		previewPackets = [];
+		previewTimedOut = false;
 		error = '';
 		try {
 			const response = await previewPcap(file, {
@@ -234,11 +341,12 @@
 				limit: 100,
 			});
 			previewPackets = response.packets;
+			previewTimedOut = response.timed_out ?? false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Preview failed';
 		} finally {
 			previewLoading = false;
-			setTimeout(() => {
+			scrollTimer = setTimeout(() => {
 				document.getElementById('preview-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 			}, 50);
 		}
@@ -247,6 +355,7 @@
 	function closePreview() {
 		previewFile = '';
 		previewPackets = [];
+		previewTimedOut = false;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -291,11 +400,55 @@
 	}
 
 	// ---------------------------------------------------------------------------
+	// Capture control
+	// ---------------------------------------------------------------------------
+
+	async function loadCaptureStatus() {
+		// OLD CODE START — a failed read came back as enabled: true and set the toggle on
+		// try {
+		// 	captureStatus = await getCaptureStatus();
+		// 	captureEnabled = captureStatus.enabled;
+		// } catch {
+		// 	// Default to enabled if API unreachable
+		// }
+		// OLD CODE END
+		try {
+			captureStatus = await fetchCaptureStatus();
+			captureEnabled = captureStatus.enabled;
+		} catch {
+			// state unknown: the label says so and the toggle stays disabled
+		}
+	}
+
+	async function handleCaptureToggle() {
+		if (captureEnabled === null) return;
+		captureLoading = true;
+		try {
+			const result = await toggleCapture(!captureEnabled);
+			captureEnabled = result.enabled;
+			if (captureStatus) {
+				captureStatus.enabled = result.enabled;
+				captureStatus.containerRunning = result.containerRunning;
+				captureStatus.containerStatus = result.containerStatus;
+			}
+		} catch (err) {
+			// OLD CODE START — showed the bare daemon/HTTP message
+			// error = err instanceof Error ? err.message : 'Toggle failed';
+			// OLD CODE END
+			error = `Couldn't turn capture ${captureEnabled ? 'off' : 'on'}: ${err instanceof Error ? err.message : 'the request failed'}`;
+		} finally {
+			captureLoading = false;
+		}
+	}
+
+	// ---------------------------------------------------------------------------
 	// Lifecycle
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
+		loadCaptureStatus();
 		loadFiles().then(() => { initialized = true; });
+		return () => { searchRun++; clearTimeout(scrollTimer); };
 	});
 </script>
 
@@ -311,6 +464,35 @@
 			<p class="subtitle">Search and analyze captured network traffic</p>
 		</div>
 		<div class="header-right">
+			<div class="capture-toggle">
+				<!-- OLD CODE START — showed "Active" whenever capture was enabled, even with the
+				     container down or the status request failed (DEFAULT_STATUS has enabled: true)
+				<span class="capture-status-dot" class:active={captureEnabled}></span>
+				<span class="capture-status-label">
+					{captureEnabled ? 'Capture Active' : 'Capture Stopped'}
+				</span>
+				OLD CODE END -->
+				<span class="capture-status-dot" class:active={captureView === 'active'}></span>
+				<span class="capture-status-label">{CAPTURE_LABELS[captureView]}</span>
+				<!-- OLD CODE START — read "on" and stayed clickable when the state was unknown
+				<button
+					class="toggle-switch"
+					class:on={captureEnabled}
+					onclick={handleCaptureToggle}
+					disabled={captureLoading}
+					aria-label={captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
+				>
+				OLD CODE END -->
+				<button
+					class="toggle-switch"
+					class:on={captureEnabled === true}
+					onclick={handleCaptureToggle}
+					disabled={captureLoading || captureEnabled === null}
+					aria-label={captureEnabled === null ? "PCAP capture state unknown: can't change it" : captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
+				>
+					<span class="toggle-knob" class:loading={captureLoading}></span>
+				</button>
+			</div>
 			<div class="pills">
 				{#each TIME_RANGES as range}
 					<button
@@ -332,18 +514,21 @@
 	<div class="stats-grid">
 		<button class="stat-card clickable" onclick={() => document.getElementById('files-section')?.scrollIntoView({ behavior: 'smooth' })}>
 			<span class="stat-label">PCAP Files</span>
-			<span class="stat-value text-primary">{totalFileCount}</span>
+			<span class="stat-value text-primary">{filesFailed ? '--' : totalFileCount}</span>
 		</button>
 		<div class="stat-card">
 			<span class="stat-label">Total Captured</span>
-			<span class="stat-value">{formatBytes(totalBytes)}</span>
+			<span class="stat-value">{filesFailed ? '--' : formatBytes(totalBytes)}</span>
 		</div>
 		<div class="stat-card">
 			<span class="stat-label">Newest Capture</span>
 			<span class="stat-value">{newestCapture ? formatRelativeTime(newestCapture) : '\u2014'}</span>
 		</div>
 		<div class="stat-card">
+			<!-- OLD CODE START — read as the top protocol of all captures, but it only counts the previewed packets (#63)
 			<span class="stat-label">Top Protocol</span>
+			OLD CODE END -->
+			<span class="stat-label" title="Most common protocol among the packets in the preview below">Top Protocol in Preview</span>
 			<span class="stat-value">{protocolBreakdown.length > 0 ? protocolBreakdown[0].protocol : '\u2014'}</span>
 		</div>
 	</div>
@@ -351,7 +536,9 @@
 	<!-- Capture Timeline -->
 	<section class="card">
 		<h2>Capture Timeline</h2>
-		{#if captureTimeline.length === 0 && !filesLoading}
+		{#if filesFailed && !filesLoading}
+			<p class="empty-state">Couldn't load the PCAP file list: the request failed.</p>
+		{:else if captureTimeline.length === 0 && !filesLoading}
 			<p class="empty-state">No PCAP files in this time range.</p>
 		{:else if captureTimeline.length > 0}
 			<div class="chart-wrapper" bind:clientWidth={chartWidth}>
@@ -405,7 +592,11 @@
 				bind:value={bpfFilter}
 				onkeydown={(e) => e.key === 'Enter' && runSearch()}
 			/>
+			<!-- OLD CODE START — 2026-11-02: disabled for the whole run; a background search
+			     can take many minutes, so a new filter or range must be able to replace it
 			<button class="btn btn-primary" onclick={runSearch} disabled={loading}>
+			OLD CODE END -->
+			<button class="btn btn-primary" onclick={runSearch}>
 				{loading ? 'Searching...' : 'Search'}
 			</button>
 			<button class="btn btn-secondary" onclick={downloadFiltered} disabled={!bpfFilter.trim()}>
@@ -435,11 +626,34 @@
 	{/if}
 
 	<!-- Search Results -->
-	{#if searchDone}
+	{#if searchDone || loading}
 		<section class="card">
 			<h2>Search Results ({searchResults.length} files match)</h2>
+			{#if loading}
+				<p class="search-progress">
+					{#if searchProgress}
+						<!-- OLD CODE START — #137: no sizes or estimate
+						Checked {searchProgress.checked} of {searchProgress.total} files, newest first&hellip;
+						OLD CODE END -->
+						Checked {searchProgress.checked} of {searchProgress.total} files ({formatBytes(searchProgress.bytesChecked)} of {formatBytes(searchProgress.bytesTotal)}), newest first{searchEta(searchProgress)}&hellip;
+					{:else}
+						Starting search&hellip;
+					{/if}
+				</p>
+			{:else if searchProgress && searchProgress.timedOut > 0}
+				<p class="search-note">{timedOutNote(searchProgress.timedOut)}</p>
+			{/if}
+			{#if !loading && searchProgress && searchProgress.failed > 0}
+				<p class="search-note">
+					{searchProgress.failed === 1 ? "1 file couldn't be searched" : `${searchProgress.failed} files couldn't be searched`}{searchProgress.error ? `: ${searchProgress.error}` : '.'}
+				</p>
+			{/if}
 			{#if searchResults.length === 0}
-				<p class="empty-state">No matching packets found in any PCAP file.</p>
+				{#if searchDone && searchProgress && searchProgress.failed > 0}
+					<p class="empty-state">No matching packets in the files that could be searched.</p>
+				{:else if searchDone}
+					<p class="empty-state">No matching packets found in any PCAP file.</p>
+				{/if}
 			{:else}
 				<div class="table-container">
 					<table class="data-table">
@@ -523,6 +737,11 @@
 				</table>
 			</div>
 			<p class="table-footer">Showing {previewPackets.length} packets</p>
+			{#if previewTimedOut}
+				<p class="search-note">Stopped after 45 seconds: this file is large, so only its first part was read.</p>
+			{/if}
+		{:else if !previewLoading && previewTimedOut}
+			<p class="search-note">No matching packets in the part of this file read within 45 seconds. The file is large; try a smaller file or a narrower time range.</p>
 		{:else if !previewLoading}
 			<p class="empty-state">No packets to display{bpfFilter ? ` matching filter "${bpfFilter}"` : ''}.</p>
 		{/if}
@@ -533,10 +752,12 @@
 		<!-- Available Files -->
 		<section class="card">
 			<div class="card-header">
-				<h2>Available Files{!filesLoading ? ` (${files.length})` : ''}</h2>
+				<h2>Available Files{!filesLoading && !filesFailed ? ` (${files.length})` : ''}</h2>
 				{#if filesLoading}<span class="loading-indicator">Loading...</span>{/if}
 			</div>
-			{#if files.length === 0 && !filesLoading}
+			{#if filesFailed && !filesLoading}
+				<p class="empty-state">Couldn't load the PCAP file list: the request failed.</p>
+			{:else if files.length === 0 && !filesLoading}
 				<p class="empty-state">No PCAP files found in the selected time range.</p>
 			{:else}
 				<div class="table-container">
@@ -745,7 +966,83 @@
 	.path-cell { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 	/* Empty states */
+	.search-progress { color: var(--text-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-md); }
+	.search-note { color: var(--warning); font-size: var(--text-sm); margin: 0 0 var(--space-md); }
 	.empty-state { color: var(--text-muted); font-size: var(--text-base); text-align: center; padding: var(--space-xl) var(--space-md); }
+
+	/* Capture toggle */
+	.capture-toggle {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-xs) var(--space-md);
+		background: var(--bg-elevated);
+		border: 1px solid var(--border-default);
+		border-radius: var(--radius-md, 8px);
+	}
+
+	.capture-status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--red);
+		flex-shrink: 0;
+	}
+	.capture-status-dot.active {
+		background: var(--green);
+		box-shadow: 0 0 6px var(--green);
+	}
+
+	.capture-status-label {
+		font-size: var(--text-sm);
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	.toggle-switch {
+		position: relative;
+		width: 36px;
+		height: 20px;
+		border-radius: 10px;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		cursor: pointer;
+		transition: background 0.2s, border-color 0.2s;
+		padding: 0;
+		flex-shrink: 0;
+		color: var(--text-primary);
+	}
+	.toggle-switch.on {
+		background: var(--green-dim);
+		border-color: var(--green);
+	}
+	.toggle-switch:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.toggle-knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: var(--text-secondary);
+		transition: transform 0.2s, background 0.2s;
+	}
+	.toggle-switch.on .toggle-knob {
+		transform: translateX(16px);
+		background: var(--green);
+	}
+	.toggle-knob.loading {
+		animation: pulse-toggle 0.8s ease-in-out infinite;
+	}
+
+	@keyframes pulse-toggle {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
 
 	/* Responsive */
 	@media (max-width: 900px) {

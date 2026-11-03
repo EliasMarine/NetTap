@@ -4,21 +4,37 @@ NetTap PcapSearchService — Search and filter captured PCAP files.
 Provides PCAP file listing, BPF filter search, packet preview (via tshark),
 and filtered PCAP download (via mergecap + tshark).
 
-PCAP directory is configurable via PCAP_DIR env var (default: /data/pcap/).
+All TShark/mergecap operations run inside the nettap-tshark container via
+``docker exec``, matching the pattern used in TSharkService. TShark is NOT
+installed in the daemon container.
+
+PCAP directory is configurable via PCAP_DIR env var (default: /opt/nettap/pcap).
 """
 
 import asyncio
 import logging
 import os
 import re
+import shlex
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from services.tshark_service import (
+    bounded_exec,
+    filter_check_cmd,
+    raise_filter_check_failure,
+)
+
 logger = logging.getLogger("nettap.services.pcap_search")
 
-_DEFAULT_PCAP_DIR = os.environ.get("PCAP_DIR", "/data/pcap")
+_DEFAULT_PCAP_DIR = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
+
+# TShark container name and mount path — must match docker-compose.yml
+_TSHARK_CONTAINER = "nettap-tshark"
+_CONTAINER_PCAP_MOUNT = "/pcap"
 
 # Display filter validation — reject shell metacharacters.
 # We allow & and | because Wireshark display filters use && (AND) and || (OR).
@@ -28,12 +44,66 @@ _FILTER_FORBIDDEN = re.compile(r"[;`$]")
 # Supported PCAP file extensions
 _PCAP_EXTENSIONS = {".pcap", ".pcapng", ".cap"}
 
+# Max concurrent TShark docker exec operations.  Shares the same
+# nettap-tshark container (cpus: 1.0) as TSharkService, so keep this
+# low to avoid thrashing the CPU budget and hitting timeouts.
+_MAX_CONCURRENT_TSHARK = 2
+
+# A search reads whole files (~25 s per 576 MB at the container's 1 CPU on the G11), so it
+# runs as a background job; each file gets this long before it counts as timed out.
+# tshark needs ~120 MiB plus about the file's size: past the container's 1 GiB it is killed.
+_SEARCH_FILE_TIMEOUT = 300
+_TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
+
+# -c counts packets read, not matches, so a filtered preview pipes through head instead.
+# User values reach tshark only as positional args ($1 file, $2 filter, $3 limit).
+# -l flushes each line so tshark stops right after head quits, not a 4 KB buffer later (#78)
+_FILTERED_PREVIEW_SCRIPT = (
+    'tshark -l -r "$1" -Y "$2" -T fields -e frame.number -e frame.time -e ip.src '
+    "-e ip.dst -e frame.protocols -e frame.len -e _ws.col.Info -E separator='|' "
+    '| head -n "$3"'
+)
+# OLD CODE START — #78: without -l a rare filter read on after the limit (35 s vs 26 s)
+# _FILTERED_PREVIEW_SCRIPT = (
+#     'tshark -r "$1" -Y "$2" -T fields -e frame.number -e frame.time -e ip.src '
+#     "-e ip.dst -e frame.protocols -e frame.len -e _ws.col.Info -E separator='|' "
+#     '| head -n "$3"'
+# )
+# OLD CODE END
+
 
 class PcapSearchService:
     """Search and filter captured PCAP files."""
 
     def __init__(self, pcap_dir: str | None = None) -> None:
         self._pcap_dir = Path(pcap_dir or _DEFAULT_PCAP_DIR)
+        self._semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TSHARK)
+        self._search_seq = 0
+        self._search_job: dict[str, Any] | None = None
+        self._search_task: asyncio.Task | None = None
+
+    def contains(self, path: str) -> bool:
+        """True when path, with ".." and symlinks resolved, is inside the PCAP directory.
+
+        A string-prefix test let "/opt/nettap/pcap/../../etc/passwd" and sibling
+        directories such as "/opt/nettap/pcap-old" through.
+        """
+        root = os.path.realpath(self._pcap_dir)
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+
+    def _to_container_path(self, daemon_path: str) -> str:
+        """Translate a daemon-side PCAP path to the tshark container path.
+
+        The daemon mounts pcap-data at ``self._pcap_dir`` (e.g. /opt/nettap/pcap).
+        The tshark container mounts the same volume at ``/pcap``.
+        """
+        try:
+            relative = Path(daemon_path).relative_to(self._pcap_dir)
+        except ValueError:
+            # Path is not under our pcap dir — return as-is and let
+            # tshark report the error (security validation happens elsewhere).
+            return daemon_path
+        return f"{_CONTAINER_PCAP_MOUNT}/{relative}"
 
     # ------------------------------------------------------------------
     # File listing
@@ -72,13 +142,15 @@ class PcapSearchService:
             if to_dt and modified > to_dt:
                 continue
 
-            results.append({
-                "file": str(path),
-                "name": path.name,
-                "size_bytes": stat.st_size,
-                "modified": modified.isoformat(),
-                "relative_path": str(path.relative_to(self._pcap_dir)),
-            })
+            results.append(
+                {
+                    "file": str(path),
+                    "name": path.name,
+                    "size_bytes": stat.st_size,
+                    "modified": modified.isoformat(),
+                    "relative_path": str(path.relative_to(self._pcap_dir)),
+                }
+            )
 
         # Sort by modification time, newest first
         results.sort(key=lambda r: r["modified"], reverse=True)
@@ -127,58 +199,197 @@ class PcapSearchService:
 
         matching = []
         for pcap in pcaps:
-            count = await self._count_matching_packets(
-                pcap["file"], bpf_filter
-            )
-            if count > 0:
-                matching.append({
-                    **pcap,
-                    "matching_packets": count,
-                })
+            count = await self._count_matching_packets(pcap["file"], bpf_filter)
+            if count:
+                matching.append(
+                    {
+                        **pcap,
+                        "matching_packets": count,
+                    }
+                )
 
         return matching
 
-    async def _count_matching_packets(
-        self, pcap_file: str, bpf_filter: str
-    ) -> int:
-        """Count packets matching BPF filter in a PCAP file.
+    async def search_progress(
+        self,
+        bpf_filter: str,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> dict[str, Any]:
+        """Start a background search for these params, or report the one running.
 
-        Uses asyncio.create_subprocess_exec (not shell) to avoid injection.
+        A call with different params replaces the running job. Files are checked
+        newest first and matches appear as they are found.
         """
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "tshark",
-                "-r", pcap_file,
-                "-Y", bpf_filter,
-                "-T", "fields",
-                "-e", "frame.number",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=30
-            )
-
-            if proc.returncode != 0:
-                logger.debug(
-                    "tshark filter count failed for %s: %s",
-                    pcap_file,
-                    stderr.decode(errors="replace").strip(),
+        key = (bpf_filter, from_ts, to_ts)
+        if self._search_job is None or self._search_job["key"] != key:
+            valid, err = self.validate_bpf_filter(bpf_filter)
+            if not valid:
+                raise ValueError(f"Invalid display filter: {err}")
+            if self._search_task is not None:
+                self._search_task.cancel()
+            pcaps = self.get_available_pcaps(from_ts, to_ts)
+            self._search_seq += 1
+            self._search_job = {
+                "id": self._search_seq,
+                "key": key,
+                "results": (),
+                "files_checked": 0,
+                "files_total": len(pcaps),
+                "timed_out": 0,
+                "failed": 0,
+                "error": None,
+                "complete": not pcaps,
+                # #137: sizes and time so far, for the page's estimate (no assumed rate)
+                "bytes_total": sum(p["size_bytes"] for p in pcaps),
+                "bytes_checked": 0,
+                "started": time.monotonic(),
+                "finished": None if pcaps else time.monotonic(),
+            }
+            self._search_task = (
+                asyncio.create_task(
+                    self._run_search_job(self._search_seq, pcaps, bpf_filter)
                 )
-                return 0
+                if pcaps
+                else None
+            )
+        job = self._search_job
+        return {
+            "filter": bpf_filter,
+            "count": len(job["results"]),
+            "results": list(job["results"]),
+            "files_checked": job["files_checked"],
+            "files_total": job["files_total"],
+            "complete": job["complete"],
+            "timed_out": job["timed_out"],
+            # #96: files tshark couldn't read, and the first reason, so they aren't "no match"
+            "failed": job["failed"],
+            "error": job["error"],
+            "bytes_total": job["bytes_total"],
+            "bytes_checked": job["bytes_checked"],
+            "seconds_elapsed": round(
+                (job["finished"] or time.monotonic()) - job["started"]
+            ),
+        }
+
+    async def _run_search_job(
+        self, job_id: int, pcaps: list[dict[str, Any]], bpf_filter: str
+    ) -> None:
+        for pcap in pcaps:
+            # OLD CODE START — #96: a file tshark couldn't read counted as "no match"
+            # count = await self._count_matching_packets(
+            #     pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+            # )
+            # OLD CODE END
+            error = None
+            try:
+                count = await self._count_matching_packets(
+                    pcap["file"], bpf_filter, timeout=_SEARCH_FILE_TIMEOUT
+                )
+            except Exception as exc:
+                count, error = 0, str(exc)
+            job = self._search_job
+            if job is None or job["id"] != job_id:
+                return  # replaced by a newer search
+            found = ({**pcap, "matching_packets": count},) if count else ()
+            self._search_job = {
+                **job,
+                "results": job["results"] + found,
+                "files_checked": job["files_checked"] + 1,
+                "timed_out": job["timed_out"] + (count is None),
+                "failed": job["failed"] + (error is not None),
+                "error": job["error"] or error,
+                "bytes_checked": job["bytes_checked"] + pcap["size_bytes"],
+            }
+        job = self._search_job
+        if job is not None and job["id"] == job_id:
+            self._search_job = {**job, "complete": True, "finished": time.monotonic()}
+
+    async def _count_matching_packets(
+        self, pcap_file: str, bpf_filter: str, timeout: int = 45
+    ) -> int | None:
+        """Count packets matching BPF filter in a PCAP file; None if it timed out.
+
+        Raises RuntimeError when tshark couldn't read the file (#96).
+
+        Runs tshark inside the nettap-tshark container via docker exec.
+        Uses asyncio.create_subprocess_exec (argument-list form, no shell).
+        A semaphore limits concurrent docker exec operations.
+        """
+        container_path = self._to_container_path(pcap_file)
+        cmd = [
+            "docker",
+            "exec",
+            _TSHARK_CONTAINER,
+            # background searches share the container's 1 CPU with previews and
+            # analysis; lowest priority keeps those inside the web proxy's timeout
+            "nice",
+            "-n",
+            "19",
+            "tshark",
+            "-r",
+            container_path,
+            "-Y",
+            bpf_filter,
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+        ]
+        try:
+            async with self._semaphore:
+                logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
+                proc = await asyncio.create_subprocess_exec(
+                    *bounded_exec(cmd, timeout),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                started = time.monotonic()
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout + 10
+                )
+
+            # #137: a KILL before timeout's own deadline is the kernel's OOM killer, not a timeout
+            if proc.returncode == 137 and time.monotonic() - started < timeout:
+                try:
+                    size = f" ({round(os.path.getsize(pcap_file) / 1_000_000)} MB)"
+                except OSError:  # pruned meanwhile
+                    size = ""
+                logger.warning("tshark ran out of memory reading %s", pcap_file)
+                raise RuntimeError(
+                    f"tshark ran out of memory reading {os.path.basename(pcap_file)}{size}"
+                )
+            if proc.returncode in _TIMEOUT_EXIT_CODES:
+                logger.warning("tshark timed out counting packets in %s", pcap_file)
+                return None
 
             lines = stdout.decode(errors="replace").strip().split("\n")
-            return len([line for line in lines if line.strip()])
+            count = len([line for line in lines if line.strip()])
+            # a file still being written can end mid-packet: keep what tshark printed
+            # OLD CODE START — #96: a failed read (bad filter, container down) was "0 matches"
+            # if proc.returncode != 0 and not count:
+            #     logger.debug("tshark filter count failed for %s: %s", pcap_file, ...)
+            # return count
+            # OLD CODE END
+            if proc.returncode != 0 and not count:
+                err = stderr.decode(errors="replace").strip()
+                logger.warning("tshark filter count failed for %s: %s", pcap_file, err)
+                raise RuntimeError(err or f"tshark exited with code {proc.returncode}")
+            return count
 
         except asyncio.TimeoutError:
             logger.warning("tshark timed out counting packets in %s", pcap_file)
-            return 0
-        except FileNotFoundError:
-            logger.error("tshark not found in PATH")
-            return 0
-        except Exception as exc:
-            logger.error("Error counting packets in %s: %s", pcap_file, exc)
-            return 0
+            return None
+        # OLD CODE START — #96: docker missing or any other error read as "0 matches"
+        # except FileNotFoundError:
+        #     logger.error("docker not found in PATH")
+        #     return 0
+        # except Exception as exc:
+        #     logger.error("Error counting packets in %s: %s", pcap_file, exc)
+        #     return 0
+        # OLD CODE END
+        except FileNotFoundError as exc:
+            raise RuntimeError("docker not found in PATH") from exc
 
     # ------------------------------------------------------------------
     # Preview
@@ -190,54 +401,119 @@ class PcapSearchService:
         bpf_filter: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Extract matching packets for preview.
+        """Packets only; see preview_with_status()."""
+        return (await self.preview_with_status(pcap_file, bpf_filter, limit))["packets"]
 
-        Uses asyncio.create_subprocess_exec (not shell) to avoid injection.
+    async def preview_with_status(
+        self,
+        pcap_file: str,
+        bpf_filter: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Extract matching packets for preview: {"packets": [...], "timed_out": bool}.
+
+        timed_out means tshark ran out of time before reading the whole file or
+        finding `limit` matches (a busy multi-GB file at the container's CPU), so an empty or
+        short list is not proof the file has no more matches.
+
+        Runs tshark inside the nettap-tshark container via docker exec.
+        Uses asyncio.create_subprocess_exec (argument-list form, no shell).
         Returns a list of packet summaries with frame number, timestamp,
         source, destination, protocol, length, and info.
         """
         # Security: ensure file is within pcap directory
         pcap_path = Path(pcap_file)
-        if not str(pcap_path).startswith(str(self._pcap_dir)):
+        # OLD CODE START — string prefix: ".." and sibling directories passed
+        # if not str(pcap_path).startswith(str(self._pcap_dir)):
+        # OLD CODE END
+        if not self.contains(pcap_file):
             raise ValueError("PCAP file must be within the configured PCAP directory")
         if not pcap_path.exists():
             raise FileNotFoundError(f"PCAP file not found: {pcap_file}")
 
+        container_path = self._to_container_path(pcap_file)
         cmd = [
+            "docker",
+            "exec",
+            _TSHARK_CONTAINER,
             "tshark",
-            "-r", pcap_file,
-            "-T", "fields",
-            "-e", "frame.number",
-            "-e", "frame.time",
-            "-e", "ip.src",
-            "-e", "ip.dst",
-            "-e", "frame.protocols",
-            "-e", "frame.len",
-            "-e", "_ws.col.Info",
-            "-E", "separator=|",
-            "-c", str(limit),
+            "-r",
+            container_path,
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "frame.time",
+            "-e",
+            "ip.src",
+            "-e",
+            "ip.dst",
+            "-e",
+            "frame.protocols",
+            "-e",
+            "frame.len",
+            "-e",
+            "_ws.col.Info",
+            "-E",
+            "separator=|",
+            "-c",
+            str(limit),
         ]
 
         if bpf_filter:
             valid, err = self.validate_bpf_filter(bpf_filter)
             if not valid:
                 raise ValueError(f"Invalid display filter: {err}")
-            cmd.extend(["-Y", bpf_filter])
+            # OLD CODE START — 2026-11-02: with -c, only matches among the first
+            # `limit` packets read were shown (often none)
+            # cmd.extend(["-Y", bpf_filter])
+            # OLD CODE END
+            cmd = [
+                "docker",
+                "exec",
+                _TSHARK_CONTAINER,
+                "sh",
+                "-c",
+                _FILTERED_PREVIEW_SCRIPT,
+                "sh",
+                container_path,
+                bpf_filter,
+                str(limit),
+            ]
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=30
-            )
+            async with self._semaphore:
+                logger.debug("Running: %s", " ".join(shlex.quote(c) for c in cmd))
+                proc = await asyncio.create_subprocess_exec(
+                    *bounded_exec(cmd, 45),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                # the in-container timeout fires first, so partial output survives
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=55)
 
-            if proc.returncode != 0:
+            timed_out = proc.returncode in _TIMEOUT_EXIT_CODES
+            # a file still being written can end mid-packet: keep what tshark printed
+            # OLD CODE START — #96: a failed preview (container down, unreadable file)
+            # came back as "no packets"
+            # if proc.returncode != 0 and not stdout.strip():
+            #     err_msg = stderr.decode(errors="replace").strip()
+            #     if not timed_out:
+            #         logger.error("tshark preview failed: %s", err_msg)
+            #     return {"packets": [], "timed_out": timed_out}
+            # OLD CODE END
+            if proc.returncode != 0 and not stdout.strip():
+                if timed_out:
+                    return {"packets": [], "timed_out": True}
                 err_msg = stderr.decode(errors="replace").strip()
                 logger.error("tshark preview failed: %s", err_msg)
-                return []
+                raise RuntimeError(
+                    err_msg or f"tshark exited with code {proc.returncode}"
+                )
+            if bpf_filter and not timed_out and not stdout.strip():
+                # the pipeline's status is head's: a filter tshark refused also printed nothing (#96)
+                await self._check_filter(container_path, bpf_filter)
 
             packets = []
             for line in stdout.decode(errors="replace").strip().split("\n"):
@@ -245,24 +521,44 @@ class PcapSearchService:
                     continue
                 parts = line.split("|", 6)
                 if len(parts) >= 6:
-                    packets.append({
-                        "frame_number": parts[0].strip(),
-                        "timestamp": parts[1].strip(),
-                        "source": parts[2].strip(),
-                        "destination": parts[3].strip(),
-                        "protocol": parts[4].strip(),
-                        "length": parts[5].strip(),
-                        "info": parts[6].strip() if len(parts) > 6 else "",
-                    })
+                    packets.append(
+                        {
+                            "frame_number": parts[0].strip(),
+                            "timestamp": parts[1].strip(),
+                            "source": parts[2].strip(),
+                            "destination": parts[3].strip(),
+                            "protocol": parts[4].strip(),
+                            "length": parts[5].strip(),
+                            "info": parts[6].strip() if len(parts) > 6 else "",
+                        }
+                    )
 
-            return packets
+            return {"packets": packets, "timed_out": timed_out}
 
         except asyncio.TimeoutError:
             logger.warning("tshark preview timed out for %s", pcap_file)
-            return []
-        except FileNotFoundError:
-            logger.error("tshark not found in PATH")
-            return []
+            return {"packets": [], "timed_out": True}
+        # OLD CODE START — #96: docker missing read as "no packets"
+        # except FileNotFoundError:
+        #     logger.error("docker not found in PATH")
+        #     return {"packets": [], "timed_out": False}
+        # OLD CODE END
+        except FileNotFoundError as exc:
+            # not FileNotFoundError: the API reads that as "PCAP file not found" (404)
+            raise RuntimeError("docker not found in PATH") from exc
+
+    async def _check_filter(self, container_path: str, display_filter: str) -> None:
+        """Raise ValueError carrying tshark's message if it refuses the filter (#96)."""
+        async with self._semaphore:
+            proc = await asyncio.create_subprocess_exec(
+                *bounded_exec(filter_check_cmd(container_path, display_filter), 15),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
+        raise_filter_check_failure(
+            proc.returncode, stderr.decode(errors="replace"), ValueError
+        )
 
     # ------------------------------------------------------------------
     # Download (merge + filter)
@@ -276,9 +572,15 @@ class PcapSearchService:
     ) -> str | None:
         """Merge and filter PCAPs into a single temporary download file.
 
-        Uses asyncio.create_subprocess_exec (not shell) to avoid injection.
-        Returns the path to the temporary filtered PCAP file, or None on
-        failure. Caller is responsible for cleanup.
+        Runs mergecap and tshark inside the nettap-tshark container via
+        docker exec.  Intermediate files live in the container's /tmp
+        (tmpfs, 100M).  The final filtered output is written to stdout
+        (``-w -``) and captured on the daemon side.
+
+        Uses asyncio.create_subprocess_exec (argument-list form, no shell).
+        Returns the path to the temporary filtered PCAP file on the daemon,
+        or None when there are no PCAP files; raises RuntimeError when the
+        merge or filter fails (#96).  Caller is responsible for cleanup.
         """
         valid, err = self.validate_bpf_filter(bpf_filter)
         if not valid:
@@ -289,85 +591,145 @@ class PcapSearchService:
             return None
 
         pcap_files = [p["file"] for p in pcaps]
+        container_pcap_files = [self._to_container_path(f) for f in pcap_files]
 
-        # Create temp output file
+        # Create daemon-side temp file for final output
         tmp = tempfile.NamedTemporaryFile(
             suffix=".pcap", prefix="nettap_filtered_", delete=False
         )
         tmp_path = tmp.name
         tmp.close()
 
-        try:
-            if len(pcap_files) == 1:
-                # Single file — just filter directly
-                merged_path = pcap_files[0]
-            else:
-                # Merge multiple PCAPs first
-                merged_tmp = tempfile.NamedTemporaryFile(
-                    suffix=".pcap", prefix="nettap_merged_", delete=False
-                )
-                merged_path = merged_tmp.name
-                merged_tmp.close()
+        # If merging multiple files, use a temp path inside the container
+        container_merged_path = "/tmp/nettap_merged.pcap"
 
-                merge_cmd = ["mergecap", "-w", merged_path] + pcap_files
+        try:
+            async with self._semaphore:
+                if len(container_pcap_files) == 1:
+                    # Single file — filter directly from the PCAP volume
+                    source_path = container_pcap_files[0]
+                else:
+                    # Merge multiple PCAPs inside the container
+                    merge_cmd = [
+                        "docker",
+                        "exec",
+                        _TSHARK_CONTAINER,
+                        "mergecap",
+                        "-w",
+                        container_merged_path,
+                    ] + container_pcap_files
+
+                    logger.debug(
+                        "Running: %s", " ".join(shlex.quote(c) for c in merge_cmd)
+                    )
+                    proc = await asyncio.create_subprocess_exec(
+                        *bounded_exec(merge_cmd, 150),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, stderr_bytes = await asyncio.wait_for(
+                        proc.communicate(), timeout=150
+                    )
+
+                    if proc.returncode != 0:
+                        err = stderr_bytes.decode(errors="replace").strip()
+                        logger.error("mergecap failed: %s", err)
+                        os.unlink(tmp_path)
+                        # OLD CODE START — #96: the API answered "No matching PCAP data"
+                        # return None
+                        # OLD CODE END
+                        raise RuntimeError(f"mergecap failed: {err}")
+
+                    source_path = container_merged_path
+
+                # Filter inside the container, write to stdout (``-w -``)
+                # and capture the binary output on the daemon side.
+                filter_cmd = [
+                    "docker",
+                    "exec",
+                    _TSHARK_CONTAINER,
+                    "tshark",
+                    "-r",
+                    source_path,
+                    "-Y",
+                    bpf_filter,
+                    "-w",
+                    "-",
+                ]
+                logger.debug(
+                    "Running: %s", " ".join(shlex.quote(c) for c in filter_cmd)
+                )
                 proc = await asyncio.create_subprocess_exec(
-                    *merge_cmd,
+                    *bounded_exec(filter_cmd, 150),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                _, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=120
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=150
                 )
 
                 if proc.returncode != 0:
-                    logger.error(
-                        "mergecap failed: %s",
-                        stderr.decode(errors="replace").strip(),
-                    )
-                    os.unlink(merged_path)
+                    err = stderr_bytes.decode(errors="replace").strip()
+                    logger.error("tshark filter failed: %s", err)
                     os.unlink(tmp_path)
-                    return None
+                    await self._cleanup_container_tmp(container_merged_path, pcap_files)
+                    # OLD CODE START — #96: the API answered "No matching PCAP data"
+                    # return None
+                    # OLD CODE END
+                    raise RuntimeError(f"tshark filter failed: {err}")
 
-            # Filter the merged file
-            filter_cmd = [
-                "tshark",
-                "-r", merged_path,
-                "-Y", bpf_filter,
-                "-w", tmp_path,
-            ]
-            proc = await asyncio.create_subprocess_exec(
-                *filter_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=120
-            )
+            # Write captured binary PCAP data to daemon-side temp file
+            # (outside semaphore -- no docker exec needed)
+            with open(tmp_path, "wb") as f:
+                f.write(stdout_bytes)
 
-            # Clean up merged temp file if we created one
-            if len(pcap_files) > 1:
-                os.unlink(merged_path)
-
-            if proc.returncode != 0:
-                logger.error(
-                    "tshark filter failed: %s",
-                    stderr.decode(errors="replace").strip(),
-                )
-                os.unlink(tmp_path)
-                return None
+            # Clean up merged temp file inside the container
+            await self._cleanup_container_tmp(container_merged_path, pcap_files)
 
             return tmp_path
 
-        except asyncio.TimeoutError:
+        # OLD CODE START — #96: a timeout or missing docker came back as None, which
+        # the API answers with 404 "No matching PCAP data found"
+        # except asyncio.TimeoutError:
+        #     ... cleanup ...
+        #     return None
+        # except FileNotFoundError as exc:
+        #     logger.error("docker not found: %s", exc)
+        #     ... cleanup ...
+        #     return None
+        # OLD CODE END
+        except asyncio.TimeoutError as exc:
             logger.error("PCAP download operation timed out")
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            return None
+            await self._cleanup_container_tmp(container_merged_path, pcap_files)
+            raise RuntimeError("PCAP download timed out") from exc
         except FileNotFoundError as exc:
-            logger.error("Required tool not found: %s", exc)
+            logger.error("docker not found: %s", exc)
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            return None
+            raise RuntimeError("docker not found in PATH") from exc
+
+    async def _cleanup_container_tmp(
+        self, container_path: str, pcap_files: list[str]
+    ) -> None:
+        """Remove a temp file inside the tshark container (best-effort)."""
+        if len(pcap_files) <= 1:
+            return  # No merged file was created
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "exec",
+                _TSHARK_CONTAINER,
+                "rm",
+                "-f",
+                container_path,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=5)
+        except Exception:
+            logger.debug("Failed to clean up container temp file %s", container_path)
 
 
 # ---------------------------------------------------------------------------

@@ -72,9 +72,7 @@ class TestLookup(unittest.TestCase):
             "00:50:56": "VMware",
             "B8:27:EB": "Raspberry Pi Foundation",
         }
-        self.tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        self.tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         json.dump(self.oui_data, self.tmp)
         self.tmp.close()
         self.svc = MacLookupService(oui_db_path=self.tmp.name)
@@ -119,9 +117,7 @@ class TestLookupCorruptDb(unittest.TestCase):
     """Tests for MacLookupService when OUI database is corrupt."""
 
     def setUp(self):
-        self.tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        self.tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         self.tmp.write("not valid json {{{")
         self.tmp.close()
 

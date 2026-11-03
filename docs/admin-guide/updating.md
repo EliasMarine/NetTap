@@ -11,7 +11,7 @@ The update system manages three categories of components:
 | Category | Components |
 |---|---|
 | **Core** | NetTap daemon, web dashboard |
-| **Docker Images** | Malcolm containers (Zeek, Suricata, Arkime, OpenSearch, etc.), Grafana |
+| **Docker Images** | Malcolm containers (Zeek, Suricata, OpenSearch, etc.), Grafana |
 | **System** | Docker Engine, Docker Compose, OS packages |
 
 ---

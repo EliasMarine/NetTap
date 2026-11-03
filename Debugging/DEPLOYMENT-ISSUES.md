@@ -1,7 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-03-12
-> **Status:** 57 issues tracked. 57 RESOLVED. Latest: Switched NVMe SMART monitoring to nvme-cli as primary tool (direct ioctl, no SCSI translation). smartctl retained as SATA fallback. Added SYS_ADMIN capability, removed pySMART. 59 SMART tests passing. Lessons 87–91 added.
+> **Last updated:** 2026-11-01 (Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
+> **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
 
@@ -46,18 +46,23 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboards | OK | Fixed NET-86: healthcheck curl needed auth credentials. Added `--config curlrc`. |
 | Dashboards Helper | OK | Fixed NET-86: `container_health.sh` may not exist → `test -d /proc/1`. |
 | Filebeat | OK | Fixed NET-85: `pgrep` not available in Malcolm image → `test -d /proc/1`. Service was running fine (7 inputs, cron jobs succeeding). |
-| Logstash startup | **FRAGILE** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). |
+| Logstash startup | **FRAGILE (fix pending device check)** | `opensearch_status.sh` waits for `malcolm_template` — requires `securityadmin.sh` + template bootstrap. Breaks on `--force-recreate` if roles_mapping.yml resets. Bootstrap commands now in CLAUDE.md (NET-84). Chain 21 (MS-001) removes the cause: OpenSearch now gets `ROLE_*`. |
 | NetTap daemon NIC discovery | OK | Fixed in PR #70 — full /sys mount resolves symlinks. Verified correct. |
 | NetTap setup wizard API | OK | Fixed in PR #71 — auth middleware skips `/api/setup/*` |
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
+| Mirror capture setup (daemon host commands) | OK | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verified on the G11 2026-11-01: `verify-mirror-mode.sh` all checks pass after a reboot (~3,800 pps on enp4s0). |
+| Zeek live cluster | OK | Chain 23: on AMD CPUs with a broken RDRAND every Zeek process got the same Broker ID, the cluster never connected and Zeek wrote no logs. zeek-live is now built locally with a /dev/urandom shim. Verified on the G11 2026-11-01: unique IDs, 9 cluster connections, ~25 Zeek log types written. |
+| OpenSearch index mapping | OK (G11; PR pending) | Chain 24: malcolm_template's index pattern was a placeholder, so every daily index guessed its field types; Zeek records were rejected (event.id as long) and the daemon's queries were built on the guessed `.keyword` fields. Existing boxes: `bash scripts/remote/fix-index-template.sh --delete-today`, then `bash scripts/remote/deploy-malcolm-field-names.sh`. |
+| Dashboard data accuracy | IN PROGRESS (G11) | Chain 25: dashboard figures disagreed with OpenSearch. Batches 1–2 are deployed and verified on the G11; batch 3 (device registry, bandwidth ranking, Log Explorer totals, pcap-monitor DNS storm) is deploying. Remaining: certificates (x509), IoT heuristics, Tools/PCAP/System pages. Tracking: `tracking-fixes/2026-11-01-dashboard-data-accuracy.md`. |
+| NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 
 ---
 
 ## Issue Chain Overview
 
-The deployment bugs fall into **18 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
+The deployment bugs fall into **22 causal chains**. Each chain had a root cause that triggered cascading failures, and some fixes introduced new bugs that required follow-up fixes.
 
 ```
 CHAIN 1: OpenSearch Auth & Bootstrap (NET-48 → NET-49)
@@ -200,6 +205,231 @@ CHAIN 18: PCAP Search Page Redesign (phase-5/mirror-span-mode)
   9. Time range pills: quick time range selection (1h, 6h, 24h, 7d, 30d).
   10. DNS copy button CSS fix: bigger icon (1.25rem), accent-blue color.
   11. Added formatRelativeTime and PROTO_FILTER_MAP helpers to pcap.ts API client.
+
+CHAIN 19: Bundled OUI vendor database never shipped (fix/ci-baseline, PR #142)
+  Commit 2052e94
+  .gitignore's `data/` rule also matched `daemon/data/`, so `oui_database.json` was never
+  committed. Images built on the device lacked it; MacLookupService logs a warning and falls
+  back to an empty DB, so the MAC Lookup tool silently returned no vendor. Found when CI's
+  daemon tests first ran. Fix: allowlist only that file; `notifications.json` (SMTP passwords,
+  API tokens) and every other runtime file under `daemon/data/` stay ignored.
+
+CHAIN 20: Daemon API open to the whole LAN (fix/pr110-review, into PR #110)
+  Commit 520a5b6
+  The daemon moved to `network_mode: host` to reach the UniFi controller, so its aiohttp
+  server on 0.0.0.0:8880 was reachable from any LAN device, with no auth and CORS "*"
+  (bridge teardown, retention, UniFi key, logs). Fix: every request except GET /api/health
+  needs `X-NetTap-Daemon-Token`. The daemon creates the token in the `daemon-auth` volume.
+  Only nettap-web mounts it read-only, and daemonFetch sends it. There is no loopback
+  exemption, because the host-networked Zeek/Suricata/Arkime containers share loopback.
+  Side effect: any script that curls :8880 directly now needs the token (see Known Risks).
+
+CHAIN 21: Real root cause of the OpenSearch 403s (fix/code-review-batch-1, review MS-001)
+  Chains 1, 11 and 15-Fix-5 treated the symptom. Malcolm's OpenSearch image runs
+  setup-internal-users.sh on EVERY start: it envsubsts roles_mapping.yml.orig ($ROLE_ADMIN,
+  $ROLE_CAPTURE_SERVICE, ...) and deletes any entry with an empty role. NetTap's opensearch
+  service set no ROLE_*, so every entry was deleted and only `_meta` was left. setup-post-start.sh
+  then pushed that empty mapping with securityadmin.sh. So the mapping was not "reverting to
+  the image default" on recreate: it was rebuilt empty and re-pushed on every start, plain
+  restarts included, and the manual bootstrap raced that push.
+  Fix: set the eight ROLE_* the mapping uses on the opensearch service (values from Malcolm's
+  config/auth-common.env.example). deploy-malcolm.sh no longer writes roles_mapping.yml; it
+  waits up to 60 s for Malcolm's own push and only runs securityadmin.sh itself as a fallback.
+  fix-opensearch.sh writes the minimal mapping only on a container without ROLE_ADMIN.
+  Verify on the device: `sudo docker restart nettap-opensearch`, wait for healthy, then
+  CLAUDE.md bootstrap Step 4 must return cluster health with no bootstrap run.
+
+CHAIN 22: Ubuntu AppArmor blocked every daemon nsenter, so mirror setup never ran (fix/daemon-drop-nsenter)
+  Found 2026-11-01 on the GMKtec G11 (Ubuntu 24.04.5) mirror trial by verify-mirror-mode.sh.
+  Symptom: the wizard saved mirror mode on enp4s0 and the capture containers listened on it,
+  but the port stayed admin DOWN (state DOWN, no UP flag), so it got no packets. There was no
+  /etc/netplan/10-nettap-mirror-enp4s0.yaml and no nettap-mirror.service, so nothing would
+  survive a reboot either. PROMISC and TSO/GSO/GRO off came from the capture containers'
+  own PCAP_IFACE_TWEAK, which never brings a port up or touches rx-vlan-offload.
+  Root cause: every host network command ran as `nsenter -t 1 -n -- <cmd>`. Ubuntu's
+  docker-default AppArmor profile denies the ptrace read nsenter needs on PID 1 (kernel log:
+  apparmor="DENIED" operation="ptrace" comm="nsenter" peer="unconfined", every 30 s).
+  SYS_ADMIN + SYS_PTRACE + pid: host don't help; AppArmor is checked on top of capabilities.
+  MirrorManager.setup() stopped at its first check (`ip -j link show`) and changed nothing.
+  The same failure hit BridgeManager, BridgeHealthMonitor, HostNetOps (DHCP gateway mode)
+  and nic_discovery (which fell through to a direct `ip` call, so it hid the problem).
+  Second bug it exposed: the wizard's "is this NIC in use" guard (_nic_in_use_problem) read
+  the failed `ip` calls as "no default route, no address" and passed ANY NIC, the management
+  port included. It only stayed safe because setup() failed too.
+  Fix: the daemon already runs with network_mode: host, so _run_nsenter (4 copies) now runs
+  the command directly. The guard fails closed when `ip -j link show dev X` returns nothing.
+  Because setup()'s address flush now really runs at every daemon start, the CR-076 guard
+  went in too: main.py skips mirror setup when the NIC carries the default route or has an
+  IPv4 address (a NIC rename could otherwise point the config at the management port).
+  The review of the fix found two more places CR-076 applied:
+  - The boot unit nettap-mirror.service ran `ip addr flush` by NIC name at every boot, with no
+    check. That line is removed; the netplan file keeps the NIC address-free. Its ethtool -K line
+    is now non-fatal, so a refused offload can't stop the unit before the IPv6 line runs.
+  - Go Live's POST /api/setup/bridge had no in-use check. It works on Ubuntu for the first time
+    now, so it gets the same refusal (and name validation) as the bridge preview.
+  Still true after the fix: /proc/sys is read-only in the container, so setup()'s
+  `sysctl -w ...disable_ipv6=1` only logs a warning. The host boot unit
+  nettap-mirror.service applies it; deploy-drop-nsenter.sh starts that unit once so no
+  reboot is needed. Verify: `bash scripts/remote/deploy-drop-nsenter.sh` (Step 6 must show
+  0 nsenter refusals, Step 8 no ✗ lines), then reboot and run verify-mirror-mode.sh again.
+
+CHAIN 23: AMD RDRAND bug gave every Zeek process the same Broker ID, so Zeek wrote no logs (fix/zeek-rdrand-urandom, NET-127)
+  Found 2026-11-01 on the GMKtec G11 (AMD Ryzen Embedded R2514) right after Chain 22 was verified.
+  Symptom: dashboard empty. Mirror capture worked (~3,800 pps) and Suricata records reached
+  OpenSearch (5,120), but `event.provider:zeek` returned 0. Every zeekctl node said running and
+  listened on 127.0.0.1:27760-27765, yet there were zero connections between them, only
+  cluster.log was written, and zeekdeploy.sh redeployed the cluster every 60-80 s.
+  Root cause: this CPU's RDRAND returns a constant. The kernel logs "RDRAND is not reliable on
+  this platform; disabling" but only stops using it itself; CPUID still advertises it. libstdc++'s
+  std::random_device("default") uses RDSEED/RDRAND, and Broker makes endpoint IDs from it, so
+  every process got 001599e4-f730-5365-83be-168f95cf9782 and Broker refused to peer with
+  "itself". A two-process Broker peering test failed under default seccomp, seccomp=unconfined
+  and bridge networking alike; Python uuid4 (getrandom) was fine.
+  Fix (owner chose the Zeek-only route: no BIOS, kernel or host change): zeek-live is built from
+  docker/Dockerfile.zeek-live = pinned Malcolm Zeek image + libnettap_urandom.so. The library
+  replaces libstdc++'s std::random_device::_M_init and sends "default"/"rdrand"/"rdseed" to
+  /dev/urandom; explicit device files pass through. It loads via /etc/ld.so.preload because zeek
+  has file capabilities, so ld.so runs in secure mode and ignores LD_PRELOAD. It applies to all
+  boxes; /dev/urandom is just as good on healthy CPUs.
+  Build-time guards: a self-test runs in the build stage and again inside the final image (a
+  negative control without the library fails on all three CPU sources), and the build fails if
+  zeek or libbroker stop importing the replaced symbol after a Malcolm tag bump. CI builds the
+  build stage; the compose bats suite checks zeek-live is built with the fix.
+  Verify: `bash scripts/remote/deploy-zeek-rdrand-fix.sh` (Step 4 different IDs, Step 5 cluster
+  connections, Step 6 conn.log lines, Step 7 new Zeek records in OpenSearch).
+
+CHAIN 24: malcolm_template's index pattern was never filled in, so indices guessed field types (fix/index-template-pattern, NET-128)
+  Found 2026-11-01 on the G11 right after Chain 23: Zeek wrote ~25 log types, but Logstash got
+  HTTP 400 "failed to parse field [event.id] of type [long]" for every Zeek conn/dns/ssl/http record
+  (Zeek uids like CT5Rak1Hppryc3RFd6), ~1,800 per 10 min. Devices page empty.
+  Root cause: deploy-malcolm.sh bootstrap_index_templates pushed /opt/templates/malcolm_template.json
+  raw, so index_patterns stayed "MALCOLM_NETWORK_INDEX_PATTERN_REPLACER" and matched no index.
+  Malcolm's own shared-object-creation.sh fills that in, but a malcolm_template already existed, so
+  Logstash's wait passed and nothing replaced it. Every daily arkime_sessions3-* index then guessed
+  its types from its first records: event.id a number (Zeek's text uids rejected), IPs and keywords
+  text + .keyword. This was true on the N100 too: Chain 13 read it as Malcolm's normal mapping and
+  added .keyword to every daemon query, which matches nothing once the template applies.
+  Fix: the installer fills in the pattern (arkime_sessions3-*) before pushing. fix-index-template.sh
+  pushes the corrected template on existing boxes (with --delete-today it also drops today's index so
+  the fix applies now, not at 00:00 UTC). The daemon drops .keyword from every query and Painless
+  script (197 lines, 20 files), log search no longer adds .keyword to sort fields, and the web alert
+  drawer's related-logs query is fixed the same way. test_query_field_names.py fails if a .keyword
+  field name comes back.
+  On the G11 (owner approved deleting today's index, 15,457 records): template pattern now
+  arkime_sessions3-*, new index has source.ip=ip and event.id=keyword, Zeek conn/dns/ssl/http/files
+  indexed with 0 rejections, traffic summary 205 connections. Then deploy-malcolm-field-names.sh
+  rebuilds the daemon and web and checks the devices and traffic APIs.
+
+CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accuracy, NET-129)
+  Found 2026-11-01 on the G11 once Chains 23-24 made data flow. All 121 daemon GET endpoints and
+  every page were compared with direct OpenSearch queries over the same 24 h.
+  Deployment-level causes (the rest are query bugs, see the tracking doc):
+  - The daemon runs with network_mode: host, so the Docker names logstash and nettap-cyberchef don't
+    resolve. The Logstash panels returned 502 and CyberChef read unreachable. Logstash (9600) and
+    CyberChef (8443) are now published on 127.0.0.1 only, and the daemon points at loopback.
+  - zeek-live, suricata-live and arkime-live ran Malcolm's offline PCAP processor (image default
+    *_PCAP_PROCESSOR=true). It polls a pcap-monitor service NetTap doesn't run. On host networking
+    every retry was a DNS lookup sent to the LAN resolver: thousands an hour, about half of all DNS.
+    Now *_PCAP_PROCESSOR: "false", as in Malcolm's own live containers.
+  - zeekctl's hourly conn-summary report landed in the logger spool, and Filebeat shipped it as a
+    record dated 1970 (index arkime_sessions3-700101). zeek-live now sets TraceSummary to empty.
+  - The ISM history index asked for 1 replica on a single node, so the cluster was yellow. The daemon
+    sets history replicas to 0.
+  - arkime-live never started (found 2026-11-02). It has no ./curlrc:/var/local/curlrc:ro mount, so
+    opensearch_status.sh curls https://localhost:9200 with no credentials and no --insecure, fails
+    TLS (unknown_ca, ~58 times a minute in the OpenSearch log) and loops on "Giving opensearch-local
+    time to start...". No Arkime session was ever indexed. Owner decision: turn Arkime off (no page
+    uses it; PCAP Search and TShark read netsniff's files). Tracking #44.
+  - OpenSearch 2.x intermittently fails a "now" date range inside a filter aggregation
+    ("DateRangeIncludingNowQuery does not implement createWeight"). The certificate stats hit it
+    right after a daemon restart and showed 0 of 85. Stats now use absolute times. Tracking #43.
+  Query-level fixes: the device count came from DHCP; MACs were read from a flat _source;
+  pcap-monitor and mDNS were counted as DNS lookups; totals capped at 10,000; byte fields were
+  mixed (client/server.bytes vs source/destination.bytes); risk scores always 502; the smart alerts
+  composite agg read only one page; Alerts panels skipped the engine-event filter; the threat level
+  went "critical" with no critical alerts; the device registry never had a writer.
+  Full list with causes: tracking-fixes/2026-11-01-dashboard-data-accuracy.md.
+  Also: IoT counted Suricata alerts and Zeek dns/ssl/files logs as connections (CONN_RECORDS now
+  limits connection queries to Zeek conn); certificates read ssl sessions instead of x509.
+  Batch 5: arkime-live off (profile "arkime"), PCAP capped at PCAP_MAX_DISK_PCT (25%) of the disk,
+  Live Monitor map bundled offline + LAN-only device count + NIC line-rate bandwidth, CyberChef
+  quick recipes (recipe list lacked recipe_fragment; links used the internal container URL).
+  Batch 6 (PCAP Search): tshark orphaned by asyncio timeouts (now coreutils timeout inside the
+  container), search as a background job, filtered preview via head, proxy no longer cuts PCAP
+  downloads at 10 s.
+  Batch 7 (Settings): PCAP file size read/written where pcap-capture never looked (now
+  capture.env + loader), ILM card never marked synced at startup, About version/uptime.
+  Batch 8: a filtered preview that runs out of time says so (timed_out) instead of
+  "No packets to display".
+  Batch 9: Suricata kernel defrag off (reassembled fragments exceeded its 1514-byte packet
+  size: ~124 truncated-packet alert pairs a day), mirror port on Infrastructure, index counts,
+  "Unidentified" on Home, Settings forms never save defaults after a failed load.
+  Batch 10: two decoder SIDs off (STP/LLDP "Ethertype unknown", "QUIC error on data": two-thirds
+  of all alerts); Suricata Rules page reads the container (/api/suricata/rules/live).
+  Batch 11: per-device alert counts and risk scores leave Suricata engine events out, like the
+  Alerts API (one device read 6,150 alerts, 6,101 of them noise).
+  Batch 12: DGA rule scored the leftmost hostname label (CDN/session IDs) instead of the
+  registered name; suspicious DNS flagged reverse lookups and *.plex.direct (DGA 6 -> 0).
+  Batch 13: device vendors from Malcolm's source.oui (41 of 53 were Unknown), vendor/hostname
+  categories, each IP filed under its most common MAC (routed inter-VLAN legs carry the
+  router's MAC: the UDM's registry entry held 3 IoT IPs), Home grid categorised like Devices.
+  Batch 14: TShark tool filter searched only the first N packets (tshark -c counts packets
+  read; the #50 bug in a second place) and Analyze ignored the typed filter; PCAP path
+  containment by string prefix; PCAP end to end verified (capture, preview, analysis, download).
+  Batch 15: device list made 4 OpenSearch queries per device (N+1) -> one _msearch
+  (1,335 -> 107 ms, identical fields); Windows/console categories; full-width settings pages;
+  README/docs still described Arkime. A 1.7 GB download through the web proxy arrived whole.
+  Batch 16: Grafana never loaded (nginx stripped /grafana/, Grafana serves from that sub-path)
+  and its datasources could never connect (http to HTTPS OpenSearch, no login, wrong indices,
+  raw Zeek field names): off by default, nginx resolves it per request. Retention labels: alerts
+  live in the hot index. Backup docs snapshotted indices that don't exist.
+  Batch 17: OpenSearch Dashboards had no index pattern or dashboards since March: dashboards-
+  helper's programs were FATAL EACCES (NET-53 removed its PUSER_PRIV_DROP override, NET-54 only
+  restored logstash's), then it waited for Arkime's legacy template (Arkime off), then hit an
+  unbound ARKIME_INIT_SHARDS. All three fixed; refresh kept at 1 s. A rerun found a fourth
+  (unbound MALCOLM_NETWORK_INDEX_PATTERN before detectors/alerting); now "job succeeded".
+  Batch 18: registry refresh took 62 s (refresh="wait_for" on every write): 0.9 s, each
+  listing pass refreshes once. Console/streamer hostnames are media.
+  Batch 19: backup guide run on the box: host curl got 401, wrong .env, appdata path was a
+  volume, volume names lacked docker_. Rewritten; snapshot + rename restore pass. DHCP gateway
+  mode's Infrastructure node no longer shows br0.
+  Batch 20: LAN detection kept a /24 only at 10% of the busiest one (IoT VLAN flipped, one-
+  device VLAN dropped); now 1% of all private-source traffic. Compose never passed LAN_SUBNETS.
+  Batch 21: Zeek printed a UniFi AP's DHCP chaddr as 8 bytes, so the registry held a phantom
+  second device; MACs keep 6 octets and long entries merge into the real one.
+  Batch 22: the OpenSearch login (docker/curlrc) was 644 for every local account; now PUID-owned
+  600, and every service still logs in. The installer's bats file had errexit off (fake passes).
+  Batch 23: every filtered TShark analysis spent its full 15 s match scan (piped tshark buffers
+  output and read on after head quit); tshark -l, 17.6 s -> 4.6 s. Same pipe in PCAP preview.
+  Batch 24: the excluded-IP list held the .env.example MGMT_IP placeholder while NetTap's own
+  address was counted everywhere; MGMT_IP must be a local address, else the management NIC's.
+  Batch 25: Top Destinations now also leaves out what excluded IPs send.
+  Batch 26: the Security Posture page crashed on every visit (client read `scores`, the daemon
+  sends `devices`); it loads again.
+  Batch 27: IoT trust scores counted Suricata engine events as alerts (the one count batch 11
+  missed); three devices' security scores 68/60/68 -> 92/85/92.
+  Batch 28: Device detail, its lists and its risk score stopped counting at 10,000 (no
+  track_total_hits); the risk list and detail now share one 500-device baseline.
+  Batch 29: list pages stop at OpenSearch's 10,000-result window (later pages were empty).
+  Batch 30: Security Posture's Encryption and DNS Security cards judged by Zeek service names
+  (19%, and DNS stuck at 0%); now the IoT encryption rule computed by the daemon (62%, 18%).
+  Batch 31: Device detail's 24h/7d/30d buttons had no handlers (always 24 h); the risk
+  proxies dropped from/to/limit.
+  Batch 32: the device-by-MAC page never left its loader (the client returned the daemon's
+  {device} / {traffic} wrappers); traffic now has in/out and per-destination bytes, ranked by bytes.
+  Batch 33: OpenSearch 3.5's concurrent segment search made every terms top-N approximate
+  (device top lists read low); the daemon sets it to none. Categories read every ASN;
+  unique destinations is an exact count.
+  Batch 34: top lists merged across daily indices lost counts (no shard_size anywhere); the
+  daemon's client sets one on every terms aggregation; the DNS median is an HDR percentile.
+  Batch 35: searches whose lists a shard cut short are re-run with longer lists (any network
+  size); the Threats baseline counts hours, not page requests.
+  Verify: bash scripts/remote/deploy-data-accuracy-batch1.sh, then -batch2.sh ... -batch35.sh.
+  Whole goal in one read-only run: bash scripts/remote/verify-acceptance.sh (18 checks);
+  page figures vs OpenSearch: bash scripts/remote/verify-figures.sh (16 checks);
+  every device's own pages: bash scripts/remote/verify-device-figures.sh;
+  figures independent of how the data is split: bash scripts/remote/verify-split-invariance.sh.
+  Each checks its fixes against the live APIs.
 ```
 
 ---
@@ -1008,7 +1238,7 @@ Added missing environment variables and fixed healthcheck endpoints in `docker/d
 | Field | Value |
 |---|---|
 | **Linear** | Not yet filed (manual fix applied) |
-| **Status** | Workaround applied; needs automation |
+| **Status** | Root cause found and fixed in Chain 21 (MS-001); device check pending |
 | **Severity** | High |
 | **Date** | 2026-03-03 |
 
@@ -1042,6 +1272,8 @@ docker compose up --force-recreate
 3. Restart logstash
 
 **TODO:** Automate this — add a startup script or init container that checks if `malcolm_internal` can authenticate AND authorize, and re-runs `securityadmin.sh` if not. This should be part of `deploy-malcolm.sh` or a dedicated healthcheck.
+
+**Update 2026-10-30:** the causal chain above is wrong at its first step. The file is not reset to an image default: Malcolm rebuilds it from `ROLE_*` env on every start, and with no `ROLE_*` set it comes out empty. See Chain 21.
 
 **Key Insight:** `--force-recreate` resets container filesystems but NOT named volumes. Security config lives in TWO places: the config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These can get out of sync. The security plugin reads from the index, not the files — so the files must be pushed to the index via `securityadmin.sh` after any container recreation.
 
@@ -1155,7 +1387,7 @@ Browser sends Origin: https://192.168.x.x (TLS terminated by nginx)
 **Symptoms:**
 Every dashboard page (traffic summary, devices, protocols, top talkers, categories) returned empty data or 400 errors. OpenSearch returned: `"Text fields are not optimised for operations that require per-document field data like aggregations and sorting, so these operations are disabled by default."` on all `terms` aggregation queries.
 
-**Root Cause:**
+**Root Cause:** *(Superseded by Chain 24: the mapping below was dynamic because malcolm_template's index pattern was never filled in. With Malcolm's real mapping these fields have no `.keyword`, and the suffixes were removed.)*
 Malcolm maps all text fields (source.ip, network.transport, destination.ip, network.protocol, zeek.dns.query, etc.) as **text+keyword multi-fields** in OpenSearch. The `text` type supports full-text search but NOT aggregations. Any `terms` aggregation must use the `.keyword` subfield (e.g., `source.ip.keyword`, `network.transport.keyword`). Without the `.keyword` suffix, OpenSearch refuses the aggregation with a 400 error.
 
 **Causal Chain:**
@@ -1444,6 +1676,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | File | PRs | Current State |
 |---|---|---|
 | `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SYS_ADMIN cap_add (covers netsniff-ng file caps — setcap -r unreliable on overlay2)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
+| `docker/Dockerfile.zeek-live` + `docker/zeek-live/` | NET-127 | NEW (Chain 23): Malcolm Zeek image + /dev/urandom shim for std::random_device, loaded via /etc/ld.so.preload. Self-test runs in the build stage and the final image. |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
 | `daemon/storage/manager.py` | NET-80 | `get_status()` returns `disk_total_gb`, `disk_free_gb`, numeric percentages, top-level retention days. Matches frontend `StorageStatus` interface. |
 | `web/src/routes/api/setup/storage/+server.ts` | NET-80 | `normalizeStorageStatus()` transforms old or new daemon format to frontend interface. Safety net for version mismatches. |
@@ -1519,14 +1752,14 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 3. **Malcolm's security plugin has 2 layers** — `internal_users.yml` (auth) + `roles_mapping.yml` (authz). Both must be configured AND pushed via `securityadmin.sh`.
 4. **Fresh deployments have circular template dependencies** — must bootstrap templates before logstash starts.
 41. **`--force-recreate` resets container filesystems but NOT volumes** — security config lives in TWO places: config FILES (reset on recreate) and the `.opendistro_security` INDEX (preserved in volume). These get out of sync. Must re-run `securityadmin.sh` after any `--force-recreate` that touches OpenSearch.
-42. **`roles_mapping.yml` is dynamically generated, not in git** — `deploy-malcolm.sh` writes it at deploy time. The image default is empty (just `_meta` header). If the container is recreated without running the deploy script, all service accounts lose authorization (403 on everything).
+42. **`roles_mapping.yml` is dynamically generated, not in git** — `deploy-malcolm.sh` writes it at deploy time. The image default is empty (just `_meta` header). If the container is recreated without running the deploy script, all service accounts lose authorization (403 on everything). **Corrected by lesson 102.**
 
 ### Docker / Container Gotchas
 5. **`su` failing silently (exit 0)** is extremely hard to debug — the process simply never starts.
 6. **Docker creates missing file bind-mount sources as directories** — always pre-create files before container start.
 7. **`docker compose up -d` blocks on `service_healthy`** — bootstrap logic that runs after `up -d` will deadlock if the healthcheck depends on that bootstrap.
 8. **`id -u` under sudo returns 0** — use `SUDO_UID` or `stat` for real user detection.
-35. **`no-new-privileges` blocks `nsenter`** — the `setns` syscall used by nsenter requires privilege escalation. If a container needs nsenter (e.g., to access host network namespace), it must override `security_opt: [no-new-privileges:false]`. Maintain security via other mechanisms (cap_drop, read_only).
+35. **`no-new-privileges` blocks `nsenter`** — *(Moot since Chain 22: the daemon no longer uses nsenter.)* the `setns` syscall used by nsenter requires privilege escalation. If a container needs nsenter (e.g., to access host network namespace), it must override `security_opt: [no-new-privileges:false]`. Maintain security via other mechanisms (cap_drop, read_only).
 
 ### JVM / Logstash Specifics
 9. **Logstash 9.x filters `-Xss` from `LS_JAVA_OPTS`** — env vars are unreliable for non-heap JVM flags.
@@ -1636,6 +1869,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 95. **Device hostname resolution via DNS answer records works well** — querying `zeek.dns.answers` (the IPs a domain resolves to) and aggregating by `zeek.dns.query.keyword` with `terms size=1` returns the most common hostname for any IP. This is already implemented in `DeviceFingerprint.get_hostname_for_ip()` and adds ~15 hostnames per 37 devices (depends on DNS traffic volume).
 96. **Risk scoring already returns full factor breakdown** — `GET /api/risk/scores/{ip}` returns not just the score/level but an array of `factors` with `{name, score, max, description}` for all 5 weighted factors. No new backend work needed to display the breakdown — just consume the existing API.
 
+### Daemon→Frontend Data Contracts (NEW — 2026-03-16)
+97. **Svelte 5 `{#each (device.ip)}` crashes with `each_key_duplicate` when keys are `undefined`** — if the daemon returns an array of strings (`["10.0.0.1"]`) but the component destructures objects (`device.ip`), every key evaluates to `undefined`, and ALL items share the same key. Svelte 5 throws `each_key_duplicate`, which crashes mid-render and leaves the DOM in a stale loading state (spinner never clears). The fix is always on the data source: return objects `{ip, count, severity}` not bare strings.
+98. **Timeline/chart data contract mismatches cause silent rendering failures, not crashes** — if the daemon returns `{buckets: [{count, signatures}]}` but the component expects `{series: [{total, sub_categories}]}`, the guard clause (`{#if timelineData?.series?.length}`) evaluates to falsy and the section simply never renders. No error in console. Always verify field names AND structure between daemon response and TypeScript types.
+99. **Always include `last_seen` (or equivalent timestamp) in aggregation responses** — OpenSearch `max` aggregation on `@timestamp` adds minimal query cost and prevents `formatRelativeTime(undefined)` rendering broken in the frontend. Add `"latest": {"max": {"field": "@timestamp"}}` as a sub-aggregation to any `terms` bucket that will be displayed with time context.
+
 ### Process Lessons
 20. **Don't apply privilege fixes globally** — scope to only the affected services.
 21. **Re-evaluate workarounds when the root cause is fixed** — leftover workarounds become harmful.
@@ -1644,6 +1882,80 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 24. **Always read the source code** — the assumption that `jvm.options.d/` works in Logstash came from Elasticsearch docs. Reading `JvmOptionsParser.java` would have caught this immediately.
 25. **Test from `install.sh`, not just `docker compose up -d`** — individual service restarts may work while a full fresh deployment reveals missing dependencies.
 52. **`.gitignore` rule `logs/` catches SvelteKit route directories like `web/src/routes/logs/`** — use `git add -f` to override.
+100. **Same trap, worse outcome: `data/` hid `daemon/data/oui_database.json` (Chain 19)** — the file existed on the dev machine, so nothing failed locally. Unanchored `.gitignore` directory rules match at every depth. Prefer an explicit allowlist (`!/daemon/data/`, `/daemon/data/*`, `!/daemon/data/<file>`) over `git add -f`, which leaves the rule in place, so the next new file in that folder is hidden too. Run tests from a clean `git archive` export to catch files that only exist locally.
+101. **`network_mode: host` publishes every listening port to the LAN (Chain 20)** — `ports:` no longer applies, so a server bound to 0.0.0.0 is open to every device on the network. Treat a move to host networking as a new public endpoint: add auth first. Loopback is not a trust boundary either, because every other host-networked container shares it.
+102. **Read the image's entrypoint before writing a workaround (Chain 21)** — Malcolm's OpenSearch builds `roles_mapping.yml` from `ROLE_*` env on every start and pushes it. The 403s came from the missing env, not from a file "reverting". Months of manual bootstraps raced that push. When a Malcolm file keeps going back, find the script that writes it and give it the env it expects.
+103. **AppArmor blocks `nsenter -t 1` from a container on Ubuntu, whatever its capabilities (Chain 22)** — docker-default only allows ptrace between docker-default peers, and host PID 1 is unconfined. If the container already has `network_mode: host`, `nsenter -n` was never needed: run the command directly. Check the kernel log (`journalctl -k | grep DENIED`, readable by the `adm` group) before assuming a capability is missing. Also: a helper that returns `[]` on failure turns every safety check built on it into "looks fine". Make the check fail closed.
+104. **The kernel's "RDRAND is not reliable" warning doesn't protect userspace (Chain 23)** — the kernel stops using RDRAND itself, but CPUID still advertises it, so `std::random_device` in every C++ program on that box returns a constant. In a Broker/zeekctl cluster, "all nodes running, zero connections" means checking `Broker::node_id()` across two runs before suspecting the network or seccomp. A binary with file capabilities ignores LD_PRELOAD; use `/etc/ld.so.preload` inside the image.
+105. **Check the live template before changing queries (Chain 24)** — `GET _index_template/malcolm_template` showed `index_patterns: ["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"]`: the template matched nothing, so indices were dynamically mapped. Chain 13 had "fixed" the symptom (text fields can't be aggregated) by adding `.keyword` to ~200 field references, which baked the broken mapping into the code. When a Malcolm file has a `*_REPLACER` token, Malcolm's scripts fill it in before use; anything NetTap pushes itself must do the same.
+106. **A host-network container can't use Docker DNS names, and its failed lookups leak (Chain 25)** — `logstash:9600` and `nettap-cyberchef:8443` never resolved from the daemon. Anything it calls needs a loopback-published port. Any Malcolm program in a host-network container that polls a missing service (pcap-monitor) sends a DNS query to the LAN resolver on every retry. Check `env | grep _PROCESSOR` in each live container.
+107. **Compare every dashboard number with a direct OpenSearch query (Chain 25)** — unit tests passed for months while the device count read DHCP leases, DNS counted mDNS, and two byte-field pairs were mixed. An endpoint-by-endpoint comparison over the same 24 h, plus checking that numbers shown on two pages agree, found 30+ errors in one pass.
+108. **"Connections" must be filtered to `event.dataset: conn` (Chain 25)** — `arkime_sessions3-*` holds Zeek conn, dns, ssl, files, http and x509 logs plus Suricata alerts, all with `source.mac`. A query without a dataset filter counts all of them: an ESP device read 1% encrypted from 162 alerts + 2 TLS connections. The April "Arkime compatibility" commits that removed these filters were wrong for a Zeek deployment. Use the shared `CONN_RECORDS`.
+109. **A failed query must never render as 0 (Chain 25)** — the certificate service logged an OpenSearch error and returned zeros, and the web client also mapped HTTP errors to zeros, so the card said "0 certificates" with 85 present. Raise in the service, return 503, show "—". Also avoid `now` ranges inside filter aggregations on OpenSearch 2.x.
+110. **Read a container's logs for a retry loop before trusting it is running (Chain 25)** — arkime-live sat "Up" for its whole life while looping on `opensearch_status.sh` (missing curlrc mount). `docker ps` showed it healthy enough; only its log and 58 TLS errors a minute in OpenSearch gave it away.
+111. **Exercise every button once, not just the page load (Chain 25)** — CyberChef "loaded" in three earlier checks, yet every quick recipe failed: the daemon's recipe list never carried the `recipe_fragment` the page posts back, and links pointed at the container's internal URL. Contract mismatches between daemon JSON and the web types only show when the action runs.
+112. **Ground truth must use the app's own definitions (Chain 25)** — Live "30 devices" vs a check's "38" was the check counting every private range; the daemon counts its detected LAN (192.168.1.0/24), same as the Devices page. Compare like with like before calling a figure wrong, then raise the definition itself (#47) as a separate question.
+113. **A timeout on `docker exec` does not stop the process in the container (Chain 25)** — `asyncio.wait_for` (or killing the docker CLI) leaves the exec'd process running. Seven orphaned full-file tshark reads pinned the tshark container at its memory limit and made every preview time out. Run the command under `timeout -k 5 N` inside the container.
+114. **A fetch `AbortSignal.timeout` also kills a response body that is already streaming (Chain 25)** — the web proxy's 10 s timeout silently truncated every PCAP download longer than 10 s. Streaming downloads must use the browser request's signal, not a fixed timer.
+115. **Compose variables are resolved at container creation; `docker restart` never re-reads them (Chain 25)** — a setting the daemon saves for another container must reach it through something that container reads at start (capture.env + the loader), and the page must show the value the process actually runs with (`docker top` the real command line when in doubt).
+116. **Test a time limit with a filter that can never match (Chain 25)** — `frame.len == 1` makes tshark read the whole file, so a 4.4 GB file reliably hits the 45 s limit and a 1 MB one reliably finishes. A real filter like `dns` gives a different answer on every file, which makes it useless for checking the limit itself.
+117. **Kernel defrag can hand Suricata packets bigger than its packet size (Chain 25)** — with AF_PACKET `defrag: yes`, a fragmented datagram reaches Suricata as one packet; above `default-packet-size` (1514) it is cut and flagged "AF-PACKET/IPv4 truncated packet". netsniff (no defrag) saw no frame over 1514, which ruled out jumbo and VLAN frames. Prove it with `ping -s 3000` to the gateway; fix with Suricata's own defrag (`SURICATA_AF_PACKET_DEFRAG=false`, autofp runmode).
+118. **Before trusting a settings page, find what actually reads its file (Chain 25)** — the Suricata Rules page edited `update-sources.yaml`, which suricata-update never reads (the container's `update.yaml` is generated by Malcolm) and which the daemon container did not even mount. Grep for the consumer of every file a page writes.
+119. **Rank alerts by signature, then check every query that counts them (Chain 25)** — two decoder events (STP/LLDP frames, QUIC parse errors) were two-thirds of all Suricata alert documents; a switch-uplink mirror carries layer-2 control traffic Suricata cannot decode. The Alerts API already excluded `SURICATA ` events, but the per-device counts and risk scores did not (#60): one device read 6,150 alerts, 6,101 of them noise. Grep for every `event.dataset: alert` query when you change what counts as an alert.
+120. **Don't pass an API reply back through `docker exec` as an argument (Chain 25)** — a 223 KB suricata-update log in the JSON hit "Argument list too long". Parse the reply in the same in-container Python that fetched it and print only the fields the check needs.
+121. **Check which label a domain heuristic actually scores (Chain 25)** — the DGA rule's comment said "registrable domain" but the code took `parts[0]`, the leftmost label, so every CDN session ID under a real domain read as a DGA. Before tuning a threshold, print the label being scored for the false positives; the bug may be the input, not the threshold.
+122. **On a mirrored uplink, an IP's newest MAC can be the router's (Chain 25)** — a flow routed between VLANs crosses the uplink twice, the second leg with the router as source MAC. Map IP→MAC by the most common MAC (the device's own leg is on every flow), never the latest record.
+123. **Look for Malcolm's enrichment before bundling data (Chain 25)** — the daemon carried 208/500-prefix OUI tables while every record already had Malcolm's full IEEE vendor in `source.oui`. Check what logstash adds to the documents first.
+124. **Two pages showing the same thing must share the rule (Chain 25)** — Home (registry) and Devices (live query) categorised devices by different inputs and disagreed 29 vs 15 Unknown. Reuse the one function, and make the deploy check compare the two pages.
+125. **When a bug is a tool's semantics, grep for every caller of that tool (Chain 25)** — tshark's `-c` counts packets read, not matches. It was fixed for PCAP preview (#50), but the TShark tool built the same `-c N -Y filter` command and returned 0 DNS packets for a busy capture (#64). After such a fix, grep the repo for the same flags.
+126. **Prove a performance refactor changed nothing but speed (Chain 25)** — before batching the device list's per-device queries into `_msearch`, the deploy saved `/api/devices` from the old daemon and compared it with the new one over one fixed `from`/`to` window (a relative "last 24 h" moves between the two calls). 53 of 53 devices matched field for field; only then does the 12× speed-up count.
+127. **A proxied tool's link is not working until a page loads through it (Chain 25)** — Grafana passed its container health check and `/grafana/api/*` answered through nginx, yet every page 301-looped: `proxy_pass http://grafana/;` strips the prefix while `GF_SERVER_SERVE_FROM_SUB_PATH=true` requires it. Check an HTML page through the proxy, and for an app with a datasource, its own datasource health endpoint.
+128. **nginx `upstream` blocks must resolve at start (Chain 25)** — a static `upstream` naming a container that a compose profile may leave out stops nginx, and with it the whole UI. For optional services use `resolver 127.0.0.11` and `set $u http://name:port; proxy_pass $u;`, and test the config with `docker compose run --rm --no-deps --entrypoint nginx <svc> -t` before recreating the front door.
+129. **"healthy" is not "working" for a supervisord container (Chain 25)** — dashboards-helper's healthcheck is `test -d /proc/1`, so it reported healthy for eight months while every program was FATAL. For any Malcolm container, check `supervisorctl -c /etc/supervisord.conf status`; and when a fix is reverted for one service (NET-53), re-check every service the original fix covered (NET-54 restored logstash only).
+130. **Waking a dormant job: read what it will do before you start it (Chain 25)** — the helper's cron had an index size-prune (no-op at limit `'0'`) and would re-stamp `malcolm_template` with a 60 s refresh. Reading the scripts first turned a silent freshness regression into a one-line env setting.
+131. **`refresh="wait_for"` on every write makes a batch job O(n) seconds (Chain 25)** — the device registry waited ~1 s per write, so ~50 devices took 62 s. Write without it; refresh once before any pass that searches what was just written (get by id is realtime). A test fake that models search visibility catches a missing refresh: the stale doc gets written back over the fresh one.
+132. **Run a docs procedure on a real box before calling it fixed (Chain 25)** — the backup guide's index names were fixed (#72), but running it showed the rest failed silently: no login (401), the `.env` Compose doesn't read, a host path that is really a container volume behind `|| true`, and volume names without Compose's `docker_` prefix (which creates an empty volume). Check each step's output, not its exit code.
+133. **A "top N%" threshold relative to the biggest item flips for items near the line (Chain 25)** — LAN detection kept /24s at ≥10% of the busiest subnet; the IoT VLAN sat at 12.6% and moved in and out between restarts, and a real one-device VLAN at 4.7% never counted. Pull the real distribution first, then pick a cut (here 1% of the total) with wide margins on both sides.
+134. **An override env var documented in code is not an override until compose passes it (Chain 25)** — the daemon read `LAN_SUBNETS`, and the plan was "owner sets it in docker/.env", but the compose `environment:` block never listed it. Add a compose bats check for every env var the code treats as configuration.
+135. **Don't trust a protocol field's length to be the hardware's (Chain 25)** — Zeek formats a DHCP chaddr using the client's `hlen`; a UniFi AP sent 8 bytes on one VLAN and the registry grew a phantom device keyed `F4:E2:C6:FF:98:21:62:72`. Normalize identifiers to their real shape (6 octets for Ethernet) at the one place every source passes through.
+136. **A file a dropped-privilege process must read: give it to that user, don't open it to everyone (Chain 25)** — the installer made the OpenSearch login 644 because root:root 600 broke Malcolm (its entrypoints read it as PUID). PUID-owned 600 works for PUID and root and shuts out every other account. Check by reading the file as each process user in each consuming container (`docker exec -u <uid> c test -r f`).
+137. **A bats test that turns off `-e` can't fail on a middle line (Chain 25)** — `set +euo pipefail` in a helper made `test_malcolm_config.bats` pass with failing checks; restoring `-e` exposed 11. Also: a sourced script that defines `run()` replaces bats' `run`; keep a copy (`bats_run`). Prove a new test fails on the old code before trusting it.
+138. **`docker top` needs a PID column** — `docker top c -o uid` fails ("Couldn't find PID field"); use `-o pid,uid`. And an empty list must fail a check, not pass it vacuously.
+139. **`tshark ... | head -n N` does not stop tshark (Chain 25, #78)** — piped tshark buffers 4 KB of output, so it only sees head has quit on a later flush and may read the whole file first. Every filtered analysis used its full 15 s scan for a 1 s job. Use `tshark -l` (flush per line) whenever its output feeds `head`. Time each pass on the box before guessing.
+140. **Zeek windows are never closed (Chain 25)** — a connection is logged when it ends but stamped with its start, so a past time window keeps gaining records. Compare an API figure against OpenSearch by bracketing it between a raw read just before and one just after, not one read taken at another moment.
+141. **Never trust a placeholder from an example env file (Chain 25, #79)** — `.env.example`'s `MGMT_IP=192.168.1.100` was taken as NetTap's own address, excluded, and saved into the owner's list, while the real address was counted. Validate configured addresses against the host (`ip -j -4 addr show`), and keep auto-detected values out of user-owned settings so a wrong one can't stick.
+142. **`sudo -S` eats stdin (Chain 25)** — piping JSON into `sudo docker exec -i` under a password-on-stdin wrapper delivers nothing. Pass data as an argument; it also works with a cached sudo.
+143. **When you fix a filter, grep for every query over the same records (Chain 25, #82)** — batch 11 put the Suricata engine-event exclusion on the per-device alert counts and risk scores. The IoT fleet summary has its own alert-count query, and it never got the exclusion. `grep -rn 'suricata.alert.severity' daemon/` would have found it. The same check also showed that a test must use the scale the API reports: the IoT pillars are percentages of 40 points, so 10 points read as +25, not +10.
+144. **`hits.total` is a lower bound unless the query sets `track_total_hits` (Chain 25, #83–#85)** — OpenSearch stops counting at 10,000 and reports `relation: gte`, so a busy device read exactly 10,000. Find these with `grep -rn 'get("total"' daemon/` and compare with `grep -c track_total_hits`. Once a total is exact, a page count built from it must also stop at `index.max_result_window` (10,000), because `from + size` past it returns nothing.
+145. **One definition per figure, computed in one place (Chain 25, #86)** — "encrypted" was defined twice. The IoT pages used ports plus Zeek protocols, with local chatter left out; Security Posture used service-name substrings on the client. The two disagreed by 43 points (19% vs 62%). Put the rule in a shared constant (`ENCRYPTED_CONN_FILTER`) and have the daemon return the figure. Also check that a score can reach its full range on real data: DNS Security looked for service names Zeek never emits, so it was 0% by construction.
+146. **Check that a control does something, not just that the page renders (Chain 25, #87)** — Device detail's range pills had no handlers, and no figure check could notice, because every figure was correct for 24 h. Click each control in the browser and confirm the requests it sends (here: `from=` changes). A same-end rule applies to range checks too: compare windows that end at the same moment, or the newest minutes skew the result.
+147. **Parse OpenSearch replies as JSON; never grep the numbers (Chain 25, #89)** — batch 32's raw byte check grepped `"value":[0-9]*`. It also caught `hits.total.value` (exactly +10,000 when capped), and sums past ~10^7 come back as `3.7E9`, so the grep kept `3`. Both looked like data errors until the reply was read whole. Pipe the reply into `python3 -c 'json.load(...)'` inside a container (the device has no host Python packages) and pass it as an argument, not stdin, when the harness uses `sudo -S`.
+148. **OpenSearch 3.x terms aggregations are approximate even on one shard (Chain 25, #90)** — `search.concurrent_segment_search.mode` defaults to `auto`, which slices each shard for aggregation searches, so a terms top-N carries a count error (`doc_count_error_upper_bound`) like a multi-shard search. NetTap sets it to `none`. To check a top list, compare it with an exact list (`size` larger than the number of terms), not with the same query shape, and pass `request_cache=false` when probing a settings change: the shard request cache answers repeated size-0 searches.
+149. **Test multi-index behaviour before the data spans several indices (Chain 25, #93–#94)** — forcing `search.concurrent_segment_search.mode` to `all` (transient) makes OpenSearch count each shard in slices and merge them the way it merges daily indices, so an endpoint whose figures change under it will change once a window spans days. A fixed `shard_size` is only exact up to that many terms; read `doc_count_error_upper_bound` (!= 0 means a shard cut its list short) and re-run instead.
+150. **A GET must not change what the next GET reports (Chain 25, #95)** — the Threats baseline appended a point per request, so the figure depended on how often a page was open. Reading the same past window twice and comparing (the split check's A/A2 reads) catches it.
+151. **"All of X" is never a terms top-N (Chain 25, #96)** — a terms aggregation with `size` 500 is the 500 busiest, not every device; code that counts, sums or scans its buckets as "all" goes wrong as soon as a network has more. Use a composite aggregation paged to the end (`storage/all_buckets.py`), which also keeps each reply under `search.max_buckets`. A home network sits under every old cap, so this class of bug never shows on the G11: test it with fakes that return only the top N for terms and every bucket for composites.
+152. **A failed check must never read as "none found" (Chain 25, #96)** — `except: return []` turned a failed beaconing query into "No beaconing patterns detected", a failed alert count into a low risk score, and a failed report into threat level "none". Let the failure reach the API as an HTTP error, have the web client throw on any non-2xx, and have the page say "Couldn't check …". For a section of a bigger reply, name it (`failed_checks`); for a scan stopped by a cap, say so (`complete: false`). OpenSearch itself answers from the shards that worked unless told otherwise, so the daemon's client treats `_shards.failed > 0` as an error.
+153. **Check which host a log record's `source.ip` is before grouping by it (Chain 25, #99)** — Zeek's DHCP records put the *client* in `source.ip` (the address it was given) and carry no server address, so "group DHCP records by source.ip" listed clients as DHCP servers and every device renewing a lease became a critical rogue server. Look at real records first (`assigned_ip` = `source.ip` gave it away). The server is whoever sends from UDP 67 or answers on it, from connection records, and one gateway serving several VLANs is one MAC.
+154. **No input data means "not checked", not 0 (Chain 25, #99)** — the box records no ARP at all, so the ARP spoofing and IP conflict detectors always answered 0. Any detector that depends on one log type should say when that log is empty for the window (`arp_recorded: false` plus a note).
+155. **A cross-check can be the flaky side (Chain 25, #97)** — the heatmap check's own 15-minute `date_histogram` twice put 2 rewritten long-connection records (`_version` 2) 30+ min late on the first read of a run, while the daemon, direct range sums and every later read agreed; it never happened in isolation. Re-read both sides before calling a difference real, and prove which side is right with a third method (here: per-hour range sums and the records' own timestamps). The histogram ran on OpenSearch's skip-list collector (`skip_list_collectors_used` in a profile; switched on automatically for new `@timestamp` fields since 3.3.0). No upstream bug matches and the bad read couldn't be reproduced once the window moved, so the check re-reads both sides up to 3 times rather than changing NetTap's queries on a guess. Update (batch 41, #113): it reproduced. The same 2 cells differed in batches 40 and 41, and a probe showed the 15 min histogram moving up to 3 GB between slots depending on the query's shape, while range filters, the daemon and later reads agreed; it faded as segments with old copies of rewritten records merged. With `profile: true` it was always right. The checks now count with one range filter per slot (a `filters` aggregation), never a `date_histogram`, so the truth side can't share the bug.
+156. **"Last seen" is a record's time, never the time a job ran (Chain 25, #102)** — the registry stamped `last_seen` with `now` on every update, including vendor and OS lookups, so Home said "4m ago" for devices last heard 24 min earlier and "13h ago" for 17 h. Pass the record's timestamp (a hit's sort value, a bucket's `max(@timestamp)`), move it only forward, and repair values the old code left (a device can't be seen after its newest record).
+157. **A parameter the API can't read is a 400, never a quiet default (Chain 25, #104, #105)** — `from=now-5m` became the last 24 h with HTTP 200, and the Infrastructure page divided a day of connections by 300 s: 1,601 evt/s for ~5/s. The reply even echoed the real window; nothing read it. 14 copies of the same parser all did this.
+158. **Check that a component's fields exist in the reply it gets (Chain 25, #101)** — `DeviceGrid` read `total_bytes` and `connection_count` from registry devices that never carry them, so every card showed "--" and nothing failed. A test that renders the real page with a real-shaped reply catches it; a test of a copied formatter can't.
+159. **Run a check where the thing it checks lives (Chain 25, #114, #115)** — the Updates page's rules check and rules update both ran in the daemon container, which has neither the rules file nor `suricata-update`: the check found no file and read as "current" (while `checked` listed it), the update failed with "Command not found", and no test noticed because the tests mocked the file into existence. Read the file in the container that owns it, reuse the code path already verified there (the Suricata Rules page's update), count a source that can't be read as a failed check, and never offer a button the daemon can't carry out (`applies_with`).
+160. **Anything learned from the network once must be relearned (Chain 25, #116)** — LAN subnets were detected at startup only, so a 10.10.0.x network that appeared hours later was in no count and its device never got an IP in the registry; an appliance can run for months between restarts. Re-detect on a schedule, apply the result in place where every reader looks, and keep the last good answer when detection finds nothing rather than falling back to a broad default that changes every figure.
+161. **When a check's flaky side turns out to be the product's method, fix the product (Chain 25, #113, #120)** — lesson 155 moved the checks off `date_histogram` because their own histograms misbucketed; batch 44's split check then caught the same OpenSearch 3.5 skip-list bug in the Log Explorer timeline, off by up to ~970 records an hour and stable across reads. Every top-level time series now counts with `date_range` slots (`storage/time_slots.py`), which equal one range filter per slot. Test each candidate replacement on real data against an independent truth before switching, and probe the nested cases separately: beacon slots under `multi_terms` were exact, so they stayed.
+162. **A container started from another container's image doesn't inherit its compose settings (Chain 25, #123)** — the Malcolm update runs `docker compose` in a helper made from the daemon's image. Compose gives the daemon `user: root`, but the image's USER is nettap, so the helper would have had no docker.sock, no write to `docker/.env` and no read of OpenSearch's files. Pass `--user`, mounts and env explicitly, and test the helper on the box with a read-only preflight before the real run.
+163. **Anything longer than a proxy timeout is a background job with polled status (Chain 25, #124, #125)** — the update apply waited inside one request behind a 10 s proxy, and the page and daemon disagreed on the status shape, so no progress ever showed. Answer 202, keep one status shape both sides test against, and say "not confirmed" when polling gives up.
+164. **Restore what you can't downgrade (Chain 25, #123)** — a newer OpenSearch's data can't be opened by the old one, so a snapshot made through the API doesn't make a rollback. The update copies the whole data volume while the writers are stopped and swaps it back on failure.
+165. **CI's pinned formatter is part of the build (Chain 25)** — PR #152's Lint Python job had been failing on `ruff format --check` (92 files), which silently skipped the daemon tests and Docker builds. Run the pinned version (`uvx ruff@0.17.3 format --check daemon/`) before pushing, not the local one.
+166. **A release upgrade can rename an image, not only change its tag (Chain 25, #129)** — Malcolm 26.04.0 replaced Redis with Valkey, so `malcolm/redis:26.10.0` doesn't exist and the first UI update stopped at the pull ("manifest unknown"; nothing had changed, by design). Valkey also can't read Redis's RDB v12, so it gets its own volume. Before trusting a new tag, `docker manifest inspect` every image the compose file resolves to (batch 46's preflight now does).
+167. **Audit every file in a new image for the env it reads, not only supervisord (Chain 25, #132)** — the supervisord `%(ENV_*)s` audit found nothing missing, but filebeat's `filebeat-zeek-files-logs.yml` read `VALKEY_PASSWORD`, and its program restarted every second while supervisorctl still said RUNNING. Grep the whole image filesystem for the new names, and check that a RUNNING program keeps its pid.
+168. **Healthchecks belong on an endpoint the upstream itself checks (Chain 25, #133)** — `curl /` was 200 on Malcolm 26.02.0 and 404 on 26.10.0, so a working api read unhealthy and the update rolled back. Use what upstream's own health script uses (`/mapi/ping` in `container_health.sh`), which holds across releases.
+169. **Config shared by an upgrade and its rollback must work on both releases (Chain 25, #134)** — dashboards-helper's supervisord.conf was ported to 26.10.0's `index-init.sh`, so after the rollback to 26.02.0 idxinit went FATAL. Any file mounted into both releases picks the release's own path at run time (`[ -x new ] && new || old`), and the rollback path gets the same test the upgrade does.
+170. **"Healthy" is not "working": a rollback is verified like the upgrade (Chain 25, #135)** — after the automatic rollback every container was healthy, but Logstash took 4 more minutes to start its pipelines, so the acceptance check right after it found 0 records. The rollback now waits for records and PCAP to arrive again, and reports a failure (keeping the backup) if they don't.
+171. **Measure an approved fix against the real answer before shipping it (Chain 25, #137)** — the owner approved capping tshark's memory with session reset (`-M`). Measured on a real 181 MB file it found 28,888 `http || tls` packets against the true 28,459 and saved no memory, so it would have made PCAP Search report wrong numbers. The exact fix bounded the input instead (256 MB capture files). Tools that trade state for memory change results; check counts against an unbounded run, and go back to the owner when the approved mechanism doesn't hold.
+172. **A reverse proxy that resolves names once breaks on the next container recreate (Chain 25, #138)** — nginx's `upstream { server nettap-web:3000; }` was resolved at startup; batch 51's `--force-recreate` gave the web container a new IP and every page was a 502 for 16 minutes while the container itself was healthy. Earlier recreates happened to get the same IP back, so it hid for weeks. Make the proxy re-resolve (`resolve` in the upstream, or a variable with `resolver 127.0.0.11`), pin the proxy image when you rely on a version-specific directive, and test by recreating the backend on purpose.
+173. **A blocking call in an async server stalls every request, including the health check (Chain 25, #139)** — the daemon's handlers are `async`, but the OpenSearch client is synchronous. The threat report (8–13 s), risk scores (7.5 s) and beaconing (5.6 s) held the one request loop, so an instant request (`/api/capture/mode`) took 8–9 s, and the top bar's 5 s liveness check said "Can't reach NetTap" on a healthy box. Unit tests never showed it because nothing ran concurrently. The fix was found by watching *other* requests' timings during a page load: identical finish times across unrelated endpoints are the signature. Long blocking work goes in `asyncio.to_thread`. Check new slow endpoints with the daemon's own `nettap.api: GET … (N ms)` log lines (anything over ~2 s). Moving work into threads also exposes shared state that was only ever touched on the loop: the LAN filter's `clear()` + `update()` could be read empty by a handler thread, so it now changes in one step.
 
 ---
 
@@ -1651,6 +1963,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | Risk | Impact | Mitigation |
 |---|---|---|
+| Mirror setup now really runs at every daemon start (Chain 22) | `MirrorManager.setup()` flushes the capture NIC's addresses on each start; before Chain 22 it never ran on Ubuntu | CR-076 guard in `main.py` skips setup when the NIC has the default route or an IPv4 address, and logs `Mirror setup skipped`. If capture stops after a NIC rename, check the daemon log and `/etc/nettap/capture-mode.conf`. |
+| `sysctl -w` from the daemon always fails (Chain 22) | `/proc/sys` is read-only in the container, so mirror setup can't turn IPv6 off on the capture NIC at runtime; a mirrored router advert can then give that NIC an IPv6 address | The host boot unit `nettap-mirror.service` applies it at boot. After a wizard change, run `sudo systemctl restart nettap-mirror.service` or reboot. |
+| Boxes with older, dynamically mapped indices (Chain 24) | The daemon now queries Malcolm's field names (no `.keyword`); on an index from before the template fix those fields are text, so aggregations on it fail and that day's data drops out of dashboard ranges | Run `fix-index-template.sh` (plus `--delete-today` if acceptable). Older daily indices age out with retention; delete them early if their data isn't needed. |
+| zeek-live is a local build on top of the Malcolm Zeek image (Chain 23) | A Malcolm tag bump needs `docker compose build zeek-live`, not just a pull; if the new Zeek stops importing `std::random_device::_M_init`, affected AMD boxes go silent again | The Dockerfile's final-stage checks fail the build in that case. After a tag bump, rebuild zeek-live and read the build log for `random_device shim: ok`. |
+| Every process in zeek-live preloads libnettap_urandom.so (Chain 23) | bash, supervisord and Python also load libstdc++ (shared pages, a few MB) | Accepted. If a process in that container ever misbehaves at start, check it without the preload: `docker run --rm --entrypoint bash nettap/zeek-live:<tag> -c 'mv /etc/ld.so.preload /tmp; <cmd>'`. |
 | Malcolm upgrade may change entrypoint behavior | Supervisord.conf override and PUSER_PRIV_DROP could break | Pin Malcolm image tags; test upgrades in staging |
 | `-Xss8m` may not be enough for future zeek plugins | StackOverflowError returns | Monitor pipeline startup; increase to 16m if needed |
 | `fix-perms` runs chown on every container restart | Slow startup on large data dirs | Consider conditional check (`stat -c %U`) |
@@ -1661,14 +1978,20 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Full `/sys` mount exposes entire sysfs tree to daemon | Larger attack surface than just `/sys/class/net` | Mount is read-only (:ro), container has cap_drop: ALL + selective cap_add, read_only: true. Only `/sys/class/leds` is writable for LED blink. |
 | NIC LED blink unavailable on kernel <6.11 (igc) | Users cannot visually identify NICs via LED | Info fallback shows MAC/PCI/driver; document manual identification in setup guide |
 | Malcolm env files may gain new vars on upgrade | Capture/proxy services crash-loop from missing env vars or broken nginx templates | After upgrading Malcolm tag, diff upstream env files and template files against our compose env vars |
-| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Must re-run security bootstrap (write `roles_mapping.yml` + `securityadmin.sh`) after any `--force-recreate`. TODO: automate in deploy script or init container. |
+| Older `scripts/remote/*.sh` curl `:8880` without the token (Chain 20) | They now get 401 and look like a daemon outage | Before reusing one, read the token first: `TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)`, then `curl -H "X-NetTap-Daemon-Token: $TOKEN" ...`. Never print the token. |
+| `daemon-auth` volume mounted inside the daemon's `/var/run` tmpfs | If mount order differs on the device, the daemon can't create the token and the whole API stays locked (web shows daemon errors) | `deploy-pr110-review-fixes.sh` Step 5 checks the token exists in the daemon and web. If it fails, check `docker inspect nettap-storage-daemon` mounts. |
+| `--force-recreate` breaks OpenSearch security | Logstash, filebeat, and all services using `malcolm_internal` get 403 | Fixed at the root by Chain 21 (`ROLE_*` on the opensearch service); device check pending. Until confirmed, check auth after a recreate and run `bash scripts/remote/fix-opensearch.sh` if it fails. |
 | Storage API format can regress if daemon code is reverted | Setup wizard disk check fails, storage config page broken | `normalizeStorageStatus()` in SvelteKit proxy handles both old and new formats as safety net. Always verify `get_status()` output matches `StorageStatus` interface after daemon changes. |
 | Removing PROTOCOL_HEADER/HOST_HEADER from web env | All form POSTs (setup wizard, login, settings) silently fail with CSRF 403 | These env vars are required for SvelteKit adapter-node behind any TLS-terminating reverse proxy. Document in deployment guide. |
 | SSL key permissions reset on cert regeneration | nettap-nginx crash-loops with "Permission denied" on key file | After regenerating SSL certs, always `chmod 644` the key file. Document in deployment guide. |
 | Malcolm image updates may add/change file capabilities on binaries | EPERM on exec if file caps exceed bounding set | After Malcolm tag bumps, run `getcap` on capture binaries inside the image. Ensure all file caps are in `cap_add`. Do NOT rely on `setcap -r` to strip caps at runtime — it silently fails on overlay2. |
-| OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | TODO: add post-start hook to `nettap.service` or create an init container that runs securityadmin.sh |
+| OpenSearch security bootstrap not automated on boot | After reboot + container recreate, all services get 403 until manual `fix-opensearch.sh` | Not needed after Chain 21: Malcolm's own post-start push now carries the full mapping. Device check pending. |
+| Compose now requires `ARKIME_SECRET` and `GRAFANA_ADMIN_PASSWORD` in `docker/.env` (CR-021, CR-022) | On a device whose `.env` predates them, EVERY `docker compose` command fails with "required variable ... is missing a value" | `scripts/install/malcolm-config.sh` adds missing keys. The batch-1 deploy script adds them before its first compose call. Grafana keeps its old admin password in its database until reset with `grafana cli admin reset-admin-password`, which the deploy script does. |
+| Installed `nettap.service` units still run `docker compose down` on stop (CR-025) | install.sh now writes `ExecStop=... stop`, but a unit installed earlier (or copied from the untracked `scripts/remote/nettap.service`) keeps `down`, so every reboot still recreates all containers | The batch-1 deploy script rewrites `ExecStop` to `stop` in `/etc/systemd/system/nettap.service` and runs `systemctl daemon-reload`. Check with `systemctl cat nettap.service`. |
 | Missing index pattern env vars on new services | Logstash (or any Malcolm service) silently misindexes all events into garbage index names | After adding or modifying any Malcolm service in docker-compose.yml, check Malcolm's upstream env_file references and ensure ALL required env vars are set. Especially `MALCOLM_NETWORK_INDEX_PATTERN`, `MALCOLM_NETWORK_INDEX_SUFFIX`, `MALCOLM_OTHER_INDEX_PATTERN`, `MALCOLM_OTHER_INDEX_SUFFIX` for any service running Logstash filters. |
-| TShark filter may not find packets in very old PCAPs | Arkime rotates PCAP files by size (256MB default), older sessions may span files not in the 5-file search window | The auto-analyze heuristic tries 5 closest PCAPs by modified time. For very old connections, manual PCAP search may be needed. Could increase window or improve heuristic later. |
+| TShark filter may not find packets in very old PCAPs | Arkime rotates PCAP files by size (256MB default), older sessions may span files not in the 5-file search window | The auto-analyze heuristic tries 5 closest PCAPs by modified time. For very old connections, manual PCAP search may be needed. Could increase window or improve heuristic later. Since CR-020 the PCAPs are netsniff's (pcap-capture), rotated by the UI's file-size setting; Arkime writes none. |
+| Since CR-020/MS-002, netsniff in pcap-capture is the only PCAP writer | With PCAP capture turned off in the UI there is no PCAP at all: packet analysis and PCAP download have nothing to read (Arkime used to keep writing its own copy). PCAP older than `cold_days` is now deleted every cycle, including the old `arkime-live/` files | Intended (one writer, half the NVMe writes). arkime-live must be recreated, not restarted, for `pcapWriteMethod=null` to apply; check with `sudo docker exec nettap-arkime-live grep ^pcapWriteMethod /opt/arkime/etc/config.ini`. |
+| Storage manager now stops `nettap-pcap-capture` at critical disk (CR-018) | Capture stays off until usage drops below the resume threshold; the flag `/opt/nettap/data/storage-stopped-capture` survives restarts | Resume respects `PCAP_CAPTURE_ENABLED`. If capture seems stuck off, check the daemon log for `docker start` errors and the flag file. |
 | Suricata alert exclusion is hardcoded in logs.py | If event.dataset naming changes in Malcolm upgrade, alerts may leak back into log stats | Check `event.dataset` values after Malcolm version bumps. The `_EXCLUDE_ALERTS_FILTER` constant uses `{"term": {"event.dataset": "alert"}}`. |
 | pcap-monitor DNS exclusion is query-name based | If Zeek internal monitoring changes, the exclusion pattern breaks | The `_EXCLUDE_DNS_NOISE` filter matches `zeek.dns.query.keyword: "pcap-monitor"` literally. Check after Zeek/Malcolm upgrades. |
 
@@ -1726,3 +2049,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | ddfb627 | Svelte build fix: {@const} inside <div> invalid — inline expressions instead | 2026-03-13 |
 | — | 7d44e5d | Device intelligence dashboard v2: 7 sections + TShark drill-down drawer | 2026-03-13 |
 | — | c948e8c | Svelte build fix: {@const} inside <svg> invalid — $derived arc calc instead | 2026-03-13 |
+| — | 2052e94 | Ship bundled OUI vendor DB: .gitignore `data/` also hid `daemon/data/oui_database.json` (Chain 19) | 2026-10-29 |
+| — | 520a5b6 | Daemon API token: host networking had left :8880 open to the LAN (Chain 20) | 2026-10-29 |

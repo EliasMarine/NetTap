@@ -78,7 +78,10 @@ class TestGetApiKeysEmptyFile(AioHTTPTestCase):
     """Tests for GET /api/settings/api-keys when env file does not exist."""
 
     def setUp(self):
-        self.tmp_path = tempfile.mktemp(suffix=".env")
+        # OLD CODE START — mktemp names a file another process could create first
+        # self.tmp_path = tempfile.mktemp(suffix=".env")
+        # OLD CODE END
+        self.tmp_path = os.path.join(tempfile.mkdtemp(), "missing.env")
         # Don't create the file -- it should not exist
         super().setUp()
 
@@ -318,9 +321,13 @@ class TestExcludedIpsPut(AioHTTPTestCase):
     """Tests for PUT /api/settings/excluded-ips."""
 
     def setUp(self):
-        self.tmp_env = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
+        self.tmp_env = tempfile.NamedTemporaryFile(
+            suffix=".env", delete=False, mode="w"
+        )
         self.tmp_env.close()
-        self.tmp_ips = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
+        self.tmp_ips = tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w"
+        )
         self.tmp_ips.close()
         super().setUp()
 
@@ -398,17 +405,54 @@ class TestExcludedIpsPut(AioHTTPTestCase):
         self.assertEqual(data["count"], 0)
         self.assertEqual(self.app["excluded_ips"], [])
 
+    async def _put_rejected(self, entries):
+        """PUT entries, assert 400, and assert nothing was saved."""
+        self.app["excluded_ips"] = ["1.2.3.4"]
+        resp = await self.client.request(
+            "PUT", "/api/settings/excluded-ips", json={"excluded_ips": entries}
+        )
+        self.assertEqual(resp.status, 400)
+        data = await resp.json()
+        self.assertIn("single IP address", data["error"])
+        self.assertEqual(self.app["excluded_ips"], ["1.2.3.4"])
+        with open(self.tmp_ips.name) as f:
+            self.assertEqual(f.read(), "")
+
+    @unittest_run_loop
+    async def test_put_rejects_cidr(self):
+        """A CIDR range is not a single IP and is rejected."""
+        await self._put_rejected(["10.0.0.1", "192.168.1.0/24"])
+
+    @unittest_run_loop
+    async def test_put_rejects_junk(self):
+        """Hostnames, empty strings and non-strings are rejected."""
+        for entries in (["router.lan"], ["  "], [42], [{"ip": "10.0.0.1"}]):
+            await self._put_rejected(entries)
+
+    @unittest_run_loop
+    async def test_put_normalizes_ips(self):
+        """Valid entries are stored stripped and in canonical form."""
+        resp = await self.client.request(
+            "PUT",
+            "/api/settings/excluded-ips",
+            json={"excluded_ips": [" 10.0.0.1 ", "2001:DB8:0::1", "2001:db8::1"]},
+        )
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(self.app["excluded_ips"], ["10.0.0.1", "2001:db8::1"])
+
 
 class TestExcludedIpsService(unittest.TestCase):
     """Tests for the excluded IPs service module."""
 
     def test_load_returns_empty_when_file_missing(self):
         from services.excluded_ips import load_excluded_ips
+
         result = load_excluded_ips("/tmp/nonexistent_excluded_ips.json")
         self.assertEqual(result, [])
 
     def test_save_and_load_roundtrip(self):
         from services.excluded_ips import load_excluded_ips, save_excluded_ips
+
         tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         tmp.close()
         try:
@@ -421,14 +465,35 @@ class TestExcludedIpsService(unittest.TestCase):
 
     def test_build_filter_empty_list(self):
         from services.excluded_ips import build_excluded_ips_filter
+
         result = build_excluded_ips_filter([])
         self.assertEqual(result, [])
 
     def test_build_filter_with_ips(self):
         from services.excluded_ips import build_excluded_ips_filter
+
         result = build_excluded_ips_filter(["10.0.0.1", "99.10.70.92"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["terms"]["source.ip"], ["10.0.0.1", "99.10.70.92"])
+
+    def test_build_filter_skips_and_logs_invalid_stored_entries(self):
+        """Entries saved before validation (CIDR, junk) are skipped and logged."""
+        from services.excluded_ips import (
+            _warn_invalid_entry,
+            build_excluded_ips_filter,
+        )
+
+        _warn_invalid_entry.cache_clear()
+        with self.assertLogs("nettap.services.excluded_ips", "WARNING") as logs:
+            result = build_excluded_ips_filter(["10.0.0.0/24", "10.0.0.1", "junk"])
+        self.assertEqual(result, [{"terms": {"source.ip": ["10.0.0.1"]}}])
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("10.0.0.0/24", logs.output[0])
+
+    def test_build_filter_all_invalid_returns_empty(self):
+        from services.excluded_ips import build_excluded_ips_filter
+
+        self.assertEqual(build_excluded_ips_filter(["10.0.0.0/8", ""]), [])
 
 
 if __name__ == "__main__":

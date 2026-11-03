@@ -10,9 +10,13 @@ common RFC1918 source IP subnets to automatically identify the user's
 actual LAN without any manual configuration.
 """
 
+import functools
+import ipaddress
 import json
 import logging
 import os
+
+from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.excluded_ips")
 
@@ -72,11 +76,18 @@ def _is_rfc1918(a: int, b: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# A /24 counts as LAN when it makes at least this share of all outbound connections from
+# private addresses. G11 (#47): real subnets 85%, 10.7% and 4%; stray sources 0.06% or less.
+_MIN_SUBNET_SHARE = 0.01
+# Source pages carry no sub-aggregations: 10x fewer scans than the default, far below max_buckets
+_SOURCE_PAGE = 10_000
+
+
 def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
     """Auto-detect LAN subnets by querying OpenSearch for common source IPs.
 
     Strategy: aggregate source.ip from recent zeek conn logs, extract the
-    /24 subnet of each top IP, keep only RFC1918 subnets, and return them
+    /24 subnet of every IP, keep only RFC1918 subnets, and return them
     sorted by frequency. This correctly identifies the user's actual LAN
     regardless of their subnet scheme (192.168.1.x, 10.0.1.x, 172.16.x.x, etc.).
 
@@ -105,7 +116,7 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                             "script": {
                                 "script": {
                                     "source": """
-                                        def ip = doc['destination.ip.keyword'].size() > 0 ? doc['destination.ip.keyword'].value : '';
+                                        def ip = doc['destination.ip'].size() > 0 ? doc['destination.ip'].value : '';
                                         if (ip.length() == 0) return false;
                                         def parts = ip.splitOnToken('.');
                                         if (parts.length != 4) return false;
@@ -116,25 +127,44 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                                         if (a == 192 && b == 168) return false;
                                         return true;
                                     """,
-                                    "lang": "painless"
+                                    "lang": "painless",
                                 }
                             }
                         },
                     ]
                 }
             },
-            "aggs": {
-                "top_sources": {
-                    "terms": {
-                        "field": "source.ip.keyword",
-                        "size": 500,
-                    }
-                }
-            },
+            # OLD CODE START — #96: the 500 busiest sources only
+            # "aggs": {
+            #     "top_sources": {
+            #         "terms": {
+            #             "field": "source.ip",
+            #             "size": 500,
+            #         }
+            #     }
+            # },
+            # OLD CODE END
         }
 
-        result = client.search(index=NETWORK_INDEX, body=query)
-        buckets = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        # OLD CODE START — #96: on a network with more than 500 sources, quieter devices fell out
+        # of their subnet's count and of the total its share is measured against
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # buckets = (
+        #     result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
+        # )
+        # OLD CODE END
+        pages, complete = all_buckets(
+            client,
+            NETWORK_INDEX,
+            query["query"],
+            [{"ip": {"terms": {"field": "source.ip"}}}],
+            page_size=_SOURCE_PAGE,
+        )
+        if not complete:
+            logger.warning(
+                "LAN detection stopped at %d sources; shares are partial", len(pages)
+            )
+        buckets = [{**b, "key": b["key"]["ip"]} for b in pages]
 
         if not buckets:
             logger.warning("LAN detection: no source IPs found in OpenSearch")
@@ -166,9 +196,15 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         # Sort by connection count descending, take top subnets
         sorted_subnets = sorted(subnet_counts.items(), key=lambda x: x[1], reverse=True)
 
-        # Only keep subnets with meaningful traffic (>10% of the top subnet's traffic)
-        top_count = sorted_subnets[0][1]
-        threshold = top_count * 0.10
+        # OLD CODE START — #47: 10% of the busiest subnet dropped quiet real LANs (an IoT
+        # VLAN at ~11% flipped in and out between restarts; a one-device VLAN at 5% never got in)
+        # # Only keep subnets with meaningful traffic (>10% of the top subnet's traffic)
+        # top_count = sorted_subnets[0][1]
+        # threshold = top_count * 0.10
+        # OLD CODE END
+        # Keep every subnet with a real share of all LAN traffic; stray RFC1918 sources
+        # (a VPN client, a host's container network) stay far below it
+        threshold = sum(subnet_counts.values()) * _MIN_SUBNET_SHARE
         detected = [s for s, c in sorted_subnets if c >= threshold]
 
         logger.info(
@@ -239,7 +275,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
             "script": {
                 "script": {
                     "source": """
-                        def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
+                        def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
                         if (ip.length() == 0) return false;
                         def parts = ip.splitOnToken('.');
                         if (parts.length != 4) return false;
@@ -250,7 +286,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                         if (a == 192 && b == 168) return true;
                         return false;
                     """,
-                    "lang": "painless"
+                    "lang": "painless",
                 }
             }
         }
@@ -270,7 +306,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
         "script": {
             "script": {
                 "source": f"""
-                    def ip = doc['source.ip.keyword'].size() > 0 ? doc['source.ip.keyword'].value : '';
+                    def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
                     if (ip.length() == 0) return false;
                     def parts = ip.splitOnToken('.');
                     if (parts.length != 4) return false;
@@ -279,7 +315,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                     int c = Integer.parseInt(parts[2]);
                     return {condition_str};
                 """,
-                "lang": "painless"
+                "lang": "painless",
             }
         }
     }
@@ -315,17 +351,173 @@ def detect_and_build_lan_filter(client) -> dict:
     return build_lan_filter([])
 
 
+def changed_lan_filter(client, current: dict) -> dict | None:
+    """Re-run LAN detection; the new filter if the subnets changed, else None (#116).
+
+    Detection ran only at startup, so a subnet first seen later (a new VLAN) counted
+    nowhere until a restart. With LAN_SUBNETS set, or when detection finds nothing
+    (e.g. OpenSearch unreachable), the current filter stays: falling back to all of
+    RFC1918 on a hiccup would change every count.
+    """
+    if _parse_manual_subnets():
+        return None
+    detected = detect_lan_subnets(client)
+    if not detected:
+        return None
+    new = build_lan_filter(detected)
+    return None if new == current else new
+
+
 # Module-level fallback — used only until auto-detection runs in create_app()
 # After startup, devices.py and risk.py read from request.app["lan_filter"]
 RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
+
+
+# OLD CODE START — 2026-11-02: also matched records with no event.dataset (Arkime
+# sessions). arkime-live indexes the same flows Zeek logs, so once it runs every
+# connection would count twice; traffic/devices/bandwidth already use Zeek conn only.
+# # Connection records only: Zeek conn, or Arkime sessions (no event.dataset). The
+# # index also holds dns/ssl/files/http records and Suricata alerts that share
+# # source.mac; counting those as connections made an ESP device 1% "encrypted"
+# # (162 alerts + 2 TLS connections) on the G11, 2026-11-02.
+# CONN_RECORDS: dict = {
+#     "bool": {
+#         "should": [
+#             {"term": {"event.dataset": "conn"}},
+#             {"bool": {"must_not": [{"exists": {"field": "event.dataset"}}]}},
+#         ],
+#         "minimum_should_match": 1,
+#     }
+# }
+# OLD CODE END
+# Connection records only (Zeek conn). The index also holds dns/ssl/files/http logs and
+# Suricata alerts that share source.mac; counting those as connections made an ESP
+# device 1% "encrypted" (162 alerts + 2 TLS connections) on the G11, 2026-11-02.
+CONN_RECORDS: dict = {"term": {"event.dataset": "conn"}}
+
+
+# OLD CODE START — #79: MGMT_IP was trusted as is. .env.example ships MGMT_IP=192.168.1.100,
+# so that placeholder (often a real device's address) was excluded from every page while
+# NetTap's own address (G11: 192.168.1.199, 38,744 connections a day) was counted
+# def detect_appliance_ip() -> str | None:
+#     mgmt_ip = os.environ.get("MGMT_IP", "").strip()
+#     if mgmt_ip:
+#         return mgmt_ip
+#     mgmt_iface = os.environ.get("MGMT_INTERFACE", "").strip()
+#     if mgmt_iface:
+#         return _detect_interface_ip(mgmt_iface)
+#     return None
+# OLD CODE END
+def detect_appliance_ip(fallback_iface: str = "") -> str | None:
+    """Auto-detect the appliance's management interface IPv4 address.
+
+    Priority: MGMT_IP env var, if this host holds it > MGMT_INTERFACE > fallback_iface
+    (the capture config's management NIC) > None
+    """
+    mgmt_ip = os.environ.get("MGMT_IP", "").strip()
+    if mgmt_ip:
+        local = _local_ipv4s()
+        if (
+            local is None or mgmt_ip in local
+        ):  # can't list addresses: trust it, as before
+            return mgmt_ip
+        logger.warning(
+            "MGMT_IP %s is not an address of this host; ignoring it", mgmt_ip
+        )
+
+    for iface in (os.environ.get("MGMT_INTERFACE", "").strip(), fallback_iface.strip()):
+        if iface:
+            ip = _detect_interface_ip(iface)
+            if ip:
+                return ip
+    return None
+
+
+def _local_ipv4s() -> set[str] | None:
+    """This host's IPv4 addresses (the daemon runs with host networking), or None if unknown."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            import json as _json
+
+            return {
+                a["local"]
+                for iface in _json.loads(result.stdout)
+                for a in iface.get("addr_info", [])
+                if a.get("local")
+            }
+    except Exception as exc:
+        logger.debug("Could not list local addresses: %s", exc)
+    return None
+
+
+def _detect_interface_ip(iface: str) -> str | None:
+    """Get the first IPv4 address of a network interface using ip command."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show", iface],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            import json as _json
+
+            data = _json.loads(result.stdout)
+            if data and data[0].get("addr_info"):
+                return data[0]["addr_info"][0].get("local")
+    except Exception as exc:
+        logger.debug("Could not detect IP for %s: %s", iface, exc)
+    return None
+
+
+def parse_single_ip(value: object) -> str | None:
+    """Return the canonical form of one IPv4/IPv6 address, or None.
+
+    CIDR ranges, hostnames and anything that isn't a string are rejected.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+# lru_cache makes this warn once per distinct entry instead of on every query
+@functools.lru_cache(maxsize=256)
+def _warn_invalid_entry(entry: str) -> None:
+    logger.warning("Ignoring excluded IP entry %s: not a single IP address", entry)
 
 
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
     """Build OpenSearch must_not clauses to exclude IPs from source.ip aggregations.
 
     Returns a list suitable for insertion into a bool query's must_not array.
-    Returns an empty list if no IPs are excluded.
+    Returns an empty list if no IPs are excluded. Entries that aren't a
+    single IP (e.g. CIDRs saved before validation existed) are skipped.
     """
-    if not excluded_ips:
+    # OLD CODE START — passed stored entries through unvalidated
+    # if not excluded_ips:
+    #     return []
+    # return [{"terms": {"source.ip": excluded_ips}}]
+    # OLD CODE END
+    valid = []
+    for entry in excluded_ips or []:
+        ip = parse_single_ip(entry)
+        if ip is None:
+            _warn_invalid_entry(repr(entry))
+        else:
+            valid.append(ip)
+    if not valid:
         return []
-    return [{"terms": {"source.ip": excluded_ips}}]
+    return [{"terms": {"source.ip": valid}}]

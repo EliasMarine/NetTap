@@ -1,4 +1,115 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import * as captureApi from '$api/capture';
+import CaptureHealthPanel from './CaptureHealthPanel.svelte';
+
+vi.mock('$api/capture', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/capture')>()),
+	getCaptureHealth: vi.fn(),
+	getCaptureStats: vi.fn(),
+}));
+
+// ---------------------------------------------------------------------------
+// Rendered panel: mode badge (CR-212)
+// ---------------------------------------------------------------------------
+
+describe('CaptureHealthPanel mode badge', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	async function renderWithMode(mode: string) {
+		vi.mocked(captureApi.getCaptureHealth).mockResolvedValue({
+			mode,
+			status: 'normal',
+			capture_interface: 'enp1s0',
+			link_up: true,
+			promisc_enabled: true,
+			issues: [],
+		});
+		vi.mocked(captureApi.getCaptureStats).mockResolvedValue({
+			capture_interface: 'enp1s0',
+			rx_bytes: 0,
+			tx_bytes: 0,
+			rx_packets: 0,
+			tx_packets: 0,
+			rx_dropped: 0,
+			rx_missed_errors: 0,
+			link_speed_mbps: 0,
+			drop_rate_pct: 0,
+		});
+		render(CaptureHealthPanel);
+		await vi.waitFor(() => expect(screen.getByText('enp1s0')).toBeInTheDocument());
+	}
+
+	it('labels dhcp_gateway as DHCP Gateway, not Inline Bridge', async () => {
+		await renderWithMode('dhcp_gateway');
+
+		expect(screen.getByText('DHCP Gateway')).toBeInTheDocument();
+		expect(screen.queryByText('Inline Bridge')).not.toBeInTheDocument();
+	});
+
+	it('still labels bridge as Inline Bridge', async () => {
+		await renderWithMode('bridge');
+		expect(screen.getByText('Inline Bridge')).toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Rendered panel: a failed request is not "Down" or a 0% drop rate (#96)
+// ---------------------------------------------------------------------------
+
+describe('CaptureHealthPanel when a request fails', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	const HEALTH = { mode: 'mirror', status: 'normal', capture_interface: 'enp4s0', link_up: true, promisc_enabled: true, issues: [] };
+	const STATS = {
+		capture_interface: 'enp4s0', rx_bytes: 2048, tx_bytes: 0, rx_packets: 20, tx_packets: 0,
+		rx_dropped: 0, rx_missed_errors: 0, link_speed_mbps: 2500, drop_rate_pct: 0,
+	};
+
+	/** Real getters over a stubbed fetch: each URL gets its body, or HTTP 500 when it has none. */
+	async function renderWith(replies: Record<string, unknown>) {
+		const real = await vi.importActual<typeof import('$api/capture')>('$api/capture');
+		vi.mocked(captureApi.getCaptureHealth).mockImplementation(real.getCaptureHealth);
+		vi.mocked(captureApi.getCaptureStats).mockImplementation(real.getCaptureStats);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL) => {
+				const body = replies[String(input)];
+				if (body == null) return new Response('{}', { status: 500 });
+				return new Response(JSON.stringify(body), { status: 200 });
+			}),
+		);
+		render(CaptureHealthPanel);
+	}
+
+	it('says capture health could not be checked instead of "Down"', async () => {
+		await renderWith({});
+
+		expect(await screen.findByText("Couldn't check capture health: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('Down')).not.toBeInTheDocument();
+		expect(screen.queryByText('Inline Bridge')).not.toBeInTheDocument();
+	});
+
+	it('says the counters could not be loaded instead of a 0% drop rate', async () => {
+		await renderWith({ '/api/capture/health': HEALTH });
+
+		expect(await screen.findByText("Couldn't load capture counters: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('0.000%')).not.toBeInTheDocument();
+	});
+
+	it('shows the real readings when both requests succeed', async () => {
+		await renderWith({ '/api/capture/health': HEALTH, '/api/capture/stats': STATS });
+
+		expect(await screen.findByText('0.000%')).toBeInTheDocument();
+		expect(screen.getByText('Mirror / SPAN')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+});
 
 /**
  * Tests for CaptureHealthPanel component logic.
@@ -35,6 +146,7 @@ function modeBadgeClass(mode: string): string {
 }
 
 function modeLabel(mode: string): string {
+	if (mode === 'dhcp_gateway') return 'DHCP Gateway';
 	return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline Bridge';
 }
 

@@ -7,7 +7,10 @@ All tests use mocks -- no Docker or CyberChef container required.
 import asyncio
 import base64
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
+from urllib.parse import unquote
+
+import aiohttp
 
 import sys
 import os
@@ -37,8 +40,10 @@ class TestGetRecipesAll(unittest.TestCase):
             self.assertIn("description", recipe)
             self.assertIn("category", recipe)
             self.assertIn("url", recipe)
-            # URL should start with the base URL
-            self.assertTrue(recipe["url"].startswith(CYBERCHEF_INTERNAL_URL))
+            # the web page posts the fragment back to build a link
+            self.assertTrue(recipe["recipe_fragment"].startswith("#recipe="))
+            # browser link through the nginx proxy, not the internal container URL
+            self.assertTrue(recipe["url"].startswith("/cyberchef/#recipe="))
 
 
 class TestGetRecipesByCategory(unittest.TestCase):
@@ -97,11 +102,11 @@ class TestBuildRecipeUrlNoInput(unittest.TestCase):
     """test_build_recipe_url_no_input: Verify URL construction without input."""
 
     def test_build_url_no_input(self):
-        """URL should be base_url + / + recipe_fragment with no input appended."""
+        """URL should be /cyberchef/ + recipe_fragment with no input appended."""
         svc = CyberChefService()
         fragment = "#recipe=From_Base64('A-Za-z0-9%2B/%3D',true,false)"
         url = svc.build_recipe_url(fragment)
-        expected = f"{CYBERCHEF_INTERNAL_URL}/{fragment}"
+        expected = f"/cyberchef/{fragment}"
         self.assertEqual(url, expected)
 
     def test_build_url_empty_input(self):
@@ -116,14 +121,27 @@ class TestBuildRecipeUrlWithInput(unittest.TestCase):
     """test_build_recipe_url_with_input: Verify base64-encoded input appended."""
 
     def test_build_url_with_input(self):
-        """Input data should be base64-encoded and appended as &input= parameter."""
+        """Input data should be unpadded base64, percent-encoded, as &input=."""
         svc = CyberChefService()
         fragment = "#recipe=From_Base64('A-Za-z0-9%2B/%3D',true,false)"
-        input_data = "SGVsbG8gV29ybGQ="
+        input_data = "aGVsbG8gbmV0dGFw"
         url = svc.build_recipe_url(fragment, input_data=input_data)
-        # Verify the input is base64-encoded in the URL
-        encoded_input = base64.b64encode(input_data.encode()).decode()
-        self.assertIn(f"&input={encoded_input}", url)
+        # b64("aGVsbG8gbmV0dGFw") = "YUdWc2JHOGdibVYwZEdGdw==" -> padding dropped
+        self.assertTrue(url.endswith("&input=YUdWc2JHOGdibVYwZEdGdw"))
+
+    def test_build_url_input_round_trips_through_cyberchef_parsing(self):
+        """'+', '/' and padding survive CyberChef's hash parsing ("=" split, "+" -> space)."""
+        svc = CyberChefService()
+        input_data = "???>>>\xff"
+        raw = base64.b64encode(input_data.encode()).decode()
+        self.assertTrue(all(c in raw for c in "+/="))  # the cases that used to break
+        url = svc.build_recipe_url("#recipe=To_Hex('Space',0)", input_data=input_data)
+        value = url.split("&input=", 1)[1]
+        self.assertNotIn("=", value)
+        self.assertNotIn("+", value)
+        decoded = unquote(value.replace("+", " "))
+        restored = base64.b64decode(decoded + "=" * (-len(decoded) % 4)).decode()
+        self.assertEqual(restored, input_data)
 
     def test_build_url_with_input_replaces_existing_placeholder(self):
         """When fragment already has &input=, the placeholder should be replaced."""
@@ -132,86 +150,89 @@ class TestBuildRecipeUrlWithInput(unittest.TestCase):
         fragment = "#recipe=From_Hex('Auto')&input="
         input_data = "deadbeef"
         url = svc.build_recipe_url(fragment, input_data=input_data)
-        encoded_input = base64.b64encode(input_data.encode()).decode()
+        encoded_input = base64.b64encode(input_data.encode()).decode().rstrip("=")
         self.assertIn(f"&input={encoded_input}", url)
         # Should NOT have a bare &input= left over
         self.assertNotIn("&input=&", url)
 
-    def test_build_url_with_custom_base_url(self):
-        """Custom base_url should be used in the constructed URL."""
-        custom_url = "http://localhost:9999"
-        svc = CyberChefService(base_url=custom_url)
+    def test_build_url_with_custom_public_path(self):
+        """Links use the public path; the internal base_url is for health checks only."""
+        svc = CyberChefService(base_url="http://localhost:9999", public_path="/chef")
         fragment = "#recipe=URL_Decode()"
         url = svc.build_recipe_url(fragment, input_data="test data")
-        self.assertTrue(url.startswith(custom_url))
+        self.assertTrue(url.startswith("/chef/#recipe="))
+
+
+_HEALTH_URL = f"{CYBERCHEF_INTERNAL_URL}/health"
+
+
+def _patched_session(status=None, exc=None):
+    """Patch aiohttp.ClientSession so GET /health returns `status` or raises `exc`.
+
+    Plain unittest.mock on purpose: aioresponses lags aiohttp releases
+    (0.7.9 breaks on aiohttp 3.14), and CI installs the newest aiohttp.
+    """
+    session = MagicMock()
+    if exc is not None:
+        session.get.side_effect = exc
+    else:
+        session.get.return_value.__aenter__.return_value.status = status
+    factory = MagicMock()
+    factory.return_value.__aenter__.return_value = session
+    return patch("aiohttp.ClientSession", factory), session
 
 
 class TestIsAvailableRunning(unittest.TestCase):
-    """test_is_available_running: Mock docker inspect returning 'true'."""
+    """is_available() checks CyberChef's HTTP health endpoint."""
 
     def test_is_available_running(self):
-        """When container is running, should report available=True with URL."""
+        """A 200 from /health reports available=True with the URL."""
 
         async def run():
-            svc = CyberChefService()
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(return_value=(b"true\n", b""))
-            mock_process.returncode = 0
-
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock
-            ) as mock_exec:
-                mock_exec.return_value = mock_process
-                result = await svc.is_available()
-                self.assertTrue(result["available"])
-                self.assertTrue(result["container_running"])
-                self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
-                self.assertEqual(result["url"], CYBERCHEF_INTERNAL_URL)
-                self.assertNotIn("error", result)
+            patcher, session = _patched_session(status=200)
+            with patcher:
+                result = await CyberChefService().is_available()
+            session.get.assert_called_once_with(_HEALTH_URL)
+            self.assertTrue(result["available"])
+            self.assertTrue(result["container_running"])
+            self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
+            self.assertEqual(result["url"], CYBERCHEF_INTERNAL_URL)
+            self.assertNotIn("error", result)
 
         asyncio.run(run())
 
 
 class TestIsAvailableNotRunning(unittest.TestCase):
-    """test_is_available_not_running: Mock docker inspect returning 'false'."""
+    """Non-200 responses and connection errors report unavailable."""
 
     def test_is_available_not_running(self):
-        """When container is not running, should report available=False with no URL."""
+        """A non-200 from /health reports available=False with no URL."""
 
         async def run():
-            svc = CyberChefService()
-            mock_process = AsyncMock()
-            mock_process.communicate = AsyncMock(return_value=(b"false\n", b""))
-            mock_process.returncode = 0
-
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock
-            ) as mock_exec:
-                mock_exec.return_value = mock_process
-                result = await svc.is_available()
-                self.assertFalse(result["available"])
-                self.assertFalse(result["container_running"])
-                self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
-                self.assertIsNone(result["url"])
+            patcher, _ = _patched_session(status=503)
+            with patcher:
+                result = await CyberChefService().is_available()
+            self.assertFalse(result["available"])
+            self.assertFalse(result["container_running"])
+            self.assertEqual(result["container_name"], CYBERCHEF_CONTAINER)
+            self.assertIsNone(result["url"])
+            self.assertNotIn("error", result)
 
         asyncio.run(run())
 
     def test_is_available_error(self):
-        """When docker inspect fails, should return error info."""
+        """A connection error reports unavailable and carries the error text."""
 
         async def run():
-            svc = CyberChefService()
-
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock
-            ) as mock_exec:
-                mock_exec.side_effect = FileNotFoundError("docker not found")
-                result = await svc.is_available()
-                self.assertFalse(result["available"])
-                self.assertFalse(result["container_running"])
-                self.assertIsNone(result["url"])
-                self.assertIn("error", result)
-                self.assertIn("docker not found", result["error"])
+            patcher, _ = _patched_session(
+                exc=aiohttp.ClientConnectionError("connection refused")
+            )
+            with patcher:
+                result = await CyberChefService().is_available()
+            self.assertFalse(result["available"])
+            self.assertFalse(result["container_running"])
+            self.assertIsNone(result["url"])
+            self.assertIn("connection refused", result["error"])
 
         asyncio.run(run())
 

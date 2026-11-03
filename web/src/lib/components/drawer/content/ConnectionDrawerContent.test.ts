@@ -49,10 +49,11 @@ function formatBytes(val: unknown): string {
 }
 
 /** Simulates active tab visibility — mirrors the {#if activeTab === ...} blocks */
-function getVisibleContent(activeTab: string): 'details' | 'tshark' | 'raw' | 'none' {
-	if (activeTab === 'details') return 'details';
+function getVisibleContent(activeTab: string): 'summary' | 'tshark' | 'related' | 'flow' | 'none' {
+	if (activeTab === 'summary') return 'summary';
 	if (activeTab === 'tshark') return 'tshark';
-	if (activeTab === 'raw') return 'raw';
+	if (activeTab === 'related') return 'related';
+	if (activeTab === 'flow') return 'flow';
 	return 'none';
 }
 
@@ -104,16 +105,20 @@ describe('ConnectionDrawerContent logic', () => {
 	// -- Tab visibility -------------------------------------------------------
 
 	describe('tab visibility', () => {
-		it('renders details tab when activeTab="details"', () => {
-			expect(getVisibleContent('details')).toBe('details');
+		it('renders summary tab when activeTab="summary"', () => {
+			expect(getVisibleContent('summary')).toBe('summary');
 		});
 
 		it('renders TShark tab when activeTab="tshark"', () => {
 			expect(getVisibleContent('tshark')).toBe('tshark');
 		});
 
-		it('renders Raw JSON when activeTab="raw"', () => {
-			expect(getVisibleContent('raw')).toBe('raw');
+		it('renders related tab when activeTab="related"', () => {
+			expect(getVisibleContent('related')).toBe('related');
+		});
+
+		it('renders flow tab when activeTab="flow"', () => {
+			expect(getVisibleContent('flow')).toBe('flow');
 		});
 
 		it('renders nothing for unknown tab', () => {

@@ -8,11 +8,10 @@ and sysfs-based statistics.
 """
 
 import asyncio
-import json
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -76,8 +75,7 @@ class TestSetup(unittest.TestCase):
         asyncio.run(mgr.setup())
 
         flush_cmds = [
-            c for c in commands
-            if "addr" in c and "flush" in c and "enp2s0" in c
+            c for c in commands if "addr" in c and "flush" in c and "enp2s0" in c
         ]
         self.assertEqual(len(flush_cmds), 1)
 
@@ -88,10 +86,7 @@ class TestSetup(unittest.TestCase):
 
         asyncio.run(mgr.setup())
 
-        promisc_cmds = [
-            c for c in commands
-            if "promisc" in c and "on" in c
-        ]
+        promisc_cmds = [c for c in commands if "promisc" in c and "on" in c]
         self.assertEqual(len(promisc_cmds), 1)
 
     def test_setup_disables_offloads(self):
@@ -101,10 +96,7 @@ class TestSetup(unittest.TestCase):
 
         asyncio.run(mgr.setup())
 
-        ethtool_k_cmds = [
-            c for c in commands
-            if "ethtool" in c and "-K" in c
-        ]
+        ethtool_k_cmds = [c for c in commands if "ethtool" in c and "-K" in c]
         self.assertEqual(len(ethtool_k_cmds), 1)
         cmd = ethtool_k_cmds[0]
         self.assertIn("tso", cmd)
@@ -119,10 +111,7 @@ class TestSetup(unittest.TestCase):
 
         asyncio.run(mgr.setup())
 
-        ethtool_g_cmds = [
-            c for c in commands
-            if "ethtool" in c and "-G" in c
-        ]
+        ethtool_g_cmds = [c for c in commands if "ethtool" in c and "-G" in c]
         self.assertEqual(len(ethtool_g_cmds), 1)
         cmd = ethtool_g_cmds[0]
         self.assertIn("rx", cmd)
@@ -136,8 +125,11 @@ class TestSetup(unittest.TestCase):
         asyncio.run(mgr.setup())
 
         up_cmds = [
-            c for c in commands
-            if "link" in c and "set" in c and "up" in c
+            c
+            for c in commands
+            if "link" in c
+            and "set" in c
+            and "up" in c
             and "promisc" not in c  # exclude promisc commands
         ]
         self.assertEqual(len(up_cmds), 1)
@@ -178,8 +170,10 @@ class TestSetup(unittest.TestCase):
         """setup() should write persistence files when dirs are configured."""
         import tempfile
 
-        with tempfile.TemporaryDirectory() as netplan_dir, \
-             tempfile.TemporaryDirectory() as systemd_dir:
+        with (
+            tempfile.TemporaryDirectory() as netplan_dir,
+            tempfile.TemporaryDirectory() as systemd_dir,
+        ):
             mgr = MirrorManager(
                 interface="enp2s0",
                 management_interface="enp3s0",
@@ -198,6 +192,45 @@ class TestSetup(unittest.TestCase):
             self.assertTrue(len(result["persistence_files"]) >= 1)
 
 
+class TestBootUnitLink(unittest.TestCase):
+    """LD-001: the boot unit's wants/ link must resolve on the host."""
+
+    def test_link_is_relative_and_replaces_a_stale_one(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as systemd_dir:
+            wants = os.path.join(systemd_dir, "multi-user.target.wants")
+            os.makedirs(wants)
+            link = os.path.join(wants, "nettap-mirror.service")
+            os.symlink("/host/etc/systemd/system/nettap-mirror.service", link)
+
+            mgr = MirrorManager(
+                interface="enp2s0",
+                management_interface="enp3s0",
+                netplan_dir="",
+                systemd_dir=systemd_dir,
+            )
+            mgr._write_systemd_persistence()
+
+            self.assertEqual(os.readlink(link), "../nettap-mirror.service")
+            self.assertTrue(os.path.isfile(link))
+
+    def test_boot_unit_never_flushes_and_survives_an_offload_refusal(self):
+        """CR-076: the unit runs by NIC name at every boot with no in-use check,
+        so it must not flush addresses; a refused offload must not stop it."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as systemd_dir:
+            mgr = MirrorManager(interface="enp4s0", systemd_dir=systemd_dir)
+            mgr._write_systemd_persistence()
+            with open(os.path.join(systemd_dir, "nettap-mirror.service")) as f:
+                unit = f.read()
+
+        self.assertNotIn("addr flush", unit)
+        self.assertIn("ExecStart=-/usr/sbin/ethtool -K enp4s0", unit)
+        self.assertIn("disable_ipv6=1", unit)
+
+
 class TestTeardown(unittest.TestCase):
     """Tests for teardown()."""
 
@@ -214,10 +247,7 @@ class TestTeardown(unittest.TestCase):
 
         result = asyncio.run(mgr.teardown())
 
-        promisc_off_cmds = [
-            c for c in commands
-            if "promisc" in c and "off" in c
-        ]
+        promisc_off_cmds = [c for c in commands if "promisc" in c and "off" in c]
         self.assertEqual(len(promisc_off_cmds), 1)
         self.assertTrue(result["torn_down"])
 
@@ -239,8 +269,9 @@ class TestTeardown(unittest.TestCase):
 class TestGetHealth(unittest.TestCase):
     """Tests for get_health() — checks health status mapping."""
 
-    def _setup_health_mocks(self, mgr, operstate="up", carrier="1",
-                            flags="0x1103", has_ip=False):
+    def _setup_health_mocks(
+        self, mgr, operstate="up", carrier="1", flags="0x1103", has_ip=False
+    ):
         """Set up sysfs and nsenter mocks for health checks."""
         sysfs_files = {
             "operstate": operstate,
@@ -334,6 +365,24 @@ class TestGetHealth(unittest.TestCase):
         self.assertFalse(health.link_up)
         self.assertFalse(health.promisc_enabled)
         self.assertTrue(len(health.issues) >= 1)
+
+    @patch("os.path.exists", return_value=True)
+    def test_failed_ip_check_is_not_normal(self, mock_exists):
+        """#96: an IP check that couldn't run is an issue, not "no IP, all normal"."""
+        mgr = _make_manager(interface="enp2s0")
+        self._setup_health_mocks(mgr, operstate="up", carrier="1", flags="0x1103")
+        del mgr._check_has_ip  # use the real check
+
+        async def ip_fails(*args):
+            return (1, "", "ip: command failed")
+
+        mgr._run_nsenter = ip_fails
+
+        health = asyncio.run(mgr.get_health())
+
+        self.assertEqual(health.status, "degraded")
+        self.assertIn("Could not check whether enp2s0 has an IP address", health.issues)
+        self.assertIsNone(health.extra["has_ip"])
 
 
 class TestGetStats(unittest.TestCase):

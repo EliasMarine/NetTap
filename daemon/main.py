@@ -67,17 +67,26 @@ import os
 import signal
 import logging
 import sys
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from storage.manager import StorageManager, RetentionConfig
+from storage.manager import StorageManager
+from storage.retention_config import RetentionConfigManager
 from smart.monitor import SmartMonitor, auto_detect_device
 from services.bridge_health import BridgeHealthMonitor
-from services.capture_config import load_capture_config
+from services.capture_config import CaptureConfig, load_capture_config
 from services.capture_manager import CaptureManager, CaptureMode
+from services.capture_mode_stub import CaptureManagerStub
 from services.bridge_capture_adapter import BridgeCaptureAdapter
 from services.bridge_manager import BridgeManager
+from services.dhcp_gateway import DhcpGatewayManager
 from services.mirror_manager import MirrorManager
 from api.server import start_api
+from api.devices_v2 import REGISTRY_REFRESH_INTERVAL_S, refresh_device_registry
+from services.excluded_ips import changed_lan_filter
+from api.setup import _nic_in_use_problem
+from api.capture_control import enforce_capture_state
+from api.dhcp_gateway import ensure_capture_lock
 
 logger = logging.getLogger("nettap")
 
@@ -154,7 +163,7 @@ def _parse_curlrc_credentials(config_file: str) -> tuple[str, str] | None:
                     # Remove leading keyword and separators
                     for prefix in ("--user", "-u", "user"):
                         if line.lower().startswith(prefix):
-                            rest = line[len(prefix):].strip()
+                            rest = line[len(prefix) :].strip()
                             # Remove = or : separator
                             if rest.startswith(("=", ":")):
                                 rest = rest[1:].strip()
@@ -238,9 +247,13 @@ async def storage_loop(
     Exits cleanly when *shutdown_event* is set.
     """
     logger.info("Storage monitor loop started (interval=%ds)", interval)
+    loop = asyncio.get_running_loop()
     while not shutdown_event.is_set():
         try:
-            storage.run_cycle()
+            # OLD CODE START — a cycle waiting on _cleanup_lock froze the event loop
+            # storage.run_cycle()
+            # OLD CODE END
+            await loop.run_in_executor(None, storage.run_cycle)
         except Exception:
             logger.exception("Unhandled error in storage cycle")
 
@@ -281,6 +294,77 @@ async def smart_loop(
     logger.info("SMART monitor loop stopped")
 
 
+# detection reads every stored connection (0.9 s on the G11 with two days kept), so hourly
+LAN_REDETECT_INTERVAL_S = 3600
+
+
+async def _redetect_lan(
+    app: Mapping[str, Any], loop: asyncio.AbstractEventLoop
+) -> None:
+    """Pick up a LAN subnet first seen since startup before the registry pass (#116)."""
+    current, storage = app.get("lan_filter"), app.get("storage")
+    if current is None or storage is None:
+        return
+    try:
+        new = await loop.run_in_executor(
+            None, changed_lan_filter, storage._client, current
+        )
+    except Exception:
+        logger.exception("LAN re-detection failed; keeping the current LAN subnets")
+        return
+    if new is not None:
+        # in place, on the event loop: the started app is frozen and every handler reads this dict
+        # OLD CODE START — #139: since slow handlers run in threads, one could read the dict
+        # between clear() and update(), see it empty and send OpenSearch an empty clause
+        # current.clear()
+        # current.update(new)
+        # OLD CODE END
+        current.update(new)  # replaces the "script" key in one step: never seen empty
+        for stale in [key for key in current if key not in new]:
+            del current[stale]
+        logger.info("LAN subnets changed since startup; the LAN filter is updated")
+
+
+async def device_registry_loop(
+    app: Mapping[str, Any],
+    interval: int,
+    shutdown_event: asyncio.Event,
+) -> None:
+    """Refresh the device registry from recent traffic: once at startup, then every *interval* s.
+
+    Exits cleanly when *shutdown_event* is set.
+    """
+    logger.info("Device registry loop started (interval=%ds)", interval)
+    loop = asyncio.get_running_loop()
+    registry = app.get("device_registry")
+    if registry is not None:
+        try:
+            fixed = await loop.run_in_executor(None, registry.correct_last_seen)
+            logger.info(
+                "Device registry: %d last-seen times were later than the last record; corrected",
+                fixed,
+            )
+        except Exception:
+            logger.exception("Device registry: last-seen correction failed")
+    next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S  # startup just detected them
+    while not shutdown_event.is_set():
+        if loop.time() >= next_lan_check:
+            await _redetect_lan(app, loop)
+            next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S
+        try:
+            await loop.run_in_executor(None, refresh_device_registry, app)
+        except Exception:
+            logger.exception("Unhandled error in device registry refresh")
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+    logger.info("Device registry loop stopped")
+
+
 async def bridge_loop(
     bridge_health: BridgeHealthMonitor,
     interval: int,
@@ -307,24 +391,35 @@ async def bridge_loop(
 
 
 async def capture_health_loop(
-    capture_mgr: CaptureManager,
+    # OLD CODE START — replaced 2026-10-30: setup/configure swaps the manager at
+    # runtime, so the loop reads the live one each tick
+    # capture_mgr: CaptureManager,
+    # OLD CODE END
+    get_manager: Callable[[], CaptureManager],
     interval: int,
     shutdown_event: asyncio.Event,
 ) -> None:
-    """Periodically run capture health checks for any CaptureManager.
+    """Periodically reconcile and health-check the current CaptureManager.
 
-    Used in mirror mode (and potentially other future modes) where
-    bridge_loop is not applicable. Calls capture_mgr.get_health()
-    and logs the status.
+    Runs in every capture mode. Each tick reads the manager from
+    *get_manager* (the setup wizard can swap it), calls ``reconcile()`` (DHCP
+    gateway self-heal; a no-op elsewhere) and then ``get_health()``, and logs
+    the status. One failing tick never stops the loop.
 
     Exits cleanly when *shutdown_event* is set.
     """
-    mode_name = capture_mgr.mode.value
-    logger.info(
-        "Capture health loop started (mode=%s, interval=%ds)", mode_name, interval
-    )
+    # OLD CODE START — replaced 2026-10-30: the mode is read per tick now
+    # mode_name = capture_mgr.mode.value
+    # logger.info(
+    #     "Capture health loop started (mode=%s, interval=%ds)", mode_name, interval
+    # )
+    # OLD CODE END
+    logger.info("Capture health loop started (interval=%ds)", interval)
     while not shutdown_event.is_set():
         try:
+            capture_mgr = get_manager()
+            mode_name = capture_mgr.mode.value
+            await capture_mgr.reconcile()
             health = await capture_mgr.get_health()
             if health.status != "normal":
                 logger.warning(
@@ -353,6 +448,136 @@ async def capture_health_loop(
 
 
 # ---------------------------------------------------------------------------
+# Capture manager setup
+# ---------------------------------------------------------------------------
+
+
+def _log_capture_config(capture_cfg: CaptureConfig) -> None:
+    """Log the loaded capture mode configuration."""
+    logger.info("=" * 60)
+    logger.info("  Capture mode:           %s", capture_cfg.mode.value)
+    if capture_cfg.mode == CaptureMode.MIRROR:
+        logger.info("  Mirror interface:       %s", capture_cfg.interface)
+        logger.info(
+            "  Management interface:   %s", capture_cfg.management or "(not set)"
+        )
+    elif capture_cfg.mode == CaptureMode.DHCP_GATEWAY:
+        logger.info("  Gateway interface:      %s", capture_cfg.interface)
+        logger.info("  DHCP subnet:            %s", capture_cfg.dhcp_subnet)
+        logger.info(
+            "  Upstream gateway:       %s",
+            capture_cfg.dhcp_upstream_gateway or "(not enabled yet)",
+        )
+    else:
+        logger.info("  Bridge name:            %s", capture_cfg.bridge_name)
+        logger.info("  WAN interface:          %s", capture_cfg.wan_interface)
+        logger.info("  LAN interface:          %s", capture_cfg.lan_interface)
+    logger.info("=" * 60)
+
+
+async def _build_capture_manager(
+    capture_cfg: CaptureConfig,
+) -> tuple[CaptureManager, BridgeHealthMonitor | None]:
+    """Create (and set up) the manager for the configured mode.
+
+    Returns the manager and, in bridge mode only, the BridgeHealthMonitor that
+    bridge_loop runs.
+    """
+    if capture_cfg.mode == CaptureMode.BRIDGE:
+        # Bridge mode: wrap existing BridgeManager + BridgeHealthMonitor
+        bridge_name = capture_cfg.bridge_name
+        wan_iface = capture_cfg.wan_interface
+        lan_iface = capture_cfg.lan_interface
+
+        bridge_health = BridgeHealthMonitor(
+            bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
+        )
+        bridge_manager = BridgeManager(
+            bridge_name=bridge_name,
+            netplan_dir=os.environ.get("HOST_NETPLAN_DIR", ""),
+            systemd_dir=os.environ.get("HOST_SYSTEMD_DIR", ""),
+            sysctl_dir=os.environ.get("HOST_SYSCTL_DIR", ""),
+        )
+        logger.info("Capture manager: BridgeCaptureAdapter (bridge mode)")
+        adapter = BridgeCaptureAdapter(
+            bridge_manager=bridge_manager,
+            bridge_health=bridge_health,
+            wan_iface=wan_iface,
+            lan_iface=lan_iface,
+            bridge_name=bridge_name,
+        )
+        return adapter, bridge_health
+
+    if capture_cfg.mode == CaptureMode.MIRROR:
+        # Mirror mode: create MirrorManager and configure the NIC
+        mirror_manager = MirrorManager(
+            interface=capture_cfg.interface,
+            management_interface=capture_cfg.management,
+        )
+        # CR-076: setup() flushes the NIC's addresses. A NIC rename can point the
+        # saved config at the management port, so skip setup when it's in use.
+        in_use = await _nic_in_use_problem(None, capture_cfg.interface)
+        if in_use is not None:
+            logger.error(
+                "Mirror setup skipped, nothing changed: %s %s",
+                capture_cfg.interface,
+                in_use,
+            )
+            logger.info("Capture manager: MirrorManager (mirror mode, not set up)")
+            return mirror_manager, None
+        setup_result = await mirror_manager.setup()
+        if setup_result.get("success"):
+            logger.info(
+                "Mirror interface %s configured successfully",
+                capture_cfg.interface,
+            )
+        else:
+            logger.error(
+                "Mirror interface setup failed: %s",
+                setup_result.get("errors", []),
+            )
+        if setup_result.get("warnings"):
+            logger.warning("Mirror setup warnings: %s", setup_result["warnings"])
+        logger.info("Capture manager: MirrorManager (mirror mode)")
+        return mirror_manager, None
+
+    # DHCP gateway mode: re-apply routing + dnsmasq only once enable has run
+    dhcp_manager = DhcpGatewayManager(capture_cfg)
+    if dhcp_manager.routing_active:
+        setup_result = await dhcp_manager.setup()
+        if setup_result.get("success"):
+            logger.info("DHCP gateway restored on %s", capture_cfg.interface)
+        else:
+            logger.error(
+                "DHCP gateway setup reported problems: %s",
+                setup_result.get("errors", []),
+            )
+        if setup_result.get("warnings"):
+            logger.warning("DHCP gateway warnings: %s", setup_result["warnings"])
+    logger.info("Capture manager: DhcpGatewayManager (dhcp_gateway mode)")
+    return dhcp_manager, None
+
+
+async def init_capture_manager() -> tuple[CaptureManager, BridgeHealthMonitor | None]:
+    """Load the capture config and build its manager, never raising (CR-167).
+
+    A bad capture-mode.conf or a failing setup is logged and replaced by
+    CaptureManagerStub, so it can't crash-loop the daemon (and with it the
+    storage and SMART loops).
+    """
+    try:
+        capture_cfg = load_capture_config()
+        _log_capture_config(capture_cfg)
+        return await _build_capture_manager(capture_cfg)
+    except Exception:
+        logger.exception(
+            "Capture setup failed; running without capture management "
+            "(CaptureManagerStub). Fix /etc/nettap/capture-mode.conf and restart."
+        )
+        return CaptureManagerStub(), None
+
+
+# ---------------------------------------------------------------------------
 # Main async entry point
 # ---------------------------------------------------------------------------
 
@@ -364,30 +589,59 @@ async def async_main() -> None:
     cfg = load_config()
     configure_logging(cfg["log_level"])
 
+    # --- Parse OpenSearch credentials from curlrc ---
+    creds_file = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE", "")
+    http_auth = _parse_curlrc_credentials(creds_file)
+
+    # --- Build retention config manager ---
+    # Uses the priority chain: retention.json > env vars > RetentionConfig defaults.
+    # This replaces the manual RetentionConfig construction from env vars.
+    config_path = os.environ.get(
+        "RETENTION_CONFIG_PATH", "/opt/nettap/data/retention.json"
+    )
+    env_file_cfg = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
+    config_manager = RetentionConfigManager(
+        config_path=config_path, env_file=env_file_cfg
+    )
+
+    # OLD CODE START — manual RetentionConfig construction from env vars.
+    # Replaced by RetentionConfigManager.load() which uses the priority chain:
+    # retention.json > env vars > RetentionConfig defaults.
+    # retention_config = RetentionConfig(
+    #     hot_days=cfg["retention_hot"],
+    #     warm_days=cfg["retention_warm"],
+    #     cold_days=cfg["retention_cold"],
+    #     disk_threshold=cfg["disk_threshold"],
+    #     emergency_threshold=cfg["emergency_threshold"],
+    # )
+    # OLD CODE END
+
+    retention_config = config_manager.load()
+
     # --- Log startup config summary ---
     logger.info("=" * 60)
     logger.info("NetTap daemon starting")
     logger.info("=" * 60)
     logger.info("  OpenSearch URL:         %s", cfg["opensearch_url"])
+    logger.info("  Retention config path:  %s", config_path)
     logger.info(
         "  Retention (hot/warm/cold): %d / %d / %d days",
-        cfg["retention_hot"],
-        cfg["retention_warm"],
-        cfg["retention_cold"],
+        retention_config.hot_days,
+        retention_config.warm_days,
+        retention_config.cold_days,
     )
-    logger.info("  Disk threshold:         %.0f%%", cfg["disk_threshold"] * 100)
-    logger.info("  Emergency threshold:    %.0f%%", cfg["emergency_threshold"] * 100)
+    logger.info(
+        "  Disk threshold:         %.0f%%", retention_config.disk_threshold * 100
+    )
+    logger.info(
+        "  Emergency threshold:    %.0f%%", retention_config.emergency_threshold * 100
+    )
     logger.info("  Storage check interval: %ds", cfg["storage_check_interval"])
     logger.info("  SMART check interval:   %ds", cfg["smart_check_interval"])
     logger.info("  Bridge check interval:  %ds", cfg["bridge_check_interval"])
     logger.info("  SMART device:           %s", cfg["smart_device"])
     logger.info("  API port:               %d", cfg["api_port"])
     logger.info("  Log level:              %s", cfg["log_level"])
-    logger.info("=" * 60)
-
-    # --- Parse OpenSearch credentials from curlrc ---
-    creds_file = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE", "")
-    http_auth = _parse_curlrc_credentials(creds_file)
     if http_auth:
         logger.info(
             "  OpenSearch auth:        loaded from %s (user=%s)",
@@ -399,17 +653,13 @@ async def async_main() -> None:
             "  OpenSearch auth:        NO CREDENTIALS — queries may fail with 403. "
             "Set OPENSEARCH_CREDS_CONFIG_FILE or mount curlrc in the container."
         )
+    logger.info("=" * 60)
 
     # --- Build subsystems ---
-    retention_config = RetentionConfig(
-        hot_days=cfg["retention_hot"],
-        warm_days=cfg["retention_warm"],
-        cold_days=cfg["retention_cold"],
-        disk_threshold=cfg["disk_threshold"],
-        emergency_threshold=cfg["emergency_threshold"],
+    storage = StorageManager(
+        retention_config, cfg["opensearch_url"], http_auth=http_auth
     )
-
-    storage = StorageManager(retention_config, cfg["opensearch_url"], http_auth=http_auth)
+    storage._retention_config_manager = config_manager
     smart = SmartMonitor(device=cfg["smart_device"])
 
     # --- Shutdown coordination ---
@@ -431,83 +681,11 @@ async def async_main() -> None:
         cfg["opensearch_url"],
         port=cfg["api_port"],
         shutdown_event=shutdown_event,
+        retention_config_manager=config_manager,
+        http_auth=http_auth,
     )
 
-    # --- Load capture mode configuration ---
-    capture_cfg = load_capture_config()
-    logger.info("=" * 60)
-    logger.info("  Capture mode:           %s", capture_cfg.mode.value)
-    if capture_cfg.mode == CaptureMode.MIRROR:
-        logger.info("  Mirror interface:       %s", capture_cfg.interface)
-        logger.info("  Management interface:   %s", capture_cfg.management or "(not set)")
-    else:
-        logger.info("  Bridge name:            %s", capture_cfg.bridge_name)
-        logger.info("  WAN interface:          %s", capture_cfg.wan_interface)
-        logger.info("  LAN interface:          %s", capture_cfg.lan_interface)
-    logger.info("=" * 60)
-
-    # --- Initialize capture manager based on mode ---
-    capture_manager: CaptureManager | None = None
-
-    if capture_cfg.mode == CaptureMode.BRIDGE:
-        # Bridge mode: wrap existing BridgeManager + BridgeHealthMonitor
-        bridge_name = capture_cfg.bridge_name
-        wan_iface = capture_cfg.wan_interface
-        lan_iface = capture_cfg.lan_interface
-
-        bridge_health = BridgeHealthMonitor(
-            bridge_name=bridge_name, wan_iface=wan_iface, lan_iface=lan_iface
-        )
-        bridge_manager = BridgeManager(
-            bridge_name=bridge_name,
-            netplan_dir=os.environ.get("HOST_NETPLAN_DIR", ""),
-            systemd_dir=os.environ.get("HOST_SYSTEMD_DIR", ""),
-            sysctl_dir=os.environ.get("HOST_SYSCTL_DIR", ""),
-        )
-        capture_manager = BridgeCaptureAdapter(
-            bridge_manager=bridge_manager,
-            bridge_health=bridge_health,
-            wan_iface=wan_iface,
-            lan_iface=lan_iface,
-            bridge_name=bridge_name,
-        )
-        logger.info("Capture manager: BridgeCaptureAdapter (bridge mode)")
-
-    elif capture_cfg.mode == CaptureMode.MIRROR:
-        # Mirror mode: create MirrorManager and configure the NIC
-        mirror_manager = MirrorManager(
-            interface=capture_cfg.interface,
-            management_interface=capture_cfg.management,
-        )
-        setup_result = await mirror_manager.setup()
-        if setup_result.get("success"):
-            logger.info(
-                "Mirror interface %s configured successfully",
-                capture_cfg.interface,
-            )
-        else:
-            logger.error(
-                "Mirror interface setup failed: %s",
-                setup_result.get("errors", []),
-            )
-        if setup_result.get("warnings"):
-            logger.warning(
-                "Mirror setup warnings: %s", setup_result["warnings"]
-            )
-        capture_manager = mirror_manager
-        logger.info("Capture manager: MirrorManager (mirror mode)")
-
-    # --- Wire real capture manager into the HTTP API app ---
-    # create_app() installs a CaptureManagerStub so endpoints work during
-    # startup. Now that the real manager is ready, replace the stub.
-    if capture_manager is not None and api_runner.app is not None:
-        api_runner.app["capture_manager"] = capture_manager
-        logger.info(
-            "Replaced CaptureManagerStub with %s in API app",
-            type(capture_manager).__name__,
-        )
-
-    # --- Start monitoring tasks ---
+    # --- Start storage + SMART loops before capture setup (CR-167) ---
     storage_task = asyncio.create_task(
         storage_loop(storage, cfg["storage_check_interval"], shutdown_event),
         name="storage-loop",
@@ -516,23 +694,73 @@ async def async_main() -> None:
         smart_loop(smart, cfg["smart_check_interval"], shutdown_event),
         name="smart-loop",
     )
+    registry_task = asyncio.create_task(
+        device_registry_loop(
+            api_runner.app, REGISTRY_REFRESH_INTERVAL_S, shutdown_event
+        ),
+        name="device-registry-loop",
+    )
 
-    # Capture health loop: bridge mode uses the existing bridge_loop;
-    # mirror mode (and future modes) use the generic capture_health_loop.
-    if capture_cfg.mode == CaptureMode.BRIDGE:
-        capture_health_task = asyncio.create_task(
+    # --- Enforce persisted PCAP capture state ---
+    env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
+    await enforce_capture_state(env_file)
+
+    # OLD CODE START — replaced 2026-10-30 (CR-167, DHCP gateway mode): config
+    # load + manager setup moved into the guarded init_capture_manager() (the
+    # per-mode code is unchanged there); the generic loop now runs in every mode
+    # capture_cfg = load_capture_config()
+    # capture_manager: CaptureManager | None = None
+    # ...
+    # if capture_manager is not None and api_runner.app is not None:
+    #     api_runner.app["capture_manager"] = capture_manager
+    # ...
+    # if capture_cfg.mode == CaptureMode.BRIDGE:
+    #     capture_health_task = asyncio.create_task(
+    #         bridge_loop(bridge_health, cfg["bridge_check_interval"], shutdown_event),
+    #         name="bridge-loop",
+    #     )
+    # else:
+    #     capture_health_task = asyncio.create_task(
+    #         capture_health_loop(
+    #             capture_manager, cfg["bridge_check_interval"], shutdown_event
+    #         ),
+    #         name="capture-health-loop",
+    #     )
+    # OLD CODE END
+
+    # --- Load capture mode configuration and build its manager ---
+    # create_app() installs a CaptureManagerStub so endpoints work during
+    # startup. The real manager replaces it under the lock the setup wizard
+    # and DHCP endpoints use, so a wizard request can't race startup.
+    async with ensure_capture_lock(api_runner.app):
+        capture_manager, bridge_health = await init_capture_manager()
+        api_runner.app["capture_manager"] = capture_manager
+    logger.info(
+        "Replaced CaptureManagerStub with %s in API app",
+        type(capture_manager).__name__,
+    )
+
+    # Generic capture loop in every mode: it reads the live manager each tick
+    # (setup can swap it) and calls reconcile() then get_health()
+    capture_health_task = asyncio.create_task(
+        capture_health_loop(
+            lambda: api_runner.app["capture_manager"],
+            cfg["bridge_check_interval"],
+            shutdown_event,
+        ),
+        name="capture-health-loop",
+    )
+    # OLD CODE START — 2026-11-01: the device registry loop is cancelled with the others
+    # all_tasks = (storage_task, smart_task, capture_health_task)
+    # OLD CODE END
+    all_tasks = (storage_task, smart_task, registry_task, capture_health_task)
+    # Bridge mode keeps its dedicated bridge health loop as well
+    if bridge_health is not None:
+        bridge_task = asyncio.create_task(
             bridge_loop(bridge_health, cfg["bridge_check_interval"], shutdown_event),
             name="bridge-loop",
         )
-    else:
-        capture_health_task = asyncio.create_task(
-            capture_health_loop(
-                capture_manager, cfg["bridge_check_interval"], shutdown_event
-            ),
-            name="capture-health-loop",
-        )
-
-    all_tasks = (storage_task, smart_task, capture_health_task)
+        all_tasks = (*all_tasks, bridge_task)
 
     logger.info("All monitoring loops running; waiting for shutdown signal")
 

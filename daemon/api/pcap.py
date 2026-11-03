@@ -15,6 +15,7 @@ import os
 
 from aiohttp import web
 
+from api.time_range import iso_param
 from services.pcap_search import PcapSearchService
 
 logger = logging.getLogger("nettap.api.pcap")
@@ -24,8 +25,12 @@ async def handle_pcap_files(request: web.Request) -> web.Response:
     """GET /api/pcap/files?from=&to= — List available PCAP files."""
     pcap_service: PcapSearchService = request.app["pcap_search"]
 
-    from_ts = request.query.get("from")
-    to_ts = request.query.get("to")
+    # OLD CODE START — an unreadable bound was dropped downstream, so a bad from searched every file
+    # from_ts = request.query.get("from")
+    # to_ts = request.query.get("to")
+    # OLD CODE END
+    from_ts = iso_param(request, "from")
+    to_ts = iso_param(request, "to")
 
     try:
         files = pcap_service.get_available_pcaps(from_ts, to_ts)
@@ -35,10 +40,12 @@ async def handle_pcap_files(request: web.Request) -> web.Response:
             {"error": f"Failed to list PCAP files: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "count": len(files),
-        "files": files,
-    })
+    return web.json_response(
+        {
+            "count": len(files),
+            "files": files,
+        }
+    )
 
 
 async def handle_pcap_search(request: web.Request) -> web.Response:
@@ -46,29 +53,43 @@ async def handle_pcap_search(request: web.Request) -> web.Response:
     pcap_service: PcapSearchService = request.app["pcap_search"]
 
     bpf_filter = request.query.get("filter", "").strip()
-    from_ts = request.query.get("from")
-    to_ts = request.query.get("to")
+    # OLD CODE START — an unreadable bound was dropped downstream, so a bad from searched every file
+    # from_ts = request.query.get("from")
+    # to_ts = request.query.get("to")
+    # OLD CODE END
+    from_ts = iso_param(request, "from")
+    to_ts = iso_param(request, "to")
 
     if not bpf_filter:
-        return web.json_response(
-            {"error": "filter parameter is required"}, status=400
-        )
+        return web.json_response({"error": "filter parameter is required"}, status=400)
 
+    # OLD CODE START — 2026-11-02: one blocking request read every file in the range
+    # (~45 s per 240 MB); the web proxy gave up after 10 s
+    # try:
+    #     results = await pcap_service.search(bpf_filter, from_ts, to_ts)
+    # except ValueError as exc:
+    #     return web.json_response({"error": str(exc)}, status=400)
+    # except Exception as exc:
+    #     logger.error("Error searching PCAPs: %s", exc)
+    #     return web.json_response({"error": f"PCAP search failed: {exc}"}, status=500)
+    #
+    # return web.json_response(
+    #     {
+    #         "filter": bpf_filter,
+    #         "count": len(results),
+    #         "results": results,
+    #     }
+    # )
+    # OLD CODE END
     try:
-        results = await pcap_service.search(bpf_filter, from_ts, to_ts)
+        progress = await pcap_service.search_progress(bpf_filter, from_ts, to_ts)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except Exception as exc:
         logger.error("Error searching PCAPs: %s", exc)
-        return web.json_response(
-            {"error": f"PCAP search failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"PCAP search failed: {exc}"}, status=500)
 
-    return web.json_response({
-        "filter": bpf_filter,
-        "count": len(results),
-        "results": results,
-    })
+    return web.json_response(progress)
 
 
 async def handle_pcap_preview(request: web.Request) -> web.Response:
@@ -80,9 +101,7 @@ async def handle_pcap_preview(request: web.Request) -> web.Response:
     limit_str = request.query.get("limit", "100")
 
     if not pcap_file:
-        return web.json_response(
-            {"error": "file parameter is required"}, status=400
-        )
+        return web.json_response({"error": "file parameter is required"}, status=400)
 
     try:
         limit = max(1, min(int(limit_str), 1000))
@@ -90,23 +109,26 @@ async def handle_pcap_preview(request: web.Request) -> web.Response:
         limit = 100
 
     try:
-        packets = await pcap_service.preview(pcap_file, bpf_filter, limit)
+        result = await pcap_service.preview_with_status(pcap_file, bpf_filter, limit)
+        packets = result["packets"]
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except FileNotFoundError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     except Exception as exc:
         logger.error("Error previewing PCAP: %s", exc)
-        return web.json_response(
-            {"error": f"PCAP preview failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"PCAP preview failed: {exc}"}, status=500)
 
-    return web.json_response({
-        "file": pcap_file,
-        "filter": bpf_filter,
-        "count": len(packets),
-        "packets": packets,
-    })
+    return web.json_response(
+        {
+            "file": pcap_file,
+            "filter": bpf_filter,
+            "count": len(packets),
+            "packets": packets,
+            # ran out of time before the end of the file: fewer matches is not "none"
+            "timed_out": result["timed_out"],
+        }
+    )
 
 
 async def handle_pcap_download_file(request: web.Request) -> web.Response:
@@ -115,22 +137,29 @@ async def handle_pcap_download_file(request: web.Request) -> web.Response:
 
     pcap_file = request.query.get("file", "").strip()
     if not pcap_file:
-        return web.json_response(
-            {"error": "file parameter is required"}, status=400
-        )
+        return web.json_response({"error": "file parameter is required"}, status=400)
 
     # Security: ensure file is within pcap directory
-    pcap_path = os.path.abspath(pcap_file)
-    pcap_dir = os.path.abspath(str(pcap_service._pcap_dir))
-    if not pcap_path.startswith(pcap_dir):
+    # OLD CODE START — sound (contains() resolves symlinks), but CodeQL can't see a guard in
+    # another function, and abspath left a symlink in the directory pointing elsewhere
+    # pcap_path = os.path.abspath(pcap_file)
+    # OLD CODE END
+    # OLD CODE START — string prefix: ".." was resolved, but "/opt/nettap/pcap-old/..." passed
+    # pcap_dir = os.path.abspath(str(pcap_service._pcap_dir))
+    # if not pcap_path.startswith(pcap_dir):
+    # OLD CODE END
+    # OLD CODE START — same check, inline below so the served path is the checked one
+    # if not pcap_service.contains(pcap_path):
+    # OLD CODE END
+    pcap_root = os.path.realpath(str(pcap_service._pcap_dir))
+    pcap_path = os.path.realpath(pcap_file)
+    if not pcap_path.startswith(pcap_root + os.sep):
         return web.json_response(
             {"error": "File must be within the PCAP directory"}, status=400
         )
 
     if not os.path.exists(pcap_path):
-        return web.json_response(
-            {"error": "PCAP file not found"}, status=404
-        )
+        return web.json_response({"error": "PCAP file not found"}, status=404)
 
     filename = os.path.basename(pcap_path)
     return web.FileResponse(
@@ -147,30 +176,26 @@ async def handle_pcap_download(request: web.Request) -> web.Response:
     pcap_service: PcapSearchService = request.app["pcap_search"]
 
     bpf_filter = request.query.get("filter", "").strip()
-    from_ts = request.query.get("from")
-    to_ts = request.query.get("to")
+    # OLD CODE START — an unreadable bound was dropped downstream, so a bad from searched every file
+    # from_ts = request.query.get("from")
+    # to_ts = request.query.get("to")
+    # OLD CODE END
+    from_ts = iso_param(request, "from")
+    to_ts = iso_param(request, "to")
 
     if not bpf_filter:
-        return web.json_response(
-            {"error": "filter parameter is required"}, status=400
-        )
+        return web.json_response({"error": "filter parameter is required"}, status=400)
 
     try:
-        tmp_path = await pcap_service.download_filtered(
-            bpf_filter, from_ts, to_ts
-        )
+        tmp_path = await pcap_service.download_filtered(bpf_filter, from_ts, to_ts)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     except Exception as exc:
         logger.error("Error downloading filtered PCAP: %s", exc)
-        return web.json_response(
-            {"error": f"PCAP download failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"PCAP download failed: {exc}"}, status=500)
 
     if tmp_path is None:
-        return web.json_response(
-            {"error": "No matching PCAP data found"}, status=404
-        )
+        return web.json_response({"error": "No matching PCAP data found"}, status=404)
 
     try:
         response = web.FileResponse(
@@ -188,9 +213,7 @@ async def handle_pcap_download(request: web.Request) -> web.Response:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         logger.error("Error sending PCAP download: %s", exc)
-        return web.json_response(
-            {"error": f"Failed to send PCAP: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"Failed to send PCAP: {exc}"}, status=500)
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +221,7 @@ async def handle_pcap_download(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-def register_pcap_routes(
-    app: web.Application, pcap_service: PcapSearchService
-) -> None:
+def register_pcap_routes(app: web.Application, pcap_service: PcapSearchService) -> None:
     """Register PCAP search API routes."""
     app["pcap_search"] = pcap_service
 

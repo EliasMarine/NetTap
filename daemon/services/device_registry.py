@@ -20,9 +20,38 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from opensearchpy import OpenSearchException
+from opensearchpy import NotFoundError, OpenSearchException
+
+from services.device_fingerprint import _mac_from_hit
+from services.excluded_ips import CONN_RECORDS
 
 logger = logging.getLogger("nettap.services.device_registry")
+
+
+def record_time(epoch_ms: Any) -> str | None:
+    """An OpenSearch date (epoch ms, as a sort value or max aggregation returns it) as ISO, or None."""
+    if not isinstance(epoch_ms, (int, float)) or isinstance(epoch_ms, bool):
+        return None
+    return datetime.fromtimestamp(epoch_ms / 1000, timezone.utc).isoformat()
+
+
+def hit_time(hit: dict) -> str | None:
+    """The record time of a hit from a search sorted on @timestamp."""
+    sort = hit.get("sort") or [None]
+    return record_time(sort[0])
+
+
+def _later(current: str | None, seen_at: str) -> str:
+    """The later of a stored last_seen and a record time; an unreadable stored value gives way."""
+    try:
+        if current and datetime.fromisoformat(current) >= datetime.fromisoformat(
+            seen_at
+        ):
+            return current
+    except (TypeError, ValueError):
+        pass
+    return seen_at
+
 
 DEVICES_INDEX = "nettap-devices"
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -61,8 +90,10 @@ class DeviceRegistry:
     device documents using the MAC address as the document ID.
     """
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, changelog: Any = None):
         self._client = client
+        # ChangelogService; when set, a device's first write logs "device_joined"
+        self._changelog = changelog
         self._ensure_index()
 
     def _ensure_index(self) -> None:
@@ -79,7 +110,12 @@ class DeviceRegistry:
     @staticmethod
     def _normalize_mac(mac: str) -> str:
         """Normalize MAC to uppercase colon-separated format."""
-        return mac.strip().upper().replace("-", ":").replace(".", ":")
+        # OLD CODE START — #76: kept every octet, so an 8-byte DHCP chaddr became a second device
+        # return mac.strip().upper().replace("-", ":").replace(".", ":")
+        # OLD CODE END
+        octets = mac.strip().upper().replace("-", ":").replace(".", ":").split(":")
+        # Zeek prints a DHCP chaddr at the client's own length; a UniFi AP sent 8 bytes on a VLAN
+        return ":".join(octets[:6])
 
     def register_device(
         self,
@@ -87,6 +123,7 @@ class DeviceRegistry:
         ip: str | None = None,
         source: str = "unknown",
         metadata: dict | None = None,
+        seen_at: str | None = None,
     ) -> dict:
         """Upsert a device record, merging enrichment data.
 
@@ -95,6 +132,8 @@ class DeviceRegistry:
             ip: IP address currently associated with this device.
             source: Enrichment source name (e.g. "dhcp", "arp", "mdns", "unifi").
             metadata: Additional enrichment data from this source.
+            seen_at: Time of the network record this comes from. Only a record moves
+                last_seen; vendor and OS lookups (no record) leave it alone.
 
         Returns:
             The updated device document dict.
@@ -103,7 +142,10 @@ class DeviceRegistry:
         metadata = metadata or {}
         now = datetime.now(timezone.utc).isoformat()
 
-        existing = self.get_device(mac)
+        # OLD CODE START — 2026-11-01: get_device() returns None on any error, so a timeout made a known device look new (first_seen reset, duplicate changelog event)
+        # existing = self.get_device(mac)
+        # OLD CODE END
+        existing = self._get_existing(mac)
 
         if existing:
             # Merge into existing record
@@ -127,7 +169,10 @@ class DeviceRegistry:
                 doc["manufacturer"] = metadata["manufacturer"]
 
             # Update category if provided and current is unknown
-            if metadata.get("category") and doc.get("category", CATEGORY_UNKNOWN) == CATEGORY_UNKNOWN:
+            if (
+                metadata.get("category")
+                and doc.get("category", CATEGORY_UNKNOWN) == CATEGORY_UNKNOWN
+            ):
                 cat = metadata["category"]
                 if cat in VALID_CATEGORIES:
                     doc["category"] = cat
@@ -146,8 +191,14 @@ class DeviceRegistry:
             }
             doc["enrichment_sources"] = enrichment
 
-            # Update last_seen
-            doc["last_seen"] = now
+            # OLD CODE START — every update, a vendor or OS lookup included, made the device
+            # "last seen" at the moment the registry ran: Home said "4m ago" for devices
+            # last heard 24 min (or 17 h) earlier
+            # # Update last_seen
+            # doc["last_seen"] = now
+            # OLD CODE END
+            if seen_at:
+                doc["last_seen"] = _later(doc.get("last_seen"), seen_at)
 
             # No longer new after first update
             doc["is_new"] = False
@@ -163,10 +214,21 @@ class DeviceRegistry:
                 "ips": [ip] if ip else [],
                 "hostnames": hostnames,
                 "manufacturer": metadata.get("manufacturer"),
-                "friendly_name": metadata.get("unifi_alias") or metadata.get("friendly_name"),
-                "category": metadata.get("category", CATEGORY_UNKNOWN),
-                "first_seen": now,
-                "last_seen": now,
+                "friendly_name": metadata.get("unifi_alias")
+                or metadata.get("friendly_name"),
+                # OLD CODE START — unchecked, unlike the merge branch above: a "media" vendor
+                # category would land in a group the device grid doesn't have (#26)
+                # "category": metadata.get("category", CATEGORY_UNKNOWN),
+                # OLD CODE END
+                "category": metadata.get("category")
+                if metadata.get("category") in VALID_CATEGORIES
+                else CATEGORY_UNKNOWN,
+                # OLD CODE START — registration time, up to a refresh window after the record
+                # "first_seen": now,
+                # "last_seen": now,
+                # OLD CODE END
+                "first_seen": seen_at or now,
+                "last_seen": seen_at or now,
                 "is_new": True,
                 "enrichment_sources": {
                     source: {
@@ -181,26 +243,224 @@ class DeviceRegistry:
                 index=DEVICES_INDEX,
                 id=mac,
                 body=doc,
-                refresh="wait_for",
+                # OLD CODE START — every write waited ~1 s for a refresh, so a registry refresh
+                # took ~1 min; readers of the search side call refresh_index() once per pass
+                # refresh="wait_for",
+                # OLD CODE END
             )
         except OpenSearchException as exc:
             logger.error("Failed to upsert device %s: %s", mac, exc)
             raise
 
+        if existing is None and self._changelog is not None:
+            self._log_new_device(doc, source)
+
         return doc
+
+    def set_category(self, device: dict, category: str) -> bool:
+        """Store a category on a known device without touching last_seen or its sources."""
+        if category not in VALID_CATEGORIES or device.get("category") == category:
+            return False
+        try:
+            # OLD CODE START — wait_for per write (see register_device)
+            # self._client.index(
+            #     index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category}, refresh="wait_for"
+            # )
+            # OLD CODE END
+            self._client.index(
+                index=DEVICES_INDEX,
+                id=device["mac"],
+                body={**device, "category": category},
+            )
+            return True
+        except OpenSearchException as exc:
+            logger.error("Failed to set category on %s: %s", device["mac"], exc)
+            return False
+
+    def correct_last_seen(self) -> int:
+        """Move back each last_seen that is later than the device's newest network record.
+
+        Before seen_at, any update (a vendor or OS lookup included) stamped last_seen with the
+        time it ran, and last_seen only moves forward, so a quiet device kept "13 h ago" for a
+        last record 17 h old. No device is seen after its newest record, so a later value is
+        wrong; a device whose records have all aged out is left alone. A failed search raises.
+        Returns the number corrected.
+        """
+        fixed = 0
+        for device in self.get_all_devices(limit=1000):
+            mac, stored = device.get("mac"), device.get("last_seen")
+            if not mac or not stored:
+                continue
+            body = {
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "should": [
+                            {"terms": {"source.ip": device.get("ips") or []}},
+                            {"term": {"source.mac": mac.lower()}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+                "aggs": {"newest": {"max": {"field": "@timestamp"}}},
+            }
+            reply = self._client.search(index=NETWORK_INDEX, body=body)
+            newest = record_time(
+                (reply.get("aggregations") or {}).get("newest", {}).get("value")
+            )
+            if newest is None or _later(newest, stored) == newest:
+                continue  # last_seen is no later than the newest record
+            first = device.get("first_seen")
+            self._client.index(
+                index=DEVICES_INDEX,
+                id=mac,
+                body={
+                    **device,
+                    "last_seen": newest,
+                    "first_seen": newest
+                    if not first or _later(first, newest) == first
+                    else first,
+                },
+            )
+            fixed += 1
+        return fixed
+
+    def drop_reassigned_ips(self, assigned: dict[str, str]) -> int:
+        """Remove each just-seen IP from every device other than the one it was seen on (#26).
+
+        An IPv4 address belongs to one MAC at a time, so an IP left on another device is a
+        DHCP reassignment or an old mis-filing (routed traffic carrying the router's MAC).
+        0.0.0.0 (a DHCP client's address before it has one) is dropped everywhere.
+
+        Returns:
+            Number of devices updated.
+        """
+        owner = {ip: self._normalize_mac(mac) for ip, mac in assigned.items()}
+        count = 0
+        self.refresh_index()  # the devices registered just before must be searchable
+        for device in self.get_all_devices(limit=1000):
+            mac, ips = device.get("mac"), device.get("ips") or []
+            keep = [ip for ip in ips if ip != "0.0.0.0" and owner.get(ip, mac) == mac]
+            if len(keep) == len(ips):
+                continue
+            try:
+                # OLD CODE START — wait_for per write (see register_device)
+                # self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}, refresh="wait_for")
+                # OLD CODE END
+                self._client.index(
+                    index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}
+                )
+                count += 1
+            except OpenSearchException as exc:
+                logger.error("Failed to drop moved IPs from %s: %s", mac, exc)
+        return count
+
+    def merge_long_macs(self) -> int:
+        """Fold entries stored under a MAC longer than 6 octets into their real device (#76).
+
+        Keeps the long entry's IPs and names; the real device's last_seen is left alone.
+
+        Returns:
+            Number of entries merged.
+        """
+        self.refresh_index()
+        count = 0
+        for device in self.get_all_devices(limit=1000):
+            long_mac = device.get("mac") or ""
+            if len(long_mac.split(":")) <= 6:
+                continue
+            mac = self._normalize_mac(long_mac)
+            try:
+                real = self._get_existing(mac)
+                if real is None:
+                    merged = {**device, "mac": mac}
+                else:
+                    merged = {
+                        **real,
+                        "ips": list(
+                            dict.fromkeys(
+                                (real.get("ips") or []) + (device.get("ips") or [])
+                            )
+                        ),
+                        "hostnames": list(
+                            dict.fromkeys(
+                                (real.get("hostnames") or [])
+                                + (device.get("hostnames") or [])
+                            )
+                        ),
+                    }
+                self._client.index(index=DEVICES_INDEX, id=mac, body=merged)
+                self._client.delete(index=DEVICES_INDEX, id=long_mac)
+                count += 1
+                logger.info("Merged registry entry %s into %s", long_mac, mac)
+            except OpenSearchException as exc:
+                logger.error("Failed to merge registry entry %s: %s", long_mac, exc)
+        return count
+
+    def refresh_index(self) -> None:
+        """Make every write so far visible to searches (get by id never needs this).
+
+        Writes don't wait for a refresh, so a pass that lists devices calls this once first.
+        """
+        try:
+            self._client.indices.refresh(index=DEVICES_INDEX)
+        except OpenSearchException as exc:
+            # The index refreshes itself within a second anyway; the pass just reads older data
+            logger.warning("Failed to refresh %s: %s", DEVICES_INDEX, exc)
+
+    def _get_existing(self, mac: str) -> dict | None:
+        """The stored device doc, or None only when OpenSearch says it does not exist.
+
+        Any other error raises, so a failed lookup never re-creates a known device.
+        """
+        try:
+            return self._client.get(index=DEVICES_INDEX, id=mac).get("_source")
+        except NotFoundError:
+            return None
+
+    def _log_new_device(self, doc: dict, source: str) -> None:
+        """Record a device's first sighting on the Changelog page."""
+        ip = doc["ips"][0] if doc["ips"] else None
+        where = f" at {ip}" if ip else ""
+        self._changelog.log_event(
+            "device_joined",
+            f"New device {doc['mac']}",
+            f"First seen{where} (source: {source})",
+            {"mac": doc["mac"], "ip": ip, "source": source},
+        )
 
     def get_device(self, mac: str) -> dict | None:
         """Retrieve a device by MAC address.
 
         Returns:
-            Device document dict, or None if not found.
+            Device document dict, or None if not found. Any other error raises (#96).
         """
         mac = self._normalize_mac(mac)
+        # OLD CODE START — #96: any failure read as "Device not found" (404)
+        # try:
+        #     result = self._client.get(index=DEVICES_INDEX, id=mac)
+        #     return result.get("_source")
+        # except OpenSearchException:
+        #     return None
+        # OLD CODE END
         try:
             result = self._client.get(index=DEVICES_INDEX, id=mac)
-            return result.get("_source")
-        except OpenSearchException:
+        except NotFoundError:
             return None
+        return result.get("_source")
+
+    def get_devices(self, macs: list[str]) -> dict[str, dict]:
+        """{normalized MAC: device} for the MACs the registry knows, in one request."""
+        ids = sorted({self._normalize_mac(m) for m in macs if m})
+        if not ids:
+            return {}
+        try:
+            result = self._client.mget(index=DEVICES_INDEX, body={"ids": ids})
+        except NotFoundError:
+            return {}
+        return {
+            d["_id"]: d["_source"] for d in result.get("docs", []) if d.get("found")
+        }
 
     def get_all_devices(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """List all known devices with pagination.
@@ -215,16 +475,26 @@ class DeviceRegistry:
             "sort": [{"last_seen": {"order": "desc"}}],
         }
 
-        try:
-            result = self._client.search(index=DEVICES_INDEX, body=query)
-            return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
-        except OpenSearchException as exc:
-            logger.error("Failed to list devices: %s", exc)
-            return []
+        # OLD CODE START — #96: [] read as "no devices known"
+        # try:
+        #     result = self._client.search(index=DEVICES_INDEX, body=query)
+        #     return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to list devices: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=DEVICES_INDEX, body=query)
+        return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
-    def get_device_traffic(
-        self, mac: str, from_ts: str, to_ts: str
-    ) -> dict:
+    def count_first_seen_since(self, since: str) -> int:
+        """How many devices NetTap first saw at or after `since` (an ISO timestamp)."""
+        result = self._client.count(
+            index=DEVICES_INDEX,
+            body={"query": {"range": {"first_seen": {"gte": since}}}},
+        )
+        return int(result.get("count", 0))
+
+    def get_device_traffic(self, mac: str, from_ts: str, to_ts: str) -> dict:
         """Get traffic summary for a device by MAC address.
 
         Queries arkime_sessions3-* for connections where source.mac matches.
@@ -240,14 +510,16 @@ class DeviceRegistry:
 
         # Build should clauses: match by MAC or any known IP
         should_clauses: list[dict] = [
-            {"term": {"source.mac.keyword": mac}},
-            {"term": {"source.mac.keyword": mac.lower()}},
+            {"term": {"source.mac": mac}},
+            {"term": {"source.mac": mac.lower()}},
         ]
         for ip in ips:
             should_clauses.append({"term": {"source.ip": ip}})
 
         query = {
             "size": 0,
+            # hits.total is shown as a count; without this OpenSearch stops at 10,000
+            "track_total_hits": True,
             "query": {
                 "bool": {
                     "filter": [
@@ -260,8 +532,8 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
+                        # connection_count counts connections, not DNS/SSL logs or alerts
+                        CONN_RECORDS,
                     ],
                     "should": should_clauses,
                     "minimum_should_match": 1,
@@ -272,33 +544,56 @@ class DeviceRegistry:
                     "sum": {
                         "script": {
                             "source": (
-                                "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0)"
-                                " + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
+                                "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
                             ),
                             "lang": "painless",
                         }
                     }
                 },
-                "protocols": {
-                    "terms": {"field": "network.transport.keyword", "size": 10}
-                },
+                # #89: the MAC page shows in/out and per-destination bytes; without these it read 0
+                "outbound_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+                "inbound_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+                "protocols": {"terms": {"field": "network.transport", "size": 10}},
+                # OLD CODE START — #89: connection counts only
+                # "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
+                # OLD CODE END
+                # Ranked by bytes: the MAC page draws byte bars with ranks (by connection count
+                # its #1 read 673 KB and its #8 507 MB)
                 "top_destinations": {
-                    "terms": {"field": "destination.ip.keyword", "size": 20}
+                    # #90: ordered by a sum, so each shard must return every destination to rank exactly
+                    "terms": {
+                        "field": "destination.ip",
+                        "size": 20,
+                        "order": {"bytes": "desc"},
+                        "shard_size": 10_000,
+                    },
+                    "aggs": {
+                        "bytes": {
+                            "sum": {
+                                "script": {
+                                    "source": (
+                                        "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+                                        " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                                    ),
+                                    "lang": "painless",
+                                }
+                            }
+                        },
+                    },
                 },
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("Failed to get traffic for device %s: %s", mac, exc)
-            return {
-                "mac": mac,
-                "total_bytes": 0,
-                "connection_count": 0,
-                "protocols": [],
-                "top_destinations": [],
-            }
+        # OLD CODE START — #96: a failure read as a device with no traffic
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to get traffic for device %s: %s", mac, exc)
+        #     return {"mac": mac, "total_bytes": 0, "inbound_bytes": 0, "outbound_bytes": 0,
+        #             "connection_count": 0, "protocols": [], "top_protocols": [], "top_destinations": []}
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         aggs = result.get("aggregations", {})
         hits_total = result.get("hits", {}).get("total", {})
@@ -306,20 +601,34 @@ class DeviceRegistry:
             hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
         )
 
-        protocols = [
-            b["key"]
-            for b in aggs.get("protocols", {}).get("buckets", [])
-        ]
+        protocol_buckets = aggs.get("protocols", {}).get("buckets", [])
+        protocols = [b["key"] for b in protocol_buckets]
+        # OLD CODE START — #89: connections only, so the MAC page drew every bar as 0 bytes
+        # top_destinations = [
+        #     {"ip": b["key"], "connections": b["doc_count"]}
+        #     for b in aggs.get("top_destinations", {}).get("buckets", [])
+        # ]
+        # OLD CODE END
         top_destinations = [
-            {"ip": b["key"], "connections": b["doc_count"]}
+            {
+                "ip": b["key"],
+                "connections": b["doc_count"],
+                "bytes": int(b.get("bytes", {}).get("value") or 0),
+            }
             for b in aggs.get("top_destinations", {}).get("buckets", [])
         ]
 
         return {
             "mac": mac,
             "total_bytes": aggs.get("total_bytes", {}).get("value", 0) or 0,
+            "inbound_bytes": int(aggs.get("inbound_bytes", {}).get("value") or 0),
+            "outbound_bytes": int(aggs.get("outbound_bytes", {}).get("value") or 0),
             "connection_count": connection_count,
             "protocols": protocols,
+            # the shape the MAC page reads; `protocols` stays for other callers
+            "top_protocols": [
+                {"name": b["key"], "count": b["doc_count"]} for b in protocol_buckets
+            ],
             "top_destinations": top_destinations,
         }
 
@@ -347,12 +656,16 @@ class DeviceRegistry:
             },
         }
 
-        try:
-            result = self._client.search(index=DEVICES_INDEX, body=query)
-            return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
-        except OpenSearchException as exc:
-            logger.error("Device search failed for '%s': %s", query_str, exc)
-            return []
+        # OLD CODE START — #96: [] read as "no device matches"
+        # try:
+        #     result = self._client.search(index=DEVICES_INDEX, body=query)
+        #     return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
+        # except OpenSearchException as exc:
+        #     logger.error("Device search failed for '%s': %s", query_str, exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=DEVICES_INDEX, body=query)
+        return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
     def get_display_name(self, device: dict) -> str:
         """Resolve the best display name for a device using priority rules.
@@ -391,6 +704,15 @@ class DeviceRegistry:
 
         return device.get("mac", "Unknown")
 
+    def get_name(self, device: dict) -> str | None:
+        """The name Home shows for a device, or None where it would show the vendor or MAC."""
+        name = self.get_display_name(device)
+        return (
+            None
+            if name in (device.get("manufacturer"), device.get("mac", "Unknown"))
+            else name
+        )
+
     # ------------------------------------------------------------------
     # Passive enrichment methods
     # ------------------------------------------------------------------
@@ -417,18 +739,28 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dhcp"}},
+                        # OLD CODE START — 2026-11-01: Malcolm fills dhcp.id from zeek.dhcp.trans_id, which dhcp.log never has, so this matched nothing
+                        # {"exists": {"field": "dhcp.id"}},
+                        # OLD CODE END
+                        # Malcolm tags Zeek dhcp.log and ja4d.log records with service "dhcp"
+                        {"term": {"network.protocol": "dhcp"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
             },
+            # OLD CODE START — 2026-11-01: dhcp.ip is Arkime-only; Malcolm merges the assigned IP into dhcp.host, so dhcp.host[0] can be an IP
+            # "_source": [
+            #     "source.mac",
+            #     "source.ip",
+            #     "dhcp.host",
+            #     "dhcp.ip",
+            # ],
+            # OLD CODE END
             "_source": [
                 "source.mac",
                 "source.ip",
-                "zeek.dhcp.hostname",
-                "zeek.dhcp.vendor_class",
-                "zeek.dhcp.assigned_addr",
+                "zeek.dhcp.host_name",
+                "zeek.dhcp.assigned_ip",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -439,25 +771,40 @@ class DeviceRegistry:
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
-                mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE START — 2026-11-01: Malcolm stores source.mac as a list, which crashed the set lookup below
+                # mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hit)
                 if not mac or mac in seen_macs:
                     continue
                 seen_macs.add(mac)
 
-                ip = (
-                    src.get("zeek.dhcp.assigned_addr")
-                    or src.get("zeek", {}).get("dhcp", {}).get("assigned_addr")
-                    or src.get("source.ip")
-                    or src.get("source", {}).get("ip")
-                )
-                hostname = (
-                    src.get("zeek.dhcp.hostname")
-                    or src.get("zeek", {}).get("dhcp", {}).get("hostname")
-                )
-                vendor_class = (
-                    src.get("zeek.dhcp.vendor_class")
-                    or src.get("zeek", {}).get("dhcp", {}).get("vendor_class")
-                )
+                # OLD CODE START — 2026-11-01: read Malcolm's zeek.dhcp fields, see the _source note above
+                # # Arkime stores DHCP fields under nested "dhcp" object
+                # dhcp_obj = src.get("dhcp", {})
+                # dhcp_ip_val = dhcp_obj.get("ip")
+                # # dhcp.ip may be a list in Arkime
+                # if isinstance(dhcp_ip_val, list):
+                #     dhcp_ip_val = dhcp_ip_val[0] if dhcp_ip_val else None
+                # ip = (
+                #     dhcp_ip_val
+                #     or src.get("source.ip")
+                #     or src.get("source", {}).get("ip")
+                # )
+                # dhcp_host_val = dhcp_obj.get("host")
+                # if isinstance(dhcp_host_val, list):
+                #     dhcp_host_val = dhcp_host_val[0] if dhcp_host_val else None
+                # hostname = dhcp_host_val
+                # OLD CODE END
+                zeek_dhcp = src.get("zeek", {}).get("dhcp", {})
+                ip = zeek_dhcp.get("assigned_ip") or src.get("source", {}).get("ip")
+                if (
+                    ip == "0.0.0.0"
+                ):  # a DISCOVER/REQUEST from a client with no address yet
+                    ip = None
+                hostname = zeek_dhcp.get("host_name")
+                # vendor_class not reliably available in Arkime DHCP data
+                vendor_class = None
 
                 metadata: dict[str, Any] = {}
                 if hostname:
@@ -465,7 +812,13 @@ class DeviceRegistry:
                 if vendor_class:
                     metadata["vendor_class"] = vendor_class
 
-                self.register_device(mac=mac, ip=ip, source="dhcp", metadata=metadata)
+                self.register_device(
+                    mac=mac,
+                    ip=ip,
+                    source="dhcp",
+                    metadata=metadata,
+                    seen_at=hit_time(hit),
+                )
                 count += 1
 
         except OpenSearchException as exc:
@@ -494,17 +847,15 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
             },
             "aggs": {
                 "by_mac": {
-                    "terms": {"field": "source.mac.keyword", "size": 500},
+                    "terms": {"field": "source.mac", "size": 500},
                     "aggs": {
-                        "ips": {"terms": {"field": "source.ip.keyword", "size": 10}},
+                        "ips": {"terms": {"field": "source.ip", "size": 10}},
                     },
                 }
             },
@@ -513,7 +864,9 @@ class DeviceRegistry:
         count = 0
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
-            buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+            buckets = (
+                result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+            )
             for bucket in buckets:
                 mac = bucket["key"]
                 ip_buckets = bucket.get("ips", {}).get("buckets", [])
@@ -547,9 +900,8 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "dns"}},
-                        {"wildcard": {"zeek.dns.query.keyword": "*.local"}},
+                        {"term": {"network.protocol": "dns"}},
+                        {"wildcard": {"dns.host": "*.local"}},
                         {"exists": {"field": "source.mac"}},
                     ]
                 }
@@ -557,7 +909,7 @@ class DeviceRegistry:
             "_source": [
                 "source.mac",
                 "source.ip",
-                "zeek.dns.query",
+                "dns.host",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -568,26 +920,37 @@ class DeviceRegistry:
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
-                mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE START — 2026-11-01: Malcolm stores source.mac as a list, which crashed the set lookup below
+                # mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hit)
                 if not mac or mac in seen_macs:
                     continue
                 seen_macs.add(mac)
 
                 ip = src.get("source.ip") or src.get("source", {}).get("ip")
-                dns_query = (
-                    src.get("zeek.dns.query")
-                    or src.get("zeek", {}).get("dns", {}).get("query")
-                )
+                # Arkime stores dns.host as a list
+                dns_host_val = src.get("dns.host") or src.get("dns", {}).get("host")
+                if isinstance(dns_host_val, list):
+                    # Find the .local entry in the list
+                    dns_query = next(
+                        (h for h in dns_host_val if h.endswith(".local")), None
+                    )
+                else:
+                    dns_query = dns_host_val
 
                 if dns_query and dns_query.endswith(".local"):
                     # Extract friendly name from mDNS (e.g. "iPhone._tcp.local" -> "iPhone")
-                    hostname = dns_query.split(".")[0] if "." in dns_query else dns_query
+                    hostname = (
+                        dns_query.split(".")[0] if "." in dns_query else dns_query
+                    )
 
                     self.register_device(
                         mac=mac,
                         ip=ip,
                         source="mdns",
                         metadata={"hostname": hostname, "mdns_query": dns_query},
+                        seen_at=hit_time(hit),
                     )
                     count += 1
 
@@ -617,13 +980,12 @@ class DeviceRegistry:
                                 }
                             }
                         },
-                        {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "http"}},
+                        {"term": {"network.protocol": "http"}},
                         {"exists": {"field": "source.mac"}},
                     ],
                     "should": [
-                        {"match": {"zeek.http.uri": "ssdp"}},
-                        {"match": {"zeek.http.user_agent": "UPnP"}},
+                        {"match": {"http.uri": "ssdp"}},
+                        {"match": {"http.useragent": "UPnP"}},
                         {"term": {"destination.port": 1900}},
                     ],
                     "minimum_should_match": 1,
@@ -632,8 +994,8 @@ class DeviceRegistry:
             "_source": [
                 "source.mac",
                 "source.ip",
-                "zeek.http.user_agent",
-                "zeek.http.uri",
+                "http.useragent",
+                "http.uri",
             ],
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
@@ -644,15 +1006,17 @@ class DeviceRegistry:
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
-                mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE START — 2026-11-01: Malcolm stores source.mac as a list, which crashed the set lookup below
+                # mac = src.get("source.mac") or src.get("source", {}).get("mac")
+                # OLD CODE END
+                mac = _mac_from_hit(hit)
                 if not mac or mac in seen_macs:
                     continue
                 seen_macs.add(mac)
 
                 ip = src.get("source.ip") or src.get("source", {}).get("ip")
-                user_agent = (
-                    src.get("zeek.http.user_agent")
-                    or src.get("zeek", {}).get("http", {}).get("user_agent")
+                user_agent = src.get("http.useragent") or src.get("http", {}).get(
+                    "useragent"
                 )
 
                 metadata: dict[str, Any] = {}
@@ -664,7 +1028,13 @@ class DeviceRegistry:
                     if parts:
                         metadata["hostname"] = parts[0].replace("-", " ")
 
-                self.register_device(mac=mac, ip=ip, source="ssdp", metadata=metadata)
+                self.register_device(
+                    mac=mac,
+                    ip=ip,
+                    source="ssdp",
+                    metadata=metadata,
+                    seen_at=hit_time(hit),
+                )
                 count += 1
 
         except OpenSearchException as exc:
@@ -682,6 +1052,7 @@ class DeviceRegistry:
         Returns:
             Number of devices enriched.
         """
+        self.refresh_index()  # names and IPs from this refresh's enrichers must be searchable
         devices = self.get_all_devices(limit=1000)
         count = 0
 

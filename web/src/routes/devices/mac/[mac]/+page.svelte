@@ -14,11 +14,15 @@
 	import type { RegistryDevice, DeviceTraffic } from '$api/devices-registry';
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	let device = $state<RegistryDevice | null>(null);
 	let traffic = $state<DeviceTraffic | null>(null);
 	let loading = $state(true);
 	let error = $state(false);
+	// #96: a failed request is not "Device not found"
+	let deviceFailed = $state(false);
+	let trafficFailed = $state(false);
 
 	let mac = $derived($page.params.mac);
 
@@ -31,9 +35,17 @@
 				getRegistryDevice(mac),
 				getDeviceTraffic(mac),
 			]);
-			device = d.status === 'fulfilled' ? d.value : null;
-			traffic = t.status === 'fulfilled' ? t.value : null;
-			if (!device) error = true;
+			// OLD CODE START — #96: any failure read as "Device not found"
+			// device = d.status === 'fulfilled' ? d.value : null;
+			// traffic = t.status === 'fulfilled' ? t.value : null;
+			// if (!device) error = true;
+			// OLD CODE END
+			// getRegistryDevice resolves null only for a real 404; a failed refresh keeps the last data
+			if (d.status === 'fulfilled') device = d.value;
+			if (t.status === 'fulfilled') traffic = t.value;
+			deviceFailed = d.status === 'rejected';
+			trafficFailed = t.status === 'rejected';
+			if (d.status === 'fulfilled' && !device) error = true;
 		} catch {
 			error = true;
 		} finally {
@@ -111,6 +123,10 @@
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Loading device details...</p>
+		</div>
+	{:else if deviceFailed && !device}
+		<div class="empty-state">
+			<p class="empty-text">{loadFailed(`device ${mac}`)}</p>
 		</div>
 	{:else if error || !device}
 		<div class="empty-state">
@@ -211,6 +227,12 @@
 						<div class="info-row">
 							<span class="info-label">Connections</span>
 							<span class="info-value mono">{traffic.connection_count.toLocaleString()}</span>
+						</div>
+					{/if}
+					{#if trafficFailed}
+						<div class="info-row">
+							<span class="info-label">Traffic</span>
+							<span class="info-value">{loadFailed('traffic', traffic !== null)}</span>
 						</div>
 					{/if}
 				</div>

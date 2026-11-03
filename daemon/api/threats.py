@@ -6,12 +6,14 @@ beaconing detection, lateral movement, DNS anomalies, and
 auto-investigations.
 """
 
+import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiohttp import web
 
+from api.time_range import parse_time_range
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.threats")
@@ -21,22 +23,27 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
 def _get_client(request: web.Request):
@@ -48,10 +55,23 @@ async def handle_threat_report(request: web.Request) -> web.Response:
     """GET /api/threats/report?from=&to= — Unified threat report."""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.investigation import generate_threat_report
+
     try:
-        report = await generate_threat_report(client, from_ts, to_ts)
+        # OLD CODE START — #139: the report's OpenSearch calls block, so on the request loop
+        # they held up every other request for 8-13 s (the top bar said "Can't reach NetTap")
+        # report = await generate_threat_report(
+        #     client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # )
+        # OLD CODE END
+        report = await asyncio.to_thread(
+            asyncio.run,
+            generate_threat_report(
+                client, from_ts, to_ts, excluded_ips=excluded_ips_list
+            ),
+        )
     except Exception as exc:
         logger.error("Threat report generation failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -63,40 +83,73 @@ async def handle_beaconing(request: web.Request) -> web.Response:
     """GET /api/threats/beaconing?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_detection import detect_beaconing
+
     try:
-        beacons = detect_beaconing(client, from_ts, to_ts)
+        # OLD CODE START — #139: 5-6 s of blocking OpenSearch calls on the request loop
+        # beacons, complete = detect_beaconing(
+        #     client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # )
+        # OLD CODE END
+        beacons, complete = await asyncio.to_thread(
+            detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Beaconing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({"from": from_ts, "to": to_ts, "beacons": beacons, "total": len(beacons)})
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "beacons": beacons,
+            "total": len(beacons),
+            "complete": complete,
+        }
+    )
 
 
 async def handle_lateral_movement(request: web.Request) -> web.Response:
     """GET /api/threats/lateral?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_detection import detect_lateral_movement
+
     try:
-        movements = detect_lateral_movement(client, from_ts, to_ts)
+        movements, complete = detect_lateral_movement(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("Lateral movement detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    return web.json_response({"from": from_ts, "to": to_ts, "movements": movements, "total": len(movements)})
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "movements": movements,
+            "total": len(movements),
+            "complete": complete,
+        }
+    )
 
 
 async def handle_dns_anomalies(request: web.Request) -> web.Response:
     """GET /api/threats/dns-anomalies?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_detection import analyze_dns_anomalies
+
     try:
-        anomalies = analyze_dns_anomalies(client, from_ts, to_ts)
+        anomalies = analyze_dns_anomalies(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         logger.error("DNS anomaly analysis failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -108,24 +161,37 @@ async def handle_threat_intel(request: web.Request) -> web.Response:
     """GET /api/threats/intel?from=&to= — Populate TI from Suricata + return matches."""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     from services.threat_intel import ThreatIntelService
+
     ti = ThreatIntelService()
     ti.load_cache()
 
     # Bootstrap from Suricata data
-    new_count = ti.populate_from_suricata(client, from_ts, to_ts)
+    try:
+        new_count = ti.populate_from_suricata(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
+    except Exception as exc:
+        logger.error("Threat intel refresh from Suricata failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
     feeds = ti.get_all_matches()
 
-    return web.json_response({
-        "from": from_ts, "to": to_ts,
-        "new_indicators": new_count,
-        "feeds": feeds,
-        "total_indicators": sum(f["indicator_count"] for f in feeds.values()),
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "new_indicators": new_count,
+            "feeds": feeds,
+            "total_indicators": sum(f["indicator_count"] for f in feeds.values()),
+        }
+    )
 
 
-def register_threat_routes(app: web.Application, storage_manager: StorageManager) -> None:
+def register_threat_routes(
+    app: web.Application, storage_manager: StorageManager
+) -> None:
     app.router.add_get("/api/threats/report", handle_threat_report)
     app.router.add_get("/api/threats/beaconing", handle_beaconing)
     app.router.add_get("/api/threats/lateral", handle_lateral_movement)

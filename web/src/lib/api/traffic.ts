@@ -61,6 +61,10 @@ export interface ProtocolsResponse {
 	to: string;
 	protocols: ProtocolEntry[];
 	services: ProtocolEntry[];
+	/** Connections that can carry encrypted traffic (local chatter and STUN left out), and how many did (#86) */
+	encryption?: { eligible: number; encrypted: number };
+	/** Plain DNS lookups (mDNS/LLMNR left out) and DNS-over-TLS connections (#86) */
+	dns?: { plain: number; over_tls: number };
 }
 
 export interface BandwidthPoint {
@@ -146,14 +150,94 @@ export interface Connection {
 	_index: string;
 	/** ECS fields from OpenSearch _source */
 	'@timestamp'?: string;
-	source?: { ip?: string; port?: number; bytes?: number; packets?: number };
-	destination?: { ip?: string; port?: number; bytes?: number; packets?: number };
+	source?: { ip?: string; port?: number; bytes?: number; packets?: number; as?: { full?: string }; geo?: { country_iso_code?: string; country_name?: string } };
+	destination?: { ip?: string; port?: number; bytes?: number; packets?: number; as?: { full?: string }; geo?: { country_iso_code?: string; country_name?: string } };
 	client?: { bytes?: number };
 	server?: { bytes?: number };
 	network?: { transport?: string; protocol?: string; community_id?: string };
 	event?: { duration?: number };
 	zeek?: { session_id?: string; conn?: { state?: string; history?: string } };
 	[key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Connections v3 types
+// ---------------------------------------------------------------------------
+
+export interface ConnectionStatsSource {
+	ip: string;
+	total_bytes: number;
+	connections: number;
+}
+
+export interface ConnectionStatsDestination {
+	ip: string;
+	total_bytes: number;
+	connections: number;
+	asn: string;
+	country: string;
+}
+
+export interface ConnectionStatsResponse {
+	from: string;
+	to: string;
+	total_sessions: number;
+	bytes_in: number;
+	bytes_out: number;
+	alert_sessions: number;
+	protocols: ProtocolEntry[];
+	top_sources: ConnectionStatsSource[];
+	top_destinations: ConnectionStatsDestination[];
+}
+
+export interface SankeyNode {
+	id: string;
+	label: string;
+	value: number;
+	country?: string;
+}
+
+export interface SankeyLink {
+	source: string;
+	target: string;
+	value: number;
+}
+
+export interface SankeyResponse {
+	from: string;
+	to: string;
+	nodes: {
+		sources: SankeyNode[];
+		protocols: SankeyNode[];
+		destinations: SankeyNode[];
+	};
+	links: SankeyLink[];
+}
+
+export interface ConnectionTimelineBucket {
+	timestamp: string;
+	total: number;
+	protocols: Record<string, number>;
+}
+
+export interface ConnectionTimelineResponse {
+	from: string;
+	to: string;
+	interval: string;
+	buckets: ConnectionTimelineBucket[];
+}
+
+export interface RelatedConnectionsResponse {
+	from: string;
+	to: string;
+	src_ip: string;
+	dst_ip: string;
+	total_connections: number;
+	total_bytes: number;
+	protocols: string[];
+	first_seen: string | null;
+	last_seen: string | null;
+	connections: Connection[];
 }
 
 export interface ConnectionsResponse {
@@ -194,18 +278,21 @@ export async function getTrafficSummary(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/summary${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			total_bytes: 0,
-			orig_bytes: 0,
-			resp_bytes: 0,
-			packet_count: 0,
-			connection_count: 0,
-			top_protocol: 'unknown',
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 B and 0 connections
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		total_bytes: 0,
+	// 		orig_bytes: 0,
+	// 		resp_bytes: 0,
+	// 		packet_count: 0,
+	// 		connection_count: 0,
+	// 		top_protocol: 'unknown',
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Traffic summary failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -219,9 +306,12 @@ export async function getTopTalkers(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/traffic/top-talkers${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', limit: opts.limit ?? 20, top_talkers: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no talkers
+	// if (!res.ok) {
+	// 	return { from: '', to: '', limit: opts.limit ?? 20, top_talkers: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top talkers failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -235,9 +325,12 @@ export async function getTopDestinations(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/traffic/top-destinations${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', limit: opts.limit ?? 20, top_destinations: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no destinations
+	// if (!res.ok) {
+	// 	return { from: '', to: '', limit: opts.limit ?? 20, top_destinations: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top destinations failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -251,9 +344,12 @@ export async function getProtocolDistribution(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/protocols${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', protocols: [], services: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no protocols or services
+	// if (!res.ok) {
+	// 	return { from: '', to: '', protocols: [], services: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Protocol distribution failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -268,9 +364,12 @@ export async function getBandwidthTimeSeries(
 	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/traffic/bandwidth${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', interval: opts.interval ?? '5m', series: [] };
-	}
+	// OLD CODE START — #96: a failed request read as an empty chart
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: opts.interval ?? '5m', series: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Bandwidth time series failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -290,17 +389,20 @@ export async function getConnections(
 	});
 	const res = await fetch(`/api/traffic/connections${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			page: opts.page ?? 1,
-			size: opts.size ?? 50,
-			total: 0,
-			total_pages: 0,
-			connections: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as "No Connections"
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		page: opts.page ?? 1,
+	// 		size: opts.size ?? 50,
+	// 		total: 0,
+	// 		total_pages: 0,
+	// 		connections: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection list failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -314,9 +416,12 @@ export async function getTrafficCategories(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/traffic/categories${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', categories: [] };
-	}
+	// OLD CODE START — #96: a failed request read as "No category data yet"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', categories: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Traffic categories failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -330,22 +435,27 @@ export async function getCategoryDetail(
 ): Promise<CategoryDetailResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
 	const url = `/api/traffic/categories/${encodeURIComponent(category)}${q}`;
-	try {
-		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
-	} catch (err) {
-		console.error('[getCategoryDetail] fetch failed for', category, err);
-		return {
-			category,
-			label: category,
-			device_count: 0,
-			total_bytes: 0,
-			connection_count: 0,
-			devices: [],
-			services: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as "No traffic data" for the category
+	// try {
+	// 	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	return await res.json();
+	// } catch (err) {
+	// 	console.error('[getCategoryDetail] fetch failed for', category, err);
+	// 	return {
+	// 		category,
+	// 		label: category,
+	// 		device_count: 0,
+	// 		total_bytes: 0,
+	// 		connection_count: 0,
+	// 		devices: [],
+	// 		services: [],
+	// 	};
+	// }
+	// OLD CODE END
+	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Category detail failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
@@ -357,18 +467,108 @@ export async function getCategoryBandwidth(
 ): Promise<CategoryBandwidthResponse> {
 	const q = buildQuery(opts as Record<string, string | number | undefined>);
 	const url = `/api/traffic/categories/${encodeURIComponent(category)}/bandwidth${q}`;
-	try {
-		const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-		if (!res.ok) throw new Error(`${res.status}`);
-		return await res.json();
-	} catch (err) {
-		console.error('[getCategoryBandwidth] fetch failed for', category, err);
-		return {
-			category,
-			from: '',
-			to: '',
-			interval: opts.interval ?? '15m',
-			series: [],
-		};
-	}
+	// OLD CODE START — #96: a failed request read as an empty chart
+	// try {
+	// 	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	// 	if (!res.ok) throw new Error(`${res.status}`);
+	// 	return await res.json();
+	// } catch (err) {
+	// 	console.error('[getCategoryBandwidth] fetch failed for', category, err);
+	// 	return {
+	// 		category,
+	// 		from: '',
+	// 		to: '',
+	// 		interval: opts.interval ?? '15m',
+	// 		series: [],
+	// 	};
+	// }
+	// OLD CODE END
+	const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+	if (!res.ok) throw new Error(`Category bandwidth failed: HTTP ${res.status}`);
+	return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Connections v3 fetch functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Get aggregated connection statistics (stat cards + analytics data).
+ */
+export async function getConnectionStats(
+	opts: TimeRangeParams = {}
+): Promise<ConnectionStatsResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to });
+	const res = await fetch(`/api/traffic/connections/stats${query}`);
+	// OLD CODE START — #96: a failed request read as 0 sessions and 0 B
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '', to: '', total_sessions: 0, bytes_in: 0, bytes_out: 0,
+	// 		alert_sessions: 0, protocols: [], top_sources: [], top_destinations: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection stats failed: HTTP ${res.status}`);
+	return res.json();
+}
+
+/**
+ * Get Sankey diagram data (source IPs → protocols → destination orgs).
+ */
+export async function getConnectionSankey(
+	opts: TimeRangeParams & { limit?: number } = {}
+): Promise<SankeyResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
+	const res = await fetch(`/api/traffic/connections/sankey${query}`);
+	// OLD CODE START — #96: a failed request read as no flows
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '', to: '',
+	// 		nodes: { sources: [], protocols: [], destinations: [] },
+	// 		links: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection flow failed: HTTP ${res.status}`);
+	return res.json();
+}
+
+/**
+ * Get connection timeline (session count by protocol over time).
+ */
+export async function getConnectionTimeline(
+	opts: TimeRangeParams & { interval?: string } = {}
+): Promise<ConnectionTimelineResponse> {
+	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
+	const res = await fetch(`/api/traffic/connections/timeline${query}`);
+	// OLD CODE START — #96: a failed request read as an empty timeline
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: opts.interval ?? '15m', buckets: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Connection timeline failed: HTTP ${res.status}`);
+	return res.json();
+}
+
+/**
+ * Get all connections between a specific source-destination pair.
+ */
+export async function getRelatedConnections(
+	srcIp: string,
+	dstIp: string,
+	opts: TimeRangeParams = {}
+): Promise<RelatedConnectionsResponse> {
+	const query = buildQuery({ src_ip: srcIp, dst_ip: dstIp, from: opts.from, to: opts.to });
+	const res = await fetch(`/api/traffic/connections/related${query}`);
+	// OLD CODE START — #96: a failed request read as 0 related sessions
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '', to: '', src_ip: srcIp, dst_ip: dstIp,
+	// 		total_connections: 0, total_bytes: 0, protocols: [],
+	// 		first_seen: null, last_seen: null, connections: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Related connections failed: HTTP ${res.status}`);
+	return res.json();
 }

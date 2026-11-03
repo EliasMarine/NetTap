@@ -13,8 +13,9 @@ The mirror NIC:
     - Is NOT part of a bridge
 
 Architecture decisions:
-    - nsenter instead of Docker socket: proven safe, already used in
-      bridge_manager.py, works with existing caps (NET_ADMIN, SYS_PTRACE, pid:host)
+    - Host network commands run directly: the daemon container uses
+      network_mode: host and NET_ADMIN. (nsenter was dropped 2026-11-01 because
+      Ubuntu's docker-default AppArmor profile blocks it.)
     - Host filesystem mounts for persistence: writes networkd and systemd configs
       to mounted host dirs so mirror NIC config survives reboot
     - Separate management interface: web UI access uses a different NIC so the
@@ -33,6 +34,7 @@ from .capture_manager import (
     CaptureMode,
     CaptureStats,
 )
+from .dhcp_gateway_host import replace_symlink
 
 logger = logging.getLogger("nettap.services.mirror_manager")
 
@@ -43,8 +45,9 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 class MirrorManager(CaptureManager):
     """Manages a mirror/SPAN capture interface.
 
-    All network operations use ``nsenter -t 1 -n`` to execute in the host
-    network namespace. Persistence files are written to mounted host dirs.
+    Network commands run in the host network namespace, which the daemon
+    container shares (network_mode: host). Persistence files are written to
+    mounted host dirs.
     """
 
     def __init__(
@@ -115,9 +118,7 @@ class MirrorManager(CaptureManager):
             "ip", "addr", "flush", "dev", self._interface
         )
         if rc != 0:
-            warnings.append(
-                f"Could not flush IP addresses: {err.strip()}"
-            )
+            warnings.append(f"Could not flush IP addresses: {err.strip()}")
 
         # 2. Write networkd config to prevent DHCP on mirror interface
         if self._netplan_dir:
@@ -129,15 +130,23 @@ class MirrorManager(CaptureManager):
             "ip", "link", "set", self._interface, "promisc", "on"
         )
         if rc != 0:
-            errors.append(
-                f"Failed to enable promiscuous mode: {err.strip()}"
-            )
+            errors.append(f"Failed to enable promiscuous mode: {err.strip()}")
 
         # 4. Disable NIC offloads — prevents reassembly that hides real packet sizes
         rc, _, err = await self._run_nsenter(
-            "ethtool", "-K", self._interface,
-            "tso", "off", "gso", "off", "gro", "off",
-            "lro", "off", "rx-vlan-offload", "off",
+            "ethtool",
+            "-K",
+            self._interface,
+            "tso",
+            "off",
+            "gso",
+            "off",
+            "gro",
+            "off",
+            "lro",
+            "off",
+            "rx-vlan-offload",
+            "off",
         )
         if rc != 0:
             # ethtool failures are non-critical — some NICs don't support all offloads
@@ -156,9 +165,7 @@ class MirrorManager(CaptureManager):
             )
 
         # 6. Bring interface UP
-        rc, _, err = await self._run_nsenter(
-            "ip", "link", "set", self._interface, "up"
-        )
+        rc, _, err = await self._run_nsenter("ip", "link", "set", self._interface, "up")
         if rc != 0:
             errors.append(f"Failed to bring {self._interface} up: {err.strip()}")
 
@@ -220,9 +227,13 @@ class MirrorManager(CaptureManager):
             )
 
         if not errors:
-            logger.info("Mirror interface %s torn down (promisc disabled)", self._interface)
+            logger.info(
+                "Mirror interface %s torn down (promisc disabled)", self._interface
+            )
         else:
-            logger.warning("Mirror interface %s teardown had errors: %s", self._interface, errors)
+            logger.warning(
+                "Mirror interface %s teardown had errors: %s", self._interface, errors
+            )
 
         return {
             "torn_down": len(errors) == 0,
@@ -259,20 +270,15 @@ class MirrorManager(CaptureManager):
             )
 
         # Check 2: Operational state
-        operstate = self._read_sysfs_file(
-            os.path.join(iface_dir, "operstate")
-        )
+        operstate = self._read_sysfs_file(os.path.join(iface_dir, "operstate"))
         link_up = operstate == "up"
         if not link_up:
             issues.append(
-                f"Interface {self._interface} is {operstate or 'unknown'} "
-                f"(expected up)"
+                f"Interface {self._interface} is {operstate or 'unknown'} (expected up)"
             )
 
         # Check 3: Carrier detected
-        carrier = self._read_sysfs_file(
-            os.path.join(iface_dir, "carrier")
-        )
+        carrier = self._read_sysfs_file(os.path.join(iface_dir, "carrier"))
         carrier_up = carrier == "1"
         if not carrier_up:
             issues.append(
@@ -282,9 +288,7 @@ class MirrorManager(CaptureManager):
         # Check 4: Promiscuous mode
         promisc_enabled = self._check_promisc()
         if not promisc_enabled:
-            issues.append(
-                f"Promiscuous mode not enabled on {self._interface}"
-            )
+            issues.append(f"Promiscuous mode not enabled on {self._interface}")
 
         # Check 5: No IP address (mirror NIC should be capture-only)
         has_ip = await self._check_has_ip()
@@ -292,6 +296,10 @@ class MirrorManager(CaptureManager):
             issues.append(
                 f"IP address assigned to {self._interface} — mirror NIC "
                 f"should have no IP (capture-only)"
+            )
+        elif has_ip is None:
+            issues.append(
+                f"Could not check whether {self._interface} has an IP address"
             )
 
         # Determine overall status
@@ -359,9 +367,7 @@ class MirrorManager(CaptureManager):
 
         # Calculate drop rate
         total_rx = rx_packets + rx_dropped
-        drop_rate_pct = round(
-            (rx_dropped / total_rx) * 100, 4
-        ) if total_rx > 0 else 0.0
+        drop_rate_pct = round((rx_dropped / total_rx) * 100, 4) if total_rx > 0 else 0.0
 
         return CaptureStats(
             capture_interface=self._interface,
@@ -385,12 +391,17 @@ class MirrorManager(CaptureManager):
     # -------------------------------------------------------------------
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter.
+        """Run a command in the host network namespace (network_mode: host).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -404,11 +415,11 @@ class MirrorManager(CaptureManager):
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     def _check_promisc(self) -> bool:
         """Check if the mirror interface has promiscuous mode enabled.
@@ -426,22 +437,28 @@ class MirrorManager(CaptureManager):
         except ValueError:
             return False
 
-    async def _check_has_ip(self) -> bool:
+    async def _check_has_ip(self) -> bool | None:
         """Check if the mirror interface has any IP address assigned.
 
         Mirror NICs should be capture-only with no L3 configuration.
 
         Returns:
-            True if any IP address is assigned, False otherwise.
+            True if any IP address is assigned, False if none, None if
+            ``ip`` failed or its output couldn't be read (not checked).
         """
         rc, stdout, _ = await self._run_nsenter(
             "ip", "-j", "addr", "show", "dev", self._interface
         )
+        # OLD CODE START — #96: a failed check read as "no IP", so health could say normal
+        # if rc != 0:
+        #     return False
+        # OLD CODE END
         if rc != 0:
-            return False
+            return None
 
         try:
             import json
+
             iface_data = json.loads(stdout)
             if iface_data and isinstance(iface_data, list):
                 addr_info = iface_data[0].get("addr_info", [])
@@ -454,8 +471,12 @@ class MirrorManager(CaptureManager):
                     if family == "inet6" and not local.startswith("fe80"):
                         return True
             return False
-        except (ValueError, KeyError, IndexError):
-            return False
+        # OLD CODE START — #96: unreadable output read as "no IP"
+        # except (ValueError, KeyError, IndexError):
+        #     return False
+        # OLD CODE END
+        except (ValueError, KeyError, IndexError, AttributeError):
+            return None
 
     def _write_networkd_config(self) -> list[str]:
         """Write systemd-networkd config to prevent DHCP on the mirror NIC.
@@ -507,6 +528,14 @@ class MirrorManager(CaptureManager):
         files_written: list[str] = []
 
         unit_path = os.path.join(self._systemd_dir, "nettap-mirror.service")
+        # OLD CODE START — removed 2026-11-01 (CR-076): the unit ran, at every boot
+        # and by NIC name with no in-use check,
+        #   ExecStart=/sbin/ip addr flush dev {self._interface}
+        # After a NIC rename that strips the management port. The netplan file
+        # (dhcp4/dhcp6 false, link-local: []) already keeps the NIC address-free.
+        # ethtool -K also gained "-": a refused offload (Realtek) stopped the unit
+        # before the IPv6 line ran.
+        # OLD CODE END
         unit_content = textwrap.dedent(f"""\
             # NetTap mirror interface service — auto-generated
             # Configures mirror/SPAN capture NIC at boot
@@ -519,14 +548,12 @@ class MirrorManager(CaptureManager):
             [Service]
             Type=oneshot
             RemainAfterExit=yes
-            # Strip any IP addresses
-            ExecStart=/sbin/ip addr flush dev {self._interface}
             # Enable promiscuous mode for packet capture
             ExecStart=/sbin/ip link set {self._interface} promisc on
             # Bring interface UP
             ExecStart=/sbin/ip link set {self._interface} up
-            # Disable NIC offloads for accurate capture
-            ExecStart=/usr/sbin/ethtool -K {self._interface} tso off gso off gro off lro off rx-vlan-offload off
+            # Disable NIC offloads for accurate capture (non-fatal, like the ring buffer)
+            ExecStart=-/usr/sbin/ethtool -K {self._interface} tso off gso off gro off lro off rx-vlan-offload off
             # Maximize ring buffer to reduce drops
             ExecStart=-/usr/sbin/ethtool -G {self._interface} rx 4096
             # Disable IPv6
@@ -545,9 +572,18 @@ class MirrorManager(CaptureManager):
             if os.path.isdir(wants_dir):
                 symlink_path = os.path.join(wants_dir, "nettap-mirror.service")
                 try:
-                    if os.path.exists(symlink_path):
-                        os.remove(symlink_path)
-                    os.symlink(unit_path, symlink_path)
+                    # OLD CODE START — replaced 2026-10-30 (LD-001): the target was
+                    # the container path (/host/etc/...), which doesn't exist on the
+                    # host, so systemd never started the unit; exists() is also False
+                    # for that dangling link, so re-creating it hit FileExistsError.
+                    # if os.path.exists(symlink_path):
+                    #     os.remove(symlink_path)
+                    # os.symlink(unit_path, symlink_path)
+                    # OLD CODE END
+                    # Relative target resolves on the host and in the container
+                    replace_symlink(
+                        os.path.join("..", os.path.basename(unit_path)), symlink_path
+                    )
                     logger.info("Created systemd symlink: %s", symlink_path)
                 except OSError as exc:
                     logger.warning("Could not create systemd symlink: %s", exc)

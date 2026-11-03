@@ -63,24 +63,10 @@ describe('search API client', () => {
 			expect(result.results).toHaveLength(2);
 		});
 
-		it('returns empty results on HTTP error', async () => {
-			mockFetchFailure(500);
-
-			const result = await executeSearch('failing query');
-
-			expect(result.total).toBe(0);
-			expect(result.results).toEqual([]);
-			expect(result.query).toBe('failing query');
-		});
-
-		it('preserves query string in fallback response', async () => {
+		// #96: a failed search read as "0 results ... No results found"
+		it('throws on HTTP error so the search box can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await executeSearch('some search');
-
-			expect(result.query).toBe('some search');
-			expect(result.description).toBe('');
-			expect(result.index).toBe('');
+			await expect(executeSearch('some search')).rejects.toThrow('HTTP 502');
 		});
 
 		it('returns results with correct _id and _index fields', async () => {

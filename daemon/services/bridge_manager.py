@@ -2,12 +2,13 @@
 NetTap Bridge Manager Service
 
 Creates and manages the Linux bridge (br0) that sits inline between the ISP
-modem and the home/small business router. Uses ``nsenter -t 1 -n`` to execute
-network namespace commands on the host from inside the Docker container.
+modem and the home/small business router. Network commands run directly in
+the host network namespace, which the daemon container shares
+(network_mode: host).
 
 Architecture decisions:
-    - nsenter instead of Docker socket: proven safe, already used in
-      nic_discovery.py, works with existing caps (NET_ADMIN, SYS_PTRACE, pid:host)
+    - Host network commands run directly (network_mode: host + NET_ADMIN).
+      nsenter was dropped 2026-11-01: Ubuntu's AppArmor profile blocks it.
     - Host filesystem mounts for persistence: writes netplan, systemd unit,
       and sysctl config to mounted host dirs so bridge survives reboot
     - "Soft bypass" via promisc toggle: no Docker socket needed, containers
@@ -20,6 +21,8 @@ import os
 import textwrap
 from pathlib import Path
 
+from services.dhcp_gateway_host import replace_symlink
+
 logger = logging.getLogger("nettap.services.bridge_manager")
 
 # Host sysfs for reading NIC state (container mounts host /sys at /host/sys)
@@ -29,8 +32,9 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 class BridgeManager:
     """Manages bridge creation, teardown, and readiness checks.
 
-    All network operations use ``nsenter -t 1 -n`` to execute in the host
-    network namespace. Persistence files are written to mounted host dirs.
+    Network commands run in the host network namespace, which the daemon
+    container shares (network_mode: host). Persistence files are written to
+    mounted host dirs.
     """
 
     def __init__(
@@ -93,9 +97,7 @@ class BridgeManager:
 
         # Verify both interfaces exist on the host
         for iface in (wan, lan):
-            rc, stdout, _ = await self._run_nsenter(
-                "ip", "-j", "link", "show", iface
-            )
+            rc, stdout, _ = await self._run_nsenter("ip", "-j", "link", "show", iface)
             if rc != 0:
                 errors.append(f"Interface {iface} does not exist on host")
 
@@ -112,18 +114,14 @@ class BridgeManager:
             }
 
         # Check if bridge already exists
-        rc, _, _ = await self._run_nsenter(
-            "ip", "link", "show", self._bridge_name
-        )
+        rc, _, _ = await self._run_nsenter("ip", "link", "show", self._bridge_name)
         bridge_existed = rc == 0
 
         if bridge_existed:
             logger.info("Bridge %s already exists — reconfiguring", self._bridge_name)
             # Remove existing member interfaces before re-adding
             for iface in (wan, lan):
-                await self._run_nsenter(
-                    "ip", "link", "set", iface, "nomaster"
-                )
+                await self._run_nsenter("ip", "link", "set", iface, "nomaster")
         else:
             # Create bridge
             rc, _, err = await self._run_nsenter(
@@ -172,9 +170,7 @@ class BridgeManager:
                 warnings.append(f"Could not enable promisc on {iface}: {err.strip()}")
 
             # Bring interface UP
-            rc, _, err = await self._run_nsenter(
-                "ip", "link", "set", iface, "up"
-            )
+            rc, _, err = await self._run_nsenter("ip", "link", "set", iface, "up")
             if rc != 0:
                 warnings.append(f"Could not bring {iface} up: {err.strip()}")
 
@@ -204,8 +200,17 @@ class BridgeManager:
         # NIC offload tuning — disable TSO/GSO/GRO/LRO for reliable capture
         for iface in (wan, lan):
             rc, _, err = await self._run_nsenter(
-                "ethtool", "-K", iface, "tso", "off", "gso", "off",
-                "gro", "off", "lro", "off"
+                "ethtool",
+                "-K",
+                iface,
+                "tso",
+                "off",
+                "gso",
+                "off",
+                "gro",
+                "off",
+                "lro",
+                "off",
             )
             if rc != 0:
                 # ethtool failures are non-critical — some NICs don't support all offloads
@@ -234,8 +239,13 @@ class BridgeManager:
         )
 
         # Persist configuration to host filesystem
+        # OLD CODE START — #96: write failures were only logged; setup still said created
+        # if persist:
+        #     persistence_files = self._write_persistence(wan, lan)
+        # OLD CODE END
+        persist_failures: list[str] = []
         if persist:
-            persistence_files = self._write_persistence(wan, lan)
+            persistence_files = self._write_persistence(wan, lan, persist_failures)
 
         state = "reconfigured" if bridge_existed else "created"
         logger.info(
@@ -254,8 +264,13 @@ class BridgeManager:
             "lan": lan,
             "state": state,
             "errors": errors,
-            "warnings": warnings,
+            # OLD CODE START — #96: persistence write failures weren't in the response
+            # "warnings": warnings,
+            # OLD CODE END
+            "warnings": [*warnings, *persist_failures],
             "persistence_files": persistence_files,
+            # #96: false when the bridge won't come back after a reboot as configured
+            "persisted": bool(persistence_files) and not persist_failures,
         }
 
     async def teardown_bridge(self) -> dict:
@@ -267,9 +282,7 @@ class BridgeManager:
         errors: list[str] = []
 
         # Check if bridge exists
-        rc, _, _ = await self._run_nsenter(
-            "ip", "link", "show", self._bridge_name
-        )
+        rc, _, _ = await self._run_nsenter("ip", "link", "show", self._bridge_name)
         if rc != 0:
             return {
                 "torn_down": False,
@@ -284,8 +297,11 @@ class BridgeManager:
         if rc == 0 and stdout.strip():
             try:
                 import json
+
                 links = json.loads(stdout)
-                member_ifaces = [link.get("ifname", "") for link in links if link.get("ifname")]
+                member_ifaces = [
+                    link.get("ifname", "") for link in links if link.get("ifname")
+                ]
             except (ValueError, KeyError):
                 pass
 
@@ -295,9 +311,7 @@ class BridgeManager:
             await self._run_nsenter("ip", "link", "set", iface, "promisc", "off")
 
         # Delete bridge
-        rc, _, err = await self._run_nsenter(
-            "ip", "link", "del", self._bridge_name
-        )
+        rc, _, err = await self._run_nsenter("ip", "link", "del", self._bridge_name)
         if rc != 0:
             errors.append(f"Failed to delete bridge: {err.strip()}")
 
@@ -328,11 +342,13 @@ class BridgeManager:
         # 1. Bridge exists
         bridge_dir = os.path.join(_SYSFS_NET, self._bridge_name)
         bridge_exists = os.path.exists(bridge_dir)
-        checks.append({
-            "name": "bridge_exists",
-            "passed": bridge_exists,
-            "detail": f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
-        })
+        checks.append(
+            {
+                "name": "bridge_exists",
+                "passed": bridge_exists,
+                "detail": f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
+            }
+        )
 
         if not bridge_exists:
             # All remaining checks are N/A without a bridge
@@ -354,68 +370,80 @@ class BridgeManager:
             }
 
         # 2. Bridge is UP
-        bridge_up = self._read_sysfs(
-            os.path.join(bridge_dir, "operstate")
-        ) == "up"
-        checks.append({
-            "name": "bridge_up",
-            "passed": bridge_up,
-            "detail": f"Bridge {self._bridge_name} is {'UP' if bridge_up else 'DOWN'}",
-        })
+        bridge_up = self._read_sysfs(os.path.join(bridge_dir, "operstate")) == "up"
+        checks.append(
+            {
+                "name": "bridge_up",
+                "passed": bridge_up,
+                "detail": f"Bridge {self._bridge_name} is {'UP' if bridge_up else 'DOWN'}",
+            }
+        )
 
         # Discover member interfaces from bridge
         wan_iface, lan_iface = await self._discover_members()
 
         # 3. WAN carrier
-        wan_carrier = self._read_sysfs(
-            os.path.join(_SYSFS_NET, wan_iface, "carrier")
-        ) == "1" if wan_iface else False
-        checks.append({
-            "name": "wan_carrier",
-            "passed": wan_carrier,
-            "detail": f"WAN ({wan_iface or 'unknown'}) carrier {'detected' if wan_carrier else 'not detected — connect cable to WAN port'}",
-        })
+        wan_carrier = (
+            self._read_sysfs(os.path.join(_SYSFS_NET, wan_iface, "carrier")) == "1"
+            if wan_iface
+            else False
+        )
+        checks.append(
+            {
+                "name": "wan_carrier",
+                "passed": wan_carrier,
+                "detail": f"WAN ({wan_iface or 'unknown'}) carrier {'detected' if wan_carrier else 'not detected — connect cable to WAN port'}",
+            }
+        )
 
         # 4. LAN carrier
-        lan_carrier = self._read_sysfs(
-            os.path.join(_SYSFS_NET, lan_iface, "carrier")
-        ) == "1" if lan_iface else False
-        checks.append({
-            "name": "lan_carrier",
-            "passed": lan_carrier,
-            "detail": f"LAN ({lan_iface or 'unknown'}) carrier {'detected' if lan_carrier else 'not detected — connect cable to LAN port'}",
-        })
+        lan_carrier = (
+            self._read_sysfs(os.path.join(_SYSFS_NET, lan_iface, "carrier")) == "1"
+            if lan_iface
+            else False
+        )
+        checks.append(
+            {
+                "name": "lan_carrier",
+                "passed": lan_carrier,
+                "detail": f"LAN ({lan_iface or 'unknown'}) carrier {'detected' if lan_carrier else 'not detected — connect cable to LAN port'}",
+            }
+        )
 
         # 5. WAN promisc
         wan_promisc = await self._check_promisc(wan_iface) if wan_iface else False
-        checks.append({
-            "name": "wan_promisc",
-            "passed": wan_promisc,
-            "detail": f"WAN ({wan_iface or 'unknown'}) promiscuous mode {'enabled' if wan_promisc else 'disabled'}",
-        })
+        checks.append(
+            {
+                "name": "wan_promisc",
+                "passed": wan_promisc,
+                "detail": f"WAN ({wan_iface or 'unknown'}) promiscuous mode {'enabled' if wan_promisc else 'disabled'}",
+            }
+        )
 
         # 6. LAN promisc
         lan_promisc = await self._check_promisc(lan_iface) if lan_iface else False
-        checks.append({
-            "name": "lan_promisc",
-            "passed": lan_promisc,
-            "detail": f"LAN ({lan_iface or 'unknown'}) promiscuous mode {'enabled' if lan_promisc else 'disabled'}",
-        })
+        checks.append(
+            {
+                "name": "lan_promisc",
+                "passed": lan_promisc,
+                "detail": f"LAN ({lan_iface or 'unknown'}) promiscuous mode {'enabled' if lan_promisc else 'disabled'}",
+            }
+        )
 
         # 7. STP disabled
-        stp_val = self._read_sysfs(
-            os.path.join(bridge_dir, "bridge", "stp_state")
-        )
+        stp_val = self._read_sysfs(os.path.join(bridge_dir, "bridge", "stp_state"))
         stp_disabled = stp_val == "0"
-        checks.append({
-            "name": "stp_disabled",
-            "passed": stp_disabled,
-            "detail": f"STP {'disabled' if stp_disabled else 'enabled (should be disabled for inline tap)'}",
-        })
+        checks.append(
+            {
+                "name": "stp_disabled",
+                "passed": stp_disabled,
+                "detail": f"STP {'disabled' if stp_disabled else 'enabled (should be disabled for inline tap)'}",
+            }
+        )
 
-        # 8. Netfilter disabled — must read from HOST namespace via nsenter.
-        # /proc/sys/net/bridge/bridge-nf-call-iptables inside the container
-        # reflects the container's own namespace (always 1), not the host's.
+        # 8. Netfilter disabled — read from the HOST network namespace. The
+        # daemon shares it (network_mode: host); a container with its own
+        # namespace would read its own value (always 1), not the host's.
         # If the file doesn't exist, the br_netfilter kernel module is not
         # loaded — meaning bridge traffic is NOT subject to iptables at all,
         # which is the desired state (effectively disabled).
@@ -429,11 +457,13 @@ class BridgeManager:
             # File doesn't exist → br_netfilter module not loaded → no interference
             nf_disabled = True
             nf_detail = "Bridge netfilter not loaded (br_netfilter module absent — no iptables interference)"
-        checks.append({
-            "name": "netfilter_disabled",
-            "passed": nf_disabled,
-            "detail": nf_detail,
-        })
+        checks.append(
+            {
+                "name": "netfilter_disabled",
+                "passed": nf_disabled,
+                "detail": nf_detail,
+            }
+        )
 
         # Determine overall readiness and message
         all_passed = all(c["passed"] for c in checks)
@@ -452,7 +482,9 @@ class BridgeManager:
         else:
             # Some non-carrier checks failed
             detail_list = "; ".join(c["detail"] for c in failed)
-            message = f"Bridge is operational but some checks need attention: {detail_list}"
+            message = (
+                f"Bridge is operational but some checks need attention: {detail_list}"
+            )
 
         return {
             "ready": all_passed,
@@ -465,12 +497,17 @@ class BridgeManager:
     # -------------------------------------------------------------------
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter.
+        """Run a command in the host network namespace (network_mode: host).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -484,11 +521,11 @@ class BridgeManager:
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     async def _discover_members(self) -> tuple[str, str]:
         """Discover WAN and LAN member interfaces of the bridge.
@@ -530,7 +567,9 @@ class BridgeManager:
         except ValueError:
             return False
 
-    def _write_persistence(self, wan: str, lan: str) -> list[str]:
+    def _write_persistence(
+        self, wan: str, lan: str, failures: list[str] | None = None
+    ) -> list[str]:
         """Write bridge persistence files to mounted host directories.
 
         Writes:
@@ -538,10 +577,13 @@ class BridgeManager:
         2. Systemd unit for bridge bring-up at boot
         3. Sysctl config for bridge netfilter disable
 
+        Each write that fails is appended to ``failures`` when given (#96).
+
         Returns:
             List of file paths written.
         """
         files_written: list[str] = []
+        failures = [] if failures is None else failures
 
         # 1. Netplan YAML
         if self._netplan_dir:
@@ -576,6 +618,7 @@ class BridgeManager:
                 logger.info("Wrote netplan config: %s", netplan_path)
             except OSError as exc:
                 logger.warning("Could not write netplan config: %s", exc)
+                failures.append(f"Could not write netplan config {netplan_path}: {exc}")
 
         # 2. Systemd unit
         if self._systemd_dir:
@@ -612,14 +655,28 @@ class BridgeManager:
                 if os.path.isdir(wants_dir):
                     symlink_path = os.path.join(wants_dir, "nettap-bridge.service")
                     try:
-                        if os.path.exists(symlink_path):
-                            os.remove(symlink_path)
-                        os.symlink(unit_path, symlink_path)
+                        # OLD CODE START — replaced 2026-10-30 (LD-001): the target was
+                        # the container path (/host/etc/...), which doesn't exist on the
+                        # host, so systemd never started the unit; exists() is also False
+                        # for that dangling link, so re-creating it hit FileExistsError.
+                        # if os.path.exists(symlink_path):
+                        #     os.remove(symlink_path)
+                        # os.symlink(unit_path, symlink_path)
+                        # OLD CODE END
+                        # Relative target resolves on the host and in the container
+                        replace_symlink(
+                            os.path.join("..", os.path.basename(unit_path)),
+                            symlink_path,
+                        )
                         logger.info("Created systemd symlink: %s", symlink_path)
                     except OSError as exc:
                         logger.warning("Could not create systemd symlink: %s", exc)
+                        failures.append(
+                            f"Could not enable nettap-bridge.service at boot: {exc}"
+                        )
             except OSError as exc:
                 logger.warning("Could not write systemd unit: %s", exc)
+                failures.append(f"Could not write systemd unit {unit_path}: {exc}")
 
         # 3. Sysctl config
         if self._sysctl_dir:
@@ -637,6 +694,7 @@ class BridgeManager:
                 logger.info("Wrote sysctl config: %s", sysctl_path)
             except OSError as exc:
                 logger.warning("Could not write sysctl config: %s", exc)
+                failures.append(f"Could not write sysctl config {sysctl_path}: {exc}")
 
         return files_written
 

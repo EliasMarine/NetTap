@@ -105,12 +105,11 @@ describe('investigations API client', () => {
 			expect(url).toContain('severity=high');
 		});
 
-		it('returns empty investigations on HTTP error', async () => {
+		// #96: an empty list read as "No Investigations"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(502);
 
-			const result = await getInvestigations();
-
-			expect(result.investigations).toEqual([]);
+			await expect(getInvestigations()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -134,14 +133,10 @@ describe('investigations API client', () => {
 			expect(result.id).toBe('inv-001');
 		});
 
-		it('returns fallback investigation on HTTP error', async () => {
+		// #96: a made-up investigation on failure looked saved
+		it('throws on HTTP error instead of returning a made-up investigation', async () => {
 			mockFetchFailure(500);
-
-			const result = await createInvestigation({ title: 'Test Investigation' });
-
-			expect(result.id).toBe('');
-			expect(result.title).toBe('Test Investigation');
-			expect(result.status).toBe('open');
+			await expect(createInvestigation({ title: 'Test Investigation' })).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -158,12 +153,18 @@ describe('investigations API client', () => {
 			expect(result!.id).toBe('inv-001');
 		});
 
-		it('returns null on HTTP error', async () => {
+		it('returns null when the investigation does not exist (404)', async () => {
 			mockFetchFailure(404);
 
 			const result = await getInvestigation('inv-999');
 
 			expect(result).toBeNull();
+		});
+
+		it('throws on any other HTTP error', async () => {
+			mockFetchFailure(502);
+
+			await expect(getInvestigation('inv-001')).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -346,14 +347,11 @@ describe('investigations API client', () => {
 			expect(result.by_status.open).toBe(5);
 		});
 
-		it('returns empty stats on HTTP error', async () => {
+		// #96: zeros read as "no investigations" on the tabs and the posture page
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(502);
 
-			const result = await getInvestigationStats();
-
-			expect(result.total).toBe(0);
-			expect(result.by_status).toEqual({});
-			expect(result.by_severity).toEqual({});
+			await expect(getInvestigationStats()).rejects.toThrow('HTTP 502');
 		});
 	});
 });

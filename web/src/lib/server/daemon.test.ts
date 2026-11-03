@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { daemonFetch, daemonJSON } from './daemon';
 
 // ---------------------------------------------------------------------------
@@ -195,5 +198,104 @@ describe('daemonJSON', () => {
 
 		expect(result.status).toBe(502);
 		expect(result.error).toContain('Daemon unreachable');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Shared daemon token (X-NetTap-Daemon-Token)
+// ---------------------------------------------------------------------------
+
+describe('daemonFetch token', () => {
+	const TOKEN_HEADER = 'X-NetTap-Daemon-Token';
+	let dir: string;
+	let tokenFile: string;
+	let fetchDaemon: typeof daemonFetch;
+
+	const sentHeaders = (call: number) =>
+		vi.mocked(globalThis.fetch).mock.calls[call][1]?.headers as Record<string, string>;
+
+	beforeEach(async () => {
+		dir = mkdtempSync(join(tmpdir(), 'nettap-daemon-token-'));
+		tokenFile = join(dir, 'daemon-token');
+		vi.stubEnv('DAEMON_TOKEN_FILE', tokenFile);
+		vi.resetModules();
+		({ daemonFetch: fetchDaemon } = await import('./daemon'));
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.restoreAllMocks();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('sends the token read from the token file', async () => {
+		writeFileSync(tokenFile, 'token-a\n');
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('{}', { status: 200 }));
+
+		await fetchDaemon('/api/system/health');
+
+		expect(sentHeaders(0)[TOKEN_HEADER]).toBe('token-a');
+		expect(sentHeaders(0)['Content-Type']).toBe('application/json');
+	});
+
+	it('still calls the daemon without a header when the file is missing', async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('{}', { status: 401 }));
+
+		const res = await fetchDaemon('/api/system/health');
+
+		expect(res.status).toBe(401);
+		expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+		expect(sentHeaders(0)[TOKEN_HEADER]).toBeUndefined();
+		expect(logged).toHaveBeenCalledTimes(1);
+	});
+
+	it('caches the token until the daemon rejects it', async () => {
+		writeFileSync(tokenFile, 'token-a');
+		vi.mocked(globalThis.fetch).mockImplementation(async () => new Response('{}', { status: 200 }));
+
+		await fetchDaemon('/api/one');
+		writeFileSync(tokenFile, 'token-b');
+		await fetchDaemon('/api/two');
+
+		expect(sentHeaders(1)[TOKEN_HEADER]).toBe('token-a');
+	});
+
+	it('re-reads the token after a 401 and retries once with the new one', async () => {
+		writeFileSync(tokenFile, 'token-a');
+		vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+		await fetchDaemon('/api/warm-cache');
+
+		writeFileSync(tokenFile, 'token-b');
+		vi.mocked(globalThis.fetch)
+			.mockResolvedValueOnce(new Response('{"error":"Unauthorized"}', { status: 401 }))
+			.mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }));
+
+		const res = await fetchDaemon('/api/storage/prune', { method: 'POST', body: '{}' });
+
+		expect(res.status).toBe(200);
+		expect(sentHeaders(1)[TOKEN_HEADER]).toBe('token-a');
+		expect(sentHeaders(2)[TOKEN_HEADER]).toBe('token-b');
+		expect(vi.mocked(globalThis.fetch).mock.calls[2][1]?.method).toBe('POST');
+	});
+
+	it('does not retry when the re-read token is unchanged', async () => {
+		writeFileSync(tokenFile, 'token-a');
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('{}', { status: 401 }));
+
+		const res = await fetchDaemon('/api/system/health');
+
+		expect(res.status).toBe(401);
+		expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('never puts the token in the unreachable-daemon error body', async () => {
+		writeFileSync(tokenFile, 'secret-token-value');
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('ECONNREFUSED'));
+
+		const res = await fetchDaemon('/api/system/health');
+
+		expect(res.status).toBe(502);
+		expect(await res.text()).not.toContain('secret-token-value');
 	});
 });

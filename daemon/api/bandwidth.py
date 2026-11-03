@@ -15,9 +15,12 @@ Endpoints:
 
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import web
+from opensearchpy import OpenSearchException
 
+from api.time_range import parse_time_range
 from services.bandwidth_tracker import BandwidthTracker
 
 logger = logging.getLogger("nettap.api.bandwidth")
@@ -29,29 +32,34 @@ logger = logging.getLogger("nettap.api.bandwidth")
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Extract 'from' and 'to' query parameters as ISO timestamps.
-
-    Defaults to the last 30 days if not provided.
-    """
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(days=30)).isoformat()
-    default_to = now.isoformat()
-
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 30 days; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Extract 'from' and 'to' query parameters as ISO timestamps.
+    #
+    # Defaults to the last 30 days if not provided.
+    # """
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(days=30)).isoformat()
+    # default_to = now.isoformat()
+    #
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    #
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    #
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(days=30))
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +73,7 @@ async def handle_monthly(request: web.Request) -> web.Response:
     Returns monthly usage totals and projection.
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     now = datetime.now(timezone.utc)
     year_str = request.query.get("year", str(now.year))
@@ -77,13 +86,23 @@ async def handle_monthly(request: web.Request) -> web.Response:
         year = now.year
         month = now.month
 
-    usage = tracker.get_monthly_usage(year, month)
-    projection = tracker.get_projected_monthly(year, month)
+    try:
+        usage = tracker.get_monthly_usage(year, month, excluded_ips=excluded_ips_list)
+        projection = tracker.get_projected_monthly(
+            year, month, excluded_ips=excluded_ips_list
+        )
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in bandwidth/monthly: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
-    return web.json_response({
-        **usage,
-        "projection": projection,
-    })
+    return web.json_response(
+        {
+            **usage,
+            "projection": projection,
+        }
+    )
 
 
 async def handle_daily(request: web.Request) -> web.Response:
@@ -93,14 +112,23 @@ async def handle_daily(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
-    daily = tracker.get_daily_usage(from_ts, to_ts)
+    try:
+        daily = tracker.get_daily_usage(from_ts, to_ts, excluded_ips=excluded_ips_list)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in bandwidth/daily: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "daily": daily,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "daily": daily,
+        }
+    )
 
 
 async def handle_devices(request: web.Request) -> web.Response:
@@ -110,6 +138,7 @@ async def handle_devices(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     limit_str = request.query.get("limit", "50")
     try:
@@ -117,32 +146,66 @@ async def handle_devices(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         limit = 50
 
-    devices = tracker.get_per_device_usage(from_ts, to_ts, limit=limit)
+    try:
+        devices = tracker.get_per_device_usage(
+            from_ts,
+            to_ts,
+            limit=limit,
+            excluded_ips=excluded_ips_list,
+            # same LAN rule as the device list, so both pages show the same devices
+            lan_filter=request.app.get("lan_filter"),
+        )
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in bandwidth/devices: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "devices": devices,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "devices": devices,
+        }
+    )
 
 
 async def handle_heatmap(request: web.Request) -> web.Response:
-    """GET /api/bandwidth/heatmap?from=&to=
+    """GET /api/bandwidth/heatmap?from=&to=&tz=
 
-    Returns a 7x24 hour-of-day x day-of-week bandwidth matrix.
+    Returns a 7x24 hour-of-day x day-of-week bandwidth matrix, in the viewer's IANA
+    time zone `tz` (default UTC).
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
-    matrix = tracker.get_hourly_heatmap(from_ts, to_ts)
+    tz = request.query.get("tz") or "UTC"
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        return web.json_response({"error": f"Unknown time zone: {tz}"}, status=400)
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        "hours": list(range(24)),
-        "matrix": matrix,
-    })
+    try:
+        matrix = tracker.get_hourly_heatmap(
+            from_ts, to_ts, excluded_ips=excluded_ips_list, tz=tz
+        )
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in bandwidth/heatmap: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "tz": tz,
+            "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            "hours": list(range(24)),
+            "matrix": matrix,
+        }
+    )
 
 
 async def handle_cap(request: web.Request) -> web.Response:
@@ -152,10 +215,19 @@ async def handle_cap(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     cap = tracker.get_cap()
+    excluded_ips_list = request.app.get("excluded_ips", [])
 
     # Get current month usage for percentage
     now = datetime.now(timezone.utc)
-    usage = tracker.get_monthly_usage(now.year, now.month)
+    try:
+        usage = tracker.get_monthly_usage(
+            now.year, now.month, excluded_ips=excluded_ips_list
+        )
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in bandwidth/cap: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     cap["current_usage_bytes"] = usage["total_bytes"]
     if cap["monthly_cap_bytes"] > 0:
@@ -199,11 +271,13 @@ async def handle_set_cap(request: web.Request) -> web.Response:
 
     tracker.save_cap(cap_bytes)
 
-    return web.json_response({
-        "result": "saved",
-        "monthly_cap_gb": round(cap_bytes / (1024**3), 1),
-        "monthly_cap_bytes": cap_bytes,
-    })
+    return web.json_response(
+        {
+            "result": "saved",
+            "monthly_cap_gb": round(cap_bytes / (1024**3), 1),
+            "monthly_cap_bytes": cap_bytes,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

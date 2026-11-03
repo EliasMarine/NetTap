@@ -10,12 +10,18 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+# OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+# from services.excluded_ips import build_excluded_ips_filter
+# OLD CODE END
+from api.time_range import parse_time_range
+from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.logs")
 
@@ -23,101 +29,465 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Log type -> OpenSearch filter mapping
 LOG_TYPE_FILTERS = {
-    "zeek.conn": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "conn"}}],
-    "zeek.dns": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "dns"}}],
-    "zeek.http": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "http"}}],
-    "zeek.tls": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "ssl"}}],
-    "zeek.files": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "files"}}],
-    "zeek.dhcp": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "dhcp"}}],
-    "zeek.smtp": [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "smtp"}}],
-    "suricata": [{"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}],
+    "zeek.conn": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "conn"}},
+    ],
+    "zeek.dns": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "dns"}},
+    ],
+    "zeek.http": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "http"}},
+    ],
+    "zeek.tls": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "ssl"}},
+    ],
+    "zeek.files": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "files"}},
+    ],
+    "zeek.dhcp": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "dhcp"}},
+    ],
+    "zeek.smtp": [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": "smtp"}},
+    ],
+    "suricata": [
+        {"term": {"event.provider": "suricata"}},
+        {"term": {"event.dataset": "alert"}},
+    ],
 }
 
 # Field definitions per log type (name, type, description, example)
 FIELD_DEFINITIONS = {
     "zeek.conn": [
-        {"name": "@timestamp", "type": "date", "description": "When the connection was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "IP address that initiated the connection", "example": "192.168.1.100"},
-        {"name": "source.port", "type": "integer", "description": "Port used by the source", "example": "52341"},
-        {"name": "destination.ip", "type": "ip", "description": "IP address that received the connection", "example": "8.8.8.8"},
-        {"name": "destination.port", "type": "integer", "description": "Port on the destination (e.g. 443 = HTTPS)", "example": "443"},
-        {"name": "network.transport", "type": "keyword", "description": "Transport protocol (tcp, udp, icmp)", "example": "tcp"},
-        {"name": "network.protocol", "type": "keyword", "description": "Application protocol detected by Zeek", "example": "ssl"},
-        {"name": "event.duration", "type": "float", "description": "How long the connection lasted (seconds)", "example": "1.234"},
-        {"name": "source.bytes", "type": "long", "description": "Bytes sent by the source", "example": "1024"},
-        {"name": "destination.bytes", "type": "long", "description": "Bytes sent by the destination", "example": "2048"},
-        {"name": "zeek.conn.state", "type": "keyword", "description": "Connection state (S1=established, SF=finished, REJ=rejected)", "example": "SF"},
-        {"name": "zeek.conn.history", "type": "keyword", "description": "Connection history string (ShADFf = SYN/ACK/DATA/FIN)", "example": "ShADFf"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the connection was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "IP address that initiated the connection",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "source.port",
+            "type": "integer",
+            "description": "Port used by the source",
+            "example": "52341",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "IP address that received the connection",
+            "example": "8.8.8.8",
+        },
+        {
+            "name": "destination.port",
+            "type": "integer",
+            "description": "Port on the destination (e.g. 443 = HTTPS)",
+            "example": "443",
+        },
+        {
+            "name": "network.transport",
+            "type": "keyword",
+            "description": "Transport protocol (tcp, udp, icmp)",
+            "example": "tcp",
+        },
+        {
+            "name": "network.protocol",
+            "type": "keyword",
+            "description": "Application protocol detected by Zeek",
+            "example": "ssl",
+        },
+        {
+            "name": "event.duration",
+            "type": "float",
+            "description": "How long the connection lasted (seconds)",
+            "example": "1.234",
+        },
+        {
+            "name": "source.bytes",
+            "type": "long",
+            "description": "Bytes sent by the source",
+            "example": "1024",
+        },
+        {
+            "name": "destination.bytes",
+            "type": "long",
+            "description": "Bytes sent by the destination",
+            "example": "2048",
+        },
+        {
+            "name": "zeek.conn.state",
+            "type": "keyword",
+            "description": "Connection state (S1=established, SF=finished, REJ=rejected)",
+            "example": "SF",
+        },
+        {
+            "name": "zeek.conn.history",
+            "type": "keyword",
+            "description": "Connection history string (ShADFf = SYN/ACK/DATA/FIN)",
+            "example": "ShADFf",
+        },
     ],
     "zeek.dns": [
-        {"name": "@timestamp", "type": "date", "description": "When the DNS query was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Device that made the DNS query", "example": "192.168.1.100"},
-        {"name": "destination.ip", "type": "ip", "description": "DNS server that answered", "example": "8.8.8.8"},
-        {"name": "zeek.dns.query", "type": "keyword", "description": "Domain name that was looked up", "example": "www.google.com"},
-        {"name": "zeek.dns.qtype_name", "type": "keyword", "description": "DNS record type (A=IPv4, AAAA=IPv6, CNAME=alias)", "example": "A"},
-        {"name": "zeek.dns.rcode_name", "type": "keyword", "description": "Response code (NOERROR=success, NXDOMAIN=not found)", "example": "NOERROR"},
-        {"name": "zeek.dns.answers", "type": "keyword", "description": "IP addresses returned in the DNS response", "example": "142.250.80.46"},
-        {"name": "zeek.dns.rejected", "type": "boolean", "description": "Whether the query was rejected", "example": "false"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the DNS query was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Device that made the DNS query",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "DNS server that answered",
+            "example": "8.8.8.8",
+        },
+        {
+            "name": "zeek.dns.query",
+            "type": "keyword",
+            "description": "Domain name that was looked up",
+            "example": "www.google.com",
+        },
+        {
+            "name": "zeek.dns.qtype_name",
+            "type": "keyword",
+            "description": "DNS record type (A=IPv4, AAAA=IPv6, CNAME=alias)",
+            "example": "A",
+        },
+        {
+            "name": "zeek.dns.rcode_name",
+            "type": "keyword",
+            "description": "Response code (NOERROR=success, NXDOMAIN=not found)",
+            "example": "NOERROR",
+        },
+        {
+            "name": "zeek.dns.answers",
+            "type": "keyword",
+            "description": "IP addresses returned in the DNS response",
+            "example": "142.250.80.46",
+        },
+        {
+            "name": "zeek.dns.rejected",
+            "type": "boolean",
+            "description": "Whether the query was rejected",
+            "example": "false",
+        },
     ],
     "zeek.http": [
-        {"name": "@timestamp", "type": "date", "description": "When the HTTP request was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Device that made the HTTP request", "example": "192.168.1.100"},
-        {"name": "destination.ip", "type": "ip", "description": "Web server that responded", "example": "93.184.216.34"},
-        {"name": "zeek.http.method", "type": "keyword", "description": "HTTP method (GET, POST, PUT, etc.)", "example": "GET"},
-        {"name": "zeek.http.host", "type": "keyword", "description": "Website hostname from the Host header", "example": "www.example.com"},
-        {"name": "zeek.http.uri", "type": "keyword", "description": "URL path requested", "example": "/api/data"},
-        {"name": "zeek.http.status_code", "type": "integer", "description": "HTTP response code (200=OK, 404=not found, 500=error)", "example": "200"},
-        {"name": "zeek.http.user_agent", "type": "keyword", "description": "Browser or app that made the request", "example": "Mozilla/5.0..."},
-        {"name": "zeek.http.resp_mime_types", "type": "keyword", "description": "Content type of the response", "example": "text/html"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the HTTP request was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Device that made the HTTP request",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "Web server that responded",
+            "example": "93.184.216.34",
+        },
+        {
+            "name": "zeek.http.method",
+            "type": "keyword",
+            "description": "HTTP method (GET, POST, PUT, etc.)",
+            "example": "GET",
+        },
+        {
+            "name": "zeek.http.host",
+            "type": "keyword",
+            "description": "Website hostname from the Host header",
+            "example": "www.example.com",
+        },
+        {
+            "name": "zeek.http.uri",
+            "type": "keyword",
+            "description": "URL path requested",
+            "example": "/api/data",
+        },
+        {
+            "name": "zeek.http.status_code",
+            "type": "integer",
+            "description": "HTTP response code (200=OK, 404=not found, 500=error)",
+            "example": "200",
+        },
+        {
+            "name": "zeek.http.user_agent",
+            "type": "keyword",
+            "description": "Browser or app that made the request",
+            "example": "Mozilla/5.0...",
+        },
+        {
+            "name": "zeek.http.resp_mime_types",
+            "type": "keyword",
+            "description": "Content type of the response",
+            "example": "text/html",
+        },
     ],
     "zeek.tls": [
-        {"name": "@timestamp", "type": "date", "description": "When the TLS handshake was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Device that initiated the TLS connection", "example": "192.168.1.100"},
-        {"name": "destination.ip", "type": "ip", "description": "Server that accepted the TLS connection", "example": "93.184.216.34"},
-        {"name": "zeek.tls.version", "type": "keyword", "description": "TLS version used (TLSv1.3 is current best)", "example": "TLSv13"},
-        {"name": "zeek.tls.server_name", "type": "keyword", "description": "Server Name Indication — the domain being connected to", "example": "www.google.com"},
-        {"name": "zeek.tls.cipher", "type": "keyword", "description": "Encryption cipher suite negotiated", "example": "TLS_AES_256_GCM_SHA384"},
-        {"name": "zeek.tls.established", "type": "boolean", "description": "Whether the TLS handshake completed successfully", "example": "true"},
-        {"name": "zeek.tls.subject", "type": "keyword", "description": "Certificate subject (who the cert was issued to)", "example": "CN=www.google.com"},
-        {"name": "zeek.tls.issuer", "type": "keyword", "description": "Certificate Authority that issued the cert", "example": "CN=GTS CA 1C3,O=Google Trust Services LLC"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the TLS handshake was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Device that initiated the TLS connection",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "Server that accepted the TLS connection",
+            "example": "93.184.216.34",
+        },
+        {
+            "name": "zeek.tls.version",
+            "type": "keyword",
+            "description": "TLS version used (TLSv1.3 is current best)",
+            "example": "TLSv13",
+        },
+        {
+            "name": "zeek.tls.server_name",
+            "type": "keyword",
+            "description": "Server Name Indication — the domain being connected to",
+            "example": "www.google.com",
+        },
+        {
+            "name": "zeek.tls.cipher",
+            "type": "keyword",
+            "description": "Encryption cipher suite negotiated",
+            "example": "TLS_AES_256_GCM_SHA384",
+        },
+        {
+            "name": "zeek.tls.established",
+            "type": "boolean",
+            "description": "Whether the TLS handshake completed successfully",
+            "example": "true",
+        },
+        {
+            "name": "zeek.tls.subject",
+            "type": "keyword",
+            "description": "Certificate subject (who the cert was issued to)",
+            "example": "CN=www.google.com",
+        },
+        {
+            "name": "zeek.tls.issuer",
+            "type": "keyword",
+            "description": "Certificate Authority that issued the cert",
+            "example": "CN=GTS CA 1C3,O=Google Trust Services LLC",
+        },
     ],
     "zeek.files": [
-        {"name": "@timestamp", "type": "date", "description": "When the file transfer was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Device that sent the file", "example": "93.184.216.34"},
-        {"name": "destination.ip", "type": "ip", "description": "Device that received the file", "example": "192.168.1.100"},
-        {"name": "zeek.files.filename", "type": "keyword", "description": "Name of the file transferred", "example": "document.pdf"},
-        {"name": "zeek.files.mime_type", "type": "keyword", "description": "File content type", "example": "application/pdf"},
-        {"name": "zeek.files.total_bytes", "type": "long", "description": "Size of the file in bytes", "example": "102400"},
-        {"name": "zeek.files.md5", "type": "keyword", "description": "MD5 hash of the file (for identification)", "example": "d41d8cd98f00b204e9800998ecf8427e"},
-        {"name": "zeek.files.sha1", "type": "keyword", "description": "SHA1 hash of the file", "example": "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the file transfer was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Device that sent the file",
+            "example": "93.184.216.34",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "Device that received the file",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "zeek.files.filename",
+            "type": "keyword",
+            "description": "Name of the file transferred",
+            "example": "document.pdf",
+        },
+        {
+            "name": "zeek.files.mime_type",
+            "type": "keyword",
+            "description": "File content type",
+            "example": "application/pdf",
+        },
+        {
+            "name": "zeek.files.total_bytes",
+            "type": "long",
+            "description": "Size of the file in bytes",
+            "example": "102400",
+        },
+        {
+            "name": "zeek.files.md5",
+            "type": "keyword",
+            "description": "MD5 hash of the file (for identification)",
+            "example": "d41d8cd98f00b204e9800998ecf8427e",
+        },
+        {
+            "name": "zeek.files.sha1",
+            "type": "keyword",
+            "description": "SHA1 hash of the file",
+            "example": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+        },
     ],
     "zeek.dhcp": [
-        {"name": "@timestamp", "type": "date", "description": "When the DHCP transaction was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Device requesting an IP address", "example": "0.0.0.0"},
-        {"name": "zeek.dhcp.client_addr", "type": "ip", "description": "IP address assigned to the device", "example": "192.168.1.100"},
-        {"name": "zeek.dhcp.mac", "type": "keyword", "description": "MAC address of the requesting device", "example": "aa:bb:cc:dd:ee:ff"},
-        {"name": "zeek.dhcp.hostname", "type": "keyword", "description": "Hostname the device reported", "example": "johns-iphone"},
-        {"name": "zeek.dhcp.msg_types", "type": "keyword", "description": "DHCP message type (DISCOVER, OFFER, REQUEST, ACK)", "example": "ACK"},
-        {"name": "zeek.dhcp.lease_time", "type": "long", "description": "Lease duration in seconds", "example": "86400"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the DHCP transaction was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Device requesting an IP address",
+            "example": "0.0.0.0",
+        },
+        {
+            "name": "zeek.dhcp.client_addr",
+            "type": "ip",
+            "description": "IP address assigned to the device",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "zeek.dhcp.mac",
+            "type": "keyword",
+            "description": "MAC address of the requesting device",
+            "example": "aa:bb:cc:dd:ee:ff",
+        },
+        {
+            "name": "zeek.dhcp.hostname",
+            "type": "keyword",
+            "description": "Hostname the device reported",
+            "example": "johns-iphone",
+        },
+        {
+            "name": "zeek.dhcp.msg_types",
+            "type": "keyword",
+            "description": "DHCP message type (DISCOVER, OFFER, REQUEST, ACK)",
+            "example": "ACK",
+        },
+        {
+            "name": "zeek.dhcp.lease_time",
+            "type": "long",
+            "description": "Lease duration in seconds",
+            "example": "86400",
+        },
     ],
     "zeek.smtp": [
-        {"name": "@timestamp", "type": "date", "description": "When the email transaction was observed", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Device sending the email", "example": "192.168.1.100"},
-        {"name": "destination.ip", "type": "ip", "description": "Mail server receiving the email", "example": "74.125.133.26"},
-        {"name": "zeek.smtp.mailfrom", "type": "keyword", "description": "Sender email address", "example": "user@example.com"},
-        {"name": "zeek.smtp.rcptto", "type": "keyword", "description": "Recipient email address(es)", "example": "recipient@example.com"},
-        {"name": "zeek.smtp.subject", "type": "keyword", "description": "Email subject line", "example": "Meeting tomorrow"},
-        {"name": "zeek.smtp.tls", "type": "boolean", "description": "Whether TLS encryption was used", "example": "true"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the email transaction was observed",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Device sending the email",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "Mail server receiving the email",
+            "example": "74.125.133.26",
+        },
+        {
+            "name": "zeek.smtp.mailfrom",
+            "type": "keyword",
+            "description": "Sender email address",
+            "example": "user@example.com",
+        },
+        {
+            "name": "zeek.smtp.rcptto",
+            "type": "keyword",
+            "description": "Recipient email address(es)",
+            "example": "recipient@example.com",
+        },
+        {
+            "name": "zeek.smtp.subject",
+            "type": "keyword",
+            "description": "Email subject line",
+            "example": "Meeting tomorrow",
+        },
+        {
+            "name": "zeek.smtp.tls",
+            "type": "boolean",
+            "description": "Whether TLS encryption was used",
+            "example": "true",
+        },
     ],
     "suricata": [
-        {"name": "@timestamp", "type": "date", "description": "When the alert was triggered", "example": "2026-03-05T12:34:56Z"},
-        {"name": "source.ip", "type": "ip", "description": "Source IP that triggered the alert", "example": "192.168.1.100"},
-        {"name": "destination.ip", "type": "ip", "description": "Destination IP involved in the alert", "example": "45.33.32.156"},
-        {"name": "suricata.alert.signature", "type": "keyword", "description": "Name of the IDS rule that matched", "example": "ET SCAN Potential SSH Scan"},
-        {"name": "suricata.alert.signature_id", "type": "integer", "description": "Unique rule ID (SID) from the Suricata ruleset", "example": "2001219"},
-        {"name": "suricata.alert.severity", "type": "integer", "description": "Severity level (1=high, 2=medium, 3=low)", "example": "2"},
-        {"name": "suricata.alert.category", "type": "keyword", "description": "Alert category grouping", "example": "Attempted Information Leak"},
-        {"name": "network.transport", "type": "keyword", "description": "Transport protocol (tcp, udp, icmp)", "example": "tcp"},
+        {
+            "name": "@timestamp",
+            "type": "date",
+            "description": "When the alert was triggered",
+            "example": "2026-03-05T12:34:56Z",
+        },
+        {
+            "name": "source.ip",
+            "type": "ip",
+            "description": "Source IP that triggered the alert",
+            "example": "192.168.1.100",
+        },
+        {
+            "name": "destination.ip",
+            "type": "ip",
+            "description": "Destination IP involved in the alert",
+            "example": "45.33.32.156",
+        },
+        {
+            "name": "suricata.alert.signature",
+            "type": "keyword",
+            "description": "Name of the IDS rule that matched",
+            "example": "ET SCAN Potential SSH Scan",
+        },
+        {
+            "name": "suricata.alert.signature_id",
+            "type": "integer",
+            "description": "Unique rule ID (SID) from the Suricata ruleset",
+            "example": "2001219",
+        },
+        {
+            "name": "suricata.alert.severity",
+            "type": "integer",
+            "description": "Severity level (1=high, 2=medium, 3=low)",
+            "example": "2",
+        },
+        {
+            "name": "suricata.alert.category",
+            "type": "keyword",
+            "description": "Alert category grouping",
+            "example": "Attempted Information Leak",
+        },
+        {
+            "name": "network.transport",
+            "type": "keyword",
+            "description": "Transport protocol (tcp, udp, icmp)",
+            "example": "tcp",
+        },
     ],
 }
 
@@ -128,37 +498,50 @@ _DEFAULT_SIZE = 50
 _ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"}
 
 _LOG_TYPE_LABELS = {
-    "conn": "Connections", "dns": "DNS", "http": "HTTP", "ssl": "TLS",
-    "files": "Files", "dhcp": "DHCP", "smtp": "SMTP", "alert": "Suricata",
+    "conn": "Connections",
+    "dns": "DNS",
+    "http": "HTTP",
+    "ssl": "TLS",
+    "files": "Files",
+    "dhcp": "DHCP",
+    "smtp": "SMTP",
+    "alert": "Suricata",
 }
 
 # Exclude Suricata alerts from log explorer aggregations (they have their own page)
 _EXCLUDE_ALERTS_FILTER = {"must_not": [{"term": {"event.dataset": "alert"}}]}
 
-# Exclude Zeek internal noise from DNS aggregations
-_EXCLUDE_DNS_NOISE = [
-    {"term": {"zeek.dns.query.keyword": "pcap-monitor"}},
-]
+# OLD CODE START — replaced 2026-11-01: one shared constant so log search and DNS analytics agree
+# # Exclude Zeek internal noise from DNS aggregations
+# _EXCLUDE_DNS_NOISE = [
+#     {"term": {"zeek.dns.query": "pcap-monitor"}},
+# ]
+# OLD CODE END
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Parse and validate from/to time range from query params."""
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Parse and validate from/to time range from query params."""
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
 async def handle_log_search(request: web.Request) -> web.Response:
@@ -183,33 +566,57 @@ async def handle_log_search(request: web.Request) -> web.Response:
     if query_str:
         must.append({"query_string": {"query": query_str, "default_operator": "AND"}})
 
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
+
     body: dict = {
-        "query": {"bool": {
-            "must": must if must else [{"match_all": {}}],
-            "filter": filters,
-            "must_not": _EXCLUDE_DNS_NOISE,
-        }},
+        "query": {
+            "bool": {
+                "must": must if must else [{"match_all": {}}],
+                "filter": filters,
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": _EXCLUDE_DNS_NOISE + excluded,
+                # OLD CODE END
+                # OLD CODE START — 2026-11-01: unfiltered search included Suricata alerts while
+                # the stat cards left them out, so "Total Events" never matched the results
+                # "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE END
+                # Alerts have their own page; they show here only when "suricata" is chosen
+                "must_not": _EXCLUDE_DNS_NOISE
+                + (
+                    [] if log_type == "suricata" else _EXCLUDE_ALERTS_FILTER["must_not"]
+                ),
+            }
+        },
         "size": size,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "sort": [],
     }
 
-    # Sort — auto-add .keyword suffix for text fields that need it.
-    # Fields like @timestamp, _id, and numeric fields don't need it.
-    _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
+    # OLD CODE START — replaced 2026-11-01: the .keyword sub-fields only existed
+    # because malcolm_template never applied (its index pattern was a placeholder),
+    # so indices were dynamically mapped. With Malcolm's real mapping these fields
+    # are keyword/ip/long and have no .keyword sub-field, so sorting on one is an
+    # error (Chain 24).
+    # _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
+    # ...
+    #     if (
+    #         not field.startswith(_NO_KEYWORD_PREFIXES)
+    #         and not field.endswith(".keyword")
+    #         and "." in field
+    #         and field not in ("source.port", "destination.port")
+    #     ):
+    #         field = f"{field}.keyword"
+    # OLD CODE END
     for part in sort_param.split(","):
         if ":" in part:
             field, order = part.split(":", 1)
         else:
             field, order = part, "desc"
-        # Add .keyword for text fields (zeek.*, suricata.*, source.*, destination.*)
-        # unless they already have .keyword or are known non-text fields
-        if (
-            not field.startswith(_NO_KEYWORD_PREFIXES)
-            and not field.endswith(".keyword")
-            and "." in field
-            and field not in ("source.port", "destination.port")
-        ):
-            field = f"{field}.keyword"
+        # Old clients may still send the .keyword names
+        field = field.removesuffix(".keyword")
         body["sort"].append({field: {"order": order}})
     # Always add _id tiebreaker for cursor pagination
     if not any("_id" in s for s in body["sort"]):
@@ -236,20 +643,24 @@ async def handle_log_search(request: web.Request) -> web.Response:
         documents = []
         last_sort = None
         for hit in hits.get("hits", []):
-            documents.append({
-                "_id": hit.get("_id"),
-                "_index": hit.get("_index"),
-                "_source": hit.get("_source", {}),
-            })
+            documents.append(
+                {
+                    "_id": hit.get("_id"),
+                    "_index": hit.get("_index"),
+                    "_source": hit.get("_source", {}),
+                }
+            )
             last_sort = hit.get("sort")
 
-        return web.json_response({
-            "hits": documents,
-            "total": hits.get("total", {}).get("value", 0),
-            "search_after": last_sort,
-            "size": size,
-            "log_type": log_type or "all",
-        })
+        return web.json_response(
+            {
+                "hits": documents,
+                "total": hits.get("total", {}).get("value", 0),
+                "search_after": last_sort,
+                "size": size,
+                "log_type": log_type or "all",
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Log search failed")
         return web.json_response({"error": f"Search failed: {exc}"}, status=500)
@@ -261,11 +672,16 @@ async def handle_log_fields(request: web.Request) -> web.Response:
 
     if log_type not in FIELD_DEFINITIONS:
         return web.json_response(
-            {"error": f"Unknown log type: {log_type}", "available": list(FIELD_DEFINITIONS.keys())},
+            {
+                "error": f"Unknown log type: {log_type}",
+                "available": list(FIELD_DEFINITIONS.keys()),
+            },
             status=400,
         )
 
-    return web.json_response({"log_type": log_type, "fields": FIELD_DEFINITIONS[log_type]})
+    return web.json_response(
+        {"log_type": log_type, "fields": FIELD_DEFINITIONS[log_type]}
+    )
 
 
 async def handle_log_stats(request: web.Request) -> web.Response:
@@ -273,18 +689,26 @@ async def handle_log_stats(request: web.Request) -> web.Response:
     storage: StorageManager = request.app["storage"]
     from_ts, to_ts = _parse_time_range(request)
 
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
+
     body: dict = {
         "size": 0,
         "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
+                # OLD CODE END
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "unique_sources": {"cardinality": {"field": "source.ip.keyword"}},
-            "protocol_count": {"cardinality": {"field": "event.dataset.keyword"}},
+            "unique_sources": {"cardinality": {"field": "source.ip"}},
+            "protocol_count": {"cardinality": {"field": "event.dataset"}},
             "src_bytes": {"sum": {"field": "source.bytes"}},
             "dst_bytes": {"sum": {"field": "destination.bytes"}},
         },
@@ -298,19 +722,20 @@ async def handle_log_stats(request: web.Request) -> web.Response:
 
         aggs = result.get("aggregations", {})
         total_events = result.get("hits", {}).get("total", {}).get("value", 0)
-        total_bytes = (
-            aggs.get("src_bytes", {}).get("value", 0)
-            + aggs.get("dst_bytes", {}).get("value", 0)
-        )
+        total_bytes = aggs.get("src_bytes", {}).get("value", 0) + aggs.get(
+            "dst_bytes", {}
+        ).get("value", 0)
 
-        return web.json_response({
-            "from": from_ts,
-            "to": to_ts,
-            "total_events": total_events,
-            "unique_sources": aggs.get("unique_sources", {}).get("value", 0),
-            "protocol_count": aggs.get("protocol_count", {}).get("value", 0),
-            "total_bytes": total_bytes,
-        })
+        return web.json_response(
+            {
+                "from": from_ts,
+                "to": to_ts,
+                "total_events": total_events,
+                "unique_sources": aggs.get("unique_sources", {}).get("value", 0),
+                "protocol_count": aggs.get("protocol_count", {}).get("value", 0),
+                "total_bytes": total_bytes,
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Log stats query failed")
         return web.json_response({"error": f"Stats query failed: {exc}"}, status=502)
@@ -325,26 +750,48 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
     if interval not in _ALLOWED_INTERVALS:
         interval = "1h"
 
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
+                # OLD CODE END
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
-        "aggs": {
-            "timeline": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                },
-                "aggs": {
-                    "by_type": {"terms": {"field": "event.dataset.keyword", "size": 20}},
-                },
-            }
-        },
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram put up to ~970 records
+        # an hour in the wrong slot on the G11
+        # "aggs": {
+        #     "timeline": {
+        #         "date_histogram": {"field": "@timestamp", "fixed_interval": interval},
+        #         "aggs": {"by_type": {"terms": {"field": "event.dataset", "size": 20}}},
+        #     }
+        # },
+        # OLD CODE END
     }
+    try:
+        body["aggs"] = {
+            "timeline": time_slots(
+                from_ts,
+                to_ts,
+                interval,
+                aggs={"by_type": {"terms": {"field": "event.dataset", "size": 20}}},
+            )
+        }
+    except ValueError:
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     try:
         loop = asyncio.get_running_loop()
@@ -352,24 +799,34 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
             None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
-        raw_buckets = result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        # OLD CODE START — #120: date_histogram buckets (see above)
+        # raw_buckets = (
+        #     result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        # )
+        # OLD CODE END
+        raw_buckets = histogram_buckets(result.get("aggregations", {}).get("timeline"))
         buckets = []
         for b in raw_buckets:
             entry: dict = {
                 "timestamp": b.get("key_as_string", b.get("key")),
                 "total": b.get("doc_count", 0),
             }
-            type_buckets = {tb["key"]: tb["doc_count"] for tb in b.get("by_type", {}).get("buckets", [])}
+            type_buckets = {
+                tb["key"]: tb["doc_count"]
+                for tb in b.get("by_type", {}).get("buckets", [])
+            }
             for key in _LOG_TYPE_LABELS:
                 entry[key] = type_buckets.get(key, 0)
             buckets.append(entry)
 
-        return web.json_response({
-            "from": from_ts,
-            "to": to_ts,
-            "interval": interval,
-            "buckets": buckets,
-        })
+        return web.json_response(
+            {
+                "from": from_ts,
+                "to": to_ts,
+                "interval": interval,
+                "buckets": buckets,
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Log timeline query failed")
         return web.json_response({"error": f"Timeline query failed: {exc}"}, status=502)
@@ -382,16 +839,24 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
 
     limit = min(int(request.query.get("limit", "10")), 50)
 
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
+                # OLD CODE END
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "top_sources": {"terms": {"field": "source.ip.keyword", "size": limit}},
+            "top_sources": {"terms": {"field": "source.ip", "size": limit}},
         },
     }
 
@@ -404,14 +869,18 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
         raw = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
         talkers = [{"ip": b["key"], "count": b["doc_count"]} for b in raw]
 
-        return web.json_response({
-            "from": from_ts,
-            "to": to_ts,
-            "talkers": talkers,
-        })
+        return web.json_response(
+            {
+                "from": from_ts,
+                "to": to_ts,
+                "talkers": talkers,
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Top talkers query failed")
-        return web.json_response({"error": f"Top talkers query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"Top talkers query failed: {exc}"}, status=502
+        )
 
 
 async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
@@ -419,16 +888,24 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
     storage: StorageManager = request.app["storage"]
     from_ts, to_ts = _parse_time_range(request)
 
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
+                # OLD CODE END
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "protocols": {"terms": {"field": "event.dataset.keyword", "size": 20}},
+            "protocols": {"terms": {"field": "event.dataset", "size": 20}},
         },
     }
 
@@ -448,14 +925,18 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
             for b in raw
         ]
 
-        return web.json_response({
-            "from": from_ts,
-            "to": to_ts,
-            "protocols": protocols,
-        })
+        return web.json_response(
+            {
+                "from": from_ts,
+                "to": to_ts,
+                "protocols": protocols,
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Protocol breakdown query failed")
-        return web.json_response({"error": f"Protocol breakdown query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"Protocol breakdown query failed: {exc}"}, status=502
+        )
 
 
 async def handle_log_top_destinations(request: web.Request) -> web.Response:
@@ -465,16 +946,24 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
 
     limit = min(int(request.query.get("limit", "10")), 50)
 
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
+
     body: dict = {
         "size": 0,
         "query": {
             "bool": {
                 "filter": [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}],
-                **_EXCLUDE_ALERTS_FILTER,
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
+                # OLD CODE END
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "top_destinations": {"terms": {"field": "destination.ip.keyword", "size": limit}},
+            "top_destinations": {"terms": {"field": "destination.ip", "size": limit}},
         },
     }
 
@@ -484,17 +973,25 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
             None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
-        raw = result.get("aggregations", {}).get("top_destinations", {}).get("buckets", [])
+        raw = (
+            result.get("aggregations", {})
+            .get("top_destinations", {})
+            .get("buckets", [])
+        )
         destinations = [{"ip": b["key"], "count": b["doc_count"]} for b in raw]
 
-        return web.json_response({
-            "from": from_ts,
-            "to": to_ts,
-            "destinations": destinations,
-        })
+        return web.json_response(
+            {
+                "from": from_ts,
+                "to": to_ts,
+                "destinations": destinations,
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Top destinations query failed")
-        return web.json_response({"error": f"Top destinations query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"Top destinations query failed: {exc}"}, status=502
+        )
 
 
 async def handle_log_top_dns(request: web.Request) -> web.Response:
@@ -503,6 +1000,10 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
 
     limit = min(int(request.query.get("limit", "10")), 50)
+
+    # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+    # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    # OLD CODE END
 
     body: dict = {
         "size": 0,
@@ -513,11 +1014,14 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "dns"}},
                 ],
+                # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
+                # "must_not": _EXCLUDE_DNS_NOISE + excluded,
+                # OLD CODE END
                 "must_not": _EXCLUDE_DNS_NOISE,
             }
         },
         "aggs": {
-            "top_queries": {"terms": {"field": "zeek.dns.query.keyword", "size": limit}},
+            "top_queries": {"terms": {"field": "zeek.dns.query", "size": limit}},
         },
     }
 
@@ -530,11 +1034,13 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
         raw = result.get("aggregations", {}).get("top_queries", {}).get("buckets", [])
         queries = [{"domain": b["key"], "count": b["doc_count"]} for b in raw]
 
-        return web.json_response({
-            "from": from_ts,
-            "to": to_ts,
-            "queries": queries,
-        })
+        return web.json_response(
+            {
+                "from": from_ts,
+                "to": to_ts,
+                "queries": queries,
+            }
+        )
     except OpenSearchException as exc:
         logger.exception("Top DNS query failed")
         return web.json_response({"error": f"Top DNS query failed: {exc}"}, status=502)

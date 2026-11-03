@@ -117,7 +117,9 @@ def auto_detect_device() -> str:
         logger.info("SMART auto-detect: found virtio device %s", vd_devices[0])
         return vd_devices[0]
 
-    logger.warning("SMART auto-detect: no block devices found, defaulting to /dev/nvme0n1")
+    logger.warning(
+        "SMART auto-detect: no block devices found, defaulting to /dev/nvme0n1"
+    )
     return "/dev/nvme0n1"
 
 
@@ -172,7 +174,7 @@ class SmartMetrics:
     total_bytes_read: int | None
     media_errors: int | None  # NVMe specific
     reallocated_sectors: int | None  # SATA specific
-    healthy: bool
+    healthy: bool | None  # None = the drive's health could not be read
     warnings: list[str] = field(default_factory=list)
     timestamp: str = ""  # ISO 8601, set at creation time
 
@@ -304,6 +306,7 @@ class SmartMonitor:
             Controller device path (e.g., "/dev/nvme0").
         """
         import re
+
         m = re.match(r"(/dev/nvme\d+)", self.device)
         if m:
             return m.group(1)
@@ -386,7 +389,10 @@ class SmartMonitor:
                 # Wrap in a structure compatible with the rest of the code
                 self._raw_data = {"_source": "nvme-cli", "_nvme_smart_log": nvme_data}
                 return self._raw_data
-            logger.info("nvme-cli returned no data for %s, falling back to smartctl", self.device)
+            logger.info(
+                "nvme-cli returned no data for %s, falling back to smartctl",
+                self.device,
+            )
 
         # Fallback: smartctl (SATA primary, NVMe fallback)
         try:
@@ -506,10 +512,14 @@ class SmartMonitor:
             list(data.keys()),
         )
         return {
-            "temperature_c": None, "percentage_used": None,
-            "power_on_hours": None, "total_bytes_written": None,
-            "total_bytes_read": None, "media_errors": None,
-            "critical_warning": None, "reallocated_sectors": None,
+            "temperature_c": None,
+            "percentage_used": None,
+            "power_on_hours": None,
+            "total_bytes_written": None,
+            "total_bytes_read": None,
+            "media_errors": None,
+            "critical_warning": None,
+            "reallocated_sectors": None,
         }
 
     @staticmethod
@@ -543,7 +553,9 @@ class SmartMonitor:
         if temp_raw is not None:
             # nvme-cli returns Kelvin (e.g., 311 = 38C)
             temperature_c = temp_raw - 273 if temp_raw > 200 else temp_raw
-            logger.debug("NVMe temperature from nvme-cli: %dK -> %dC", temp_raw, temperature_c)
+            logger.debug(
+                "NVMe temperature from nvme-cli: %dK -> %dC", temp_raw, temperature_c
+            )
 
         percentage_used = self._safe_int(nvme_log.get("percent_used"))
         power_on_hours = self._safe_int(nvme_log.get("power_on_hours"))
@@ -885,9 +897,23 @@ class SmartMonitor:
             extracted = self._extract_sata_metrics(raw_data)
 
         # Determine overall health status
-        # Consider the drive healthy unless we find a concerning metric
-        healthy = True
-        warnings: list[str] = []
+        # OLD CODE START — #96: a drive that gave no overall assessment (unreadable,
+        # no permission, no SMART) was reported healthy
+        # # Consider the drive healthy unless we find a concerning metric
+        # healthy = True
+        # warnings: list[str] = []
+        # OLD CODE END
+        if raw_data.get("_source") == "nvme-cli":
+            assessed = (
+                raw_data.get("_nvme_smart_log", {}).get("critical_warning") is not None
+            )
+        else:
+            assessed = "passed" in (raw_data.get("smart_status") or {})
+        # None = unknown: without the drive's own assessment nothing was checked
+        healthy: bool | None = True if assessed else None
+        warnings: list[str] = (
+            [] if assessed else [f"SMART health could not be read from {self.device}"]
+        )
 
         # Check overall health assessment
         if raw_data.get("_source") == "nvme-cli":
@@ -977,6 +1003,9 @@ class SmartMonitor:
             if sysfs_info:
                 result.update(sysfs_info)
 
+        if result["healthy"] is None:
+            result["error"] = f"SMART health could not be read from {self.device}"
+
         return result
 
     def _sysfs_fallback(self) -> dict:
@@ -1017,7 +1046,9 @@ class SmartMonitor:
                     info["total_capacity_bytes"] = sectors * 512
 
             if info:
-                logger.info("SMART sysfs fallback: found %s", info.get("model", "unknown"))
+                logger.info(
+                    "SMART sysfs fallback: found %s", info.get("model", "unknown")
+                )
 
             return info
         except Exception as exc:
@@ -1106,9 +1137,7 @@ class SmartMonitor:
             for msg in guidance:
                 logger.warning("SMART guidance: %s", msg)
         else:
-            logger.info(
-                "SMART self-test for %s: all key fields present", self.device
-            )
+            logger.info("SMART self-test for %s: all key fields present", self.device)
 
         self._diagnostics = {
             "device": self.device,
@@ -1175,7 +1204,5 @@ class SmartMonitor:
             )
             return True
         except Exception as exc:
-            logger.error(
-                "Failed to index SMART metrics to %s: %s", index_name, exc
-            )
+            logger.error("Failed to index SMART metrics to %s: %s", index_name, exc)
             return False

@@ -14,10 +14,11 @@ Endpoints:
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiohttp import web
 
+from api.time_range import parse_time_range
 from services.mac_correlator import MACCorrelator
 
 logger = logging.getLogger("nettap.api.mac_correlation")
@@ -26,26 +27,31 @@ _DEFAULT_RANGE_HOURS = 24
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Extract 'from' and 'to' query parameters as ISO timestamps."""
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
-
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Extract 'from' and 'to' query parameters as ISO timestamps."""
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    #
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    #
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    #
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
 async def handle_randomized_macs(request: web.Request) -> web.Response:
@@ -61,12 +67,14 @@ async def handle_randomized_macs(request: web.Request) -> web.Response:
             {"error": f"Failed to detect randomized MACs: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "count": len(macs),
-        "randomized_macs": macs,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "count": len(macs),
+            "randomized_macs": macs,
+        }
+    )
 
 
 async def handle_fingerprint(request: web.Request) -> web.Response:
@@ -83,11 +91,13 @@ async def handle_fingerprint(request: web.Request) -> web.Response:
             {"error": f"Failed to build fingerprint: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "fingerprint": fingerprint,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "fingerprint": fingerprint,
+        }
+    )
 
 
 async def handle_merge_suggestions(request: web.Request) -> web.Response:
@@ -104,12 +114,14 @@ async def handle_merge_suggestions(request: web.Request) -> web.Response:
             status=500,
         )
 
-    return web.json_response({
-        "from": from_ts,
-        "to": to_ts,
-        "count": len(suggestions),
-        "suggestions": suggestions,
-    })
+    return web.json_response(
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "count": len(suggestions),
+            "suggestions": suggestions,
+        }
+    )
 
 
 async def handle_merge(request: web.Request) -> web.Response:
@@ -120,9 +132,7 @@ async def handle_merge(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     mac_randomized = body.get("mac_randomized", "").strip()
     mac_real = body.get("mac_real", "").strip()
@@ -143,10 +153,12 @@ async def handle_merge(request: web.Request) -> web.Response:
             {"error": f"Failed to merge devices: {exc}"}, status=500
         )
 
-    return web.json_response({
-        "result": "merged",
-        "merge": record,
-    })
+    return web.json_response(
+        {
+            "result": "merged",
+            "merge": record,
+        }
+    )
 
 
 async def handle_merge_history(request: web.Request) -> web.Response:
@@ -154,10 +166,12 @@ async def handle_merge_history(request: web.Request) -> web.Response:
     correlator: MACCorrelator = request.app["mac_correlator"]
     history = correlator.get_merge_history()
 
-    return web.json_response({
-        "count": len(history),
-        "merges": history,
-    })
+    return web.json_response(
+        {
+            "count": len(history),
+            "merges": history,
+        }
+    )
 
 
 async def handle_undo_merge(request: web.Request) -> web.Response:
@@ -168,23 +182,17 @@ async def handle_undo_merge(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response(
-            {"error": "Invalid JSON body"}, status=400
-        )
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     merge_id = body.get("merge_id", "").strip()
     if not merge_id:
-        return web.json_response(
-            {"error": "merge_id is required"}, status=400
-        )
+        return web.json_response({"error": "merge_id is required"}, status=400)
 
     correlator: MACCorrelator = request.app["mac_correlator"]
     success = correlator.undo_merge(merge_id)
 
     if not success:
-        return web.json_response(
-            {"error": f"Merge {merge_id} not found"}, status=404
-        )
+        return web.json_response({"error": f"Merge {merge_id} not found"}, status=404)
 
     return web.json_response({"result": "undone", "merge_id": merge_id})
 

@@ -96,8 +96,9 @@ Rules:
 - Google-style docstrings
 
 ```bash
-ruff check daemon/
-ruff format daemon/
+# Same ruff version CI pins; formatter output differs between releases
+uvx ruff@0.17.3 check daemon/
+uvx ruff@0.17.3 format daemon/
 ```
 
 ### TypeScript / Svelte (web)

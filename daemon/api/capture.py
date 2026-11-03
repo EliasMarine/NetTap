@@ -23,19 +23,19 @@ def _get_capture_manager(request: web.Request):
     """Retrieve the CaptureManager from the app."""
     cm = request.app.get("capture_manager")
     if cm is None:
-        raise web.HTTPServiceUnavailable(
-            text="Capture manager not initialized"
-        )
+        raise web.HTTPServiceUnavailable(text="Capture manager not initialized")
     return cm
 
 
 async def handle_capture_mode(request: web.Request) -> web.Response:
     """GET /api/capture/mode — Return the current capture mode."""
     cm = _get_capture_manager(request)
-    return web.json_response({
-        "mode": cm.mode.value,
-        "interface": cm.get_capture_interface(),
-    })
+    return web.json_response(
+        {
+            "mode": cm.mode.value,
+            "interface": cm.get_capture_interface(),
+        }
+    )
 
 
 async def handle_capture_health(request: web.Request) -> web.Response:
@@ -46,9 +46,7 @@ async def handle_capture_health(request: web.Request) -> web.Response:
         return web.json_response(health.to_dict())
     except Exception as exc:
         logger.error("Capture health check failed: %s", exc)
-        return web.json_response(
-            {"error": f"Health check failed: {exc}"}, status=500
-        )
+        return web.json_response({"error": f"Health check failed: {exc}"}, status=500)
 
 
 async def handle_capture_stats(request: web.Request) -> web.Response:
@@ -67,9 +65,11 @@ async def handle_capture_stats(request: web.Request) -> web.Response:
 async def handle_capture_interface(request: web.Request) -> web.Response:
     """GET /api/capture/interface — Return the active capture interface name."""
     cm = _get_capture_manager(request)
-    return web.json_response({
-        "interface": cm.get_capture_interface(),
-    })
+    return web.json_response(
+        {
+            "interface": cm.get_capture_interface(),
+        }
+    )
 
 
 def register_capture_routes(app: web.Application) -> None:

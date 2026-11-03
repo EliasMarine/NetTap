@@ -1,0 +1,65 @@
+{
+  "_comment": "Expected port/protocol profiles for IoT device categories. Used by the protocol audit endpoint to flag unexpected traffic — if a device communicates on ports outside its category profile, it is flagged as anomalous. Profiles are intentionally permissive (common ports included) to reduce false positives.",
+  "profiles": {
+    "camera": {
+      "label": "IP Camera / Security Camera",
+      "expected_ports": [80, 443, 554, 8554, 8080, 8443, 53, 123],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "80/443 = web UI and cloud API; 554/8554 = RTSP video streaming; 8080/8443 = alternative web UI and management ports; 53 = DNS; 123 = NTP time sync"
+    },
+    "smart_speaker": {
+      "label": "Smart Speaker / Voice Assistant",
+      "expected_ports": [443, 8443, 53, 123, 5353, 1900],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "443/8443 = cloud API and voice processing; 53 = DNS; 123 = NTP; 5353 = mDNS for local discovery; 1900 = SSDP/UPnP for device discovery"
+    },
+    "thermostat": {
+      "label": "Smart Thermostat",
+      "expected_ports": [443, 8883, 1883, 53, 123],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "443 = cloud API; 8883 = MQTT over TLS; 1883 = MQTT plaintext; 53 = DNS; 123 = NTP"
+    },
+    "smart_plug": {
+      "label": "Smart Plug / Smart Outlet",
+      "expected_ports": [443, 8883, 1883, 53, 123, 6668, 6669],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "443 = cloud API; 8883 = MQTT over TLS; 1883 = MQTT plaintext; 53 = DNS; 123 = NTP; 6668/6669 = Tuya IoT protocol (used by many smart plugs and switches)"
+    },
+    "smart_tv": {
+      "label": "Smart TV / Streaming Device",
+      "expected_ports": [80, 443, 8443, 53, 123, 5353, 1900, 8008, 8009, 9080],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "80/443/8443 = streaming services and cloud API; 53 = DNS; 123 = NTP; 5353 = mDNS; 1900 = SSDP/UPnP; 8008/8009 = Chromecast/Google Cast; 9080 = secondary streaming or DIAL protocol"
+    },
+    "hub": {
+      "label": "Smart Home Hub / Bridge",
+      "expected_ports": [80, 443, 8443, 8080, 53, 123, 5353, 1900, 8883, 1883, 25105],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "80/443/8443/8080 = web UI and cloud API; 53 = DNS; 123 = NTP; 5353 = mDNS; 1900 = SSDP/UPnP; 8883/1883 = MQTT; 25105 = Insteon protocol"
+    },
+    "doorbell": {
+      "label": "Smart Doorbell / Video Doorbell",
+      "expected_ports": [443, 8443, 554, 8554, 53, 123],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "443/8443 = cloud API and video upload; 554/8554 = RTSP video streaming; 53 = DNS; 123 = NTP"
+    },
+    "light": {
+      "label": "Smart Light / Smart Bulb",
+      "expected_ports": [443, 80, 53, 123, 5353, 1900, 8010],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "443/80 = cloud API; 53 = DNS; 123 = NTP; 5353 = mDNS; 1900 = SSDP/UPnP; 8010 = Philips Hue local API and similar protocols"
+    },
+    "sensor": {
+      "label": "IoT Sensor (motion, temperature, humidity, etc.)",
+      "expected_ports": [443, 8883, 1883, 53, 123],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "443 = cloud API; 8883 = MQTT over TLS; 1883 = MQTT plaintext; 53 = DNS; 123 = NTP"
+    },
+    "default": {
+      "label": "Unknown / Uncategorized IoT Device",
+      "expected_ports": [80, 443, 53, 123, 5353, 1900],
+      "expected_protocols": ["tcp", "udp"],
+      "notes": "Baseline profile for unrecognized devices — only common web, DNS, NTP, and discovery ports. Any traffic outside these is flagged for review."
+    }
+  }
+}

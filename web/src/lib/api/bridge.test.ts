@@ -97,26 +97,16 @@ describe('bridge API client', () => {
 			expect(result.health_status).toBe('normal');
 		});
 
-		it('returns default values on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting the bridge down', async () => {
 			mockFetchFailure(502);
 
-			const result = await getBridgeHealth();
-
-			expect(result.bridge_state).toBe('unknown');
-			expect(result.wan_link).toBe(false);
-			expect(result.lan_link).toBe(false);
-			expect(result.health_status).toBe('down');
-			expect(result.issues).toContain('Unable to reach bridge health endpoint');
+			await expect(getBridgeHealth()).rejects.toThrow('HTTP 502');
 		});
 
-		it('returns default values on server error', async () => {
+		it('throws on server error', async () => {
 			mockFetchFailure(500);
 
-			const result = await getBridgeHealth();
-
-			expect(result.bridge_state).toBe('unknown');
-			expect(result.uptime_seconds).toBe(0);
-			expect(result.latency_us).toBe(0);
+			await expect(getBridgeHealth()).rejects.toThrow('HTTP 500');
 		});
 
 		it('includes issues array from response', async () => {
@@ -273,13 +263,19 @@ describe('bridge API client', () => {
 			expect(result.activated_at).toBe('2026-02-26T10:00:00Z');
 		});
 
-		it('returns default bypass status on HTTP error', async () => {
-			mockFetchFailure(502);
+		it('reads the daemon\'s bypass_active field', async () => {
+			mockFetchSuccess({ bypass_active: true });
 
 			const result = await getBypassStatus();
 
-			expect(result.active).toBe(false);
+			expect(result.active).toBe(true);
 			expect(result.activated_at).toBeNull();
+		});
+
+		it('throws on HTTP error instead of reporting bypass inactive', async () => {
+			mockFetchFailure(502);
+
+			await expect(getBypassStatus()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -368,14 +364,10 @@ describe('bridge API client', () => {
 			expect(result.checks[0].name).toBe('bridge_exists');
 		});
 
-		it('returns not-ready defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting not ready', async () => {
 			mockFetchFailure(500);
 
-			const result = await getBridgeReadiness();
-
-			expect(result.ready).toBe(false);
-			expect(result.checks).toEqual([]);
-			expect(result.message).toBe('Unable to reach readiness endpoint');
+			await expect(getBridgeReadiness()).rejects.toThrow('HTTP 500');
 		});
 	});
 

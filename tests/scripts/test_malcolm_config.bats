@@ -11,6 +11,9 @@ load 'helpers/setup'
 
 # Source the script under test (functions only, not the standalone block)
 _source_malcolm_config() {
+    # common.sh defines its own run() (the installer's dry-run wrapper), which replaces bats'
+    # run; keep bats' copy as bats_run for the tests that need $status and $output
+    eval "bats_run() $(declare -f run | tail -n +2)"
     # Source common.sh and the script under test
     source "${REPO_ROOT}/scripts/common.sh"
     source "${BATS_TEST_DIRNAME}/helpers/mocks.bash"
@@ -22,10 +25,16 @@ _source_malcolm_config() {
     export PROJECT_ROOT="${TEST_TMPDIR}"
     export CERTS_DIR="${TEST_TMPDIR}/docker/certs"
     export AUTH_DIR="${TEST_TMPDIR}/docker/auth"
+    mkdir -p "${TEST_TMPDIR}/docker"  # the real repo always has it; generate_compose_env writes there
 
-    # Reset strict mode — set -euo pipefail from the sourced scripts breaks
-    # BATS test isolation (unbound $status, premature exits on assertion failures)
-    set +euo pipefail
+    # OLD CODE START — +e also switched off bats' own errexit, so a failed assertion before
+    # a test's last line was ignored and the test passed anyway
+    # # Reset strict mode — set -euo pipefail from the sourced scripts breaks
+    # # BATS test isolation (unbound $status, premature exits on assertion failures)
+    # set +euo pipefail
+    # OLD CODE END
+    # Drop the sourced scripts' -u and pipefail (unbound $status); keep -e, which is how bats fails a test
+    set +uo pipefail
 }
 
 # ==========================================================================
@@ -48,7 +57,7 @@ _source_malcolm_config() {
 
     generate_certs "${TEST_TMPDIR}/docker/certs"
 
-    run openssl x509 -in "${TEST_TMPDIR}/docker/certs/ca.crt" -noout -text
+    bats_run openssl x509 -in "${TEST_TMPDIR}/docker/certs/ca.crt" -noout -text
     [ "$status" -eq 0 ]
     [[ "$output" == *"Issuer:"*"NetTap CA"* ]]
 }
@@ -58,7 +67,7 @@ _source_malcolm_config() {
 
     generate_certs "${TEST_TMPDIR}/docker/certs"
 
-    run openssl verify \
+    bats_run openssl verify \
         -CAfile "${TEST_TMPDIR}/docker/certs/ca.crt" \
         "${TEST_TMPDIR}/docker/certs/server.crt"
     [ "$status" -eq 0 ]
@@ -157,7 +166,7 @@ _source_malcolm_config() {
     generate_certs "${TEST_TMPDIR}/docker/certs"
     generate_nginx_ssl
 
-    run openssl verify \
+    bats_run openssl verify \
         -CAfile "${TEST_TMPDIR}/docker/certs/ca.crt" \
         "${TEST_TMPDIR}/docker/ssl/nettap.crt"
     [ "$status" -eq 0 ]
@@ -216,7 +225,7 @@ _source_malcolm_config() {
 
     # Don't generate CA — should fail with error (exit 1)
     # Run in subshell since error() calls exit 1
-    run bash -c "
+    bats_run bash -c "
         source '${REPO_ROOT}/scripts/common.sh'
         source '${REPO_ROOT}/scripts/install/malcolm-config.sh'
         export PROJECT_ROOT='${TEST_TMPDIR}'
@@ -253,16 +262,48 @@ _source_malcolm_config() {
     grep -q '^insecure$' "$curlrc_file"
 }
 
-@test "generate_curlrc: file has 644 permissions (not 600 — container user must read)" {
+# OLD CODE START — the file used to be world-readable (644); now PUID-owned 600
+# @test "generate_curlrc: file has 644 permissions (not 600 — container user must read)" {
+#     ... asserted perms = 644
+# }
+# OLD CODE END
+
+_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+
+@test "generate_curlrc: owned by the compose PUID, readable by nobody else" {
     _source_malcolm_config
+    chown() { echo "$*" > "${TEST_TMPDIR}/chown.args"; }
+    mkdir -p "${TEST_TMPDIR}/docker"
+    printf 'PUID=1234\nPGID=5678\n' > "${TEST_TMPDIR}/docker/.env"
 
     generate_curlrc
 
-    local perms
-    perms=$(stat -f '%Lp' "${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc" 2>/dev/null || \
-            stat -c '%a' "${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc" 2>/dev/null)
+    local file="${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc"
+    [ "$(_mode "$file")" = "600" ]
+    [ "$(cat "${TEST_TMPDIR}/chown.args")" = "1234:5678 ${file}" ]
+}
 
-    [ "$perms" = "644" ]
+@test "generate_curlrc: locks a world-readable file from an earlier install" {
+    _source_malcolm_config
+    chown() { return 0; }
+    local file="${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc"
+    mkdir -p "$(dirname "$file")"
+    printf 'user: "malcolm_internal:x"\n' > "$file"
+    chmod 644 "$file"
+
+    generate_curlrc
+
+    [ "$(_mode "$file")" = "600" ]
+    grep -q 'malcolm_internal:x' "$file"  # credentials kept
+}
+
+@test "generate_curlrc: stays 644 if the owner can't be changed (OpenSearch must still read it)" {
+    _source_malcolm_config
+    chown() { return 1; }
+
+    generate_curlrc
+
+    [ "$(_mode "${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc")" = "644" ]
 }
 
 @test "generate_curlrc: generates a non-empty password" {
@@ -436,6 +477,51 @@ EOF
     ! grep -q "^PUID=0$" "${TEST_TMPDIR}/docker/.env"
 }
 
+# _source_malcolm_config turns set -e off, and then a failing assertion does
+# not fail the test at all. These tests turn it back on after the call.
+@test "generate_compose_env: new .env gets random Arkime and Grafana secrets (CR-021, CR-022)" {
+    _source_malcolm_config
+    unset ARKIME_SECRET GRAFANA_ADMIN_PASSWORD
+    mkdir -p "${TEST_TMPDIR}/docker"
+
+    generate_compose_env
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    grep -Eq "^ARKIME_SECRET=[0-9a-f]{32}$" "$env_file"
+    grep -Eq "^GRAFANA_ADMIN_PASSWORD=[0-9a-f]{32}$" "$env_file"
+    # (common.sh's own run() shadows bats' run here)
+    [ "$(grep -c "NetTap_Arkime_Secret" "$env_file")" -eq 0 ]
+}
+
+@test "generate_compose_env: adds missing secrets to an existing .env, keeps the rest (CR-021)" {
+    _source_malcolm_config
+    mkdir -p "${TEST_TMPDIR}/docker"
+    printf 'PUID=1000\nREDIS_PASSWORD=keepme\nARKIME_SECRET=\n' > "${TEST_TMPDIR}/docker/.env"
+
+    generate_compose_env
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    grep -q "^PUID=1000$" "$env_file"
+    grep -q "^REDIS_PASSWORD=keepme$" "$env_file"
+    [ "$(grep -c '^ARKIME_SECRET=' "$env_file")" -eq 1 ]
+    grep -Eq "^ARKIME_SECRET=[0-9a-f]{32}$" "$env_file"
+    grep -Eq "^GRAFANA_ADMIN_PASSWORD=[0-9a-f]{32}$" "$env_file"
+}
+
+@test "generate_compose_env: never changes a secret that is already set" {
+    _source_malcolm_config
+    mkdir -p "${TEST_TMPDIR}/docker"
+    printf 'PUID=1000\nARKIME_SECRET=abc\nGRAFANA_ADMIN_PASSWORD=def\n' > "${TEST_TMPDIR}/docker/.env"
+
+    generate_compose_env
+    set -e
+
+    grep -q "^ARKIME_SECRET=abc$" "${TEST_TMPDIR}/docker/.env"
+    grep -q "^GRAFANA_ADMIN_PASSWORD=def$" "${TEST_TMPDIR}/docker/.env"
+}
+
 @test "generate_compose_env: includes heap sizes" {
     _source_malcolm_config
     export SUDO_UID=1000
@@ -454,7 +540,7 @@ EOF
     generate_compose_env
 
     local env_file="${TEST_TMPDIR}/docker/.env"
-    grep -q "^MALCOLM_IMAGE_TAG=26.02.0$" "$env_file"
+    grep -q "^MALCOLM_IMAGE_TAG=26.10.0$" "$env_file"
 }
 
 # ==========================================================================
@@ -547,7 +633,7 @@ EOF
     export SUDO_UID=1000
     export SUDO_GID=1000
 
-    run configure_malcolm
+    bats_run configure_malcolm
     [ "$status" -eq 0 ]
 
     # Verify all outputs exist
@@ -566,6 +652,6 @@ EOF
     export SUDO_UID=1000
 
     configure_malcolm
-    run configure_malcolm
+    bats_run configure_malcolm
     [ "$status" -eq 0 ]
 }

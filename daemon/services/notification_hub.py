@@ -78,7 +78,9 @@ class NotificationHub:
                 self._channels = {}
                 self._rules = {}
         else:
-            logger.info("No notification config at %s, starting fresh", self._config_path)
+            logger.info(
+                "No notification config at %s, starting fresh", self._config_path
+            )
 
     def _save_config(self) -> None:
         """Persist channels and rules to the JSON config file."""
@@ -102,7 +104,9 @@ class NotificationHub:
             The created channel dict including its generated ID.
         """
         if channel_type not in CHANNEL_TYPES:
-            raise ValueError(f"Unsupported channel type: {channel_type}. Must be one of {CHANNEL_TYPES}")
+            raise ValueError(
+                f"Unsupported channel type: {channel_type}. Must be one of {CHANNEL_TYPES}"
+            )
 
         channel_id = config.get("id") or str(uuid.uuid4())[:8]
         channel = {
@@ -201,18 +205,22 @@ class NotificationHub:
             else:
                 logger.error("Unknown channel type: %s", channel_type)
         except Exception as exc:
-            logger.error("Failed to send to channel %s (%s): %s", channel_id, channel_type, exc)
+            logger.error(
+                "Failed to send to channel %s (%s): %s", channel_id, channel_type, exc
+            )
             success = False
 
         # Log delivery
-        self._delivery_log.append({
-            "channel_id": channel_id,
-            "channel_type": channel_type,
-            "title": title,
-            "severity": severity,
-            "success": success,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        self._delivery_log.append(
+            {
+                "channel_id": channel_id,
+                "channel_type": channel_type,
+                "title": title,
+                "severity": severity,
+                "success": success,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         # Keep only last 100 entries
         if len(self._delivery_log) > 100:
             self._delivery_log = self._delivery_log[-100:]
@@ -292,7 +300,9 @@ class NotificationHub:
                     "title": title,
                     "description": message,
                     "color": self._severity_color(severity),
-                    "footer": {"text": f"NetTap | {self._severity_label(severity).upper()}"},
+                    "footer": {
+                        "text": f"NetTap | {self._severity_label(severity).upper()}"
+                    },
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             ]
@@ -311,7 +321,12 @@ class NotificationHub:
             logger.error("Slack config missing webhook_url")
             return False
 
-        severity_emoji = {1: ":red_circle:", 2: ":orange_circle:", 3: ":large_yellow_circle:", 4: ":large_blue_circle:"}
+        severity_emoji = {
+            1: ":red_circle:",
+            2: ":orange_circle:",
+            3: ":large_yellow_circle:",
+            4: ":large_blue_circle:",
+        }
         emoji = severity_emoji.get(severity, ":white_circle:")
 
         payload = {
@@ -419,7 +434,9 @@ class NotificationHub:
             The created rule dict.
         """
         if event_type not in EVENT_TYPES:
-            raise ValueError(f"Unknown event type: {event_type}. Must be one of {EVENT_TYPES}")
+            raise ValueError(
+                f"Unknown event type: {event_type}. Must be one of {EVENT_TYPES}"
+            )
 
         rule_id = str(uuid.uuid4())[:8]
         rule = {
@@ -431,7 +448,13 @@ class NotificationHub:
         }
         self._rules[rule_id] = rule
         self._save_config()
-        logger.info("Added routing rule %s: %s -> %s (min_severity=%d)", rule_id, event_type, channels, min_severity)
+        logger.info(
+            "Added routing rule %s: %s -> %s (min_severity=%d)",
+            rule_id,
+            event_type,
+            channels,
+            min_severity,
+        )
         return rule
 
     def get_rules(self) -> list[dict[str, Any]]:

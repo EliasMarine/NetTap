@@ -66,14 +66,10 @@ describe('traffic API client', () => {
 			expect(result).toEqual(expected);
 		});
 
-		it('returns zero-value defaults on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getTrafficSummary();
-
-			expect(result.total_bytes).toBe(0);
-			expect(result.connection_count).toBe(0);
-			expect(result.top_protocol).toBe('unknown');
+			await expect(getTrafficSummary()).rejects.toThrow('HTTP 502');
 		});
 
 		it('passes time range parameters', async () => {
@@ -109,12 +105,10 @@ describe('traffic API client', () => {
 			expect(result.top_talkers[0].ip).toBe('192.168.1.100');
 		});
 
-		it('returns empty list on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getTopTalkers();
-
-			expect(result.top_talkers).toEqual([]);
+			await expect(getTopTalkers()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -142,13 +136,10 @@ describe('traffic API client', () => {
 			expect(result.protocols).toHaveLength(2);
 		});
 
-		it('returns empty arrays on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getProtocolDistribution();
-
-			expect(result.protocols).toEqual([]);
-			expect(result.services).toEqual([]);
+			await expect(getProtocolDistribution()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -173,12 +164,10 @@ describe('traffic API client', () => {
 			expect(result.series).toHaveLength(2);
 		});
 
-		it('returns empty series on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getBandwidthTimeSeries();
-
-			expect(result.series).toEqual([]);
+			await expect(getBandwidthTimeSeries()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -237,14 +226,10 @@ describe('traffic API client', () => {
 			expect(calledUrl).toContain('to=');
 		});
 
-		it('returns empty categories on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getTrafficCategories();
-
-			expect(result.categories).toEqual([]);
-			expect(result.from).toBe('');
-			expect(result.to).toBe('');
+			await expect(getTrafficCategories()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -287,13 +272,10 @@ describe('traffic API client', () => {
 			expect(result.devices[0].ip).toBe('192.168.1.10');
 		});
 
-		it('returns empty on error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(404);
-
-			const result = await getCategoryDetail('nonexistent');
-
-			expect(result.devices).toEqual([]);
-			expect(result.device_count).toBe(0);
+			await expect(getCategoryDetail('nonexistent')).rejects.toThrow('HTTP 404');
 		});
 
 		it('encodes category name in URL', async () => {
@@ -352,14 +334,10 @@ describe('traffic API client', () => {
 			expect(result.series[0].download_bytes).toBe(5000);
 		});
 
-		it('returns empty series on fetch error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getCategoryBandwidth('streaming');
-
-			expect(result.series).toEqual([]);
-			expect(result.category).toBe('streaming');
-			expect(result.interval).toBe('15m');
+			await expect(getCategoryBandwidth('streaming')).rejects.toThrow('HTTP 500');
 		});
 	});
 });

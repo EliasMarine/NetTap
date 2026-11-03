@@ -15,12 +15,16 @@ from typing import Any
 
 import yaml
 
+from services.tshark_service import bounded_exec
+
 logger = logging.getLogger("nettap.services.suricata_rules")
 
 # Default config path -- overridable via env var
 DEFAULT_SOURCES_CONFIG = os.environ.get(
     "SURICATA_SOURCES_CONFIG",
-    os.path.join(os.path.dirname(__file__), "../../config/suricata/update-sources.yaml"),
+    os.path.join(
+        os.path.dirname(__file__), "../../config/suricata/update-sources.yaml"
+    ),
 )
 
 DEFAULT_CONTAINER_NAME = os.environ.get(
@@ -44,6 +48,53 @@ DEFAULT_COMMERCIAL_CONFIG = os.environ.get(
     "SURICATA_COMMERCIAL_CONFIG",
     os.path.join(os.path.dirname(__file__), "../../config/suricata/commercial.yaml"),
 )
+
+
+# What the Suricata container really runs. update-sources.yaml, the schedule file, custom
+# rules and commercial keys are not wired into suricata-update (dashboard data accuracy #58),
+# so the page reads the facts from the container instead.
+_LIVE_STATUS_SCRIPT = r"""
+R=/var/lib/suricata/rules/suricata.rules
+[ -f "$R" ] || { echo MISSING; exit 0; }
+echo "ENABLED $(grep -cE '^(alert|drop|pass|reject) ' "$R")"
+echo "DISABLED $(grep -cE '^# *(alert|drop|pass|reject) ' "$R")"
+echo "MTIME $(stat -c %Y "$R")"
+sed -n '/^sources:/,/^[a-z]/p' /etc/suricata/update.yaml 2>/dev/null | sed -n 's/^ *- *//p' | sed 's/^/SOURCE /'
+grep suricata-update-rules /etc/crontab 2>/dev/null | awk '{ print "CRON", $1, $2, $3, $4, $5 }'
+"""
+_LIVE_STATUS_TIMEOUT = 20
+
+
+def parse_live_status(output: str) -> dict[str, Any]:
+    """Parse the _LIVE_STATUS_SCRIPT output into the /api/suricata/rules/live body."""
+    if output.strip() == "MISSING":
+        return {"available": False, "error": "Suricata has no rules file yet."}
+    status: dict[str, Any] = {
+        "available": False,
+        "enabled_rules": 0,
+        "disabled_rules": 0,
+        "last_updated": None,
+        "sources": [],
+        "schedule": None,
+        "error": None,
+    }
+    for line in output.splitlines():
+        key, _, value = line.strip().partition(" ")
+        value = value.strip()
+        if key == "ENABLED" and value.isdigit():
+            status = {**status, "enabled_rules": int(value), "available": True}
+        elif key == "DISABLED" and value.isdigit():
+            status = {**status, "disabled_rules": int(value)}
+        elif key == "MTIME" and value.isdigit():
+            updated = datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+            status = {**status, "last_updated": updated}
+        elif key == "SOURCE" and value:
+            status = {**status, "sources": [*status["sources"], value]}
+        elif key == "CRON" and value:
+            status = {**status, "schedule": value}
+    if not status["available"]:
+        return {**status, "error": "Could not read Suricata's rule count."}
+    return status
 
 
 class SuricataRuleManager:
@@ -96,11 +147,13 @@ class SuricataRuleManager:
         sources = data.get("sources", {})
         result = []
         for source_id, config in sources.items():
-            result.append({
-                "id": source_id,
-                "enabled": config.get("enabled", False),
-                "description": config.get("description", ""),
-            })
+            result.append(
+                {
+                    "id": source_id,
+                    "enabled": config.get("enabled", False),
+                    "description": config.get("description", ""),
+                }
+            )
         return result
 
     def enable_source(self, source_id: str) -> bool:
@@ -139,7 +192,9 @@ class SuricataRuleManager:
         # Step 1: Run suricata-update
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", container,
+                "docker",
+                "exec",
+                container,
                 "suricata-update",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -157,25 +212,77 @@ class SuricataRuleManager:
 
         # Step 2: Reload rules via suricatasc
         reload_output = ""
+        reload_ok = False
         if update_success:
             try:
                 reload_proc = await asyncio.create_subprocess_exec(
-                    "docker", "exec", container,
-                    "suricatasc", "-c", "reload-rules",
+                    "docker",
+                    "exec",
+                    container,
+                    "suricatasc",
+                    "-c",
+                    "reload-rules",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )
                 reload_stdout, _ = await reload_proc.communicate()
-                reload_output = reload_stdout.decode("utf-8", errors="replace") if reload_stdout else ""
+                reload_output = (
+                    reload_stdout.decode("utf-8", errors="replace")
+                    if reload_stdout
+                    else ""
+                )
+                # suricatasc exits non-zero when Suricata answers NOK
+                reload_ok = reload_proc.returncode == 0
+                if not reload_ok:
+                    logger.error("Suricata rule reload failed: %s", reload_output)
             except Exception as exc:
                 logger.error("Failed to reload rules: %s", exc)
                 reload_output = "Reload failed: {}".format(exc)
 
         return {
-            "success": update_success,
+            # OLD CODE START — #96: a failed reload still said success, while Suricata
+            # kept running the old rules
+            # "success": update_success,
+            # OLD CODE END
+            "success": update_success and reload_ok,
             "output": update_output,
             "reload_output": reload_output,
         }
+
+    # ------------------------------------------------------------------
+    # Live status (read from the Suricata container)
+    # ------------------------------------------------------------------
+
+    async def get_live_status(self) -> dict[str, Any]:
+        """Rule counts, last refresh, sources and schedule Suricata really uses."""
+        cmd = bounded_exec(
+            ["docker", "exec", self._container_name, "sh", "-c", _LIVE_STATUS_SCRIPT],
+            _LIVE_STATUS_TIMEOUT,
+        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=_LIVE_STATUS_TIMEOUT + 10
+            )
+        except (OSError, asyncio.TimeoutError) as exc:
+            logger.error("Could not read Suricata's rule status: %s", exc)
+            return {
+                "available": False,
+                "error": "Could not reach the Suricata container.",
+            }
+        if proc.returncode != 0:
+            detail = (stderr or b"").decode("utf-8", errors="replace").strip()[:200]
+            logger.error(
+                "Reading Suricata's rule status failed (rc=%s): %s",
+                proc.returncode,
+                detail,
+            )
+            return {"available": False, "error": "Could not read Suricata's rules."}
+        return parse_live_status((stdout or b"").decode("utf-8", errors="replace"))
 
     # ------------------------------------------------------------------
     # Rule stats
@@ -258,7 +365,9 @@ class SuricataRuleManager:
         valid_intervals = {"daily", "weekly", "manual"}
         if interval not in valid_intervals:
             raise ValueError(
-                "Invalid interval '{}'. Must be one of: {}".format(interval, valid_intervals)
+                "Invalid interval '{}'. Must be one of: {}".format(
+                    interval, valid_intervals
+                )
             )
 
         enabled = interval != "manual"
@@ -306,7 +415,9 @@ class SuricataRuleManager:
     # Commercial source configuration
     # ------------------------------------------------------------------
 
-    def configure_commercial(self, source_type: str, license_key: str) -> dict[str, Any]:
+    def configure_commercial(
+        self, source_type: str, license_key: str
+    ) -> dict[str, Any]:
         """Configure a commercial rule source (ET Pro or Snort Subscriber).
 
         Args:
@@ -316,7 +427,9 @@ class SuricataRuleManager:
         valid_types = {"etpro", "snort"}
         if source_type not in valid_types:
             raise ValueError(
-                "Invalid source type '{}'. Must be one of: {}".format(source_type, valid_types)
+                "Invalid source type '{}'. Must be one of: {}".format(
+                    source_type, valid_types
+                )
             )
 
         if not license_key or len(license_key) < 8:

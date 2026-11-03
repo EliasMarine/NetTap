@@ -2,7 +2,7 @@
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 from aiohttp.test_utils import AioHTTPTestCase
 from aiohttp import web
 from api.logs import register_log_routes
@@ -37,6 +37,38 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(data["total"], 0)
         self.assertEqual(data["log_type"], "all")
 
+    async def test_search_total_counts_past_10000(self):
+        """The UI shows this total; OpenSearch stops at 10,000 unless asked."""
+        self.mock_client.search.return_value = self._mock_search_response()
+        resp = await self.client.request("GET", "/api/logs/search")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args[1]["body"]
+        self.assertIs(body["track_total_hits"], True)
+
+    async def _must_not(self, path: str) -> list:
+        self.mock_client.search.return_value = {
+            **self._mock_search_response(),
+            "aggregations": {},
+        }
+        resp = await self.client.request("GET", path)
+        self.assertEqual(resp.status, 200)
+        return self.mock_client.search.call_args[1]["body"]["query"]["bool"]["must_not"]
+
+    async def test_stat_cards_and_results_use_the_same_exclusions(self):
+        """On the G11, Total Events said 127.1K while the results said 107,320."""
+        alert = {"term": {"event.dataset": "alert"}}
+        noise = {"term": {"zeek.dns.query": "pcap-monitor"}}
+        search = await self._must_not("/api/logs/search")
+        stats = await self._must_not("/api/logs/stats")
+        timeline = await self._must_not("/api/logs/timeline")
+        for clauses in (search, stats, timeline):
+            self.assertIn(alert, clauses)
+            self.assertIn(noise, clauses)
+
+    async def test_search_suricata_type_still_shows_alerts(self):
+        must_not = await self._must_not("/api/logs/search?log_type=suricata")
+        self.assertNotIn({"term": {"event.dataset": "alert"}}, must_not)
+
     async def test_search_by_log_type(self):
         """GET /api/logs/search?log_type=zeek.dns filters correctly."""
         self.mock_client.search.return_value = self._mock_search_response()
@@ -45,7 +77,11 @@ class TestLogSearchAPI(AioHTTPTestCase):
         call_args = self.mock_client.search.call_args
         call_body = call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        datasets = [f["term"]["event.dataset"] for f in filters if "event.dataset" in f.get("term", {})]
+        datasets = [
+            f["term"]["event.dataset"]
+            for f in filters
+            if "event.dataset" in f.get("term", {})
+        ]
         self.assertIn("dns", datasets)
 
     async def test_search_with_query_string(self):
@@ -55,6 +91,17 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         call_body = self.mock_client.search.call_args[1]["body"]
         self.assertIn("query_string", json.dumps(call_body))
+
+    async def test_search_sort_uses_malcolm_field_names(self):
+        """Sort fields are used as-is; an old client's .keyword suffix is dropped (Chain 24)."""
+        self.mock_client.search.return_value = self._mock_search_response()
+        resp = await self.client.request(
+            "GET", "/api/logs/search?sort=source.ip:asc,zeek.dns.query.keyword:desc"
+        )
+        self.assertEqual(resp.status, 200)
+        sort = self.mock_client.search.call_args[1]["body"]["sort"]
+        self.assertEqual(sort[0], {"source.ip": {"order": "asc"}})
+        self.assertEqual(sort[1], {"zeek.dns.query": {"order": "desc"}})
 
     async def test_search_pagination(self):
         """GET /api/logs/search?size=10 respects size param."""
@@ -86,7 +133,9 @@ class TestLogSearchAPI(AioHTTPTestCase):
     async def test_search_with_field_projection(self):
         """Fields param limits returned _source fields."""
         self.mock_client.search.return_value = self._mock_search_response()
-        resp = await self.client.request("GET", "/api/logs/search?fields=source.ip,destination.ip")
+        resp = await self.client.request(
+            "GET", "/api/logs/search?fields=source.ip,destination.ip"
+        )
         self.assertEqual(resp.status, 200)
         call_body = self.mock_client.search.call_args[1]["body"]
         self.assertEqual(call_body["_source"], ["source.ip", "destination.ip"])
@@ -139,8 +188,16 @@ class TestLogSearchAPI(AioHTTPTestCase):
 
     async def test_fields_all_log_types(self):
         """All 8 log types have field definitions."""
-        for log_type in ["zeek.conn", "zeek.dns", "zeek.http", "zeek.tls",
-                         "zeek.files", "zeek.dhcp", "zeek.smtp", "suricata"]:
+        for log_type in [
+            "zeek.conn",
+            "zeek.dns",
+            "zeek.http",
+            "zeek.tls",
+            "zeek.files",
+            "zeek.dhcp",
+            "zeek.smtp",
+            "suricata",
+        ]:
             resp = await self.client.request("GET", f"/api/logs/fields/{log_type}")
             self.assertEqual(resp.status, 200, f"Failed for {log_type}")
             data = await resp.json()
@@ -156,6 +213,7 @@ class TestLogSearchAPI(AioHTTPTestCase):
     async def test_search_opensearch_error(self):
         """OpenSearch exception returns 500."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("connection refused")
         resp = await self.client.request("GET", "/api/logs/search")
         self.assertEqual(resp.status, 500)
@@ -164,7 +222,9 @@ class TestLogSearchAPI(AioHTTPTestCase):
 
     # ── Stats endpoint tests ──────────────────────────────────────────
 
-    def _mock_stats_response(self, total=1234, unique_src=42, protocols=5, src_bytes=100000, dst_bytes=200000):
+    def _mock_stats_response(
+        self, total=1234, unique_src=42, protocols=5, src_bytes=100000, dst_bytes=200000
+    ):
         """Helper to create a mock OpenSearch stats aggregation response."""
         return {
             "hits": {"total": {"value": total}, "hits": []},
@@ -208,6 +268,7 @@ class TestLogSearchAPI(AioHTTPTestCase):
     async def test_stats_opensearch_error(self):
         """Stats endpoint returns 502 on OpenSearch error."""
         from opensearchpy import OpenSearchException
+
         self.mock_client.search.side_effect = OpenSearchException("timeout")
         resp = await self.client.request("GET", "/api/logs/stats")
         self.assertEqual(resp.status, 502)
@@ -261,9 +322,67 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(data["interval"], "1h")
         # Verify the actual query used 1h
         call_body = self.mock_client.search.call_args[1]["body"]
-        self.assertEqual(
-            call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"], "1h"
+        # OLD CODE START — #120: the timeline was a date_histogram
+        # self.assertEqual(
+        #     call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"], "1h"
+        # )
+        # OLD CODE END
+        # one exact range per hour: OpenSearch 3.5's date_histogram misplaced records (#120)
+        from datetime import datetime
+
+        first = call_body["aggs"]["timeline"]["date_range"]["ranges"][0]
+        span = datetime.fromisoformat(
+            first["to"].replace("Z", "+00:00")
+        ) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
+        self.assertEqual(span.total_seconds(), 3600)
+
+    async def test_timeline_slots_come_back_as_buckets(self):
+        """#120: date_range slots read as the timeline's buckets, in time order."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 3}, "hits": []},
+            "aggregations": {
+                "timeline": {
+                    "buckets": [
+                        {
+                            "key": "x",
+                            "from": 1793581200000.0,
+                            "to": 1793584800000.0,
+                            "doc_count": 1,
+                            "by_type": {"buckets": [{"key": "dns", "doc_count": 1}]},
+                        },
+                        {
+                            "key": "y",
+                            "from": 1793577600000.0,
+                            "to": 1793581200000.0,
+                            "doc_count": 2,
+                            "by_type": {"buckets": [{"key": "conn", "doc_count": 2}]},
+                        },
+                    ]
+                }
+            },
+        }
+        resp = await self.client.request(
+            "GET",
+            "/api/logs/timeline?from=2026-11-02T00:00:00Z&to=2026-11-02T01:30:00Z",
         )
+        data = await resp.json()
+        self.assertEqual(
+            [
+                (b["timestamp"], b["total"], b["conn"], b["dns"])
+                for b in data["buckets"]
+            ],
+            [
+                ("2026-11-02T00:00:00.000Z", 2, 2, 0),
+                ("2026-11-02T01:00:00.000Z", 1, 0, 1),
+            ],
+        )
+
+    async def test_timeline_interval_too_fine_for_the_range_is_400(self):
+        resp = await self.client.request(
+            "GET",
+            "/api/logs/timeline?interval=1m&from=2026-01-01T00:00:00Z&to=2026-11-01T00:00:00Z",
+        )
+        self.assertEqual(resp.status, 400)
 
     # ── Top talkers endpoint tests ────────────────────────────────────
 
@@ -358,8 +477,16 @@ class TestLogSearchAPI(AioHTTPTestCase):
         # Verify DNS-specific filters in the query
         call_body = self.mock_client.search.call_args[1]["body"]
         filters = call_body["query"]["bool"]["filter"]
-        providers = [f["term"]["event.provider"] for f in filters if "event.provider" in f.get("term", {})]
-        datasets = [f["term"]["event.dataset"] for f in filters if "event.dataset" in f.get("term", {})]
+        providers = [
+            f["term"]["event.provider"]
+            for f in filters
+            if "event.provider" in f.get("term", {})
+        ]
+        datasets = [
+            f["term"]["event.dataset"]
+            for f in filters
+            if "event.dataset" in f.get("term", {})
+        ]
         self.assertIn("zeek", providers)
         self.assertIn("dns", datasets)
 

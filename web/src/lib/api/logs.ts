@@ -116,16 +116,19 @@ export async function getLogStats(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/logs/stats${query}`);
 
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			total_events: 0,
-			unique_sources: 0,
-			protocol_count: 0,
-			total_bytes: 0,
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 events and 0 B
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		total_events: 0,
+	// 		unique_sources: 0,
+	// 		protocol_count: 0,
+	// 		total_bytes: 0,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Log stats failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -139,9 +142,12 @@ export async function getLogTimeline(
 	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/logs/timeline${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', interval: opts.interval || '1h', buckets: [] };
-	}
+	// OLD CODE START — #96: a failed request read as an empty timeline
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: opts.interval || '1h', buckets: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Log timeline failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -155,9 +161,12 @@ export async function getLogTopTalkers(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/logs/top-talkers${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', talkers: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no sources
+	// if (!res.ok) {
+	// 	return { from: '', to: '', talkers: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Log top talkers failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -171,9 +180,12 @@ export async function getLogProtocolBreakdown(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/logs/protocol-breakdown${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', protocols: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no protocols
+	// if (!res.ok) {
+	// 	return { from: '', to: '', protocols: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Log protocol breakdown failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -187,9 +199,12 @@ export async function getLogTopDestinations(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/logs/top-destinations${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', destinations: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no destinations
+	// if (!res.ok) {
+	// 	return { from: '', to: '', destinations: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Log top destinations failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -203,9 +218,12 @@ export async function getLogTopDns(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/logs/top-dns${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', queries: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no DNS queries
+	// if (!res.ok) {
+	// 	return { from: '', to: '', queries: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Log top DNS failed: HTTP ${res.status}`);
 
 	return res.json();
 }

@@ -28,11 +28,13 @@ async def handle_list_sources(request: web.Request) -> web.Response:
     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
     sources = manager.get_enabled_sources()
     last_update = manager.get_last_update()
-    return web.json_response({
-        "sources": sources,
-        "count": len(sources),
-        "last_update": last_update,
-    })
+    return web.json_response(
+        {
+            "sources": sources,
+            "count": len(sources),
+            "last_update": last_update,
+        }
+    )
 
 
 async def handle_enable_source(request: web.Request) -> web.Response:
@@ -84,6 +86,17 @@ async def handle_update_rules(request: web.Request) -> web.Response:
             {"error": f"Rule update failed: {exc}"},
             status=500,
         )
+
+
+async def handle_live_status(request: web.Request) -> web.Response:
+    """GET /api/suricata/rules/live
+
+    What Suricata really runs: enabled/disabled rule counts, last refresh,
+    sources and update schedule, read from the Suricata container.
+    """
+    manager: SuricataRuleManager = request.app["suricata_rule_manager"]
+    status = await manager.get_live_status()
+    return web.json_response(status, status=200 if status.get("available") else 502)
 
 
 async def handle_rule_stats(request: web.Request) -> web.Response:
@@ -203,6 +216,7 @@ def register_suricata_rules_routes(
     app["suricata_rule_manager"] = manager
 
     # Static routes first (before parameterized)
+    app.router.add_get("/api/suricata/rules/live", handle_live_status)
     app.router.add_get("/api/suricata/rules/stats", handle_rule_stats)
     app.router.add_get("/api/suricata/rules/schedule", handle_get_schedule)
     app.router.add_put("/api/suricata/rules/schedule", handle_set_schedule)
@@ -214,7 +228,11 @@ def register_suricata_rules_routes(
 
     # Source listing + parameterized routes
     app.router.add_get("/api/suricata/rules/sources", handle_list_sources)
-    app.router.add_post("/api/suricata/rules/sources/{id:.+}/enable", handle_enable_source)
-    app.router.add_post("/api/suricata/rules/sources/{id:.+}/disable", handle_disable_source)
+    app.router.add_post(
+        "/api/suricata/rules/sources/{id:.+}/enable", handle_enable_source
+    )
+    app.router.add_post(
+        "/api/suricata/rules/sources/{id:.+}/disable", handle_disable_source
+    )
 
     logger.info("Suricata rules API routes registered (11 endpoints)")

@@ -143,7 +143,11 @@ class BridgeCaptureAdapter(CaptureManager):
             "lan_iface": self._lan_iface,
             "bypass_active": bypass_active,
             "watchdog_active": health_dict.get("watchdog_active", False),
-            "latency_us": health_dict.get("latency_us", 0.0),
+            # OLD CODE START — #96: a missing value became a 0 µs figure
+            # "latency_us": health_dict.get("latency_us", 0.0),
+            # OLD CODE END
+            "latency_us": health_dict.get("latency_us"),
+            "latency_note": health_dict.get("latency_note", ""),
             "uptime_seconds": health_dict.get("uptime_seconds", 0.0),
             "last_check": health_dict.get("last_check", ""),
         }
@@ -190,9 +194,7 @@ class BridgeCaptureAdapter(CaptureManager):
         ]
         counters: dict[str, int] = {}
         for name in counter_names:
-            counters[name] = self._read_sysfs_int(
-                os.path.join(stats_dir, name)
-            )
+            counters[name] = self._read_sysfs_int(os.path.join(stats_dir, name))
 
         # Link speed (in Mbps) — lives at the interface level, not statistics/
         speed_path = os.path.join(_SYSFS_NET, self._bridge_name, "speed")

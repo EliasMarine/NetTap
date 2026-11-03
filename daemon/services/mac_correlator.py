@@ -19,6 +19,9 @@ from typing import Any
 
 from opensearchpy import OpenSearchException
 
+from storage.all_buckets import all_buckets
+from storage.time_slots import histogram_buckets, time_slots
+
 logger = logging.getLogger("nettap.services.mac_correlator")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -31,6 +34,80 @@ _DEFAULT_MERGE_FILE = os.environ.get(
 # Confidence thresholds
 _HIGH_CONFIDENCE = 0.80
 _MEDIUM_CONFIDENCE = 0.50
+
+
+# Per MAC for the randomized list; 1,000 MACs x (1 + 5 top destinations) per page
+_RANDOMIZED_AGGS = {
+    "first_seen": {"min": {"field": "@timestamp"}},
+    "last_seen": {"max": {"field": "@timestamp"}},
+    "total_bytes": {
+        "sum": {
+            "script": {
+                "source": (
+                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) "
+                    "+ (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                ),
+                "lang": "painless",
+            }
+        }
+    },
+    "top_dests": {"terms": {"field": "destination.ip", "size": 5}},
+}
+
+# What _compute_similarity reads per MAC (as in get_behavioral_fingerprint)
+_SIMILARITY_AGGS = {
+    "dns_domains": {"terms": {"field": "dns.question.name", "size": 20}},
+    "dest_ips": {"terms": {"field": "destination.ip", "size": 20}},
+    "ja3_hashes": {"terms": {"field": "tls.ja3", "size": 10}},
+    "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+    "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+}
+# 250 MACs x (1 + 50 term buckets) keeps a page far below search.max_buckets
+_FINGERPRINT_PAGE = 250
+
+_BY_MAC = [{"mac": {"terms": {"field": "source.mac"}}}]
+
+
+def _in_range(from_ts: str, to_ts: str) -> dict:
+    """Query for every record in the time range."""
+    return {
+        "bool": {
+            "filter": [
+                {
+                    "range": {
+                        "@timestamp": {
+                            "gte": from_ts,
+                            "lte": to_ts,
+                            "format": "strict_date_optional_time",
+                        }
+                    }
+                }
+            ]
+        }
+    }
+
+
+def _similarity_fingerprint(bucket: dict) -> dict[str, Any]:
+    """The fingerprint fields _compute_similarity reads, from one MAC's _SIMILARITY_AGGS."""
+
+    def keys(agg: str, name: str) -> list[dict[str, Any]]:
+        buckets = (bucket.get(agg) or {}).get("buckets", [])
+        return [{name: b["key"], "count": b["doc_count"]} for b in buckets]
+
+    orig = (bucket.get("total_orig_bytes") or {}).get("value") or 0
+    resp = (bucket.get("total_resp_bytes") or {}).get("value") or 0
+    return {
+        "dns_patterns": keys("dns_domains", "domain"),
+        "tls_fingerprints": keys("ja3_hashes", "ja3"),
+        "destination_ips": keys("dest_ips", "ip"),
+        "traffic_profile": {"total_bytes": orig + resp},
+    }
+
+
+def _busiest_first(buckets: list[dict]) -> list[dict]:
+    """Composite buckets keyed by MAC, as {key: mac, ...}, most records first."""
+    keyed = [{**b, "key": b["key"]["mac"]} for b in buckets]
+    return sorted(keyed, key=lambda b: b.get("doc_count", 0), reverse=True)
 
 
 def is_randomized_mac(mac: str) -> bool:
@@ -91,86 +168,114 @@ class MACCorrelator:
     # Randomized MAC detection
     # ------------------------------------------------------------------
 
-    def detect_randomized_macs(
-        self, from_ts: str, to_ts: str
-    ) -> list[dict[str, Any]]:
+    def detect_randomized_macs(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:
         """Find MACs with the locally-administered bit set in traffic data.
 
         Returns a list of dicts with mac, connection_count, first_seen, last_seen,
         total_bytes, and top_destinations.
         """
-        query = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
-            "aggs": {
-                "macs": {
-                    "terms": {
-                        "field": "source.mac.keyword",
-                        "size": 500,
-                    },
-                    "aggs": {
-                        "first_seen": {"min": {"field": "@timestamp"}},
-                        "last_seen": {"max": {"field": "@timestamp"}},
-                        "total_bytes": {
-                            "sum": {
-                                "script": {
-                                    "source": (
-                                        "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) "
-                                        "+ (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)"
-                                    ),
-                                    "lang": "painless",
-                                }
-                            }
-                        },
-                        "top_dests": {
-                            "terms": {
-                                "field": "destination.ip.keyword",
-                                "size": 5,
-                            }
-                        },
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: only the 500 busiest MACs were checked, so quieter randomized
+        # MACs were missing from the list and its count
+        # query = {
+        #     "size": 0,
+        #     "query": {
+        #         "bool": {
+        #             "filter": [
+        #                 {
+        #                     "range": {
+        #                         "@timestamp": {
+        #                             "gte": from_ts,
+        #                             "lte": to_ts,
+        #                             "format": "strict_date_optional_time",
+        #                         }
+        #                     }
+        #                 }
+        #             ]
+        #         }
+        #     },
+        #     "aggs": {
+        #         "macs": {
+        #             "terms": {
+        #                 "field": "source.mac",
+        #                 "size": 500,
+        #             },
+        #             "aggs": {
+        #                 "first_seen": {"min": {"field": "@timestamp"}},
+        #                 "last_seen": {"max": {"field": "@timestamp"}},
+        #                 "total_bytes": {
+        #                     "sum": {
+        #                         "script": {
+        #                             # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+        #                             # "source": ("(doc['client.bytes']...) " "+ (doc['server.bytes']...)"),
+        #                             # OLD CODE END
+        #                             "source": (
+        #                                 "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) "
+        #                                 "+ (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+        #                             ),
+        #                             "lang": "painless",
+        #                         }
+        #                     }
+        #                 },
+        #                 "top_dests": {
+        #                     "terms": {
+        #                         "field": "destination.ip",
+        #                         "size": 5,
+        #                     }
+        #                 },
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error detecting randomized MACs: %s", exc)
+        #     return []
+        #
+        # buckets = result.get("aggregations", {}).get("macs", {}).get("buckets", [])
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            pages, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                _in_range(from_ts, to_ts),
+                _BY_MAC,
+                _RANDOMIZED_AGGS,
+            )
+        # OLD CODE START — #96: [] read as "no randomized MACs on this network"
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error detecting randomized MACs: %s", exc)
+        #     return []
+        # OLD CODE END
         except OpenSearchException as exc:
             logger.error("OpenSearch error detecting randomized MACs: %s", exc)
-            return []
-
-        buckets = result.get("aggregations", {}).get("macs", {}).get("buckets", [])
+            raise
+        if not complete:
+            logger.warning(
+                "MAC scan stopped at %d MACs; the list is partial", len(pages)
+            )
+        buckets = _busiest_first(pages)
         randomized = []
 
         for bucket in buckets:
             mac = bucket["key"]
             if is_randomized_mac(mac):
                 top_dests = [
-                    d["key"]
-                    for d in bucket.get("top_dests", {}).get("buckets", [])
+                    d["key"] for d in bucket.get("top_dests", {}).get("buckets", [])
                 ]
-                randomized.append({
-                    "mac": mac,
-                    "connection_count": bucket["doc_count"],
-                    "first_seen": bucket.get("first_seen", {}).get("value_as_string"),
-                    "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
-                    "total_bytes": bucket.get("total_bytes", {}).get("value", 0),
-                    "top_destinations": top_dests,
-                })
+                randomized.append(
+                    {
+                        "mac": mac,
+                        "connection_count": bucket["doc_count"],
+                        "first_seen": bucket.get("first_seen", {}).get(
+                            "value_as_string"
+                        ),
+                        "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
+                        "total_bytes": bucket.get("total_bytes", {}).get("value", 0),
+                        "top_destinations": top_dests,
+                    }
+                )
 
         logger.info(
             "Found %d randomized MACs out of %d total",
@@ -204,7 +309,7 @@ class MACCorrelator:
                 }
             }
         }
-        mac_filter = {"term": {"source.mac.keyword": mac}}
+        mac_filter = {"term": {"source.mac": mac}}
 
         fingerprint: dict[str, Any] = {
             "mac": mac,
@@ -223,37 +328,37 @@ class MACCorrelator:
             "aggs": {
                 "dns_domains": {
                     "terms": {
-                        "field": "dns.question.name.keyword",
+                        "field": "dns.question.name",
                         "size": 20,
                     }
                 },
                 "dest_ips": {
                     "terms": {
-                        "field": "destination.ip.keyword",
+                        "field": "destination.ip",
                         "size": 20,
                     }
                 },
                 "ja3_hashes": {
                     "terms": {
-                        "field": "tls.ja3.keyword",
+                        "field": "tls.ja3",
                         "size": 10,
                     }
                 },
-                "hourly_activity": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "calendar_interval": "hour",
-                    }
-                },
-                "total_orig_bytes": {
-                    "sum": {"field": "client.bytes", "missing": 0}
-                },
+                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                # "hourly_activity": {
+                #     "date_histogram": {"field": "@timestamp", "calendar_interval": "hour"}
+                # },
+                # OLD CODE END
+                "hourly_activity": time_slots(from_ts, to_ts, "1h"),
+                # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                # OLD CODE END
+                "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                 "total_resp_bytes": {
-                    "sum": {"field": "server.bytes", "missing": 0}
+                    "sum": {"field": "destination.bytes", "missing": 0}
                 },
-                "total_orig_pkts": {
-                    "sum": {"field": "source.packets", "missing": 0}
-                },
+                "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
                 "total_resp_pkts": {
                     "sum": {"field": "destination.packets", "missing": 0}
                 },
@@ -281,7 +386,9 @@ class MACCorrelator:
                     "hour": b.get("key_as_string", b.get("key")),
                     "connections": b["doc_count"],
                 }
-                for b in aggs.get("hourly_activity", {}).get("buckets", [])
+                for b in histogram_buckets(
+                    aggs.get("hourly_activity")
+                )  # date_histogram before #120
             ]
 
             orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
@@ -301,10 +408,13 @@ class MACCorrelator:
                 ),
             }
 
+        # OLD CODE START — #96: an empty fingerprint read as a device with no DNS, TLS or traffic
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error building fingerprint for %s: %s", mac, exc)
+        # OLD CODE END
         except OpenSearchException as exc:
-            logger.error(
-                "OpenSearch error building fingerprint for %s: %s", mac, exc
-            )
+            logger.error("OpenSearch error building fingerprint for %s: %s", mac, exc)
+            raise
 
         return fingerprint
 
@@ -312,9 +422,7 @@ class MACCorrelator:
     # Merge suggestions
     # ------------------------------------------------------------------
 
-    def _compute_similarity(
-        self, fp_a: dict[str, Any], fp_b: dict[str, Any]
-    ) -> float:
+    def _compute_similarity(self, fp_a: dict[str, Any], fp_b: dict[str, Any]) -> float:
         """Compute behavioral similarity between two fingerprints (0.0-1.0).
 
         Weights:
@@ -370,74 +478,106 @@ class MACCorrelator:
             return 0.0
         return sum(s * w for s, w in scores) / total_weight
 
-    def suggest_merges(
-        self, from_ts: str, to_ts: str
-    ) -> list[dict[str, Any]]:
+    def _fingerprints(self, from_ts: str, to_ts: str) -> dict[str, dict[str, Any]]:
+        """Similarity fingerprint of every MAC in range, busiest first; raises (logged) on failure."""
+        try:
+            pages, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                _in_range(from_ts, to_ts),
+                _BY_MAC,
+                _SIMILARITY_AGGS,
+                page_size=_FINGERPRINT_PAGE,
+            )
+        # OLD CODE START — #96: {} read as "no merge suggestions"
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error fingerprinting MACs: %s", exc)
+        #     return {}
+        # OLD CODE END
+        except OpenSearchException as exc:
+            logger.error("OpenSearch error fingerprinting MACs: %s", exc)
+            raise
+        if not complete:
+            logger.warning(
+                "MAC fingerprints stopped at %d MACs; suggestions are partial",
+                len(pages),
+            )
+        return {b["key"]: _similarity_fingerprint(b) for b in _busiest_first(pages)}
+
+    def suggest_merges(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:
         """Compare randomized MACs to known devices and suggest merges.
 
         Returns a list of merge candidates with confidence scores.
         """
-        randomized = self.detect_randomized_macs(from_ts, to_ts)
-        if not randomized:
-            return []
-
-        # Get all MACs for fingerprinting
-        all_macs_query = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
-            "aggs": {
-                "macs": {
-                    "terms": {"field": "source.mac.keyword", "size": 500}
-                }
-            },
-        }
-
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=all_macs_query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error finding known MACs: %s", exc)
-            return []
-
-        all_mac_buckets = (
-            result.get("aggregations", {}).get("macs", {}).get("buckets", [])
-        )
-        randomized_set = {r["mac"] for r in randomized}
-        known_macs = [
-            b["key"]
-            for b in all_mac_buckets
-            if not is_randomized_mac(b["key"]) and b["key"] not in randomized_set
-        ]
-
-        if not known_macs:
+        # OLD CODE START — #96: real devices outside the 500 busiest MACs were never candidates,
+        # and one fingerprint query per (randomized, known) pair could not scale to every MAC
+        # randomized = self.detect_randomized_macs(from_ts, to_ts)
+        # if not randomized:
+        #     return []
+        #
+        # # Get all MACs for fingerprinting
+        # all_macs_query = {
+        #     "size": 0,
+        #     "query": {
+        #         "bool": {
+        #             "filter": [
+        #                 {
+        #                     "range": {
+        #                         "@timestamp": {
+        #                             "gte": from_ts,
+        #                             "lte": to_ts,
+        #                             "format": "strict_date_optional_time",
+        #                         }
+        #                     }
+        #                 }
+        #             ]
+        #         }
+        #     },
+        #     "aggs": {"macs": {"terms": {"field": "source.mac", "size": 500}}},
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=all_macs_query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error finding known MACs: %s", exc)
+        #     return []
+        #
+        # all_mac_buckets = (
+        #     result.get("aggregations", {}).get("macs", {}).get("buckets", [])
+        # )
+        # randomized_set = {r["mac"] for r in randomized}
+        # known_macs = [
+        #     b["key"]
+        #     for b in all_mac_buckets
+        #     if not is_randomized_mac(b["key"]) and b["key"] not in randomized_set
+        # ]
+        #
+        # if not known_macs:
+        #     return []
+        # OLD CODE END
+        prints = self._fingerprints(from_ts, to_ts)
+        randomized = [{"mac": m} for m in prints if is_randomized_mac(m)]
+        known_macs = [m for m in prints if not is_randomized_mac(m)]
+        if not randomized or not known_macs:
             return []
 
         suggestions = []
 
         for rand_entry in randomized:
             rand_mac = rand_entry["mac"]
-            rand_fp = self.get_behavioral_fingerprint(rand_mac, from_ts, to_ts)
+            # OLD CODE START — #96: one query per MAC
+            # rand_fp = self.get_behavioral_fingerprint(rand_mac, from_ts, to_ts)
+            # OLD CODE END
+            rand_fp = prints[rand_mac]
 
             best_match: dict[str, Any] | None = None
             best_score = 0.0
 
             for known_mac in known_macs:
-                known_fp = self.get_behavioral_fingerprint(
-                    known_mac, from_ts, to_ts
-                )
+                # OLD CODE START — #96: one query per MAC pair
+                # known_fp = self.get_behavioral_fingerprint(known_mac, from_ts, to_ts)
+                # OLD CODE END
+                known_fp = prints[known_mac]
                 score = self._compute_similarity(rand_fp, known_fp)
 
                 if score > best_score and score >= _MEDIUM_CONFIDENCE:

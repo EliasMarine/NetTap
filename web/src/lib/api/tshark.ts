@@ -15,6 +15,8 @@ export interface TSharkAnalyzeRequest {
 	output_format?: 'json' | 'text';
 	fields?: string[];
 	include_hex?: boolean;
+	verbose?: boolean;
+	follow_stream?: '' | 'tcp' | 'udp' | 'tls' | 'http';
 }
 
 export interface TSharkPacket {
@@ -91,13 +93,18 @@ export async function analyzePcap(req: TSharkAnalyzeRequest): Promise<TSharkAnal
 export async function getTSharkStatus(): Promise<TSharkStatus> {
 	const res = await fetch('/api/tshark/status');
 
+	// OLD CODE START — #96: a failed request read as "TShark is not available / Not Deployed"
+	// if (!res.ok) {
+	// 	return {
+	// 		available: false,
+	// 		version: '',
+	// 		container_running: false,
+	// 		container_name: '',
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			available: false,
-			version: '',
-			container_running: false,
-			container_name: '',
-		};
+		throw new Error(`TShark status request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -122,8 +129,13 @@ export async function getProtocols(): Promise<{ protocols: TSharkProtocol[]; cou
 export async function getPcapFiles(): Promise<{ pcaps: PcapFile[]; count: number }> {
 	const res = await fetch('/api/tshark/pcaps');
 
+	// OLD CODE START — #96: a failed request read as "No PCAP files available"
+	// if (!res.ok) {
+	// 	return { pcaps: [], count: 0 };
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return { pcaps: [], count: 0 };
+		throw new Error(`PCAP file list request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

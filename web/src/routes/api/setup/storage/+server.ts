@@ -2,6 +2,13 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
 import { daemonJSON } from '$lib/server/daemon.js';
 
+export interface IlmPolicyStatus {
+	synced: boolean;
+	last_applied: string | null;
+	pending_retry: boolean;
+	policies: Record<string, string>;
+}
+
 export interface StorageStatus {
 	disk_total_gb: number;
 	disk_used_gb: number;
@@ -14,6 +21,8 @@ export interface StorageStatus {
 	emergency_threshold_percent: number;
 	estimated_daily_gb: number;
 	source: 'daemon' | 'mock';
+	last_prune_at: string | null;
+	ilm_status: IlmPolicyStatus | null;
 }
 
 export interface StorageConfigRequest {
@@ -77,6 +86,8 @@ function normalizeStorageStatus(raw: Record<string, unknown>): StorageStatus {
 		emergency_threshold_percent: emergencyPct || 90,
 		estimated_daily_gb: (raw.estimated_daily_gb as number) ?? 1.2,
 		source: 'daemon',
+		last_prune_at: (raw.last_prune_at as string) ?? null,
+		ilm_status: (raw.ilm_status as IlmPolicyStatus) ?? null,
 	};
 }
 
@@ -103,15 +114,21 @@ export const GET: RequestHandler = async () => {
 		emergency_threshold_percent: 90,
 		estimated_daily_gb: 1.2,
 		source: 'mock',
+		last_prune_at: null,
+		ilm_status: null,
 	};
 
 	return json(mock);
 };
 
+/** Matches daemonFetch's default timeout. */
+const SAVE_TIMEOUT_MS = 10_000;
+
 /**
- * POST: Save retention configuration.
- * In production, the daemon applies these via OpenSearch ILM and env vars.
- * For now, we accept the config and return success.
+ * POST: Save retention configuration via the daemon.
+ * Success only when the daemon confirms it. Daemon errors keep their status;
+ * unreachable → 502; timeout or an unreadable 2xx body → 504/502 with
+ * `outcome_unknown: true`, because the daemon may have saved it anyway.
  */
 export const POST: RequestHandler = async ({ request }) => {
 	let body: StorageConfigRequest;
@@ -151,21 +168,38 @@ export const POST: RequestHandler = async ({ request }) => {
 		);
 	}
 
-	// Try the daemon
-	const { data, error } = await daemonJSON<{ saved: boolean }>('/api/storage/config', {
+	// Try the daemon — it returns { saved, ilm_applied, ilm_results/ilm_error, config }
+	const signal = AbortSignal.timeout(SAVE_TIMEOUT_MS);
+	const { data, error, status } = await daemonJSON<Record<string, unknown>>('/api/storage/config', {
 		method: 'POST',
 		body: JSON.stringify(body),
+		signal,
 	});
 
 	if (data && !error) {
 		return json(data);
 	}
 
-	// Daemon unavailable — accept the config anyway (will be applied on restart)
-	return json({
-		saved: true,
-		message: 'Configuration saved. It will be applied when services start.',
-		config: body,
-		source: 'mock',
-	});
+	// OLD CODE START — reported "saved" even though the daemon never stored anything
+	// // Daemon unavailable — accept the config anyway (will be applied on restart)
+	// return json({
+	// 	saved: true,
+	// 	ilm_applied: false,
+	// 	message: 'Configuration saved. It will be applied when services start.',
+	// 	config: body,
+	// 	source: 'mock',
+	// });
+	// OLD CODE END
+
+	if (signal.aborted) {
+		return json(
+			{ saved: false, outcome_unknown: true, error: 'The daemon did not answer in time.' },
+			{ status: 504 }
+		);
+	}
+	if (status < 400) {
+		// 2xx with an unreadable body: the daemon may have saved it
+		return json({ saved: false, outcome_unknown: true, error: error ?? 'Unreadable daemon response' }, { status: 502 });
+	}
+	return json({ saved: false, error: error ?? `Daemon returned ${status}` }, { status });
 };

@@ -12,15 +12,46 @@
 	let sidebarCollapsed = $state(false);
 	let mobileOpen = $state(false);
 	let captureMode = $state<CaptureMode | null>(null);
+	let modeFailed = $state(false); // #96: say "Mode unknown" rather than guess Bridge
+
+	// Top-bar badge per capture mode; anything unknown shows as Bridge (the old default)
+	const MODE_BADGES: Record<string, { label: string; cls: string }> = {
+		mirror: { label: 'Mirror', cls: 'mode-mirror' },
+		dhcp_gateway: { label: 'DHCP Gateway', cls: 'mode-dhcp' },
+	};
+	const BRIDGE_BADGE = { label: 'Bridge', cls: 'mode-bridge' };
+	let modeBadge = $derived(captureMode ? (MODE_BADGES[captureMode.mode] ?? BRIDGE_BADGE) : null);
 
 	$effect(() => {
 		getCaptureMode().then((mode) => {
 			captureMode = mode;
 		}).catch(() => {
-			// Silently fail — badge just won't show
+			modeFailed = true;
 		});
 		// Also populate the global store for drawer components
 		initCaptureMode();
+	});
+
+	// Top-bar status: Online only while the daemon actually answers its liveness check
+	const DAEMON_CHECK_MS = 30_000;
+	const DAEMON_STATUS_TEXT = { checking: 'Checking…', online: 'Online', offline: "Can't reach NetTap" };
+	let daemonStatus = $state<keyof typeof DAEMON_STATUS_TEXT>('checking');
+
+	async function checkDaemon() {
+		try {
+			const res = await fetch('/api/system/ping');
+			// a lapsed session redirects to the login page, which is not the daemon answering
+			const body = res.ok ? await res.json() : null;
+			daemonStatus = body?.status === 'ok' ? 'online' : 'offline';
+		} catch {
+			daemonStatus = 'offline';
+		}
+	}
+
+	$effect(() => {
+		checkDaemon();
+		const timer = setInterval(checkDaemon, DAEMON_CHECK_MS);
+		return () => clearInterval(timer);
 	});
 
 	const navItems = [
@@ -39,6 +70,7 @@
 		{ href: '/pcap', label: 'PCAP Search', icon: 'download' },
 		{ href: '/tools', label: 'Tools', icon: 'tool' },
 		{ href: '/infrastructure', label: 'Infrastructure', icon: 'server' },
+		{ href: '/system', label: 'System', icon: 'cpu' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' },
 	];
 
@@ -146,6 +178,8 @@
 								<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
 							{:else if item.icon === 'server'}
 								<rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" />
+							{:else if item.icon === 'cpu'}
+								<rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" /><line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" /><line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" /><line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
 							{:else if item.icon === 'settings'}
 								<circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
 							{/if}
@@ -175,15 +209,35 @@
 				<h1 class="topbar-title">{getPageTitle($page.url.pathname)}</h1>
 
 				<div class="topbar-right">
+					<!-- OLD CODE START — two-way badge showed dhcp_gateway as Bridge (2026-10-30)
 					{#if captureMode}
 						<span class="mode-badge {captureMode.mode === 'mirror' ? 'mode-mirror' : 'mode-bridge'}" title="Capture mode: {captureMode.mode}">
 							{captureMode.mode === 'mirror' ? 'Mirror' : 'Bridge'}
 						</span>
 					{/if}
+					OLD CODE END -->
+					{#if captureMode && modeBadge}
+						<span class="mode-badge {modeBadge.cls}" title="Capture mode: {captureMode.mode}">
+							{modeBadge.label}
+						</span>
+					{:else if modeFailed}
+						<span class="mode-badge mode-unknown" title="Capture mode: couldn't be read">Mode unknown</span>
+					{/if}
 
+					<!-- OLD CODE START — always said Online, even with the daemon down
 					<div class="status-indicator">
 						<span class="health-dot green"></span>
 						<span class="status-text">Online</span>
+					</div>
+					OLD CODE END -->
+					<div class="status-indicator" title="Whether the NetTap service answers">
+						<span
+							class="health-dot"
+							class:green={daemonStatus === 'online'}
+							class:red={daemonStatus === 'offline'}
+							class:checking={daemonStatus === 'checking'}
+						></span>
+						<span class="status-text" class:offline={daemonStatus === 'offline'}>{DAEMON_STATUS_TEXT[daemonStatus]}</span>
 					</div>
 
 					<NotificationBell />
@@ -379,6 +433,14 @@
 		font-weight: 500;
 	}
 
+	.status-text.offline {
+		color: var(--red);
+	}
+
+	.health-dot.checking {
+		background: var(--text-dim);
+	}
+
 	.logout-form {
 		display: inline;
 	}
@@ -416,6 +478,16 @@
 	.mode-bridge {
 		background-color: var(--green-dim);
 		color: var(--green);
+	}
+
+	.mode-dhcp {
+		background-color: var(--purple-dim);
+		color: var(--purple);
+	}
+
+	.mode-unknown {
+		background-color: var(--bg-elevated);
+		color: var(--text-muted);
 	}
 
 	.desktop-only {

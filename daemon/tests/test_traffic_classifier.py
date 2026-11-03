@@ -241,11 +241,16 @@ class TestGetCategoryStats(unittest.TestCase):
     @staticmethod
     def _asn_response(asn_buckets):
         """Helper to build a mock OpenSearch ASN aggregation response."""
+        # #96: one composite page (no after_key), as all_buckets reads it
         return {
             "aggregations": {
-                "asn_breakdown": {
+                "all": {
                     "buckets": [
-                        {"key": name, "doc_count": count, "total_bytes": {"value": bytes_val}}
+                        {
+                            "key": {"asn": name},
+                            "doc_count": count,
+                            "total_bytes": {"value": bytes_val},
+                        }
                         for name, count, bytes_val in asn_buckets
                     ]
                 }
@@ -255,11 +260,15 @@ class TestGetCategoryStats(unittest.TestCase):
     def test_category_stats_success(self):
         """Successful category stats query returns categorized data."""
         mock_client = MagicMock()
-        mock_client.search = MagicMock(return_value=self._asn_response([
-            ("AS2906 Netflix Inc", 150, 10_000_000),
-            ("AS15169 Google LLC", 100, 5_000_000),
-            ("AS13335 Cloudflare, Inc.", 80, 3_000_000),
-        ]))
+        mock_client.search = MagicMock(
+            return_value=self._asn_response(
+                [
+                    ("AS2906 Netflix Inc", 150, 10_000_000),
+                    ("AS15169 Google LLC", 100, 5_000_000),
+                    ("AS13335 Cloudflare, Inc.", 80, 3_000_000),
+                ]
+            )
+        )
 
         async def run():
             return await get_category_stats(
@@ -286,8 +295,8 @@ class TestGetCategoryStats(unittest.TestCase):
         # Verify search was called once (single ASN aggregation)
         self.assertEqual(mock_client.search.call_count, 1)
 
-    def test_category_stats_error(self):
-        """OpenSearch query error returns empty list."""
+    def test_category_stats_error_raises(self):
+        """#96: a query error raises; [] would read as no traffic in any category."""
         mock_client = MagicMock()
         mock_client.search = MagicMock(side_effect=Exception("Connection refused"))
 
@@ -296,8 +305,8 @@ class TestGetCategoryStats(unittest.TestCase):
                 mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
             )
 
-        result = asyncio.run(run())
-        self.assertEqual(result, [])
+        with self.assertRaises(Exception):
+            asyncio.run(run())
 
     def test_category_stats_empty_results(self):
         """Empty ASN buckets returns empty list."""
@@ -315,10 +324,14 @@ class TestGetCategoryStats(unittest.TestCase):
     def test_category_stats_sorted_by_bytes(self):
         """Results are sorted by total_bytes descending."""
         mock_client = MagicMock()
-        mock_client.search = MagicMock(return_value=self._asn_response([
-            ("AS32934 Meta Platforms", 200, 1_000_000),
-            ("AS2906 Netflix Inc", 500, 5_000_000),
-        ]))
+        mock_client.search = MagicMock(
+            return_value=self._asn_response(
+                [
+                    ("AS32934 Meta Platforms", 200, 1_000_000),
+                    ("AS2906 Netflix Inc", 500, 5_000_000),
+                ]
+            )
+        )
 
         async def run():
             return await get_category_stats(

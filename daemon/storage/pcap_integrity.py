@@ -14,7 +14,6 @@ Usage:
 
 import hashlib
 import logging
-import os
 from pathlib import Path
 
 logger = logging.getLogger("nettap.storage.pcap_integrity")
@@ -112,9 +111,7 @@ class PcapIntegrityChecker:
         digest = self._compute_checksum(pcap_path)
         cksum_path = self.checksum_path_for(pcap_path)
 
-        cksum_path.write_text(
-            f"{digest}  {pcap_path.name}\n", encoding="utf-8"
-        )
+        cksum_path.write_text(f"{digest}  {pcap_path.name}\n", encoding="utf-8")
 
         logger.info(
             "Wrote %s checksum for %s: %s",
@@ -155,17 +152,13 @@ class PcapIntegrityChecker:
             # Format: "<hex_digest>  <filename>"
             stored_digest = stored_line.split("  ")[0].strip()
         except (OSError, IndexError) as exc:
-            logger.error(
-                "Cannot read checksum file %s: %s", cksum_path, exc
-            )
+            logger.error("Cannot read checksum file %s: %s", cksum_path, exc)
             return False
 
         current_digest = self._compute_checksum(pcap_path)
 
         if current_digest == stored_digest:
-            logger.debug(
-                "PCAP integrity OK: %s (%s)", pcap_path.name, self.algorithm
-            )
+            logger.debug("PCAP integrity OK: %s (%s)", pcap_path.name, self.algorithm)
             return True
         else:
             logger.error(

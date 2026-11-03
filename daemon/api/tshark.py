@@ -34,6 +34,8 @@ async def handle_tshark_analyze(request: web.Request) -> web.Response:
             output_format=body.get("output_format", "json"),
             fields=body.get("fields", []),
             include_hex=bool(body.get("include_hex", False)),
+            verbose=bool(body.get("verbose", False)),
+            follow_stream=body.get("follow_stream", ""),
         )
         result = await tshark.analyze(req)
         return web.json_response(result.to_dict())

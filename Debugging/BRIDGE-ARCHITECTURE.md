@@ -263,22 +263,24 @@ This workaround forces the bridge UP and enables promisc at boot, working around
 ```
 Bridge (br0) captures packets ←→ Promiscuous mode enabled on eth0/eth1
                  ↓
-         ┌───────┴────────┬────────────┬──────────┐
-         ↓                ↓            ↓          ↓
-    Zeek Live      Suricata Live   Arkime Live  PCAP Capture
-    (metadata)      (alerts)       (full PCAP)   (raw PCAP)
-         ↓                ↓            ↓          ↓
-    zeek/live/      /var/log/      pcap-data/   pcap-data/
-                    suricata/
-         ↓                ↓            ↓          ↓
-      Filebeat          Filebeat     Arkime     (PCAP stored)
-         ↓                ↓            ↓
-         └────────┬───────┴────────────┘
+         ┌───────┴────────┬─────────────────┐
+         ↓                ↓                 ↓
+    Zeek Live      Suricata Live      PCAP Capture
+    (metadata)      (alerts)          (netsniff-ng, raw PCAP)
+         ↓                ↓                 ↓
+    zeek/live/      /var/log/          pcap-data/
+                    suricata/               ↓
+         ↓                ↓            PCAP Search (daemon, BPF over the files)
+      Filebeat          Filebeat       TShark (packet decode / replay)
+         ↓                ↓
+         └────────┬───────┘
                   ↓
             Logstash (enrichment)
                   ↓
             OpenSearch (indexing)
 ```
+
+Arkime Live (`arkime-live`) is **off by default** since 2026-11-02 (owner decision, `tracking-fixes/2026-11-01-dashboard-data-accuracy.md` #44). See "PCAP Capture and Arkime" below.
 
 ### Capture Containers Configuration
 
@@ -316,7 +318,7 @@ zeek-live:
 **Custom config:** `config/zeek/nettap.zeek`
 
 - Defines `local_nets` for internal traffic classification
-- Disables PCAP extraction (we capture separately with Arkime)
+- Disables PCAP extraction (netsniff-ng in `pcap-capture` writes the PCAP)
 - Sets log rotation
 
 ### Suricata Configuration
@@ -327,18 +329,20 @@ zeek-live:
 - Runs in `workers` runmode (multi-threaded)
 - Auto-updates rules
 
-### Arkime Configuration
+### PCAP Capture and Arkime
 
-- Captures full PCAP sessions
-- Stores in `pcap-data/` volume
-- Indexes sessions into OpenSearch for searchability
+- **netsniff-ng in `pcap-capture` is the only PCAP writer** (CR-020/MS-002). It writes rotating files to the `pcap-data/` volume; the UI's capture toggle and file-size setting control it.
+- **PCAP Search** (`daemon/services/pcap_search.py`) runs BPF filters over those files, and **TShark** (`nettap-tshark`) decodes and replays packets from the same files. Together they cover the session search and packet replay that Arkime's viewer would have given.
+- **Arkime is off by default, not deleted** (owner decision 2026-11-02, #44). The `arkime-live` service stays in `docker/docker-compose.yml` with `profiles: ["arkime"]`, so a plain `docker compose up -d` doesn't start it. It never worked on NetTap: it had no `./curlrc:/var/local/curlrc:ro` mount, so Malcolm's `opensearch_status.sh` looped forever ("Giving opensearch-local time to start…", ~58 TLS `unknown_ca` errors a minute in OpenSearch), and with `ARKIME_PCAP_WRITE_METHOD: "null"` it wrote no PCAP anyway.
+- To try it again: fix the curlrc mount first, then `docker compose -f docker/docker-compose.yml --profile arkime up -d arkime-live`. Naming `arkime-live` on any compose command line starts it, so scripts must not list it. `ARKIME_SECRET` must still be set in `docker/.env`, because compose interpolates every service, profiled or not.
+- Old Arkime PCAP left in `pcap-data/arkime-live/` is still pruned by the storage daemon, which scans the volume recursively.
 
 ### Data Flow Isolation
 
 **Critical:** Capture containers and storage daemon don't interact directly:
 
 ```
-Zeek/Suricata/Arkime (network_mode: host)
+Zeek/Suricata/pcap-capture (network_mode: host)
     ↓
     Write to shared Docker volumes
     ↓
@@ -365,6 +369,8 @@ Docker Container (nettap-storage-daemon)
     ├─ Can't run ip commands directly
     └─ Solution: nsenter -t 1 -n -- <command> (enter host network namespace)
 ```
+
+> **Update 2026-11-01 (Chain 22):** the daemon now runs with `network_mode: host`, so it already is in the host network namespace and runs `ip`/`ethtool`/`iptables` directly. `nsenter -t 1 -n` was dropped: Ubuntu's docker-default AppArmor profile denies its ptrace read of PID 1 (`apparmor="DENIED" ... comm="nsenter"`), so every host command failed on the G11. `/proc/sys` is still read-only in the container, so `sysctl -w` from the daemon fails; host boot units apply sysctls.
 
 ### Sysfs Mounting
 
@@ -476,7 +482,7 @@ Bypass mode **disables all packet capture** while keeping the bridge forwarding:
 
 ```
 Normal Mode:
-  WAN ─→ [Zeek/Suricata/Arkime capturing] ─→ LAN  ← ~5-10ms latency
+  WAN ─→ [Zeek/Suricata/netsniff capturing] ─→ LAN  ← ~5-10ms latency
 
 Bypass Mode:
   WAN ─────→ [Pure L2 forwarding, no capture] ─→ LAN  ← ~1ms latency
@@ -495,7 +501,7 @@ Bypass Mode:
 
 ```bash
 # Step 1: Stop capture services
-docker compose -f docker/docker-compose.yml stop zeek-live suricata-live arkime-live pcap-capture
+docker compose -f docker/docker-compose.yml stop zeek-live suricata-live pcap-capture
 
 # Step 2: Flush ebtables rules (clean L2 path)
 ebtables -F && ebtables -X && ebtables -t nat -F && ebtables -t nat -X
@@ -516,7 +522,7 @@ ip link set eth0 promisc on
 ip link set eth1 promisc on
 
 # Step 2: Start capture services
-docker compose -f docker/docker-compose.yml start zeek-live suricata-live arkime-live pcap-capture
+docker compose -f docker/docker-compose.yml start zeek-live suricata-live pcap-capture
 
 # Step 3: Remove state file
 rm -f /tmp/nettap-bypass-active
@@ -646,6 +652,15 @@ Verifies:
 | **No bridge creation from daemon** | Wizard step 3 only generated mock preview | Added `BridgeManager.create_bridge()` + `/api/setup/bridge` endpoint | **FIXED** (PR #83) |
 | **No readiness check** | User had no guidance on cable migration | Added 8-point readiness check at `/api/bridge/readiness` | **FIXED** (PR #83) |
 | **No Go Live page** | Wizard redirected to `/login` with no guidance | Added `/go-live` page with 3-phase workflow | **FIXED** (PR #83) |
+| **Boot units never enabled** (review LD-001) | `nettap-bridge.service` / `nettap-mirror.service` wants/ links pointed at the container path `/host/etc/...`, which doesn't exist on the host, so the oneshot never ran at boot; re-creating the dangling link also raised FileExistsError | Links now use the relative target `../<unit>` via `replace_symlink()` (lexists-aware). Existing devices get the fixed link the next time the bridge or mirror persistence is written | **FIXED** (fix/code-review-batch-1), device check pending |
+| **AppArmor blocked every daemon `nsenter`** (Chain 22) | On Ubuntu, mirror setup stopped at its first check: capture port left admin DOWN, no netplan file, no `nettap-mirror.service`. Bridge, bridge health and DHCP gateway host commands failed the same way | The daemon (`network_mode: host`) runs host commands directly; `_run_nsenter` no longer wraps them | **FIXED** (fix/daemon-drop-nsenter), verified on the G11 2026-11-01 |
+| **Zeek cluster never connected on AMD CPUs with a broken RDRAND** (Chain 23) | Packets reached the capture port and Suricata logged them, but every Zeek process got the same Broker ID, so the zeekctl nodes refused to peer and Zeek wrote no logs (no conn/dns/http data on the dashboard) | zeek-live is built from `docker/Dockerfile.zeek-live`: a preloaded library sends `std::random_device`'s CPU sources to /dev/urandom | **FIXED** (fix/zeek-rdrand-urandom, NET-127), verified on the G11 2026-11-01 |
+| **Zeek records rejected by OpenSearch; dashboard queries on guessed fields** (Chain 24) | malcolm_template's index pattern was a placeholder, so indices guessed field types: Zeek's text uids failed against `event.id` as a number, and the daemon's `.keyword` queries were built on the guessed mapping | Installer fills in the pattern; `fix-index-template.sh` for existing boxes; daemon and web query Malcolm's field names | **FIXED** (fix/index-template-pattern, NET-128), template and index fixed on the G11 |
+| **In-use guard passed any NIC when `ip` failed** (Chain 22) | `_nic_in_use_problem` read failed `ip` calls as "no route, no address", so the wizard would have accepted the management port for mirror mode | Fails closed when `ip -j link show dev X` returns nothing | **FIXED** (fix/daemon-drop-nsenter) |
+| **Mirror setup flushed the configured NIC at every daemon start** (review CR-076) | After a NIC rename the saved capture NIC could be the management port; setup() would strip its address | `main.py` skips mirror setup (logs `Mirror setup skipped`) when the NIC carries the default route or has an IPv4 address. The boot unit `nettap-mirror.service` no longer runs `ip addr flush` by name at every boot | **FIXED** (fix/daemon-drop-nsenter), device check pending |
+| **Daemon can't turn IPv6 off on the capture NIC at runtime** | `/proc/sys` is read-only in the container; a mirrored router advert can give the capture NIC an IPv6 address until reboot | `nettap-mirror.service` sets `disable_ipv6=1` on the host at boot; `deploy-drop-nsenter.sh` starts it once | OPEN (workaround) |
+| **Wizard Verify built the bridge** (review CR-004) | The bridge step's Verify called the daemon's bridge create, so it enslaved both NICs and persisted br0 mid-wizard; a daemon error fell back to a mock that showed as verified | Verify calls the read-only `POST /api/setup/bridge/preview`, which also refuses a port the machine still uses (an address, the default route, the live DHCP gateway NIC). Go Live still builds br0. Go Live's create (`POST /api/setup/bridge`) got the same in-use check and name validation on 2026-11-01 (Chain 22) | **FIXED** (fix/code-review-batch-1), device check pending |
+| **arkime-live never started** (Chain 25, data accuracy #44) | No `./curlrc:/var/local/curlrc:ro` mount, so `opensearch_status.sh` looped forever (~58 TLS `unknown_ca` errors a minute in OpenSearch); no Arkime session was ever indexed. Nothing in NetTap used it | Not fixed on purpose: owner decision 2026-11-02 to turn it off. `profiles: ["arkime"]` keeps it out of the default stack; daemon capture restarts, bypass mode and the deploy scripts no longer name it. PCAP Search + TShark read the netsniff files | **OFF BY DEFAULT** (2026-11-02) |
 
 ### Design Gaps
 
@@ -683,7 +698,7 @@ Verifies:
 
 1. **Docker-isolated daemon can't directly interact with host network**
    - All sysfs reads must go through mounted volumes
-   - All bridge commands use `nsenter -t 1 -n --` to enter host namespace
+   - All bridge commands use `nsenter -t 1 -n --` to enter host namespace *(until 2026-11-01; now run directly under `network_mode: host`, see Chain 22)*
    - **Trade-off:** Security (container isolation) vs. simplicity
 
 2. **Capture containers isolated from storage daemon**
@@ -724,9 +739,9 @@ Verifies:
 4. SURICATA (captures on br0, network_mode: host)
    Writes: suricata-live-logs/eve.json (alerts)
    ↓
-5. ARKIME (captures full PCAP on br0, network_mode: host)
-   Writes: pcap-data/*.pcap
-   Indexes sessions into OpenSearch
+5. PCAP CAPTURE (netsniff-ng on br0, network_mode: host)
+   Writes: pcap-data/*.pcap (read by PCAP Search and TShark, not indexed)
+   (Arkime used to sit here; off by default since 2026-11-02, #44)
    ↓
 6. FILEBEAT (reads log volumes in default network)
    Watches: zeek-live-logs/, suricata-live-logs/
@@ -842,8 +857,9 @@ sudo scripts/bridge/bypass-mode.sh --disable
 ### Health Check Test
 
 ```bash
-# Query health endpoint
-curl -s http://localhost:8880/api/bridge/health | jq .
+# Query health endpoint (daemon routes need the token since the PR #110 review fixes)
+TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)
+curl -s -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/bridge/health | jq .
 
 # Expected response:
 # {
@@ -962,7 +978,7 @@ The Go Live workflow bridges the gap between the setup wizard (which configures 
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Bridge creation method | `nsenter -t 1 -n` for `ip link` commands | Already proven in nic_discovery.py; works with existing caps (NET_ADMIN, SYS_PTRACE, pid: host) |
+| Bridge creation method | `ip link` run directly (daemon has `network_mode: host`); was `nsenter -t 1 -n` until 2026-11-01 | nsenter is blocked by Ubuntu's AppArmor (Chain 22); host networking makes it unnecessary |
 | Bridge persistence | Mount host `/etc/netplan`, `/etc/systemd/system`, `/etc/sysctl.d` as writable volumes | Daemon writes config files directly; host picks them up on next boot |
 | Bypass mode | "Soft bypass" — toggle promiscuous mode via nsenter | No Docker socket needed; containers stay running but receive no packets |
 | Bypass state file | `/tmp/nettap-bypass-active` | `/tmp` has writable tmpfs; `/var/run` was on read-only root fs |
@@ -973,8 +989,9 @@ The Go Live workflow bridges the gap between the setup wizard (which configures 
 The `nettap-storage-daemon` container has these capabilities for bridge management:
 
 - **NET_ADMIN**: Required for `ip link add/set` bridge commands and ethtool NIC tuning
-- **SYS_PTRACE**: Required for `nsenter -t 1 -n` to enter host network namespace
-- **pid: host**: Required for nsenter to target PID 1 (host init process)
+- **SYS_PTRACE**: Was for `nsenter -t 1 -n` (dropped 2026-11-01, Chain 22); kept until a device run shows nothing else needs it
+- **pid: host**: Was for nsenter to target PID 1 (dropped 2026-11-01); kept for the same reason
+- **network_mode: host**: Host network commands run directly in the shared namespace
 - **No Docker socket**: Bridge management uses nsenter, not the Docker API — reduces attack surface
 
 Host filesystem mounts for persistence:
@@ -1015,6 +1032,71 @@ A new `bridge_loop()` runs alongside `storage_loop()` and `smart_loop()` in the 
 - Persistence files require host dirs to be mounted writable. If mounts are missing, bridge works but won't survive reboot.
 - Bypass state is ephemeral (tmpfs) — lost on container restart. This is intentional: reboot should resume monitoring.
 - No hot-swap NIC detection — if a NIC is physically replaced, bridge must be recreated.
+
+---
+
+## 16. DHCP Gateway Mode (added 2026-10-30)
+
+> Design and contract: `docs/plans/2026-10-30-dhcp-gateway-mode-design.md`. Branch `phase-4/dhcp-gateway-mode`. Not yet verified on hardware.
+
+### Why it exists
+
+The inline bridge sits between modem and router, so it only sees traffic **after** the router's NAT: every device looks like the router's public IP. DHCP gateway mode moves NetTap in front of the NAT. NetTap hands out addresses on its own subnet, names itself the gateway, and routes and masquerades to the router, so every flow carries the device's real IP and MAC. In the onboarding wizard it is now the recommended mode, Mirror/SPAN is the other primary mode, and the inline bridge moved under "Advanced".
+
+### Topology (one-armed)
+
+```
+ISP modem ── router (192.168.1.1, DHCP OFF) ── LAN / Wi-Fi ──┬── NetTap LAN NIC: 192.168.1.50/24 (static) + 10.77.0.1/24
+                                                             └── devices: 10.77.0.x, gw 10.77.0.1, dns 192.168.1.1
+```
+
+One NIC carries both legs: device ↔ NetTap (pre-NAT, captured) and NetTap ↔ router (post-NAT, filtered out of capture).
+
+### Moving parts
+
+| Piece | Where | Notes |
+|-------|-------|-------|
+| DHCP server | dnsmasq child of the daemon (`--port=0`, DHCP only, 1 h lease, unprivileged user) | Router IP handed out as DNS, so DNS still crosses NetTap and is attributed to the device. Never started without first probing for another DHCP server. |
+| Forwarding + NAT | iptables `DOCKER-USER` accept (pinned `-i lan -o lan`), `nat POSTROUTING` masquerade, `OUTPUT` ICMP-redirect drop, all tagged `nettap-dhcp-gateway` | `DOCKER-USER` because Docker's FORWARD policy is DROP. Backend (nft/legacy) detected by which one has `DOCKER-USER`. |
+| Self-heal | `DhcpGatewayManager.reconcile()` every capture-health tick (30 s) | Re-adds gateway address, upstream address, default route, rules; restarts a dead dnsmasq only after a clean probe. |
+| Boot persistence | `/etc/netplan/90-nettap-dhcp-gateway.yaml`, `/etc/sysctl.d/99-nettap-dhcp-gateway.conf`, `/etc/nettap/dhcp-gateway-firewall.sh`, `nettap-dhcp-gateway.service` (After=docker.service; wants-symlink targets the **host** path) | Routing returns at boot without waiting for OpenSearch/daemon. |
+| Capture | `PCAP_IFACE=<lan>`, `PCAP_FILTER="net <subnet> or udp port 67 or udp port 68"` | Device leg only, so each flow is recorded once. Zeek honours it via Malcolm's own `local.zeek` (`CAPTURE_FILTER`). |
+
+### Capture-mode plumbing (all modes)
+
+Before 2026-10-30 the wizard's capture choice never reached the daemon or the capture containers (review CR-007). Now:
+
+- `/etc/nettap` on the host is mounted read-write into the daemon and read-only into zeek-live, suricata-live and pcap-capture (and arkime-live, when its `arkime` profile is turned on).
+- `/api/setup/configure` writes `/etc/nettap/capture-mode.conf` (INI, the file `load_capture_config` reads) and `/etc/nettap/capture.env` (`CAPTURE_MODE`, `PCAP_IFACE`, `PCAP_FILTER`), then restarts the capture containers only if `capture.env` changed. Since 2026-11-02 that is three (zeek-live, suricata-live, pcap-capture); arkime-live is off by default (#44) and the daemon never restarts it.
+- Each capture entrypoint first sources `config/capture/nettap-capture-env.sh`, which **parses** (never sources) `capture.env`, validates the values and exports `PCAP_IFACE`, `PCAP_FILTER`, `CAPTURE_FILTER`. No file means the compose values stay in effect, so existing installs are unchanged.
+
+### API
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/capture/dhcp/preflight` | GET | Interface, upstream, subnet conflicts, other DHCP servers (live DHCPDISCOVER probe), IPv6 RA, ip_forward, firewall backend, checks, ready |
+| `/api/capture/dhcp/enable` | POST `{"confirm": true}` | Re-runs preflight; 409 with checks if blocked; applies + persists; starts dnsmasq |
+| `/api/capture/dhcp/disable` | POST | Stops the DHCP server; routing stays so devices keep working while they move back to the router |
+| `/api/capture/dhcp/status` | GET | Routing/DHCP state, leases, issues |
+
+The web proxies enable/disable through dedicated routes with a 60 s timeout.
+
+### Recovery (NetTap down, router DHCP off)
+
+Give a laptop a fixed address in the router's network, open the router's admin page, turn its DHCP back on, then reconnect devices. Full wording lives in the go-live page and design §7.
+
+### Known issues / risks (DHCP gateway)
+
+| Issue | Impact | Status |
+|-------|--------|--------|
+| NetTap's old router lease expires after router DHCP is turned off | networkd drops the address and default route once; reconcile re-adds them within 30 s; NetTap's own DNS may fail until a reboot applies the netplan file | MITIGATED (self-heal + netplan) |
+| Reboot on installs using `nettap.service` runs `compose down` | OpenSearch recreated, auth mapping lost (review CR-025, root cause MS-001) | OPEN — run the OpenSearch bootstrap after reboot |
+| iptables run from the daemon image, not the host binary | On **legacy**-backend hosts the daemon and dockerd don't share the xtables lock; rare insert race. nft hosts (Ubuntu 22.04 default) unaffected | DOCUMENTED |
+| IPv6 via router RAs bypasses NetTap | v6 traffic invisible | WARNED in preflight / go-live |
+| Static-IP devices and device-to-device LAN traffic | Not captured | DOCUMENTED |
+| Double NAT | Router port forwards/UPnP don't reach devices | DOCUMENTED; NetTap-side port forwarding is a follow-up |
+| Switching capture mode after first run | The wizard can't save once an admin exists, so there is no in-app mode switch yet | FOLLOW-UP |
+| Bridge/mirror wants-symlinks point at the container path (LD-001) | Their boot units never run | OPEN (bridge/mirror only; DHCP unit uses the host path) |
 
 ---
 

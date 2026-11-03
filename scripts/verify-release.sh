@@ -364,7 +364,7 @@ if [[ "$RUN_DOCKER" == "true" ]]; then
             DOCKER_CMD="sudo docker"
         fi
         if [[ -f "$COMPOSE_FILE" ]]; then
-            for svc in nettap-storage-daemon nettap-web nettap-tshark nettap-cyberchef; do
+            for svc in nettap-storage-daemon nettap-web nettap-tshark nettap-cyberchef zeek-live; do
                 # shellcheck disable=SC2086
                 run_cmd "Build ${svc}" $DOCKER_CMD compose -f "$COMPOSE_FILE" build "$svc" || SECTION_OK=false
             done
