@@ -48,15 +48,31 @@ RUNNING=$(sudo docker ps --filter name=nettap- --format '{{.Names}}' | wc -l)
 if [ -z "$UNHEALTHY" ]; then rc=0; else rc=1; fi
 check "every NetTap container up and healthy" "$rc" "$RUNNING running${UNHEALTHY:+; not healthy: $UNHEALTHY}"
 FATAL=""
-for c in nettap-logstash nettap-dashboards-helper; do
+# OLD CODE START — 2026-11-03 (#132): one read, logstash and dashboards-helper only; filebeat's
+# zeek-files-logs program restarted every second on Malcolm 26.10.0 and still read RUNNING
+# for c in nettap-logstash nettap-dashboards-helper; do
+#     S=$(sudo docker exec "$c" supervisorctl -c /etc/supervisord.conf status 2>&1 \
+#         | awk '$2 != "RUNNING" && !($1 ~ /^(fix-perms|idxinit)$/ && $2 == "EXITED") {print $1 "=" $2}' | tr '\n' ' ')
+#     [ -n "$S" ] && FATAL="$FATAL $c: $S"
+# done
+# OLD CODE END
+for c in nettap-logstash nettap-dashboards-helper nettap-filebeat; do
+    A=$(sudo docker exec "$c" supervisorctl -c /etc/supervisord.conf status 2>&1)
+    sleep 5
+    B=$(sudo docker exec "$c" supervisorctl -c /etc/supervisord.conf status 2>&1)
     # fix-perms and idxinit are one-shots (autorestart=false): EXITED is their done state, and
-    # their effects are checked below (indexing resumes, Malcolm's dashboards exist)
-    S=$(sudo docker exec "$c" supervisorctl -c /etc/supervisord.conf status 2>&1 \
-        | awk '$2 != "RUNNING" && !($1 ~ /^(fix-perms|idxinit)$/ && $2 == "EXITED") {print $1 "=" $2}' | tr '\n' ' ')
+    # their effects are checked below (indexing resumes, Malcolm's dashboards exist). Programs
+    # that don't autostart stay "STOPPED Not started". A RUNNING program with a new pid 5 s
+    # later is restarting in a loop.
+    S=$(printf '%s\n==\n%s\n' "$A" "$B" | awk '
+        $1 == "==" { second = 1; next }
+        !second { pid[$1] = $4; next }
+        $2 == "RUNNING" && pid[$1] != $4 { print $1 "=restarting"; next }
+        $2 != "RUNNING" && !($1 ~ /^(fix-perms|idxinit)$/ && $2 == "EXITED") && !($2 == "STOPPED" && $3 == "Not") { print $1 "=" $2 }' | tr '\n' ' ')
     [ -n "$S" ] && FATAL="$FATAL $c: $S"
 done
 if [ -z "$FATAL" ]; then rc=0; else rc=1; fi
-check "Malcolm supervisor programs running" "$rc" "${FATAL:-logstash and dashboards-helper all RUNNING}"
+check "Malcolm supervisor programs running, none restarting" "$rc" "${FATAL:-logstash, dashboards-helper and filebeat steady}"
 echo ""
 
 echo "→ Step 3: Everything else goes through the daemon API..."
