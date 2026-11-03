@@ -121,6 +121,25 @@
 
 	const selectedCount = $derived(selectedComponents.size);
 
+	// polling can stop before the daemon says the batch finished: that isn't "complete"
+	// a finished batch whose Malcolm update rolled back is "completed" too: its results decide
+	const finishedTitle = $derived(
+		updateStatus?.state === 'completed'
+			? updateStatus.results.some((r) => !r.success)
+				? 'Update Failed'
+				: 'Update Complete'
+			: updateStatus?.state === 'error'
+				? 'Update Failed'
+				: 'Update Not Confirmed',
+	);
+
+	// A Malcolm update takes 10–40 minutes, a rules update about one: poll every 3 s, give up after 3 hours
+	const POLL_INTERVAL_MS = 3000;
+	const MAX_POLLS = (3 * 60 * 60 * 1000) / POLL_INTERVAL_MS;
+	const MAX_POLL_FAILURES = 20;
+	// bumped to stop a running poll loop: a newer one took over, or the page closed
+	let pollRun = 0;
+
 	const successCount = $derived(
 		updateStatus?.results.filter((r) => r.success).length ?? 0
 	);
@@ -340,6 +359,12 @@
 		try {
 			const status = await applyUpdates([...selectedComponents]);
 
+			// 409: another tab (or this one before a reload) already started an update; follow it
+			if (status.already_running) {
+				await followUpdate(status);
+				return;
+			}
+
 			// #96: the client answers a failed request with an empty 'error' status, which
 			// read as an "Update Complete" with no results
 			if (status.state === 'error' && status.results.length === 0) {
@@ -367,34 +392,98 @@
 		}
 	}
 
+	// OLD CODE START — the daemon applied updates before answering, so 2 minutes was the cap; it now
+	// answers at once and a Malcolm update runs 10–40 minutes
+	// async function pollUpdateStatus() {
+	// 	let attempts = 0;
+	// 	const maxAttempts = 120; // max 2 minutes of polling
+	//
+	// 	while (attempts < maxAttempts) {
+	// 		await new Promise((resolve) => setTimeout(resolve, 1000));
+	// 		attempts++;
+	//
+	// 		try {
+	// 			const status = await getUpdateStatus();
+	// 			updateStatus = status;
+	//
+	// 			if (status.state !== 'in_progress') {
+	// 				updateInProgress = false;
+	// 				updateCompleted = true;
+	// 				// Refresh versions after update completes
+	// 				await fetchAll();
+	// 				return;
+	// 			}
+	// 		} catch {
+	// 			// Continue polling on error
+	// 		}
+	// 	}
+	//
+	// 	updateInProgress = false;
+	// 	updateCompleted = true;
+	// 	// #96: the loop gave up without seeing the update finish
+	// 	actionError = "Couldn't confirm the update finished: its status didn't report completion within 2 minutes.";
+	// }
+	// OLD CODE END
 	async function pollUpdateStatus() {
-		let attempts = 0;
-		const maxAttempts = 120; // max 2 minutes of polling
+		const run = ++pollRun;
+		let failures = 0;
 
-		while (attempts < maxAttempts) {
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-			attempts++;
+		for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+			if (run !== pollRun) return;
 
+			let status: UpdateStatus;
 			try {
-				const status = await getUpdateStatus();
-				updateStatus = status;
-
-				if (status.state !== 'in_progress') {
-					updateInProgress = false;
-					updateCompleted = true;
-					// Refresh versions after update completes
-					await fetchAll();
-					return;
-				}
+				status = await getUpdateStatus();
 			} catch {
-				// Continue polling on error
+				// OpenSearch restarts during a Malcolm update, but the daemon should keep answering
+				if (++failures < MAX_POLL_FAILURES) continue;
+				updateInProgress = false;
+				updateCompleted = true;
+				actionError = 'Lost contact with NetTap while the update was running: reload the page to see where it got to.';
+				return;
 			}
+			if (run !== pollRun) return;
+			failures = 0;
+			updateStatus = status;
+			if (status.state === 'in_progress') continue;
+
+			updateInProgress = false;
+			updateCompleted = true;
+			if (status.state === 'error') {
+				actionError = "The update couldn't run: NetTap reported an error.";
+			} else if (status.state !== 'completed') {
+				// idle: the daemon restarted and lost track of the batch
+				actionError = "Couldn't confirm the update finished: NetTap stopped reporting it. Check the versions below.";
+			}
+			await fetchAll();
+			return;
 		}
 
 		updateInProgress = false;
 		updateCompleted = true;
-		// #96: the loop gave up without seeing the update finish
-		actionError = "Couldn't confirm the update finished: its status didn't report completion within 2 minutes.";
+		actionError = "Couldn't confirm the update finished: it was still running after 3 hours. Reload the page to see where it got to.";
+	}
+
+	/** Show an update the daemon is running (started here, in another tab, or before a reload) and poll it. */
+	async function followUpdate(status: UpdateStatus) {
+		showUpdatePanel = true;
+		updateCompleted = false;
+		updateInProgress = true;
+		updateStatus = status;
+		selectedComponents = new Set(status.components);
+		await pollUpdateStatus();
+	}
+
+	async function resumeRunningUpdate() {
+		let status: UpdateStatus;
+		try {
+			status = await getUpdateStatus();
+		} catch {
+			// unknown is fine here: starting another update gets a 409, which follows the running one
+			return;
+		}
+		if (status.state === 'in_progress') await followUpdate(status);
 	}
 
 	async function handleRollback(component: string) {
@@ -420,6 +509,10 @@
 
 	$effect(() => {
 		fetchAll();
+		resumeRunningUpdate();
+		return () => {
+			pollRun++;
+		};
 	});
 </script>
 
@@ -525,7 +618,10 @@
 					<div class="card-header">
 						<span class="card-title">
 							{#if updateCompleted}
+								<!-- OLD CODE START — read "Update Complete" also when polling stopped first
 								Update Complete
+								OLD CODE END -->
+								{finishedTitle}
 							{:else if updateInProgress}
 								Updating...
 							{:else}
@@ -610,6 +706,9 @@
 								></div>
 							</div>
 							<p class="progress-label mono">{updateStatus.progress_percent}% complete</p>
+							{#if updateStatus.current_step}
+								<p class="progress-label">{updateStatus.current_step}</p>
+							{/if}
 
 							<div class="component-status-list">
 								{#each [...selectedComponents] as component}
@@ -817,6 +916,9 @@
 											>
 												Update
 											</button>
+										{:else if update?.applies_with}
+											<!-- was blank: say how this update arrives -->
+											<span class="applies-with text-xs">{update.applies_with}</span>
 										{/if}
 									</span>
 								</div>
@@ -1312,7 +1414,10 @@
 
 	.version-table-header {
 		display: grid;
+		/* OLD CODE START — auto: an applies_with sentence squeezed the other columns
 		grid-template-columns: 2fr 1.5fr 1.5fr 1fr auto;
+		OLD CODE END */
+		grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1.5fr;
 		gap: var(--space-md);
 		padding: var(--space-xs) 0;
 		font-size: var(--text-xs);
@@ -1325,7 +1430,10 @@
 
 	.version-row {
 		display: grid;
+		/* OLD CODE START — auto: an applies_with sentence squeezed the other columns
 		grid-template-columns: 2fr 1.5fr 1.5fr 1fr auto;
+		OLD CODE END */
+		grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1.5fr;
 		gap: var(--space-md);
 		padding: var(--space-sm) 0;
 		align-items: center;
@@ -1364,6 +1472,11 @@
 	.vtcol-action {
 		display: flex;
 		justify-content: flex-end;
+	}
+
+	.applies-with {
+		color: var(--text-muted);
+		text-align: right;
 	}
 
 	.sort-controls {
@@ -1521,7 +1634,10 @@
 
 		.version-table-header,
 		.version-row {
+			/* OLD CODE START — auto: see .version-row
 			grid-template-columns: 1.5fr 1fr 1fr auto;
+			OLD CODE END */
+			grid-template-columns: 1.5fr 1fr 1fr 1fr;
 		}
 
 		.vtcol-latest {

@@ -232,6 +232,43 @@ describe('updates API client', () => {
 			expect(result.results).toEqual([]);
 		});
 
+		// the daemon now starts the work in the background and answers at once
+		it('treats a 202 as started and returns its status', async () => {
+			const started = { ...sampleUpdateStatus, state: 'in_progress', components: ['malcolm'], progress_percent: 0, results: [] };
+			mockFetchSuccess(started, 202);
+
+			const result = await applyUpdates(['malcolm']);
+
+			expect(result).toEqual(started);
+			expect(result.already_running).toBeUndefined();
+		});
+
+		it('returns the running update, flagged already_running, on a 409', async () => {
+			const running = {
+				error: 'An update is already running', state: 'in_progress', components: ['malcolm'], current_component: 'malcolm',
+				current_step: 'Downloading Malcolm 26.10.0\'s images', progress_percent: 40, started_at: '2026-11-02T20:00:00Z',
+				completed_at: null, results: [],
+			};
+			mockFetchSuccess(running, 409);
+
+			const result = await applyUpdates(['suricata-rules']);
+
+			expect(result.already_running).toBe(true);
+			expect(result.state).toBe('in_progress');
+			expect(result.components).toEqual(['malcolm']);
+			expect(result.current_step).toBe("Downloading Malcolm 26.10.0's images");
+		});
+
+		it('still returns an empty error status on a 400', async () => {
+			mockFetchSuccess({ error: 'components array is required and must not be empty' }, 400);
+
+			const result = await applyUpdates([]);
+
+			expect(result.state).toBe('error');
+			expect(result.results).toEqual([]);
+			expect(result.already_running).toBeUndefined();
+		});
+
 		it('sends a single component correctly', async () => {
 			mockFetchSuccess(sampleUpdateStatus);
 

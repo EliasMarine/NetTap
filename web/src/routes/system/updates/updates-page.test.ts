@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import UpdatesPage from './+page.svelte';
 
 const VERSIONS = {
@@ -9,14 +9,14 @@ const VERSIONS = {
 	last_scan: '',
 };
 
-/** Answer each URL with its body, or HTTP 500 when it has none. */
-function stubFetch(replies: Record<string, unknown>) {
+/** Answer each URL with its body (read at call time) and its code (200 by default), or HTTP 500 when it has none. */
+function stubFetch(replies: Record<string, unknown>, codes: Record<string, number> = {}) {
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async (input: RequestInfo | URL) => {
 			const body = replies[String(input)];
 			if (body == null) return new Response('{}', { status: 500 });
-			return new Response(JSON.stringify(body), { status: 200 });
+			return new Response(JSON.stringify(body), { status: codes[String(input)] ?? 200 });
 		}),
 	);
 }
@@ -303,7 +303,10 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		const pinned = screen.getByRole('checkbox', { name: /^arkime/ });
 		expect(pinned).toBeDisabled();
 		expect(pinned).not.toBeChecked();
-		expect(screen.getByText(MALCOLM)).toBeInTheDocument();
+		// OLD CODE START — the versions table now says it too
+		// expect(screen.getByText(MALCOLM)).toBeInTheDocument();
+		// OLD CODE END
+		expect(within(pinned.closest('label')!).getByText(MALCOLM)).toBeInTheDocument();
 		// the sentence replaces its size/restart detail; the rules row keeps both
 		expect(screen.getAllByText('size unknown')).toHaveLength(1);
 		expect(screen.getAllByText('Restart required')).toHaveLength(1);
@@ -363,5 +366,195 @@ describe('Software Updates page — rows match the real reply', () => {
 		expect(await status('logstash')).toBe('Update Available');
 		expect(await status('os')).toBe('Not checked');
 		expect(await status('suricata-rules')).toBe('Up to Date');
+	});
+});
+
+// The daemon now starts an update in the background and answers at once (202); a Malcolm update
+// runs 10–40 minutes, so the page follows it for as long as it runs.
+describe('Software Updates page — a long-running update', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	const STATUS = '/api/system/updates/status';
+	const ZEEK_UPDATE = {
+		component: 'zeek', current_version: '6.0.4', latest_version: '6.0.5', update_type: 'patch',
+		release_url: '', release_date: '', changelog: '', size_mb: null, requires_restart: false, applies_with: null,
+	};
+	const IDLE = {
+		state: 'idle', components: [], current_component: null, current_step: null, progress_percent: 0,
+		started_at: null, completed_at: null, results: [],
+	};
+	const running = (components: string[], current_step: string | null = null) => ({
+		...IDLE, state: 'in_progress', components, current_component: components[0], current_step,
+		progress_percent: 45, started_at: '2026-11-02T20:00:00Z',
+	});
+	const statusCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === STATUS).length;
+
+	function stub(status: unknown, codes: Record<string, number> = {}) {
+		const replies: Record<string, unknown> = {
+			'/api/system/versions': VERSIONS,
+			'/api/system/updates/available': { updates: [ZEEK_UPDATE], last_check: '2026-11-02T21:00:00Z' },
+			'/api/system/updates/history': { history: [], count: 0 },
+			[STATUS]: status,
+		};
+		stubFetch(replies, codes);
+		return replies;
+	}
+
+	it('calls a finished batch whose Malcolm update rolled back "Update Failed", with the reason', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const replies = stub(IDLE, { '/api/system/updates/apply': 202 });
+		replies['/api/system/updates/apply'] = running(['zeek']);
+
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		replies[STATUS] = {
+			...running(['zeek']), state: 'completed', current_component: null, progress_percent: 100, completed_at: '2026-11-02T20:30:00Z',
+			results: [{ component: 'zeek', success: false, old_version: '26.02.0', new_version: '26.02.0', started_at: '', completed_at: '',
+				error: 'Not every container was running. NetTap rolled back to Malcolm 26.02.0.', rollback_available: false }],
+		};
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(await screen.findByText('Update Failed')).toBeInTheDocument();
+		expect(screen.queryByText('Update Complete')).not.toBeInTheDocument();
+		expect(screen.getByText(/NetTap rolled back to Malcolm 26.02.0/)).toBeInTheDocument();
+	});
+
+	it('keeps polling past 2 minutes while the update runs, and stops once it completes', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const replies = stub(IDLE, { '/api/system/updates/apply': 202 });
+		replies['/api/system/updates/apply'] = running(['zeek']);
+
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		replies[STATUS] = running(['zeek']);
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+
+		expect(await screen.findByText('45% complete')).toBeInTheDocument();
+		await vi.advanceTimersByTimeAsync(150_000);
+		expect(statusCalls()).toBeGreaterThanOrEqual(45);
+		expect(screen.getByText('45% complete')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't confirm/)).not.toBeInTheDocument();
+
+		replies[STATUS] = {
+			...running(['zeek']), state: 'completed', current_component: null, progress_percent: 100, completed_at: '2026-11-02T20:03:00Z',
+			results: [{ component: 'zeek', success: true, old_version: '6.0.4', new_version: '6.0.5', started_at: '', completed_at: '', error: null, rollback_available: false }],
+		};
+		await vi.advanceTimersByTimeAsync(3000);
+		expect(await screen.findByText('Update Complete')).toBeInTheDocument();
+		expect(screen.getByText('1 succeeded')).toBeInTheDocument();
+
+		const callsWhenDone = statusCalls();
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(statusCalls()).toBe(callsWhenDone);
+	});
+
+	it('shows the current step under the progress bar', async () => {
+		stub(running(['malcolm'], "Downloading Malcolm 26.10.0's images"));
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText("Downloading Malcolm 26.10.0's images")).toBeInTheDocument();
+	});
+
+	it('follows an update already running when the page loads', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		stub(running(['malcolm']));
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText('45% complete')).toBeInTheDocument();
+		expect(screen.getByText('Updating...', { selector: '.card-title' })).toBeInTheDocument();
+		expect(screen.getByText('malcolm', { selector: '.component-status-name' })).toBeInTheDocument();
+		// in progress mode: nothing offers to start another update
+		expect(screen.queryByRole('button', { name: /^Update \d+ Component/ })).toBeNull();
+
+		const callsOnLoad = statusCalls();
+		await vi.advanceTimersByTimeAsync(9000);
+		expect(statusCalls()).toBeGreaterThanOrEqual(callsOnLoad + 3);
+	});
+
+	it('follows the running update when apply answers 409, without calling it a failure', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const replies = stub(IDLE, { '/api/system/updates/apply': 409 });
+		replies['/api/system/updates/apply'] = { error: 'An update is already running', ...running(['malcolm'], 'Backing up OpenSearch') };
+
+		render(UpdatesPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		replies[STATUS] = running(['malcolm'], 'Backing up OpenSearch');
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+
+		expect(await screen.findByText('Backing up OpenSearch')).toBeInTheDocument();
+		expect(screen.getByText('malcolm', { selector: '.component-status-name' })).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't start the update/)).not.toBeInTheDocument();
+
+		const callsAfter409 = statusCalls();
+		await vi.advanceTimersByTimeAsync(3000);
+		expect(statusCalls()).toBe(callsAfter409 + 1);
+	});
+
+	it('stops after 20 failed status reads in a row and says contact was lost', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const replies = stub(running(['malcolm']));
+
+		render(UpdatesPage);
+		expect(await screen.findByText('45% complete')).toBeInTheDocument();
+		delete replies[STATUS];
+		await vi.advanceTimersByTimeAsync(20 * 3000);
+
+		expect(
+			await screen.findByText('Lost contact with NetTap while the update was running: reload the page to see where it got to.'),
+		).toBeInTheDocument();
+		expect(screen.queryByText('Update Complete')).not.toBeInTheDocument();
+		const callsWhenStopped = statusCalls();
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(statusCalls()).toBe(callsWhenStopped);
+	});
+});
+
+// The versions table gains a "malcolm" row, which takes Malcolm's update; the image rows say they move with it.
+describe('Software Updates page — the Malcolm row', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const MOVES_WITH = "Updates with the Malcolm row: Malcolm's images move together.";
+	const row = (name: string, current_version: string) =>
+		({ name, category: 'docker', current_version, install_type: 'docker', last_checked: '', status: 'ok', details: {} });
+	const update = (component: string, current_version: string, latest_version: string, applies_with: string | null) => ({
+		component, current_version, latest_version, update_type: 'minor', release_url: '', release_date: '', changelog: '',
+		size_mb: null, requires_restart: true, applies_with,
+	});
+
+	function stub() {
+		stubFetch({
+			'/api/system/versions': { versions: [row('malcolm', '26.02.0'), row('arkime', '26.02.0')], last_scan: '' },
+			'/api/system/updates/available': {
+				updates: [update('malcolm', '26.02.0', '26.10.0', null), update('arkime', '26.02.0', '26.10.0', MOVES_WITH)],
+				last_check: '2026-11-02T21:00:00Z',
+			},
+			'/api/system/updates/history': { history: [], count: 0 },
+		});
+	}
+	const actionCell = async (name: string) =>
+		(await screen.findByText(name, { selector: '.component-name' })).closest('.version-row')!.querySelector('.vtcol-action') as HTMLElement;
+
+	it('shows the applies_with sentence in the action column, with no Update button for that row', async () => {
+		stub();
+		render(UpdatesPage);
+
+		const cell = await actionCell('arkime');
+		expect(within(cell).getByText(MOVES_WITH)).toBeInTheDocument();
+		expect(within(cell).queryByRole('button')).toBeNull();
+	});
+
+	it('offers an Update button on the malcolm row', async () => {
+		stub();
+		render(UpdatesPage);
+
+		const cell = await actionCell('malcolm');
+		expect(within(cell).getByRole('button', { name: 'Update' })).toBeInTheDocument();
+		expect(screen.getAllByRole('button', { name: 'Update' })).toHaveLength(1);
 	});
 });

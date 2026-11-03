@@ -38,10 +38,17 @@ export interface AvailableUpdate {
 
 export interface UpdateStatus {
 	state: 'idle' | 'in_progress' | 'completed' | 'error';
+	/** The batch being (or last) applied; [] when idle with no history */
+	components: string[];
 	current_component: string | null;
+	/** Plain-English step, shown as is */
+	current_step: string | null;
 	progress_percent: number;
 	started_at: string | null;
+	completed_at: string | null;
 	results: UpdateResult[];
+	/** Set by applyUpdates on a 409: this is the update that was already running */
+	already_running?: boolean;
 }
 
 export interface UpdateResult {
@@ -143,7 +150,8 @@ export async function checkForUpdates(): Promise<{ updates: AvailableUpdate[]; f
 }
 
 /**
- * Apply updates to the specified components.
+ * Start applying updates to the specified components. The daemon works in the background;
+ * follow it with getUpdateStatus().
  */
 export async function applyUpdates(components: string[]): Promise<UpdateStatus> {
 	const res = await fetch('/api/system/updates/apply', {
@@ -152,12 +160,31 @@ export async function applyUpdates(components: string[]): Promise<UpdateStatus> 
 		body: JSON.stringify({ components }),
 	});
 
+	// The daemon answers 202 with the started update's status (res.ok covers it), or 409 with the
+	// status of the update already running, so the caller can follow that one instead
+	if (res.status === 409) {
+		const running: UpdateStatus = await res.json();
+		return { ...running, already_running: true };
+	}
+
 	if (!res.ok) {
+		// OLD CODE START — before components/current_step/completed_at were part of the status
+		// return {
+		// 	state: 'error',
+		// 	current_component: null,
+		// 	progress_percent: 0,
+		// 	started_at: null,
+		// 	results: [],
+		// };
+		// OLD CODE END
 		return {
 			state: 'error',
+			components: [],
 			current_component: null,
+			current_step: null,
 			progress_percent: 0,
 			started_at: null,
+			completed_at: null,
 			results: [],
 		};
 	}
