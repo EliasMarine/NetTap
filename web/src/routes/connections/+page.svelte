@@ -31,6 +31,7 @@
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
 	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import { connectionDurationMs } from '$lib/utils/connection-duration';
 
 	// ---------------------------------------------------------------------------
 	// Types & Constants
@@ -160,12 +161,15 @@
 			case 'dst': return `${asString(getField(conn, 'destination.ip'))} ${portText(conn, 'destination.port')}`.trim();
 			case 'protocol': return asString(getField(conn, 'network.transport'));
 			case 'service': return asString(getField(conn, 'protocol'));
-			case 'duration': {
-				const start = getField(conn, 'event.start') as string | undefined;
-				const end = getField(conn, 'event.end') as string | undefined;
-				if (!start || !end) return 0;
-				return new Date(end).getTime() - new Date(start).getTime();
-			}
+			// OLD CODE START — #144: NaN for every epoch-ms record, so the sort did nothing
+			// case 'duration': {
+			// 	const start = getField(conn, 'event.start') as string | undefined;
+			// 	const end = getField(conn, 'event.end') as string | undefined;
+			// 	if (!start || !end) return 0;
+			// 	return new Date(end).getTime() - new Date(start).getTime();
+			// }
+			// OLD CODE END
+			case 'duration': return connectionDurationMs(conn) ?? -1;
 			case 'bytesIn': return (getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes') ?? 0) as number;
 			case 'bytesOut': return (getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes') ?? 0) as number;
 			case 'state': return connState(conn);
@@ -246,11 +250,15 @@
 	}
 
 	function formatDuration(conn: Connection): string {
-		const start = getField(conn, 'event.start') as string | undefined;
-		const end = getField(conn, 'event.end') as string | undefined;
-		if (!start || !end) return '--';
-		const ms = new Date(end).getTime() - new Date(start).getTime();
-		if (isNaN(ms) || ms < 0) return '--';
+		// OLD CODE START — #144: event.start/end are epoch-ms text on Malcolm 26.x, so every row read "--"
+		// const start = getField(conn, 'event.start') as string | undefined;
+		// const end = getField(conn, 'event.end') as string | undefined;
+		// if (!start || !end) return '--';
+		// const ms = new Date(end).getTime() - new Date(start).getTime();
+		// if (isNaN(ms) || ms < 0) return '--';
+		// OLD CODE END
+		const ms = connectionDurationMs(conn);
+		if (ms === null) return '--';
 		const seconds = ms / 1000;
 		if (seconds < 1) return `${ms}ms`;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;

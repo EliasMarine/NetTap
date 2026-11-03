@@ -18,6 +18,7 @@
 	import type { AnalysisMode } from '$lib/utils/tshark-analyze';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
 	import { partOfWhole } from '$lib/utils/part-of-whole';
+	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { getRelatedConnections } from '$api/traffic';
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
@@ -86,7 +87,13 @@
 	let service = $derived(asString(getField(connection, 'network.protocol') || getField(connection, 'zeek.conn.service')));
 	let uid = $derived(asString(getField(connection, 'zeek.conn.uid') || getField(connection, 'zeek.uid')));
 	let connState = $derived(asString(getField(connection, 'zeek.conn.conn_state')));
-	let duration = $derived(getField(connection, 'event.duration') || getField(connection, 'zeek.conn.duration'));
+	// OLD CODE START — #144: event.duration is nanoseconds (ECS), read here as seconds: 255 ms showed ~70,943 h
+	// let duration = $derived(getField(connection, 'event.duration') || getField(connection, 'zeek.conn.duration'));
+	// OLD CODE END
+	let duration = $derived.by(() => {
+		const ms = connectionDurationMs(connection);
+		return ms === null ? null : ms / 1000;
+	});
 	let origBytes = $derived(getField(connection, 'source.bytes') || getField(connection, 'zeek.conn.orig_bytes'));
 	let respBytes = $derived(getField(connection, 'destination.bytes') || getField(connection, 'zeek.conn.resp_bytes'));
 	let origPkts = $derived(getField(connection, 'zeek.conn.orig_pkts') as string | number | null);

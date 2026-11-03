@@ -175,6 +175,20 @@ class TestLiveConnectionTracker(unittest.TestCase):
         self.assertGreater(conn["bytes"], 0)
         self.assertGreater(conn["duration"], 0)
 
+    def test_format_connection_reads_malcolm_epoch_ms_times(self):
+        """#144: Malcolm 26.x writes event.start/end as epoch-ms text; they read 0 s before."""
+        tracker = LiveConnectionTracker()
+        source = _make_opensearch_hit()
+        source["event"] = {"start": "1793683365306", "end": "1793683365561"}
+        self.assertAlmostEqual(tracker._format_connection(source)["duration"], 0.255)
+
+    def test_format_connection_prefers_length(self):
+        """#144: `length` (ms) is on every record and is what the device page sorts by."""
+        tracker = LiveConnectionTracker()
+        source = _make_opensearch_hit()
+        source["length"] = 21313625
+        self.assertAlmostEqual(tracker._format_connection(source)["duration"], 21313.625)
+
     def test_format_connection_missing_fields(self):
         """Format connection should handle missing fields gracefully."""
         tracker = LiveConnectionTracker()

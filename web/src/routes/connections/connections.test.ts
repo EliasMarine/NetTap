@@ -199,3 +199,29 @@ describe('Connections — sorting', () => {
 		expect(sources()).toEqual(['192.168.1.10:80', '192.168.1.9:50001', '192.168.1.9:443']);
 	});
 });
+
+describe('Connections — duration', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("shows Malcolm 26.x records' durations, which read -- before (#144)", async () => {
+		const conn = (id: string, extra: Record<string, unknown>) => ({
+			_id: id, _index: 'arkime_sessions3-x', '@timestamp': '2026-10-29T10:00:00Z',
+			source: { ip: '192.168.1.9', port: 50001 }, destination: { ip: '8.8.8.8', port: 53 }, network: { transport: 'udp' },
+			...extra,
+		});
+		vi.mocked(getConnections).mockResolvedValue({
+			from: '', to: '', page: 1, size: 50, total: 2, total_pages: 1,
+			connections: [
+				conn('a', { event: { start: '1793683365306', end: '1793683365561', duration: 255397081 } }),
+				conn('b', { length: 1500, event: { start: '1793683365306', end: '1793683366806' } }),
+			],
+		});
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+		const { container } = render(Page);
+		await flush();
+		const durations = [...container.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[5]?.textContent?.trim());
+		expect(durations).toEqual(['255ms', '1.5s']);
+	});
+});
