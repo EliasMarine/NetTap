@@ -1044,7 +1044,10 @@ services:
       retries: 3
 
   nettap-nginx:
-    image: nginx:stable-alpine
+    # OLD CODE START — #138: a floating tag; nginx.conf's upstream "resolve" needs 1.27.3+
+    # image: nginx:stable-alpine
+    # OLD CODE END
+    image: nginx:1.30-alpine
     container_name: nettap-nginx
     restart: unless-stopped
     <<: *logging-defaults
