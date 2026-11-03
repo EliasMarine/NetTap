@@ -405,25 +405,50 @@ class TSharkService:
         cmd.extend(["-c", str(request.max_packets)])
         if request.display_filter:
             cmd.extend(["-Y", request.display_filter])
-        # TShark 4.0 names the column _ws.col.Info (4.2+ renamed it _ws.col.info)
-        cmd.extend(["-T", "fields", "-e", "frame.number", "-e", "_ws.col.Info"])
+        # TShark 4.0 names the columns _ws.col.Info (4.2+ renamed them _ws.col.info)
+        # OLD CODE START — #141: the table took the protocol from frame.protocols' last
+        # entry, so a payload tshark couldn't decode read "DATA" where Wireshark says UDP
+        # cmd.extend(["-T", "fields", "-e", "frame.number", "-e", "_ws.col.Info"])
+        # OLD CODE END
+        cmd.extend(
+            [
+                "-T",
+                "fields",
+                "-e",
+                "frame.number",
+                "-e",
+                "_ws.col.Protocol",
+                "-e",
+                "_ws.col.Info",
+            ]
+        )
         return cmd
 
     @staticmethod
     def _with_info_column(packets: list[dict], stdout: str) -> list[dict]:
-        """Copy each packet with the Wireshark Info text added to its layers."""
-        info_by_frame = dict(
-            line.split("\t", 1) for line in stdout.splitlines() if "\t" in line
-        )
+        """Copy each packet with Wireshark's Protocol and Info columns added to its layers."""
+        # OLD CODE START — #141: Info only; the Protocol column comes from the same pass now
+        # info_by_frame = dict(
+        #     line.split("\t", 1) for line in stdout.splitlines() if "\t" in line
+        # )
+        # OLD CODE END
+        columns_by_frame = {}
+        for line in stdout.splitlines():
+            parts = line.split("\t", 2)  # Info is last, so a tab inside it stays in it
+            if len(parts) == 3:
+                columns_by_frame[parts[0]] = {
+                    "_ws.col.Protocol": parts[1],
+                    "_ws.col.Info": parts[2],
+                }
         merged = []
         for pkt in packets:
             layers = pkt.get("_source", {}).get("layers")
             number = (layers or {}).get("frame", {}).get("frame.number")
-            info = info_by_frame.get(str(number))
-            if info is None:
+            columns = columns_by_frame.get(str(number))
+            if columns is None:
                 merged.append(pkt)
                 continue
-            source = {**pkt["_source"], "layers": {**layers, "_ws.col.Info": info}}
+            source = {**pkt["_source"], "layers": {**layers, **columns}}
             merged.append({**pkt, "_source": source})
         return merged
 
