@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+	getConnections,
 	getConnectionStats,
 	getConnectionSankey,
 	getConnectionTimeline,
@@ -39,6 +40,16 @@ function mockFetchFailure(status = 500): void {
 describe('connections v3 API client', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
+	});
+
+	// -- getConnections (#145) -----------------------------------------------
+
+	describe('getConnections', () => {
+		it('sends the sort, order and state so the daemon sorts and filters every page', async () => {
+			mockFetchSuccess({ connections: [] });
+			await getConnections({ page: 3, size: 50, sort: 'duration', order: 'desc', state: 'timeout' });
+			expect(fetch).toHaveBeenCalledWith('/api/traffic/connections?page=3&size=50&sort=duration&order=desc&state=timeout');
+		});
 	});
 
 	// -- getConnectionStats --------------------------------------------------

@@ -16,6 +16,7 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from api.time_range import parse_time_range
+from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
 from services.excluded_ips import build_excluded_ips_filter
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.iot_monitor import (
@@ -44,6 +45,15 @@ _ZEEK_CONN_FILTERS = [
     {"term": {"event.provider": "zeek"}},
     {"term": {"event.dataset": "conn"}},
 ]
+
+# The Connections page's State pills as Zeek conn_state codes, filtered in the query so the total
+# and the pages count only matching connections; the browser filtered one page of 50 (#145)
+_CONN_STATE_CODES = {
+    "established": ["SF", "S1"],
+    "closed": ["S2", "S3"],
+    "rejected": ["REJ", "RSTR", "RSTO"],
+    "timeout": ["S0"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -607,15 +617,33 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
 
 async def handle_connections(request: web.Request) -> web.Response:
-    """GET /api/traffic/connections?from=&to=&page=1&size=50&q=
+    """GET /api/traffic/connections?from=&to=&page=1&size=50&q=&sort=time&order=desc&state=all
 
     Returns a paginated list of Zeek connection log entries with optional
-    full-text search.
+    full-text search, sorted by any of the page's columns and filtered by
+    connection state across every page (#145).
     """
     from_ts, to_ts = _parse_time_range(request)
     page = _parse_int_param(request, "page", 1)
     size = min(_parse_int_param(request, "size", 50), 200)  # Cap at 200
     search_query = request.query.get("q", "").strip()
+    sort_key = request.query.get("sort", "time")
+    order = request.query.get("order", "desc")
+    state = request.query.get("state", "all")
+    if (
+        sort_key not in _CONNECTION_SORT_FIELDS
+        or order not in ("asc", "desc")
+        or (state != "all" and state not in _CONN_STATE_CODES)
+    ):
+        return web.json_response(
+            {
+                "error": "sort must be one of "
+                + ", ".join(_CONNECTION_SORT_FIELDS)
+                + ", order asc or desc, and state all or one of "
+                + ", ".join(_CONN_STATE_CODES)
+            },
+            status=400,
+        )
     client = _get_client(request)
 
     offset = (page - 1) * size
@@ -626,6 +654,8 @@ async def handle_connections(request: web.Request) -> web.Response:
         _time_range_filter(from_ts, to_ts),
         *_ZEEK_CONN_FILTERS,
     ]
+    if state != "all":
+        filter_clauses.append({"terms": {"zeek.conn.conn_state": _CONN_STATE_CODES[state]}})
 
     if search_query:
         must_clauses.append(
@@ -649,7 +679,10 @@ async def handle_connections(request: web.Request) -> web.Response:
                 "filter": filter_clauses,
             }
         },
-        "sort": [{"@timestamp": {"order": "desc"}}],
+        # OLD CODE START — #145: always newest first; the page sorted only the 50 rows it had
+        # "sort": [{"@timestamp": {"order": "desc"}}],
+        # OLD CODE END
+        "sort": _connection_sort(sort_key, order),
     }
 
     try:

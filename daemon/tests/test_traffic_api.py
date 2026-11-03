@@ -565,6 +565,47 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(data["total_pages"], 200)
 
     @unittest_run_loop
+    async def test_connections_sort_and_state_reach_opensearch(self):
+        """#145: the page sorted and filtered only the 50 rows it had; the query does both now."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request(
+            "GET", "/api/traffic/connections?sort=source&order=asc&state=rejected"
+        )
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual(
+            body["sort"],
+            [
+                {"source.ip": {"order": "asc", "missing": "_last"}},
+                {"source.port": {"order": "asc", "missing": "_last"}},
+                {"@timestamp": {"order": "desc"}},
+            ],
+        )
+        self.assertIn(
+            {"terms": {"zeek.conn.conn_state": ["REJ", "RSTR", "RSTO"]}},
+            body["query"]["bool"]["filter"],
+        )
+
+    @unittest_run_loop
+    async def test_connections_default_is_newest_first_unfiltered(self):
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        await self.client.request("GET", "/api/traffic/connections")
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual(body["sort"], [{"@timestamp": {"order": "desc"}}])
+        self.assertFalse(any("terms" in f for f in body["query"]["bool"]["filter"]))
+
+    @unittest_run_loop
+    async def test_connections_refuses_unknown_sort_order_or_state(self):
+        for query in ("sort=bogus", "order=up", "state=weird"):
+            resp = await self.client.request("GET", f"/api/traffic/connections?{query}")
+            self.assertEqual(resp.status, 400, query)
+        self.mock_client.search.assert_not_called()
+
+    @unittest_run_loop
     async def test_connections_size_capped(self):
         """Page size is capped at 200."""
         self.mock_client.search.return_value = {

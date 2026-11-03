@@ -178,25 +178,67 @@ describe('Connections — sorting', () => {
 		vi.clearAllMocks();
 	});
 
-	it('orders Source by IP and then port', async () => {
-		const conn = (id: string, ip: string, port: number) => ({
-			_id: id, _index: 'arkime_sessions3-x', '@timestamp': '2026-10-29T10:00:00Z',
-			source: { ip, port }, destination: { ip: '8.8.8.8', port: 53 }, network: { transport: 'udp' },
-		});
-		vi.mocked(getConnections).mockResolvedValue({
-			from: '', to: '', page: 1, size: 50, total: 3, total_pages: 1,
-			connections: [conn('a', '192.168.1.10', 80), conn('b', '192.168.1.9', 50001), conn('c', '192.168.1.9', 443)],
-		});
+	// OLD CODE START — #145: the page sorted the 50 rows it had; the daemon sorts every page now
+	// it('orders Source by IP and then port', async () => {
+	// 	const conn = (id: string, ip: string, port: number) => ({
+	// 		_id: id, _index: 'arkime_sessions3-x', '@timestamp': '2026-10-29T10:00:00Z',
+	// 		source: { ip, port }, destination: { ip: '8.8.8.8', port: 53 }, network: { transport: 'udp' },
+	// 	});
+	// 	vi.mocked(getConnections).mockResolvedValue({
+	// 		from: '', to: '', page: 1, size: 50, total: 3, total_pages: 1,
+	// 		connections: [conn('a', '192.168.1.10', 80), conn('b', '192.168.1.9', 50001), conn('c', '192.168.1.9', 443)],
+	// 	});
+	// 	vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+	// 	const { container } = render(Page);
+	// 	await flush();
+	// 	const header = [...container.querySelectorAll('th.sortable')].find((th) => th.textContent?.trim().startsWith('Source'))!;
+	// 	const sources = () => [...container.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[1]?.textContent?.replace(/\s+/g, ''));
+
+	// 	await fireEvent.click(header); // a new text column starts ascending
+	// 	expect(sources()).toEqual(['192.168.1.9:443', '192.168.1.9:50001', '192.168.1.10:80']);
+	// 	await fireEvent.click(header);
+	// 	expect(sources()).toEqual(['192.168.1.10:80', '192.168.1.9:50001', '192.168.1.9:443']);
+	// });
+	// OLD CODE END
+
+	const row = (id: string, extra: Record<string, unknown> = {}) => ({
+		_id: id, _index: 'arkime_sessions3-x', '@timestamp': '2026-10-29T10:00:00Z',
+		source: { ip: '192.168.1.9', port: 50001 }, destination: { ip: '8.8.8.8', port: 53 }, network: { transport: 'udp' },
+		...extra,
+	});
+
+	async function renderWith(rows: ReturnType<typeof row>[]) {
+		vi.mocked(getConnections).mockResolvedValue({ from: '', to: '', page: 1, size: 50, total: 900, total_pages: 18, connections: rows });
 		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
-		const { container } = render(Page);
+		const view = render(Page);
 		await flush();
+		return view;
+	}
+
+	it('asks the daemon to sort every page, not just the rows on screen', async () => {
+		const { container } = await renderWith([row('a')]);
+		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'time', order: 'desc' }));
 		const header = [...container.querySelectorAll('th.sortable')].find((th) => th.textContent?.trim().startsWith('Source'))!;
-		const sources = () => [...container.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[1]?.textContent?.replace(/\s+/g, ''));
 
 		await fireEvent.click(header); // a new text column starts ascending
-		expect(sources()).toEqual(['192.168.1.9:443', '192.168.1.9:50001', '192.168.1.10:80']);
+		await flush();
+		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'asc' }));
 		await fireEvent.click(header);
-		expect(sources()).toEqual(['192.168.1.10:80', '192.168.1.9:50001', '192.168.1.9:443']);
+		await flush();
+		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'desc' }));
+	});
+
+	it("filters by state on the daemon and shows its rows as they come", async () => {
+		const { container, getByRole } = await renderWith([row('a', { zeek: { conn: { conn_state: 'REJ' } } }), row('b')]);
+		await fireEvent.click(getByRole('button', { name: 'Rejected' }));
+		await flush();
+		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, state: 'rejected' }));
+		expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+	});
+
+	it("shows the service from network.protocol, not protocol's transport entry", async () => {
+		const { container } = await renderWith([row('a', { protocol: ['udp', 'dns'], network: { transport: 'udp', protocol: ['dns'] } })]);
+		expect(container.querySelector('tbody tr')?.querySelectorAll('td')[4]?.textContent?.trim()).toBe('dns');
 	});
 });
 

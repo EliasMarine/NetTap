@@ -1042,15 +1042,20 @@ async def handle_device_detail(request: web.Request) -> web.Response:
 
 # Recent Connections columns the device page can sort on, and the field behind each (#140).
 # `length` is the session's end minus start: the duration the page shows, on every record.
+# The Connections page sorts through the same map (#145), so it carries its Source and State too.
 _CONNECTION_SORT_FIELDS = {
     "time": "@timestamp",
+    "source": "source.ip",
     "destination": "destination.ip",
     "proto": "network.transport",
     "service": "network.protocol",
     "duration": "length",
     "dl": "destination.bytes",
     "ul": "source.bytes",
+    "state": "zeek.conn.conn_state",
 }
+# An address column sorts by IP, then port
+_PORT_TIEBREAK = {"source": "source.port", "destination": "destination.port"}
 
 
 def _connection_sort(sort_key: str, order: str) -> list[dict]:
@@ -1060,8 +1065,12 @@ def _connection_sort(sort_key: str, order: str) -> list[dict]:
     clauses = [
         {_CONNECTION_SORT_FIELDS[sort_key]: {"order": order, "missing": "_last"}}
     ]
-    if sort_key == "destination":
-        clauses.append({"destination.port": {"order": order, "missing": "_last"}})
+    # OLD CODE START — #145: destination only; the Connections page sorts Source the same way
+    # if sort_key == "destination":
+    #     clauses.append({"destination.port": {"order": order, "missing": "_last"}})
+    # OLD CODE END
+    if sort_key in _PORT_TIEBREAK:
+        clauses.append({_PORT_TIEBREAK[sort_key]: {"order": order, "missing": "_last"}})
     return [*clauses, {"@timestamp": {"order": "desc"}}]
 
 

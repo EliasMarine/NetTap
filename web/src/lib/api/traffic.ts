@@ -374,11 +374,34 @@ export async function getBandwidthTimeSeries(
 	return res.json();
 }
 
+/** The Connections page's columns the daemon sorts on, and its State pills (#145). */
+export type ConnectionSort = 'time' | 'source' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul' | 'state';
+export type ConnectionStateFilter = 'all' | 'established' | 'closed' | 'rejected' | 'timeout';
+
 /**
  * Get paginated connection list with optional search.
  */
+// OLD CODE START — #145: no sort or state, so the page sorted and filtered one page of 50 rows
+// export async function getConnections(
+// 	opts: TimeRangeParams & { page?: number; size?: number; q?: string } = {}
+// ): Promise<ConnectionsResponse> {
+// 	const query = buildQuery({
+// 		from: opts.from,
+// 		to: opts.to,
+// 		page: opts.page,
+// 		size: opts.size,
+// 		q: opts.q,
+// 	});
+// OLD CODE END
 export async function getConnections(
-	opts: TimeRangeParams & { page?: number; size?: number; q?: string } = {}
+	opts: TimeRangeParams & {
+		page?: number;
+		size?: number;
+		q?: string;
+		sort?: ConnectionSort;
+		order?: 'asc' | 'desc';
+		state?: ConnectionStateFilter;
+	} = {}
 ): Promise<ConnectionsResponse> {
 	const query = buildQuery({
 		from: opts.from,
@@ -386,6 +409,9 @@ export async function getConnections(
 		page: opts.page,
 		size: opts.size,
 		q: opts.q,
+		sort: opts.sort,
+		order: opts.order,
+		state: opts.state,
 	});
 	const res = await fetch(`/api/traffic/connections${query}`);
 
