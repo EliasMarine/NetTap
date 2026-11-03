@@ -6,6 +6,7 @@
 <script lang="ts">
 	import type { LiveConnection } from '$lib/api/live';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -114,19 +115,34 @@
 			let cmp = 0;
 			switch (sortField) {
 				case 'timestamp':
-					cmp = a.timestamp.localeCompare(b.timestamp);
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = a.timestamp.localeCompare(b.timestamp);
+					// OLD CODE END
+					cmp = compareValues(a.timestamp, b.timestamp);
 					break;
 				case 'source_ip':
-					cmp = a.source_ip.localeCompare(b.source_ip);
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = a.source_ip.localeCompare(b.source_ip);
+					// OLD CODE END
+					cmp = compareValues(a.source_ip, b.source_ip);
 					break;
 				case 'direction':
-					cmp = getDirection(a).localeCompare(getDirection(b));
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = getDirection(a).localeCompare(getDirection(b));
+					// OLD CODE END
+					cmp = compareValues(getDirection(a), getDirection(b));
 					break;
 				case 'dest_ip':
-					cmp = a.dest_ip.localeCompare(b.dest_ip);
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = a.dest_ip.localeCompare(b.dest_ip);
+					// OLD CODE END
+					cmp = compareValues(a.dest_ip, b.dest_ip);
 					break;
 				case 'protocol':
-					cmp = (a.service || a.protocol).localeCompare(b.service || b.protocol);
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = (a.service || a.protocol).localeCompare(b.service || b.protocol);
+					// OLD CODE END
+					cmp = compareValues(a.service || a.protocol, b.service || b.protocol);
 					break;
 				case 'dest_port':
 					cmp = a.dest_port - b.dest_port;

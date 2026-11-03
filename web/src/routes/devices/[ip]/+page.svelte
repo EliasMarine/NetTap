@@ -29,6 +29,8 @@
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { TableSort } from '$lib/utils/table-sort.svelte';
+	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
 	import type {
 		DeviceDetail,
@@ -289,6 +291,22 @@
 		fetchConnections(1);
 	}
 
+	// Every table sorts (design system): the short top-N tables here, Recent Connections on the
+	// daemon, so a sort covers every page of results, not just the one shown (#140)
+	const destSort = new TableSort<'ip' | 'bytes' | 'connections'>('bytes');
+	const dnsSort = new TableSort<'domain' | 'count'>('count');
+	const portSort = new TableSort<'port' | 'service' | 'connections'>('connections');
+	const connSort = new TableSort<DeviceConnectionSort>('time');
+	const CONNECTION_COLUMNS: [DeviceConnectionSort, string][] = [
+		['time', 'Time'], ['destination', 'Destination'], ['proto', 'Proto'], ['service', 'Service'],
+		['duration', 'Duration'], ['dl', 'DL'], ['ul', 'UL'],
+	];
+
+	function sortConnections(key: DeviceConnectionSort) {
+		connSort.toggle(key);
+		fetchConnections(1);
+	}
+
 	async function fetchConnections(pageNum: number = 1) {
 		connectionsLoading = true;
 		try {
@@ -296,6 +314,8 @@
 				...span,
 				page: pageNum,
 				size: connectionsPageSize,
+				sort: connSort.key,
+				order: connSort.dir,
 			});
 			connections = res.connections;
 			connectionsPage = res.page;
@@ -743,9 +763,13 @@
 				{#if device.top_destinations?.length}
 					<div class="table-wrap">
 						<table class="data-table">
-							<thead><tr><th>Destination</th><th>Bytes</th><th>Conn</th></tr></thead>
+							<thead><tr>
+								{#each [['ip', 'Destination'], ['bytes', 'Bytes'], ['connections', 'Conn']] as const as [key, label] (key)}
+									<th class="sortable" class:sorted={destSort.key === key} onclick={() => destSort.toggle(key)}>{label}<span class="sort-arrow">{destSort.arrow(key)}</span></th>
+								{/each}
+							</tr></thead>
 							<tbody>
-								{#each device.top_destinations.slice(0, 8) as dest, i (`${dest.ip}-${i}`)}
+								{#each destSort.apply(device.top_destinations.slice(0, 8), (d, key) => d[key]) as dest, i (`${dest.ip}-${i}`)}
 									<tr>
 										<td><span class="mono td-sm"><IPAddress ip={dest.ip} /></span></td>
 										<td class="mono td-sm">{formatBytes(dest.bytes)}</td>
@@ -766,9 +790,13 @@
 				{#if device.dns_queries?.length}
 					<div class="table-wrap">
 						<table class="data-table">
-							<thead><tr><th>Domain</th><th>Count</th></tr></thead>
+							<thead><tr>
+								{#each [['domain', 'Domain'], ['count', 'Count']] as const as [key, label] (key)}
+									<th class="sortable" class:sorted={dnsSort.key === key} onclick={() => dnsSort.toggle(key)}>{label}<span class="sort-arrow">{dnsSort.arrow(key)}</span></th>
+								{/each}
+							</tr></thead>
 							<tbody>
-								{#each device.dns_queries.filter((d) => !d.domain.includes('._tcp.') && !d.domain.includes('._udp.') && !d.domain.endsWith('.arpa')).slice(0, 10) as q, i (`${q.domain}-${i}`)}
+								{#each dnsSort.apply(device.dns_queries.filter((d) => !d.domain.includes('._tcp.') && !d.domain.includes('._udp.') && !d.domain.endsWith('.arpa')).slice(0, 10), (q, key) => q[key]) as q, i (`${q.domain}-${i}`)}
 									<tr>
 										<td class="td-sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={q.domain}>{q.domain}</td>
 										<td class="mono td-sm">{formatNumber(q.count)}</td>
@@ -791,9 +819,13 @@
 				{#if ports.length > 0}
 					<div class="table-wrap">
 						<table class="data-table">
-							<thead><tr><th>Port</th><th>Service</th><th>Conn</th></tr></thead>
+							<thead><tr>
+								{#each [['port', 'Port'], ['service', 'Service'], ['connections', 'Conn']] as const as [key, label] (key)}
+									<th class="sortable" class:sorted={portSort.key === key} onclick={() => portSort.toggle(key)}>{label}<span class="sort-arrow">{portSort.arrow(key)}</span></th>
+								{/each}
+							</tr></thead>
 							<tbody>
-								{#each ports.slice(0, 8) as p, i (`${p.port}-${i}`)}
+								{#each portSort.apply(ports.slice(0, 8), (p, key) => p[key]) as p, i (`${p.port}-${i}`)}
 									<tr>
 										<td class="mono td-sm" class:port-suspicious={p.suspicious}>{p.port}</td>
 										<td class="td-sm" class:port-suspicious={p.suspicious}>{p.service}{#if p.suspicious} &#x26A0;{/if}</td>
@@ -832,7 +864,11 @@
 				<div class="table-wrap">
 					<table class="data-table">
 						<thead>
-							<tr><th>Time</th><th>Destination</th><th>Proto</th><th>Service</th><th>Duration</th><th>DL</th><th>UL</th></tr>
+							<tr>
+								{#each CONNECTION_COLUMNS as [key, label] (key)}
+									<th class="sortable" class:sorted={connSort.key === key} onclick={() => sortConnections(key)}>{label}<span class="sort-arrow">{connSort.arrow(key)}</span></th>
+								{/each}
+							</tr>
 						</thead>
 						<tbody>
 							{#each filteredConnections as conn, i (`${conn._id}-${i}`)}

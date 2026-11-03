@@ -12,6 +12,7 @@
 	import { getNewDeviceCount } from '$api/devices-registry';
 	import type { Device } from '$api/devices';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -195,7 +196,10 @@
 			const av = (a as any)[sortField] ?? 0;
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			const bv = (b as any)[sortField] ?? 0;
-			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+			// const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE END
+			const cmp = compareValues(av, bv);
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
 	});

@@ -32,6 +32,7 @@
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	import { acknowledgeAlert } from '$api/alerts';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -155,22 +156,37 @@
 			let cmp = 0;
 			switch (sortKey) {
 				case 'timestamp':
-					cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
+					// OLD CODE END
+					cmp = compareValues(a.timestamp || '', b.timestamp || '');
 					break;
 				case 'severity':
 					cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
 					break;
 				case 'signature':
-					cmp = (a.alert?.signature || '').localeCompare(b.alert?.signature || '');
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = (a.alert?.signature || '').localeCompare(b.alert?.signature || '');
+					// OLD CODE END
+					cmp = compareValues(a.alert?.signature || '', b.alert?.signature || '');
 					break;
 				case 'src_ip':
-					cmp = (a.src_ip || '').localeCompare(b.src_ip || '');
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = (a.src_ip || '').localeCompare(b.src_ip || '');
+					// OLD CODE END
+					cmp = compareValues(a.src_ip || '', b.src_ip || '');
 					break;
 				case 'dest_ip':
-					cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
+					// OLD CODE END
+					cmp = compareValues(a.dest_ip || '', b.dest_ip || '');
 					break;
 				case 'category':
-					cmp = (a.alert?.category || '').localeCompare(b.alert?.category || '');
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// cmp = (a.alert?.category || '').localeCompare(b.alert?.category || '');
+					// OLD CODE END
+					cmp = compareValues(a.alert?.category || '', b.alert?.category || '');
 					break;
 			}
 			return sortDir === 'asc' ? cmp : -cmp;

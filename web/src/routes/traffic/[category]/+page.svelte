@@ -30,6 +30,7 @@
 	} from '$api/traffic';
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Category metadata
@@ -143,7 +144,10 @@
 			const av = (a as any)[sortField] ?? 0;
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			const bv = (b as any)[sortField] ?? 0;
-			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+			// const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE END
+			const cmp = compareValues(av, bv);
 			return sortDir === 'asc' ? cmp : -cmp;
 		});
 	});

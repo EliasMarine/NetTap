@@ -6,6 +6,7 @@
 	 * and detail modal. Alerts on issuer changes (potential MITM).
 	 */
 
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 	import {
 		getCertificates,
 		getExpiringCerts,
@@ -75,9 +76,13 @@
 					bVal = (b.source_ip || '').toLowerCase();
 					break;
 			}
-			if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
-			if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
-			return 0;
+			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+			// if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+			// if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+			// return 0;
+			// OLD CODE END
+			const cmp = compareValues(aVal, bVal);
+			return sortDir === 'asc' ? cmp : -cmp;
 		});
 		return sorted;
 	});

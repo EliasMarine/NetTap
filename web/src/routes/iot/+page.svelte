@@ -22,6 +22,7 @@
 	import type { DrawerTab } from '$lib/components/DetailDrawer.svelte';
 	import type { BarItem } from '$lib/components/HorizontalBarList.svelte';
 	import type { Segment } from '$lib/components/charts/DonutChart.svelte';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	import {
 		getFleetSummary,
@@ -425,13 +426,26 @@
 					bv = b.internal_target.hostname ?? b.internal_target.ip;
 					break;
 				case 'risk':
-					const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-					av = riskOrder[a.risk] ?? 4; bv = riskOrder[b.risk] ?? 4;
+					// OLD CODE START — critical ranked 0, so the first (descending) click put low risk on top
+					// const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+					// av = riskOrder[a.risk] ?? 4; bv = riskOrder[b.risk] ?? 4;
+					// OLD CODE END
+					const riskRank: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+					av = riskRank[a.risk] ?? 0; bv = riskRank[b.risk] ?? 0;
+					break;
+				case 'ports':
+					av = a.ports.join(', '); bv = b.ports.join(', ');
+					break;
+				case 'description':
+					av = a.description; bv = b.description;
 					break;
 				default:
 					av = a.connection_count; bv = b.connection_count;
 			}
-			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+			// const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE END
+			const cmp = compareValues(av, bv);
 			return isoSortDir === 'asc' ? cmp : -cmp;
 		});
 	});
@@ -842,8 +856,20 @@
 										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
 									{/if}
 								</th>
-								<th>Ports</th>
-								<th>Description</th>
+								<th class="sortable" class:sorted={isoSortField === 'ports'}
+									onclick={() => toggleIsoSort('ports')}>
+									Ports
+									{#if isoSortField === 'ports'}
+										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
+									{/if}
+								</th>
+								<th class="sortable" class:sorted={isoSortField === 'description'}
+									onclick={() => toggleIsoSort('description')}>
+									Description
+									{#if isoSortField === 'description'}
+										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
+									{/if}
+								</th>
 							</tr>
 						</thead>
 						<tbody>

@@ -10,6 +10,7 @@
 	 *   - Result count
 	 *   - Sortable table: Port, Protocol, Service, Description
 	 */
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Static port data (~150 well-known ports)
@@ -223,7 +224,10 @@
 			if (typeof av === 'number' && typeof bv === 'number') {
 				return sortAsc ? av - bv : bv - av;
 			}
-			const cmp = String(av).localeCompare(String(bv));
+			// OLD CODE START — text columns: compareValues orders the numbers inside names ("HTTP-8" before "HTTP-80"), like every table
+			// const cmp = String(av).localeCompare(String(bv));
+			// OLD CODE END
+			const cmp = compareValues(av, bv);
 			return sortAsc ? cmp : -cmp;
 		});
 
