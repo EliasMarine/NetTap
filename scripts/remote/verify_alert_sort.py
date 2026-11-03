@@ -1,8 +1,10 @@
-"""#146 check, run inside nettap-storage-daemon: the alert tables sort every page on the daemon.
+"""#146/#147 check, run inside nettap-storage-daemon: the alert tables sort every page, and a
+category's (and sub-category's) alert list holds exactly the alerts its header counts.
 
-Severity "desc" must put the range's most severe alert on page 1 (the pages ranked only the 50
-newest), each column comes back in order both ways, a category keeps its filter while sorted,
-and unknown values are refused. Read-only: GET requests to the daemon only.
+#146: severity "desc" must put the range's most severe alert on page 1 (the pages ranked only the
+50 newest), each column comes back in order both ways, and unknown values are refused.
+#147: each category's list total equals its header (Exploit listed 99 under a 6-alert header),
+and each sub-category's list equals its bar. Read-only: GET requests to the daemon only.
 """
 
 import ipaddress
@@ -57,7 +59,8 @@ def check(label: str, ok: bool, detail: str) -> bool:
     return ok
 
 
-now = datetime.now(UTC)
+# ends 10 minutes ago, so records still arriving can't change a total between two calls
+now = datetime.now(UTC) - timedelta(minutes=10)
 window = {"from": (now - timedelta(hours=24)).isoformat(), "to": now.isoformat()}
 all_ok = True
 
@@ -100,7 +103,24 @@ if busiest:
         f"HTTP {code}, total {body.get('total')} sorted vs {plain} unsorted",
     )
 
-for params in ({"sort": "bogus"}, {"order": "up"}):
+for cat in cats.get("categories") or []:
+    detail = get(f"/api/alerts/categories/{cat['id']}", window)[1]
+    header = (detail.get("stats") or {}).get("total")
+    code, body = get("/api/alerts", {**window, "category": cat["id"], "size": 1})
+    all_ok &= check(
+        f"#147 category {cat['id']}: list total = header",
+        code == 200 and body.get("total") == header == cat.get("count"),
+        f"HTTP {code}, list {body.get('total')}, header {header}, overview {cat.get('count')}",
+    )
+    for sub in detail.get("sub_categories") or []:
+        code, body = get("/api/alerts", {**window, "category": cat["id"], "sub": sub["id"], "size": 1})
+        all_ok &= check(
+            f"#147   sub-category {sub['id']}: list total = bar",
+            code == 200 and body.get("total") == sub.get("count"),
+            f"HTTP {code}, list {body.get('total')}, bar {sub.get('count')}",
+        )
+
+for params in ({"sort": "bogus"}, {"order": "up"}, {"category": "bogus"}, {"category": "exploit", "sub": "tor"}):
     code, _ = get("/api/alerts", {**window, **params})
     all_ok &= check(f"refused {params}", code == 400, f"HTTP {code}")
 sys.exit(0 if all_ok else 1)
