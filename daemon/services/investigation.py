@@ -6,9 +6,11 @@ an analyst would need: host profile, connection history, related alerts,
 DNS context, and actionable recommendations.
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 from storage.time_slots import histogram_buckets, time_slots
 
@@ -233,10 +235,27 @@ async def generate_threat_report(
     #     client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded
     # )
     # OLD CODE END
-    summary = await get_smart_alert_summary(client, from_ts, to_ts)
-    alerts = await get_smart_alerts(
-        client, from_ts, to_ts, include_info=False, limit=200
-    )
+    # #139: the three checks block on OpenSearch and don't depend on each other or on the
+    # alerts: run them side by side in threads, so the report waits for the slowest one only
+    loop = asyncio.get_running_loop()
+    running = {
+        name: loop.run_in_executor(
+            None, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
+        )
+        for name, detect in (
+            ("beaconing", detect_beaconing),
+            ("dns_anomalies", analyze_dns_anomalies),
+            ("lateral_movement", detect_lateral_movement),
+        )
+    }
+    try:
+        summary = await get_smart_alert_summary(client, from_ts, to_ts)
+        alerts = await get_smart_alerts(
+            client, from_ts, to_ts, include_info=False, limit=200
+        )
+    except BaseException:
+        await asyncio.gather(*running.values(), return_exceptions=True)
+        raise
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -264,25 +283,27 @@ async def generate_threat_report(
         "incomplete_checks": [],
         "investigations": [],
     }
-    for name, detect in (
-        ("beaconing", detect_beaconing),
-        ("dns_anomalies", analyze_dns_anomalies),
-        ("lateral_movement", detect_lateral_movement),
-    ):
-        try:
-            found = detect(client, from_ts, to_ts, excluded_ips=excluded_ips)
-        except Exception:
-            logger.error("Threat report: the %s check failed", name, exc_info=True)
-            report["failed_checks"] = [*report["failed_checks"], name]
-            continue
-        if isinstance(found, dict):  # DNS anomalies: findings plus "complete"
-            complete = found.get("complete", True)
-            found = {k: v for k, v in found.items() if k != "complete"}
-        else:
-            found, complete = found
-        report[name] = found
-        if not complete:
-            report["incomplete_checks"] = [*report["incomplete_checks"], name]
+    # OLD CODE START — #139: each check ran after the previous one, on the request loop
+    # for name, detect in (
+    #     ("beaconing", detect_beaconing),
+    #     ("dns_anomalies", analyze_dns_anomalies),
+    #     ("lateral_movement", detect_lateral_movement),
+    # ):
+    #     try:
+    #         found = detect(client, from_ts, to_ts, excluded_ips=excluded_ips)
+    #     except Exception:
+    #         logger.error("Threat report: the %s check failed", name, exc_info=True)
+    #         report["failed_checks"] = [*report["failed_checks"], name]
+    #         continue
+    #     if isinstance(found, dict):  # DNS anomalies: findings plus "complete"
+    #         complete = found.get("complete", True)
+    #         found = {k: v for k, v in found.items() if k != "complete"}
+    #     else:
+    #         found, complete = found
+    #     report[name] = found
+    #     if not complete:
+    #         report["incomplete_checks"] = [*report["incomplete_checks"], name]
+    # OLD CODE END
 
     # Auto-investigate top critical alerts (cap at 3)
     critical = [a for a in alerts if a.get("severity", 5) <= 2]
@@ -302,5 +323,21 @@ async def generate_threat_report(
             )
             if "investigations" not in report["failed_checks"]:
                 report["failed_checks"] = [*report["failed_checks"], "investigations"]
+
+    for name, check in running.items():
+        try:
+            found = await check
+        except Exception:
+            logger.error("Threat report: the %s check failed", name, exc_info=True)
+            report["failed_checks"] = [*report["failed_checks"], name]
+            continue
+        if isinstance(found, dict):  # DNS anomalies: findings plus "complete"
+            complete = found.get("complete", True)
+            found = {k: v for k, v in found.items() if k != "complete"}
+        else:
+            found, complete = found
+        report[name] = found
+        if not complete:
+            report["incomplete_checks"] = [*report["incomplete_checks"], name]
 
     return report

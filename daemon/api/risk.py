@@ -6,6 +6,7 @@ These endpoints compute per-device risk scores (0-100) based on network
 telemetry data from OpenSearch indices.
 """
 
+import asyncio
 import logging
 import os
 from datetime import timedelta
@@ -200,7 +201,16 @@ def _device_score_aggs() -> dict:
 # ---------------------------------------------------------------------------
 
 
+# OLD CODE START — #139: the scoring queries ran on the request loop and held up every other
+# request for up to 7.5 s (the top bar's 5 s liveness check then said "Can't reach NetTap")
+# async def handle_risk_scores(request: web.Request) -> web.Response:
+# OLD CODE END
 async def handle_risk_scores(request: web.Request) -> web.Response:
+    """GET /api/risk/scores?from=&to=&limit= — scored in a worker thread (#139)."""
+    return await asyncio.to_thread(_risk_scores, request)
+
+
+def _risk_scores(request: web.Request) -> web.Response:
     """GET /api/risk/scores?from=&to=&limit=
 
     Returns risk scores for every device in the given time range, highest first;

@@ -6,6 +6,7 @@ beaconing detection, lateral movement, DNS anomalies, and
 auto-investigations.
 """
 
+import asyncio
 import logging
 import os
 from datetime import timedelta
@@ -59,8 +60,17 @@ async def handle_threat_report(request: web.Request) -> web.Response:
     from services.investigation import generate_threat_report
 
     try:
-        report = await generate_threat_report(
-            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # OLD CODE START — #139: the report's OpenSearch calls block, so on the request loop
+        # they held up every other request for 8-13 s (the top bar said "Can't reach NetTap")
+        # report = await generate_threat_report(
+        #     client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # )
+        # OLD CODE END
+        report = await asyncio.to_thread(
+            asyncio.run,
+            generate_threat_report(
+                client, from_ts, to_ts, excluded_ips=excluded_ips_list
+            ),
         )
     except Exception as exc:
         logger.error("Threat report generation failed: %s", exc)
@@ -78,8 +88,13 @@ async def handle_beaconing(request: web.Request) -> web.Response:
     from services.threat_detection import detect_beaconing
 
     try:
-        beacons, complete = detect_beaconing(
-            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # OLD CODE START — #139: 5-6 s of blocking OpenSearch calls on the request loop
+        # beacons, complete = detect_beaconing(
+        #     client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # )
+        # OLD CODE END
+        beacons, complete = await asyncio.to_thread(
+            detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
         )
     except Exception as exc:
         logger.error("Beaconing detection failed: %s", exc)

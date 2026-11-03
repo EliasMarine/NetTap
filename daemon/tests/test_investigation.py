@@ -1,6 +1,7 @@
 """Tests for the investigation service recommendation logic."""
 
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.investigation import _generate_recommendation, generate_threat_report
@@ -95,6 +96,44 @@ def test_threat_report_names_failed_and_partial_checks():
     assert report["lateral_movement"] == [move]
     assert report["dns_anomalies"]["dga_suspects"] == [{"domain": "x"}]
     assert "complete" not in report["dns_anomalies"]
+
+
+def test_threat_report_runs_its_checks_side_by_side():
+    """#139: the checks ran one after another, so the report took their sum (8-13 s on the G11)."""
+    all_three = threading.Barrier(3, timeout=5)
+
+    def check(result):
+        def run(*_args, **_kwargs):
+            all_three.wait()  # BrokenBarrierError unless all three run at once
+            return result
+
+        return run
+
+    with (
+        patch(
+            "services.alert_intelligence.get_smart_alert_summary",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])
+        ),
+        patch(
+            "services.threat_detection.detect_beaconing",
+            side_effect=check(([{"source_ip": "192.168.1.66"}], True)),
+        ),
+        patch(
+            "services.threat_detection.detect_lateral_movement",
+            side_effect=check(([], True)),
+        ),
+        patch(
+            "services.threat_detection.analyze_dns_anomalies",
+            side_effect=check({"complete": True}),
+        ),
+    ):
+        report = asyncio.run(generate_threat_report(MagicMock(), "now-1h", "now"))
+
+    assert report["failed_checks"] == []
+    assert report["beaconing"] == [{"source_ip": "192.168.1.66"}]
 
 
 def test_failed_investigation_is_a_failed_check_not_zero_counts():
