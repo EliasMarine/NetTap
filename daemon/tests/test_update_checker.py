@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -551,7 +552,7 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         self.assertEqual(by_component["suricata"]["update_type"], "minor")
         self.assertIsNone(by_component["suricata"]["size_mb"])
         self.assertEqual(result["failed_checks"], [])
-        self.assertFalse(any("hub.docker.com" in u for u in urls))
+        self.assertFalse(any(urlparse(u).hostname == "hub.docker.com" for u in urls))
 
     def _old_test_same_release_is_up_to_date(self):
         result, _ = self._run(
@@ -592,7 +593,7 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         )
         self.assertIsNone(by_component["nettap-opensearch"]["size_mb"])
         self.assertEqual(result["failed_checks"], [])
-        self.assertFalse(any("hub.docker.com" in u for u in urls))
+        self.assertFalse(any(urlparse(u).hostname == "hub.docker.com" for u in urls))
 
     def test_a_newer_untested_release_is_shown_but_not_offered(self):
         result, _ = self._run(

@@ -78,7 +78,10 @@ class TestGetApiKeysEmptyFile(AioHTTPTestCase):
     """Tests for GET /api/settings/api-keys when env file does not exist."""
 
     def setUp(self):
-        self.tmp_path = tempfile.mktemp(suffix=".env")
+        # OLD CODE START — mktemp names a file another process could create first
+        # self.tmp_path = tempfile.mktemp(suffix=".env")
+        # OLD CODE END
+        self.tmp_path = os.path.join(tempfile.mkdtemp(), "missing.env")
         # Don't create the file -- it should not exist
         super().setUp()
 
