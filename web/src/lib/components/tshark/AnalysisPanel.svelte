@@ -108,9 +108,11 @@
 
 		// Try up to 5 PCAP files (closest first) until we find matching packets
 		const maxAttempts = Math.min(5, sortedPcaps.length);
+		let cutShort = 0; // searches TShark stopped before the end of the file
 		for (let i = 0; i < maxAttempts; i++) {
 			pcapPath = sortedPcaps[i].path;
 			await runAnalysis();
+			if (result?.truncated) cutShort++;
 
 			if (result && result.packet_count > 0) {
 				return; // Found matching packets
@@ -118,8 +120,15 @@
 		}
 
 		// If no packets matched with the filter, show helpful message
+		// OLD CODE START — 2026-11-03: said "none found" when the searches had stopped early
+		// if (result && result.packet_count === 0 && displayFilter) {
+		// 	errorMessage = `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
+		// }
+		// OLD CODE END
 		if (result && result.packet_count === 0 && displayFilter) {
-			errorMessage = `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
+			errorMessage = cutShort
+				? `No packets matching filter "${displayFilter}" in the parts of ${maxAttempts} PCAP file(s) TShark searched: it stopped before the end of ${cutShort} of them, so matches may be further in. Try a narrower filter.`
+				: `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
 		}
 	}
 
@@ -405,9 +414,19 @@
 			<span class="badge badge-accent">
 				{result.packet_count} packet{result.packet_count !== 1 ? 's' : ''}
 			</span>
+			<!-- OLD CODE START — 2026-11-03: a filter search cut short at its time limit with 0 found
+			     read "more packets available" (batch 47's TShark check)
 			{#if result.truncated}
 				<span class="badge badge-warning">
 					Truncated — more packets available
+				</span>
+			{/if}
+			OLD CODE END -->
+			{#if result.truncated}
+				<span class="badge badge-warning">
+					{result.packet_count === 0
+						? 'Stopped before the end of the file: matches may be further in'
+						: 'Not the whole file: more packets may match'}
 				</span>
 			{/if}
 			{#if result.tshark_version}
