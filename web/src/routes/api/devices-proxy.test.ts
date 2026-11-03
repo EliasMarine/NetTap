@@ -8,6 +8,7 @@ const daemonFetch = vi.fn();
 vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: (...a: unknown[]) => daemonFetch(...a) }));
 
 const single = await import('./devices/[ip]/+server.js');
+const connections = await import('./devices/[ip]/connections/+server.js');
 
 describe('device detail / registry proxy', () => {
 	beforeEach(() => {
@@ -25,5 +26,12 @@ describe('device detail / registry proxy', () => {
 		const url = new URL('https://nettap.local/api/devices/192.168.1.5?from=a&to=b');
 		await single.GET({ params: { ip: '192.168.1.5' }, url } as never);
 		expect(daemonFetch).toHaveBeenCalledWith('/api/devices/192.168.1.5?from=a&to=b');
+	});
+
+	// #143: the device page's column sort (#140) never reached the daemon
+	it("forwards a device's connection sort and order with the paging", async () => {
+		const url = new URL('https://nettap.local/api/devices/192.168.1.5/connections?from=a&to=b&page=2&size=50&sort=dl&order=asc&other=x');
+		await connections.GET({ params: { ip: '192.168.1.5' }, url } as never);
+		expect(daemonFetch).toHaveBeenCalledWith('/api/devices/192.168.1.5/connections?from=a&to=b&page=2&size=50&sort=dl&order=asc');
 	});
 });

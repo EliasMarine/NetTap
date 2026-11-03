@@ -3,9 +3,9 @@ import type { RequestHandler } from './$types.js';
 import { daemonFetch } from '$lib/server/daemon.js';
 
 /**
- * GET /api/devices/{ip}/connections?from=&to=&page=1&size=50
+ * GET /api/devices/{ip}/connections?from=&to=&page=1&size=50&sort=time&order=desc
  * Proxies to the daemon's GET /api/devices/{ip}/connections endpoint,
- * forwarding all query parameters for paginated device connection listing.
+ * forwarding the paging, time range and sort parameters (the daemon validates them).
  */
 export const GET: RequestHandler = async ({ url, params }) => {
 	const queryParams = new URLSearchParams();
@@ -17,6 +17,12 @@ export const GET: RequestHandler = async ({ url, params }) => {
 	if (to) queryParams.set('to', to);
 	if (page) queryParams.set('page', page);
 	if (size) queryParams.set('size', size);
+	// #143: sort and order were dropped here, so the device page's column sort (#140) never
+	// reached the daemon: the arrow changed and the rows stayed newest first
+	const sort = url.searchParams.get('sort');
+	const order = url.searchParams.get('order');
+	if (sort) queryParams.set('sort', sort);
+	if (order) queryParams.set('order', order);
 
 	const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
 	const res = await daemonFetch(`/api/devices/${encodeURIComponent(params.ip)}/connections${query}`);

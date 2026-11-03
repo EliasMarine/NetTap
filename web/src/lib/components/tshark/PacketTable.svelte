@@ -152,7 +152,8 @@
 							<td class="col-src mono">{col(pkt, 'src')}</td>
 							<td class="col-dst mono">{col(pkt, 'dst')}</td>
 							<td class="col-proto">
-								<span class="badge badge-accent">{col(pkt, 'protocol')}</span>
+								<!-- proto-name: Wireshark writes TLSv1.2, not TLSV1.2 (.badge upper-cases) -->
+								<span class="badge badge-accent proto-name">{col(pkt, 'protocol')}</span>
 							</td>
 							<td class="col-len mono">{col(pkt, 'length')}</td>
 							<td class="col-info">{col(pkt, 'info')}</td>
@@ -233,6 +234,8 @@
 		border-bottom: 1px solid var(--border-default);
 		user-select: none;
 	}
+
+	.proto-name { text-transform: none; }
 
 	.packet-table th.sortable { cursor: pointer; }
 	.packet-table th.sortable:hover { color: var(--text-primary); }

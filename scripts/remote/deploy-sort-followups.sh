@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Deploy the sort-sweep follow-ups (#142) from main. Web UI only; the daemon is untouched.
+# Deploy the sort-sweep follow-ups (#142, #143) from main. Web UI only; the daemon is untouched.
 # Tracking: tracking-fixes/2026-11-01-dashboard-data-accuracy.md
 #
 #   #142: severity sorts most-severe-first with a ↓ arrow (Alerts, alert categories, Home),
 #     the Alerts Protocol column sorts, Certificates put blanks last, Connections sort by IP
 #     then port, Infrastructure sorts index sizes as sizes and health red-first.
+#   #143: the web proxy forwards a device's connection sort, so the device page's
+#     Connections table really sorts (it stayed newest first).
 #   The web UI is down for under a minute while it restarts.
 #
 # The full output is also saved to ~/nettap-sort-followups.log.
@@ -22,7 +24,7 @@ check() {  # check "label" <0 pass / 1 fail> "detail"
     if [ "$2" -eq 0 ]; then echo "   ✓ $1: $3"; else echo "   ✗ $1: $3"; FAILED=1; fi
 }
 
-echo "=== Deploy: sort-sweep follow-ups (#142) from $BRANCH ==="
+echo "=== Deploy: sort-sweep follow-ups (#142, #143) from $BRANCH ==="
 echo ""
 
 echo "→ Step 1: Pull latest code..."
@@ -72,7 +74,7 @@ check "no errors in the nettap-web log" "$rc" "$ERRS ERROR/Traceback lines"
 echo ""
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "=== #142 deployed and verified — open Alerts and click Severity: most severe first, ↓ ==="
+    echo "=== #142 and #143 deployed and verified — open Alerts and click Severity: most severe first, ↓ ==="
 else
     echo "=== Finished with ✗ lines above — paste this output back ==="
 fi
