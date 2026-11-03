@@ -320,6 +320,11 @@ services:
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+      # the same under the names Malcolm 26.04.0+ reads (filebeat-zeek-files-logs.yml: without
+      # VALKEY_PASSWORD that program exits "missing field accessing 'output.redis.password'")
+      VALKEY_HOST: "redis"
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
     # NOTE: No cert mount needed — BEATS_SSL is false. If enabled in the future,
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
@@ -745,7 +750,11 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
+      # OLD CODE START — 2026-11-03 (#133): "/" answered 200 on 26.02.0 only; 26.10.0 gives 404
+      # test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
+      # OLD CODE END
+      # the endpoint Malcolm's own container_health.sh checks, in every release since 26.02.0
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/mapi/ping || exit 1"]
       start_period: 60s
 
   # OLD CODE START — nginx-proxy disabled. Malcolm's baked-in nginx.conf

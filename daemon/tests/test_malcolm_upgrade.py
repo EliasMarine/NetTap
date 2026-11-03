@@ -429,8 +429,14 @@ class TestTheTestedReleaseIsTheOneNetTapInstalls:
         assert "${MALCOLM_KV_IMAGE:-redis}-data:/data" in redis["volumes"]
         # each image keeps its own data: Valkey 8.1 can't read Redis 7.4's RDB files
         assert {"redis-data", "valkey-data"} <= set(compose["volumes"])
-        api = compose["services"]["api"]["environment"]
-        assert api["VALKEY_HOST"] == api["REDIS_HOST"] == "redis"
+        # "/" is a 404 on 26.10.0's api; /mapi/ping is what Malcolm's container_health.sh uses
+        api_check = " ".join(compose["services"]["api"]["healthcheck"]["test"])
+        assert "http://localhost:5000/mapi/ping" in api_check
+        # the only 26.10.0 images that read VALKEY_* (every file in each image searched)
+        for svc in ("api", "filebeat"):
+            env = compose["services"][svc]["environment"]
+            assert env["VALKEY_HOST"] == env["REDIS_HOST"] == "redis", svc
+            assert env["VALKEY_PASSWORD"] == env["REDIS_PASSWORD"], svc
 
     def test_malcolm_services_are_the_compose_services_on_the_tag(self):
         services = yaml.safe_load(
