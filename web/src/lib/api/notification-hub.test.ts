@@ -62,16 +62,14 @@ describe('notification-hub API client', () => {
 			expect(result.channels[0].type).toBe('discord');
 		});
 
-		it('returns empty on HTTP error', async () => {
+		it('throws on HTTP error instead of listing no channels', async () => {
 			mockFetchFailure();
-			const result = await getChannels();
-			expect(result.channels).toEqual([]);
+			await expect(getChannels()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns empty on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
-			const result = await getChannels();
-			expect(result.channels).toEqual([]);
+			await expect(getChannels()).rejects.toThrow('network error');
 		});
 	});
 
@@ -148,10 +146,9 @@ describe('notification-hub API client', () => {
 			expect(result.count).toBe(1);
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error instead of an empty log', async () => {
 			mockFetchFailure();
-			const result = await getDeliveryLog();
-			expect(result.log).toEqual([]);
+			await expect(getDeliveryLog()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -167,10 +164,9 @@ describe('notification-hub API client', () => {
 			expect(result.count).toBe(1);
 		});
 
-		it('returns empty on error', async () => {
-			mockFetchReject();
-			const result = await getRules();
-			expect(result.rules).toEqual([]);
+		it('throws on error instead of listing no rules', async () => {
+			mockFetchFailure(503);
+			await expect(getRules()).rejects.toThrow('HTTP 503');
 		});
 	});
 

@@ -100,8 +100,12 @@
 				relatedLoading = false;
 				return;
 			}
-			// Use .keyword sub-fields for reliable IP matching on ip-typed fields
-			const ipClauses = ips.map(ip => `(source.ip.keyword:"${ip}" OR destination.ip.keyword:"${ip}")`).join(' OR ');
+			// OLD CODE START — replaced 2026-11-01: .keyword sub-fields only existed while
+			// malcolm_template didn't apply; with Malcolm's mapping source/destination.ip
+			// are ip fields with no .keyword (Chain 24).
+			// const ipClauses = ips.map(ip => `(source.ip.keyword:"${ip}" OR destination.ip.keyword:"${ip}")`).join(' OR ');
+			// OLD CODE END
+			const ipClauses = ips.map(ip => `(source.ip:"${ip}" OR destination.ip:"${ip}")`).join(' OR ');
 			// Exclude this alert from results
 			const query = `(${ipClauses}) AND NOT _id:"${alert._id}"`;
 			// Time window: ±1 hour around the alert timestamp

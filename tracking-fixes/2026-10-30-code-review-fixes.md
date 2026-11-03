@@ -51,6 +51,7 @@ Item 8 of the review's fix-first table says CR-018; that is a typo for CR-017. C
 | 2026-10-30 | CR-002 | NET-122: PCAP deleted before indices; today's indices never deleted; cascade stops below the emergency threshold | pytest (fail without the fix) |
 | 2026-10-30 | CR-018 | NET-123: docker stop/start nettap-pcap-capture with a persistent flag; resume respects PCAP_CAPTURE_ENABLED | pytest (fail without the fix) |
 | 2026-10-30 | CR-020, MS-002 | NET-124: ARKIME_PCAP_WRITE_METHOD=null (netsniff is the only writer); PCAP older than cold_days deleted every cycle | pytest + bats (fail without the fix) |
+| 2026-11-01 | CR-076 | NET-126: main.py skips mirror setup when the NIC carries the default route or has an IPv4 address. Done with the nsenter removal (Chain 22), which made the flush reachable for the first time on Ubuntu | pytest +1 (fails without the guard) |
 <!--LOG-->
 
 ## Found while fixing
@@ -160,7 +161,7 @@ New problems found during the fixes. They are not in the review's 273, so they d
 | ☐ | CR-073 | daemon-services-B | `daemon/services/iot_monitor.py:562` | Encryption ratio counts all DNS/NTP/mDNS/SSDP sessions as unencrypted, inflating 'unencrypted' findings and lowering every IoT grade | Open |
 | ☐ | CR-074 | daemon-services-B | `daemon/services/lan_anomaly_detector.py:58` | ARP-spoofing and IP-conflict detection query an 'arp' Zeek dataset the deployed stack never produces, so both always report all clear; the… | Open |
 | ☐ | CR-075 | daemon-services-B | `daemon/services/lan_anomaly_detector.py:157` | Rogue-DHCP detection groups by source.ip (the DHCP client), so normal clients are flagged as critical rogue DHCP servers | Open |
-| ☐ | CR-076 | daemon-services-A | `daemon/services/mirror_manager.py:115` | Mirror setup flushes IPs on the configured NIC at every daemon start with no management guard | Open |
+| ✅ | CR-076 | daemon-services-A | `daemon/services/mirror_manager.py:115` | Mirror setup flushes IPs on the configured NIC at every daemon start with no management guard | Fixed (NET-126) |
 | ☐ | CR-077 | daemon-api-B, daemon-services-C | `daemon/services/notification_hub.py:273` | Email channel test runs blocking smtplib with no timeout on the daemon event loop | Open |
 | ☐ | CR-078 | daemon-api-B | `daemon/services/pcap_search.py:160` | PCAP search runs tshark over every file sequentially with no overall limit and holds a shared semaphore slot | Open |
 | ☐ | CR-079 | daemon-api-B, daemon-services-A | `daemon/services/pcap_search.py:367` | Filtered download merges into a fixed shared path in a 100 MB tmpfs and reports failures as 'no matching data' | Open |

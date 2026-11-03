@@ -12,6 +12,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager
@@ -196,10 +197,10 @@ class TestListIndices:
         assert "suricata-alert-2026-01-20" in names
         assert "arkime_sessions3-260125" in names
 
-    def test_list_indices_handles_opensearch_error(
+    def test_list_indices_raises_on_opensearch_error(
         self, retention_config, mock_opensearch_client
     ):
-        """Verify returns empty list when OpenSearch raises an error."""
+        """#96: a failed request is an error, not "no indices"."""
         mock_opensearch_client.cat.indices.side_effect = OpenSearchException(
             "connection refused"
         )
@@ -209,8 +210,24 @@ class TestListIndices:
         mgr._client = mock_opensearch_client
         mgr.opensearch_url = "http://localhost:9200"
 
-        indices = mgr.list_indices()
-        assert indices == []
+        with pytest.raises(OpenSearchException):
+            mgr.list_indices()
+
+    def test_prune_still_returns_zero_when_opensearch_down(
+        self, retention_config, mock_opensearch_client
+    ):
+        """Pruning keeps its old behaviour: nothing listed, nothing deleted."""
+        mock_opensearch_client.cat.indices.side_effect = OpenSearchException("down")
+
+        mgr = StorageManager.__new__(StorageManager)
+        mgr.config = retention_config
+        mgr._client = mock_opensearch_client
+        mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
+
+        assert mgr.prune_oldest_indices() == 0
+        assert mgr.prune_emergency() == 0
+        mock_opensearch_client.indices.delete.assert_not_called()
 
 
 # =========================================================================
@@ -579,3 +596,41 @@ class TestGetStatus:
         # Index counts should include expected tiers
         for tier in ("hot", "warm", "cold", "unknown"):
             assert tier in status["index_counts"]
+        assert "indices_error" not in status
+
+    def test_opensearch_down_index_counts_unknown_disk_kept(
+        self, retention_config, mock_opensearch_client
+    ):
+        """#96: OpenSearch down is unknown index counts, not 0; disk figures stay."""
+        mock_opensearch_client.cat.indices.side_effect = OpenSearchException("down")
+        mgr = StorageManager.__new__(StorageManager)
+        mgr.config = retention_config
+        mgr._client = mock_opensearch_client
+        mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
+
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.65),
+            patch("shutil.disk_usage") as mock_disk,
+        ):
+            mock_disk.return_value = MagicMock(
+                total=1000 * 1024**3, used=650 * 1024**3, free=350 * 1024**3
+            )
+            status = mgr.get_status()
+
+        assert status["index_counts"] is None
+        assert status["total_indices"] is None
+        assert "down" in status["indices_error"]
+        assert status["disk_usage_percent"] == 65.0
+
+    def test_unreadable_disk_raises(self, retention_config, mock_opensearch_client):
+        """#96: no disk figures is an error, not 0 bytes at -100%."""
+        mgr = StorageManager.__new__(StorageManager)
+        mgr.config = retention_config
+        mgr._client = mock_opensearch_client
+        mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
+
+        with patch.object(mgr, "check_disk_usage", side_effect=OSError("gone")):
+            with pytest.raises(OSError):
+                mgr.get_status()

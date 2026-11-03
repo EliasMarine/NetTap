@@ -12,7 +12,10 @@ set -u
 
 REPO_DIR="/home/nettap/NetTap"
 DAEMON="nettap-storage-daemon"
-CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-arkime-live nettap-pcap-capture)
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+# CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-arkime-live nettap-pcap-capture)
+# OLD CODE END
+CAPTURE_CONTAINERS=(nettap-zeek-live nettap-suricata-live nettap-pcap-capture)
 SAMPLE_SECONDS=10
 # A non-mirror port sees broadcast/multicast and only the odd flooded unicast
 # frame; a working uplink mirror sees a steady stream of other hosts' unicast.
@@ -87,9 +90,18 @@ if ! ip link show "$NIC" >/dev/null 2>&1; then
     fail "$NIC does not exist on this host"
 else
     ethtool -i "$NIC" 2>/dev/null | grep -E '^(driver|version|firmware-version):' | sed 's/^/     /'
-    SPEED=$(cat "/sys/class/net/$NIC/speed" 2>/dev/null || echo "?")
-    echo "     link speed: ${SPEED} Mb/s"
-    [ "$SPEED" = "2500" ] || warn "Link is not 2.5 Gb/s — check the cable and the switch port speed"
+    # An admin-DOWN port reports no speed even with a good cable (2026-11-01 G11 run)
+    if ! ip -o link show "$NIC" | grep -qE '[<,]UP[,>]'; then
+        fail "$NIC is switched off (admin DOWN) — NetTap's mirror setup didn't bring it up (sudo docker logs nettap-storage-daemon 2>&1 | grep -i mirror)"
+    else
+        SPEED=$(cat "/sys/class/net/$NIC/speed" 2>/dev/null || echo "?")
+        echo "     link speed: ${SPEED} Mb/s"
+        case "$SPEED" in
+            2500) ;;
+            "?"|-1|"") warn "Port is up but has no link — check the cable and that the switch port is enabled" ;;
+            *) warn "Link is ${SPEED} Mb/s, not 2.5 Gb/s — check the cable and the switch port speed" ;;
+        esac
+    fi
 
     ADDRS=$(ip -o addr show dev "$NIC" 2>/dev/null)
     if [ -z "$ADDRS" ]; then ok "No IP addresses"; else fail "Has addresses (capture NIC must have none):"; echo "$ADDRS" | sed 's/^/     /'; fi
@@ -150,8 +162,9 @@ else
     echo "$OTHER_NETPLAN" | sed 's/^/     /'
 fi
 for unit in nettap-mirror.service nettap.service; do
-    STATE=$(systemctl is-enabled "$unit" 2>/dev/null || echo "missing")
-    if [ "$STATE" = "enabled" ]; then ok "$unit enabled"; else fail "$unit is $STATE"; fi
+    # is-enabled prints "not-found" itself and exits non-zero, so don't append a fallback
+    STATE=$(systemctl is-enabled "$unit" 2>/dev/null | head -1)
+    if [ "$STATE" = "enabled" ]; then ok "$unit enabled"; else fail "$unit is ${STATE:-missing}"; fi
 done
 echo ""
 

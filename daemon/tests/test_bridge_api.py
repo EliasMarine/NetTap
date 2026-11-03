@@ -9,7 +9,7 @@ using AioHTTPTestCase.
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -353,7 +353,41 @@ class TestBridgeCreateEndpoint(AioHTTPTestCase):
     def setUp(self):
         self.mock_monitor = _make_mock_monitor()
         self.mock_manager = _make_mock_manager()
+        self.in_use = AsyncMock(return_value=None)
+        self.guard = patch("api.bridge._nic_in_use_problem", self.in_use)
+        self.guard.start()
         super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self.guard.stop()
+
+    async def test_create_refuses_a_nic_the_machine_uses(self):
+        """CR-004 refusal on create too: never enslave the management NIC."""
+        self.mock_manager.create_bridge = AsyncMock(return_value={"created": True})
+        self.in_use.side_effect = lambda _cm, iface: (
+            "carries this machine's internet connection (its default route)"
+            if iface == "enp1s0"
+            else None
+        )
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0", "lan_interface": "enp1s0"},
+        )
+        self.assertEqual(resp.status, 400)
+        self.assertIn("enp1s0 carries", (await resp.json())["error"])
+        self.mock_manager.create_bridge.assert_not_awaited()
+
+    async def test_create_rejects_a_bad_interface_name(self):
+        self.mock_manager.create_bridge = AsyncMock(return_value={"created": True})
+        resp = await self.client.request(
+            "POST",
+            "/api/setup/bridge",
+            json={"wan_interface": "enp2s0; reboot", "lan_interface": "enp1s0"},
+        )
+        self.assertEqual(resp.status, 400)
+        self.mock_manager.create_bridge.assert_not_awaited()
 
     async def get_application(self):
         app = web.Application()
@@ -435,7 +469,15 @@ class TestBridgeCreateRefusedInDhcpGatewayMode(AioHTTPTestCase):
         self.mock_monitor = _make_mock_monitor()
         self.mock_manager = _make_mock_manager()
         self.mock_manager.create_bridge = AsyncMock(return_value={"created": True})
+        self.guard = patch(
+            "api.bridge._nic_in_use_problem", AsyncMock(return_value=None)
+        )
+        self.guard.start()
         super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self.guard.stop()
 
     async def get_application(self):
         app = web.Application()

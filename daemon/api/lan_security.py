@@ -5,10 +5,11 @@ Registers LAN anomaly detection endpoints with the aiohttp application.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiohttp import web
 
+from api.time_range import parse_time_range
 from services.lan_anomaly_detector import LANAnomalyDetector
 from storage.manager import StorageManager
 
@@ -18,26 +19,44 @@ _DEFAULT_RANGE_HOURS = 24
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Extract 'from' and 'to' query parameters as ISO timestamps."""
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Extract 'from' and 'to' query parameters as ISO timestamps."""
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    #
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    #
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    #
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
 
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
+NO_ARP_NOTE = (
+    "This box recorded no ARP traffic in this period, so ARP spoofing and IP conflicts were "
+    "not checked. A count of 0 here means not checked, not none found."
+)
 
-    return (raw_from or default_from, raw_to or default_to)
+
+def _arp_coverage(detector: LANAnomalyDetector, from_ts: str, to_ts: str) -> dict:
+    """{"arp_recorded": bool} plus a plain note when the ARP checks had nothing to look at."""
+    if detector.arp_recorded(from_ts, to_ts):
+        return {"arp_recorded": True}
+    return {"arp_recorded": False, "note": NO_ARP_NOTE}
 
 
 async def handle_all_anomalies(request: web.Request) -> web.Response:
@@ -51,6 +70,7 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
 
     try:
         anomalies = detector.get_all_anomalies(from_ts, to_ts)
+        coverage = _arp_coverage(detector, from_ts, to_ts)
     except Exception as exc:
         logger.error("LAN anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -61,6 +81,7 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
             "to": to_ts,
             "anomalies": anomalies,
             "count": len(anomalies),
+            **coverage,
         }
     )
 
@@ -76,6 +97,7 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
 
     try:
         alerts = detector.detect_arp_spoofing(from_ts, to_ts)
+        coverage = _arp_coverage(detector, from_ts, to_ts)
     except Exception as exc:
         logger.error("ARP spoofing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -86,6 +108,7 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
             "to": to_ts,
             "alerts": alerts,
             "count": len(alerts),
+            **coverage,
         }
     )
 

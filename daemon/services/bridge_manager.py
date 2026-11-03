@@ -2,12 +2,13 @@
 NetTap Bridge Manager Service
 
 Creates and manages the Linux bridge (br0) that sits inline between the ISP
-modem and the home/small business router. Uses ``nsenter -t 1 -n`` to execute
-network namespace commands on the host from inside the Docker container.
+modem and the home/small business router. Network commands run directly in
+the host network namespace, which the daemon container shares
+(network_mode: host).
 
 Architecture decisions:
-    - nsenter instead of Docker socket: proven safe, already used in
-      nic_discovery.py, works with existing caps (NET_ADMIN, SYS_PTRACE, pid:host)
+    - Host network commands run directly (network_mode: host + NET_ADMIN).
+      nsenter was dropped 2026-11-01: Ubuntu's AppArmor profile blocks it.
     - Host filesystem mounts for persistence: writes netplan, systemd unit,
       and sysctl config to mounted host dirs so bridge survives reboot
     - "Soft bypass" via promisc toggle: no Docker socket needed, containers
@@ -31,8 +32,9 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 class BridgeManager:
     """Manages bridge creation, teardown, and readiness checks.
 
-    All network operations use ``nsenter -t 1 -n`` to execute in the host
-    network namespace. Persistence files are written to mounted host dirs.
+    Network commands run in the host network namespace, which the daemon
+    container shares (network_mode: host). Persistence files are written to
+    mounted host dirs.
     """
 
     def __init__(
@@ -237,8 +239,13 @@ class BridgeManager:
         )
 
         # Persist configuration to host filesystem
+        # OLD CODE START — #96: write failures were only logged; setup still said created
+        # if persist:
+        #     persistence_files = self._write_persistence(wan, lan)
+        # OLD CODE END
+        persist_failures: list[str] = []
         if persist:
-            persistence_files = self._write_persistence(wan, lan)
+            persistence_files = self._write_persistence(wan, lan, persist_failures)
 
         state = "reconfigured" if bridge_existed else "created"
         logger.info(
@@ -257,8 +264,13 @@ class BridgeManager:
             "lan": lan,
             "state": state,
             "errors": errors,
-            "warnings": warnings,
+            # OLD CODE START — #96: persistence write failures weren't in the response
+            # "warnings": warnings,
+            # OLD CODE END
+            "warnings": [*warnings, *persist_failures],
             "persistence_files": persistence_files,
+            # #96: false when the bridge won't come back after a reboot as configured
+            "persisted": bool(persistence_files) and not persist_failures,
         }
 
     async def teardown_bridge(self) -> dict:
@@ -429,9 +441,9 @@ class BridgeManager:
             }
         )
 
-        # 8. Netfilter disabled — must read from HOST namespace via nsenter.
-        # /proc/sys/net/bridge/bridge-nf-call-iptables inside the container
-        # reflects the container's own namespace (always 1), not the host's.
+        # 8. Netfilter disabled — read from the HOST network namespace. The
+        # daemon shares it (network_mode: host); a container with its own
+        # namespace would read its own value (always 1), not the host's.
         # If the file doesn't exist, the br_netfilter kernel module is not
         # loaded — meaning bridge traffic is NOT subject to iptables at all,
         # which is the desired state (effectively disabled).
@@ -485,12 +497,17 @@ class BridgeManager:
     # -------------------------------------------------------------------
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter.
+        """Run a command in the host network namespace (network_mode: host).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -504,11 +521,11 @@ class BridgeManager:
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     async def _discover_members(self) -> tuple[str, str]:
         """Discover WAN and LAN member interfaces of the bridge.
@@ -550,7 +567,9 @@ class BridgeManager:
         except ValueError:
             return False
 
-    def _write_persistence(self, wan: str, lan: str) -> list[str]:
+    def _write_persistence(
+        self, wan: str, lan: str, failures: list[str] | None = None
+    ) -> list[str]:
         """Write bridge persistence files to mounted host directories.
 
         Writes:
@@ -558,10 +577,13 @@ class BridgeManager:
         2. Systemd unit for bridge bring-up at boot
         3. Sysctl config for bridge netfilter disable
 
+        Each write that fails is appended to ``failures`` when given (#96).
+
         Returns:
             List of file paths written.
         """
         files_written: list[str] = []
+        failures = [] if failures is None else failures
 
         # 1. Netplan YAML
         if self._netplan_dir:
@@ -596,6 +618,7 @@ class BridgeManager:
                 logger.info("Wrote netplan config: %s", netplan_path)
             except OSError as exc:
                 logger.warning("Could not write netplan config: %s", exc)
+                failures.append(f"Could not write netplan config {netplan_path}: {exc}")
 
         # 2. Systemd unit
         if self._systemd_dir:
@@ -648,8 +671,12 @@ class BridgeManager:
                         logger.info("Created systemd symlink: %s", symlink_path)
                     except OSError as exc:
                         logger.warning("Could not create systemd symlink: %s", exc)
+                        failures.append(
+                            f"Could not enable nettap-bridge.service at boot: {exc}"
+                        )
             except OSError as exc:
                 logger.warning("Could not write systemd unit: %s", exc)
+                failures.append(f"Could not write systemd unit {unit_path}: {exc}")
 
         # 3. Sysctl config
         if self._sysctl_dir:
@@ -667,6 +694,7 @@ class BridgeManager:
                 logger.info("Wrote sysctl config: %s", sysctl_path)
             except OSError as exc:
                 logger.warning("Could not write sysctl config: %s", exc)
+                failures.append(f"Could not write sysctl config {sysctl_path}: {exc}")
 
         return files_written
 

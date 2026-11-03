@@ -117,10 +117,15 @@ echo ""
 
 echo "→ Step 7: Recreate the changed services..."
 # --no-deps: never recreate OpenSearch again here.
-# arkime-live must be recreated, not restarted: Arkime applies passwordSecret
-# only when it first writes config.ini inside the container.
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44); naming it here would start it
+# # arkime-live must be recreated, not restarted: Arkime applies passwordSecret
+# # only when it first writes config.ini inside the container.
+# sudo docker compose -f "$COMPOSE" up -d --no-deps --force-recreate \
+#     nettap-storage-daemon nettap-web nettap-nginx nettap-grafana arkime-live \
+#     || echo "   ✗ recreate failed"
+# OLD CODE END
 sudo docker compose -f "$COMPOSE" up -d --no-deps --force-recreate \
-    nettap-storage-daemon nettap-web nettap-nginx nettap-grafana arkime-live \
+    nettap-storage-daemon nettap-web nettap-nginx nettap-grafana \
     || echo "   ✗ recreate failed"
 echo "   ✓ Containers recreated"
 echo ""
@@ -265,8 +270,13 @@ fi
 echo ""
 
 echo "→ Step 17: PCAP has one writer and the daemon can delete it (CR-001, CR-018, CR-020, MS-002)..."
-WRITE_METHOD=$(sudo docker exec nettap-arkime-live grep -h '^pcapWriteMethod' /opt/arkime/etc/config.ini 2>/dev/null | tail -1)
-expect "Arkime pcapWriteMethod" "${WRITE_METHOD#pcapWriteMethod=}" "null"
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44), so there is no config.ini to read
+# WRITE_METHOD=$(sudo docker exec nettap-arkime-live grep -h '^pcapWriteMethod' /opt/arkime/etc/config.ini 2>/dev/null | tail -1)
+# expect "Arkime pcapWriteMethod" "${WRITE_METHOD#pcapWriteMethod=}" "null"
+# OLD CODE END
+# head -1: docker inspect prints an empty line for a missing container
+ARKIME_STATE=$(sudo docker inspect --format='{{.State.Status}}' nettap-arkime-live 2>/dev/null | head -1)
+expect "arkime-live (off by default)" "${ARKIME_STATE:-absent}" "absent|exited|created"
 CAPS=$(sudo docker inspect --format '{{.HostConfig.CapAdd}}' "$DAEMON" 2>/dev/null || echo "")
 case "$CAPS" in
     *DAC_OVERRIDE*) echo "   ✓ daemon has DAC_OVERRIDE" ;;

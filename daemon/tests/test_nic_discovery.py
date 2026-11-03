@@ -259,6 +259,34 @@ class TestNicListEndpoint(AioHTTPTestCase):
             data = await resp.json()
             self.assertEqual(data["interfaces"], [])
 
+    @unittest_run_loop
+    async def test_unreadable_sysfs_is_an_error_not_no_nics(self):
+        """#96: sysfs that can't be read is a 500, not "no interfaces"."""
+        with patch(
+            "api.nic_discovery._get_sys_net_path",
+            return_value=Path("/nonexistent/sys/class/net"),
+        ):
+            resp = await self.client.request("GET", "/api/setup/nics")
+        self.assertEqual(resp.status, 500)
+        self.assertIn("error", await resp.json())
+
+    @unittest_run_loop
+    async def test_failed_address_lookup_is_an_error_not_no_ips(self):
+        """#96: a failed `ip addr` is a 500, not every NIC shown without an IP."""
+
+        async def ip_fails(*argv, **kwargs):
+            raise FileNotFoundError("ip")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sys_net = _create_fake_sysfs(Path(tmpdir))
+            with (
+                patch("api.nic_discovery._get_sys_net_path", return_value=sys_net),
+                patch("asyncio.create_subprocess_exec", ip_fails),
+            ):
+                resp = await self.client.request("GET", "/api/setup/nics")
+        self.assertEqual(resp.status, 500)
+        self.assertIn("addresses", (await resp.json())["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

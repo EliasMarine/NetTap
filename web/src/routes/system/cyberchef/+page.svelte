@@ -104,6 +104,8 @@
 					</span>
 				{:else if loading}
 					<span class="badge">Checking...</span>
+				{:else}
+					<span class="badge">Unknown</span>
 				{/if}
 			</div>
 			<p class="text-muted">Data encoding, decoding, and analysis toolkit</p>
@@ -129,6 +131,13 @@
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Checking CyberChef status...</p>
+		</div>
+	{:else if !status}
+		<!-- #96: a failed status request is not "the container is not running" -->
+		<div class="unavailable-state">
+			<h3>CyberChef Status Unknown</h3>
+			<p class="text-muted">Couldn't check CyberChef status: the request failed.</p>
+			<button class="btn btn-primary btn-sm" onclick={fetchStatus}>Retry</button>
 		</div>
 	{:else if !status?.available}
 		<!-- CyberChef unavailable -->

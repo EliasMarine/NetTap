@@ -11,17 +11,21 @@ details, and acknowledgement tracking.
 import json
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
 
 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
+from storage.all_buckets import all_buckets
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.alerts")
 
@@ -50,6 +54,9 @@ _SURICATA_ALERT_FILTERS: list[dict] = [
 _SURICATA_NOISE_EXCLUSION: list[dict] = [
     {"prefix": {"rule.name": "SURICATA "}},
 ]
+# Shared with the per-device alert counts (Devices, Risk) so every page counts alerts the
+# same way (dashboard data accuracy #60)
+SURICATA_NOISE_EXCLUSION = _SURICATA_NOISE_EXCLUSION
 
 # Path for storing acknowledgement data (local JSON file)
 _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
@@ -61,29 +68,39 @@ _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Extract 'from' and 'to' query parameters as ISO timestamps.
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Extract 'from' and 'to' query parameters as ISO timestamps.
+    #
+    # Defaults to the last 24 hours if not provided or unparseable.
+    # """
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    #
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    #
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    #
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
-    Defaults to the last 24 hours if not provided or unparseable.
-    """
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
 
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-
-    return (raw_from or default_from, raw_to or default_to)
+# OpenSearch's default index.max_result_window: from + size past it returns nothing.
+# shortcut: only the newest 10,000 records can be paged to; use search_after if older pages are needed
+_RESULT_WINDOW = 10_000
 
 
 def _parse_int_param(request: web.Request, name: str, default: int) -> int:
@@ -326,8 +343,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             {
                 "bool": {
                     "should": [
-                        {"term": {"source.ip.keyword": ip_filter}},
-                        {"term": {"destination.ip.keyword": ip_filter}},
+                        {"term": {"source.ip": ip_filter}},
+                        {"term": {"destination.ip": ip_filter}},
                     ],
                     "minimum_should_match": 1,
                 }
@@ -361,7 +378,7 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 should_clauses.append(
                     {
                         "wildcard": {
-                            "rule.name.keyword": {
+                            "rule.name": {
                                 "value": f"*{pattern}*",
                                 "case_insensitive": True,
                             }
@@ -385,6 +402,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
     query = {
         "size": size,
         "from": offset,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": filter_clauses,
@@ -437,7 +456,12 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             "page": page,
             "size": size,
             "total": total,
-            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            # OLD CODE START — #85: pages past OpenSearch's 10,000-result window came back empty
+            # "total_pages": (total + size - 1) // size if size > 0 else 0,
+            # OLD CODE END
+            "total_pages": min(-(-total // size), _RESULT_WINDOW // size)
+            if size > 0
+            else 0,
             "alerts": alerts,
         }
     )
@@ -654,24 +678,44 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": excluded,
                 # OLD CODE END
+                # Same engine-event rule as the alert count, so the panels add up to the total
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
-        "aggs": {
-            "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {"min": from_ts, "max": to_ts},
-                },
-                "aggs": {
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+        # "aggs": {
+        #     "over_time": {
+        #         "date_histogram": {
+        #             "field": "@timestamp",
+        #             "fixed_interval": interval,
+        #             "min_doc_count": 0,
+        #             "extended_bounds": {"min": from_ts, "max": to_ts},
+        #         },
+        #         "aggs": {"by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}}},
+        #     }
+        # },
+        # OLD CODE END
+    }
+    try:
+        query["aggs"] = {
+            "over_time": time_slots(
+                from_ts,
+                to_ts,
+                interval,
+                aggs={
                     "by_severity": {
                         "terms": {"field": "suricata.alert.severity", "size": 5}
                     }
                 },
-            }
-        },
-    }
+            )
+        }
+    except ValueError:
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     try:
         result = client.search(index=NETWORK_INDEX, body=query)
@@ -682,9 +726,12 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
         )
 
     buckets = []
-    for bucket in (
-        result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
-    ):
+    # OLD CODE START — #120: date_histogram buckets
+    # for bucket in (
+    #     result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    # ):
+    # OLD CODE END
+    for bucket in histogram_buckets(result.get("aggregations", {}).get("over_time")):
         entry = {
             "timestamp": bucket.get("key_as_string", ""),
             "high": 0,
@@ -736,12 +783,14 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": excluded,
                 # OLD CODE END
+                # Same engine-event rule as the alert count, so the panels add up to the total
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {
             "top_sigs": {
                 "terms": {
-                    "field": "rule.name.keyword",
+                    "field": "rule.name",
                     "size": limit,
                     "missing": "Unknown",
                 },
@@ -804,7 +853,7 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     # OLD CODE END
-    field = "source.ip.keyword" if direction == "src" else "destination.ip.keyword"
+    field = "source.ip" if direction == "src" else "destination.ip"
 
     query = {
         "size": 0,
@@ -817,6 +866,8 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": excluded,
                 # OLD CODE END
+                # Same engine-event rule as the alert count, so the panels add up to the total
+                "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
         "aggs": {"top_ips": {"terms": {"field": field, "size": limit}}},
@@ -847,6 +898,77 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
             "ips": ips,
         }
     )
+
+
+# Docs without a rule.name group under this name, as the old `missing: "Unknown"` did
+_UNKNOWN_SIGNATURE = "Unknown"
+# Signatures per page when each carries a sparkline: 100 x (~186 daily buckets over 180 days
+# of alerts + 5 severities) stays under search.max_buckets (65,535)
+_SPARKLINE_SIGNATURE_PAGE = 100
+
+
+def _every_signature(
+    client, query: dict, aggs: dict | None = None, page_size: int = 1_000
+) -> list[dict]:
+    """Every rule.name bucket matching `query`, "key" = the name (#96).
+
+    A category is a pattern match on the name, so its totals need every signature, not a top list.
+    """
+    sources = [{"sig": {"terms": {"field": "rule.name", "missing_bucket": True}}}]
+    buckets, complete = all_buckets(
+        client, NETWORK_INDEX, query, sources, aggs, page_size=page_size
+    )
+    if not complete:
+        logger.warning("Alert signatures stopped at %d", len(buckets))
+    return [
+        {
+            **b,
+            "key": _UNKNOWN_SIGNATURE if b["key"]["sig"] is None else b["key"]["sig"],
+        }
+        for b in buckets
+    ]
+
+
+def _signature_filter(names) -> dict:
+    """Alerts whose rule.name is in `names` ("Unknown" also matches alerts without one)."""
+    should: list[dict] = [{"terms": {"rule.name": sorted(names)}}]
+    if _UNKNOWN_SIGNATURE in names:
+        should.append({"bool": {"must_not": {"exists": {"field": "rule.name"}}}})
+    return {"bool": {"should": should, "minimum_should_match": 1}}
+
+
+def _alerts_by_ip(
+    client, query: dict, field: str, sig_severity: dict[str, int]
+) -> dict[str, tuple[int, int]]:
+    """{ip: (alerts, worst severity)} for every `field` value among these signatures (#96).
+
+    The severity is the worst of the signatures the IP appears in, never above 4 (as before).
+    """
+    if not sig_severity:
+        return {}
+    by_sev: dict[int, list[str]] = defaultdict(list)
+    for name, sev in sig_severity.items():
+        by_sev[sev].append(name)
+    scoped = {"bool": {"filter": [query, _signature_filter(sig_severity)]}}
+    per_sev = {str(s): _signature_filter(names) for s, names in by_sev.items()}
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        scoped,
+        [{"ip": {"terms": {"field": field}}}],
+        {"sev": {"filters": {"filters": per_sev}}},
+    )
+    if not complete:
+        logger.warning("Alert %s values stopped at %d", field, len(buckets))
+    return {
+        b["key"]["ip"]: (
+            b.get("doc_count", 0),
+            min(
+                [4, *(int(s) for s, f in b["sev"]["buckets"].items() if f["doc_count"])]
+            ),
+        )
+        for b in buckets
+    }
 
 
 async def handle_alerts_categories(request: web.Request) -> web.Response:
@@ -887,31 +1009,53 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
                 "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
-        "aggs": {
-            "by_signature": {
-                "terms": {
-                    "field": "rule.name.keyword",
-                    "size": 500,
-                    "missing": "Unknown",
-                },
-                "aggs": {
-                    "by_severity": {
-                        "terms": {"field": "suricata.alert.severity", "size": 5}
-                    },
-                    "over_time": {
-                        "date_histogram": {
-                            "field": "@timestamp",
-                            "fixed_interval": interval,
-                            "min_doc_count": 0,
-                        }
-                    },
-                },
-            }
-        },
+        # OLD CODE START — #96: the top 500 signatures only; the rest fell out of every category
+        # "aggs": {
+        #     "by_signature": {
+        #         "terms": {
+        #             "field": "rule.name",
+        #             "size": 500,
+        #             "missing": "Unknown",
+        #         },
+        #         "aggs": {
+        #             "by_severity": {
+        #                 "terms": {"field": "suricata.alert.severity", "size": 5}
+        #             },
+        #             "over_time": {
+        #                 "date_histogram": {
+        #                     "field": "@timestamp",
+        #                     "fixed_interval": interval,
+        #                     "min_doc_count": 0,
+        #                 }
+        #             },
+        #         },
+        #     }
+        # },
+        # OLD CODE END
+    }
+    per_signature = {
+        "by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}},
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+        # "over_time": {
+        #     "date_histogram": {
+        #         "field": "@timestamp",
+        #         "fixed_interval": interval,
+        #         "min_doc_count": 0,
+        #     }
+        # },
+        # OLD CODE END
+        "over_time": time_slots(
+            from_ts, to_ts, interval
+        ),  # the sparkline interval fits any range
     }
 
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — #96: the top 500 signatures only; the rest fell out of every category
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE END
+        signatures = _every_signature(
+            client, query["query"], per_signature, _SPARKLINE_SIGNATURE_PAGE
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/categories: %s", exc)
         return web.json_response(
@@ -941,9 +1085,12 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
 
     sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
 
-    for bucket in (
-        result.get("aggregations", {}).get("by_signature", {}).get("buckets", [])
-    ):
+    # OLD CODE START — #96: the top 500 signatures only; the rest fell out of every category
+    # for bucket in (
+    #     result.get("aggregations", {}).get("by_signature", {}).get("buckets", [])
+    # ):
+    # OLD CODE END
+    for bucket in signatures:
         sig_name = bucket.get("key", "Unknown")
         doc_count = bucket.get("doc_count", 0)
 
@@ -962,7 +1109,8 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             entry["severity_breakdown"][sev_label] += sev_bucket.get("doc_count", 0)
 
         # Sparkline sub-agg
-        for time_bucket in bucket.get("over_time", {}).get("buckets", []):
+        # was bucket.get("over_time", {}).get("buckets", []) (date_histogram, #120)
+        for time_bucket in histogram_buckets(bucket.get("over_time")):
             ts_key = time_bucket.get("key_as_string", "")
             ts_count = time_bucket.get("doc_count", 0)
             if ts_key:
@@ -1081,29 +1229,44 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                 "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
-        "aggs": {
-            "by_signature": {
-                "terms": {
-                    "field": "rule.name.keyword",
-                    "size": 500,
-                    "missing": "Unknown",
-                },
-                "aggs": {
-                    "by_severity": {
-                        "terms": {"field": "suricata.alert.severity", "size": 5}
-                    },
-                    "by_src_ip": {"terms": {"field": "source.ip.keyword", "size": 50}},
-                    "by_dst_ip": {
-                        "terms": {"field": "destination.ip.keyword", "size": 50}
-                    },
-                    "latest": {"max": {"field": "@timestamp"}},
-                },
-            }
-        },
+        # OLD CODE START — #96: the top 500 signatures only; the rest fell out of the category
+        # "aggs": {
+        #     "by_signature": {
+        #         "terms": {
+        #             "field": "rule.name",
+        #             "size": 500,
+        #             "missing": "Unknown",
+        #         },
+        #         "aggs": {
+        #             "by_severity": {
+        #                 "terms": {"field": "suricata.alert.severity", "size": 5}
+        #             },
+        #             "by_src_ip": {"terms": {"field": "source.ip", "size": 50}},
+        #             "by_dst_ip": {"terms": {"field": "destination.ip", "size": 50}},
+        #             "latest": {"max": {"field": "@timestamp"}},
+        #         },
+        #     }
+        # },
+        # OLD CODE END
+    }
+    per_signature = {
+        "by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}},
+        # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+        # "by_src_ip": {"terms": {"field": "source.ip", "size": 50}},
+        # "by_dst_ip": {"terms": {"field": "destination.ip", "size": 50}},
+        # OLD CODE END
+        "latest": {"max": {"field": "@timestamp"}},
     }
 
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — #96: the top 500 signatures only; the rest fell out of the category
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE END
+        # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+        # # 500 x (5 + 50 + 50) sub-buckets stays under search.max_buckets (65,535)
+        # signatures = _every_signature(client, query["query"], per_signature, 500)
+        # OLD CODE END
+        signatures = _every_signature(client, query["query"], per_signature)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category detail: %s", exc)
         return web.json_response(
@@ -1115,15 +1278,23 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     total_count = 0
     severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     sub_cat_counts: dict[str, int] = {}
-    all_sources: set[str] = set()
-    all_targets: set[str] = set()
-    device_counts: dict[str, int] = {}  # ip → total alert count
-    device_severity: dict[str, int] = {}  # ip → worst severity (lowest = worst)
+    # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+    # all_sources: set[str] = set()
+    # all_targets: set[str] = set()
+    # device_counts: dict[str, int] = {}  # ip → total alert count
+    # device_severity: dict[str, int] = {}  # ip → worst severity (lowest = worst)
+    # OLD CODE END
+    sig_severity: dict[
+        str, int
+    ] = {}  # signature → primary severity, for the IP queries
     top_signatures: list[dict] = []
 
-    for bucket in (
-        result.get("aggregations", {}).get("by_signature", {}).get("buckets", [])
-    ):
+    # OLD CODE START — #96: the top 500 signatures only; the rest fell out of the category
+    # for bucket in (
+    #     result.get("aggregations", {}).get("by_signature", {}).get("buckets", [])
+    # ):
+    # OLD CODE END
+    for bucket in signatures:
         sig_name = bucket.get("key", "Unknown")
         doc_count = bucket.get("doc_count", 0)
 
@@ -1147,21 +1318,24 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
                 sig_name, int(sev_buckets[0].get("key", 4))
             )
 
-        # Source IPs — track per-device counts
-        for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
-            ip = src_b.get("key", "")
-            if ip:
-                all_sources.add(ip)
-                device_counts[ip] = device_counts.get(ip, 0) + src_b.get("doc_count", 0)
-                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
-
-        # Destination IPs — track per-device counts
-        for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
-            ip = dst_b.get("key", "")
-            if ip:
-                all_targets.add(ip)
-                device_counts[ip] = device_counts.get(ip, 0) + dst_b.get("doc_count", 0)
-                device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+        # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
+        # # Source IPs — track per-device counts
+        # for src_b in bucket.get("by_src_ip", {}).get("buckets", []):
+        #     ip = src_b.get("key", "")
+        #     if ip:
+        #         all_sources.add(ip)
+        #         device_counts[ip] = device_counts.get(ip, 0) + src_b.get("doc_count", 0)
+        #         device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+        #
+        # # Destination IPs — track per-device counts
+        # for dst_b in bucket.get("by_dst_ip", {}).get("buckets", []):
+        #     ip = dst_b.get("key", "")
+        #     if ip:
+        #         all_targets.add(ip)
+        #         device_counts[ip] = device_counts.get(ip, 0) + dst_b.get("doc_count", 0)
+        #         device_severity[ip] = min(device_severity.get(ip, 4), primary_sev)
+        # OLD CODE END
+        sig_severity[sig_name] = primary_sev
 
         # Sub-category
         sub_id = categorize_sub_category(sig_name, category)
@@ -1181,6 +1355,27 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         )
 
     top_signatures.sort(key=lambda s: s["count"], reverse=True)
+
+    # Every source and target IP of the category's signatures, with its alert count
+    try:
+        sources = _alerts_by_ip(client, query["query"], "source.ip", sig_severity)
+        targets = _alerts_by_ip(client, query["query"], "destination.ip", sig_severity)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in alert category IPs: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+    all_sources = set(sources)
+    all_targets = set(targets)
+    unseen = (0, 4)  # (no alerts, low)
+    device_counts = {
+        ip: sources.get(ip, unseen)[0] + targets.get(ip, unseen)[0]
+        for ip in all_sources | all_targets
+    }
+    device_severity = {
+        ip: min(sources.get(ip, unseen)[1], targets.get(ip, unseen)[1])
+        for ip in device_counts
+    }
 
     # Build sub-categories response
     sub_categories = []
@@ -1273,50 +1468,97 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
                 "must_not": _SURICATA_NOISE_EXCLUSION,
             }
         },
-        "aggs": {
-            "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {"min": from_ts, "max": to_ts},
-                },
-                "aggs": {
-                    "by_signature": {
-                        "terms": {"field": "rule.name.keyword", "size": 50}
-                    }
-                },
-            }
-        },
+        # OLD CODE START — #96: 50 signatures per time bucket; a busier hour's total lost the rest
+        # "aggs": {
+        #     "over_time": {
+        #         "date_histogram": {
+        #             "field": "@timestamp",
+        #             "fixed_interval": interval,
+        #             "min_doc_count": 0,
+        #             "extended_bounds": {"min": from_ts, "max": to_ts},
+        #         },
+        #         "aggs": {"by_signature": {"terms": {"field": "rule.name", "size": 50}}},
+        #     }
+        # },
+        # OLD CODE END
     }
 
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — #96: 50 signatures per time bucket; a busier hour's total lost the rest
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE END
+        # Count only this category's signatures, so each time bucket's doc_count is its total
+        names = [
+            b["key"]
+            for b in _every_signature(client, query["query"])
+            if categorize_alert(b["key"]) == category
+        ]
+        by_sub: dict[str, list[str]] = defaultdict(list)
+        for name in names:
+            sub_id = categorize_sub_category(name, category)
+            if sub_id:
+                by_sub[sub_id].append(name)
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+        # over_time: dict = {
+        #     "date_histogram": {
+        #         "field": "@timestamp",
+        #         "fixed_interval": interval,
+        #         "min_doc_count": 0,
+        #         "extended_bounds": {"min": from_ts, "max": to_ts},
+        #     }
+        # }
+        # OLD CODE END
+        over_time: dict = time_slots(from_ts, to_ts, interval)
+        if by_sub:
+            per_sub = {sub: _signature_filter(n) for sub, n in by_sub.items()}
+            over_time["aggs"] = {"by_sub": {"filters": {"filters": per_sub}}}
+        body = {
+            "size": 0,
+            "query": {"bool": {"filter": [query["query"], _signature_filter(names)]}},
+            "aggs": {"over_time": over_time},
+        }
+        result = client.search(index=NETWORK_INDEX, body=body)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in category timeline: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except ValueError:  # more slots than time_slots allows
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     series = []
-    for time_bucket in (
-        result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    # was result["aggregations"]["over_time"]["buckets"] (date_histogram, #120)
+    for time_bucket in histogram_buckets(
+        result.get("aggregations", {}).get("over_time")
     ):
         ts = time_bucket.get("key_as_string", "")
-        category_count = 0
-        sub_cat_breakdown: dict[str, int] = {}
-
-        for sig_bucket in time_bucket.get("by_signature", {}).get("buckets", []):
-            sig_name = sig_bucket.get("key", "Unknown")
-            sig_count = sig_bucket.get("doc_count", 0)
-
-            if categorize_alert(sig_name) == category:
-                category_count += sig_count
-                sub_id = categorize_sub_category(sig_name, category)
-                if sub_id:
-                    sub_cat_breakdown[sub_id] = (
-                        sub_cat_breakdown.get(sub_id, 0) + sig_count
-                    )
+        # OLD CODE START — #96: 50 signatures per time bucket; a busier hour's total lost the rest
+        # category_count = 0
+        # sub_cat_breakdown: dict[str, int] = {}
+        #
+        # for sig_bucket in time_bucket.get("by_signature", {}).get("buckets", []):
+        #     sig_name = sig_bucket.get("key", "Unknown")
+        #     sig_count = sig_bucket.get("doc_count", 0)
+        #
+        #     if categorize_alert(sig_name) == category:
+        #         category_count += sig_count
+        #         sub_id = categorize_sub_category(sig_name, category)
+        #         if sub_id:
+        #             sub_cat_breakdown[sub_id] = (
+        #                 sub_cat_breakdown.get(sub_id, 0) + sig_count
+        #             )
+        # OLD CODE END
+        category_count = time_bucket.get("doc_count", 0)
+        sub_cat_breakdown = {
+            sub: f.get("doc_count", 0)
+            for sub, f in time_bucket.get("by_sub", {}).get("buckets", {}).items()
+            if f.get("doc_count", 0)
+        }
 
         series.append(
             {

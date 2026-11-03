@@ -9,6 +9,7 @@ first), CR-018 (critical disk really stops pcap-capture) and MS-002
 
 import os
 import threading
+from collections import namedtuple
 from collections import deque
 from datetime import datetime, timedelta, timezone
 import subprocess
@@ -16,6 +17,8 @@ from unittest.mock import MagicMock, patch
 
 from storage.manager import RetentionConfig, StorageManager
 from storage.retention_config import RetentionConfigManager
+
+shutil_usage = namedtuple("usage", "total used free")
 
 
 def _make_manager(config: RetentionConfig, client=None) -> StorageManager:
@@ -360,3 +363,83 @@ class TestPcapAgeRetention:
             assert mgr.prune_expired_pcaps() == 0
 
         assert sum(r.levelname == "ERROR" for r in caplog.records) == 2
+
+
+# =========================================================================
+# #37: full capture, capped at a share of the disk (owner decision 2026-11-02)
+# =========================================================================
+
+
+def _disk(total: int):
+    return patch(
+        "storage.manager.shutil.disk_usage",
+        return_value=shutil_usage(total=total, used=0, free=total),
+    )
+
+
+class TestPcapDiskCap:
+    def _three_files(self, root):
+        # oldest -> newest: 300 + 200 + 100 = 600 bytes of PCAP
+        return [
+            _pcap(root / "a.pcap", 3, 300),
+            _pcap(root / "b.pcap", 2, 200),
+            _pcap(root / "c.pcap", 1, 100),
+        ]
+
+    def test_deletes_oldest_until_under_the_cap(self, tmp_path):
+        a, b, c = self._three_files(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, pcap_max_disk_fraction=0.25))
+        with _disk(800):  # cap = 200 bytes: 600 -> 300 -> 100
+            assert mgr.prune_pcaps_over_cap() == 2
+        assert (a.exists(), b.exists(), c.exists()) == (False, False, True)
+
+    def test_stops_as_soon_as_pcap_fits(self, tmp_path):
+        a, b, c = self._three_files(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, pcap_max_disk_fraction=0.25))
+        with _disk(1200):  # cap = 300 bytes: deleting the oldest (300) is enough
+            assert mgr.prune_pcaps_over_cap() == 1
+        assert (a.exists(), b.exists(), c.exists()) == (False, True, True)
+
+    def test_nothing_deleted_under_the_cap(self, tmp_path):
+        files = self._three_files(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, pcap_max_disk_fraction=0.25))
+        with _disk(10_000):  # cap = 2,500 bytes
+            assert mgr.prune_pcaps_over_cap() == 0
+        assert all(f.exists() for f in files)
+
+    def test_newest_file_is_kept_even_over_the_cap(self, tmp_path):
+        """netsniff may still be writing the newest file."""
+        *_, newest = self._three_files(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, pcap_max_disk_fraction=0.01))
+        with _disk(1000):  # cap = 10 bytes
+            assert mgr.prune_pcaps_over_cap() == 2
+        assert newest.exists()
+
+    def test_zero_turns_the_cap_off(self, tmp_path):
+        files = self._three_files(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, pcap_max_disk_fraction=0.0))
+        with _disk(100):
+            assert mgr.prune_pcaps_over_cap() == 0
+        assert all(f.exists() for f in files)
+
+    def test_run_cycle_applies_the_cap(self, tmp_path):
+        a, b, c = self._three_files(tmp_path)
+        mgr = _make_manager(_cfg(tmp_path, cold_days=30, pcap_max_disk_fraction=0.25))
+        mgr.check_disk_usage = MagicMock(return_value=0.10)
+        mgr.get_disk_prediction = MagicMock(return_value={})
+        with _disk(1200):
+            mgr.run_cycle()
+        assert not a.exists() and c.exists()
+
+    def test_env_sets_the_share(self, monkeypatch):
+        from storage.manager import _pcap_cap_fraction
+
+        for raw, expected in (
+            ("10", 0.10),
+            ("0", 0.0),
+            ("", 0.25),
+            ("lots", 0.25),
+            ("150", 0.25),
+        ):
+            monkeypatch.setenv("PCAP_MAX_DISK_PCT", raw)
+            assert _pcap_cap_fraction() == expected, raw

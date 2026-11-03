@@ -6,55 +6,47 @@ NetTap uses a three-tier storage architecture to balance retention needs with di
 
 ## Three-Tier Storage Architecture
 
-| Tier | Data | Default Retention | Daily Size | Compression |
-|---|---|---|---|---|
-| **Hot** | Zeek metadata logs | 90 days | 300--800 MB | ~8:1 (zstd) |
-| **Warm** | Suricata IDS alerts | 180 days | 10--50 MB | ~6:1 (zstd) |
-| **Cold** | PCAP captures (alert-triggered) | 30 days | Variable | ~3:1 (zstd) |
+| Tier | Data | Default Retention | Where it lives |
+|---|---|---|---|
+| **Hot** | Zeek logs **and** Suricata alerts | 90 days (`RETENTION_HOT`) | One daily OpenSearch index, `arkime_sessions3-YYMMDD` |
+| **Warm** | Separate `suricata-*` indices only | 180 days (`RETENTION_WARM`) | Not created by a Malcolm install, so this setting is normally unused |
+| **Cold** | PCAP captures (all traffic) | 30 days (`RETENTION_COLD`) | Files under `/opt/nettap/pcap`, capped at `PCAP_MAX_DISK_PCT` of the disk |
 
-### Hot Tier (Zeek Metadata)
+### Hot Tier (Zeek logs and Suricata alerts)
 
-Zeek generates structured JSON logs for every network connection: conn, DNS, HTTP, TLS, DHCP, SMTP, and file metadata. These logs are the richest source of network visibility data.
+Malcolm's Logstash writes every Zeek log (conn, DNS, HTTP, TLS, DHCP, SMTP, files) and every Suricata alert into the same daily index.
 
-- **Index pattern:** `zeek-*`
-- **Rollover:** At 10 GB or 1 day (whichever comes first)
-- **Retention:** 90 days by default (configurable via `RETENTION_HOT`)
-- **Action at expiry:** Automatic deletion
+- **Index pattern:** `arkime_sessions3-*` (plus `malcolm_beats_*` host data, if present)
+- **Retention:** 90 days by default (`RETENTION_HOT`). The whole daily index is deleted, so **alerts are kept exactly as long as Zeek logs**.
+- **Action at expiry:** automatic deletion by the `nettap-hot-policy` ISM policy.
 
-### Warm Tier (Suricata Alerts)
+### Warm Tier (separate Suricata indices)
 
-Suricata alert and protocol logs are kept longer because alert data is typically smaller and more valuable for historical investigation.
-
-- **Index pattern:** `suricata-*`
-- **Rollover:** At 5 GB or 1 day
-- **Optimization:** After 7 days, indices are force-merged to 1 segment and set to read-only (reduces resource usage)
-- **Retention:** 180 days by default (configurable via `RETENTION_WARM`)
-- **Action at expiry:** Automatic deletion
+The daemon keeps a warm retention setting for `suricata-*` indices, but a standard install never creates them: alerts go into the hot index above. To keep alerts longer, raise the hot retention.
 
 ### Cold Tier (PCAP Captures)
 
-Raw packet captures are stored for forensic analysis but consume significant disk space.
+netsniff-ng records all traffic to rotating PCAP files. They are files, not OpenSearch indices.
 
-- **Index pattern:** `arkime-*`, `pcap-*`
-- **Rollover:** At 20 GB or 1 day
-- **Retention:** 30 days by default (configurable via `RETENTION_COLD`)
-- **Action at expiry:** Automatic deletion
+- **Location:** `/opt/nettap/pcap` (rotated by `PCAP_ROTATE_MB` or every `PCAP_ROTATE_MIN` minutes)
+- **Retention:** 30 days by default (`RETENTION_COLD`)
+- **Disk cap:** PCAP files are capped at `PCAP_MAX_DISK_PCT` percent of the disk (default 25; 0 disables the cap). The storage daemon deletes the oldest files first.
+- **Action at expiry:** the storage daemon deletes the file.
 
 ---
 
 ## Index Lifecycle Management (ILM)
 
-OpenSearch ISM (Index State Management) policies automatically manage the lifecycle of each index tier. The policies are defined in `config/opensearch/ilm-policy.json` and applied automatically during installation.
+OpenSearch ISM (Index State Management) manages the hot indices. The daemon builds the policy from your retention settings (`daemon/storage/ilm_generator.py`) and applies it at startup and whenever retention is saved; `config/opensearch/ilm-policy.json` is the fallback.
 
 ### Policy Flow
 
 ```
-Hot state                   Warm state (alerts only)         Delete state
-  ├─ Rollover on size/age     ├─ Force merge to 1 segment     └─ Delete index
-  └─ Transition to next       ├─ Set read-only
-     state after N days        └─ Transition to delete
-                                  after N days
+nettap-hot-policy  (arkime_sessions3-*, malcolm_beats_*, zeek-*)
+  hot ── after RETENTION_HOT days ──> delete
 ```
+
+There is no rollover or force-merge: Malcolm already starts a new index each day.
 
 All policy actions include retry logic (3 attempts with exponential backoff) to handle transient OpenSearch errors.
 

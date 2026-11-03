@@ -370,6 +370,8 @@ write_env_assignments() {
         fi
     fi
 
+    # Holds SMTP_PASS once notifications are set up; only the installer (root) reads it
+    chmod 600 "$ENV_FILE"
     _set_env_value "WAN_INTERFACE" "$wan" "$ENV_FILE"
     _set_env_value "LAN_INTERFACE" "$lan" "$ENV_FILE"
     if [[ -n "$mgmt" ]]; then

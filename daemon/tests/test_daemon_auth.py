@@ -145,7 +145,9 @@ def _make_full_app(tmp_dir: str) -> web.Application:
     from api.server import create_app
     from storage.manager import RetentionConfig, StorageManager
 
-    with patch.object(StorageManager, "_create_client", return_value=MagicMock()):
+    # An empty reply, not a MagicMock: LAN detection pages until a reply has no after_key (#96)
+    client = MagicMock(**{"search.return_value": {}})
+    with patch.object(StorageManager, "_create_client", return_value=client):
         storage = StorageManager(RetentionConfig(), "http://localhost:9200")
     with (
         patch.dict(

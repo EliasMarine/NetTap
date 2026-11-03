@@ -87,3 +87,74 @@ describe('Device detail — suppress smart alert', () => {
 		expect(screen.queryByText('Suppress failed. Try again.')).not.toBeInTheDocument();
 	});
 });
+
+describe('Device detail — time range (#87)', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const HOUR = 3_600_000;
+	function spanHours(opts: { from?: string; to?: string }): number {
+		return (Date.parse(opts.to ?? '') - Date.parse(opts.from ?? '')) / HOUR;
+	}
+
+	it('asks for the last 24 h by default and 7 days after clicking 7d, on every request', async () => {
+		const devices = await import('$api/devices');
+		render(Page);
+		await flush();
+		expect(spanHours(vi.mocked(devices.getDeviceDetail).mock.calls[0][1] as never)).toBe(24);
+
+		vi.clearAllMocks();
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+		for (const fn of [
+			devices.getDeviceDetail,
+			devices.getDeviceCategories,
+			devices.getDevicePorts,
+			devices.getDeviceRiskScore,
+			devices.getDeviceConnections,
+		]) {
+			expect(vi.mocked(fn)).toHaveBeenCalledTimes(1);
+			expect(spanHours(vi.mocked(fn).mock.calls[0][1] as never)).toBe(168);
+		}
+		expect(spanHours(vi.mocked(getSmartAlerts).mock.calls[0][0] as never)).toBe(168);
+		// Connection pages reuse the fetch's window instead of sliding with the clock
+		const detailOpts = vi.mocked(devices.getDeviceDetail).mock.calls[0][1] as { from: string };
+		const connOpts = vi.mocked(devices.getDeviceConnections).mock.calls[0][1] as { from: string };
+		expect(connOpts.from).toBe(detailOpts.from);
+	});
+});
+
+// #96: getSmartAlerts turned an HTTP error into an empty list, so the card said "No actionable
+// alerts for this device" when the request had failed.
+describe('Device detail — smart alerts request fails', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('says the alerts could not be loaded and keeps the rest of the page', async () => {
+		vi.mocked(getSmartAlerts).mockRejectedValue(new Error('Smart alerts failed: HTTP 502'));
+		render(Page);
+		await flush();
+
+		expect(screen.getByText("Couldn't load alerts for this device: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No actionable alerts for this device.')).not.toBeInTheDocument();
+		expect(screen.getByText('check failed')).toBeInTheDocument();
+		expect(screen.getAllByText('laptop').length).toBeGreaterThan(0);
+	});
+
+	it('still says there are none when the request succeeds empty', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('No actionable alerts for this device.')).toBeInTheDocument();
+	});
+});

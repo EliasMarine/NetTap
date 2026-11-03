@@ -66,6 +66,8 @@ export interface FleetDevice {
 	behavior_score: number;
 	anomaly_count: number;
 	encryption_pct: number;
+	/** False when only local chatter (DNS, mDNS, NTP, ...) was seen: encryption is N/A */
+	encryption_applicable?: boolean;
 	tracker_count: number;
 	last_seen: string | null;
 }
@@ -85,6 +87,8 @@ export interface PrivacyDevice {
 	telemetry_bytes: number;
 	third_party_orgs: number;
 	encryption_ratio: number;
+	/** False when only local chatter was seen: the ratio is N/A, not 100% */
+	encryption_applicable?: boolean;
 	phone_home_per_hour: number;
 }
 

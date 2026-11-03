@@ -69,15 +69,10 @@ describe('logs API client', () => {
 			expect(result.total_bytes).toBe(1073741824);
 		});
 
-		it('returns zeros on failure', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getLogStats();
-
-			expect(result.total_events).toBe(0);
-			expect(result.unique_sources).toBe(0);
-			expect(result.protocol_count).toBe(0);
-			expect(result.total_bytes).toBe(0);
+			await expect(getLogStats()).rejects.toThrow('HTTP 502');
 		});
 
 		it('passes time range parameters', async () => {
@@ -113,13 +108,10 @@ describe('logs API client', () => {
 			expect(result.buckets[0].conn).toBe(50);
 		});
 
-		it('returns empty buckets on failure', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getLogTimeline();
-
-			expect(result.buckets).toEqual([]);
-			expect(result.interval).toBe('1h');
+			await expect(getLogTimeline()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes interval parameter', async () => {
@@ -152,12 +144,10 @@ describe('logs API client', () => {
 			expect(result.talkers[0].ip).toBe('192.168.1.100');
 		});
 
-		it('returns empty talkers on failure', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getLogTopTalkers();
-
-			expect(result.talkers).toEqual([]);
+			await expect(getLogTopTalkers()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes limit parameter', async () => {
@@ -190,12 +180,10 @@ describe('logs API client', () => {
 			expect(result.protocols[0].protocol).toBe('conn');
 		});
 
-		it('returns empty protocols on failure', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getLogProtocolBreakdown();
-
-			expect(result.protocols).toEqual([]);
+			await expect(getLogProtocolBreakdown()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes time range parameters', async () => {
@@ -230,12 +218,10 @@ describe('logs API client', () => {
 			expect(result.destinations[0].ip).toBe('8.8.8.8');
 		});
 
-		it('returns empty destinations on failure', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getLogTopDestinations();
-
-			expect(result.destinations).toEqual([]);
+			await expect(getLogTopDestinations()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes limit parameter', async () => {
@@ -268,12 +254,10 @@ describe('logs API client', () => {
 			expect(result.queries[0].domain).toBe('google.com');
 		});
 
-		it('returns empty queries on failure', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getLogTopDns();
-
-			expect(result.queries).toEqual([]);
+			await expect(getLogTopDns()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes limit parameter', async () => {
