@@ -206,6 +206,14 @@ class TestHappyPath:
         )
         assert pull[pull.index("-p") + 1] == "docker" and "sha256:daemonimage" in pull
 
+    def test_every_helper_runs_as_root(self, tmp_path):
+        # the daemon image's USER is nettap; only compose's user: root makes the daemon root,
+        # and nettap can't use docker.sock, write docker/.env or copy OpenSearch's files
+        docker = FakeDocker()
+        _apply(_upgrade(docker, tmp_path=tmp_path))
+        helpers = [c for c in docker.calls if c[:2] == ["docker", "run"]]
+        assert helpers and all(c[c.index("--user") + 1] == "root" for c in helpers)
+
 
 class TestNothingChangesBeforeTheStop:
     @pytest.mark.parametrize("fail", ["pull", "build"])

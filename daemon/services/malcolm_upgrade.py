@@ -351,6 +351,8 @@ class MalcolmUpgrade:
             "docker",
             "run",
             "--rm",
+            "--user",
+            "root",  # the image's USER is nettap: no docker.sock, docker/.env or data access
             "--entrypoint",
             "docker",
             "-v",
@@ -377,6 +379,8 @@ class MalcolmUpgrade:
             "docker",
             "run",
             "--rm",
+            "--user",
+            "root",  # the image's USER is nettap: no docker.sock, docker/.env or data access
             "--network",
             "none",
             "--entrypoint",
