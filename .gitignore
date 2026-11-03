@@ -54,3 +54,6 @@ config/malcolm/GeoLite2-*.mmdb
 .claude/worktrees/
 .playwright-mcp/
 web/test-results/
+# Codex plan-review transcripts and per-session handoff notes (the vault keeps the curated record)
+.codex-review/
+HANDOFF-*.md
