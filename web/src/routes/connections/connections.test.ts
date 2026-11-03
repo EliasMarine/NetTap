@@ -168,3 +168,34 @@ describe('Connections — failed requests', () => {
 		expect(screen.queryByText(/Couldn't load connections/)).not.toBeInTheDocument();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Sorting (G11 sort sweep): Source sorts by IP, then port, both as numbers
+// ---------------------------------------------------------------------------
+
+describe('Connections — sorting', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('orders Source by IP and then port', async () => {
+		const conn = (id: string, ip: string, port: number) => ({
+			_id: id, _index: 'arkime_sessions3-x', '@timestamp': '2026-10-29T10:00:00Z',
+			source: { ip, port }, destination: { ip: '8.8.8.8', port: 53 }, network: { transport: 'udp' },
+		});
+		vi.mocked(getConnections).mockResolvedValue({
+			from: '', to: '', page: 1, size: 50, total: 3, total_pages: 1,
+			connections: [conn('a', '192.168.1.10', 80), conn('b', '192.168.1.9', 50001), conn('c', '192.168.1.9', 443)],
+		});
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+		const { container } = render(Page);
+		await flush();
+		const header = [...container.querySelectorAll('th.sortable')].find((th) => th.textContent?.trim().startsWith('Source'))!;
+		const sources = () => [...container.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[1]?.textContent?.replace(/\s+/g, ''));
+
+		await fireEvent.click(header); // a new text column starts ascending
+		expect(sources()).toEqual(['192.168.1.9:443', '192.168.1.9:50001', '192.168.1.10:80']);
+		await fireEvent.click(header);
+		expect(sources()).toEqual(['192.168.1.10:80', '192.168.1.9:50001', '192.168.1.9:443']);
+	});
+});
