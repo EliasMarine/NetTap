@@ -58,9 +58,16 @@ _LOGSTASH_GEOIP_DB = (  # the jruby and gem versions vary between images
 #     "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
 # )
 # OLD CODE END
-_LOGSTASH_GEOIP_APPLIES_WITH = (
-    "Comes with Malcolm's Logstash image, so it updates with the Malcolm row."
-)
+# OLD CODE START — #136: read as if the Malcolm row would bring it when that row had
+# nothing to install (Malcolm already at the tested release)
+# _LOGSTASH_GEOIP_APPLIES_WITH = (
+#     "Comes with Malcolm's Logstash image, so it updates with the Malcolm row."
+# )
+# OLD CODE END
+_LOGSTASH_GEOIP_APPLIES_WITH = "Comes with Malcolm's Logstash image: a newer one arrives with a newer Malcolm release."
+# MaxMind publishes GeoLite2 at least weekly, so a database 7+ days old has a newer
+# release; its date isn't known without a MaxMind account, so none is made up (#136)
+_GEOIP_NEWER = "newer weekly release"
 # the update executor has no way to replace the running daemon and web containers
 NETTAP_APPLIES_WITH = "NetTap can't replace itself from this page: get the new release and rerun its install script."
 
@@ -182,7 +189,9 @@ class UpdateChecker:
             try:
                 all_updates.extend(await self._check_github_releases())
             except Exception as exc:
-                logger.warning("GitHub release check failed: %s", exc)
+                logger.warning(
+                    "GitHub release check failed: %r", exc
+                )  # a timeout's message is empty
                 self._failed_checks.append("nettap-daemon")
 
             # OLD CODE START — #96: checked Docker Hub malcolm/*, which isn't where the
@@ -482,7 +491,9 @@ class UpdateChecker:
         try:
             data = await self._fetch_json(_MALCOLM_RELEASE_URL)
         except Exception as exc:
-            logger.warning("Malcolm release check failed: %s", exc)
+            logger.warning(
+                "Malcolm release check failed: %r", exc
+            )  # a timeout's message is empty
         latest = (data.get("tag_name") or "").lstrip("v")
         if latest:
             self._malcolm_known = True
@@ -694,7 +705,10 @@ class UpdateChecker:
                     return AvailableUpdate(
                         component="geoip-db",
                         current_version=db_date.strftime("%Y-%m-%d"),
-                        latest_version=now.strftime("%Y-%m-%d"),
+                        # OLD CODE START — #136: today's date, not a release date
+                        # latest_version=now.strftime("%Y-%m-%d"),
+                        # OLD CODE END
+                        latest_version=_GEOIP_NEWER,
                         update_type="patch",
                         release_url="https://dev.maxmind.com/geoip/updating-databases",
                         release_date=now.isoformat(),
@@ -728,7 +742,10 @@ class UpdateChecker:
         return AvailableUpdate(
             component="geoip-db",
             current_version=db_date.strftime("%Y-%m-%d"),
-            latest_version=now.strftime("%Y-%m-%d"),
+            # OLD CODE START — #136: today's date, not a release date
+            # latest_version=now.strftime("%Y-%m-%d"),
+            # OLD CODE END
+            latest_version=_GEOIP_NEWER,
             update_type="patch",
             release_url="https://dev.maxmind.com/geoip/updating-databases",
             release_date=now.isoformat(),

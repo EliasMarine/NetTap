@@ -908,10 +908,18 @@ class TestGeoIPDatabaseInLogstash(unittest.TestCase):
         #     "Comes with Malcolm's Logstash image: update NetTap to get a newer one.",
         # )
         # OLD CODE END
+        # OLD CODE START — #136: the Malcolm row may have nothing to install
+        # self.assertEqual(
+        #     update.applies_with,
+        #     "Comes with Malcolm's Logstash image, so it updates with the Malcolm row.",
+        # )
+        # OLD CODE END
         self.assertEqual(
             update.applies_with,
-            "Comes with Malcolm's Logstash image, so it updates with the Malcolm row.",
+            "Comes with Malcolm's Logstash image: a newer one arrives with a newer Malcolm release.",
         )
+        # no made-up release date: today's date isn't when MaxMind published (#136)
+        self.assertEqual(update.latest_version, "newer weekly release")
         self.assertEqual(failed, [])
 
     def test_unreadable_container_is_a_failed_check_not_no_update(self):
