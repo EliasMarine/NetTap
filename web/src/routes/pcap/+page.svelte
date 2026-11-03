@@ -16,6 +16,7 @@
 		PcapSearchResult,
 		PcapPacket,
 	} from '$lib/api/pcap';
+	import { formatDuration } from '$lib/utils/tshark-helpers';
 	// OLD CODE START — getCaptureStatus fakes enabled: true when the request fails
 	// import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	// OLD CODE END
@@ -40,7 +41,10 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let selectedTimeRange = $state('24h');
+	// OLD CODE START — #137: a whole day is ~185 GB on a busy network, hours to search
+	// let selectedTimeRange = $state('24h');
+	// OLD CODE END
+	let selectedTimeRange = $state('1h');
 	let initialized = $state(false);
 
 	// Filter
@@ -56,7 +60,16 @@
 	// Search
 	let searchResults = $state<PcapSearchResult[]>([]);
 	let searchDone = $state(false);
-	let searchProgress = $state<{ checked: number; total: number; timedOut: number; failed: number; error: string } | null>(null);
+	let searchProgress = $state<{
+		checked: number;
+		total: number;
+		timedOut: number;
+		failed: number;
+		error: string;
+		bytesChecked: number;
+		bytesTotal: number;
+		secondsElapsed: number;
+	} | null>(null);
 	/** Bumped on every new search and on destroy so a stale poll loop exits. */
 	let searchRun = 0;
 	/** The scroll-to-preview timer; cleared on destroy, when `document` may be gone. */
@@ -205,10 +218,24 @@
 		} catch { return ts; }
 	}
 
+	// OLD CODE START — #137: a shorter range doesn't make a large file any faster
+	// function timedOutNote(n: number): string {
+	// 	return n === 1
+	// 		? '1 large file took longer than 5 minutes and was skipped \u2014 pick a shorter time range to search it.'
+	// 		: `${n} large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.`;
+	// }
+	// OLD CODE END
 	function timedOutNote(n: number): string {
 		return n === 1
-			? '1 large file took longer than 5 minutes and was skipped \u2014 pick a shorter time range to search it.'
-			: `${n} large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.`;
+			? "1 file took longer than 5 minutes and wasn't searched: any matches in it aren't counted."
+			: `${n} files took longer than 5 minutes each and weren't searched: any matches in them aren't counted.`;
+	}
+
+	/** Time left at this box's own pace so far (#137); none before the first file is done. */
+	function searchEta(p: { bytesChecked: number; bytesTotal: number; secondsElapsed: number }): string {
+		if (p.bytesChecked <= 0 || p.secondsElapsed <= 0) return '';
+		const left = (p.secondsElapsed * (p.bytesTotal - p.bytesChecked)) / p.bytesChecked;
+		return `, about ${formatDuration(Math.round(left))} left`;
 	}
 
 	function sortIndicator(active: boolean, dir: 'asc' | 'desc'): string {
@@ -285,6 +312,9 @@
 					// #96: files tshark couldn't read are not "no match"
 					failed: response.failed ?? 0,
 					error: response.error ?? '',
+					bytesChecked: response.bytes_checked ?? 0,
+					bytesTotal: response.bytes_total ?? 0,
+					secondsElapsed: response.seconds_elapsed ?? 0,
 				};
 				if (response.complete) {
 					searchDone = true;
@@ -602,7 +632,10 @@
 			{#if loading}
 				<p class="search-progress">
 					{#if searchProgress}
+						<!-- OLD CODE START — #137: no sizes or estimate
 						Checked {searchProgress.checked} of {searchProgress.total} files, newest first&hellip;
+						OLD CODE END -->
+						Checked {searchProgress.checked} of {searchProgress.total} files ({formatBytes(searchProgress.bytesChecked)} of {formatBytes(searchProgress.bytesTotal)}), newest first{searchEta(searchProgress)}&hellip;
 					{:else}
 						Starting search&hellip;
 					{/if}

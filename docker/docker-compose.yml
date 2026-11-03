@@ -1107,7 +1107,10 @@ services:
     volumes:
       - pcap-data:/pcap:ro
     mem_limit: 1g
-    cpus: 0.5
+    # OLD CODE START — #137: a whole-file search read ~11 MB/s at 0.5 CPU
+    # cpus: 0.5
+    # OLD CODE END
+    cpus: 1.0  # ~23 MB/s per search on the G11; tshark is single-threaded
     security_opt:
       - no-new-privileges:true
     cap_drop:

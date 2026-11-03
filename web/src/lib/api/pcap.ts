@@ -36,6 +36,10 @@ export interface PcapSearchResponse {
 	/** Files tshark couldn't read (counted in files_checked), and the first reason (#96). */
 	failed?: number;
 	error?: string | null;
+	/** Sizes and time so far, for the page's estimate (#137). */
+	bytes_total?: number;
+	bytes_checked?: number;
+	seconds_elapsed?: number;
 }
 
 export interface PcapPacket {

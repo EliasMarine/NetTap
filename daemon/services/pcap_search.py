@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,12 +45,13 @@ _FILTER_FORBIDDEN = re.compile(r"[;`$]")
 _PCAP_EXTENSIONS = {".pcap", ".pcapng", ".cap"}
 
 # Max concurrent TShark docker exec operations.  Shares the same
-# nettap-tshark container (cpus: 0.5) as TSharkService, so keep this
+# nettap-tshark container (cpus: 1.0) as TSharkService, so keep this
 # low to avoid thrashing the CPU budget and hitting timeouts.
 _MAX_CONCURRENT_TSHARK = 2
 
-# A search reads whole files (~45 s per 240 MB at the container's 0.5 CPU), so it runs
-# as a background job; each file gets this long before it counts as timed out.
+# A search reads whole files (~25 s per 576 MB at the container's 1 CPU on the G11), so it
+# runs as a background job; each file gets this long before it counts as timed out.
+# tshark needs ~120 MiB plus about the file's size: past the container's 1 GiB it is killed.
 _SEARCH_FILE_TIMEOUT = 300
 _TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
 
@@ -238,6 +240,11 @@ class PcapSearchService:
                 "failed": 0,
                 "error": None,
                 "complete": not pcaps,
+                # #137: sizes and time so far, for the page's estimate (no assumed rate)
+                "bytes_total": sum(p["size_bytes"] for p in pcaps),
+                "bytes_checked": 0,
+                "started": time.monotonic(),
+                "finished": None if pcaps else time.monotonic(),
             }
             self._search_task = (
                 asyncio.create_task(
@@ -258,6 +265,11 @@ class PcapSearchService:
             # #96: files tshark couldn't read, and the first reason, so they aren't "no match"
             "failed": job["failed"],
             "error": job["error"],
+            "bytes_total": job["bytes_total"],
+            "bytes_checked": job["bytes_checked"],
+            "seconds_elapsed": round(
+                (job["finished"] or time.monotonic()) - job["started"]
+            ),
         }
 
     async def _run_search_job(
@@ -287,10 +299,11 @@ class PcapSearchService:
                 "timed_out": job["timed_out"] + (count is None),
                 "failed": job["failed"] + (error is not None),
                 "error": job["error"] or error,
+                "bytes_checked": job["bytes_checked"] + pcap["size_bytes"],
             }
         job = self._search_job
         if job is not None and job["id"] == job_id:
-            self._search_job = {**job, "complete": True}
+            self._search_job = {**job, "complete": True, "finished": time.monotonic()}
 
     async def _count_matching_packets(
         self, pcap_file: str, bpf_filter: str, timeout: int = 45
@@ -308,7 +321,7 @@ class PcapSearchService:
             "docker",
             "exec",
             _TSHARK_CONTAINER,
-            # background searches share the container's 0.5 CPU with previews and
+            # background searches share the container's 1 CPU with previews and
             # analysis; lowest priority keeps those inside the web proxy's timeout
             "nice",
             "-n",
@@ -331,10 +344,21 @@ class PcapSearchService:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                started = time.monotonic()
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout + 10
                 )
 
+            # #137: a KILL before timeout's own deadline is the kernel's OOM killer, not a timeout
+            if proc.returncode == 137 and time.monotonic() - started < timeout:
+                try:
+                    size = f" ({round(os.path.getsize(pcap_file) / 1_000_000)} MB)"
+                except OSError:  # pruned meanwhile
+                    size = ""
+                logger.warning("tshark ran out of memory reading %s", pcap_file)
+                raise RuntimeError(
+                    f"tshark ran out of memory reading {os.path.basename(pcap_file)}{size}"
+                )
             if proc.returncode in _TIMEOUT_EXIT_CODES:
                 logger.warning("tshark timed out counting packets in %s", pcap_file)
                 return None
@@ -389,7 +413,7 @@ class PcapSearchService:
         """Extract matching packets for preview: {"packets": [...], "timed_out": bool}.
 
         timed_out means tshark ran out of time before reading the whole file or
-        finding `limit` matches (a busy multi-GB file at 0.5 CPU), so an empty or
+        finding `limit` matches (a busy multi-GB file at the container's CPU), so an empty or
         short list is not proof the file has no more matches.
 
         Runs tshark inside the nettap-tshark container via docker exec.

@@ -90,7 +90,7 @@ Complete reference for all environment variables used by NetTap. Set these in `/
 | Variable | Default | Description |
 |---|---|---|
 | `PCAP_IFACE` | `br0` | Network interface for packet capture |
-| `PCAP_ROTATE_MB` | `100` (the installer writes `4096` to `docker/.env`) | Rotate PCAP files at this size (MB) |
+| `PCAP_ROTATE_MB` | `100` (the installer writes `256` to `docker/.env`) | Rotate PCAP files at this size (MB); PCAP Search can't read files over ~700 MB |
 | `PCAP_ROTATE_MIN` | `10` | Rotate PCAP files at this interval (minutes) |
 | `PCAP_DIR` | `/opt/nettap/pcap` | Directory for PCAP file storage |
 | `ZEEK_LOCAL_NETS` | `192.168.0.0/16,10.0.0.0/8,172.16.0.0/12` | RFC 1918 local network definitions for Zeek |

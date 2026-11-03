@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+import services.pcap_search as pcap_search_mod
 from services.pcap_search import PcapSearchService
 
 
@@ -346,6 +347,24 @@ class TestBackgroundSearch:
         assert {r["matching_packets"] for r in done["results"]} == {2}
 
     @pytest.mark.asyncio
+    async def test_progress_reports_sizes_and_time_for_the_estimate(
+        self, service, fake_tshark
+    ):
+        # #137: the page estimates what's left from this box's own pace, not an assumed rate
+        first = await service.search_progress("dns")
+        sizes = sum(p["size_bytes"] for p in service.get_available_pcaps())
+        assert first["bytes_total"] == sizes > 0
+        assert first["bytes_checked"] == 0
+        assert first["seconds_elapsed"] >= 0
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["bytes_checked"] == done["bytes_total"]
+        assert (
+            done["seconds_elapsed"]
+            == (await service.search_progress("dns"))["seconds_elapsed"]
+        )
+
+    @pytest.mark.asyncio
     async def test_same_params_poll_the_same_job(self, service, fake_tshark):
         await service.search_progress("dns")
         task = service._search_task
@@ -363,6 +382,33 @@ class TestBackgroundSearch:
         assert old.cancelled() or old.done()
         await service._search_task
         assert (await service.search_progress("http"))["complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_out_of_memory_is_reported_as_such_not_as_a_timeout(
+        self, service, fake_tshark
+    ):
+        # #137: the kernel's KILL (137) before timeout's deadline: a 787 MB file in a 1 GiB container
+        fake_tshark.result = (b"", 137)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["timed_out"] == 0
+        assert done["failed"] == 3
+        assert done["error"].startswith("tshark ran out of memory reading ")
+        assert done["error"].endswith(" MB)")
+
+    @pytest.mark.asyncio
+    async def test_kill_at_timeouts_deadline_is_still_a_timeout(
+        self, service, fake_tshark, monkeypatch
+    ):
+        # timeout -k 5 sends KILL 5 s after its deadline: that 137 is a timeout
+        clock = iter(range(0, 100_000, 400))
+        monkeypatch.setattr(pcap_search_mod.time, "monotonic", lambda: next(clock))
+        fake_tshark.result = (b"", 137)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert (done["timed_out"], done["failed"]) == (3, 0)
 
     @pytest.mark.asyncio
     async def test_timed_out_files_are_reported_not_counted_as_no_match(

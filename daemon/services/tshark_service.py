@@ -62,7 +62,7 @@ ALLOWED_OUTPUT_FORMATS = {"json", "text", "pdml"}
 ALLOWED_FOLLOW_PROTOCOLS = {"", "tcp", "udp", "tls", "http"}
 
 # Max concurrent TShark docker exec operations.  The nettap-tshark container
-# is capped at 0.5 CPU; more than 2 simultaneous analyses thrash that budget
+# is capped at 1 CPU (0.5 before #137); more than 2 simultaneous analyses thrash it
 # and increase the chance of hitting the 30s timeout.
 MAX_CONCURRENT_ANALYSES = 2
 

@@ -421,7 +421,11 @@ RETENTION_COLD=${RETENTION_COLD:-30}
 DISK_THRESHOLD_PERCENT=${DISK_THRESHOLD_PERCENT:-80}
 
 # PCAP rotation
-PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-4096}
+# OLD CODE START — #137: tshark needs ~120 MiB + the file's size; PCAP Search couldn't
+# read 4 GB files in its 1 GiB container (a 787 MB file thrashed to the 5-minute limit)
+# PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-4096}
+# OLD CODE END
+PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-256}
 PCAP_ROTATE_MIN=${PCAP_ROTATE_MIN:-10}
 
 # Arkime

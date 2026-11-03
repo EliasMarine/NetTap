@@ -284,7 +284,10 @@ describe('PCAP page — search polling', () => {
 
 		await startSearch();
 
-		expect(screen.getByText(/Checked 5 of 53 files, newest first/)).toBeInTheDocument();
+		// OLD CODE START — #137: the progress line now carries sizes and an estimate
+		// expect(screen.getByText(/Checked 5 of 53 files, newest first/)).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText(/Checked 5 of 53 files \(.* of .*\), newest first/)).toBeInTheDocument();
 		expect(screen.queryByText('a.pcap')).not.toBeInTheDocument();
 		expect(screen.queryByText(/No matching packets/)).not.toBeInTheDocument();
 
@@ -348,12 +351,44 @@ describe('PCAP page — search polling', () => {
 
 		await startSearch();
 
+		// OLD CODE START — #137: a shorter range doesn't make a large file faster
+		// expect(
+		// 	screen.getByText(
+		// 		'2 large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.',
+		// 	),
+		// ).toBeInTheDocument();
+		// OLD CODE END
 		expect(
 			screen.getByText(
-				'2 large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.',
+				"2 files took longer than 5 minutes each and weren't searched: any matches in them aren't counted.",
 			),
 		).toBeInTheDocument();
 		expect(screen.getByText('a.pcap')).toBeInTheDocument();
+	});
+
+	it('estimates the time left from the pace so far, and none before the first file (#137)', async () => {
+		stubSearch([
+			searchBody({ files_checked: 0, bytes_total: 4 * 1_073_741_824, bytes_checked: 0, seconds_elapsed: 30 }),
+			searchBody({ files_checked: 1, bytes_total: 4 * 1_073_741_824, bytes_checked: 1_073_741_824, seconds_elapsed: 600 }),
+		]);
+
+		await startSearch();
+		expect(screen.getByText(/Checked 0 of 53 files \(0 B of 4\.0 GB\), newest first/)).toBeInTheDocument();
+		expect(screen.queryByText(/left/)).not.toBeInTheDocument();
+
+		await vi.advanceTimersByTimeAsync(3000);
+		// 1 GB in 600 s, 3 GB to go: 1800 s
+		expect(screen.getByText(/1\.0 GB of 4\.0 GB\), newest first, about 30m 0s left/)).toBeInTheDocument();
+	});
+
+	it('searches the last hour by default (#137)', async () => {
+		const urls = stubSearch([searchBody({ files_checked: 53, complete: true })]);
+
+		await startSearch();
+
+		const q = new URL(urls[0], 'http://x').searchParams;
+		const hours = (Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')) / 3_600_000;
+		expect(hours).toBe(1);
 	});
 
 	it('does not show the skipped-files note when nothing timed out', async () => {
