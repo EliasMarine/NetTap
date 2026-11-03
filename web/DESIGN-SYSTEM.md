@@ -236,7 +236,46 @@ Use the global `.card` class. Always include a `.card-header` with title.
 
 ### Sortable Data Tables (REQUIRED for ALL tables)
 
-**Every table in the application MUST be sortable.** Use this pattern:
+**Every table in the application MUST be sortable** — every column, both directions. Use the shared helper in `web/src/lib/utils/table-sort.svelte.ts`:
+
+```typescript
+import { TableSort } from '$lib/utils/table-sort.svelte';
+
+// starts on 'bytes', descending; clicking the same column flips it, a new column starts descending
+const sort = new TableSort<'name' | 'ip' | 'bytes'>('bytes');
+
+// value(row, key) returns what to sort by; blanks (null, undefined, '') go last both ways
+let sorted = $derived(sort.apply(items, (row, key) => row[key]));
+```
+
+```html
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th class="sortable" class:sorted={sort.key === 'name'} onclick={() => sort.toggle('name')}>
+          Name<span class="sort-arrow">{sort.arrow('name')}</span>
+        </th>
+        <!-- more columns -->
+      </tr>
+    </thead>
+    <tbody>
+      {#each sorted as item}
+        <tr><!-- cells --></tr>
+      {/each}
+    </tbody>
+  </table>
+</div>
+```
+
+**Comparing values:** a hand-written comparator must use `compareValues(a, b)` from the same file, never `localeCompare` or `<`. Those order text character by character, so `10.10.0.235` lands before `10.10.0.26`, port `80` before `8`, and tshark's `0.000123` after `0.01`. `compareValues` compares numbers (and numeric text) by value and orders the numbers inside text as numbers.
+
+**Sort the rows that exist, not the rows on screen:** when a table is paginated by the daemon, sorting one page is wrong. Send `sort`/`order` to the API and sort in the OpenSearch query instead (see `_connection_sort` in `daemon/api/devices.py` and the Connections table on the device page).
+
+**Rank labels, don't spell them:** severity and risk columns sort by a rank map (`{ critical: 4, high: 3, medium: 2, low: 1 }`), so the first (descending) click puts the worst on top.
+
+<details>
+<summary>Previous pattern (kept for reference; text compare was wrong for IPs and numbers)</summary>
 
 ```typescript
 let sortField = $state('column_name');
@@ -285,6 +324,8 @@ let sorted = $derived(
 </div>
 ```
 
+</details>
+
 ```css
 .table-wrap {
   overflow-x: auto;
@@ -310,7 +351,7 @@ let sorted = $derived(
 
 .sort-arrow {
   color: var(--accent);
-  margin-left: 2px;
+  margin-left: var(--space-xs);
 }
 ```
 
