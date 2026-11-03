@@ -298,6 +298,15 @@ class TestGetDevice:
         result = registry.get_device("FF:FF:FF:FF:FF:FF")
         assert result is None
 
+    def test_get_device_error_raises_not_none(self, registry, mock_client):
+        """#96: a failed lookup answered "Device not found" (404)."""
+        from opensearchpy import ConnectionTimeout
+
+        mock_client.get.side_effect = ConnectionTimeout("TIMEOUT", "timed out", None)
+
+        with pytest.raises(ConnectionTimeout):
+            registry.get_device("AA:BB:CC:DD:EE:FF")
+
 
 # ---------------------------------------------------------------------------
 # Get all devices
@@ -326,14 +335,14 @@ class TestGetAllDevices:
         result = registry.get_all_devices()
         assert result == []
 
-    def test_get_all_devices_error(self, registry, mock_client):
-        """Should return empty list on OpenSearch error."""
+    def test_get_all_devices_error_raises(self, registry, mock_client):
+        """#96: a failed list raises; [] read as "no devices known"."""
         from opensearchpy import OpenSearchException
 
         mock_client.search.side_effect = OpenSearchException("test error")
 
-        result = registry.get_all_devices()
-        assert result == []
+        with pytest.raises(OpenSearchException):
+            registry.get_all_devices()
 
 
 # ---------------------------------------------------------------------------
@@ -376,9 +385,59 @@ class TestGetDeviceTraffic:
         assert result["connection_count"] == 42
         assert "tcp" in result["protocols"]
         assert len(result["top_destinations"]) == 1
+        # DNS/SSL logs and Suricata alerts share source.mac; only connections count
+        filters = mock_client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
+        assert {"term": {"event.dataset": "conn"}} in filters
 
-    def test_get_device_traffic_error(self, registry, mock_client):
-        """Should return empty summary on OpenSearch error."""
+    def test_get_device_traffic_has_what_the_mac_page_shows(
+        self, registry, mock_client
+    ):
+        """#89: the MAC page shows in/out bytes, bytes per destination and protocol counts.
+
+        Without them it read "0 in / 0 out" and drew every destination bar as 0 bytes.
+        """
+        mock_client.get.return_value = {
+            "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}
+        }
+        mock_client.search.return_value = {
+            "hits": {"total": {"value": 42}},
+            "aggregations": {
+                "total_bytes": {"value": 1500},
+                "outbound_bytes": {"value": 500},
+                "inbound_bytes": {"value": 1000},
+                "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
+                "top_destinations": {
+                    "buckets": [
+                        {"key": "8.8.8.8", "doc_count": 10, "bytes": {"value": 1000}},
+                    ]
+                },
+            },
+        }
+
+        result = registry.get_device_traffic(
+            "AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
+
+        assert result["inbound_bytes"] == 1000
+        assert result["outbound_bytes"] == 500
+        assert result["top_destinations"] == [
+            {"ip": "8.8.8.8", "connections": 10, "bytes": 1000}
+        ]
+        assert result["top_protocols"] == [{"name": "tcp", "count": 30}]
+        aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
+        assert aggs["outbound_bytes"] == {
+            "sum": {"field": "source.bytes", "missing": 0}
+        }
+        assert aggs["inbound_bytes"] == {
+            "sum": {"field": "destination.bytes", "missing": 0}
+        }
+        # ranked by the bytes the page draws, not by connection count
+        assert aggs["top_destinations"]["terms"]["order"] == {"bytes": "desc"}
+        # #90: ranking by a sum is only exact when each shard returns every destination
+        assert aggs["top_destinations"]["terms"]["shard_size"] >= 10_000
+
+    def test_get_device_traffic_error_raises(self, registry, mock_client):
+        """#96: a failed query raises; zeros read as a device with no traffic."""
         mock_client.get.return_value = {
             "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}
         }
@@ -386,14 +445,12 @@ class TestGetDeviceTraffic:
 
         mock_client.search.side_effect = OpenSearchException("test error")
 
-        result = registry.get_device_traffic(
-            "AA:BB:CC:DD:EE:FF",
-            "2026-01-01T00:00:00Z",
-            "2026-01-02T00:00:00Z",
-        )
-
-        assert result["total_bytes"] == 0
-        assert result["connection_count"] == 0
+        with pytest.raises(OpenSearchException):
+            registry.get_device_traffic(
+                "AA:BB:CC:DD:EE:FF",
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +478,15 @@ class TestSearchDevices:
 
         result = registry.search_devices("nonexistent")
         assert result == []
+
+    def test_search_error_raises(self, registry, mock_client):
+        """#96: [] read as "no device matches"."""
+        from opensearchpy import OpenSearchException
+
+        mock_client.search.side_effect = OpenSearchException("test error")
+
+        with pytest.raises(OpenSearchException):
+            registry.search_devices("192.168.1")
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +623,28 @@ class TestDHCPEnrichment:
         assert count == 1
         # Verify index was called (device was registered)
         assert mock_client.index.called
+
+    def test_enrich_from_dhcp_skips_unassigned_address(self, registry, mock_client):
+        """#26: a DISCOVER's 0.0.0.0 source is not the device's IP."""
+        from opensearchpy import NotFoundError
+
+        mock_client.get.side_effect = NotFoundError(404, "not found", {})
+        mock_client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "source": {"mac": "2A:37:F4:D9:20:F5", "ip": "0.0.0.0"},
+                            "dhcp": {"id": "d1"},
+                        }
+                    }
+                ]
+            }
+        }
+
+        registry.enrich_from_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+        assert mock_client.index.call_args.kwargs["body"]["ips"] == []
 
     def test_enrich_from_dhcp_deduplicates(self, registry, mock_client):
         """Should not register the same MAC twice."""
@@ -951,3 +1039,34 @@ class TestIPTracking:
 
         result = registry.register_device(mac="AA:BB:CC:DD:EE:FF", ip="192.168.1.100")
         assert result["ips"].count("192.168.1.100") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/devices/registry",
+        "/api/devices/registry/AA:BB:CC:DD:EE:FF",
+        "/api/devices/registry/AA:BB:CC:DD:EE:FF/traffic",
+        "/api/devices/registry/search?q=192.168",
+    ],
+)
+async def test_registry_endpoints_answer_502_when_opensearch_fails(
+    registry, mock_client, path
+):
+    """#96: a failed query listed no devices, a known device as "not found", or zero traffic."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from opensearchpy import ConnectionTimeout
+
+    from api.devices_v2 import register_devices_v2_routes
+
+    mock_client.get.side_effect = ConnectionTimeout("TIMEOUT", "timed out", None)
+    mock_client.search.side_effect = ConnectionTimeout("TIMEOUT", "timed out", None)
+    app = web.Application()
+    register_devices_v2_routes(app, registry, MagicMock())
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get(path)
+        assert resp.status == 502
+        assert "error" in await resp.json()

@@ -338,8 +338,26 @@ class TestInitCaptureManager:
         mirror_cls = MagicMock()
         mirror_cls.return_value.setup = AsyncMock(side_effect=OSError("no nsenter"))
         monkeypatch.setattr("main.MirrorManager", mirror_cls)
+        monkeypatch.setattr("main._nic_in_use_problem", AsyncMock(return_value=None))
         mgr, _ = asyncio.run(init_capture_manager())
         assert isinstance(mgr, CaptureManagerStub)
+
+    def test_mirror_setup_skipped_when_nic_in_use(self, monkeypatch, tmp_path):
+        """CR-076: never flush a NIC the machine still uses (e.g. after a rename)."""
+        self._with_config(
+            monkeypatch,
+            tmp_path,
+            CaptureConfig(mode=CaptureMode.MIRROR, interface="enp2s0"),
+        )
+        mirror_cls = MagicMock()
+        mirror_cls.return_value.setup = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr("main.MirrorManager", mirror_cls)
+        guard = AsyncMock(return_value="carries this machine's internet connection")
+        monkeypatch.setattr("main._nic_in_use_problem", guard)
+        mgr, _ = asyncio.run(init_capture_manager())
+        guard.assert_awaited_once_with(None, "enp2s0")
+        mirror_cls.return_value.setup.assert_not_awaited()
+        assert mgr is mirror_cls.return_value
 
     def test_dhcp_mode_with_routing_runs_setup(self, monkeypatch, tmp_path):
         self._with_config(

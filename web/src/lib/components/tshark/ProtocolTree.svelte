@@ -42,11 +42,14 @@
 		for (const [layerName, layerData] of Object.entries(src)) {
 			// Skip internal metadata keys
 			if (layerName.startsWith('_ws.') || layerName === '_index' || layerName === '_type' || layerName === '_score') continue;
+			// -x adds a *_raw hex copy of every layer and field; the hex pane shows those bytes
+			if (layerName.endsWith('_raw')) continue;
 
 			const fields: Array<{ key: string; value: string }> = [];
 
 			if (layerData && typeof layerData === 'object' && !Array.isArray(layerData)) {
 				for (const [fieldKey, fieldVal] of Object.entries(layerData as Record<string, unknown>)) {
+					if (fieldKey.endsWith('_raw')) continue;
 					// Flatten nested objects into dot-separated keys
 					if (fieldVal && typeof fieldVal === 'object' && !Array.isArray(fieldVal)) {
 						for (const [subKey, subVal] of Object.entries(fieldVal as Record<string, unknown>)) {

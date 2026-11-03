@@ -60,13 +60,18 @@ export interface DeliveryLogResponse {
  * List all configured notification channels.
  */
 export async function getChannels(): Promise<ChannelsResponse> {
-	try {
-		const res = await fetch(`/api/notifications/channels`);
-		if (!res.ok) return { channels: [], count: 0 };
-		return res.json();
-	} catch {
-		return { channels: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failed request read as "No channels configured"
+	// try {
+	// 	const res = await fetch(`/api/notifications/channels`);
+	// 	if (!res.ok) return { channels: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { channels: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/notifications/channels`);
+	if (!res.ok) throw new Error(`Notification channels request failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
@@ -124,26 +129,36 @@ export async function testChannel(id: string): Promise<boolean> {
  * Get recent delivery log.
  */
 export async function getDeliveryLog(): Promise<DeliveryLogResponse> {
-	try {
-		const res = await fetch(`/api/notifications/log`);
-		if (!res.ok) return { log: [], count: 0 };
-		return res.json();
-	} catch {
-		return { log: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failed request read as "No delivery attempts yet"
+	// try {
+	// 	const res = await fetch(`/api/notifications/log`);
+	// 	if (!res.ok) return { log: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { log: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/notifications/log`);
+	if (!res.ok) throw new Error(`Notification delivery log request failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
  * List all routing rules.
  */
 export async function getRules(): Promise<RulesResponse> {
-	try {
-		const res = await fetch(`/api/notifications/rules`);
-		if (!res.ok) return { rules: [], count: 0 };
-		return res.json();
-	} catch {
-		return { rules: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failed request read as "No routing rules configured"
+	// try {
+	// 	const res = await fetch(`/api/notifications/rules`);
+	// 	if (!res.ok) return { rules: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { rules: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/notifications/rules`);
+	if (!res.ok) throw new Error(`Notification rules request failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**

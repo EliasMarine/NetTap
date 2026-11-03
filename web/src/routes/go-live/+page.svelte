@@ -58,6 +58,7 @@
 	// ----- Bypass state -----
 	let bypassToggling = $state(false);
 	let bypassConfirmOpen = $state(false);
+	let bypassError = $state('');
 
 	// ----- Interval IDs for cleanup -----
 	let readinessInterval: ReturnType<typeof setInterval> | undefined;
@@ -164,16 +165,27 @@
 
 	async function handleBypassToggle() {
 		bypassToggling = true;
+		bypassError = '';
 		try {
-			if (health?.bypass_active) {
-				await disableBypass();
-			} else {
-				await enableBypass();
+			// OLD CODE START — #96: a failed toggle ({ result: 'error' }) was ignored
+			// if (health?.bypass_active) {
+			// 	await disableBypass();
+			// } else {
+			// 	await enableBypass();
+			// }
+			// OLD CODE END
+			const wasActive = health?.bypass_active;
+			const res = wasActive ? await disableBypass() : await enableBypass();
+			if (res.result === 'error') {
+				bypassError = `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`;
 			}
 			// Refresh health
 			await fetchHealth();
 		} catch {
-			// Error will show from health refresh
+			// OLD CODE START — #96: a network error was swallowed
+			// // Error will show from health refresh
+			// OLD CODE END
+			bypassError = "Couldn't change bypass mode: the request failed.";
 		}
 		bypassToggling = false;
 		bypassConfirmOpen = false;
@@ -256,6 +268,8 @@
 					<span class="badge badge-muted">Checking...</span>
 				{:else if readiness?.ready}
 					<span class="badge badge-success">Ready</span>
+				{:else if !readiness}
+					<span class="badge badge-muted">Unknown</span>
 				{:else}
 					<span class="badge badge-warning">Not Ready</span>
 				{/if}
@@ -281,7 +295,10 @@
 				<p class="text-muted">No readiness checks returned. Is the daemon running?</p>
 			{/if}
 
+			<!-- OLD CODE START — #96: a failed readiness check read as "not created yet"
 			{#if !bridgeExists}
+			OLD CODE END -->
+			{#if readiness && !bridgeExists}
 				<div class="action-section">
 					<p class="text-muted">The bridge has not been created yet. Create it to proceed.</p>
 					{#if createError}
@@ -439,7 +456,10 @@
 					</div>
 					<div class="health-stat">
 						<span class="health-label">Latency</span>
+						<!-- OLD CODE START — read "null us" now that the daemon doesn't make up a latency
 						<span class="health-value">{health.latency_us} us</span>
+						OLD CODE END -->
+						<span class="health-value" title={health.latency_note || undefined}>{health.latency_us != null ? `${health.latency_us} us` : 'Not measured'}</span>
 					</div>
 					<div class="health-stat">
 						<span class="health-label">Uptime</span>
@@ -476,6 +496,7 @@
 				Go to Dashboard
 			</button>
 
+			<!-- #96: no bypass toggle while the bridge state is unknown -->
 			{#if health?.bypass_active}
 				<button
 					class="btn btn-lg"
@@ -488,12 +509,15 @@
 				<button
 					class="btn btn-danger btn-lg"
 					onclick={() => { bypassConfirmOpen = true; }}
-					disabled={bypassToggling}
+					disabled={bypassToggling || !health}
 				>
 					Enable Bypass
 				</button>
 			{/if}
 		</div>
+		{#if bypassError}
+			<div class="alert alert-danger">{bypassError}</div>
+		{/if}
 
 		<!-- Bypass confirmation dialog -->
 		{#if bypassConfirmOpen}

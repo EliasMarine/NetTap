@@ -5,15 +5,17 @@
 	 * Props:
 	 *   onsubmit  – callback fired when the user submits a filter string
 	 *   disabled  – whether the input and buttons are disabled
+	 *   onchange  – callback fired on every edit, so a parent's Analyze uses the typed filter
 	 */
 
 	interface Props {
 		onsubmit: (filter: string) => void;
 		disabled?: boolean;
 		value?: string;
+		onchange?: (filter: string) => void;
 	}
 
-	let { onsubmit, disabled = false, value = '' }: Props = $props();
+	let { onsubmit, disabled = false, value = '', onchange }: Props = $props();
 
 	// ---- State ----
 	let filterText = $state('');
@@ -95,6 +97,7 @@
 	// ---- Preset selection ----
 	function selectPreset(filter: string) {
 		filterText = filter;
+		onchange?.(filter);
 		showPresets = false;
 		validationStatus = 'idle';
 		validationMessage = '';
@@ -123,6 +126,7 @@
 				class="input filter-field"
 				placeholder="Enter display filter (e.g. http.request, dns, tcp.port == 443)"
 				bind:value={filterText}
+				oninput={() => onchange?.(filterText.trim())}
 				onkeydown={handleKeydown}
 				{disabled}
 			/>

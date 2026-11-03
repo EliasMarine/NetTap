@@ -18,11 +18,14 @@
 		connection,
 		detail = null,
 		detailLoading = false,
+		detailFailed = false,
 		activeTab,
 	}: {
 		connection: LiveConnection;
 		detail: ConnectionDetailResponse | null;
 		detailLoading: boolean;
+		/** #96: the detail request failed, so "no alerts" / "no history" would be false */
+		detailFailed?: boolean;
 		activeTab: string;
 	} = $props();
 
@@ -164,6 +167,10 @@
 				<span class="loading-spinner"></span>
 				<span class="loading-text">Loading alerts...</span>
 			</div>
+		{:else if detailFailed}
+			<div class="empty-section">
+				<span class="empty-label">Couldn't load alerts for this connection: the request failed.</span>
+			</div>
 		{:else if !detail?.alerts?.length}
 			<div class="empty-section">
 				<span class="empty-icon">&#x2714;</span>
@@ -190,6 +197,10 @@
 			<div class="loading-row">
 				<span class="loading-spinner"></span>
 				<span class="loading-text">Loading history...</span>
+			</div>
+		{:else if detailFailed}
+			<div class="empty-section">
+				<span class="empty-label">Couldn't load history for this connection: the request failed.</span>
 			</div>
 		{:else if !detail?.history?.timeline?.length}
 			<div class="empty-section">

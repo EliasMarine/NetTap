@@ -145,7 +145,10 @@ print('{SSHA}' + base64.b64encode(h + salt).decode())
         echo "${username}:${hash}" > "${auth_dir}/htpasswd"
     fi
 
-    chmod 644 "${auth_dir}/htpasswd"
+    # OLD CODE START — 644 for Malcolm's nginx-proxy, which NetTap no longer runs; no container mounts it
+    # chmod 644 "${auth_dir}/htpasswd"
+    # OLD CODE END
+    chmod 600 "${auth_dir}/htpasswd"
     log "Auth file created for user '${username}'"
 }
 
@@ -154,12 +157,28 @@ print('{SSHA}' + base64.b64encode(h + salt).decode())
 # Malcolm's entrypoint reads this file to set up the admin user and hashes
 # the password into internal_users.yml via setup-internal-users.sh.
 # ---------------------------------------------------------------------------
+# The OpenSearch login file is owned by the compose PUID with mode 600: Malcolm's entrypoints
+# drop to PUID before reading it, and no other local account can read it. Falls back to 644
+# (the old mode) only if the owner can't be changed, so OpenSearch never loses its login.
+_lock_curlrc() {
+    local file="$1" puid pgid
+    puid=$(grep -oE '^PUID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
+    pgid=$(grep -oE '^PGID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
+    if chown "${puid:-${SUDO_UID:-1000}}:${pgid:-${SUDO_GID:-1000}}" "$file" 2>/dev/null; then
+        chmod 600 "$file"
+    else
+        chmod 644 "$file"
+        warn "Could not give ${file} to the container user; it stays readable by every local account"
+    fi
+}
+
 generate_curlrc() {
     local curlrc_dir="${PROJECT_ROOT}/docker/curlrc"
     local curlrc_file="${curlrc_dir}/.opensearch.primary.curlrc"
 
     if [[ -f "$curlrc_file" ]]; then
         log "OpenSearch credentials already exist, skipping"
+        _lock_curlrc "$curlrc_file"  # earlier installs left it world-readable
         return 0
     fi
 
@@ -181,12 +200,16 @@ user: "malcolm_internal:${os_password}"
 insecure
 CURLRC
 
-    # File must be world-readable: Malcolm's entrypoint drops privileges to the
-    # opensearch user (PUID) BEFORE reading this file via setup-internal-users.sh.
-    # With root:root 600, the opensearch user cannot read the credentials, causing
-    # the security plugin to initialize without valid certs or users.
-    # The file is already in a gitignored directory and mounted :ro in containers.
-    chmod 644 "$curlrc_file"
+    # OLD CODE START — world-readable so the PUID user could read it, but so could every
+    # local account. root:root 600 broke OpenSearch (it reads as PUID); PUID-owned 600 doesn't.
+    # # File must be world-readable: Malcolm's entrypoint drops privileges to the
+    # # opensearch user (PUID) BEFORE reading this file via setup-internal-users.sh.
+    # # With root:root 600, the opensearch user cannot read the credentials, causing
+    # # the security plugin to initialize without valid certs or users.
+    # # The file is already in a gitignored directory and mounted :ro in containers.
+    # chmod 644 "$curlrc_file"
+    # OLD CODE END
+    _lock_curlrc "$curlrc_file"
     log "OpenSearch credentials generated in ${curlrc_dir}"
 }
 
@@ -361,7 +384,9 @@ generate_compose_env() {
 
 # Malcolm image settings
 MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
-MALCOLM_IMAGE_TAG=26.02.0
+MALCOLM_IMAGE_TAG=26.10.0
+# Malcolm's key-value store image for that release (Valkey since 26.04.0)
+MALCOLM_KV_IMAGE=valkey
 
 # Process ownership (must be non-root — OpenSearch refuses to run as UID 0)
 PUID=${puid}
@@ -396,7 +421,11 @@ RETENTION_COLD=${RETENTION_COLD:-30}
 DISK_THRESHOLD_PERCENT=${DISK_THRESHOLD_PERCENT:-80}
 
 # PCAP rotation
-PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-4096}
+# OLD CODE START — #137: tshark needs ~120 MiB + the file's size; PCAP Search couldn't
+# read 4 GB files in its 1 GiB container (a 787 MB file thrashed to the 5-minute limit)
+# PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-4096}
+# OLD CODE END
+PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-256}
 PCAP_ROTATE_MIN=${PCAP_ROTATE_MIN:-10}
 
 # Arkime

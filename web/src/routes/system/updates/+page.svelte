@@ -15,6 +15,7 @@
 		UpdateResult,
 	} from '$api/updates.js';
 	import Collapsible from '$lib/components/Collapsible.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -29,6 +30,26 @@
 	let loading = $state(true);
 	let checking = $state(false);
 	let applying = $state(false);
+	// #96: a failed request never reads as "Up to Date" or a finished update
+	let versionsFailed = $state(false);
+	let updatesFailed = $state(false);
+	let historyFailed = $state(false);
+	let actionError = $state('');
+	// sources the daemon couldn't reach while checking ("component-versions" = all of them)
+	let failedChecks = $state<string[]>([]);
+	// components the daemon's last check covered (null: an older daemon that doesn't say)
+	let checkedComponents = $state<string[] | null>(null);
+
+	// names a reader can follow; anything else is a component name, as in the table below
+	let failedChecksNote = $derived(
+		failedChecks.includes('component-versions')
+			? "Couldn't read the installed versions, so no component could be checked for updates."
+			: `Couldn't check ${failedChecks.join(', ')} for updates.`,
+	);
+
+	function checkFailed(key: string, name: string): boolean {
+		return updatesFailed || failedChecks.some((c) => c === key || c === name || c === 'component-versions');
+	}
 
 	// Update modal/panel state
 	let showUpdatePanel = $state(false);
@@ -44,7 +65,11 @@
 	// ---------------------------------------------------------------------------
 
 	const versionEntries = $derived.by(() => {
-		const entries = Object.entries(versions).map(([key, v]) => ({ key, ...v }));
+		// OLD CODE START — the daemon sends a list, so each key was its index ("0", "1"…) and no
+		// row ever matched its update: every row read "Up to Date" beside "7 updates available"
+		// const entries = Object.entries(versions).map(([key, v]) => ({ key, ...v }));
+		// OLD CODE END
+		const entries = Object.values(versions).map((v) => ({ key: v.name, ...v }));
 
 		if (sortBy === 'status') {
 			const statusOrder: Record<string, number> = { error: 0, unknown: 1, ok: 2 };
@@ -83,6 +108,8 @@
 	};
 
 	const updatesAvailableCount = $derived(availableUpdates.length);
+	// updates NetTap can apply here; the others say how they arrive (applies_with)
+	const applicableCount = $derived(availableUpdates.filter((u) => !u.applies_with).length);
 
 	const updatesMap = $derived.by(() => {
 		const map = new Map<string, AvailableUpdate>();
@@ -93,6 +120,25 @@
 	});
 
 	const selectedCount = $derived(selectedComponents.size);
+
+	// polling can stop before the daemon says the batch finished: that isn't "complete"
+	// a finished batch whose Malcolm update rolled back is "completed" too: its results decide
+	const finishedTitle = $derived(
+		updateStatus?.state === 'completed'
+			? updateStatus.results.some((r) => !r.success)
+				? 'Update Failed'
+				: 'Update Complete'
+			: updateStatus?.state === 'error'
+				? 'Update Failed'
+				: 'Update Not Confirmed',
+	);
+
+	// A Malcolm update takes 10–40 minutes, a rules update about one: poll every 3 s, give up after 3 hours
+	const POLL_INTERVAL_MS = 3000;
+	const MAX_POLLS = (3 * 60 * 60 * 1000) / POLL_INTERVAL_MS;
+	const MAX_POLL_FAILURES = 20;
+	// bumped to stop a running poll loop: a newer one took over, or the page closed
+	let pollRun = 0;
 
 	const successCount = $derived(
 		updateStatus?.results.filter((r) => r.success).length ?? 0
@@ -201,32 +247,62 @@
 
 	async function fetchAll() {
 		loading = true;
-		try {
-			const [versionsRes, updatesRes, historyRes] = await Promise.all([
-				getVersions(),
-				getAvailableUpdates(),
-				getUpdateHistory(),
-			]);
-			versions = versionsRes.versions;
-			lastScan = versionsRes.last_scan;
-			availableUpdates = updatesRes.updates;
-			lastCheck = updatesRes.last_check;
-			updateHistory = historyRes;
-		} catch {
-			// Keep existing state on error
-		} finally {
-			loading = false;
+		// OLD CODE START — #96: the getters faked empty lists on failure (every row read
+		// "Up to Date"), and one failure blanked the rest; they now throw
+		// try {
+		// 	const [versionsRes, updatesRes, historyRes] = await Promise.all([
+		// 		getVersions(),
+		// 		getAvailableUpdates(),
+		// 		getUpdateHistory(),
+		// 	]);
+		// 	versions = versionsRes.versions;
+		// 	lastScan = versionsRes.last_scan;
+		// 	availableUpdates = updatesRes.updates;
+		// 	lastCheck = updatesRes.last_check;
+		// 	updateHistory = historyRes;
+		// } catch {
+		// 	// Keep existing state on error
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const [versionsRes, updatesRes, historyRes] = await Promise.allSettled([
+			getVersions(),
+			getAvailableUpdates(),
+			getUpdateHistory(),
+		]);
+		if (versionsRes.status === 'fulfilled') {
+			versions = versionsRes.value.versions;
+			lastScan = versionsRes.value.last_scan;
 		}
+		if (updatesRes.status === 'fulfilled') {
+			availableUpdates = updatesRes.value.updates;
+			lastCheck = updatesRes.value.last_check;
+			failedChecks = updatesRes.value.failed_checks ?? [];
+			checkedComponents = updatesRes.value.checked ?? null;
+		}
+		if (historyRes.status === 'fulfilled') updateHistory = historyRes.value;
+		historyFailed = historyRes.status === 'rejected';
+		versionsFailed = versionsRes.status === 'rejected';
+		updatesFailed = updatesRes.status === 'rejected';
+		loading = false;
 	}
 
 	async function handleCheckForUpdates() {
 		checking = true;
+		actionError = '';
 		try {
 			const res = await checkForUpdates();
 			availableUpdates = res.updates;
 			lastCheck = new Date().toISOString();
+			updatesFailed = false;
+			failedChecks = res.failed_checks ?? [];
+			checkedComponents = res.checked ?? null;
 		} catch {
-			// Keep existing state
+			// OLD CODE START — #96: a failed check was silent
+			// // Keep existing state
+			// OLD CODE END
+			actionError = "Couldn't check for updates: the request failed.";
 		} finally {
 			checking = false;
 		}
@@ -238,7 +314,12 @@
 		updateCompleted = false;
 		updateStatus = null;
 		if (selectAll) {
-			selectedComponents = new Set(availableUpdates.map((u) => u.component));
+			// OLD CODE START — selected updates NetTap can't apply (applies_with)
+			// selectedComponents = new Set(availableUpdates.map((u) => u.component));
+			// OLD CODE END
+			selectedComponents = new Set(
+				availableUpdates.filter((u) => !u.applies_with).map((u) => u.component),
+			);
 		}
 	}
 
@@ -273,9 +354,24 @@
 		applying = true;
 		updateInProgress = true;
 		updateCompleted = false;
+		actionError = '';
 
 		try {
 			const status = await applyUpdates([...selectedComponents]);
+
+			// 409: another tab (or this one before a reload) already started an update; follow it
+			if (status.already_running) {
+				await followUpdate(status);
+				return;
+			}
+
+			// #96: the client answers a failed request with an empty 'error' status, which
+			// read as an "Update Complete" with no results
+			if (status.state === 'error' && status.results.length === 0) {
+				updateInProgress = false;
+				actionError = "Couldn't start the update: the request failed.";
+				return;
+			}
 			updateStatus = status;
 
 			// Poll for completion if in_progress
@@ -287,46 +383,123 @@
 			}
 		} catch {
 			updateInProgress = false;
-			updateCompleted = true;
+			// OLD CODE START — #96: a failed request read as a finished update
+			// updateCompleted = true;
+			// OLD CODE END
+			actionError = "Couldn't start the update: the request failed.";
 		} finally {
 			applying = false;
 		}
 	}
 
+	// OLD CODE START — the daemon applied updates before answering, so 2 minutes was the cap; it now
+	// answers at once and a Malcolm update runs 10–40 minutes
+	// async function pollUpdateStatus() {
+	// 	let attempts = 0;
+	// 	const maxAttempts = 120; // max 2 minutes of polling
+	//
+	// 	while (attempts < maxAttempts) {
+	// 		await new Promise((resolve) => setTimeout(resolve, 1000));
+	// 		attempts++;
+	//
+	// 		try {
+	// 			const status = await getUpdateStatus();
+	// 			updateStatus = status;
+	//
+	// 			if (status.state !== 'in_progress') {
+	// 				updateInProgress = false;
+	// 				updateCompleted = true;
+	// 				// Refresh versions after update completes
+	// 				await fetchAll();
+	// 				return;
+	// 			}
+	// 		} catch {
+	// 			// Continue polling on error
+	// 		}
+	// 	}
+	//
+	// 	updateInProgress = false;
+	// 	updateCompleted = true;
+	// 	// #96: the loop gave up without seeing the update finish
+	// 	actionError = "Couldn't confirm the update finished: its status didn't report completion within 2 minutes.";
+	// }
+	// OLD CODE END
 	async function pollUpdateStatus() {
-		let attempts = 0;
-		const maxAttempts = 120; // max 2 minutes of polling
+		const run = ++pollRun;
+		let failures = 0;
 
-		while (attempts < maxAttempts) {
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-			attempts++;
+		for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+			if (run !== pollRun) return;
 
+			let status: UpdateStatus;
 			try {
-				const status = await getUpdateStatus();
-				updateStatus = status;
-
-				if (status.state !== 'in_progress') {
-					updateInProgress = false;
-					updateCompleted = true;
-					// Refresh versions after update completes
-					await fetchAll();
-					return;
-				}
+				status = await getUpdateStatus();
 			} catch {
-				// Continue polling on error
+				// OpenSearch restarts during a Malcolm update, but the daemon should keep answering
+				if (++failures < MAX_POLL_FAILURES) continue;
+				updateInProgress = false;
+				updateCompleted = true;
+				actionError = 'Lost contact with NetTap while the update was running: reload the page to see where it got to.';
+				return;
 			}
+			if (run !== pollRun) return;
+			failures = 0;
+			updateStatus = status;
+			if (status.state === 'in_progress') continue;
+
+			updateInProgress = false;
+			updateCompleted = true;
+			if (status.state === 'error') {
+				actionError = "The update couldn't run: NetTap reported an error.";
+			} else if (status.state !== 'completed') {
+				// idle: the daemon restarted and lost track of the batch
+				actionError = "Couldn't confirm the update finished: NetTap stopped reporting it. Check the versions below.";
+			}
+			await fetchAll();
+			return;
 		}
 
 		updateInProgress = false;
 		updateCompleted = true;
+		actionError = "Couldn't confirm the update finished: it was still running after 3 hours. Reload the page to see where it got to.";
+	}
+
+	/** Show an update the daemon is running (started here, in another tab, or before a reload) and poll it. */
+	async function followUpdate(status: UpdateStatus) {
+		showUpdatePanel = true;
+		updateCompleted = false;
+		updateInProgress = true;
+		updateStatus = status;
+		selectedComponents = new Set(status.components);
+		await pollUpdateStatus();
+	}
+
+	async function resumeRunningUpdate() {
+		let status: UpdateStatus;
+		try {
+			status = await getUpdateStatus();
+		} catch {
+			// unknown is fine here: starting another update gets a 409, which follows the running one
+			return;
+		}
+		if (status.state === 'in_progress') await followUpdate(status);
 	}
 
 	async function handleRollback(component: string) {
+		actionError = '';
 		try {
-			await rollbackComponent(component);
+			// OLD CODE START — #96: a failed rollback ({ result: 'error' }) was ignored
+			// await rollbackComponent(component);
+			// OLD CODE END
+			const res = await rollbackComponent(component);
+			if (res.result === 'error') actionError = `Couldn't roll back ${component}: the request failed.`;
 			await fetchAll();
 		} catch {
-			// Keep existing state
+			// OLD CODE START — #96: a network error was swallowed
+			// // Keep existing state
+			// OLD CODE END
+			actionError = `Couldn't roll back ${component}: the request failed.`;
 		}
 	}
 
@@ -336,6 +509,10 @@
 
 	$effect(() => {
 		fetchAll();
+		resumeRunningUpdate();
+		return () => {
+			pollRun++;
+		};
 	});
 </script>
 
@@ -354,12 +531,20 @@
 			</div>
 			<h2>Software Updates</h2>
 			<p class="text-muted">
-				{#if lastCheck}
+				{#if updatesFailed}
+					Couldn't load the available updates: the request failed.
+				{:else if lastCheck}
 					Last checked: {timeAgo(lastCheck)}
 				{:else}
 					Updates have not been checked yet
 				{/if}
 			</p>
+			{#if failedChecks.length > 0}
+				<!-- OLD CODE START — showed "component-versions" as is, and blamed every failure on a source not answering
+				<p class="text-warning">Couldn't check {failedChecks.join(', ')}: those sources didn't answer.</p>
+				OLD CODE END -->
+				<p class="text-warning">{failedChecksNote}</p>
+			{/if}
 		</div>
 		<div class="header-actions">
 			<button
@@ -383,6 +568,10 @@
 			<p class="text-muted">Loading version information...</p>
 		</div>
 	{:else}
+		{#if actionError}
+			<div class="alert alert-danger">{actionError}</div>
+		{/if}
+
 		<!-- Update Banner -->
 		{#if updatesAvailableCount > 0 && !showUpdatePanel}
 			<div class="update-banner">
@@ -399,7 +588,12 @@
 							{updatesAvailableCount} update{updatesAvailableCount !== 1 ? 's' : ''} available
 						</span>
 						<span class="update-banner-subtitle">
-							Review and apply updates to keep your appliance secure and up to date.
+							<!-- was always "Review and apply…", also when none could be applied here -->
+							{#if applicableCount > 0}
+								Review and apply updates to keep your appliance secure and up to date.
+							{:else}
+								None of these can be applied from here: each one says how it arrives.
+							{/if}
 						</span>
 					</div>
 				</div>
@@ -407,9 +601,12 @@
 					<button class="btn btn-secondary btn-sm" onclick={() => openUpdatePanel(true)}>
 						Review
 					</button>
-					<button class="btn btn-primary btn-sm" onclick={() => openUpdatePanel(true)}>
-						Update All
-					</button>
+					<!-- was always shown: with nothing applicable it opened a panel with nothing to pick -->
+					{#if applicableCount > 0}
+						<button class="btn btn-primary btn-sm" onclick={() => openUpdatePanel(true)}>
+							Update All
+						</button>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -421,7 +618,10 @@
 					<div class="card-header">
 						<span class="card-title">
 							{#if updateCompleted}
+								<!-- OLD CODE START — read "Update Complete" also when polling stopped first
 								Update Complete
+								OLD CODE END -->
+								{finishedTitle}
 							{:else if updateInProgress}
 								Updating...
 							{:else}
@@ -506,6 +706,9 @@
 								></div>
 							</div>
 							<p class="progress-label mono">{updateStatus.progress_percent}% complete</p>
+							{#if updateStatus.current_step}
+								<p class="progress-label">{updateStatus.current_step}</p>
+							{/if}
 
 							<div class="component-status-list">
 								{#each [...selectedComponents] as component}
@@ -555,9 +758,11 @@
 								{#each availableUpdates as update}
 									<div class="component-check-item">
 										<label class="check-label">
+											<!-- applies_with: NetTap can't apply it, so it can't be picked -->
 											<input
 												type="checkbox"
-												checked={selectedComponents.has(update.component)}
+												checked={!update.applies_with && selectedComponents.has(update.component)}
+												disabled={!!update.applies_with}
 												onchange={() => toggleComponent(update.component)}
 											/>
 											<div class="check-info">
@@ -566,14 +771,23 @@
 													<span class={updateTypeBadgeClass(update.update_type)}>
 														{update.update_type}
 													</span>
-													{#if update.requires_restart}
+													{#if update.requires_restart && !update.applies_with}
 														<span class="badge badge-warning">Restart required</span>
 													{/if}
 												</div>
 												<span class="check-version mono">
 													{update.current_version} &rarr; {update.latest_version}
 												</span>
+												<!-- OLD CODE START — an unmeasured (null) size showed nothing; now it says so
 												{#if update.size_mb > 0}
+													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
+												{/if}
+												OLD CODE END -->
+												{#if update.applies_with}
+													<span class="check-size text-muted">{update.applies_with}</span>
+												{:else if update.size_mb == null}
+													<span class="check-size text-muted">size unknown</span>
+												{:else if update.size_mb > 0}
 													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
 												{/if}
 											</div>
@@ -681,18 +895,30 @@
 											<span class="badge badge-muted">Unknown</span>
 										{:else if update}
 											<span class="badge badge-warning">Update Available</span>
+										{:else if checkFailed(entry.key, entry.name)}
+											<span class="badge badge-muted">Unknown</span>
+										<!-- no check since the daemon started: no update listed doesn't mean none exists -->
+										{:else if !lastCheck || (checkedComponents && !checkedComponents.includes(entry.name))}
+											<!-- nothing checks the OS, Docker, Python…: no listed update doesn't make them current -->
+											<span class="badge badge-muted">Not checked</span>
 										{:else}
 											<span class="badge badge-success">Up to Date</span>
 										{/if}
 									</span>
 									<span class="vtcol-action">
+										<!-- OLD CODE START — offered Update for updates NetTap can't apply
 										{#if update}
+										OLD CODE END -->
+										{#if update && !update.applies_with}
 											<button
 												class="btn btn-secondary btn-xs"
 												onclick={() => openSingleUpdate(entry.key)}
 											>
 												Update
 											</button>
+										{:else if update?.applies_with}
+											<!-- was blank: say how this update arrives -->
+											<span class="applies-with text-xs">{update.applies_with}</span>
 										{/if}
 									</span>
 								</div>
@@ -702,7 +928,9 @@
 				{/if}
 			{/each}
 
-			{#if Object.keys(versions).length === 0}
+			{#if versionsFailed}
+				<p class="text-muted empty-state">Couldn't load installed versions: the request failed.</p>
+			{:else if Object.keys(versions).length === 0}
 				<p class="text-muted empty-state">No version information available. Click "Check for Updates" to scan.</p>
 			{/if}
 		</div>
@@ -742,6 +970,9 @@
 					{/each}
 				</div>
 			</Collapsible>
+		{/if}
+		{#if historyFailed}
+			<p class="text-warning">{loadFailed('the update history', updateHistory.length > 0)}</p>
 		{/if}
 	{/if}
 </div>
@@ -931,6 +1162,10 @@
 		align-items: flex-start;
 		gap: var(--space-sm);
 		cursor: pointer;
+	}
+
+	.check-label:has(input:disabled) {
+		cursor: default;
 	}
 
 	.check-label input[type='checkbox'] {
@@ -1179,7 +1414,10 @@
 
 	.version-table-header {
 		display: grid;
+		/* OLD CODE START — auto: an applies_with sentence squeezed the other columns
 		grid-template-columns: 2fr 1.5fr 1.5fr 1fr auto;
+		OLD CODE END */
+		grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1.5fr;
 		gap: var(--space-md);
 		padding: var(--space-xs) 0;
 		font-size: var(--text-xs);
@@ -1192,7 +1430,10 @@
 
 	.version-row {
 		display: grid;
+		/* OLD CODE START — auto: an applies_with sentence squeezed the other columns
 		grid-template-columns: 2fr 1.5fr 1.5fr 1fr auto;
+		OLD CODE END */
+		grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1.5fr;
 		gap: var(--space-md);
 		padding: var(--space-sm) 0;
 		align-items: center;
@@ -1231,6 +1472,11 @@
 	.vtcol-action {
 		display: flex;
 		justify-content: flex-end;
+	}
+
+	.applies-with {
+		color: var(--text-muted);
+		text-align: right;
 	}
 
 	.sort-controls {
@@ -1388,7 +1634,10 @@
 
 		.version-table-header,
 		.version-row {
+			/* OLD CODE START — auto: see .version-row
 			grid-template-columns: 1.5fr 1fr 1fr auto;
+			OLD CODE END */
+			grid-template-columns: 1.5fr 1fr 1fr 1fr;
 		}
 
 		.vtcol-latest {

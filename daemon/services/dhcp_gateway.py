@@ -12,9 +12,9 @@ State (see docs/plans/2026-10-30-dhcp-gateway-mode-design.md §5):
     ``disable`` turns off only the DHCP server; ``teardown`` removes everything.
 
 Architecture decisions:
-    - Host network commands go through ``nsenter -t 1 -n`` like the bridge
-      and mirror managers. dnsmasq and the DHCP probe run in the daemon
-      process, which already shares the host network namespace.
+    - Host network commands, dnsmasq and the DHCP probe all run directly in
+      the daemon process, which shares the host network namespace
+      (network_mode: host). nsenter was dropped 2026-11-01 (AppArmor).
     - Firewall rules live in Docker's DOCKER-USER chain (Docker's FORWARD
       policy is DROP) on whichever iptables backend has that chain.
     - Boot persistence does not depend on the daemon: netplan, sysctl, a

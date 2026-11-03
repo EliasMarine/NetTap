@@ -156,6 +156,44 @@ class TestUpdateRules:
         finally:
             loop.close()
 
+    def test_failed_reload_is_not_success(self, manager):
+        """#96: rules downloaded but not loaded into Suricata is not a success."""
+
+        async def run():
+            with patch("asyncio.create_subprocess_exec") as mock_exec:
+                update_proc = AsyncMock()
+                update_proc.returncode = 0
+                update_proc.communicate = AsyncMock(
+                    return_value=(b"30000 loaded", None)
+                )
+                reload_proc = AsyncMock()
+                reload_proc.returncode = 1
+                reload_proc.communicate = AsyncMock(
+                    return_value=(b'{"return": "NOK", "message": "busy"}', None)
+                )
+                mock_exec.side_effect = [update_proc, reload_proc]
+
+                result = await manager.update_rules()
+                assert result["success"] is False
+                assert "NOK" in result["reload_output"]
+
+        asyncio.run(run())
+
+    def test_reload_exception_is_not_success(self, manager):
+        async def run():
+            update_proc = AsyncMock()
+            update_proc.returncode = 0
+            update_proc.communicate = AsyncMock(return_value=(b"ok", None))
+            with patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=[update_proc, OSError("docker socket gone")],
+            ):
+                result = await manager.update_rules()
+            assert result["success"] is False
+            assert "Reload failed" in result["reload_output"]
+
+        asyncio.run(run())
+
     def test_failed_update(self, manager):
         async def run():
             with patch("asyncio.create_subprocess_exec") as mock_exec:
@@ -337,3 +375,138 @@ class TestCommercialConfig:
     def test_no_commercial_config(self, manager):
         config = manager.get_commercial_config()
         assert config is None
+
+
+# ---------------------------------------------------------------------------
+# Live status read from the Suricata container (#58)
+# ---------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+
+from services.suricata_rules import _LIVE_STATUS_SCRIPT, parse_live_status  # noqa: E402
+
+_LIVE_OUTPUT = """ENABLED 64307
+DISABLED 15954
+MTIME 1793577636
+SOURCE https://rules.emergingthreats.net/open/suricata-%(__version__)s/emerging.rules.tar.gz
+SOURCE https://sslbl.abuse.ch/blacklist/sslblacklist.rules
+CRON 0 0 * * *
+"""
+
+
+def _gnu_stat() -> bool:
+    return (
+        subprocess.run(["stat", "-c", "%Y", "/"], capture_output=True).returncode == 0
+    )
+
+
+class TestParseLiveStatus:
+    def test_reads_counts_refresh_sources_and_schedule(self):
+        status = parse_live_status(_LIVE_OUTPUT)
+        assert status["available"] is True
+        assert status["enabled_rules"] == 64307
+        assert status["disabled_rules"] == 15954
+        assert status["last_updated"] == "2026-11-02T00:00:36+00:00"
+        assert status["sources"] == [
+            "https://rules.emergingthreats.net/open/suricata-%(__version__)s/emerging.rules.tar.gz",
+            "https://sslbl.abuse.ch/blacklist/sslblacklist.rules",
+        ]
+        assert status["schedule"] == "0 0 * * *"
+        assert status["error"] is None
+
+    def test_no_rules_file(self):
+        assert parse_live_status("MISSING\n") == {
+            "available": False,
+            "error": "Suricata has no rules file yet.",
+        }
+
+    def test_unreadable_output_is_not_reported_as_zero_rules(self):
+        status = parse_live_status("grep: something broke\n")
+        assert status["available"] is False
+        assert status["error"]
+
+
+class TestGetLiveStatus:
+    def _run(self, coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_runs_one_bounded_exec_in_the_suricata_container(self, manager):
+        proc = AsyncMock()
+        proc.returncode = 0
+        proc.communicate = AsyncMock(return_value=(_LIVE_OUTPUT.encode(), b""))
+        with patch(
+            "asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
+        ) as mock_exec:
+            status = self._run(manager.get_live_status())
+        args = mock_exec.call_args.args
+        assert args[:4] == (
+            "docker",
+            "exec",
+            "test-suricata",
+            "timeout",
+        )  # timeout -k 5 N inside
+        assert args[-3:-1] == ("sh", "-c")
+        assert status["enabled_rules"] == 64307
+
+    def test_exec_failure_is_unavailable(self, manager):
+        proc = AsyncMock()
+        proc.returncode = 1
+        proc.communicate = AsyncMock(
+            return_value=(b"", b"Error: No such container: test-suricata")
+        )
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            status = self._run(manager.get_live_status())
+        assert status == {
+            "available": False,
+            "error": "Could not read Suricata's rules.",
+        }
+
+    def test_docker_missing_is_unavailable(self, manager):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=OSError("no docker")),
+        ):
+            status = self._run(manager.get_live_status())
+        assert status["available"] is False
+
+
+@pytest.mark.skipif(not _gnu_stat(), reason="the script runs on Linux (GNU stat)")
+class TestLiveStatusScript:
+    def test_script_against_sample_files(self, tmp_path):
+        rules = tmp_path / "suricata.rules"
+        rules.write_text(
+            'alert ip any any -> any any (msg:"a"; sid:1;)\n'
+            '# alert ip any any -> any any (msg:"b"; sid:2;)\n'
+            'drop ip any any -> any any (msg:"c"; sid:3;)\n'
+            "# a comment\n"
+        )
+        update = tmp_path / "update.yaml"
+        update.write_text(
+            "disable-conf: /etc/suricata/disable.conf\nsources:\n  - https://a.example/r.tar.gz\n"
+            "  - https://b.example/r.rules\nlocal:\n  - /etc/suricata/rules\n"
+        )
+        cron = tmp_path / "crontab"
+        cron.write_text("0 0 * * * /bin/bash /usr/local/bin/suricata-update-rules.sh\n")
+        script = (
+            _LIVE_STATUS_SCRIPT.replace(
+                "/var/lib/suricata/rules/suricata.rules", str(rules)
+            )
+            .replace("/etc/suricata/update.yaml", str(update))
+            .replace("/etc/crontab", str(cron))
+        )
+        out = subprocess.run(
+            ["sh", "-c", script], capture_output=True, text=True, check=True
+        ).stdout
+        status = parse_live_status(out)
+        assert status["enabled_rules"] == 2
+        assert status["disabled_rules"] == 1
+        assert status["sources"] == [
+            "https://a.example/r.tar.gz",
+            "https://b.example/r.rules",
+        ]
+        assert status["schedule"] == "0 0 * * *"
+        assert status["last_updated"]

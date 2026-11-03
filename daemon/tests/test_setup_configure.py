@@ -64,6 +64,7 @@ class _Base(AioHTTPTestCase):
         # Host network as seen by ``ip -j``: {iface: [cidr, ...]} and default routes
         self.host_addrs = {}
         self.host_routes = []
+        self.unreadable_links = set()  # ``ip -j link show dev X`` returns []
         self.patches = [
             patch.dict(
                 os.environ,
@@ -89,6 +90,8 @@ class _Base(AioHTTPTestCase):
         self.tmpdir.cleanup()
 
     async def _ip_json(self, *args):
+        if args[:2] == ("link", "show"):
+            return [] if args[3] in self.unreadable_links else [{"ifname": args[3]}]
         if args[:3] == ("-4", "route", "show"):
             return self.host_routes
         if args[:3] == ("-4", "addr", "show"):
@@ -404,6 +407,12 @@ class TestMirrorNicInUse(_Base):
         ]
         await self._assert_refused(await self._post(MIRROR_BODY), "default route")
 
+    async def test_refused_when_host_network_cannot_be_read(self):
+        """Fail closed: when ip can't read the NIC, the empty route/address
+        lists must not make it look spare (AppArmor blocked nsenter on Ubuntu)."""
+        self.unreadable_links = {"enp2s0"}
+        await self._assert_refused(await self._post(MIRROR_BODY), "was not found")
+
     async def test_refused_on_the_live_gateway_nic(self):
         gateway = _active_gateway(interface="enp2s0")
         self.app["capture_manager"] = gateway
@@ -421,6 +430,37 @@ class TestMirrorNicInUse(_Base):
         resp = await self._post(MIRROR_BODY)
         self.assertEqual(resp.status, 200)
         self.mirror_cls.assert_called_once()
+
+
+class TestRetentionSaveReported(_Base):
+    """#96: a failed retention.json write was only logged and setup said "ok"."""
+
+    STORAGE = {"hot_days": 30, "warm_days": 60, "cold_days": 15}
+
+    async def _post_with_save(self, save):
+        manager = MagicMock()
+        manager.return_value.save = save
+        with patch(f"{MODULE}.RetentionConfigManager", manager):
+            resp = await self._post({**MIRROR_BODY, "storage": self.STORAGE})
+        self.assertEqual(resp.status, 200)  # the capture settings still apply
+        return await resp.json()
+
+    async def test_failed_write_is_reported(self):
+        data = await self._post_with_save(
+            MagicMock(side_effect=OSError(30, "Read-only file system"))
+        )
+        self.assertEqual(data["status"], "partial")
+        self.assertEqual(len(data["warnings"]), 1)
+        self.assertIn("Retention settings were not saved", data["warnings"][0])
+        self.assertIn("Read-only file system", data["warnings"][0])
+        self.assertEqual(load_capture_config().mode, CaptureMode.MIRROR)
+
+    async def test_saved_retention_is_ok(self):
+        save = MagicMock()
+        data = await self._post_with_save(save)
+        save.assert_called_once_with(self.STORAGE)
+        self.assertEqual(data["status"], "ok")
+        self.assertNotIn("warnings", data)
 
 
 if __name__ == "__main__":

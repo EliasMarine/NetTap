@@ -18,8 +18,13 @@ export interface NotificationsResponse {
 export async function getNotifications(limit: number = 20): Promise<NotificationsResponse> {
 	const res = await fetch(`/api/notifications?limit=${limit}`);
 
+	// OLD CODE START — #96: a failed request read as "No notifications"
+	// if (!res.ok) {
+	// 	return { notifications: [], unreadCount: 0 };
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return { notifications: [], unreadCount: 0 };
+		throw new Error(`Notifications request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

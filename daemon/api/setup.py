@@ -328,6 +328,10 @@ async def _nic_in_use_problem(current, interface: str) -> str | None:
     ):
         return "is the network card DHCP gateway mode is routing your devices through"
     host = HostNetOps()
+    # Fail closed: ip_json returns [] on failure, which would read as "no route,
+    # no address" and pass any NIC (it did on Ubuntu while AppArmor blocked nsenter)
+    if not await host.ip_json("link", "show", "dev", interface):
+        return "was not found, or NetTap couldn't read its network settings"
     routes = await host.ip_json("-4", "route", "show", "default")
     addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
     if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
@@ -391,6 +395,7 @@ async def _apply_configuration(
 
         # Also write retention.json so the daemon picks it up on first start
         storage = body.get("storage")
+        warnings: list[str] = []
         if storage:
             try:
                 config_manager = RetentionConfigManager()
@@ -398,6 +403,8 @@ async def _apply_configuration(
                 logger.info("Wrote retention.json from setup wizard storage config")
             except (ValueError, OSError) as exc:
                 logger.warning("Failed to write retention.json from setup: %s", exc)
+                # #96: the rest of setup still applies; the response says what didn't
+                warnings.append(f"Retention settings were not saved: {exc}")
 
         ini_paths = [] if keep_gateway else [save_capture_config(capture_cfg)]
         # OLD CODE START — replaced 2026-10-30: helper moved to capture_config
@@ -425,10 +432,14 @@ async def _apply_configuration(
         )
         return web.json_response(
             {
-                "status": "ok",
+                # OLD CODE START — #96: "ok" even when retention.json wasn't written
+                # "status": "ok",
+                # OLD CODE END
+                "status": "partial" if warnings else "ok",
                 "capture_mode": capture_mode,
                 "files_written": files_written,
                 "capture_restart": capture_restart,
+                **({"warnings": warnings} if warnings else {}),
                 **({"dhcp_teardown": teardown} if teardown is not None else {}),
             }
         )
@@ -464,7 +475,7 @@ async def handle_bridge_preview(request: web.Request) -> web.Response:
 
     current = request.app.get("capture_manager")
     for iface in (wan, lan):
-        # Also fails closed when nsenter can't reach the host
+        # Also fails closed when ip can't read the host's interfaces
         if not await HostNetOps().ip_json("link", "show", "dev", iface):
             return web.json_response(
                 {"error": f"{iface} was not found on this machine."}, status=400

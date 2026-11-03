@@ -38,6 +38,8 @@ export interface CaptureStatsResponse {
 export interface CaptureStatus {
 	enabled: boolean;
 	maxFileSizeMB: number;
+	/** netsniff also starts a new file after this many minutes */
+	rotateMinutes?: number;
 	containerRunning: boolean;
 	containerStatus: string;
 }
@@ -92,15 +94,22 @@ export function captureState(status: CaptureStatus | null): CaptureState {
  * Get the current capture mode (bridge, mirror or dhcp_gateway).
  */
 export async function getCaptureMode(): Promise<CaptureMode> {
-	try {
-		const res = await fetch('/api/capture/mode');
-		if (!res.ok) {
-			return { mode: 'bridge', interface: '' };
-		}
-		return res.json();
-	} catch {
-		return { mode: 'bridge', interface: '' };
+	// OLD CODE START — #96: a failed request read as capture mode "Bridge"
+	// try {
+	// 	const res = await fetch('/api/capture/mode');
+	// 	if (!res.ok) {
+	// 		return { mode: 'bridge', interface: '' };
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { mode: 'bridge', interface: '' };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/capture/mode');
+	if (!res.ok) {
+		throw new Error(`Capture mode request failed: HTTP ${res.status}`);
 	}
+	return res.json();
 }
 
 /**
@@ -125,64 +134,61 @@ export async function fetchCaptureMode(): Promise<CaptureMode> {
  * Get capture health status.
  */
 export async function getCaptureHealth(): Promise<CaptureHealthResponse> {
-	try {
-		const res = await fetch('/api/capture/health');
-		if (!res.ok) {
-			return {
-				mode: 'bridge',
-				status: 'down',
-				capture_interface: '',
-				link_up: false,
-				promisc_enabled: false,
-				issues: ['Unable to reach capture health endpoint'],
-			};
-		}
-		return res.json();
-	} catch {
-		return {
-			mode: 'bridge',
-			status: 'down',
-			capture_interface: '',
-			link_up: false,
-			promisc_enabled: false,
-			issues: ['Unable to reach capture health endpoint'],
-		};
+	// OLD CODE START — #96: a failed request read as "Inline Bridge", status Down, link Down
+	// try {
+	// 	const res = await fetch('/api/capture/health');
+	// 	if (!res.ok) {
+	// 		return {
+	// 			mode: 'bridge',
+	// 			status: 'down',
+	// 			capture_interface: '',
+	// 			link_up: false,
+	// 			promisc_enabled: false,
+	// 			issues: ['Unable to reach capture health endpoint'],
+	// 		};
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { ...same 'down' default... };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/capture/health');
+	if (!res.ok) {
+		throw new Error(`Capture health request failed: HTTP ${res.status}`);
 	}
+	return res.json();
 }
 
 /**
  * Get capture interface statistics (drop counters, throughput).
  */
 export async function getCaptureStats(): Promise<CaptureStatsResponse> {
-	try {
-		const res = await fetch('/api/capture/stats');
-		if (!res.ok) {
-			return {
-				capture_interface: '',
-				rx_bytes: 0,
-				tx_bytes: 0,
-				rx_packets: 0,
-				tx_packets: 0,
-				rx_dropped: 0,
-				rx_missed_errors: 0,
-				link_speed_mbps: 0,
-				drop_rate_pct: 0,
-			};
-		}
-		return res.json();
-	} catch {
-		return {
-			capture_interface: '',
-			rx_bytes: 0,
-			tx_bytes: 0,
-			rx_packets: 0,
-			tx_packets: 0,
-			rx_dropped: 0,
-			rx_missed_errors: 0,
-			link_speed_mbps: 0,
-			drop_rate_pct: 0,
-		};
+	// OLD CODE START — #96: a failed request read as 0 packets dropped, 0.000% drop rate
+	// try {
+	// 	const res = await fetch('/api/capture/stats');
+	// 	if (!res.ok) {
+	// 		return {
+	// 			capture_interface: '',
+	// 			rx_bytes: 0,
+	// 			tx_bytes: 0,
+	// 			rx_packets: 0,
+	// 			tx_packets: 0,
+	// 			rx_dropped: 0,
+	// 			rx_missed_errors: 0,
+	// 			link_speed_mbps: 0,
+	// 			drop_rate_pct: 0,
+	// 		};
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { ...same all-zero default... };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/capture/stats');
+	if (!res.ok) {
+		throw new Error(`Capture stats request failed: HTTP ${res.status}`);
 	}
+	return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +208,25 @@ export async function getCaptureStatus(): Promise<CaptureStatus> {
 	} catch {
 		return { ...DEFAULT_STATUS };
 	}
+}
+
+/**
+ * Get capture status, throwing on any failure instead of returning defaults.
+ * For forms that save what they load (Settings): a guessed 100 MB or
+ * "enabled" must never be written back to the box.
+ * Throws Error with the daemon's `error` text, or `HTTP <status>`.
+ */
+export async function fetchCaptureStatus(): Promise<CaptureStatus> {
+	const res = await fetch('/api/capture/status');
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(typeof data?.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
+	}
+	const data = await res.json();
+	if (typeof data?.enabled !== 'boolean' || typeof data?.maxFileSizeMB !== 'number') {
+		throw new Error('The capture status response was incomplete.');
+	}
+	return data as CaptureStatus;
 }
 
 /**

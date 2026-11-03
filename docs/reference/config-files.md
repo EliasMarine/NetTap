@@ -106,33 +106,25 @@ outputs:
 
 ### `config/opensearch/ilm-policy.json`
 
-OpenSearch Index State Management (ISM) policies for three-tier data retention. Applied automatically during installation.
+The fallback ISM policy file. At startup and on every retention save the daemon builds the policy from your settings instead (`daemon/storage/ilm_generator.py`) and applies it.
 
-The file contains three policies:
+There is one policy:
 
 ### `nettap-hot-policy`
 
-- **Applied to:** `zeek-*` indices (priority 100)
-- **Hot state:** Rollover at 10 GB primary shard size or 1 day
-- **Delete state:** Delete indices older than 90 days
+- **Applied to:** `arkime_sessions3-*`, `malcolm_beats_*` and `zeek-*` indices. Malcolm writes every Zeek log and Suricata alert into the daily `arkime_sessions3-YYMMDD` index.
+- **Hot state:** no rollover (Malcolm starts a new index each day)
+- **Delete state:** delete each index after `RETENTION_HOT` days (default 90)
 - **Retry:** 3 attempts with exponential backoff (10 minute delay)
 
-### `nettap-warm-policy`
-
-- **Applied to:** `suricata-*` indices (priority 100)
-- **Hot state:** Rollover at 5 GB or 1 day
-- **Warm state (after 7 days):** Force merge to 1 segment, set read-only
-- **Delete state:** Delete indices older than 180 days
-
-### `nettap-cold-policy`
-
-- **Applied to:** `arkime-*` and `pcap-*` indices (priority 100)
-- **Hot state:** Rollover at 20 GB or 1 day
-- **Delete state:** Delete indices older than 30 days
+The older warm (`suricata-*`) and cold (`arkime-*`, `pcap-*`) policies matched no index and were retired. PCAP is files, not an index; the storage daemon prunes them (`RETENTION_COLD`, `PCAP_MAX_DISK_PCT`).
 
 ---
 
 ## Grafana Configuration
+
+!!! warning "Grafana is off by default"
+    `nettap-grafana` only starts with `--profile grafana`. Its datasources below point at `http://opensearch:9200` without a login and at `zeek-*`/`suricata-*` indices Malcolm never creates, and its dashboards query raw Zeek and Suricata field names rather than Malcolm's ECS fields, so they show no data. NetTap's own pages cover the same views. See `tracking-fixes/2026-11-01-dashboard-data-accuracy.md` #71.
 
 ### `config/grafana/provisioning/datasources/datasource.yaml`
 

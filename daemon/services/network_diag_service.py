@@ -29,6 +29,16 @@ MIN_HOPS = 1
 MAX_HOPS = 30
 
 
+def _tool_error(returncode: int | None, stdout: str, stderr: bytes) -> str | None:
+    """The tool's own message when it failed and printed nothing to parse, else None."""
+    if not returncode or stdout.strip():
+        return None
+    return (
+        stderr.decode("utf-8", errors="replace").strip()
+        or f"exited with code {returncode}"
+    )
+
+
 class NetworkDiagValidationError(Exception):
     """Raised when network diagnostic input validation fails."""
 
@@ -213,7 +223,11 @@ class NetworkDiagService:
                 "output": stdout,
                 "replies": parsed["replies"],
                 "stats": parsed["stats"],
-                "error": None,
+                # OLD CODE START — #96: ping's own error (unknown host, no permission)
+                # was dropped, so it read as a host that gave no replies
+                # "error": None,
+                # OLD CODE END
+                "error": _tool_error(proc.returncode, stdout, stderr_bytes),
             }
 
         except asyncio.TimeoutError:
@@ -276,7 +290,10 @@ class NetworkDiagService:
                 "max_hops": max_hops,
                 "output": stdout,
                 "hops": hops,
-                "error": None,
+                # OLD CODE START — #96: traceroute's own error was dropped (empty result)
+                # "error": None,
+                # OLD CODE END
+                "error": _tool_error(proc.returncode, stdout, stderr_bytes),
             }
 
         except asyncio.TimeoutError:

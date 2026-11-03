@@ -111,6 +111,14 @@ class TestTrafficQueriesHideExcludedIps(_ScopeCase):
         for path in ("/api/traffic/top-talkers", "/api/traffic/top-destinations"):
             self.assertIn(EXCLUDED_IP, await self._bodies_for(path), path)
 
+    @unittest_run_loop
+    async def test_top_destinations_leave_out_what_excluded_ips_send(self):
+        """#80: only destination.ip was excluded, so NetTap's own lookups still counted."""
+        body = json.loads(await self._bodies_for("/api/traffic/top-destinations"))[0]
+        must_not = body["query"]["bool"]["must_not"]
+        self.assertIn({"terms": {"source.ip": [EXCLUDED_IP]}}, must_not)
+        self.assertIn({"terms": {"destination.ip": [EXCLUDED_IP]}}, must_not)
+
 
 class TestDeviceQueriesHideExcludedIps(_ScopeCase):
     register = staticmethod(register_device_routes)

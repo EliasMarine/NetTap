@@ -2,14 +2,16 @@
 	/**
 	 * Device Inventory v2 — Card-based network device dashboard.
 	 *
-	 * Shows only DHCP-leased devices grouped by category (computer, phone, IoT,
+	 * Shows devices seen in network traffic, grouped by category (computer, phone, IoT,
 	 * infrastructure, unknown) with hero stats, search, and category filters.
 	 */
 
 	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { getDevices } from '$api/devices';
+	import { getDevices, getDeviceCount } from '$api/devices';
+	import { getNewDeviceCount } from '$api/devices-registry';
 	import type { Device } from '$api/devices';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -17,6 +19,17 @@
 
 	let loading = $state(true);
 	let devices = $state<Device[]>([]);
+	// #96: a failed load keeps the last list and says so; it never reads as "No devices seen yet"
+	let devicesFailed = $state(false);
+	// the list stops at 200 rows; Total Devices is the exact count, '—' until one loads
+	let deviceCount = $state<number | null>(null);
+	let deviceCountFailed = $state(false);
+	// exact counts, not filters of the busiest-N list: '—' until loaded, a note if they fail
+	let onlineCount = $state<number | null>(null);
+	let onlineFailed = $state(false);
+	let newCount = $state<number | null>(null);
+	let newFailed = $state(false);
+	const LIST_LIMIT = 500; // the daemon's largest device list
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
 	let viewMode = $state<'grid' | 'list'>('grid');
@@ -72,15 +85,46 @@
 
 	async function fetchDevices() {
 		loading = true;
-		try {
-			const res = await getDevices({ sort: 'bytes', order: 'desc', limit: 200 });
-			devices = res.devices;
+		// OLD CODE START — Total Devices was the length of this 200-row list, so bigger networks read 200
+		// try {
+		// 	const res = await getDevices({ sort: 'bytes', order: 'desc', limit: 200 });
+		// 	devices = res.devices;
+		// 	lastUpdated = new Date().toLocaleTimeString();
+		// 	devicesFailed = false;
+		// } catch {
+		// 	// OLD CODE START — #96: a failure read as "0 devices" and "No devices seen yet"
+		// 	// devices = [];
+		// 	// OLD CODE END
+		// 	devicesFailed = true;
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		// same (default 24 h) range for both: the page sends no from/to
+		const now = Date.now();
+		const iso = (ms: number) => new Date(ms).toISOString();
+		const [listRes, countRes, onlineRes, newRes] = await Promise.allSettled([
+			// OLD CODE START — a 200-row list; Online Now and the category pills counted only it
+			// getDevices({ sort: 'bytes', order: 'desc', limit: 200 }),
+			// OLD CODE END
+			getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
+			getDeviceCount(),
+			// devices with traffic in the last 5 minutes, by the list's own device rules
+			getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
+			getNewDeviceCount(iso(now - 24 * 60 * 60 * 1000)),
+		]);
+		if (onlineRes.status === 'fulfilled') onlineCount = onlineRes.value.count;
+		onlineFailed = onlineRes.status === 'rejected';
+		if (newRes.status === 'fulfilled') newCount = newRes.value.count;
+		newFailed = newRes.status === 'rejected';
+		if (listRes.status === 'fulfilled') {
+			devices = listRes.value.devices;
 			lastUpdated = new Date().toLocaleTimeString();
-		} catch {
-			devices = [];
-		} finally {
-			loading = false;
 		}
+		devicesFailed = listRes.status === 'rejected';
+		if (countRes.status === 'fulfilled') deviceCount = countRes.value.count;
+		deviceCountFailed = countRes.status === 'rejected';
+		loading = false;
 	}
 
 	$effect(() => { fetchDevices(); });
@@ -132,8 +176,13 @@
 	});
 
 	// Hero stats
-	let onlineCount = $derived(devices.filter((d) => d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 5 * 60 * 1000).length);
-	let newCount = $derived(devices.filter((d) => d.first_seen && (Date.now() - new Date(d.first_seen).getTime()) < 24 * 60 * 60 * 1000).length);
+	// OLD CODE START — counted inside the busiest-200 list; and first_seen is the first record in
+	// the page's 24 h window, so "New (24h)" was every device (54 of 54 on the G11)
+	// let onlineCount = $derived(devices.filter((d) => d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 5 * 60 * 1000).length);
+	// let newCount = $derived(devices.filter((d) => d.first_seen && (Date.now() - new Date(d.first_seen).getTime()) < 24 * 60 * 60 * 1000).length);
+	// OLD CODE END
+	// the list holds only the busiest LIST_LIMIT devices on a bigger network
+	let listIsPartial = $derived(deviceCount !== null && devices.length < deviceCount);
 	let topConsumer = $derived(devices.length > 0 ? devices[0] : null);
 
 	// Max bytes for bar widths
@@ -207,7 +256,22 @@
 	<div class="page-header">
 		<div>
 			<h1>Device Inventory</h1>
-			<p class="subtitle">{devices.length} DHCP-leased devices{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+			<!-- OLD CODE START — 2026-11-01: devices come from observed traffic, not DHCP leases ("DHCP-leased devices") -->
+			<!-- OLD CODE END -->
+			<!-- OLD CODE START \u2014 #96: read "0 devices seen on the network" when the list failed to load
+			<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+			OLD CODE END -->
+			{#if devicesFailed}
+				<!-- with nothing loaded the empty state below says it couldn't load -->
+				{#if devices.length > 0}<p class="subtitle">{loadFailed('devices', true)}</p>{/if}
+			{:else}
+				<!-- OLD CODE START — the list length, which stops at 200
+				<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
+				OLD CODE END -->
+				<p class="subtitle">
+					{deviceCount !== null ? `${deviceCount} devices seen on the network` : `Showing ${devices.length} devices`}{deviceCount !== null && devices.length < deviceCount ? ` \u00b7 showing the ${devices.length} busiest` : ''}{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}
+				</p>
+			{/if}
 		</div>
 		<div class="header-controls">
 			<button class="auto-btn" class:active={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
@@ -222,23 +286,42 @@
 			<div class="loading-spinner"></div>
 			<span class="text-muted">Discovering devices...</span>
 		</div>
+	{:else if devicesFailed && devices.length === 0}
+		<div class="empty-state">
+			<p class="empty-text">{loadFailed('devices')}</p>
+			<button class="reset-btn" onclick={() => fetchDevices()}>Try again</button>
+		</div>
 	{:else}
 		<!-- Hero Stats -->
 		<div class="stats-grid">
 			<div class="stat-card stat-accent">
 				<div class="stat-label">Total Devices</div>
+				<!-- OLD CODE START — the 200-row list length, not the device count
 				<div class="stat-value accent">{devices.length}</div>
-				<div class="stat-sub">DHCP-leased</div>
+				<div class="stat-sub">Seen on the network</div>
+				OLD CODE END -->
+				<div class="stat-value accent">{deviceCount ?? '\u2014'}</div>
+				<div class="stat-sub">
+					{#if deviceCountFailed}
+						<span class="text-warning">{loadFailed('the device count', deviceCount !== null)}</span>
+					{:else}
+						Seen on the network
+					{/if}
+				</div>
 			</div>
 			<div class="stat-card">
 				<div class="stat-label">Online Now</div>
-				<div class="stat-value" style="color: var(--green);">{onlineCount}</div>
-				<div class="stat-sub">last 5 min</div>
+				<div class="stat-value" style="color: var(--green);">{onlineCount ?? '\u2014'}</div>
+				<div class="stat-sub">
+					{#if onlineFailed}<span class="text-warning">{loadFailed('the online count', onlineCount !== null)}</span>{:else}traffic in the last 5 min{/if}
+				</div>
 			</div>
 			<div class="stat-card">
 				<div class="stat-label">New (24h)</div>
-				<div class="stat-value" style="color: var(--amber);">{newCount}</div>
-				<div class="stat-sub">first seen today</div>
+				<div class="stat-value" style="color: var(--amber);">{newCount ?? '\u2014'}</div>
+				<div class="stat-sub">
+					{#if newFailed}<span class="text-warning">{loadFailed('the new-device count', newCount !== null)}</span>{:else}first seen by NetTap in 24 h{/if}
+				</div>
 			</div>
 			<div class="stat-card">
 				<div class="stat-label">Top Consumer</div>
@@ -261,6 +344,9 @@
 						<span class="cat-pill-count">{categoryCounts[cat.key] ?? 0}</span>
 					</button>
 				{/each}
+				{#if listIsPartial}
+					<span class="cat-pill-note">counts for the {devices.length} busiest devices</span>
+				{/if}
 			</div>
 			<div class="filter-right">
 				<div class="view-toggle">
@@ -280,8 +366,10 @@
 					<p class="empty-text">No devices matching your filter.</p>
 					<button class="reset-btn" onclick={() => { searchQuery = ''; categoryFilter = 'all'; }}>Reset filters</button>
 				{:else}
-					<p class="empty-text">No DHCP-leased devices found.</p>
-					<p class="empty-hint">Devices appear when they obtain an IP from the network's DHCP server.</p>
+					<!-- OLD CODE START — 2026-11-01: "No DHCP-leased devices found." / "...obtain an IP from the network's DHCP server." -->
+					<!-- OLD CODE END -->
+					<p class="empty-text">No devices seen yet.</p>
+					<p class="empty-hint">Devices appear once they make a few connections through the monitored link.</p>
 				{/if}
 			</div>
 		{:else if viewMode === 'grid'}
@@ -429,6 +517,7 @@
 	.cat-pill.active { background: var(--cyan); color: var(--bg-void); border-color: var(--cyan); font-weight: 600; }
 	.cat-pill-icon { font-size: 14px; }
 	.cat-pill-count { font-family: var(--font-mono); font-size: 10px; opacity: 0.7; }
+	.cat-pill-note { align-self: center; color: var(--text-muted); font-size: var(--text-xs); }
 	.filter-right { display: flex; align-items: center; gap: var(--space-sm); }
 	.view-toggle { display: flex; gap: 2px; background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border-dim); }
 	.view-btn { width: 32px; height: 28px; border: none; background: transparent; color: var(--text-muted); font-size: 14px; border-radius: 5px; cursor: pointer; transition: all var(--transition-fast); display: flex; align-items: center; justify-content: center; }

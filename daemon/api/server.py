@@ -19,6 +19,7 @@ Endpoints:
 """
 
 import asyncio
+import functools
 import logging
 import os
 import threading
@@ -53,11 +54,11 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
+from services.capture_config import load_capture_config
 from services.excluded_ips import (
     load_excluded_ips,
     detect_and_build_lan_filter,
     detect_appliance_ip,
-    save_excluded_ips,
 )
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
@@ -106,6 +107,7 @@ from services.network_diag_service import NetworkDiagService
 from services.ssl_cert_service import SslCertService
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
+from services.malcolm_upgrade import MalcolmUpgrade
 from services.update_executor import UpdateExecutor
 from services.device_registry import DeviceRegistry
 from services.unifi_integration import UnifiIntegration
@@ -214,6 +216,15 @@ async def handle_storage_status(request: web.Request) -> web.Response:
     try:
         storage: StorageManager = request.app["storage"]
         status = storage.get_status()
+        # #96: the saved retention isn't in OpenSearch yet, so ILM isn't in sync,
+        # however long ago an earlier apply succeeded
+        if "ilm_sync" in request.app and not _ilm_in_sync(request.app):
+            task = request.app.get("_ilm_retry_task")
+            status["ilm_status"] = {
+                **status["ilm_status"],
+                "synced": False,
+                "pending_retry": task is not None and not task.done(),
+            }
         return web.json_response(status)
     except Exception as exc:
         logger.exception("Error fetching storage status")
@@ -329,19 +340,26 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
                         changelog = val
                         break
             if changelog:
+                # OLD CODE START — 2026-11-01: the dict went in as the third positional
+                # argument, which is log_event's description string, not its metadata
+                # await loop.run_in_executor(None, changelog.log_event, "storage_pruned",
+                #     f"Manual cleanup: ...", {...})
+                # OLD CODE END
                 await loop.run_in_executor(
                     None,
-                    changelog.log_event,
-                    "storage_pruned",
-                    f"Manual cleanup: deleted data older than {older_than_days} days",
-                    {
-                        "older_than_days": older_than_days,
-                        "deleted_indices": result["deleted_indices"],
-                        "deleted_pcap_files": result["deleted_pcap_files"],
-                        "freed_bytes": result["freed_bytes_estimate"],
-                        "cutoff_date": result["cutoff_date"],
-                        "trigger": "manual",
-                    },
+                    functools.partial(
+                        changelog.log_event,
+                        "storage_pruned",
+                        f"Manual cleanup: deleted data older than {older_than_days} days",
+                        metadata={
+                            "older_than_days": older_than_days,
+                            "deleted_indices": result["deleted_indices"],
+                            "deleted_pcap_files": result["deleted_pcap_files"],
+                            "freed_bytes": result["freed_bytes_estimate"],
+                            "cutoff_date": result["cutoff_date"],
+                            "trigger": "manual",
+                        },
+                    ),
                 )
         except Exception:
             logger.warning("Failed to log cleanup to changelog", exc_info=True)
@@ -437,6 +455,15 @@ async def handle_indices(request: web.Request) -> web.Response:
         )
 
 
+def _host_uptime_seconds() -> float | None:
+    """Machine uptime; /proc/uptime isn't namespaced, so the container sees the host's."""
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 async def handle_system_health(request: web.Request) -> web.Response:
     """GET /api/system/health -- Combined system health check.
 
@@ -449,8 +476,14 @@ async def handle_system_health(request: web.Request) -> web.Response:
     # opensearch_url: str = request.app["opensearch_url"]
     # OLD CODE END
 
+    # OLD CODE START — replaced 2026-11-01: the System page shows "uptime" as the
+    # machine's, but this was the daemon's (minutes after any redeploy).
+    # result: dict = {
+    #     "uptime": round(uptime, 2),
+    # OLD CODE END
     result: dict = {
-        "uptime": round(uptime, 2),
+        "uptime": round(_host_uptime_seconds() or uptime, 2),
+        "daemon_uptime": round(uptime, 2),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "storage": None,
         "smart": None,
@@ -875,6 +908,17 @@ def _load_daemon_token() -> str | None:
         return None
 
 
+def _management_interface() -> str:
+    """The management NIC from the capture config, or "" if it can't be read."""
+    try:
+        return load_capture_config().management
+    except Exception as exc:  # a broken capture config must not stop the API starting
+        logger.warning(
+            "Could not read the management NIC from the capture config: %s", exc
+        )
+        return ""
+
+
 def create_app(
     storage: StorageManager,
     smart: SmartMonitor,
@@ -962,7 +1006,10 @@ def create_app(
 
     # Network tools (DNS Recon, MAC Lookup, Ping, Traceroute, SSL Cert)
     dns_recon = DnsReconService()
-    mac_lookup = MacLookupService()
+    # OLD CODE START — #26: no OpenSearch, so only the 208 bundled prefixes were known
+    # mac_lookup = MacLookupService()
+    # OLD CODE END
+    mac_lookup = MacLookupService(opensearch_client=storage._client)
     network_diag = NetworkDiagService()
     ssl_cert = SslCertService()
     register_tools_routes(app, dns_recon, mac_lookup, network_diag, ssl_cert)
@@ -1002,11 +1049,23 @@ def create_app(
     logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
 
     # Auto-detect and exclude appliance management IP
-    appliance_ip = detect_appliance_ip()
+    # OLD CODE START — #79: the detected IP was saved into the owner's list, so a wrong one
+    # (the .env.example placeholder) stayed excluded after the detection was fixed
+    # appliance_ip = detect_appliance_ip()
+    # if appliance_ip and appliance_ip not in app["excluded_ips"]:
+    #     app["excluded_ips"].append(appliance_ip)
+    #     save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+    #     logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
+    # OLD CODE END
+    appliance_ip = detect_appliance_ip(_management_interface())
     if appliance_ip and appliance_ip not in app["excluded_ips"]:
-        app["excluded_ips"].append(appliance_ip)
-        save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+        # Runtime only: detected again at every start, never written into the owner's list
+        app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
         logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
+    elif not appliance_ip:
+        logger.warning(
+            "Appliance management IP not found; NetTap's own traffic is counted"
+        )
 
     # Auto-detect LAN subnets from OpenSearch traffic data
     # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback
@@ -1061,7 +1120,14 @@ def create_app(
 
     version_manager = VersionManager(compose_file=compose_file)
     update_checker = UpdateChecker(github_repo=github_repo)
-    update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
+    # OLD CODE START — the Malcolm update needs the OpenSearch client to see records arrive
+    # update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
+    # OLD CODE END
+    update_executor = UpdateExecutor(
+        compose_file=compose_file,
+        backup_dir=backup_dir,
+        malcolm_upgrade=MalcolmUpgrade(client=storage._client),
+    )
 
     # Wire up cross-service references
     update_checker.set_version_manager(version_manager)
@@ -1100,7 +1166,14 @@ def create_app(
     register_dhcp_gateway_routes(app)
 
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
-    device_registry = DeviceRegistry(client=storage._client)
+    # The changelog is built first so the registry can log each new device to it
+    changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE START — 2026-11-01: the registry now logs new devices to the changelog
+    # device_registry = DeviceRegistry(client=storage._client)
+    # OLD CODE END
+    device_registry = DeviceRegistry(
+        client=storage._client, changelog=changelog_service
+    )
     unifi_integration = UnifiIntegration()
     if unifi_integration.load_config():
         logger.info("UniFi integration restored from saved config")
@@ -1122,7 +1195,9 @@ def create_app(
     register_notification_hub_routes(app, notification_hub)
 
     # Changelog (network event audit log)
-    changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE START — 2026-11-01: built above, before the device registry, which logs new devices to it
+    # changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE END
     app["changelog_service"] = changelog_service
     register_changelog_routes(app, changelog_service)
 

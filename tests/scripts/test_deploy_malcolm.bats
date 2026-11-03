@@ -414,6 +414,18 @@ print('OK: all actions have retry config')
     [ "$bootstrap_line" -lt "$full_up_line" ]
 }
 
+@test "deploy: malcolm_template is pushed with its index pattern filled in (Chain 24)" {
+    local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    # The raw file's pattern is a placeholder that matches no index
+    grep -q 's/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g' "$script"
+    ! grep -E '^[^#]*-d @/opt/templates/malcolm_template.json' "$script"
+
+    # The same sed turns Malcolm's placeholder into a pattern that matches today's index
+    local index_pattern="arkime_sessions3-*"
+    run sh -c "echo '{\"index_patterns\":[\"MALCOLM_NETWORK_INDEX_PATTERN_REPLACER\"]}' | sed 's/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g'"
+    [ "$output" = '{"index_patterns":["arkime_sessions3-*"]}' ]
+}
+
 # ==========================================================================
 # OpenSearch security bootstrap
 # ==========================================================================
@@ -491,4 +503,17 @@ print('OK: all actions have retry config')
     [ -n "$template_line" ]
     [ -n "$full_up_line" ]
     [ "$template_line" -lt "$full_up_line" ]
+}
+
+@test "deploy: bootstrap writes the Arkime template marker only when it is missing (#73)" {
+    local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    local fn
+    fn=$(sed -n '/^bootstrap_index_templates()/,/^}/p' "$script")
+    # dashboards-helper waits for this legacy template before creating the index pattern
+    echo "$fn" | grep -q 'X PUT "https://opensearch:9200/_template/arkime_sessions3_template"'
+    # it must match no index, so it can never shape arkime_sessions3-* mappings
+    echo "$fn" | grep -q '"index_patterns":\["nettap-arkime-template-marker"\]'
+    # and it is guarded by a GET, so Arkime's real template is never overwritten
+    echo "$fn" | grep -q 'if ! docker compose .* exec -T dashboards-helper \\'
+    echo "$fn" | grep -q 'curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template"'
 }
