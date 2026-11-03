@@ -22,6 +22,7 @@ from storage.manager import StorageManager
 from storage.time_slots import histogram_buckets, time_slots
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
+from services.device_registry import DeviceRegistry
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 from services.traffic_classifier import classify_asn, CATEGORIES
@@ -226,6 +227,34 @@ def _get_client(request: web.Request):
     """Retrieve the OpenSearch client from the StorageManager on the app."""
     storage: StorageManager = request.app["storage"]
     return storage._client
+
+
+def _mac_key(mac: str | None) -> str:
+    """A MAC the way the registry keys it (DeviceRegistry._normalize_mac)."""
+    return DeviceRegistry._normalize_mac(mac) if mac else ""
+
+
+def _registry_names(request: web.Request, macs: list[str]) -> dict[str, str]:
+    """{normalized MAC: the name Home shows} for the MACs the device registry knows (#130).
+
+    The registry names a device by its MAC (UniFi alias, the owner's name, then the name it
+    gave DHCP), which DNS records can't do reliably; Devices and Home now agree.
+    """
+    registry = request.app.get("device_registry")
+    if registry is None or not macs:
+        return {}
+    try:
+        known = registry.get_devices(macs)
+    except Exception as exc:
+        logger.warning(
+            "Device names from the registry unavailable, using DNS names: %s", exc
+        )
+        return {}
+    return {
+        mac: name
+        for mac, device in known.items()
+        if (name := registry.get_name(device))
+    }
 
 
 def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
@@ -593,6 +622,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
         from_ts,
         to_ts,
     )
+    names = _registry_names(request, [mac for mac, _, _ in lookups.values() if mac])
     devices = []
     for b in buckets:
         ip = b["key"]
@@ -622,6 +652,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
         # os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
         # OLD CODE END
         mac, hostname, os_hint = lookups.get(ip, (None, None, None))
+        hostname = names.get(_mac_key(mac)) or hostname
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
 
         # Clean up mDNS service names and reverse DNS that aren't real hostnames
@@ -968,6 +999,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     # Passive fingerprinting enrichment
     mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
     hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
+    hostname = (
+        _registry_names(request, [mac] if mac else []).get(_mac_key(mac)) or hostname
+    )
     manufacturer = fingerprint.get_manufacturer(mac) if mac else None
     os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
 

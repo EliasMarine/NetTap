@@ -75,8 +75,22 @@ def _in_range(from_ts: str, to_ts: str) -> dict:
     }
 
 
+_MDNS_PORT = 5353
+# names in DNS records that aren't a device's hostname (service instances, reverse lookups)
+_NOT_HOSTNAMES = ("._tcp.", "._udp.", ".in-addr.arpa", ".ip6.arpa", "_asquic")
+
+
 def _hostname_query(ip: str, from_ts: str, to_ts: str) -> dict:
-    """Most common DNS name answered with this IP."""
+    """The DNS names tied to this IP: unicast answers, and mDNS the device sent itself.
+
+    OLD CODE START — #130: any DNS record listing the IP. Arkime keeps a session's names and
+    IPs as two lists, and the router reflects mDNS between VLANs with every host's records in
+    one session, so 192.168.1.188 (EliasMacStudio) took another Mac's name.
+    return {"size": 0, "query": {"bool": {"filter": [_in_range(from_ts, to_ts),
+            {"term": {"dns.ip": ip}}, {"term": {"network.protocol": "dns"}}]}},
+            "aggs": {"top_hostname": {"terms": {"field": "dns.host", "size": 1}}}}
+    OLD CODE END
+    """
     return {
         "size": 0,
         "query": {
@@ -85,10 +99,27 @@ def _hostname_query(ip: str, from_ts: str, to_ts: str) -> dict:
                     _in_range(from_ts, to_ts),
                     {"term": {"dns.ip": ip}},
                     {"term": {"network.protocol": "dns"}},
+                    {
+                        "bool": {
+                            "should": [
+                                {"term": {"source.ip": ip}},
+                                {
+                                    "bool": {
+                                        "must_not": [
+                                            {"term": {"destination.port": _MDNS_PORT}},
+                                            {"term": {"source.port": _MDNS_PORT}},
+                                        ]
+                                    }
+                                },
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
                 ]
             }
         },
-        "aggs": {"top_hostname": {"terms": {"field": "dns.host", "size": 1}}},
+        # several, so a device's service names ahead of its hostname can be skipped
+        "aggs": {"top_hostname": {"terms": {"field": "dns.host", "size": 10}}},
     }
 
 
@@ -163,8 +194,20 @@ def _user_agent_query(ip: str, from_ts: str, to_ts: str) -> dict:
 
 
 def _hostname_from(result: dict) -> str | None:
+    """The most common name that is a hostname, not a service or reverse-lookup name."""
     buckets = result.get("aggregations", {}).get("top_hostname", {}).get("buckets", [])
-    return buckets[0]["key"] if buckets else None
+    # OLD CODE START — #130: the top name, even "_adisk._tcp.local"
+    # return buckets[0]["key"] if buckets else None
+    # OLD CODE END
+    for bucket in buckets:
+        name = bucket.get("key", "")
+        if (
+            name
+            and not name.startswith("_")
+            and not any(x in name for x in _NOT_HOSTNAMES)
+        ):
+            return name
+    return None
 
 
 def _dhcp_hit(result: dict) -> dict | None:

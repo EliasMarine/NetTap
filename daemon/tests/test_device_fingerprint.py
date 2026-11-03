@@ -590,3 +590,53 @@ class TestLookupMany(unittest.TestCase):
         self.assertEqual(
             client.msearch.call_count, 3
         )  # 100 IPs (400 searches) per request
+
+
+class TestHostnamesAreTiedToTheirIP:
+    """#130: 192.168.1.188 (EliasMacStudio) read "sarabouzeid-fgwk3p497k.local" on Devices."""
+
+    def test_only_unicast_answers_or_mdns_the_device_sent_itself(self):
+        from services.device_fingerprint import _hostname_query
+
+        query = _hostname_query(
+            "192.168.1.188", "2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"
+        )
+        tied = query["query"]["bool"]["filter"][-1]["bool"]
+        assert tied["minimum_should_match"] == 1
+        sent_itself, unicast = tied["should"]
+        assert sent_itself == {"term": {"source.ip": "192.168.1.188"}}
+        assert unicast == {
+            "bool": {
+                "must_not": [
+                    {"term": {"destination.port": 5353}},
+                    {"term": {"source.port": 5353}},
+                ]
+            }
+        }
+
+    def test_service_names_are_not_hostnames(self):
+        from services.device_fingerprint import _hostname_from
+
+        reply = {
+            "aggregations": {
+                "top_hostname": {
+                    "buckets": [
+                        {"key": "elias mac studio m4 max._appsvcprepair._tcp.local"},
+                        {"key": "_adisk._tcp.local"},
+                        {"key": "188.1.168.192.in-addr.arpa"},
+                        {"key": "elias-mac-studio.local"},
+                    ]
+                }
+            }
+        }
+        assert _hostname_from(reply) == "elias-mac-studio.local"
+        assert (
+            _hostname_from(
+                {
+                    "aggregations": {
+                        "top_hostname": {"buckets": [{"key": "_hap._udp.local"}]}
+                    }
+                }
+            )
+            is None
+        )

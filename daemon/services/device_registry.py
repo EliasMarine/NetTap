@@ -449,6 +449,19 @@ class DeviceRegistry:
             return None
         return result.get("_source")
 
+    def get_devices(self, macs: list[str]) -> dict[str, dict]:
+        """{normalized MAC: device} for the MACs the registry knows, in one request."""
+        ids = sorted({self._normalize_mac(m) for m in macs if m})
+        if not ids:
+            return {}
+        try:
+            result = self._client.mget(index=DEVICES_INDEX, body={"ids": ids})
+        except NotFoundError:
+            return {}
+        return {
+            d["_id"]: d["_source"] for d in result.get("docs", []) if d.get("found")
+        }
+
     def get_all_devices(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """List all known devices with pagination.
 
@@ -690,6 +703,15 @@ class DeviceRegistry:
             return device["manufacturer"]
 
         return device.get("mac", "Unknown")
+
+    def get_name(self, device: dict) -> str | None:
+        """The name Home shows for a device, or None where it would show the vendor or MAC."""
+        name = self.get_display_name(device)
+        return (
+            None
+            if name in (device.get("manufacturer"), device.get("mac", "Unknown"))
+            else name
+        )
 
     # ------------------------------------------------------------------
     # Passive enrichment methods

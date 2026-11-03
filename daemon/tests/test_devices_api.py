@@ -21,6 +21,7 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.devices import register_device_routes
+from services.device_registry import DeviceRegistry
 from storage.manager import StorageManager, RetentionConfig
 
 
@@ -1412,3 +1413,105 @@ class TestDeviceTermsAreExact(AioHTTPTestCase):
         categories, ports = (self._terms(b) for b in self._bodies())
         self.assertGreaterEqual(categories["asn_breakdown"]["size"], 10_000)
         self.assertGreaterEqual(ports["top_ports"]["shard_size"], 10_000)
+
+
+def _registry_with(devices: dict) -> DeviceRegistry:
+    """A real DeviceRegistry whose index holds these {MAC: doc} devices."""
+    client = MagicMock()
+    client.indices.exists.return_value = True
+    client.mget.side_effect = lambda index, body: {
+        "docs": [
+            {
+                "_id": i,
+                "found": i in devices,
+                **({"_source": devices[i]} if i in devices else {}),
+            }
+            for i in body["ids"]
+        ]
+    }
+    client.get.side_effect = lambda index, id: {"_source": devices[id]}
+    return DeviceRegistry(client=client)
+
+
+STUDIO = {
+    "mac": "BC:89:C1:E1:8A:D6",
+    "hostnames": ["EliasMacStudio"],
+    "manufacturer": "Apple, Inc.",
+    "enrichment_sources": {"dhcp": {"hostname": "EliasMacStudio"}},
+}
+
+
+class TestDeviceNamesMatchHome(AioHTTPTestCase):
+    """#130: Devices named a Mac after another Mac's mDNS records; Home used the registry."""
+
+    async def get_application(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        app = web.Application()
+        app["storage"] = self.storage
+        app["device_registry"] = _registry_with({"BC:89:C1:E1:8A:D6": STUDIO})
+        register_device_routes(app, self.storage)
+        return app
+
+    def _lookups(self, dns_name: str, mac: str = "bc:89:c1:e1:8a:d6") -> dict:
+        dhcp = {"hits": {"hits": [{"_source": {"source": {"mac": mac}}}]}}
+        dns = {"aggregations": {"top_hostname": {"buckets": [{"key": dns_name}]}}}
+        return {"responses": [dhcp, {"aggregations": {}}, dns, {"aggregations": {}}]}
+
+    @unittest_run_loop
+    async def test_the_list_uses_the_registry_name_for_the_mac(self):
+        self.mock_client.search.side_effect = [
+            _device_list_response([_device_bucket("192.168.1.188")]),
+            _empty_alert_response(),
+        ] + [{"hits": {"hits": []}}] * 10
+        self.mock_client.msearch.return_value = self._lookups(
+            "sarabouzeid-fgwk3p497k.local"
+        )
+        resp = await self.client.request("GET", "/api/devices")
+        assert resp.status == 200
+        (device,) = (await resp.json())["devices"]
+        assert device["hostname"] == "EliasMacStudio"
+
+    @unittest_run_loop
+    async def test_a_device_the_registry_doesnt_know_keeps_its_dns_name(self):
+        self.mock_client.search.side_effect = [
+            _device_list_response([_device_bucket("192.168.1.60")]),
+            _empty_alert_response(),
+        ] + [{"hits": {"hits": []}}] * 10
+        self.mock_client.msearch.return_value = self._lookups(
+            "nas.local", mac="00:11:32:aa:bb:cc"
+        )
+        resp = await self.client.request("GET", "/api/devices")
+        (device,) = (await resp.json())["devices"]
+        assert device["hostname"] == "nas.local"
+
+    @unittest_run_loop
+    async def test_device_detail_uses_the_registry_name_too(self):
+        conn = {
+            "hits": {"total": {"value": 10}},
+            "aggregations": {
+                "total_bytes": {"value": 5000},
+                "protocols": {"buckets": []},
+                "first_seen": {"value_as_string": "2026-02-25T12:00:00.000Z"},
+                "last_seen": {"value_as_string": "2026-02-25T12:30:00.000Z"},
+                "top_destinations": {"buckets": []},
+                "bandwidth_series": {"buckets": []},
+            },
+        }
+        dhcp = {
+            "hits": {"hits": [{"_source": {"source": {"mac": "bc:89:c1:e1:8a:d6"}}}]}
+        }
+        dns_name = {
+            "aggregations": {
+                "top_hostname": {"buckets": [{"key": "sarabouzeid-fgwk3p497k.local"}]}
+            }
+        }
+        self.mock_client.search.side_effect = [
+            conn,
+            {"aggregations": {"dns_queries": {"buckets": []}}},
+            {"hits": {"total": {"value": 0}}},
+            dhcp,
+            dns_name,
+        ] + [{"hits": {"hits": []}}, {"aggregations": {}}] * 20
+        resp = await self.client.request("GET", "/api/devices/192.168.1.188")
+        assert resp.status == 200
+        assert (await resp.json())["device"]["hostname"] == "EliasMacStudio"
