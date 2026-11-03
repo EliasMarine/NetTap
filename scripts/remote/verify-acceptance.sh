@@ -77,12 +77,24 @@ devs = call('/api/devices' + q(limit=500))['devices']
 print('DEVICES', len(devs), sum(1 for d in devs if d.get('mac')))
 pcaps = sorted(call('/api/tshark/pcaps')['pcaps'], key=lambda p: p['modified'], reverse=True)
 print('NEWEST', pcaps[0]['name'], int(time.time() - pcaps[0]['modified']), len(pcaps))
-target = next(p for p in pcaps[1:] if 20e6 < p['size_bytes'] < 400e6)
+# OLD CODE START — 2026-11-03: one file; a scan TShark cut short at its 15 s limit (flagged
+# truncated) read as a wrong count on a busy file with 4 DNS packets (batch 47)
+# target = next(p for p in pcaps[1:] if 20e6 < p['size_bytes'] < 400e6)
+# print('FILE', target['name'], target['path'])
+# t0 = time.time()
+# r = call('/api/tshark/analyze', {'pcap_path': target['path'], 'display_filter': 'dns', 'max_packets': 50, 'output_format': 'json'})
+# dns = sum('dns' in (p.get('_source', {}).get('layers') or {}) for p in r.get('packets', []))
+# print('TSHARK', r.get('packet_count'), dns, round(time.time() - t0, 1), r.get('error'))
+# OLD CODE END
+# up to 3 files, until TShark searches one to the end; each cut-short one must say so
+for target in [p for p in pcaps[1:] if 20e6 < p['size_bytes'] < 400e6][:3]:
+    t0 = time.time()
+    r = call('/api/tshark/analyze', {'pcap_path': target['path'], 'display_filter': 'dns', 'max_packets': 50, 'output_format': 'json'})
+    dns = sum('dns' in (p.get('_source', {}).get('layers') or {}) for p in r.get('packets', []))
+    print('TSHARK', r.get('packet_count'), dns, round(time.time() - t0, 1), r.get('error'), int(bool(r.get('truncated'))), target['name'])
+    if not r.get('truncated'):
+        break
 print('FILE', target['name'], target['path'])
-t0 = time.time()
-r = call('/api/tshark/analyze', {'pcap_path': target['path'], 'display_filter': 'dns', 'max_packets': 50, 'output_format': 'json'})
-dns = sum('dns' in (p.get('_source', {}).get('layers') or {}) for p in r.get('packets', []))
-print('TSHARK', r.get('packet_count'), dns, round(time.time() - t0, 1), r.get('error'))
 listed = call('/api/pcap/files')['files']
 full = next(f['file'] for f in listed if f['file'].endswith('/' + target['name']))
 p = call('/api/pcap/preview' + q(file=full, filter='dns', limit=20))
@@ -149,12 +161,29 @@ check "devices listed, each with a MAC" "$rc" "${NDEV:-0} devices, ${NMAC:-0} wi
 echo ""
 
 echo "→ Step 6: PCAP and TShark..."
-FILE_PATH=$(field FILE 3)
-read -r _ TS_COUNT TS_DNS TS_SECS TS_ERR <<<"$(echo "$OUT" | grep '^TSHARK')"
+# OLD CODE START — 2026-11-03: each TSHARK line names its own file now
+# FILE_PATH=$(field FILE 3)
+# OLD CODE END
+# OLD CODE START — 2026-11-03: compared one file, ignoring the truncated flag
+# read -r _ TS_COUNT TS_DNS TS_SECS TS_ERR <<<"$(echo "$OUT" | grep '^TSHARK')"
+# TRUTH=$(sudo docker exec nettap-tshark sh -c 'tshark -r "$1" -Y dns -T fields -e frame.number 2>/dev/null | head -n 50 | wc -l' _ "/pcap/${FILE_PATH##*/}" 2>/dev/null | tr -d ' ')
+# if [ -n "${TS_COUNT:-}" ] && [ "$TS_COUNT" = "${TRUTH:-x}" ] && [ "$TS_COUNT" = "${TS_DNS:-y}" ]; then rc=0; else rc=1; fi
+# OLD CODE END
 # The tshark container mounts the PCAP directory at /pcap (the daemon maps paths the same way)
-TRUTH=$(sudo docker exec nettap-tshark sh -c 'tshark -r "$1" -Y dns -T fields -e frame.number 2>/dev/null | head -n 50 | wc -l' _ "/pcap/${FILE_PATH##*/}" 2>/dev/null | tr -d ' ')
-if [ -n "${TS_COUNT:-}" ] && [ "$TS_COUNT" = "${TRUTH:-x}" ] && [ "$TS_COUNT" = "${TS_DNS:-y}" ]; then rc=0; else rc=1; fi
-check "TShark 'dns' filter = tshark run directly" "$rc" "API ${TS_COUNT:-?} (${TS_DNS:-?} with a DNS layer) in ${TS_SECS:-?} s, tshark ${TRUTH:-?}, error ${TS_ERR:-?}"
+truth() { sudo docker exec nettap-tshark sh -c 'tshark -r "$1" -Y dns -T fields -e frame.number 2>/dev/null | head -n 50 | wc -l' _ "/pcap/$1" 2>/dev/null | tr -d ' '; }
+rc=1; CUT=""
+while read -r _ TS_COUNT TS_DNS TS_SECS TS_ERR TS_CUT TS_FILE; do
+    TRUTH=$(truth "$TS_FILE")
+    if [ "$TS_CUT" = "1" ]; then
+        # cut short at the time limit: flagged, and never more matches than the file has
+        [ "${TS_COUNT:-99}" -le "${TRUTH:-0}" ] || { rc=1; break; }
+        CUT="$CUT $TS_FILE (API $TS_COUNT of $TRUTH, flagged)"
+        continue
+    fi
+    if [ -n "${TS_COUNT:-}" ] && [ "$TS_COUNT" = "${TRUTH:-x}" ] && [ "$TS_COUNT" = "${TS_DNS:-y}" ]; then rc=0; fi
+    break
+done <<<"$(echo "$OUT" | grep '^TSHARK')"
+check "TShark 'dns' filter = tshark run directly" "$rc" "API ${TS_COUNT:-?} (${TS_DNS:-?} with a DNS layer) in ${TS_SECS:-?} s, tshark ${TRUTH:-?}, error ${TS_ERR:-?}${CUT:+; stopped early:$CUT}"
 read -r _ PV_N PV_ERR <<<"$(echo "$OUT" | grep '^PREVIEW')"
 if [ "${PV_N:-0}" -gt 0 ] && [ "${PV_ERR:-None}" = "None" ]; then rc=0; else rc=1; fi
 check "PCAP preview with a DNS filter" "$rc" "${PV_N:-0} packets, error ${PV_ERR:-?}"
