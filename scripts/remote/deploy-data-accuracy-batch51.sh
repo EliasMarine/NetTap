@@ -94,10 +94,13 @@ for _ in $(seq 1 72); do
 done
 if [ -n "$CLOSED" ]; then
     SIZE=$(echo "$CLOSED" | awk '{print $2}')
-    if [ "$SIZE" -le $((257 * 1048576)) ]; then rc=0; else rc=1; fi
-    check "a closed file is at most 256 MiB" "$rc" "$(echo "$CLOSED" | awk '{print $3}') $((SIZE / 1048576)) MiB"
+    # OLD CODE START — netsniff rotates once a file passes the size (G11: 261 MiB), not at it
+    # if [ "$SIZE" -le $((257 * 1048576)) ]; then rc=0; else rc=1; fi
+    # OLD CODE END
+    if [ "$SIZE" -le $((272 * 1048576)) ]; then rc=0; else rc=1; fi
+    check "a closed file is about 256 MiB (rotated once past it)" "$rc" "$(echo "$CLOSED" | awk '{print $3}') $((SIZE / 1048576)) MiB"
 else
-    check "a closed file is at most 256 MiB" 1 "no file closed within 12 minutes"
+    check "a closed file is about 256 MiB (rotated once past it)" 1 "no file closed within 12 minutes"
 fi
 echo ""
 
