@@ -346,6 +346,10 @@ print('dashboards-helper: PUSER_PRIV_DROP=false + supervisord.conf override (cor
     users=$(grep -c '^user=helper$' "$conf")
     [ "$programs" -gt 0 ]
     [ "$programs" -eq "$users" ]
+    # the update and its rollback share this file: idxinit must run on 26.10.0 and 26.02.0 (#134)
+    idxinit=$(grep -A 12 '^\[program:idxinit\]' "$conf" | grep '^command=')
+    [[ "$idxinit" == *"[ -x /usr/local/bin/index-init.sh ]"* ]]
+    [[ "$idxinit" == *"index-refresh.py"* ]]
 }
 
 @test "compose: non-logstash Malcolm services do NOT set PUSER_PRIV_DROP=false" {
