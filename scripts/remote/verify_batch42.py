@@ -15,7 +15,10 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 
 PROBLEMS: list[str] = []
-NEVER_CHECKED = {"os", "kernel", "docker", "python3", "opensearch"}  # no update source covers these
+# OLD CODE START — 2026-11-02 (#128): the OS row now reads Ubuntu's update-notifier count
+# NEVER_CHECKED = {"os", "kernel", "docker", "python3", "opensearch"}  # no update source covers these
+# OLD CODE END
+NEVER_CHECKED = {"kernel", "docker", "python3", "opensearch"}  # no update source covers these
 
 
 def call(path: str, method: str = "GET", **params) -> tuple[int, dict]:

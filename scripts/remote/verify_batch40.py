@@ -15,7 +15,10 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 
 PROBLEMS: list[str] = []
-NETTAP_APPLIES = {"nettap-daemon", "suricata-rules"}  # the only updates NetTap applies itself
+# OLD CODE START — 2026-11-02 (#123): System → Updates now applies the tested Malcolm release too
+# NETTAP_APPLIES = {"nettap-daemon", "suricata-rules"}  # the only updates NetTap applies itself
+# OLD CODE END
+NETTAP_APPLIES = {"nettap-daemon", "suricata-rules", "malcolm"}  # the updates NetTap applies itself
 GEOIP_GLOB = "/usr/share/logstash/vendor/bundle/jruby/*/gems/logstash-filter-geoip-*/vendor/GeoLite2-City.mmdb"
 
 
