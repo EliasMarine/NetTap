@@ -7,7 +7,7 @@
 # logs. /dev/urandom is just as good on every other CPU, so this applies to
 # all boxes. See Debugging/DEPLOYMENT-ISSUES.md Chain 23.
 ARG MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
-ARG MALCOLM_IMAGE_TAG=26.02.0
+ARG MALCOLM_IMAGE_TAG=26.10.0
 
 # Same Debian release as the Malcolm Zeek image, so the libstdc++ ABI matches
 FROM debian:trixie-slim AS build
@@ -38,3 +38,9 @@ RUN /tmp/random_device_urandom_test \
          grep -q _ZNSt13random_device7_M_initERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE "$f" \
            || { echo "$f no longer imports random_device::_M_init; update docker/zeek-live/" >&2; exit 1; }; \
        done
+
+# No hourly conn-summary report: zeekctl writes it into the logger spool, and
+# Filebeat ships every *.log there, so it arrived as a junk record dated 1970
+# (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #11). zeekdeploy.sh only
+# edits other keys in place, so this line survives startup.
+RUN printf '\nTraceSummary =\n' >> /usr/local/zeek/etc/zeekctl.cfg

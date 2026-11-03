@@ -280,5 +280,46 @@ class TestTraceroute(unittest.TestCase):
         asyncio.run(run_test())
 
 
+class TestToolFailuresAreReported(unittest.TestCase):
+    """#96: the tool's own error is shown, not an empty "no replies" result."""
+
+    def setUp(self):
+        self.svc = NetworkDiagService()
+
+    def _run(self, coro_fn, stdout, stderr, rc):
+        proc = MagicMock()
+        proc.communicate = AsyncMock(return_value=(stdout, stderr))
+        proc.returncode = rc
+
+        async def run():
+            with patch("asyncio.create_subprocess_exec", return_value=proc):
+                return await coro_fn()
+
+        return asyncio.run(run())
+
+    def test_ping_unknown_host_is_an_error(self):
+        result = self._run(
+            lambda: self.svc.ping("no-such-host.invalid"),
+            b"",
+            b"ping: no-such-host.invalid: Name or service not known\n",
+            2,
+        )
+        self.assertIn("Name or service not known", result["error"])
+
+    def test_ping_no_replies_is_not_an_error(self):
+        out = b"--- 10.0.0.9 ping statistics ---\n3 packets transmitted, 0 received, 100% packet loss\n"
+        result = self._run(lambda: self.svc.ping("10.0.0.9"), out, b"", 1)
+        self.assertIsNone(result["error"])
+
+    def test_traceroute_failure_is_an_error(self):
+        result = self._run(
+            lambda: self.svc.traceroute("no-such-host.invalid"),
+            b"",
+            b"no-such-host.invalid: Name or service not known\n",
+            2,
+        )
+        self.assertIn("Name or service not known", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

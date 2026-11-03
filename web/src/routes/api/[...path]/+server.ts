@@ -14,6 +14,9 @@ import { daemonFetch } from '$lib/server/daemon.js';
  *         /api/settings/bandwidth-cap, and any future daemon endpoints.
  */
 
+// tshark-backed previews run up to 45 s in the daemon; the default is 10 s.
+const SLOW_PATH_TIMEOUT_MS: Record<string, number> = { '/api/pcap/preview': 60_000 };
+
 async function proxyToDaemon(
 	{ url, request }: { url: URL; request: Request },
 	method: string
@@ -32,7 +35,16 @@ async function proxyToDaemon(
 		}
 	}
 
-	const res = await daemonFetch(daemonPath, options);
+	// PCAP downloads (0.8-3.5 GB files, or a filtered merge first) last as long as the
+	// browser keeps reading: a fixed 10 s timeout cut them off mid-file.
+	if (path.startsWith('/api/pcap/download')) {
+		options.signal = request.signal;
+	}
+
+	// OLD CODE START — 2026-11-02: one 10 s timeout for every path, downloads included
+	// const res = await daemonFetch(daemonPath, options);
+	// OLD CODE END
+	const res = await daemonFetch(daemonPath, options, SLOW_PATH_TIMEOUT_MS[path]);
 
 	// For download endpoints, stream the response through
 	const contentType = res.headers.get('content-type') || 'application/json';

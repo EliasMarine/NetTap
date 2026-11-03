@@ -67,7 +67,6 @@ assert 'services' in data, 'Missing services key'
         arkime-live
         redis
         api
-        nginx-proxy
         nettap-storage-daemon
         nettap-web
         nettap-grafana
@@ -136,7 +135,6 @@ print('All services have logging config')
         filebeat
         redis
         api
-        nginx-proxy
     )
 
     if ! _has_pyyaml; then
@@ -242,8 +240,9 @@ print('${svc}: OK')
     # Only NetTap services (which we control) should have no-new-privileges.
     # Malcolm services use `su` (setuid binary) in their entrypoint which
     # silently fails with no-new-privileges, causing services to exit code 0.
+    # nettap-storage-daemon is left out on purpose: see the NOTE on its compose
+    # block (cap_drop: ALL + selective cap_add + read_only instead; re-test first).
     local nettap_services=(
-        nettap-storage-daemon
         nettap-web
         nettap-grafana
         nettap-tshark
@@ -278,7 +277,6 @@ print('${svc}: has no-new-privileges (correct)')
         filebeat
         redis
         api
-        nginx-proxy
         zeek-live
         suricata-live
         pcap-capture
@@ -322,6 +320,38 @@ print('logstash: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: dashboards-helper has PUSER_PRIV_DROP=false with supervisord user=helper (#73)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Same EACCES as logstash: with the default privilege drop, supervisord can't
+    # reopen /dev/fd/1 and idxinit/cron never run (no index pattern, no dashboards).
+    run _compose_query "
+svc = data['services']['dashboards-helper']
+assert svc.get('environment', {}).get('PUSER_PRIV_DROP') == 'false', 'dashboards-helper: PUSER_PRIV_DROP should be false'
+volumes = [str(v) for v in svc.get('volumes', [])]
+assert any('dashboards-helper/supervisord.conf:/etc/supervisord.conf' in v for v in volumes), volumes
+env = svc.get('environment', {})
+missing = [k for k in ('ARKIME_INIT_SHARDS', 'ARKIME_INIT_REPLICAS', 'ARKIME_INIT_SHARDS_PER_NODE',
+                       'MALCOLM_NETWORK_INDEX_PATTERN', 'MALCOLM_OTHER_INDEX_PATTERN') if k not in env]
+assert env['MALCOLM_NETWORK_INDEX_PATTERN'] == 'arkime_sessions3-*', env['MALCOLM_NETWORK_INDEX_PATTERN']
+assert not missing, 'shared-object-creation.sh (set -u) needs these defined: ' + str(missing)
+assert str(env.get('ARKIME_INIT_REFRESH_SEC')) == '1', 'keep a 1 s index refresh, not the helper default of 60 s'
+print('dashboards-helper: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
+"
+    [ "$status" -eq 0 ]
+    conf="${REPO_ROOT}/config/dashboards-helper/supervisord.conf"
+    programs=$(grep -c '^\[program:' "$conf")
+    users=$(grep -c '^user=helper$' "$conf")
+    [ "$programs" -gt 0 ]
+    [ "$programs" -eq "$users" ]
+    # the update and its rollback share this file: idxinit must run on 26.10.0 and 26.02.0 (#134)
+    idxinit=$(grep -A 12 '^\[program:idxinit\]' "$conf" | grep '^command=')
+    [[ "$idxinit" == *"[ -x /usr/local/bin/index-init.sh ]"* ]]
+    [[ "$idxinit" == *"index-refresh.py"* ]]
+}
+
 @test "compose: non-logstash Malcolm services do NOT set PUSER_PRIV_DROP=false" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
@@ -329,14 +359,14 @@ print('logstash: PUSER_PRIV_DROP=false + supervisord.conf override (correct)')
 
     # Most Malcolm services refuse to run as root. They use the entrypoint's su
     # for privilege drop (works since no-new-privileges is removed).
-    # Only logstash needs PUSER_PRIV_DROP=false (supervisord /dev/fd/1 issue).
+    # Only logstash and dashboards-helper need PUSER_PRIV_DROP=false (supervisord
+    # /dev/fd/1 issue; both run their programs as non-root via user=, tests above).
+    # nginx-proxy is gone from the compose file, so it is no longer listed.
     local malcolm_services=(
         opensearch
-        dashboards-helper
         dashboards
         filebeat
         api
-        nginx-proxy
         redis
     )
 
@@ -441,17 +471,19 @@ print('api: no cert mount (correct)')
     [ "$status" -eq 0 ]
 }
 
-@test "compose: nginx-proxy mounts certs at /etc/nginx/certs" {
+# Malcolm's nginx-proxy service is gone from the compose file; NetTap's own
+# nettap-nginx is the front door and carries the TLS certs (2026-11-02).
+@test "compose: nettap-nginx mounts its TLS certs at /etc/nginx/ssl" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
     fi
 
     run _compose_query "
-svc = data['services']['nginx-proxy']
+svc = data['services']['nettap-nginx']
 volumes = svc.get('volumes', [])
-cert_mount = [v for v in volumes if '/etc/nginx/certs' in str(v)]
-assert len(cert_mount) > 0, 'nginx-proxy must mount certs at /etc/nginx/certs'
-print('nginx-proxy: cert mount found — ' + str(cert_mount[0]))
+cert_mount = [v for v in volumes if str(v).endswith(':/etc/nginx/ssl:ro')]
+assert len(cert_mount) > 0, 'nettap-nginx must mount its certs read-only at /etc/nginx/ssl'
+print('nettap-nginx: cert mount found — ' + str(cert_mount[0]))
 "
     [ "$status" -eq 0 ]
 }
@@ -605,16 +637,19 @@ print('zeek-live build: OK')
 }
 
 @test "compose: non-capture services do NOT use host network" {
+    # nettap-storage-daemon uses host networking on purpose: it runs the bridge,
+    # mirror and NIC commands in the host namespace (nsenter dropped 2026-11-01).
     local internal_services=(
-        opensearch dashboards logstash redis api nginx-proxy
-        nettap-storage-daemon nettap-web nettap-grafana
+        opensearch dashboards logstash redis api
+        nettap-web nettap-grafana
     )
 
     for svc in "${internal_services[@]}"; do
         # Should NOT have network_mode: host
         local section
         section=$(sed -n "/^  ${svc}:/,/^  [^ ]/p" "$COMPOSE_FILE")
-        if echo "$section" | grep -q "network_mode: host"; then
+        # Comments don't count (nettap-web's explains how it reaches the host-networked daemon)
+        if echo "$section" | grep -v '^[[:space:]]*#' | grep -q "network_mode: host"; then
             echo "${svc} incorrectly uses host network"
             return 1
         fi
@@ -757,6 +792,19 @@ print('pcap mount: OK')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: daemon gets the LAN_SUBNETS override (#47)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+env = data['services']['nettap-storage-daemon']['environment']
+assert env.get('LAN_SUBNETS') == '\${LAN_SUBNETS:-}', 'LAN_SUBNETS must reach the daemon: ' + repr(env.get('LAN_SUBNETS'))
+print('LAN_SUBNETS: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
 @test "compose: netsniff is the only PCAP writer (CR-020, MS-002)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"
@@ -767,6 +815,70 @@ arkime = data['services']['arkime-live']['environment']
 assert arkime.get('ARKIME_PCAP_WRITE_METHOD') == 'null', 'Arkime must not write PCAP: ' + repr(arkime.get('ARKIME_PCAP_WRITE_METHOD'))
 assert data['services']['pcap-capture']['environment']['PCAP_ENABLE_NETSNIFF'] == 'true'
 print('pcap writer: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: live capture containers do not run the offline PCAP processor" {
+    # It subscribes to Malcolm's pcap-monitor, which NetTap doesn't run, and retries
+    # forever, leaking "pcap-monitor" DNS lookups (dashboard data accuracy #32)
+    for pair in zeek-live:ZEEK suricata-live:SURICATA arkime-live:ARKIME; do
+        svc="${pair%%:*}"; prefix="${pair##*:}"
+        section=$(sed -n "/^  ${svc}:/,/^  [^ ]/p" "$COMPOSE_FILE")
+        echo "$section" | grep -q "${prefix}_PCAP_PROCESSOR: \"false\"" || {
+            echo "$svc is missing ${prefix}_PCAP_PROCESSOR: \"false\""; return 1; }
+    done
+}
+
+@test "compose: suricata-live leaves IP defrag to Suricata (no truncated reassembled packets)" {
+    # Kernel defrag hands Suricata datagrams bigger than its 1514-byte packet size, which it
+    # cuts off and flags as truncated (dashboard data accuracy #27)
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    echo "$section" | grep -q 'SURICATA_AF_PACKET_DEFRAG: "false"'
+    # the safety argument relies on Malcolm's autofp runmode, so nothing may pin another one
+    ! echo "$section" | grep -q '^ *SURICATA_RUNMODE:'
+}
+
+@test "compose: suricata-live disables the decoder rules that fire on normal switch traffic" {
+    # STP/LLDP "Ethertype unknown" and "QUIC error on data" were two-thirds of all alerts (#57)
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    sids=$(echo "$section" | awk -F'"' '/SURICATA_DISABLE_SIDS:/ { print $2 }')
+    [[ ",$sids," == *",2200121,"* ]]
+    [[ ",$sids," == *",2231001,"* ]]
+}
+
+@test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # It never started (no curlrc mount) and nothing uses it (dashboard data accuracy #44).
+    # A plain "docker compose up -d" must not start it, and nothing may depend on it.
+    run _compose_query "
+svc = data['services']['arkime-live']
+assert svc.get('profiles') == ['arkime'], 'arkime-live must only start with --profile arkime: ' + repr(svc.get('profiles'))
+deps = [name for name, s in data['services'].items() if 'arkime-live' in (s.get('depends_on') or {})]
+assert not deps, 'these services depend on arkime-live: ' + str(deps)
+others = [name for name, s in data['services'].items() if name not in ('arkime-live', 'nettap-grafana') and s.get('profiles')]
+assert not others, 'only arkime-live and nettap-grafana are profiled out of the default stack: ' + str(others)
+print('arkime profile: OK')
+"
+    [ "$status" -eq 0 ]
+}
+
+@test "compose: nettap-grafana is off by default and nothing depends on it (#71)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    # Its dashboards never showed data (dashboard data accuracy #71). nginx resolves it
+    # per request, so it must not be a depends_on of nginx or anything else.
+    run _compose_query "
+svc = data['services']['nettap-grafana']
+assert svc.get('profiles') == ['grafana'], 'nettap-grafana must only start with --profile grafana: ' + repr(svc.get('profiles'))
+deps = [name for name, s in data['services'].items() if 'nettap-grafana' in (s.get('depends_on') or {})]
+assert not deps, 'these services depend on nettap-grafana: ' + str(deps)
+print('grafana profile: OK')
 "
     [ "$status" -eq 0 ]
 }

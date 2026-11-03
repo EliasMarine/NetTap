@@ -18,12 +18,13 @@ from services.traffic_classifier import get_category_stats
 
 
 def _mock_os_response(asn_buckets):
+    # #96: one composite page (no after_key), as all_buckets reads it
     return {
         "aggregations": {
-            "asn_breakdown": {
+            "all": {
                 "buckets": [
                     {
-                        "key": name,
+                        "key": {"asn": name},
                         "doc_count": count,
                         "total_bytes": {"value": bytes_val},
                     }
@@ -134,14 +135,17 @@ class TestCategoryStats(unittest.TestCase):
         self.assertGreaterEqual(len(streaming["top_services"]), 1)
         self.assertEqual(streaming["top_services"][0]["name"], "Netflix Inc")
 
-    def test_opensearch_error_returns_empty(self):
+    def test_opensearch_error_raises(self):
+        """#96: a failed query raises; [] would read as no traffic in any category."""
         client = MagicMock()
         client.search = MagicMock(side_effect=Exception("Connection refused"))
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
-        )
-        self.assertEqual(result, [])
+        with self.assertRaises(Exception):
+            asyncio.run(
+                get_category_stats(
+                    client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                )
+            )
 
 
 if __name__ == "__main__":

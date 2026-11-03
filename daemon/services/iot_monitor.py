@@ -17,12 +17,90 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from services.excluded_ips import build_excluded_ips_filter
+from api.alerts import SURICATA_NOISE_EXCLUSION
+from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
+from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
+from storage.all_buckets import all_buckets, complete_terms
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.iot_monitor")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# Zeek writes the ICMP type/code into the port fields (destination.port 0/3/8/11)
+ICMP_TRANSPORTS = ["icmp", "icmp6", "ipv6-icmp"]
+# DNS, DHCP, NTP, SSDP, NetBIOS datagram, plus mDNS/LLMNR/NetBIOS name service
+LOCAL_SERVICE_PORTS = sorted({53, 67, 68, 123, 138, 1900, *LOCAL_NAME_SERVICE_PORTS})
+MULTICAST_BROADCAST = ["224.0.0.0/4", "ff00::/8", "255.255.255.255"]
+# Plumbing every device does (G11 false findings 2026-11-01): never an unexpected
+# port or part of the encryption share. Dedicated checks such as hardcoded DNS
+# query port 53 themselves, so they still see it.
+LOCAL_CHATTER_EXCLUSION: list[dict] = [
+    {"terms": {"network.transport": ICMP_TRANSPORTS}},
+    {"terms": {"destination.port": LOCAL_SERVICE_PORTS}},
+    {"terms": {"destination.ip": MULTICAST_BROADCAST}},
+]
+# HTTPS/QUIC, DNS-over-TLS, alt-HTTPS, MQTT over TLS, plus whatever Zeek itself
+# identified as an encrypted protocol (network.protocol is Zeek's conn service)
+ENCRYPTED_PORTS = [443, 853, 8443, 8883]
+ENCRYPTED_PROTOCOLS = ["ssl", "ssh", "quic", "dtls", "ipsec", "wireguard", "openvpn"]
+# NAT discovery carries no user data, so it is left out of the encryption share
+NO_PAYLOAD_PROTOCOLS = ["stun"]
+# One rule for "encrypted", shared with the Security Posture page (/api/traffic/protocols)
+ENCRYPTED_CONN_FILTER: dict = {
+    "bool": {
+        "should": [
+            {"terms": {"destination.port": ENCRYPTED_PORTS}},
+            {"terms": {"network.protocol": ENCRYPTED_PROTOCOLS}},
+        ],
+        "minimum_should_match": 1,
+    }
+}
+# Isolation is a security check, so it drops only UDP DNS/DHCP/NTP/discovery and
+# multicast/broadcast. TCP on those ports and pings to LAN hosts stay visible.
+ISOLATION_NOISE_EXCLUSION: list[dict] = [
+    {
+        "bool": {
+            "filter": [
+                {"term": {"network.transport": "udp"}},
+                {"terms": {"destination.port": LOCAL_SERVICE_PORTS}},
+            ]
+        }
+    },
+    {"terms": {"destination.ip": MULTICAST_BROADCAST}},
+]
+# A port in an IoT-to-LAN pair makes it critical (SSH, Telnet, NetBIOS, SMB, RDP, VNC)
+# or high (web, management)
+ISOLATION_CRITICAL_PORTS = [22, 23, 139, 445, 3389, 5900]
+ISOLATION_HIGH_PORTS = [80, 5000, 8080, 8443, 9090]
+_ISOLATION_RISKY_PORTS = [*ISOLATION_CRITICAL_PORTS, *ISOLATION_HIGH_PORTS]
+# Per (IoT MAC, LAN host) pair
+ISOLATION_PAIR_AGGS: dict = {
+    # Zeek stores the ICMP code in destination.port; keep it out
+    "not_icmp": {
+        "filter": {
+            "bool": {"must_not": [{"terms": {"network.transport": ICMP_TRANSPORTS}}]}
+        },
+        "aggs": {
+            "ports": {"terms": {"field": "destination.port", "size": 20}},
+            # the top 20 can miss a sweep's one SMB connection; risky ports come apart (#96)
+            "risky": {
+                "filter": {"terms": {"destination.port": _ISOLATION_RISKY_PORTS}},
+                "aggs": {
+                    "ports": {
+                        "terms": {
+                            "field": "destination.port",
+                            "size": len(_ISOLATION_RISKY_PORTS),
+                        }
+                    }
+                },
+            },
+            "port_count": {"cardinality": {"field": "destination.port"}},
+        },
+    },
+    "source_ip": {"terms": {"field": "source.ip", "size": 1}},
+}
 
 # Path to tracker domains list (suffix-matched against DNS queries)
 _TRACKER_DOMAINS_FILE = os.path.join(
@@ -102,6 +180,17 @@ ANOMALY_NEW_PORT = "NEW_PORT"
 ANOMALY_UNUSUAL_TIME = "UNUSUAL_TIME"
 ANOMALY_VOLUME_SPIKE = "VOLUME_SPIKE"
 ANOMALY_PROTOCOL_CHANGE = "PROTOCOL_CHANGE"
+
+# The baseline's "known" sets: anything outside them is flagged as new, so each holds
+# every value of the window, not a top N (#96)
+BASELINE_KNOWN_SOURCES: dict[str, dict] = {
+    "known_destinations": {"terms": {"field": "destination.ip"}},
+    "known_ports": {"terms": {"field": "destination.port"}},
+    "known_protocols": {"terms": {"field": "network.protocol"}},
+    "known_countries": {
+        "terms": {"field": "destination.geo.country_name", "missing_bucket": True}
+    },
+}
 
 
 def _time_range_filter(from_ts: str, to_ts: str) -> dict:
@@ -226,31 +315,57 @@ class IoTMonitor:
         if excluded:
             bool_clause["must_not"] = excluded
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_mac": {
-                    "terms": {"field": "source.mac", "size": 500},
-                    "aggs": {
-                        "oui": {"terms": {"field": "source.oui", "size": 1}},
-                        "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
-                        "last_seen": {"max": {"field": "@timestamp"}},
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: the 500 busiest MACs only; quiet IoT devices on a bigger
+        # network were never discovered, so device_count stopped short
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_mac": {
+        #             "terms": {"field": "source.mac", "size": 500},
+        #             "aggs": {
+        #                 "oui": {"terms": {"field": "source.oui", "size": 1}},
+        #                 "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
+        #                 "last_seen": {"max": {"field": "@timestamp"}},
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("IoT Arkime OUI discovery query failed: %s", exc)
+        #     return
+        #
+        # buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            buckets, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                [{"mac": {"terms": {"field": "source.mac"}}}],
+                aggs={
+                    "oui": {"terms": {"field": "source.oui", "size": 1}},
+                    "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
+                    "last_seen": {"max": {"field": "@timestamp"}},
+                },
+            )
         except Exception as exc:
             logger.error("IoT Arkime OUI discovery query failed: %s", exc)
-            return
-
-        buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+            # OLD CODE START — #96: the fleet read the cached devices, or "no IoT devices", as current
+            # return
+            # OLD CODE END
+            raise
+        if not complete:
+            logger.warning("IoT discovery stopped at %d MACs", len(buckets))
 
         for bucket in buckets:
-            mac = bucket["key"].upper()
+            # OLD CODE START — #96: terms bucket key
+            # mac = bucket["key"].upper()
+            # OLD CODE END
+            mac = bucket["key"]["mac"].upper()
 
             # Already registered — skip re-classification
             if mac in self._iot_devices:
@@ -412,6 +527,7 @@ class IoTMonitor:
                     "behavior_score": score_result["behavior_score"],
                     "anomaly_count": anomaly_count,
                     "encryption_pct": encryption_pct,
+                    "encryption_applicable": stats["encryption_applicable"],
                     "tracker_count": tracker_count,
                     "last_seen": dev_info.get("classified_at", ""),
                 }
@@ -525,6 +641,10 @@ class IoTMonitor:
     ) -> dict[str, dict[str, Any]]:
         """Query connection stats for all devices in one OpenSearch call.
 
+        Local chatter (ICMP, DNS/DHCP/NTP/discovery, multicast/broadcast) is
+        left out, so every count below covers only traffic where encryption
+        and destination ports mean something.
+
         Returns dict keyed by MAC with:
             total_connections, encrypted_connections, total_bytes,
             dest_ports (set), alert_count, third_party_orgs (int)
@@ -539,11 +659,15 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
-            ]
+            ],
+            "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — 2026-11-01: counted ICMP types as ports and DNS/mDNS as unencrypted
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,
@@ -553,11 +677,35 @@ class IoTMonitor:
                     "terms": {"field": "source.mac", "size": len(macs) * 2},
                     "aggs": {
                         "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                        "dest_ports": {
-                            "terms": {"field": "destination.port", "size": 100}
-                        },
-                        "encrypted": {
-                            "filter": {"terms": {"destination.port": [443, 8443, 8883]}}
+                        # OLD CODE START — #96: top 100 ports per device; see _counts_by_mac
+                        # "dest_ports": {
+                        #     "terms": {"field": "destination.port", "size": 100}
+                        # },
+                        # OLD CODE END
+                        # OLD CODE START — 2026-11-02: port list only; DNS-over-TLS (853),
+                        # SSH and Zeek-identified TLS on other ports counted as plaintext
+                        # "encrypted": {
+                        #     "filter": {"terms": {"destination.port": [443, 8443, 8883]}}
+                        # },
+                        # OLD CODE END
+                        # OLD CODE START — the same filter, now the shared ENCRYPTED_CONN_FILTER
+                        # "encrypted": {
+                        #     "filter": {
+                        #         "bool": {
+                        #             "should": [
+                        #                 {"terms": {"destination.port": ENCRYPTED_PORTS}},
+                        #                 {"terms": {"network.protocol": ENCRYPTED_PROTOCOLS}},
+                        #             ],
+                        #             "minimum_should_match": 1,
+                        #         }
+                        #     }
+                        # },
+                        # OLD CODE END
+                        "encrypted": {"filter": ENCRYPTED_CONN_FILTER},
+                        "no_payload": {
+                            "filter": {
+                                "terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}
+                            }
                         },
                         "third_party_orgs": {
                             "cardinality": {
@@ -571,19 +719,30 @@ class IoTMonitor:
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            ports_by_mac = self._counts_by_mac(
+                {"bool": bool_clause}, "destination.port"
+            )
         except Exception as exc:
             logger.error("Fleet conn stats query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: every device was scored as having no traffic
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, dict[str, Any]] = {}
         buckets = result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
 
         for bucket in buckets:
             raw_mac = bucket["key"].upper()
-            total_conns = bucket.get("doc_count", 0)
+            no_payload = bucket.get("no_payload", {}).get("doc_count", 0)
+            # connections where encryption means something (the ratio's denominator)
+            total_conns = bucket.get("doc_count", 0) - no_payload
             encrypted_conns = bucket.get("encrypted", {}).get("doc_count", 0)
             total_bytes = bucket.get("total_bytes", {}).get("value", 0) or 0
-            ports = {b["key"] for b in bucket.get("dest_ports", {}).get("buckets", [])}
+            # OLD CODE START — #96: top 100 ports per device
+            # ports = {b["key"] for b in bucket.get("dest_ports", {}).get("buckets", [])}
+            # OLD CODE END
+            ports = set(ports_by_mac.get(raw_mac, {}))
             third_party = bucket.get("third_party_orgs", {}).get("value", 0) or 0
 
             out[raw_mac] = {
@@ -624,10 +783,16 @@ class IoTMonitor:
                 _time_range_filter(from_ts, to_ts),
                 {"exists": {"field": "suricata.alert.severity"}},
                 {"terms": {"source.mac": mac_terms}},
-            ]
+            ],
+            # #82: Suricata engine events aren't alerts (same rule as the Alerts page and the
+            # device list, #60). G11: three IoT devices showed 521, 220 and 15 "alerts", all
+            # engine events, which lowered their trust scores
+            "must_not": [*SURICATA_NOISE_EXCLUSION, *excluded],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — #82: only the excluded IPs were left out
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
         query = {
             "size": 0,
@@ -643,7 +808,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Fleet alert count query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: every device read 0 alerts
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, int] = {}
         for bucket in (
@@ -687,35 +855,47 @@ class IoTMonitor:
             "aggs": {
                 "by_mac": {
                     "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "queried_domains": {
-                            "terms": {
-                                "field": "dns.host",
-                                "size": 500,
-                            }
-                        },
-                    },
+                    # OLD CODE START — #96: the 500 most-queried domains only; trackers
+                    # are usually in the quiet tail, so the count fell short
+                    # "aggs": {
+                    #     "queried_domains": {
+                    #         "terms": {
+                    #             "field": "dns.host",
+                    #             "size": 500,
+                    #         }
+                    #     },
+                    # },
+                    # OLD CODE END
                 }
             },
         }
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            domains_by_mac = self._counts_by_mac({"bool": bool_clause}, "dns.host")
         except Exception as exc:
             logger.error("Fleet DNS tracker query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: every device read 0 tracker domains
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, dict[str, Any]] = {}
         for bucket in (
             result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
-            domains = bucket.get("queried_domains", {}).get("buckets", [])
-            tracker_count = 0
-            for d_bucket in domains:
-                domain = d_bucket.get("key", "")
-                if self._is_tracker_domain(domain):
-                    tracker_count += 1
+            # OLD CODE START — #96: counted from the top-500 list
+            # domains = bucket.get("queried_domains", {}).get("buckets", [])
+            # tracker_count = 0
+            # for d_bucket in domains:
+            #     domain = d_bucket.get("key", "")
+            #     if self._is_tracker_domain(domain):
+            #         tracker_count += 1
+            # OLD CODE END
+            tracker_count = sum(
+                1 for d in domains_by_mac.get(raw_mac, {}) if self._is_tracker_domain(d)
+            )
 
             out[raw_mac] = {
                 "tracker_domain_count": tracker_count,
@@ -801,6 +981,8 @@ class IoTMonitor:
             "telemetry_bytes": 0,  # Would need IP-to-tracker resolution; simplified for now
             "third_party_orgs": third_party_orgs,
             "encryption_ratio": min(1.0, max(0.0, encryption_ratio)),
+            # False when only local chatter was seen: the ratio is then N/A, not 100%
+            "encryption_applicable": total_conns > 0,
             "protocol_violations": protocol_violations,
             "alert_count": alert_count,
             "firmware_age_signal": "unknown",
@@ -863,6 +1045,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
+                CONN_RECORDS,
                 {
                     "bool": {
                         "should": [
@@ -880,52 +1063,66 @@ class IoTMonitor:
         # Query for device traffic patterns
         query = {
             "size": 0,
+            # hits.total is shown as a count; without this OpenSearch stops at 10,000
+            "track_total_hits": True,
             "query": {"bool": bool_clause},
             "aggs": {
-                "destinations": {"terms": {"field": "destination.ip", "size": 100}},
-                "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
-                "protocols": {"terms": {"field": "network.protocol", "size": 10}},
-                "hourly_activity": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "calendar_interval": "hour",
-                    }
-                },
+                # OLD CODE START — #96: top 100/50/10/20 only; the rest read as "new" every hour
+                # "destinations": {"terms": {"field": "destination.ip", "size": 100}},
+                # "dest_ports": {"terms": {"field": "destination.port", "size": 50}},
+                # "protocols": {"terms": {"field": "network.protocol", "size": 10}},
+                # OLD CODE END
+                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                # "hourly_activity": {
+                #     "date_histogram": {"field": "@timestamp", "calendar_interval": "hour"}
+                # },
+                # OLD CODE END
+                "hourly_activity": time_slots(from_iso, to_iso, "1h"),
                 "total_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                "countries": {
-                    "terms": {
-                        "field": "destination.geo.country_name",
-                        "size": 20,
-                        "missing": "Unknown",
-                    }
-                },
+                # OLD CODE START — #96: see above
+                # "countries": {
+                #     "terms": {
+                #         "field": "destination.geo.country_name",
+                #         "size": 20,
+                #         "missing": "Unknown",
+                #     }
+                # },
+                # OLD CODE END
             },
         }
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            known = self._baseline_known_sets({"bool": bool_clause}, mac)
         except Exception as exc:
             logger.error("Failed to build baseline for %s: %s", mac, exc)
-            return {"error": str(exc)}
+            # OLD CODE START — #96: answered 200 with {"error": ...} as the baseline
+            # return {"error": str(exc)}
+            # OLD CODE END
+            raise
 
         aggs = result.get("aggregations", {})
 
-        # Extract known destinations
-        destinations = [
-            b["key"] for b in aggs.get("destinations", {}).get("buckets", [])
-        ]
-
-        # Extract known ports
-        ports = [b["key"] for b in aggs.get("dest_ports", {}).get("buckets", [])]
-
-        # Extract known protocols
-        protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
-
-        # Extract known countries
-        countries = [b["key"] for b in aggs.get("countries", {}).get("buckets", [])]
+        # OLD CODE START — #96: top-N lists treated as every known value
+        # # Extract known destinations
+        # destinations = [
+        #     b["key"] for b in aggs.get("destinations", {}).get("buckets", [])
+        # ]
+        #
+        # # Extract known ports
+        # ports = [b["key"] for b in aggs.get("dest_ports", {}).get("buckets", [])]
+        #
+        # # Extract known protocols
+        # protocols = [b["key"] for b in aggs.get("protocols", {}).get("buckets", [])]
+        #
+        # # Extract known countries
+        # countries = [b["key"] for b in aggs.get("countries", {}).get("buckets", [])]
+        # OLD CODE END
 
         # Calculate active hours from histogram
-        hourly = aggs.get("hourly_activity", {}).get("buckets", [])
+        hourly = histogram_buckets(
+            aggs.get("hourly_activity")
+        )  # date_histogram before #120
         active_hours: set[int] = set()
         for bucket in hourly:
             if bucket.get("doc_count", 0) > 0:
@@ -948,10 +1145,13 @@ class IoTMonitor:
             "mac": mac,
             "built_at": now.isoformat(),
             "period_days": days,
-            "known_destinations": destinations,
-            "known_ports": ports,
-            "known_protocols": protocols,
-            "known_countries": countries,
+            # OLD CODE START — #96: top-N lists
+            # "known_destinations": destinations,
+            # "known_ports": ports,
+            # "known_protocols": protocols,
+            # "known_countries": countries,
+            # OLD CODE END
+            **known,
             "active_hours": sorted(active_hours),
             "total_bytes": total_bytes,
             "daily_avg_bytes": daily_avg_bytes,
@@ -960,6 +1160,26 @@ class IoTMonitor:
 
         self._baselines[mac] = baseline
         return baseline
+
+    def _baseline_known_sets(self, query: dict, mac: str) -> dict[str, list]:
+        """Every destination, port, protocol and country the device used in `query`.
+
+        A missing country reads as "Unknown", as the terms aggregation's `missing` did.
+        """
+        known: dict[str, list] = {}
+        for name, source in BASELINE_KNOWN_SOURCES.items():
+            buckets, complete = all_buckets(
+                self._client, NETWORK_INDEX, query, [{"value": source}]
+            )
+            if not complete:
+                logger.warning(
+                    "Baseline %s for %s stopped at %d values", name, mac, len(buckets)
+                )
+            known[name] = [
+                "Unknown" if b["key"]["value"] is None else b["key"]["value"]
+                for b in buckets
+            ]
+        return known
 
     def check_anomalies(
         self,
@@ -986,6 +1206,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
+                CONN_RECORDS,
                 {
                     "bool": {
                         "should": [
@@ -1022,9 +1243,24 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Anomaly check failed for %s: %s", mac, exc)
-            return []
+            # OLD CODE START — #96: read as "no anomalies" and a fleet anomaly count of 0
+            # return []
+            # OLD CODE END
+            raise
 
         aggs = result.get("aggregations", {})
+
+        def every(name: str, known: str) -> list[dict]:
+            # #96: the hour's top 100/20/50/10 only; a new value ranked past them went unreported
+            return complete_terms(
+                self._client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                aggs.get(name, {}),
+                BASELINE_KNOWN_SOURCES[known],
+                missing="Unknown",
+            )
+
         anomalies: list[dict[str, Any]] = []
         known_dests = set(baseline.get("known_destinations", []))
         known_ports = set(baseline.get("known_ports", []))
@@ -1033,7 +1269,10 @@ class IoTMonitor:
         active_hours = set(baseline.get("active_hours", []))
 
         # Check new destinations
-        for b in aggs.get("destinations", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("destinations", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("destinations", "known_destinations"):
             if b["key"] not in known_dests:
                 anomalies.append(
                     {
@@ -1048,7 +1287,10 @@ class IoTMonitor:
                 )
 
         # Check new countries
-        for b in aggs.get("countries", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("countries", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("countries", "known_countries"):
             if b["key"] not in known_countries and b["key"] != "Unknown":
                 anomalies.append(
                     {
@@ -1063,7 +1305,10 @@ class IoTMonitor:
                 )
 
         # Check new ports
-        for b in aggs.get("dest_ports", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("dest_ports", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("dest_ports", "known_ports"):
             if b["key"] not in known_ports:
                 anomalies.append(
                     {
@@ -1078,7 +1323,10 @@ class IoTMonitor:
                 )
 
         # Check protocol changes
-        for b in aggs.get("protocols", {}).get("buckets", []):
+        # OLD CODE START — #96: see every()
+        # for b in aggs.get("protocols", {}).get("buckets", []):
+        # OLD CODE END
+        for b in every("protocols", "known_protocols"):
             if b["key"] not in known_protocols:
                 anomalies.append(
                     {
@@ -1240,6 +1488,8 @@ class IoTMonitor:
                     "telemetry_bytes": telemetry_bytes,
                     "third_party_orgs": third_party_orgs,
                     "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
+                    # Only local chatter seen: ratio stays 1.0 so nothing is penalised
+                    "encryption_applicable": total_conns > 0,
                     "phone_home_per_hour": phone_home_per_hour,
                 }
             )
@@ -1302,40 +1552,53 @@ class IoTMonitor:
             "aggs": {
                 "by_mac": {
                     "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "queried_domains": {
-                            "terms": {
-                                "field": "dns.host",
-                                "size": 500,
-                            }
-                        },
-                    },
+                    # OLD CODE START — #96: the 500 most-queried domains only
+                    # "aggs": {
+                    #     "queried_domains": {
+                    #         "terms": {
+                    #             "field": "dns.host",
+                    #             "size": 500,
+                    #         }
+                    #     },
+                    # },
+                    # OLD CODE END
                 }
             },
         }
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
+            domains_by_mac = self._counts_by_mac({"bool": bool_clause}, "dns.host")
         except Exception as exc:
             logger.error("DNS tracker detail query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: the privacy report read no trackers for every device
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, dict[str, Any]] = {}
         for bucket in (
             result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
         ):
             raw_mac = bucket["key"].upper()
-            domains = bucket.get("queried_domains", {}).get("buckets", [])
-            tracker_list: list[dict[str, Any]] = []
-            for d_bucket in domains:
-                domain = d_bucket.get("key", "")
-                if self._is_tracker_domain(domain):
-                    tracker_list.append(
-                        {
-                            "domain": domain,
-                            "query_count": d_bucket.get("doc_count", 0),
-                        }
-                    )
+            # OLD CODE START — #96: listed from the top-500 list
+            # domains = bucket.get("queried_domains", {}).get("buckets", [])
+            # tracker_list: list[dict[str, Any]] = []
+            # for d_bucket in domains:
+            #     domain = d_bucket.get("key", "")
+            #     if self._is_tracker_domain(domain):
+            #         tracker_list.append(
+            #             {
+            #                 "domain": domain,
+            #                 "query_count": d_bucket.get("doc_count", 0),
+            #             }
+            #         )
+            # OLD CODE END
+            tracker_list = [
+                {"domain": domain, "query_count": count}
+                for domain, count in domains_by_mac.get(raw_mac, {}).items()
+                if self._is_tracker_domain(domain)
+            ]
 
             out[raw_mac] = {
                 "tracker_domains": tracker_list,
@@ -1380,6 +1643,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 mac_filter,
             ]
         }
@@ -1415,7 +1679,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Communication map query failed for %s: %s", mac, exc)
-            return {"mac": mac, "destinations": []}
+            # OLD CODE START — #96: read as a device that talks to nobody
+            # return {"mac": mac, "destinations": []}
+            # OLD CODE END
+            raise
 
         # Resolve hostnames via DNS logs
         dest_ips = []
@@ -1559,6 +1826,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 mac_filter,
             ]
         }
@@ -1570,10 +1838,10 @@ class IoTMonitor:
             "query": {"bool": bool_clause},
             "aggs": {
                 "hourly": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": "1h",
-                    },
+                    # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                    # "date_histogram": {"field": "@timestamp", "fixed_interval": "1h"},
+                    # OLD CODE END
+                    **time_slots(from_ts, to_ts, "1h"),
                     "aggs": {
                         "bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                         "destinations": {"cardinality": {"field": "destination.ip"}},
@@ -1586,17 +1854,20 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Activity timeline query failed for %s: %s", mac, exc)
-            return {
-                "mac": mac,
-                "interval": "1h",
-                "buckets": [],
-                "baseline_hours": [],
-                "baseline_avg_hourly_bytes": 0,
-            }
+            # OLD CODE START — #96: read as a device with no activity
+            # return {
+            #     "mac": mac,
+            #     "interval": "1h",
+            #     "buckets": [],
+            #     "baseline_hours": [],
+            #     "baseline_avg_hourly_bytes": 0,
+            # }
+            # OLD CODE END
+            raise
 
-        hourly_buckets = (
-            result.get("aggregations", {}).get("hourly", {}).get("buckets", [])
-        )
+        hourly_buckets = histogram_buckets(
+            result.get("aggregations", {}).get("hourly")
+        )  # date_histogram before #120
 
         buckets: list[dict[str, Any]] = []
         for hb in hourly_buckets:
@@ -1663,8 +1934,8 @@ class IoTMonitor:
         """Audit IoT devices for protocol compliance violations.
 
         Checks each device's traffic against expected protocol profiles
-        based on device category. Flags unexpected ports, unencrypted
-        external connections, and hardcoded DNS.
+        based on device category. Flags unexpected ports and hardcoded DNS
+        (encryption is reported once, by the privacy report).
 
         Returns dict with 'devices' list.
         """
@@ -1678,8 +1949,10 @@ class IoTMonitor:
         excluded = build_excluded_ips_filter(excluded_ips or [])
         macs = list(devices.keys())
 
-        # Batch query connection stats (includes dest_ports)
-        conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+        # OLD CODE START — 2026-11-01: only fed the unencrypted finding removed below
+        # # Batch query connection stats (includes dest_ports)
+        # conn_stats = self._query_conn_stats_batch(macs, from_ts, to_ts, excluded)
+        # OLD CODE END
 
         # Query per-device port usage with connection counts
         port_detail = self._query_port_detail_batch(macs, from_ts, to_ts, excluded)
@@ -1698,7 +1971,9 @@ class IoTMonitor:
             )
             category_label = profile.get("label", "Unknown")
 
-            cs = conn_stats.get(mac, {})
+            # OLD CODE START — 2026-11-01: conn stats no longer queried here
+            # cs = conn_stats.get(mac, {})
+            # OLD CODE END
             pd = port_detail.get(mac, {})
             hd = hardcoded_dns.get(mac, [])
 
@@ -1725,25 +2000,29 @@ class IoTMonitor:
                         }
                     )
 
-            # Check for unencrypted external connections
-            total_conns = cs.get("total_connections", 0)
-            encrypted_conns = cs.get("encrypted_connections", 0)
-            unencrypted = total_conns - encrypted_conns
-            if total_conns > 0 and unencrypted > 0:
-                ratio = encrypted_conns / total_conns
-                if ratio < 0.9:
-                    findings.append(
-                        {
-                            "type": "unencrypted_traffic",
-                            "severity": "high" if ratio < 0.5 else "medium",
-                            "port": 0,
-                            "connection_count": unencrypted,
-                            "description": (
-                                f"{int((1 - ratio) * 100)}% of connections are unencrypted "
-                                f"({unencrypted} of {total_conns})"
-                            ),
-                        }
-                    )
+            # OLD CODE START — 2026-11-01: duplicated the findings feed's "has only N%
+            # encrypted connections", which /iot builds from the privacy report's
+            # encryption_ratio; the same fact was listed twice per device.
+            # # Check for unencrypted external connections
+            # total_conns = cs.get("total_connections", 0)
+            # encrypted_conns = cs.get("encrypted_connections", 0)
+            # unencrypted = total_conns - encrypted_conns
+            # if total_conns > 0 and unencrypted > 0:
+            #     ratio = encrypted_conns / total_conns
+            #     if ratio < 0.9:
+            #         findings.append(
+            #             {
+            #                 "type": "unencrypted_traffic",
+            #                 "severity": "high" if ratio < 0.5 else "medium",
+            #                 "port": 0,
+            #                 "connection_count": unencrypted,
+            #                 "description": (
+            #                     f"{int((1 - ratio) * 100)}% of connections are unencrypted "
+            #                     f"({unencrypted} of {total_conns})"
+            #                 ),
+            #             }
+            #         )
+            # OLD CODE END
 
             # Check for hardcoded DNS
             for dns_entry in hd:
@@ -1797,42 +2076,80 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
-            ]
+            ],
+            "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — 2026-11-01: ICMP type/code showed up as "Uses port 0/3"
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_mac": {
-                    "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "ports": {"terms": {"field": "destination.port", "size": 200}},
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: top 200 ports per device; a quiet telnet/SMB port fell off
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_mac": {
+        #             "terms": {"field": "source.mac", "size": len(macs) * 2},
+        #             "aggs": {
+        #                 "ports": {"terms": {"field": "destination.port", "size": 200}},
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("Port detail query failed: %s", exc)
+        #     return {}
+        #
+        # out: dict[str, dict[int, int]] = {}
+        # for bucket in (
+        #     result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
+        # ):
+        #     raw_mac = bucket["key"].upper()
+        #     port_map: dict[int, int] = {}
+        #     for pb in bucket.get("ports", {}).get("buckets", []):
+        #         port_map[pb["key"]] = pb.get("doc_count", 0)
+        #     out[raw_mac] = port_map
+        #
+        # return out
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            return self._counts_by_mac({"bool": bool_clause}, "destination.port")
         except Exception as exc:
             logger.error("Port detail query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: the protocol audit read no ports for every device
+            # return {}
+            # OLD CODE END
+            raise
 
-        out: dict[str, dict[int, int]] = {}
-        for bucket in (
-            result.get("aggregations", {}).get("by_mac", {}).get("buckets", [])
-        ):
-            raw_mac = bucket["key"].upper()
-            port_map: dict[int, int] = {}
-            for pb in bucket.get("ports", {}).get("buckets", []):
-                port_map[pb["key"]] = pb.get("doc_count", 0)
-            out[raw_mac] = port_map
-
-        return out
+    def _counts_by_mac(self, query: dict, field: str) -> dict[str, dict[Any, int]]:
+        """Documents per value of `field` for each source MAC in `query`: every value,
+        busiest first (ties in value order, as a terms aggregation lists them)."""
+        buckets, complete = all_buckets(
+            self._client,
+            NETWORK_INDEX,
+            query,
+            [
+                {"mac": {"terms": {"field": "source.mac"}}},
+                {"value": {"terms": {"field": field}}},
+            ],
+        )
+        if not complete:
+            logger.warning("%s per device stopped at %d pairs", field, len(buckets))
+        counts: dict[str, dict[Any, int]] = {}
+        for b in buckets:
+            per_mac = counts.setdefault(b["key"]["mac"].upper(), {})
+            value = b["key"]["value"]
+            per_mac[value] = per_mac.get(value, 0) + b.get("doc_count", 0)
+        return {
+            mac: dict(sorted(c.items(), key=lambda kv: kv[1], reverse=True))
+            for mac, c in counts.items()
+        }
 
     def _query_hardcoded_dns_batch(
         self,
@@ -1869,6 +2186,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
                 {"term": {"destination.port": 53}},
                 {"terms": {"destination.ip": well_known_dns}},
@@ -1896,7 +2214,10 @@ class IoTMonitor:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except Exception as exc:
             logger.error("Hardcoded DNS query failed: %s", exc)
-            return {}
+            # OLD CODE START — #96: read as "no device bypasses your DNS"
+            # return {}
+            # OLD CODE END
+            raise
 
         out: dict[str, list[dict[str, Any]]] = {}
         for bucket in (
@@ -1967,6 +2288,7 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
+                CONN_RECORDS,
                 {"terms": {"source.mac": mac_terms}},
                 # Destination is RFC1918 (internal) — use script filter
                 {
@@ -1988,95 +2310,161 @@ class IoTMonitor:
                         }
                     }
                 },
-            ]
+            ],
+            # OLD CODE START — 2026-11-01: port-only exclusion also hid TCP 53/123 and ICMP
+            # sweeps to LAN hosts (security review); pings are now a low-risk signal
+            # "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
+            # OLD CODE END
+            # UDP DNS/DHCP/NTP/discovery to a LAN server is expected, not lateral movement
+            "must_not": [*excluded, *ISOLATION_NOISE_EXCLUSION],
         }
-        if excluded:
-            bool_clause["must_not"] = excluded
+        # OLD CODE START — 2026-11-01: flagged DNS/DHCP to the gateway as an isolation risk
+        # if excluded:
+        #     bool_clause["must_not"] = excluded
+        # OLD CODE END
 
-        query = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "by_source_mac": {
-                    "terms": {"field": "source.mac", "size": len(macs) * 2},
-                    "aggs": {
-                        "by_dest_ip": {
-                            "terms": {"field": "destination.ip", "size": 50},
-                            "aggs": {
-                                "ports": {
-                                    "terms": {"field": "destination.port", "size": 20}
-                                },
-                                "source_ip": {
-                                    "terms": {"field": "source.ip", "size": 1}
-                                },
-                            },
-                        },
-                    },
-                }
-            },
-        }
-
+        # OLD CODE START — #96: 50 LAN hosts per device and 20 ports per pair; a pair past
+        # the 50th host or a sweep's quiet 445 dropped out, so risk and score read too low
+        # query = {
+        #     "size": 0,
+        #     "query": {"bool": bool_clause},
+        #     "aggs": {
+        #         "by_source_mac": {
+        #             "terms": {"field": "source.mac", "size": len(macs) * 2},
+        #             "aggs": {
+        #                 "by_dest_ip": {
+        #                     "terms": {"field": "destination.ip", "size": 50},
+        #                     "aggs": {
+        #                         # Zeek stores the ICMP code in destination.port; keep it out
+        #                         "not_icmp": {
+        #                             "filter": {
+        #                                 "bool": {
+        #                                     "must_not": [
+        #                                         {
+        #                                             "terms": {
+        #                                                 "network.transport": ICMP_TRANSPORTS
+        #                                             }
+        #                                         }
+        #                                     ]
+        #                                 }
+        #                             },
+        #                             "aggs": {
+        #                                 "ports": {
+        #                                     "terms": {
+        #                                         "field": "destination.port",
+        #                                         "size": 20,
+        #                                     }
+        #                                 }
+        #                             },
+        #                         },
+        #                         "source_ip": {
+        #                             "terms": {"field": "source.ip", "size": 1}
+        #                         },
+        #                     },
+        #                 },
+        #             },
+        #         }
+        #     },
+        # }
+        #
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except Exception as exc:
+        #     logger.error("Network isolation query failed: %s", exc)
+        #     return {
+        #         "segmentation_score": 100,
+        #         "segmentation_grade": "A",
+        #         "pairs": [],
+        #         "recommendation": "Could not analyze network isolation.",
+        #     }
+        #
+        # pairs: list[dict[str, Any]] = []
+        # for mac_bucket in (
+        #     result.get("aggregations", {}).get("by_source_mac", {}).get("buckets", [])
+        # ):
+        #     raw_mac = mac_bucket["key"].upper()
+        #     dev_info = devices.get(raw_mac, {})
+        #     dev_name = dev_info.get("hostname") or dev_info.get(
+        #         "manufacturer", "Unknown"
+        #     )
+        #
+        #     for dest_bucket in mac_bucket.get("by_dest_ip", {}).get("buckets", []):
+        #         dest_ip = dest_bucket["key"]
+        #
+        #         # Skip if destination is also an IoT device
+        #         if dest_ip in iot_ips:
+        #             continue
+        #
+        #         not_icmp = dest_bucket.get("not_icmp", {})
+        #         ports = [
+        #             pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])
+        #         ]
+        #         conn_count = dest_bucket.get("doc_count", 0)
+        #         pinged = conn_count > not_icmp.get("doc_count", 0)
+        #
+        #         # Get source IP
+        #         src_ip_buckets = dest_bucket.get("source_ip", {}).get("buckets", [])
+        #         src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
+        #
+        #         # Classify risk based on ports
+        #         risk = self._classify_isolation_risk(ports)
+        #
+        #         # Build description
+        #         port_names = self._port_names(ports) if ports else ""
+        #         if pinged:
+        #             # ping-only pairs get no ports, so they classify as low risk
+        #             port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+        #         desc = f"{dev_name} can reach {dest_ip} via {port_names}"
+        #
+        #         pairs.append(
+        #             {
+        #                 "iot_device": {
+        #                     "mac": raw_mac,
+        #                     "name": dev_name,
+        #                     "ip": src_ip,
+        #                 },
+        #                 "internal_target": {
+        #                     "ip": dest_ip,
+        #                     "hostname": None,  # Would need reverse DNS
+        #                 },
+        #                 "risk": risk,
+        #                 "connection_count": conn_count,
+        #                 "ports": ports,
+        #                 "description": desc,
+        #             }
+        #         )
+        # OLD CODE END
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            buckets, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                [
+                    {"mac": {"terms": {"field": "source.mac"}}},
+                    {"dest": {"terms": {"field": "destination.ip"}}},
+                ],
+                aggs=ISOLATION_PAIR_AGGS,
+            )
         except Exception as exc:
             logger.error("Network isolation query failed: %s", exc)
-            return {
-                "segmentation_score": 100,
-                "segmentation_grade": "A",
-                "pairs": [],
-                "recommendation": "Could not analyze network isolation.",
-            }
+            # OLD CODE START — #96: a failure scored the network 100 / grade A
+            # return {
+            #     "segmentation_score": 100,
+            #     "segmentation_grade": "A",
+            #     "pairs": [],
+            #     "recommendation": "Could not analyze network isolation.",
+            # }
+            # OLD CODE END
+            raise
+        if not complete:
+            logger.warning("Network isolation stopped at %d pairs", len(buckets))
 
-        pairs: list[dict[str, Any]] = []
-        for mac_bucket in (
-            result.get("aggregations", {}).get("by_source_mac", {}).get("buckets", [])
-        ):
-            raw_mac = mac_bucket["key"].upper()
-            dev_info = devices.get(raw_mac, {})
-            dev_name = dev_info.get("hostname") or dev_info.get(
-                "manufacturer", "Unknown"
-            )
-
-            for dest_bucket in mac_bucket.get("by_dest_ip", {}).get("buckets", []):
-                dest_ip = dest_bucket["key"]
-
-                # Skip if destination is also an IoT device
-                if dest_ip in iot_ips:
-                    continue
-
-                ports = [
-                    pb["key"] for pb in dest_bucket.get("ports", {}).get("buckets", [])
-                ]
-                conn_count = dest_bucket.get("doc_count", 0)
-
-                # Get source IP
-                src_ip_buckets = dest_bucket.get("source_ip", {}).get("buckets", [])
-                src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
-
-                # Classify risk based on ports
-                risk = self._classify_isolation_risk(ports)
-
-                # Build description
-                port_names = self._port_names(ports)
-                desc = f"{dev_name} can reach {dest_ip} via {port_names}"
-
-                pairs.append(
-                    {
-                        "iot_device": {
-                            "mac": raw_mac,
-                            "name": dev_name,
-                            "ip": src_ip,
-                        },
-                        "internal_target": {
-                            "ip": dest_ip,
-                            "hostname": None,  # Would need reverse DNS
-                        },
-                        "risk": risk,
-                        "connection_count": conn_count,
-                        "ports": ports,
-                        "description": desc,
-                    }
-                )
+        # A destination that is also an IoT device is not an isolation finding
+        pairs = [
+            self._isolation_pair(b, devices)
+            for b in buckets
+            if b["key"]["dest"] not in iot_ips
+        ]
 
         # Compute segmentation score
         score = 100
@@ -2108,6 +2496,11 @@ class IoTMonitor:
         )
         if not pairs:
             recommendation = "Your IoT devices are well-isolated from internal hosts."
+        elif all(p["risk"] == "low" for p in pairs):
+            recommendation = (
+                "Only pings from IoT devices to internal hosts were seen. "
+                "That is usually a connectivity check, not a risk."
+            )
         elif iot_reaching_workstations > 0:
             recommendation = (
                 f"Consider creating a separate VLAN for your IoT devices -- "
@@ -2122,7 +2515,13 @@ class IoTMonitor:
 
         # Sort pairs by risk severity
         risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        pairs.sort(key=lambda p: risk_order.get(p["risk"], 99))
+        # OLD CODE START — #96: pairs arrived busiest first from terms; composite pages
+        # them in key order, so the busiest-first tiebreak is now explicit
+        # pairs.sort(key=lambda p: risk_order.get(p["risk"], 99))
+        # OLD CODE END
+        pairs.sort(
+            key=lambda p: (risk_order.get(p["risk"], 99), -p["connection_count"])
+        )
 
         return {
             "segmentation_score": score,
@@ -2131,11 +2530,50 @@ class IoTMonitor:
             "recommendation": recommendation,
         }
 
+    def _isolation_pair(self, bucket: dict, devices: dict) -> dict[str, Any]:
+        """One IoT-device-to-LAN-host pair from a (mac, dest) composite bucket."""
+        raw_mac = bucket["key"]["mac"].upper()
+        dest_ip = bucket["key"]["dest"]
+        dev_info = devices.get(raw_mac, {})
+        dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+
+        not_icmp = bucket.get("not_icmp", {})
+        top = [pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])]
+        risky = not_icmp.get("risky", {}).get("ports", {}).get("buckets", [])
+        ports = [*top, *(pb["key"] for pb in risky if pb["key"] not in top)]
+        conn_count = bucket.get("doc_count", 0)
+        pinged = conn_count > not_icmp.get("doc_count", 0)
+
+        src_ip_buckets = bucket.get("source_ip", {}).get("buckets", [])
+        src_ip = src_ip_buckets[0]["key"] if src_ip_buckets else ""
+
+        port_count = not_icmp.get("port_count", {}).get("value")
+        port_names = self._port_names(ports, port_count) if ports else ""
+        if pinged:
+            # ping-only pairs get no ports, so they classify as low risk
+            port_names = f"{port_names}, ping" if port_names else "ping (ICMP)"
+
+        return {
+            "iot_device": {"mac": raw_mac, "name": dev_name, "ip": src_ip},
+            "internal_target": {
+                "ip": dest_ip,
+                "hostname": None,  # Would need reverse DNS
+            },
+            "risk": self._classify_isolation_risk(ports),
+            "connection_count": conn_count,
+            "ports": ports,
+            "description": f"{dev_name} can reach {dest_ip} via {port_names}",
+        }
+
     @staticmethod
     def _classify_isolation_risk(ports: list[int]) -> str:
         """Classify the risk level of IoT-to-internal communication."""
-        critical_ports = {445, 139, 3389, 5900, 22, 23}  # SMB, RDP, VNC, SSH, Telnet
-        high_ports = {80, 8080, 8443, 5000, 9090}  # Web services, management
+        # OLD CODE START — #96: now module constants, shared with the isolation query
+        # critical_ports = {445, 139, 3389, 5900, 22, 23}  # SMB, RDP, VNC, SSH, Telnet
+        # high_ports = {80, 8080, 8443, 5000, 9090}  # Web services, management
+        # OLD CODE END
+        critical_ports = set(ISOLATION_CRITICAL_PORTS)
+        high_ports = set(ISOLATION_HIGH_PORTS)
         if any(p in critical_ports for p in ports):
             return "critical"
         if any(p in high_ports for p in ports):
@@ -2145,8 +2583,8 @@ class IoTMonitor:
         return "low"
 
     @staticmethod
-    def _port_names(ports: list[int]) -> str:
-        """Convert a port list to human-readable names."""
+    def _port_names(ports: list[int], total: int | None = None) -> str:
+        """Convert a port list to human-readable names; `total` is every port used."""
         names = {
             22: "SSH",
             23: "Telnet",
@@ -2164,8 +2602,13 @@ class IoTMonitor:
         for p in ports[:5]:  # Show first 5
             name = names.get(p, str(p))
             parts.append(name)
-        if len(ports) > 5:
-            parts.append(f"+{len(ports) - 5} more")
+        # OLD CODE START — #96: "+N more" counted the listed ports, at most 20 + the risky
+        # if len(ports) > 5:
+        #     parts.append(f"+{len(ports) - 5} more")
+        # OLD CODE END
+        port_count = max(len(ports), total or 0)
+        if port_count > 5:
+            parts.append(f"+{port_count - 5} more")
         return ", ".join(parts) if parts else "unknown"
 
     # -----------------------------------------------------------------

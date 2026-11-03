@@ -232,7 +232,10 @@ monitor_startup() {
     # shellcheck disable=SC2034
     local -a critical_services=(opensearch)
     local -a dependent_services=(dashboards-helper dashboards logstash)
-    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    # OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+    # local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    # OLD CODE END
+    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture)
     local -a infra_services=(redis api nginx-proxy)
     local -a nettap_services=(nettap-storage-daemon nettap-web nettap-grafana nettap-nginx nettap-tshark nettap-cyberchef)
 
@@ -567,6 +570,28 @@ bootstrap_index_templates() {
     else
         warn "  Failed to create malcolm_template (HTTP ${template_code})"
         warn "  Logstash may wait for dashboards-helper's idxinit to create it"
+    fi
+
+    # dashboards-helper's object loader waits for Arkime's legacy template before it
+    # creates the index pattern and imports Malcolm's dashboards. Arkime is off by
+    # default (#44), so nothing created it and OpenSearch Dashboards stayed empty (#73).
+    # This marker matches no index (malcolm_template governs arkime_sessions3-*), and is
+    # only written when Arkime's real template is absent.
+    if ! docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template" \
+        -o /dev/null 2>/dev/null; then
+        local marker_code
+        marker_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_template/arkime_sessions3_template" \
+            -H "Content-Type: application/json" \
+            -d '{"index_patterns":["nettap-arkime-template-marker"],"mappings":{"properties":{}}}' \
+            -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+        if [[ "$marker_code" == "200" ]]; then
+            log "  arkime_sessions3_template marker created (Arkime is off)"
+        else
+            warn "  Failed to create the arkime_sessions3_template marker (HTTP ${marker_code})"
+            warn "  OpenSearch Dashboards will have no index pattern until it exists"
+        fi
     fi
 }
 

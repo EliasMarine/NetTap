@@ -32,13 +32,18 @@ export interface CyberChefRecipe {
 export async function getCyberChefStatus(): Promise<CyberChefStatus> {
 	const res = await fetch('/api/cyberchef/status');
 
+	// OLD CODE START — #96: a failed request read as "Offline / container is not running"
+	// if (!res.ok) {
+	// 	return {
+	// 		available: false,
+	// 		version: '',
+	// 		container_running: false,
+	// 		container_name: '',
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			available: false,
-			version: '',
-			container_running: false,
-			container_name: '',
-		};
+		throw new Error(`CyberChef status request failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

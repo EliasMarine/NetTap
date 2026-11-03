@@ -133,13 +133,16 @@ describe('tools API client', () => {
 			expect(result).toEqual(expected);
 		});
 
-		it('returns not-found defaults on HTTP error', async () => {
-			mockFetchFailure(404);
+		it('throws on HTTP error instead of reporting "not found"', async () => {
+			mockFetchFailure(500);
 
-			const result = await macLookup('00:00:00:00:00:00');
+			await expect(macLookup('00:00:00:00:00:00')).rejects.toThrow('MAC lookup failed: HTTP 500');
+		});
 
-			expect(result.found).toBe(false);
-			expect(result.vendor).toBe('');
+		it("throws with the daemon's reason on a rejected MAC", async () => {
+			mockFetchFailure(400, { error: 'Invalid MAC address format' });
+
+			await expect(macLookup('nope')).rejects.toThrow('Invalid MAC address format');
 		});
 
 		it('throws on network failure', async () => {

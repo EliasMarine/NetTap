@@ -51,6 +51,40 @@ async def handle_dns_recon(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
+# OLD CODE START — moved into MacLookupService so the device registry's vendor pass gets it too (#26)
+# def _vendor_seen_on_network(app: web.Application, oui_prefix: str) -> str | None:
+#     """Malcolm's IEEE vendor name for a prefix any captured device has used (#26).
+#
+#     shortcut: only knows prefixes seen on this network; bundle the full IEEE table if the
+#     tool must answer for arbitrary MACs.
+#     """
+#     storage = app.get("storage")
+#     if storage is None:
+#         return None
+#     body = {
+#         "size": 1,
+#         "query": {
+#             "bool": {
+#                 "filter": [
+#                     {"prefix": {"source.mac": oui_prefix.lower()}},
+#                     {"exists": {"field": "source.oui"}},
+#                 ]
+#             }
+#         },
+#         "_source": ["source.oui"],
+#     }
+#     try:
+#         hits = storage._client.search(index=NETWORK_INDEX, body=body)["hits"]["hits"]
+#     except Exception as exc:
+#         logger.warning("MAC lookup: OpenSearch vendor fallback failed: %s", exc)
+#         return None
+#     oui = hits[0].get("_source", {}).get("source", {}).get("oui") if hits else None
+#     if isinstance(oui, list):
+#         oui = next((o for o in oui if o), None)
+#     return oui or None
+# OLD CODE END
+
+
 async def handle_mac_lookup(request: web.Request) -> web.Response:
     """GET /api/tools/mac-lookup/{mac} -- OUI vendor lookup for a MAC address."""
     raw_mac = request.match_info["mac"]
@@ -58,6 +92,12 @@ async def handle_mac_lookup(request: web.Request) -> web.Response:
 
     try:
         result = mac_lookup.lookup(raw_mac)
+        # OLD CODE START — handler-level fallback, now inside MacLookupService.lookup (#26)
+        # if not result["found"]:
+        #     vendor = _vendor_seen_on_network(request.app, result["oui_prefix"])
+        #     if vendor:
+        #         result = {**result, "vendor": vendor, "found": True}
+        # OLD CODE END
         return web.json_response(result)
     except MacLookupValidationError as e:
         return web.json_response({"error": str(e)}, status=400)

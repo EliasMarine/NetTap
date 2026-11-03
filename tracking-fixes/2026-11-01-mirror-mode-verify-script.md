@@ -1,6 +1,6 @@
 # 2026-11-01 — verify-mirror-mode.sh (GMKtec G11 mirror trial)
 
-**Status:** Written, shellcheck clean (CI severity: warning). Not run on hardware yet.
+**Status:** Verified on the G11 (2026-11-01): every check passes after `deploy-drop-nsenter.sh` and a reboot, ~3,800 packets/s on enp4s0 (RELEASE-VERIFICATION.md). The first run's 5 failures were Chain 22 (NET-126).
 **Branch:** `chore/mirror-mode-verify` (off `fix/code-review-batch-1`, PR #147)
 
 ## What changed

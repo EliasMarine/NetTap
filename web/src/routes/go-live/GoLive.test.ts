@@ -130,6 +130,94 @@ describe('GoLive page — capture mode switch', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Rendered page: a failed readiness check is not "the bridge does not exist" (#96)
+// ---------------------------------------------------------------------------
+
+describe('GoLive page — failed readiness check', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	/** Bridge mode, with the real getBridgeReadiness reading /api/bridge/readiness. */
+	async function renderWithReadiness(reply: () => Promise<Response>) {
+		const real = await vi.importActual<typeof import('$lib/api/bridge.js')>('$lib/api/bridge.js');
+		vi.mocked(bridgeApi.getBridgeReadiness).mockImplementation(real.getBridgeReadiness);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url === '/api/capture/mode') return jsonResponse(200, { mode: 'bridge', interface: '' });
+				if (url === '/api/bridge/readiness') return reply();
+				return Promise.reject(new Error(`unexpected fetch ${url}`));
+			}),
+		);
+		render(GoLivePage);
+		await vi.waitFor(() => expect(bridgeApi.getBridgeReadiness).toHaveBeenCalled());
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('says the check failed, not that the bridge has not been created', async () => {
+		await renderWithReadiness(() => jsonResponse(500, { error: 'boom' }));
+
+		expect(await screen.findByText('Failed to check readiness')).toBeInTheDocument();
+		expect(screen.getByText('Unknown')).toBeInTheDocument();
+		expect(screen.queryByText(/has not been created yet/)).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Create Bridge' })).not.toBeInTheDocument();
+	});
+
+	it('still offers Create Bridge when the bridge really is missing', async () => {
+		await renderWithReadiness(() =>
+			jsonResponse(200, { ready: false, checks: [{ name: 'bridge_exists', passed: false, detail: '' }], message: '' }),
+		);
+
+		expect(await screen.findByText(/has not been created yet/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Create Bridge' })).toBeInTheDocument();
+	});
+});
+
+// The daemon now sends latency_us: null (with latency_note); the page read "null us".
+describe('GoLive page — bridge latency', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	const NOTE = "Not measured: NetTap can't time packets through the bridge";
+	const LIVE = {
+		ready: true,
+		message: '',
+		checks: ['bridge_exists', 'wan_carrier', 'lan_carrier'].map((name) => ({ name, passed: true, detail: '' })),
+	};
+	const HEALTH = {
+		bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, watchdog_active: true,
+		rx_bytes_delta: 0, tx_bytes_delta: 0, rx_packets_delta: 10, tx_packets_delta: 5, uptime_seconds: 60,
+		health_status: 'normal', issues: [], last_check: '',
+	};
+
+	async function renderLive(health: Record<string, unknown>) {
+		stubModeFetch(() => jsonResponse(200, { mode: 'bridge', interface: '' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue(LIVE as never);
+		vi.mocked(bridgeApi.getBridgeHealth).mockResolvedValue(health as never);
+		render(GoLivePage);
+		await vi.waitFor(() => expect(bridgeApi.getBridgeHealth).toHaveBeenCalled());
+	}
+
+	it('says Not measured, never "null us"', async () => {
+		await renderLive({ ...HEALTH, latency_us: null, latency_note: NOTE });
+
+		expect(await screen.findByText('Not measured')).toHaveAttribute('title', NOTE);
+		expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+	});
+
+	it('still shows a measured latency', async () => {
+		await renderLive({ ...HEALTH, latency_us: 42 });
+
+		expect(await screen.findByText('42 us')).toBeInTheDocument();
+	});
+});
+
 /**
  * Tests for Go Live page logic.
  *

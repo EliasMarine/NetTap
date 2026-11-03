@@ -4,7 +4,7 @@
 # and "bypass mode" (pure L2 forwarding with all capture disabled).
 #
 # In bypass mode:
-#   - Zeek, Suricata, Arkime, and PCAP capture containers are stopped
+#   - Zeek, Suricata and PCAP capture containers are stopped
 #   - ebtables rules are flushed (clean L2 path)
 #   - Promiscuous mode is disabled on bridge interfaces (no capture)
 #   - A state file signals that bypass is active
@@ -40,10 +40,19 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT:-nettap}"
 
 # Capture services — these are stopped in bypass mode and started on resume.
 # These must match the service names in docker-compose.yml.
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile
+# "arkime", tracking-fixes/2026-11-01-dashboard-data-accuracy.md #44); naming it
+# here would start it again on resume.
+# CAPTURE_SERVICES=(
+#     "zeek-live"
+#     "suricata-live"
+#     "arkime-live"
+#     "pcap-capture"
+# )
+# OLD CODE END
 CAPTURE_SERVICES=(
     "zeek-live"
     "suricata-live"
-    "arkime-live"
     "pcap-capture"
 )
 
@@ -439,7 +448,7 @@ if [[ "$MODE_DISABLE" == "true" ]]; then
     log "  CAPTURE MODE RESTORED"
     log "============================================"
     log ""
-    log "Zeek, Suricata, Arkime, and PCAP capture are running."
+    log "Zeek, Suricata and PCAP capture are running."
     log "Promiscuous mode is enabled on bridge interfaces."
     log ""
     log "To verify: $0 --status"

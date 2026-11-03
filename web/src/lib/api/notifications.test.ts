@@ -67,13 +67,10 @@ describe('notifications API client', () => {
 			expect(result.unreadCount).toBe(1);
 		});
 
-		it('returns empty on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no notifications', async () => {
 			mockFetchFailure(500);
 
-			const result = await getNotifications();
-
-			expect(result.notifications).toEqual([]);
-			expect(result.unreadCount).toBe(0);
+			await expect(getNotifications()).rejects.toThrow('HTTP 500');
 		});
 	});
 

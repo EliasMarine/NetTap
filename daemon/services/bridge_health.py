@@ -38,6 +38,11 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/sys/class/net")
 _BYPASS_STATE_FILE = "/tmp/nettap-bypass-active"
 
 
+def _promisc_warning(state: str, iface: str, rc: int, err: str) -> str:
+    """A failed promisc toggle as a line for the bypass response (#96)."""
+    return f"Could not turn promiscuous mode {state} on {iface}: {err.strip() or f'exit code {rc}'}"
+
+
 @dataclass
 class BridgeHealthCheck:
     """Result of a single bridge health check cycle."""
@@ -47,7 +52,10 @@ class BridgeHealthCheck:
     lan_link: bool  # carrier detected on LAN NIC
     bypass_active: bool
     watchdog_active: bool
-    latency_us: float  # bridge latency estimate in microseconds
+    # OLD CODE START — #96: a simulated estimate (fixed 50 µs) was shown as a figure
+    # latency_us: float  # bridge latency estimate in microseconds
+    # OLD CODE END
+    latency_us: float | None  # bridge latency in µs; None = not measured
     rx_bytes_delta: int  # bytes received since last check
     tx_bytes_delta: int  # bytes transmitted since last check
     rx_packets_delta: int  # packets received since last check
@@ -56,9 +64,14 @@ class BridgeHealthCheck:
     health_status: str  # "normal" | "degraded" | "bypass" | "down" | "not_configured"
     issues: list  # human-readable issue descriptions
     last_check: str  # ISO timestamp
+    latency_note: str = ""  # why latency_us is None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# Timing the bridge needs timestamped packets on both ports, which NetTap doesn't have
+LATENCY_NOT_MEASURED = "Not measured: NetTap can't time packets through the bridge"
 
 
 class BridgeHealthMonitor:
@@ -176,9 +189,12 @@ class BridgeHealthMonitor:
         # Check watchdog
         watchdog_active = await self._check_watchdog()
 
-        # Estimate bridge latency (simulated -- real measurement would
-        # require timestamped packets through the bridge path)
-        latency_us = self._estimate_latency(bridge_state, wan_link, lan_link)
+        # OLD CODE START — #96: a made-up figure (50 µs, 150 µs degraded) shown as latency
+        # # Estimate bridge latency (simulated -- real measurement would
+        # # require timestamped packets through the bridge path)
+        # latency_us = self._estimate_latency(bridge_state, wan_link, lan_link)
+        # OLD CODE END
+        latency_us = None
 
         # Build issue list
         if bridge_state == "not_configured":
@@ -221,6 +237,7 @@ class BridgeHealthMonitor:
             health_status=health_status,
             issues=issues,
             last_check=now.isoformat(),
+            latency_note=LATENCY_NOT_MEASURED,
         )
 
         self._history.append(check)
@@ -265,7 +282,10 @@ class BridgeHealthMonitor:
                 },
             }
 
-        latencies = [h.latency_us for h in self._history if h.latency_us > 0]
+        # OLD CODE START — #96: latency_us is None when not measured
+        # latencies = [h.latency_us for h in self._history if h.latency_us > 0]
+        # OLD CODE END
+        latencies = [h.latency_us for h in self._history if h.latency_us]
         avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else None
 
         total_rx_bytes = sum(h.rx_bytes_delta for h in self._history)
@@ -328,17 +348,34 @@ class BridgeHealthMonitor:
         self._write_bypass_file(active=True)
 
         # Disable promiscuous mode on both NICs — stops packet capture
+        warnings: list[str] = []
         for iface in (self._wan_iface, self._lan_iface):
             rc, _, err = await self._run_nsenter(
                 "ip", "link", "set", iface, "promisc", "off"
             )
             if rc != 0:
                 logger.warning("Failed to disable promisc on %s: %s", iface, err)
+                warnings.append(_promisc_warning("off", iface, rc, err))
             else:
                 logger.info("Disabled promiscuous mode on %s", iface)
 
         ts = datetime.now(timezone.utc).isoformat()
         logger.warning("Bypass mode ACTIVATED at %s", ts)
+        # OLD CODE START — #96: "activated" even when promisc stayed on and capture went on
+        # return {
+        #     "bypass_active": True,
+        #     "activated_at": ts,
+        #     "message": "Bypass mode activated -- traffic is flowing uninspected",
+        # }
+        # OLD CODE END
+        if warnings:
+            return {
+                "bypass_active": True,
+                "activated_at": ts,
+                "message": "Bypass mode is on, but promiscuous mode is still on for "
+                "at least one network card, so capture may continue",
+                "warnings": warnings,
+            }
         return {
             "bypass_active": True,
             "activated_at": ts,
@@ -355,17 +392,34 @@ class BridgeHealthMonitor:
         self._write_bypass_file(active=False)
 
         # Re-enable promiscuous mode on both NICs — resumes packet capture
+        warnings: list[str] = []
         for iface in (self._wan_iface, self._lan_iface):
             rc, _, err = await self._run_nsenter(
                 "ip", "link", "set", iface, "promisc", "on"
             )
             if rc != 0:
                 logger.warning("Failed to enable promisc on %s: %s", iface, err)
+                warnings.append(_promisc_warning("on", iface, rc, err))
             else:
                 logger.info("Enabled promiscuous mode on %s", iface)
 
         ts = datetime.now(timezone.utc).isoformat()
         logger.info("Bypass mode DEACTIVATED at %s", ts)
+        # OLD CODE START — #96: "inspection resumed" even when promisc stayed off
+        # return {
+        #     "bypass_active": False,
+        #     "deactivated_at": ts,
+        #     "message": "Bypass mode deactivated -- traffic inspection resumed",
+        # }
+        # OLD CODE END
+        if warnings:
+            return {
+                "bypass_active": False,
+                "deactivated_at": ts,
+                "message": "Bypass mode is off, but promiscuous mode could not be "
+                "turned back on for at least one network card, so capture may miss traffic",
+                "warnings": warnings,
+            }
         return {
             "bypass_active": False,
             "deactivated_at": ts,
@@ -566,28 +620,20 @@ class BridgeHealthMonitor:
 
         return "normal"
 
-    def _estimate_latency(
-        self, bridge_state: str, wan_link: bool, lan_link: bool
-    ) -> float:
-        """Estimate bridge forwarding latency in microseconds.
-
-        This is a simulated estimate. Real latency measurement would
-        require timestamped test packets through the bridge path.
-
-        Returns:
-            Estimated latency in microseconds.
-        """
-        if bridge_state != "up":
-            return 0.0
-
-        # Base latency for a software bridge on modern hardware
-        base_latency = 50.0  # ~50us for Linux bridge forwarding
-
-        if not wan_link or not lan_link:
-            # Degraded -- higher latency estimate
-            return base_latency * 3
-
-        return base_latency
+    # OLD CODE START — #96: a simulated latency, shown on the dashboard as if measured
+    # def _estimate_latency(
+    #     self, bridge_state: str, wan_link: bool, lan_link: bool
+    # ) -> float:
+    #     """Estimate bridge forwarding latency in microseconds (simulated)."""
+    #     if bridge_state != "up":
+    #         return 0.0
+    #     # Base latency for a software bridge on modern hardware
+    #     base_latency = 50.0  # ~50us for Linux bridge forwarding
+    #     if not wan_link or not lan_link:
+    #         # Degraded -- higher latency estimate
+    #         return base_latency * 3
+    #     return base_latency
+    # OLD CODE END
 
     def _check_bypass_file(self) -> bool:
         """Check if the bypass state file exists on disk."""

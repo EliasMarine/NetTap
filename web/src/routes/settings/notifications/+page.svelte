@@ -107,16 +107,35 @@
 		loadAll();
 	});
 
+	// #96: which section's last load failed (a failed request is not "none configured")
+	let failed = $state({ channels: false, rules: false, log: false });
+
 	async function loadAll() {
 		loading = true;
-		const [chRes, ruRes, logRes] = await Promise.all([
+		// OLD CODE START — #96: the getters now throw on failure instead of returning empty lists
+		// const [chRes, ruRes, logRes] = await Promise.all([
+		// 	getChannels(),
+		// 	getRules(),
+		// 	getDeliveryLog(),
+		// ]);
+		// channels = chRes.channels;
+		// rules = ruRes.rules;
+		// deliveryLog = logRes.log;
+		// OLD CODE END
+		const [chRes, ruRes, logRes] = await Promise.allSettled([
 			getChannels(),
 			getRules(),
 			getDeliveryLog(),
 		]);
-		channels = chRes.channels;
-		rules = ruRes.rules;
-		deliveryLog = logRes.log;
+		// A failed reload keeps the last list it had and marks it stale
+		if (chRes.status === 'fulfilled') channels = chRes.value.channels;
+		if (ruRes.status === 'fulfilled') rules = ruRes.value.rules;
+		if (logRes.status === 'fulfilled') deliveryLog = logRes.value.log;
+		failed = {
+			channels: chRes.status === 'rejected',
+			rules: ruRes.status === 'rejected',
+			log: logRes.status === 'rejected',
+		};
 		loading = false;
 	}
 
@@ -166,8 +185,16 @@
 		}
 		testingChannelId = '';
 		// Refresh delivery log
-		const logRes = await getDeliveryLog();
-		deliveryLog = logRes.log;
+		// OLD CODE START — #96: getDeliveryLog now throws on failure
+		// const logRes = await getDeliveryLog();
+		// deliveryLog = logRes.log;
+		// OLD CODE END
+		try {
+			deliveryLog = (await getDeliveryLog()).log;
+			failed = { ...failed, log: false };
+		} catch {
+			failed = { ...failed, log: true };
+		}
 	}
 
 	// Rule actions
@@ -249,7 +276,10 @@
 		<!-- Notification Channels -->
 		<div class="card settings-section">
 			<div class="card-header">
+				<!-- OLD CODE START — #96: a failed load showed "(0)"
 				<span class="card-title">Notification Channels ({channels.length})</span>
+				OLD CODE END -->
+				<span class="card-title">Notification Channels ({failed.channels && channels.length === 0 ? '--' : channels.length})</span>
 				<button class="btn btn-sm btn-primary" onclick={() => showAddForm = !showAddForm}>
 					{showAddForm ? 'Cancel' : '+ Add Channel'}
 				</button>
@@ -281,9 +311,19 @@
 				</div>
 			{/if}
 
+			<!-- OLD CODE START — #96: a failed load read as "No channels configured"
 			{#if channels.length === 0}
 				<p class="text-muted section-description">No channels configured. Add one to start receiving notifications.</p>
 			{:else}
+			OLD CODE END -->
+			{#if failed.channels && channels.length === 0}
+				<p class="text-warning section-description">Couldn't load the notification channels: the request failed.</p>
+			{:else if channels.length === 0}
+				<p class="text-muted section-description">No channels configured. Add one to start receiving notifications.</p>
+			{:else}
+				{#if failed.channels}
+					<p class="text-warning section-description">Couldn't refresh the notification channels: showing the last list.</p>
+				{/if}
 				<div class="channel-list">
 					{#each channels as ch}
 						<div class="channel-item">
@@ -306,7 +346,10 @@
 		<!-- Routing Rules -->
 		<div class="card settings-section">
 			<div class="card-header">
+				<!-- OLD CODE START — #96: a failed load showed "(0)"
 				<span class="card-title">Routing Rules ({rules.length})</span>
+				OLD CODE END -->
+				<span class="card-title">Routing Rules ({failed.rules && rules.length === 0 ? '--' : rules.length})</span>
 				<button class="btn btn-sm btn-primary" onclick={() => showRuleForm = !showRuleForm} disabled={channels.length === 0}>
 					{showRuleForm ? 'Cancel' : '+ Add Rule'}
 				</button>
@@ -350,9 +393,19 @@
 				</div>
 			{/if}
 
+			<!-- OLD CODE START — #96: a failed load read as "No routing rules configured"
 			{#if rules.length === 0}
 				<p class="text-muted">No routing rules configured.</p>
 			{:else}
+			OLD CODE END -->
+			{#if failed.rules && rules.length === 0}
+				<p class="text-warning">Couldn't load the routing rules: the request failed.</p>
+			{:else if rules.length === 0}
+				<p class="text-muted">No routing rules configured.</p>
+			{:else}
+				{#if failed.rules}
+					<p class="text-warning">Couldn't refresh the routing rules: showing the last list.</p>
+				{/if}
 				<div class="rules-list">
 					{#each rules as rule}
 						<div class="rule-item">
@@ -375,9 +428,19 @@
 				<span class="card-title">Recent Deliveries</span>
 			</div>
 
+			<!-- OLD CODE START — #96: a failed load read as "No delivery attempts yet"
 			{#if deliveryLog.length === 0}
 				<p class="text-muted section-description">No delivery attempts yet.</p>
 			{:else}
+			OLD CODE END -->
+			{#if failed.log && deliveryLog.length === 0}
+				<p class="text-warning section-description">Couldn't load the delivery log: the request failed.</p>
+			{:else if deliveryLog.length === 0}
+				<p class="text-muted section-description">No delivery attempts yet.</p>
+			{:else}
+				{#if failed.log}
+					<p class="text-warning section-description">Couldn't refresh the delivery log: showing the last entries.</p>
+				{/if}
 				<div class="log-list">
 					{#each deliveryLog.slice(0, 20) as entry}
 						<div class="log-entry {entry.success ? 'log-success' : 'log-failure'}">
@@ -398,7 +461,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-lg);
-		max-width: 800px;
+		/* OLD CODE START — design system: page containers are always full width */
+		/* max-width: 800px; */
+		/* OLD CODE END */
 	}
 
 	.settings-header h2 {

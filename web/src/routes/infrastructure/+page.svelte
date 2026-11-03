@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getBridgeHealth } from '$api/bridge.js';
-	import { getCaptureStats, getCaptureMode } from '$api/capture';
+	import { getCaptureStats, getCaptureMode, getCaptureHealth } from '$api/capture';
 	import { getSystemHealth, getStorageStatus } from '$api/system.js';
 	import {
 		getOpenSearchCluster,
@@ -12,7 +12,7 @@
 	} from '$api/infrastructure';
 	import type { OpenSearchCluster, OpenSearchIndex, LogstashStats, LogstashPipeline } from '$api/infrastructure';
 	import type { BridgeHealth } from '$api/bridge.js';
-	import type { CaptureMode, CaptureStatsResponse } from '$api/capture';
+	import type { CaptureMode, CaptureStatsResponse, CaptureHealthResponse } from '$api/capture';
 	import type { SystemHealth, StorageStatus } from '$api/system.js';
 	import {
 		getUnifiStatus,
@@ -34,6 +34,9 @@
 		UnifiWan,
 		UnifiVpnTunnel,
 	} from '$api/unifi';
+	import { loadFailed } from '$lib/utils/load-failed';
+	import { getTrafficSummary } from '$api/traffic';
+	import { getAlertCount } from '$api/alerts';
 
 	// ─── Node type for topology ─────────────────────────────────
 	type NodeId = 'bridge' | 'capture' | 'zeek' | 'suricata' | 'filebeat' | 'logstash' | 'opensearch';
@@ -46,6 +49,12 @@
 	let bridgeHealth = $state<BridgeHealth | null>(null);
 	let captureStats = $state<CaptureStatsResponse | null>(null);
 	let captureMode = $state<CaptureMode | null>(null);
+	let captureHealth = $state<CaptureHealthResponse | null>(null);
+	// a mirror box has no bridge: the first pipeline node is the mirror (SPAN) port instead
+	const isMirror = $derived(captureMode?.mode === 'mirror');
+	// nor does a DHCP gateway box: its first node is the LAN port it routes and captures on
+	const isGateway = $derived(captureMode?.mode === 'dhcp_gateway');
+	const portName = $derived(isGateway ? 'Gateway Port' : 'Mirror Port');
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
 	let cluster = $state<OpenSearchCluster | null>(null);
@@ -54,6 +63,20 @@
 	let logstashStats = $state<LogstashStats | null>(null);
 	let logstashPipelines = $state<LogstashPipeline[]>([]);
 	let showTemplates = $state(false);
+	// #96: sources whose last request failed; their figures are the last good reading or '--'
+	let failedSources = $state<Record<string, boolean>>({});
+	const failedNames = $derived(
+		Object.keys(failedSources).filter(
+			// a mirror or gateway box shows no bridge, so its bridge health is not news
+			(name) => failedSources[name] && !(name === 'bridge health' && (isMirror || isGateway)),
+		),
+	);
+
+	/** Apply a settled result: keep the old value on failure and record which source failed. */
+	function settle<T>(name: string, result: PromiseSettledResult<T>, apply: (value: T) => void) {
+		if (result.status === 'fulfilled') apply(result.value);
+		failedSources = { ...failedSources, [name]: result.status === 'rejected' };
+	}
 
 	// UniFi integration state
 	let unifiStatus = $state<UnifiStatus | null>(null);
@@ -65,6 +88,26 @@
 	let unifiWans = $state<UnifiWan[]>([]);
 	let unifiVpn = $state<UnifiVpnTunnel[]>([]);
 	let unifiLoading = $state(false);
+	// #96: UniFi reads that failed on the last poll, keyed by what the card calls them
+	let unifiFailed = $state<Record<string, boolean>>({});
+
+	/** A UniFi figure, or '—' when its read failed and there is no earlier reading to show. */
+	function unifiCount(what: string, n: number): number | string {
+		return unifiFailed[what] && n === 0 ? '—' : n;
+	}
+
+	const unifiPostureNotes = $derived(
+		(
+			[
+				['firewall policies', unifiFirewall.policies.length + unifiFirewall.zones.length],
+				['DNS policies', unifiDnsPolicies.length],
+				['VPN tunnels', unifiVpn.length],
+				['WAN interfaces', unifiWans.length],
+			] as const
+		)
+			.filter(([what]) => unifiFailed[what])
+			.map(([what, n]) => loadFailed(what, n > 0)),
+	);
 
 	// Zeek/Suricata throughput (computed from event counts over 5-min window)
 	let zeekEventsPerSec = $state<number | null>(null);
@@ -114,99 +157,195 @@
 	}
 
 	// ─── Data fetching ──────────────────────────────────────────
+	// OLD CODE START — #96: the getters faked zeros/"red"/"down" on failure and one failure
+	// blanked its whole group; they now throw, so each result is settled on its own
+	// async function fetchBridgeAndCapture() {
+	// 	try {
+	// 		const [bh, cs, cm, ch] = await Promise.all([
+	// 			getBridgeHealth(),
+	// 			getCaptureStats(),
+	// 			getCaptureMode().catch(() => null),
+	// 			getCaptureHealth(),
+	// 		]);
+	// 		bridgeHealth = bh;
+	// 		captureStats = cs;
+	// 		if (cm) captureMode = cm;
+	// 		captureHealth = ch;
+	// 	} catch { /* swallow — individual calls have their own fallbacks */ }
+	// }
+	//
+	// async function fetchLogstash() {
+	// 	try {
+	// 		const [stats, pipelines] = await Promise.all([
+	// 			getLogstashStats(),
+	// 			getLogstashPipelines(),
+	// 		]);
+	// 		logstashStats = stats;
+	// 		logstashPipelines = pipelines;
+	// 	} catch { /* swallow */ }
+	// }
+	//
+	// async function fetchOpenSearch() {
+	// 	try {
+	// 		const [cl, idx, tmpl] = await Promise.all([
+	// 			getOpenSearchCluster(),
+	// 			getOpenSearchIndices(),
+	// 			getOpenSearchTemplates(),
+	// 		]);
+	// 		cluster = cl;
+	// 		indices = idx?.indices ?? [];
+	// 		templates = Array.isArray(tmpl) ? tmpl : [];
+	// 	} catch { /* swallow */ }
+	// }
+	//
+	// async function fetchStorage() {
+	// 	try {
+	// 		const [health, storage] = await Promise.all([
+	// 			getSystemHealth(),
+	// 			getStorageStatus(),
+	// 		]);
+	// 		systemHealth = health;
+	// 		storageStatus = storage;
+	// 	} catch { /* swallow */ }
+	// }
+	// OLD CODE END
 	async function fetchBridgeAndCapture() {
-		try {
-			const [bh, cs, cm] = await Promise.all([
-				getBridgeHealth(),
-				getCaptureStats(),
-				getCaptureMode().catch(() => null),
-			]);
-			bridgeHealth = bh;
-			captureStats = cs;
-			if (cm) captureMode = cm;
-		} catch { /* swallow — individual calls have their own fallbacks */ }
+		const [bh, cs, cm, ch] = await Promise.allSettled([
+			getBridgeHealth(),
+			getCaptureStats(),
+			getCaptureMode(),
+			getCaptureHealth(),
+		]);
+		settle('bridge health', bh, (v) => (bridgeHealth = v));
+		settle('capture counters', cs, (v) => (captureStats = v));
+		settle('capture mode', cm, (v) => (captureMode = v));
+		settle('capture health', ch, (v) => (captureHealth = v));
 	}
 
 	async function fetchLogstash() {
-		try {
-			const [stats, pipelines] = await Promise.all([
-				getLogstashStats(),
-				getLogstashPipelines(),
-			]);
-			logstashStats = stats;
-			logstashPipelines = pipelines;
-		} catch { /* swallow */ }
+		const [stats, pipelines] = await Promise.allSettled([getLogstashStats(), getLogstashPipelines()]);
+		settle('Logstash stats', stats, (v) => (logstashStats = v));
+		if (pipelines.status === 'fulfilled') logstashPipelines = pipelines.value;
 	}
 
 	async function fetchOpenSearch() {
-		try {
-			const [cl, idx, tmpl] = await Promise.all([
-				getOpenSearchCluster(),
-				getOpenSearchIndices(),
-				getOpenSearchTemplates(),
-			]);
-			cluster = cl;
-			indices = idx?.indices ?? [];
-			templates = Array.isArray(tmpl) ? tmpl : [];
-		} catch { /* swallow */ }
+		const [cl, idx, tmpl] = await Promise.allSettled([
+			getOpenSearchCluster(),
+			getOpenSearchIndices(),
+			getOpenSearchTemplates(),
+		]);
+		settle('OpenSearch cluster', cl, (v) => (cluster = v));
+		settle('OpenSearch indices', idx, (v) => (indices = v?.indices ?? []));
+		if (tmpl.status === 'fulfilled') templates = Array.isArray(tmpl.value) ? tmpl.value : [];
 	}
 
 	async function fetchStorage() {
-		try {
-			const [health, storage] = await Promise.all([
-				getSystemHealth(),
-				getStorageStatus(),
-			]);
-			systemHealth = health;
-			storageStatus = storage;
-		} catch { /* swallow */ }
+		const [health, storage] = await Promise.allSettled([getSystemHealth(), getStorageStatus()]);
+		settle('system health', health, (v) => (systemHealth = v));
+		settle('storage', storage, (v) => (storageStatus = v));
 	}
 
+	// OLD CODE START — the daemon doesn't read "now-5m", so it answered for 24 h and Zeek showed
+	// 1,601 evt/s (a day of connections / 300 s) for ~5/s; Suricata read d.total, which the count
+	// reply nests under counts, so it always said 0; Math.round turned 0.8 alerts/s into 1
+	// async function fetchToolRates() {
+	// 	const WINDOW_SECS = 300; // 5-minute window
+	// 	try {
+	// 		// Zeek events (connection count from traffic summary)
+	// 		const zeekRes = await fetch('/api/traffic/summary?from=now-5m&to=now');
+	// 		if (zeekRes.ok) {
+	// 			const d = await zeekRes.json();
+	// 			const count = d.connection_count ?? d.total_connections ?? 0;
+	// 			zeekEventsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
+	// 		}
+	// 	} catch { /* swallow */ }
+	// 	try {
+	// 		// Suricata alerts (total count from alerts API)
+	// 		const suriRes = await fetch('/api/alerts/count?from=now-5m&to=now');
+	// 		if (suriRes.ok) {
+	// 			const d = await suriRes.json();
+	// 			const count = d.total ?? 0;
+	// 			suricataAlertsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
+	// 		}
+	// 	} catch { /* swallow */ }
+	// }
+	// OLD CODE END
 	async function fetchToolRates() {
 		const WINDOW_SECS = 300; // 5-minute window
-		try {
-			// Zeek events (connection count from traffic summary)
-			const zeekRes = await fetch('/api/traffic/summary?from=now-5m&to=now');
-			if (zeekRes.ok) {
-				const d = await zeekRes.json();
-				const count = d.connection_count ?? d.total_connections ?? 0;
-				zeekEventsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
-			}
-		} catch { /* swallow */ }
-		try {
-			// Suricata alerts (total count from alerts API)
-			const suriRes = await fetch('/api/alerts/count?from=now-5m&to=now');
-			if (suriRes.ok) {
-				const d = await suriRes.json();
-				const count = d.total ?? 0;
-				suricataAlertsPerSec = count > 0 ? Math.round(count / WINDOW_SECS) : 0;
-			}
-		} catch { /* swallow */ }
+		const to = new Date();
+		const range = { from: new Date(to.getTime() - WINDOW_SECS * 1000).toISOString(), to: to.toISOString() };
+		const perSec = (count: number) => Math.round((count / WINDOW_SECS) * 10) / 10;
+		const [conns, alerts] = await Promise.allSettled([getTrafficSummary(range), getAlertCount(range)]);
+		// a failed read keeps the last rate (or '--' before the first)
+		if (conns.status === 'fulfilled') zeekEventsPerSec = perSec(conns.value.connection_count);
+		if (alerts.status === 'fulfilled') suricataAlertsPerSec = perSec(alerts.value.counts.total);
 	}
 
 	async function fetchUnifi() {
+		// OLD CODE START — #96: a failed status read showed "Connect your UniFi controller" and one failed
+		// list blanked them all; the getters now throw, so each read is settled and shown on its own card
+		// try {
+		// 	const status = await getUnifiStatus();
+		// 	unifiStatus = status;
+		// 	if (!status.configured) return;
+		// 	unifiLoading = true;
+		// 	const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.all([
+		// 		getUnifiDevices(),
+		// 		getUnifiNetworks(),
+		// 		getUnifiWifi(),
+		// 		getUnifiFirewall(),
+		// 		getUnifiDnsPolicies(),
+		// 		getUnifiWans(),
+		// 		getUnifiVpn(),
+		// 	]);
+		// 	unifiDevices = devices;
+		// 	unifiNetworks = networks;
+		// 	unifiWifi = wifi;
+		// 	unifiFirewall = firewall;
+		// 	unifiDnsPolicies = dnsPolicies;
+		// 	unifiWans = wans;
+		// 	unifiVpn = vpn;
+		// } catch { /* swallow */ }
+		// unifiLoading = false;
+		// OLD CODE END
+		let status: UnifiStatus;
 		try {
-			const status = await getUnifiStatus();
-			unifiStatus = status;
-			if (!status.configured) return;
-			unifiLoading = true;
-			const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.all([
-				getUnifiDevices(),
-				getUnifiNetworks(),
-				getUnifiWifi(),
-				getUnifiFirewall(),
-				getUnifiDnsPolicies(),
-				getUnifiWans(),
-				getUnifiVpn(),
-			]);
-			unifiDevices = devices;
-			unifiNetworks = networks;
-			unifiWifi = wifi;
-			unifiFirewall = firewall;
-			unifiDnsPolicies = dnsPolicies;
-			unifiWans = wans;
-			unifiVpn = vpn;
-		} catch { /* swallow */ }
+			status = await getUnifiStatus();
+		} catch {
+			// keep the last status (and the cards it shows); the banner says it is stale
+			unifiFailed = { ...unifiFailed, 'the UniFi status': true };
+			return;
+		}
+		unifiStatus = status;
+		unifiFailed = { ...unifiFailed, 'the UniFi status': false };
+		if (!status.configured) return;
+		unifiLoading = true;
+		const [devices, networks, wifi, firewall, dnsPolicies, wans, vpn] = await Promise.allSettled([
+			getUnifiDevices(),
+			getUnifiNetworks(),
+			getUnifiWifi(),
+			getUnifiFirewall(),
+			getUnifiDnsPolicies(),
+			getUnifiWans(),
+			getUnifiVpn(),
+		]);
+		if (devices.status === 'fulfilled') unifiDevices = devices.value;
+		if (networks.status === 'fulfilled') unifiNetworks = networks.value;
+		if (wifi.status === 'fulfilled') unifiWifi = wifi.value;
+		if (firewall.status === 'fulfilled') unifiFirewall = firewall.value;
+		if (dnsPolicies.status === 'fulfilled') unifiDnsPolicies = dnsPolicies.value;
+		if (wans.status === 'fulfilled') unifiWans = wans.value;
+		if (vpn.status === 'fulfilled') unifiVpn = vpn.value;
+		unifiFailed = {
+			'the UniFi status': false,
+			'UniFi devices': devices.status === 'rejected',
+			networks: networks.status === 'rejected',
+			'WiFi networks': wifi.status === 'rejected',
+			'firewall policies': firewall.status === 'rejected',
+			'DNS policies': dnsPolicies.status === 'rejected',
+			'WAN interfaces': wans.status === 'rejected',
+			'VPN tunnels': vpn.status === 'rejected',
+		};
 		unifiLoading = false;
 	}
 
@@ -396,12 +535,20 @@
 		return storageStatus?.disk_usage_percent ?? 0;
 	});
 
-	let indexCount = $derived.by(() => {
-		return indices.length || cluster?.active_primary_shards || 0;
-	});
+	// OLD CODE START — fell back to the primary shard count, which is not an index count (#39)
+	// let indexCount = $derived.by(() => {
+	// 	return indices.length || cluster?.active_primary_shards || 0;
+	// });
+	// OLD CODE END
+	let indexCount = $derived(indices.length);
+	// System pages count data indices only (OpenSearch's own ".…" indices are skipped), so show the split
+	let dataIndexCount = $derived(indices.filter((i) => !i.index.startsWith('.')).length);
 
 	let latencyMs = $derived.by(() => {
-		if (!bridgeHealth || bridgeHealth.latency_us <= 0) return 0;
+		// OLD CODE START — latency_us is null when not measured
+		// if (!bridgeHealth || bridgeHealth.latency_us <= 0) return 0;
+		// OLD CODE END
+		if (!bridgeHealth || bridgeHealth.latency_us == null || bridgeHealth.latency_us <= 0) return 0;
 		return bridgeHealth.latency_us / 1000;
 	});
 
@@ -479,9 +626,19 @@
 	}
 
 	// ─── Lifecycle & auto-polling ───────────────────────────────
+	// Grafana is off by default (compose profile "grafana"); link it only when it answers
+	let grafanaUp = $state(false);
+
 	onMount(() => {
+		// A logged-out request is redirected to the login page (HTML, 200), so check the JSON
+		fetch('/grafana/api/health')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((j) => (grafanaUp = j?.database === 'ok'))
+			.catch(() => (grafanaUp = false));
 		fetchAll();
-		setTimeout(drawConnections, 100);
+		// cleared on unmount: it touches `document`, which is gone once the page is torn down
+		const drawTimer = setTimeout(drawConnections, 100);
+		return () => clearTimeout(drawTimer);
 	});
 
 	// Auto-poll with $effect
@@ -544,6 +701,12 @@
 		</div>
 	</header>
 
+	{#if failedNames.length > 0}
+		<div class="alert alert-warning">
+			Couldn't load {failedNames.join(', ')}: those figures show the last reading or "--".
+		</div>
+	{/if}
+
 	<!-- ═══════════════════════════════════════════════════════════
 	     PIPELINE TOPOLOGY (Hero)
 	     ═══════════════════════════════════════════════════════════ -->
@@ -566,15 +729,31 @@
 								<line x1="12" y1="6" x2="12" y2="18"/>
 							</svg>
 						</div>
-						<div class="node-name">Bridge</div>
-						<div class="node-health">
-							<span class="health-dot {bridgeHealth ? healthDotClass(bridgeHealth.bridge_state) : ''}"></span>
-							{bridgeHealth?.bridge_state === 'up' ? 'br0 UP' : bridgeHealth?.bridge_state ?? '--'}
-						</div>
-						<div class="node-metric">
-							WAN <span class="value">{bridgeHealth?.wan_link ? '\u25CF' : '\u25CB'}</span>
-							LAN <span class="value">{bridgeHealth?.lan_link ? '\u25CF' : '\u25CB'}</span>
-						</div>
+						<!-- OLD CODE START — DHCP gateway mode fell through to the br0 bridge node
+						{#if isMirror}
+							<div class="node-name">Mirror Port</div>
+						OLD CODE END -->
+						{#if isMirror || isGateway}
+							<div class="node-name">{portName}</div>
+							<div class="node-health">
+								<span class="health-dot {captureHealth ? (captureHealth.link_up ? healthDotClass(captureHealth.status) : 'red') : ''}"></span>
+								{captureHealth ? `${captureHealth.capture_interface || captureMode?.interface} ${captureHealth.link_up ? 'UP' : 'DOWN'}` : '--'}
+							</div>
+							<div class="node-metric">
+								Link <span class="value">{captureHealth?.link_up ? '\u25CF' : '\u25CB'}</span>
+								Promisc <span class="value">{captureHealth?.promisc_enabled ? '\u25CF' : '\u25CB'}</span>
+							</div>
+						{:else}
+							<div class="node-name">Bridge</div>
+							<div class="node-health">
+								<span class="health-dot {bridgeHealth ? healthDotClass(bridgeHealth.bridge_state) : ''}"></span>
+								{bridgeHealth?.bridge_state === 'up' ? 'br0 UP' : bridgeHealth?.bridge_state ?? '--'}
+							</div>
+							<div class="node-metric">
+								WAN <span class="value">{bridgeHealth?.wan_link ? '\u25CF' : '\u25CB'}</span>
+								LAN <span class="value">{bridgeHealth?.lan_link ? '\u25CF' : '\u25CB'}</span>
+							</div>
+						{/if}
 					</div>
 				</div>
 
@@ -593,8 +772,16 @@
 						</div>
 						<div class="node-name">Capture</div>
 						<div class="node-health">
-							<span class="health-dot {bridgeHealth && !bridgeHealth.bypass_active ? 'green' : 'yellow'}"></span>
-							{bridgeHealth?.bypass_active ? 'Bypass' : 'Promiscuous'}
+							<!-- OLD CODE START — DHCP gateway mode showed the bridge's bypass state
+							{#if isMirror}
+							OLD CODE END -->
+							{#if isMirror || isGateway}
+								<span class="health-dot {captureHealth ? (captureHealth.promisc_enabled ? 'green' : 'yellow') : ''}"></span>
+								{captureHealth ? (captureHealth.promisc_enabled ? 'Promiscuous' : 'Not promiscuous') : '--'}
+							{:else}
+								<span class="health-dot {bridgeHealth ? (bridgeHealth.bypass_active ? 'yellow' : 'green') : ''}"></span>
+								{bridgeHealth ? (bridgeHealth.bypass_active ? 'Bypass' : 'Promiscuous') : '--'}
+							{/if}
 						</div>
 						<div class="node-metric">Drop <span class="value">{captureStats ? captureStats.drop_rate_pct.toFixed(2) + '%' : '--'}</span></div>
 					</div>
@@ -614,7 +801,7 @@
 							<span class="health-dot green"></span>
 							Running
 						</div>
-						<div class="node-metric"><span class="value">{zeekEventsPerSec != null ? formatNumber(zeekEventsPerSec) : '--'}</span> evt/s</div>
+						<div class="node-metric"><span class="value">{zeekEventsPerSec != null ? formatNumber(zeekEventsPerSec) : '--'}</span> conn/s</div>
 					</div>
 				</div>
 
@@ -648,8 +835,8 @@
 						</div>
 						<div class="node-name">Filebeat</div>
 						<div class="node-health">
-							<span class="health-dot {logstashStats && logstashStats.events_in > 0 ? 'green' : 'yellow'}"></span>
-							{logstashStats && logstashStats.events_in > 0 ? 'Shipping' : 'Idle'}
+							<span class="health-dot {logstashStats ? (logstashStats.events_in > 0 ? 'green' : 'yellow') : ''}"></span>
+							{logstashStats ? (logstashStats.events_in > 0 ? 'Shipping' : 'Idle') : '--'}
 						</div>
 						<div class="node-metric"><span class="value">{logstashStats ? formatNumber(logstashStats.events_in) : '--'}</span> evt</div>
 					</div>
@@ -699,8 +886,105 @@
 	     DETAIL PANELS
 	     ═══════════════════════════════════════════════════════════ -->
 
+	<!-- Mirror / Gateway Port Detail (takes the bridge node's place on a mirror or DHCP gateway box) -->
+	<!-- OLD CODE START — mirror only; DHCP gateway mode opened the bridge detail
+	{#if selectedNode === 'bridge' && isMirror}
+	OLD CODE END -->
+	{#if selectedNode === 'bridge' && (isMirror || isGateway)}
+		<div class="detail-panel open">
+			<div class="detail-header">
+				<div class="detail-header-left">
+					<div class="node-icon bridge" style="width:32px;height:32px;">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="12" y1="6" x2="12" y2="18"/></svg>
+					</div>
+					<div>
+						<div class="detail-title">{portName} &mdash; {captureHealth?.capture_interface || captureMode?.interface || '--'}</div>
+						{#if isGateway}
+							<div class="detail-subtitle">Devices get their address and gateway from NetTap, which routes their traffic to the router and captures it</div>
+						{:else}
+							<div class="detail-subtitle">Receives a copy of the switch port's traffic (SPAN); NetTap is not in the traffic path</div>
+						{/if}
+					</div>
+				</div>
+				<button class="btn-close-detail" onclick={closeDetail}>&#10005;</button>
+			</div>
+			<div class="detail-body">
+				<div class="detail-grid">
+					<div class="detail-stat">
+						<div class="detail-stat-label">Link</div>
+						<div class="detail-stat-value {captureHealth ? (captureHealth.link_up ? 'green' : 'red') : ''}">
+							{captureHealth ? (captureHealth.link_up ? '\u25CF Connected' : '\u25CB Disconnected') : '--'}
+						</div>
+					</div>
+					<div class="detail-stat">
+						<div class="detail-stat-label">Promisc Mode</div>
+						<div class="detail-stat-value {captureHealth ? (captureHealth.promisc_enabled ? 'green' : 'red') : ''}">
+							{captureHealth ? (captureHealth.promisc_enabled ? 'Yes' : 'No') : '--'}
+						</div>
+					</div>
+					{#if isGateway}
+						<div class="detail-stat">
+							<div class="detail-stat-label">Routing</div>
+							<div class="detail-stat-value {captureHealth ? (captureHealth.routing_active ? 'green' : 'amber') : ''}">
+								{captureHealth ? (captureHealth.routing_active ? 'On' : 'Off') : '--'}
+							</div>
+						</div>
+						<div class="detail-stat">
+							<div class="detail-stat-label">DHCP Server</div>
+							<div class="detail-stat-value {captureHealth ? (captureHealth.dhcp_server_running ? 'green' : 'amber') : ''}">
+								{captureHealth ? (captureHealth.dhcp_server_running ? 'Running' : 'Stopped') : '--'}
+							</div>
+						</div>
+						<div class="detail-stat">
+							<div class="detail-stat-label">Leases</div>
+							<div class="detail-stat-value">{captureHealth?.lease_count ?? '--'}</div>
+						</div>
+						<div class="detail-stat">
+							<div class="detail-stat-label">Subnet</div>
+							<div class="detail-stat-value">{captureHealth?.subnet ?? '--'}</div>
+						</div>
+					{:else}
+						<div class="detail-stat">
+							<div class="detail-stat-label">IP on Mirror Port</div>
+							<!-- OLD CODE START — #96: has_ip is null when the daemon couldn't run the IP check, which read as "None"
+							<div class="detail-stat-value {captureHealth ? (captureHealth.has_ip === true ? 'red' : 'green') : ''}">
+								{captureHealth ? (captureHealth.has_ip === true ? 'Yes (should have none)' : 'None') : '--'}
+							</div>
+							OLD CODE END -->
+							<div class="detail-stat-value {captureHealth?.has_ip === true ? 'red' : captureHealth?.has_ip === false ? 'green' : ''}">
+								{captureHealth?.has_ip === true ? 'Yes (should have none)' : captureHealth?.has_ip === false ? 'None' : captureHealth?.has_ip === null ? "Couldn't check" : '--'}
+							</div>
+						</div>
+					{/if}
+					<div class="detail-stat">
+						<div class="detail-stat-label">Status</div>
+						<div class="detail-stat-value {!captureHealth ? '' : captureHealth.status === 'normal' ? 'green' : captureHealth.status === 'degraded' ? 'amber' : 'red'}">
+							{captureHealth?.status?.toUpperCase() ?? '--'}
+						</div>
+					</div>
+					{#if !isGateway}
+						<div class="detail-stat">
+							<div class="detail-stat-label">Management Port</div>
+							<div class="detail-stat-value">{captureHealth?.management_interface ?? '--'}</div>
+						</div>
+					{/if}
+				</div>
+				{#if captureHealth?.issues?.length}
+					<ul class="detail-issues">
+						{#each captureHealth.issues as issue}
+							<li>{issue}</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	<!-- Bridge Detail -->
-	{#if selectedNode === 'bridge'}
+	<!-- OLD CODE START — DHCP gateway mode opened this br0 detail
+	{#if selectedNode === 'bridge' && !isMirror}
+	OLD CODE END -->
+	{#if selectedNode === 'bridge' && !isMirror && !isGateway}
 		<div class="detail-panel open">
 			<div class="detail-header">
 				<div class="detail-header-left">
@@ -718,26 +1002,33 @@
 				<div class="detail-grid">
 					<div class="detail-stat">
 						<div class="detail-stat-label">Bridge State</div>
-						<div class="detail-stat-value {bridgeHealth?.bridge_state === 'up' ? 'green' : 'red'}">
+						<div class="detail-stat-value {bridgeHealth ? (bridgeHealth.bridge_state === 'up' ? 'green' : 'red') : ''}">
 							{bridgeHealth?.bridge_state === 'up' ? 'UP' : bridgeHealth?.bridge_state?.toUpperCase() ?? '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">WAN Carrier</div>
-						<div class="detail-stat-value {bridgeHealth?.wan_link ? 'green' : 'red'}">
-							{bridgeHealth?.wan_link ? '\u25CF Connected' : '\u25CB Disconnected'}
+						<div class="detail-stat-value {bridgeHealth ? (bridgeHealth.wan_link ? 'green' : 'red') : ''}">
+							{bridgeHealth ? (bridgeHealth.wan_link ? '\u25CF Connected' : '\u25CB Disconnected') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">LAN Carrier</div>
-						<div class="detail-stat-value {bridgeHealth?.lan_link ? 'green' : 'red'}">
-							{bridgeHealth?.lan_link ? '\u25CF Connected' : '\u25CB Disconnected'}
+						<div class="detail-stat-value {bridgeHealth ? (bridgeHealth.lan_link ? 'green' : 'red') : ''}">
+							{bridgeHealth ? (bridgeHealth.lan_link ? '\u25CF Connected' : '\u25CB Disconnected') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Latency</div>
 						<div class="detail-stat-value cyan">
+							<!-- OLD CODE START — read '--' with no reason when the daemon says latency isn't measured
 							{bridgeHealth && bridgeHealth.latency_us > 0 ? (bridgeHealth.latency_us / 1000).toFixed(1) + ' ms' : '--'}
+							OLD CODE END -->
+							{#if bridgeHealth && bridgeHealth.latency_us == null}
+								<span title={bridgeHealth.latency_note || undefined}>Not measured</span>
+							{:else}
+								{bridgeHealth && bridgeHealth.latency_us && bridgeHealth.latency_us > 0 ? (bridgeHealth.latency_us / 1000).toFixed(1) + ' ms' : '--'}
+							{/if}
 						</div>
 					</div>
 					<div class="detail-stat">
@@ -751,12 +1042,12 @@
 					<div class="detail-stat">
 						<div class="detail-stat-label">Promisc Mode</div>
 						<div class="detail-stat-value {bridgeHealth && !bridgeHealth.bypass_active ? 'green' : ''}">
-							{bridgeHealth?.bypass_active ? 'No (Bypass)' : 'Yes'}
+							{bridgeHealth ? (bridgeHealth.bypass_active ? 'No (Bypass)' : 'Yes') : '--'}
 						</div>
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Bypass Mode</div>
-						<div class="detail-stat-value">{bridgeHealth?.bypass_active ? 'Active' : 'Inactive'}</div>
+						<div class="detail-stat-value">{bridgeHealth ? (bridgeHealth.bypass_active ? 'Active' : 'Inactive') : '--'}</div>
 					</div>
 				</div>
 			</div>
@@ -939,8 +1230,8 @@
 					</div>
 					<div class="detail-stat">
 						<div class="detail-stat-label">Status</div>
-						<div class="detail-stat-value {logstashStats && logstashStats.events_in > 0 ? 'green' : 'amber'}">
-							{logstashStats && logstashStats.events_in > 0 ? 'Shipping' : 'Idle'}
+						<div class="detail-stat-value {logstashStats ? (logstashStats.events_in > 0 ? 'green' : 'amber') : ''}">
+							{logstashStats ? (logstashStats.events_in > 0 ? 'Shipping' : 'Idle') : '--'}
 						</div>
 					</div>
 				</div>
@@ -1056,7 +1347,13 @@
 					<div>
 						<div class="detail-title">OpenSearch Cluster</div>
 						<div class="detail-subtitle">
-							{cluster ? `Single-node cluster with ${indices.length} active indices` : 'Cluster status unknown'}
+							{#if !cluster}
+								Cluster status unknown
+							{:else if failedSources['OpenSearch indices']}
+								Single-node cluster; its index list couldn't be loaded
+							{:else}
+								Single-node cluster with {indices.length} active indices
+							{/if}
 						</div>
 					</div>
 				</div>
@@ -1202,10 +1499,20 @@
 		<div class="stat-card-mini">
 			<div class="stat-label">Indices</div>
 			<div class="stat-value">{indexCount > 0 ? indexCount : '--'}</div>
+			{#if indexCount > 0}
+				<div class="stat-split">{dataIndexCount} data &middot; {indexCount - dataIndexCount} system</div>
+			{/if}
 		</div>
 		<div class="stat-card-mini">
 			<div class="stat-label">Latency</div>
+			<!-- OLD CODE START — read "-- ms" when the daemon says latency isn't measured
 			<div class="stat-value green">{latencyMs > 0 ? latencyMs.toFixed(1) : '--'}<span class="stat-unit">ms</span></div>
+			OLD CODE END -->
+			{#if bridgeHealth && bridgeHealth.latency_us == null}
+				<div class="stat-value stat-value-note" title={bridgeHealth.latency_note || undefined}>Not measured</div>
+			{:else}
+				<div class="stat-value green">{latencyMs > 0 ? latencyMs.toFixed(1) : '--'}<span class="stat-unit">ms</span></div>
+			{/if}
 		</div>
 		<div class="stat-card-mini">
 			<div class="stat-label">Drop Rate</div>
@@ -1231,16 +1538,18 @@
 			</div>
 			<span class="service-arrow">&rarr;</span>
 		</a>
-		<a href="/grafana/" class="service-link" target="_blank" rel="noopener">
-			<div class="service-icon-box grafana">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-			</div>
-			<div class="service-info-text">
-				<div class="service-name">Grafana</div>
-				<div class="service-desc">Advanced dashboards &amp; graphs</div>
-			</div>
-			<span class="service-arrow">&rarr;</span>
-		</a>
+		{#if grafanaUp}
+			<a href="/grafana/" class="service-link" target="_blank" rel="noopener">
+				<div class="service-icon-box grafana">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+				</div>
+				<div class="service-info-text">
+					<div class="service-name">Grafana</div>
+					<div class="service-desc">Advanced dashboards &amp; graphs</div>
+				</div>
+				<span class="service-arrow">&rarr;</span>
+			</a>
+		{/if}
 		<a href="/cyberchef/" class="service-link" target="_blank" rel="noopener">
 			<div class="service-icon-box cyberchef">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
@@ -1256,6 +1565,9 @@
 	<!-- ═══════════════════════════════════════════════════════════
 	     UNIFI INTEGRATION
 	     ═══════════════════════════════════════════════════════════ -->
+	{#if unifiFailed['the UniFi status']}
+		<div class="alert alert-warning">{loadFailed('the UniFi status', unifiStatus !== null)}</div>
+	{/if}
 	{#if unifiStatus && !unifiStatus.configured}
 		<!-- UniFi not configured — show a subtle prompt -->
 		<section class="card unifi-not-configured">
@@ -1296,8 +1608,11 @@
 					</svg>
 					UniFi Devices
 				</h2>
-				<span class="badge badge-info">{unifiDevices.length} device{unifiDevices.length !== 1 ? 's' : ''}</span>
+				<span class="badge badge-info">{unifiCount('UniFi devices', unifiDevices.length)} device{unifiDevices.length !== 1 ? 's' : ''}</span>
 			</div>
+			{#if unifiFailed['UniFi devices'] && unifiDevices.length > 0}
+				<div class="alert alert-warning">{loadFailed('UniFi devices', true)}</div>
+			{/if}
 
 			{#if unifiLoading && unifiDevices.length === 0}
 				<div class="loading-state">
@@ -1306,7 +1621,7 @@
 				</div>
 			{:else if unifiDevices.length === 0}
 				<div class="empty-state">
-					<p class="empty-text">No UniFi devices found</p>
+					<p class="empty-text">{unifiFailed['UniFi devices'] ? loadFailed('UniFi devices') : 'No UniFi devices found'}</p>
 					<p class="empty-hint">Check your UniFi controller connection</p>
 				</div>
 			{:else}
@@ -1416,11 +1731,14 @@
 						</svg>
 						Networks
 					</h2>
-					<span class="badge badge-muted">{unifiNetworks.length}</span>
+					<span class="badge badge-muted">{unifiCount('networks', unifiNetworks.length)}</span>
 				</div>
+				{#if unifiFailed.networks && unifiNetworks.length > 0}
+					<div class="alert alert-warning">{loadFailed('networks', true)}</div>
+				{/if}
 				{#if unifiNetworks.length === 0}
 					<div class="empty-state">
-						<p class="empty-text">No networks found</p>
+						<p class="empty-text">{unifiFailed.networks ? loadFailed('networks') : 'No networks found'}</p>
 					</div>
 				{:else}
 					<div class="detail-table-wrapper">
@@ -1468,11 +1786,14 @@
 						</svg>
 						WiFi Networks
 					</h2>
-					<span class="badge badge-muted">{unifiWifi.length}</span>
+					<span class="badge badge-muted">{unifiCount('WiFi networks', unifiWifi.length)}</span>
 				</div>
+				{#if unifiFailed['WiFi networks'] && unifiWifi.length > 0}
+					<div class="alert alert-warning">{loadFailed('WiFi networks', true)}</div>
+				{/if}
 				{#if unifiWifi.length === 0}
 					<div class="empty-state">
-						<p class="empty-text">No WiFi networks found</p>
+						<p class="empty-text">{unifiFailed['WiFi networks'] ? loadFailed('WiFi networks') : 'No WiFi networks found'}</p>
 					</div>
 				{:else}
 					<div class="detail-table-wrapper">
@@ -1533,21 +1854,24 @@
 			<div class="unifi-security-grid">
 				<div class="detail-stat">
 					<div class="detail-stat-label">Firewall Policies</div>
-					<div class="detail-stat-value cyan">{unifiFirewall.policies.length}</div>
+					<div class="detail-stat-value cyan">{unifiCount('firewall policies', unifiFirewall.policies.length)}</div>
 				</div>
 				<div class="detail-stat">
 					<div class="detail-stat-label">Firewall Zones</div>
-					<div class="detail-stat-value">{unifiFirewall.zones.length}</div>
+					<div class="detail-stat-value">{unifiCount('firewall policies', unifiFirewall.zones.length)}</div>
 				</div>
 				<div class="detail-stat">
 					<div class="detail-stat-label">DNS Policies</div>
-					<div class="detail-stat-value">{unifiDnsPolicies.length}</div>
+					<div class="detail-stat-value">{unifiCount('DNS policies', unifiDnsPolicies.length)}</div>
 				</div>
 				<div class="detail-stat">
 					<div class="detail-stat-label">VPN Tunnels</div>
-					<div class="detail-stat-value">{unifiVpn.length}</div>
+					<div class="detail-stat-value">{unifiCount('VPN tunnels', unifiVpn.length)}</div>
 				</div>
 			</div>
+			{#each unifiPostureNotes as note (note)}
+				<div class="alert alert-warning">{note}</div>
+			{/each}
 			{#if unifiFirewall.policies.length > 0}
 				<div class="unifi-policy-summary">
 					<h3 class="unifi-subsection-title">Firewall Policies</h3>
@@ -2079,6 +2403,13 @@
 	.detail-stat-value.amber { color: var(--amber); }
 	.detail-stat-value.red { color: var(--red); }
 
+	.detail-issues {
+		margin: 0;
+		padding-left: var(--space-lg);
+		color: var(--amber);
+		font-size: var(--text-sm);
+	}
+
 	/* ═══════════════════════════════════════════════════════════
 	   DETAIL TABLES
 	   ═══════════════════════════════════════════════════════════ */
@@ -2233,6 +2564,12 @@
 		text-align: center;
 	}
 
+	.stat-split {
+		margin-top: var(--space-xs);
+		font-size: var(--text-xs);
+		color: var(--text-muted);
+	}
+
 	.stat-label {
 		font-size: 0.6875rem;
 		font-weight: 500;
@@ -2253,6 +2590,11 @@
 	.stat-value.green { color: var(--green); }
 	.stat-value.cyan { color: var(--cyan); }
 	.stat-value.amber { color: var(--amber); }
+
+	.stat-value.stat-value-note {
+		font-size: var(--text-sm);
+		color: var(--text-muted);
+	}
 
 	.stat-unit {
 		font-size: var(--text-xs);

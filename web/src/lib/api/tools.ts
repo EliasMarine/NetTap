@@ -125,13 +125,19 @@ export async function dnsRecon(
 export async function macLookup(mac: string): Promise<MacLookupResult> {
 	const res = await fetch(`/api/tools/mac-lookup/${encodeURIComponent(mac)}`);
 
+	// OLD CODE START — #96: a failed request read as "Not Found / Unknown vendor"
+	// if (!res.ok) {
+	// 	return {
+	// 		mac,
+	// 		oui_prefix: '',
+	// 		vendor: '',
+	// 		found: false,
+	// 	};
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return {
-			mac,
-			oui_prefix: '',
-			vendor: '',
-			found: false,
-		};
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data.error || `MAC lookup failed: HTTP ${res.status}`);
 	}
 
 	return res.json();

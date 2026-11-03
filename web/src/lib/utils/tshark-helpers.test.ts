@@ -5,6 +5,7 @@ import {
 	formatDuration,
 	formatBytes,
 	CONN_STATE_DESC,
+	getRawHex,
 } from './tshark-helpers';
 
 // ---------------------------------------------------------------------------
@@ -274,5 +275,17 @@ describe('CONN_STATE_DESC', () => {
 
 	it('returns undefined for unknown states', () => {
 		expect(CONN_STATE_DESC['UNKNOWN']).toBeUndefined();
+	});
+});
+
+describe('getRawHex', () => {
+	it('returns frame_raw hex from a -T json -x packet', () => {
+		const pkt = { _source: { layers: { frame_raw: ['0011223344', 0, 5, 0, 1] } } };
+		expect(getRawHex(pkt)).toBe('0011223344');
+	});
+
+	it('returns null without raw bytes (analysis run without -x)', () => {
+		expect(getRawHex({ _source: { layers: { frame: {} } } })).toBeNull();
+		expect(getRawHex(null)).toBeNull();
 	});
 });

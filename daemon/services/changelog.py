@@ -120,13 +120,16 @@ class ChangelogService:
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
 
-        try:
-            result = self._client.search(
-                index=f"{CHANGELOG_INDEX_PREFIX}-*", body=query
-            )
-        except OpenSearchException as exc:
-            logger.error("Failed to query changelog events: %s", exc)
-            return []
+        # OLD CODE START — #96: [] read as "no changes recorded"
+        # try:
+        #     result = self._client.search(
+        #         index=f"{CHANGELOG_INDEX_PREFIX}-*", body=query
+        #     )
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to query changelog events: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=f"{CHANGELOG_INDEX_PREFIX}-*", body=query)
 
         events = []
         for hit in result.get("hits", {}).get("hits", []):

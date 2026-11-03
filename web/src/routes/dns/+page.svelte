@@ -10,6 +10,8 @@
 		getDeviceDns,
 	} from '$lib/api/dns';
 	import { page } from '$app/stores';
+	import { partOfWhole } from '$lib/utils/part-of-whole';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type {
 		DnsStats,
@@ -49,12 +51,26 @@
 	let initialized = $state(false);
 
 	// Data
-	let stats = $state<DnsStats>({ total_queries: 0, unique_domains: 0, nxdomain_count: 0, avg_resolution_ms: 0 });
+	// OLD CODE START — #96: zeros before (or without) a successful load read as "0 queries"
+	// let stats = $state<DnsStats>({ total_queries: 0, unique_domains: 0, nxdomain_count: 0, avg_resolution_ms: 0 });
+	// OLD CODE END
+	let stats = $state<DnsStats | null>(null);
+	// #96: a failed section keeps its last good data and says so; it never reads as "none"
+	let statsFailed = $state(false);
+	let domainsFailed = $state(false);
+	let nxFailed = $state(false);
+	let typesFailed = $state(false);
+	let timelineFailed = $state(false);
+	let deviceDnsFailed = $state(false);
 	let topDomains = $state<TopDomain[]>([]);
 	let nxdomains = $state<NxdomainEntry[]>([]);
 	let queryTypes = $state<QueryTypeEntry[]>([]);
 	let timeline = $state<TimelineEntry[]>([]);
 	let suspicious = $state<SuspiciousEntry[]>([]);
+	// #96: a failed check must not read as "none detected"; a long list shows its first rows
+	let suspiciousFailed = $state(false);
+	let showAllSuspicious = $state(false);
+	const SUSPICIOUS_SHOWN = 50;
 
 	// Per-device
 	let deviceIpInput = $state('');
@@ -194,6 +210,12 @@
 		if (results[3].status === 'fulfilled') queryTypes = results[3].value.types;
 		if (results[4].status === 'fulfilled') timeline = results[4].value.series;
 		if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious;
+		suspiciousFailed = results[5].status === 'rejected';
+		statsFailed = results[0].status === 'rejected';
+		domainsFailed = results[1].status === 'rejected';
+		nxFailed = results[2].status === 'rejected';
+		typesFailed = results[3].status === 'rejected';
+		timelineFailed = results[4].status === 'rejected';
 
 		loading = false;
 	}
@@ -209,8 +231,10 @@
 		try {
 			const result = await getDeviceDns(ip, { from, to });
 			deviceDns = result.domains;
+			deviceDnsFailed = false;
 		} catch {
 			deviceDns = [];
+			deviceDnsFailed = true;
 		} finally {
 			deviceLoading = false;
 		}
@@ -262,6 +286,13 @@
 
 	function handleTimeRangeChange(value: string) {
 		selectedTimeRange = value;
+		// #96: the last range's figures must not stand in for this range if its load fails
+		stats = null;
+		topDomains = [];
+		nxdomains = [];
+		queryTypes = [];
+		timeline = [];
+		suspicious = [];
 		if (initialized) fetchAll();
 	}
 
@@ -321,29 +352,43 @@
 	</header>
 
 	<!-- Hero Stats -->
+	{#if statsFailed}
+		<p class="load-note">{loadFailed('DNS totals', stats !== null)}</p>
+	{/if}
+	<!-- OLD CODE START — #96: stats now start null (not loaded) instead of zeros
+	<span class="stat-value">{formatNumber(stats.total_queries)}</span>
+	<span class="stat-value">{formatNumber(stats.unique_domains)}</span>
+	<span class="stat-value" class:text-warning={stats.nxdomain_count > 0}>{formatNumber(stats.nxdomain_count)}</span>
+	<span class="stat-value">{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span></span>
+	OLD CODE END -->
 	<div class="stats-grid">
 		<div class="stat-card">
 			<span class="stat-label">Total Queries</span>
-			<span class="stat-value">{formatNumber(stats.total_queries)}</span>
+			<span class="stat-value">{stats ? formatNumber(stats.total_queries) : '—'}</span>
 		</div>
 		<div class="stat-card">
 			<span class="stat-label">Unique Domains</span>
-			<span class="stat-value">{formatNumber(stats.unique_domains)}</span>
+			<span class="stat-value">{stats ? formatNumber(stats.unique_domains) : '—'}</span>
 		</div>
 		<button class="stat-card clickable" onclick={() => document.getElementById('nxdomain-section')?.scrollIntoView({ behavior: 'smooth' })}>
 			<span class="stat-label">NXDOMAIN Errors</span>
-			<span class="stat-value" class:text-warning={stats.nxdomain_count > 0}>{formatNumber(stats.nxdomain_count)}</span>
+			<span class="stat-value" class:text-warning={(stats?.nxdomain_count ?? 0) > 0}>{stats ? formatNumber(stats.nxdomain_count) : '—'}</span>
 		</button>
 		<div class="stat-card">
 			<span class="stat-label">Avg Resolution</span>
-			<span class="stat-value">{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span></span>
+			<span class="stat-value">{#if stats}{stats.avg_resolution_ms.toFixed(1)}<span class="stat-unit">ms</span>{:else}—{/if}</span>
 		</div>
 	</div>
 
 	<!-- Timeline Chart -->
 	<section class="card">
 		<h2>Query Volume Timeline</h2>
-		{#if timeline.length === 0 && !loading}
+		{#if timelineFailed && !loading}
+			<p class="load-note">{loadFailed('the query timeline', timeline.length > 0)}</p>
+		{/if}
+		{#if timelineFailed && timeline.length === 0 && !loading}
+			<!-- the note above says it couldn't load -->
+		{:else if timeline.length === 0 && !loading}
 			<p class="empty-state">No timeline data available for this time range.</p>
 		{:else}
 			<div class="chart-wrapper" bind:clientWidth={chartWidth}>
@@ -418,7 +463,12 @@
 					bind:value={domainSearch}
 				/>
 			</div>
-			{#if topDomains.length === 0 && !loading}
+			{#if domainsFailed && !loading}
+				<p class="load-note">{loadFailed('top domains', topDomains.length > 0)}</p>
+			{/if}
+			{#if domainsFailed && topDomains.length === 0 && !loading}
+				<!-- the note above says it couldn't load -->
+			{:else if topDomains.length === 0 && !loading}
 				<p class="empty-state">No domains recorded. Check that Zeek is capturing DNS traffic.</p>
 			{:else}
 				<div class="table-container">
@@ -472,7 +522,12 @@
 		<!-- Query Type Distribution -->
 		<section class="card">
 			<h2>Query Type Distribution</h2>
-			{#if queryTypes.length === 0 && !loading}
+			{#if typesFailed && !loading}
+				<p class="load-note">{loadFailed('query types', queryTypes.length > 0)}</p>
+			{/if}
+			{#if typesFailed && queryTypes.length === 0 && !loading}
+				<!-- the note above says it couldn't load -->
+			{:else if queryTypes.length === 0 && !loading}
 				<p class="empty-state">No query type data available.</p>
 			{:else}
 				<HorizontalBarList
@@ -527,6 +582,8 @@
 					<p class="empty-state">Enter a device IP to see its DNS queries.</p>
 				{:else if deviceLoading}
 					<p class="empty-state">Loading DNS data for {selectedDeviceIp}...</p>
+				{:else if deviceDnsFailed}
+					<p class="load-note">{loadFailed(`DNS records for ${selectedDeviceIp}`)}</p>
 				{:else if deviceDns.length === 0}
 					<p class="empty-state">No DNS records for <span class="mono">{selectedDeviceIp}</span></p>
 				{:else}
@@ -575,7 +632,12 @@
 		<!-- NXDOMAIN Errors -->
 		<section class="card">
 			<h2>NXDOMAIN Errors</h2>
-			{#if nxdomains.length === 0 && !loading}
+			{#if nxFailed && !loading}
+				<p class="load-note">{loadFailed('NXDOMAIN errors', nxdomains.length > 0)}</p>
+			{/if}
+			{#if nxFailed && nxdomains.length === 0 && !loading}
+				<!-- the note above says it couldn't load -->
+			{:else if nxdomains.length === 0 && !loading}
 				<p class="empty-state ok-state">No NXDOMAIN errors detected. That's a good sign.</p>
 			{:else}
 				<div class="table-container">
@@ -620,11 +682,16 @@
 		<!-- Suspicious DNS Patterns -->
 		<section class="card">
 			<h2>Suspicious DNS Patterns</h2>
+			<!-- OLD CODE START — #96: a failed check showed "No suspicious DNS patterns detected"
 			{#if suspicious.length === 0 && !loading}
+			OLD CODE END -->
+			{#if suspiciousFailed && !loading}
+				<p class="empty-state">Couldn't check for suspicious DNS patterns: the request failed.</p>
+			{:else if suspicious.length === 0 && !loading}
 				<p class="empty-state ok-state">No suspicious DNS patterns detected.</p>
 			{:else}
 				<div class="suspicious-list">
-					{#each suspicious as s}
+					{#each showAllSuspicious ? suspicious : suspicious.slice(0, SUSPICIOUS_SHOWN) as s}
 						<div class="suspicious-item">
 							<div class="suspicious-header">
 								<span class="severity-badge" style="background: {SEVERITY_COLORS[s.severity] || 'var(--text-muted)'}">{s.severity}</span>
@@ -644,6 +711,14 @@
 						</div>
 					{/each}
 				</div>
+				{#if suspicious.length > SUSPICIOUS_SHOWN}
+					<div class="suspicious-more">
+						<span class="text-muted">Showing {partOfWhole(showAllSuspicious ? suspicious.length : SUSPICIOUS_SHOWN, suspicious.length)}</span>
+						<button class="btn btn-secondary btn-sm" onclick={() => (showAllSuspicious = !showAllSuspicious)}>
+							{showAllSuspicious ? 'Show fewer' : `Show all ${suspicious.length.toLocaleString('en-US')}`}
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 	</div>
@@ -1053,6 +1128,15 @@
 	.ip-link:hover { color: var(--cyan); }
 
 	/* Suspicious DNS */
+	.suspicious-more {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		margin-top: var(--space-md);
+		font-size: var(--text-sm);
+	}
+
 	.suspicious-list {
 		display: flex;
 		flex-direction: column;
@@ -1131,6 +1215,13 @@
 	}
 
 	.ok-state { color: var(--green); }
+
+	.load-note {
+		color: var(--amber);
+		font-size: var(--text-sm);
+		text-align: center;
+		padding: var(--space-md);
+	}
 
 	/* Responsive */
 	@media (max-width: 900px) {

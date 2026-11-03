@@ -169,6 +169,28 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertEqual(alert["rule"]["name"], "ET TROJAN Test")
 
     @unittest_run_loop
+    async def test_alerts_list_total_counts_past_10000(self):
+        """The UI shows total and total_pages; OpenSearch stops at 10,000 unless asked."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/alerts")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertIs(body["track_total_hits"], True)
+
+    @unittest_run_loop
+    async def test_alerts_list_pages_stop_at_the_result_window(self):
+        """#85: 7 days on the G11 = 43,355 alerts, 868 pages; pages past 200 of 50 came back empty."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 43355}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/alerts?size=50")
+        data = await resp.json()
+        self.assertEqual(data["total"], 43355)
+        self.assertEqual(data["total_pages"], 200)
+
+    @unittest_run_loop
     async def test_alerts_list_with_severity_filter(self):
         """Severity filter is included in query."""
         self.mock_client.search.return_value = {
@@ -511,3 +533,49 @@ class TestAlertAcknowledgeHandler(AioHTTPTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAlertPanelsMatchTheTotal(AioHTTPTestCase):
+    """Timeline, top signatures and top IPs leave out engine events like the count.
+
+    On the G11 the Alerts page total said 2,978 while Top Signatures listed
+    "SURICATA Ethertype unknown" (2,651) and the timeline axis reached 6,019.
+    """
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_alert_routes(app, self.storage)
+        return app
+
+    async def _must_not(self, path: str) -> list:
+        self.mock_client.search.return_value = {"aggregations": {}}
+        resp = await self.client.request("GET", path)
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        return body["query"]["bool"].get("must_not", [])
+
+    @unittest_run_loop
+    async def test_timeline(self):
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            await self._must_not("/api/alerts/timeline"),
+        )
+
+    @unittest_run_loop
+    async def test_top_signatures(self):
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            await self._must_not("/api/alerts/top-signatures"),
+        )
+
+    @unittest_run_loop
+    async def test_top_ips(self):
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            await self._must_not("/api/alerts/top-ips"),
+        )

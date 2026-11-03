@@ -218,8 +218,8 @@ class TestLiveConnectionTracker(unittest.TestCase):
         has_device_filter = any("bool" in f and "should" in f["bool"] for f in filters)
         self.assertTrue(has_device_filter)
 
-    def test_fetch_from_opensearch_error(self):
-        """Fetch should fall back to cache on OpenSearch error."""
+    def test_fetch_from_opensearch_error_raises(self):
+        """#96: a failure raised nothing and served the old cache as live connections."""
         from opensearchpy import OpenSearchException
 
         mock_client = MagicMock()
@@ -228,9 +228,8 @@ class TestLiveConnectionTracker(unittest.TestCase):
         tracker = LiveConnectionTracker(client=mock_client)
         tracker._connections.append(_make_connection())
 
-        conns = tracker.fetch_from_opensearch()
-        # Should return cached data
-        self.assertEqual(len(conns), 1)
+        with self.assertRaises(OpenSearchException):
+            tracker.fetch_from_opensearch()
 
     def test_fetch_without_client(self):
         """Fetch without client should return cached connections."""
@@ -296,6 +295,87 @@ class TestLiveDashboardQueries(unittest.TestCase):
         self.assertEqual(agg["terms"]["order"], {"total_bytes": "desc"})
         self.assertIn("total_bytes", agg["aggs"])
         self.assertNotIn("bucket_sort", agg["aggs"])
+
+    def test_active_devices_counts_lan_sources_only(self):
+        """79 "devices" for 38 on the G11: each device's IPv6 link-local counted too."""
+        client = MagicMock()
+        client.search.side_effect = [
+            {
+                "hits": {"total": {"value": 1690}, "hits": []},
+                "aggregations": {
+                    "active_devices": {"doc_count": 900, "n": {"value": 38}}
+                },
+            },
+            {"aggregations": {"alert_pairs": {"buckets": []}}},
+        ]
+        lan = {"terms": {"source.ip": ["192.168.1.0/24"]}}
+        result = LiveConnectionTracker(client=client).fetch_dashboard_data(
+            lan_filter=lan
+        )
+        agg = client.search.call_args_list[0].kwargs["body"]["aggs"]["active_devices"]
+        self.assertEqual(agg["filter"], lan)
+        self.assertEqual(result["stats"]["active_devices"], 38)
+        self.assertEqual(result["stats"]["connections_in_window"], 1690)
+
+
+class TestLiveQueryFailures(unittest.TestCase):
+    """#96: a failed live query raises; the handlers answer 502 instead of zeros or "no alert"."""
+
+    def _client(self, *results):
+        client = MagicMock()
+        client.search.side_effect = list(results)
+        return client
+
+    def test_dashboard_connections_failure_raises(self):
+        """Was an all-zero dashboard: 0 devices, 0 bytes/s, no connections."""
+        from opensearchpy import OpenSearchException
+
+        client = self._client(OpenSearchException("timeout"))
+        with self.assertRaises(OpenSearchException):
+            LiveConnectionTracker(client=client).fetch_dashboard_data()
+
+    def test_dashboard_alert_failure_raises(self):
+        """Was every connection shown without its alert flag."""
+        from opensearchpy import OpenSearchException
+
+        conns = {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        client = self._client(conns, OpenSearchException("timeout"))
+        with self.assertRaises(OpenSearchException):
+            LiveConnectionTracker(client=client).fetch_dashboard_data()
+
+    def test_detail_failure_raises(self):
+        """Was a drawer reading 0 alerts or 0 connections for a pair it never checked."""
+        from opensearchpy import OpenSearchException
+
+        ok = {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        for failing in range(3):  # session, alerts, history
+            results = [ok, ok, ok]
+            results[failing] = OpenSearchException("timeout")
+            client = self._client(*results)
+            with self.assertRaises(OpenSearchException, msg=failing):
+                LiveConnectionTracker(client=client).fetch_connection_detail(
+                    src_ip="10.0.0.5", dst_ip="1.2.3.4"
+                )
+
+    def test_connections_endpoint_answers_502(self):
+        import asyncio
+
+        from aiohttp import web
+        from aiohttp.test_utils import make_mocked_request
+        from opensearchpy import OpenSearchException
+
+        from api.live import handle_live_connections
+
+        app = web.Application()
+        app["live_tracker"] = LiveConnectionTracker(
+            client=self._client(OpenSearchException("timeout"))
+        )
+        resp = asyncio.run(
+            handle_live_connections(
+                make_mocked_request("GET", "/api/live/connections", app=app)
+            )
+        )
+        self.assertEqual(resp.status, 502)
 
 
 if __name__ == "__main__":

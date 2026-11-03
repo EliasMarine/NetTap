@@ -40,3 +40,33 @@ _location() {
     echo "$output" | grep -q 'auth_request /_nettap_auth;'
     echo "$output" | grep -q 'error_page 401 = @nettap_login;'
 }
+
+@test "nginx: CSP lets same-origin blob Web Workers run (CyberChef)" {
+    # CyberChef inlines its workers as blob: URLs; without worker-src they fall back to
+    # script-src and are blocked, so CyberChef never leaves its loading screen
+    csp=$(grep -v '^\s*#' "$NGINX_CONF" | grep 'add_header Content-Security-Policy')
+    echo "$csp" | grep -q "worker-src 'self' blob:"
+}
+
+@test "nginx: every upstream re-resolves a recreated container's IP (#138)" {
+    # resolved once at startup, a recreated nettap-web's new IP made every page a 502
+    live=$(grep -v '^[[:space:]]*#' "$NGINX_CONF")
+    echo "$live" | grep -Eq '^[[:space:]]*resolver 127\.0\.0\.11 valid=10s'
+    servers=$(echo "$live" | grep -Ec '^[[:space:]]*server nettap-[a-z-]+:[0-9]+')
+    resolved=$(echo "$live" | grep -Ec '^[[:space:]]*server nettap-[a-z-]+:[0-9]+ resolve;')
+    zones=$(echo "$live" | grep -Ec '^[[:space:]]*zone [a-z]+ 64k;')
+    [ "$servers" -eq 3 ] && [ "$resolved" -eq 3 ] && [ "$zones" -eq 3 ]
+    # "resolve" needs nginx 1.27.3+: the image is pinned, not a floating tag
+    grep -Eq '^[[:space:]]*image: nginx:1\.(2[89]|[3-9][0-9])-alpine$' "${REPO_ROOT}/docker/docker-compose.yml"
+}
+
+@test "nginx: /grafana/ keeps its path and starts without Grafana (#71)" {
+    run _location '/grafana/'
+    [ "$status" -eq 0 ]
+    # The full /grafana/... path reaches Grafana (it serves from that sub-path)
+    echo "$output" | grep -Eq '^[[:space:]]*proxy_pass \$grafana_upstream;'
+    ! echo "$output" | grep -Eq '^[[:space:]]*proxy_pass http://grafana/;'
+    # Resolved per request, so a missing container can't stop nginx starting
+    echo "$output" | grep -Eq '^[[:space:]]*resolver 127\.0\.0\.11'
+    ! grep -Eq '^[[:space:]]*upstream grafana' "$NGINX_CONF"
+}

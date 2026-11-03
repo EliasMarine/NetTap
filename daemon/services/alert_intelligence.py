@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
+from storage.all_buckets import MAX_BUCKETS
+
 logger = logging.getLogger("nettap.services.alert_intelligence")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -999,6 +1001,20 @@ _BASELINE_PATH = (
 )
 
 
+def _window_hours(from_ts: str, to_ts: str) -> tuple[float, bool]:
+    """(window length in hours, whether it ends within 15 minutes of now)."""
+    try:
+        start = datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return 24.0, False
+    start, end = (
+        t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in (start, end)
+    )
+    live = abs((datetime.now(timezone.utc) - end).total_seconds()) <= 15 * 60
+    return max((end - start).total_seconds() / 3600, 1e-9), live
+
+
 def _load_baselines() -> dict:
     """Load rolling baselines from disk."""
     try:
@@ -1018,50 +1034,111 @@ def _save_baselines(data: dict) -> None:
         logger.error("Failed to save baselines", exc_info=True)
 
 
-def update_baseline(current_summary: dict) -> dict:
-    """Compare current alert volume against rolling average.
+# OLD CODE START — #95: a snapshot on every request, so how often a page was open set the
+# baseline (168 "hourly" points could span minutes), and 24 h, 7 d and single-device
+# summaries were averaged together
+# def update_baseline(current_summary: dict) -> dict:
+#     """Compare current alert volume against rolling average.
+#
+#     Returns baseline info with deviation multiplier.
+#     """
+#     baselines = _load_baselines()
+#
+#     baselines["history"].append(
+#         {
+#             "timestamp": datetime.now(timezone.utc).isoformat(),
+#             "total_events": current_summary.get("total_events", 0),
+#             "threat_score": current_summary.get("threat_score", 0),
+#             "categories": {
+#                 k: v.get("events", 0)
+#                 for k, v in current_summary.get("categories", {}).items()
+#             },
+#         }
+#     )
+#
+#     # Keep 7 days of hourly snapshots
+#     baselines["history"] = baselines["history"][-168:]
+#
+#     deviation = 1.0
+#     avg_events = 0.0
+#     avg_score = 0.0
+#
+#     if len(baselines["history"]) > 6:
+#         history = baselines["history"][:-1]  # Exclude current
+#         avg_events = sum(h.get("total_events", 0) for h in history) / len(history)
+#         avg_score = sum(h.get("threat_score", 0) for h in history) / len(history)
+#         current_events = current_summary.get("total_events", 0)
+#         deviation = round(current_events / max(avg_events, 1), 2)
+#
+#     baselines["current_deviation"] = deviation
+#     baselines["avg_events"] = round(avg_events, 1)
+#     baselines["avg_threat_score"] = round(avg_score, 1)
+#
+#     _save_baselines(baselines)
+#
+#     return {
+#         "deviation": deviation,
+#         "avg_events": round(avg_events, 1),
+#         "avg_threat_score": round(avg_score, 1),
+#         "history_points": len(baselines["history"]),
+#         "is_anomalous": deviation > 2.0,
+#     }
+# OLD CODE END
+_MIN_BASELINE_HOURS = (
+    6  # earlier hours of the same window length before a deviation is shown
+)
 
-    Returns baseline info with deviation multiplier.
+
+def update_baseline(
+    current_summary: dict,
+    window_hours: float = 24.0,
+    record: bool = True,
+    now: datetime | None = None,
+) -> dict:
+    """Compare the current alert rate with earlier hours' rates for the same window length.
+
+    At most one snapshot per clock hour and window length, kept 7 days, and only when `record`
+    (a live, network-wide view), so the baseline doesn't depend on how often a page is open.
     """
-    baselines = _load_baselines()
+    now = now or datetime.now(timezone.utc)
+    hour = now.strftime("%Y-%m-%dT%H")
+    hours_kept_from = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H")
+    window = max(1, round(window_hours))
+    rate = current_summary.get("total_events", 0) / max(window_hours, 1e-9)
 
-    baselines["history"].append(
-        {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "total_events": current_summary.get("total_events", 0),
+    # Per-request points from before #95 have no "hour" and are dropped
+    history = [
+        h
+        for h in _load_baselines().get("history", [])
+        if "hour" in h and h["hour"] >= hours_kept_from
+    ]
+    same_window = [h for h in history if h.get("window_hours") == window]
+    earlier = [h for h in same_window if h["hour"] != hour]
+    if record and len(earlier) == len(
+        same_window
+    ):  # nothing recorded for this hour yet
+        snapshot = {
+            "hour": hour,
+            "window_hours": window,
+            "events_per_hour": rate,
             "threat_score": current_summary.get("threat_score", 0),
-            "categories": {
-                k: v.get("events", 0)
-                for k, v in current_summary.get("categories", {}).items()
-            },
         }
-    )
+        history = [*history, snapshot]
+        same_window = [*same_window, snapshot]
+        _save_baselines({"history": history})
 
-    # Keep 7 days of hourly snapshots
-    baselines["history"] = baselines["history"][-168:]
-
-    deviation = 1.0
-    avg_events = 0.0
-    avg_score = 0.0
-
-    if len(baselines["history"]) > 6:
-        history = baselines["history"][:-1]  # Exclude current
-        avg_events = sum(h.get("total_events", 0) for h in history) / len(history)
-        avg_score = sum(h.get("threat_score", 0) for h in history) / len(history)
-        current_events = current_summary.get("total_events", 0)
-        deviation = round(current_events / max(avg_events, 1), 2)
-
-    baselines["current_deviation"] = deviation
-    baselines["avg_events"] = round(avg_events, 1)
-    baselines["avg_threat_score"] = round(avg_score, 1)
-
-    _save_baselines(baselines)
+    deviation, avg_rate, avg_score = 1.0, 0.0, 0.0
+    if len(earlier) >= _MIN_BASELINE_HOURS:
+        avg_rate = sum(h["events_per_hour"] for h in earlier) / len(earlier)
+        avg_score = sum(h.get("threat_score", 0) for h in earlier) / len(earlier)
+        # same floor as before #95: at least one event per window
+        deviation = round(rate / max(avg_rate, 1 / window), 2)
 
     return {
         "deviation": deviation,
-        "avg_events": round(avg_events, 1),
+        "avg_events": round(avg_rate * window, 1),  # per window, as before
         "avg_threat_score": round(avg_score, 1),
-        "history_points": len(baselines["history"]),
+        "history_points": len(same_window),
         "is_anomalous": deviation > 2.0,
     }
 
@@ -1127,6 +1204,63 @@ def enrich_device_context(client, ip: str) -> dict | None:
 # Smart Alert Aggregation
 # ---------------------------------------------------------------------------
 
+# reclassify_severity() gives this to alerts that are context, not threats (STUN, DoH, ...)
+_INFO_SEVERITY = 5
+
+_THREAT_LEVELS = ["none", "low", "medium", "high", "critical"]
+# Highest threat level each alert severity can justify (1 = critical ... 4 = low)
+_LEVEL_FOR_SEVERITY = {1: "critical", 2: "high", 3: "medium", 4: "low"}
+
+
+def _cap_level(level: str, worst_severity: int) -> str:
+    """Lower `level` to what the worst (lowest-numbered) alert severity justifies."""
+    ceiling = _LEVEL_FOR_SEVERITY.get(worst_severity, "low")
+    return min(level, ceiling, key=_THREAT_LEVELS.index)
+
+
+# OLD CODE START — #96: 25 pages of 200 cut the groups whose signatures sort last from the summary
+# # shortcut: stops at 25 pages (5,000 alert groups) per range; raise it if a box ever has more
+# _MAX_GROUP_PAGES = 25
+# OLD CODE END
+# Each page re-reads every alert in the range, so fewer, larger pages cost less
+_GROUP_PAGE_SIZE = 1_000
+# shortcut: stops with a warning at all_buckets' MAX_BUCKETS (500,000 groups); raise both together
+_MAX_GROUP_PAGES = MAX_BUCKETS // _GROUP_PAGE_SIZE
+# Sample fields read by _normalize_alert_source and get_smart_alerts; the rest is not fetched
+_SAMPLE_FIELDS = [
+    "alert",
+    "rule",
+    "suricata.alert",
+    "suricata.severity",
+    "destination.port",
+]
+
+
+def _all_composite_buckets(client, query: dict) -> list[dict]:
+    """Page through the 'grouped' composite agg. A failed page raises (#96): an empty or
+    partial list would read as "no threats" or as lower totals."""
+    grouped = query["aggs"]["grouped"]
+    buckets: list[dict] = []
+    after = None
+    for page in range(_MAX_GROUP_PAGES):
+        composite = {**grouped["composite"], **({"after": after} if after else {})}
+        body = {**query, "aggs": {"grouped": {**grouped, "composite": composite}}}
+        # OLD CODE START — #96: a first-page failure read as threat level "none", a later one as lower totals
+        # try:
+        #     result = client.search(index=NETWORK_INDEX, body=body)
+        # except Exception:
+        #     logger.error("Smart alerts query failed (page %d)", page + 1, exc_info=True)
+        #     return None if page == 0 else buckets
+        # OLD CODE END
+        result = client.search(index=NETWORK_INDEX, body=body)
+        agg = result.get("aggregations", {}).get("grouped", {})
+        buckets.extend(agg.get("buckets", []))
+        after = agg.get("after_key")
+        if not after or len(agg.get("buckets", [])) < composite["size"]:
+            return buckets
+    logger.warning("Smart alerts stopped at %d groups", len(buckets))
+    return buckets
+
 
 async def get_smart_alerts(
     client,
@@ -1134,10 +1268,13 @@ async def get_smart_alerts(
     to_ts: str,
     device_ip: str | None = None,
     include_info: bool = False,
-    limit: int = 50,
+    limit: int | None = 50,
     excluded_ips: list[dict] | None = None,
 ) -> list[dict]:
-    """Get deduplicated, reclassified, grouped alerts with full context."""
+    """Get deduplicated, reclassified, grouped alerts with full context.
+
+    limit=None returns every group (the summary totals need all of them).
+    """
 
     filters = [
         {
@@ -1166,9 +1303,17 @@ async def get_smart_alerts(
             }
         )
 
-    bool_clause: dict = {"filter": filters}
-    if excluded_ips:
-        bool_clause["must_not"] = excluded_ips
+    # OLD CODE START — replaced 2026-11-01: only 11 named engine signatures were skipped,
+    # so "SURICATA QUIC error on data" etc. were counted as informational alerts
+    # bool_clause: dict = {"filter": filters}
+    # if excluded_ips:
+    #     bool_clause["must_not"] = excluded_ips
+    # OLD CODE END
+    # Same engine-event rule as the Alerts page (api/alerts.py _SURICATA_NOISE_EXCLUSION)
+    bool_clause: dict = {
+        "filter": filters,
+        "must_not": [{"prefix": {"rule.name": "SURICATA "}}, *(excluded_ips or [])],
+    }
 
     query = {
         "size": 0,
@@ -1176,7 +1321,10 @@ async def get_smart_alerts(
         "aggs": {
             "grouped": {
                 "composite": {
-                    "size": 200,
+                    # OLD CODE START — #96: 200 per page meant one full re-read per 200 groups
+                    # "size": 200,
+                    # OLD CODE END
+                    "size": _GROUP_PAGE_SIZE,
                     "sources": [
                         {
                             "sig_name": {
@@ -1211,6 +1359,7 @@ async def get_smart_alerts(
                         "top_hits": {
                             "size": 1,
                             "sort": [{"@timestamp": {"order": "desc"}}],
+                            "_source": _SAMPLE_FIELDS,
                         }
                     },
                 },
@@ -1218,11 +1367,20 @@ async def get_smart_alerts(
         },
     }
 
-    try:
-        result = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        logger.error("Smart alerts query failed", exc_info=True)
-        return []
+    # OLD CODE START — replaced 2026-11-01: one 200-group page saw only the first 200
+    # (signature, src, dst) groups in key order, so the home summary said 394 of 2.2K
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     logger.error("Smart alerts query failed", exc_info=True)
+    #     return []
+    # OLD CODE END
+    # OLD CODE START — #96: failures raise now instead of returning None
+    # buckets = _all_composite_buckets(client, query)
+    # if buckets is None:
+    #     return []
+    # OLD CODE END
+    buckets = _all_composite_buckets(client, query)
 
     # Optionally enrich device context
     device_context = None
@@ -1237,7 +1395,9 @@ async def get_smart_alerts(
     from api.alerts import _normalize_alert_source
 
     groups = []
-    buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
+    # OLD CODE START — buckets now come from every composite page
+    # buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
+    # OLD CODE END
 
     for bucket in buckets:
         sig_name_key = bucket["key"].get("sig_name", "") or ""
@@ -1281,7 +1441,7 @@ async def get_smart_alerts(
             signature, original_severity, dst_port, dst_ip
         )
 
-        if new_severity >= 5 and not include_info:
+        if new_severity >= _INFO_SEVERITY and not include_info:
             continue
 
         smart_category = categorize_alert(signature)
@@ -1330,14 +1490,25 @@ async def get_smart_alert_summary(
     excluded_ips: list[dict] | None = None,
 ) -> dict:
     """Get high-level threat summary with kill chains and baseline deviation."""
-    alerts = await get_smart_alerts(
+    # OLD CODE START — replaced 2026-11-01: totals came from the top 200 groups only, and
+    # the hidden informational alerts were not counted, so "394 total" sat next to "2.2K"
+    # alerts = await get_smart_alerts(
+    #     client, from_ts, to_ts, device_ip, include_info=False, limit=200,
+    #     excluded_ips=excluded_ips,
+    # )
+    # OLD CODE END
+    every_group = await get_smart_alerts(
         client,
         from_ts,
         to_ts,
         device_ip,
-        include_info=False,
-        limit=200,
+        include_info=True,
+        limit=None,
         excluded_ips=excluded_ips,
+    )
+    alerts = [a for a in every_group if a["severity"] < _INFO_SEVERITY]
+    informational_events = sum(
+        a["count"] for a in every_group if a["severity"] >= _INFO_SEVERITY
     )
 
     if not alerts:
@@ -1346,6 +1517,7 @@ async def get_smart_alert_summary(
             "threat_level": "none",
             "total_groups": 0,
             "total_events": 0,
+            "informational_events": informational_events,
             "categories": {},
             "top_threats": [],
             "kill_chains": [],
@@ -1395,8 +1567,15 @@ async def get_smart_alert_summary(
         "categories": categories,
     }
 
+    # A device's alerts are not compared with the network's history; past windows are compared
+    # but not recorded (#95)
+    window_hours, live = _window_hours(from_ts, to_ts)
     try:
-        baseline = update_baseline(summary_for_baseline)
+        baseline = (
+            None
+            if device_ip
+            else update_baseline(summary_for_baseline, window_hours, record=live)
+        )
     except Exception:
         logger.warning("Baseline update failed", exc_info=True)
         baseline = None
@@ -1409,11 +1588,16 @@ async def get_smart_alert_summary(
         elif threat_score >= 50:
             threat_level = "high"
 
+    # The level never exceeds the worst alert present: on the G11, 48 groups of
+    # high/medium alerts summed to 100 and the Alerts page read "CRITICAL" with 0 critical
+    threat_level = _cap_level(threat_level, min(a["severity"] for a in alerts))
+
     return {
         "threat_score": threat_score,
         "threat_level": threat_level,
         "total_groups": len(alerts),
         "total_events": total_events,
+        "informational_events": informational_events,
         "categories": categories,
         "top_threats": alerts[:5],
         "kill_chains": kill_chains,

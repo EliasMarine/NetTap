@@ -476,5 +476,51 @@ class TestDiscoverMembers(unittest.TestCase):
                 self.assertEqual(lan, "enp3s0")
 
 
+class TestPersistenceFailuresReported(unittest.TestCase):
+    """#96: a netplan/systemd/sysctl write that failed was only logged, and setup said
+    the bridge was created as if it would survive a reboot."""
+
+    def _create(self, netplan_dir, tmpdir):
+        systemd_dir = os.path.join(tmpdir, "systemd")
+        sysctl_dir = os.path.join(tmpdir, "sysctl")
+        os.makedirs(systemd_dir)
+        os.makedirs(sysctl_dir)
+        mgr = BridgeManager(
+            bridge_name="br0",
+            netplan_dir=netplan_dir,
+            systemd_dir=systemd_dir,
+            sysctl_dir=sysctl_dir,
+        )
+
+        async def mock_nsenter(*args):
+            if args == ("ip", "link", "show", "br0"):
+                return (1, "", 'Device "br0" does not exist.')
+            return (0, "", "")
+
+        mgr._run_nsenter = mock_nsenter
+        return asyncio.run(mgr.create_bridge("enp2s0", "enp3s0"))
+
+    def test_failed_netplan_write_is_in_the_response(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "no-such-netplan-dir")
+            result = self._create(missing, tmpdir)
+        self.assertTrue(result["created"])  # the live bridge is unchanged
+        self.assertFalse(result["persisted"])
+        self.assertTrue(
+            any("Could not write netplan config" in w for w in result["warnings"]),
+            result["warnings"],
+        )
+        self.assertEqual(len(result["persistence_files"]), 2)  # systemd + sysctl
+
+    def test_all_files_written_is_persisted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            netplan_dir = os.path.join(tmpdir, "netplan")
+            os.makedirs(netplan_dir)
+            result = self._create(netplan_dir, tmpdir)
+        self.assertTrue(result["persisted"])
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(len(result["persistence_files"]), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

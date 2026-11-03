@@ -12,6 +12,7 @@
 	let sidebarCollapsed = $state(false);
 	let mobileOpen = $state(false);
 	let captureMode = $state<CaptureMode | null>(null);
+	let modeFailed = $state(false); // #96: say "Mode unknown" rather than guess Bridge
 
 	// Top-bar badge per capture mode; anything unknown shows as Bridge (the old default)
 	const MODE_BADGES: Record<string, { label: string; cls: string }> = {
@@ -25,10 +26,32 @@
 		getCaptureMode().then((mode) => {
 			captureMode = mode;
 		}).catch(() => {
-			// Silently fail — badge just won't show
+			modeFailed = true;
 		});
 		// Also populate the global store for drawer components
 		initCaptureMode();
+	});
+
+	// Top-bar status: Online only while the daemon actually answers its liveness check
+	const DAEMON_CHECK_MS = 30_000;
+	const DAEMON_STATUS_TEXT = { checking: 'Checking…', online: 'Online', offline: "Can't reach NetTap" };
+	let daemonStatus = $state<keyof typeof DAEMON_STATUS_TEXT>('checking');
+
+	async function checkDaemon() {
+		try {
+			const res = await fetch('/api/system/ping');
+			// a lapsed session redirects to the login page, which is not the daemon answering
+			const body = res.ok ? await res.json() : null;
+			daemonStatus = body?.status === 'ok' ? 'online' : 'offline';
+		} catch {
+			daemonStatus = 'offline';
+		}
+	}
+
+	$effect(() => {
+		checkDaemon();
+		const timer = setInterval(checkDaemon, DAEMON_CHECK_MS);
+		return () => clearInterval(timer);
 	});
 
 	const navItems = [
@@ -197,11 +220,24 @@
 						<span class="mode-badge {modeBadge.cls}" title="Capture mode: {captureMode.mode}">
 							{modeBadge.label}
 						</span>
+					{:else if modeFailed}
+						<span class="mode-badge mode-unknown" title="Capture mode: couldn't be read">Mode unknown</span>
 					{/if}
 
+					<!-- OLD CODE START — always said Online, even with the daemon down
 					<div class="status-indicator">
 						<span class="health-dot green"></span>
 						<span class="status-text">Online</span>
+					</div>
+					OLD CODE END -->
+					<div class="status-indicator" title="Whether the NetTap service answers">
+						<span
+							class="health-dot"
+							class:green={daemonStatus === 'online'}
+							class:red={daemonStatus === 'offline'}
+							class:checking={daemonStatus === 'checking'}
+						></span>
+						<span class="status-text" class:offline={daemonStatus === 'offline'}>{DAEMON_STATUS_TEXT[daemonStatus]}</span>
 					</div>
 
 					<NotificationBell />
@@ -397,6 +433,14 @@
 		font-weight: 500;
 	}
 
+	.status-text.offline {
+		color: var(--red);
+	}
+
+	.health-dot.checking {
+		background: var(--text-dim);
+	}
+
 	.logout-form {
 		display: inline;
 	}
@@ -439,6 +483,11 @@
 	.mode-dhcp {
 		background-color: var(--purple-dim);
 		color: var(--purple);
+	}
+
+	.mode-unknown {
+		background-color: var(--bg-elevated);
+		color: var(--text-muted);
 	}
 
 	.desktop-only {

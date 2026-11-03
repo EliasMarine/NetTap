@@ -504,3 +504,16 @@ print('OK: all actions have retry config')
     [ -n "$full_up_line" ]
     [ "$template_line" -lt "$full_up_line" ]
 }
+
+@test "deploy: bootstrap writes the Arkime template marker only when it is missing (#73)" {
+    local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+    local fn
+    fn=$(sed -n '/^bootstrap_index_templates()/,/^}/p' "$script")
+    # dashboards-helper waits for this legacy template before creating the index pattern
+    echo "$fn" | grep -q 'X PUT "https://opensearch:9200/_template/arkime_sessions3_template"'
+    # it must match no index, so it can never shape arkime_sessions3-* mappings
+    echo "$fn" | grep -q '"index_patterns":\["nettap-arkime-template-marker"\]'
+    # and it is guarded by a GET, so Arkime's real template is never overwritten
+    echo "$fn" | grep -q 'if ! docker compose .* exec -T dashboards-helper \\'
+    echo "$fn" | grep -q 'curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template"'
+}

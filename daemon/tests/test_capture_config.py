@@ -455,3 +455,34 @@ class TestAtomicWrites:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestPcapRotateSize:
+    """netsniff's file size from the Settings page reaches capture.env (G11, 2026-11-02)."""
+
+    def test_round_trip_and_env_line(self, tmp_path):
+        conf = str(tmp_path / "capture-mode.conf")
+        env = str(tmp_path / "capture.env")
+        config = CaptureConfig(
+            mode=CaptureMode.MIRROR, interface="enp4s0", pcap_rotate_mb=750
+        )
+        save_capture_config(config, path=conf)
+        loaded = load_capture_config(path=conf)
+        assert loaded.pcap_rotate_mb == 750
+        write_env_file(loaded, path=env)
+        assert "PCAP_ROTATE_MEGABYTES=750\n" in open(env).read()
+
+    def test_unset_writes_no_line(self, tmp_path):
+        env = str(tmp_path / "capture.env")
+        write_env_file(
+            CaptureConfig(mode=CaptureMode.MIRROR, interface="enp4s0"), path=env
+        )
+        assert "PCAP_ROTATE_MEGABYTES" not in open(env).read()
+
+    @pytest.mark.parametrize("raw", ["5", "20000", "big"])
+    def test_out_of_range_or_junk_is_ignored(self, tmp_path, raw):
+        conf = tmp_path / "capture-mode.conf"
+        conf.write_text(
+            f"[capture]\nmode = mirror\ninterface = enp4s0\n\n[pcap]\nrotate_mb = {raw}\n"
+        )
+        assert load_capture_config(path=str(conf)).pcap_rotate_mb == 0

@@ -15,10 +15,13 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
+
+from services.excluded_ips import RFC1918_SOURCE_FILTER
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
 
@@ -189,11 +192,18 @@ class LiveConnectionTracker:
             "sort": [{"@timestamp": {"order": "desc"}}],
         }
 
+        # OLD CODE START — #96: a failure served the in-memory cache (old, or empty) as live
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error fetching live connections: %s", exc)
+        #     return self.get_active_connections(device, proto, country, limit=limit)
+        # OLD CODE END
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
         except OpenSearchException as exc:
             logger.error("OpenSearch error fetching live connections: %s", exc)
-            return self.get_active_connections(device, proto, country, limit=limit)
+            raise
 
         hits = result.get("hits", {}).get("hits", [])
         connections = []
@@ -330,6 +340,7 @@ class LiveConnectionTracker:
         country: str | None = None,
         limit: int = 100,
         excluded_ips: list[str] | None = None,
+        lan_filter: dict | None = None,
     ) -> dict[str, Any]:
         """Fetch complete live dashboard payload with connections + aggregations.
 
@@ -499,7 +510,15 @@ class LiveConnectionTracker:
                 "total_bytes_out": {
                     "sum": {"field": "destination.bytes", "missing": 0}
                 },
-                "active_devices": {"cardinality": {"field": "source.ip"}},
+                # OLD CODE START — 2026-11-02: every source.ip, so each device counted
+                # twice (IPv4 + IPv6 link-local): 79 "devices" for 38 on the G11
+                # "active_devices": {"cardinality": {"field": "source.ip"}},
+                # OLD CODE END
+                # LAN sources only, the same rule as the Devices page
+                "active_devices": {
+                    "filter": lan_filter or RFC1918_SOURCE_FILTER,
+                    "aggs": {"n": {"cardinality": {"field": "source.ip"}}},
+                },
                 "top_country": {
                     "terms": {
                         "field": "destination.geo.country_name",
@@ -557,18 +576,23 @@ class LiveConnectionTracker:
             },
         }
 
-        try:
-            conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in dashboard connections query: %s", exc)
-            return self._empty_dashboard_response()
-
-        try:
-            alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
-        except OpenSearchException as exc:
-            logger.warning("OpenSearch error in dashboard alert query: %s", exc)
-            # Degrade gracefully — dashboard still works without alert flags
-            alert_result = {}
+        # OLD CODE START — #96: a failed connections query showed an all-zero dashboard, and a
+        # failed alert query showed every connection as alert-free
+        # try:
+        #     conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in dashboard connections query: %s", exc)
+        #     return self._empty_dashboard_response()
+        #
+        # try:
+        #     alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
+        # except OpenSearchException as exc:
+        #     logger.warning("OpenSearch error in dashboard alert query: %s", exc)
+        #     # Degrade gracefully — dashboard still works without alert flags
+        #     alert_result = {}
+        # OLD CODE END
+        conn_result = self._client.search(index=NETWORK_INDEX, body=conn_query)
+        alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
 
         # --- Post-processing ---
 
@@ -617,7 +641,9 @@ class LiveConnectionTracker:
         window_seconds = 300.0
 
         # Active devices
-        active_devices = aggs.get("active_devices", {}).get("value", 0) or 0
+        active_devices = (
+            aggs.get("active_devices", {}).get("n", {}).get("value", 0) or 0
+        )
 
         # Top country
         top_country_buckets = aggs.get("top_country", {}).get("buckets", [])
@@ -744,6 +770,7 @@ class LiveConnectionTracker:
             "count": len(connections),
             "stats": {
                 "connections_per_second": round(total_hits / window_seconds, 2),
+                "connections_in_window": total_hits,
                 "bandwidth_bytes_per_second": round(
                     (bytes_in + bytes_out) / window_seconds, 2
                 ),
@@ -869,6 +896,7 @@ class LiveConnectionTracker:
         if port_filter:
             history_filters.append(port_filter)
 
+        now = datetime.now(timezone.utc)  # the query's now-24h..now, as hourly slots
         history_query = {
             "size": 0,
             "track_total_hits": True,
@@ -883,15 +911,15 @@ class LiveConnectionTracker:
                     }
                 },
                 "over_time": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": "1h",
-                        "min_doc_count": 0,
-                        "extended_bounds": {
-                            "min": "now-24h",
-                            "max": "now",
-                        },
-                    },
+                    # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                    # "date_histogram": {
+                    #     "field": "@timestamp",
+                    #     "fixed_interval": "1h",
+                    #     "min_doc_count": 0,
+                    #     "extended_bounds": {"min": "now-24h", "max": "now"},
+                    # },
+                    # OLD CODE END
+                    **time_slots(now - timedelta(hours=24), now, "1h"),
                     "aggs": {
                         "bytes": {
                             "sum": {
@@ -906,28 +934,29 @@ class LiveConnectionTracker:
             },
         }
 
-        # Execute queries — each with independent error handling
-        session_result = {}
-        try:
-            session_result = self._client.search(
-                index=NETWORK_INDEX, body=session_query
-            )
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in detail session query: %s", exc)
-
-        alert_result = {}
-        try:
-            alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
-        except OpenSearchException as exc:
-            logger.warning("OpenSearch error in detail alert query: %s", exc)
-
-        history_result = {}
-        try:
-            history_result = self._client.search(
-                index=NETWORK_INDEX, body=history_query
-            )
-        except OpenSearchException as exc:
-            logger.warning("OpenSearch error in detail history query: %s", exc)
+        # OLD CODE START — #96: each failure blanked its part, so the drawer read 0 alerts,
+        # 0 connections or no location for a pair it never checked
+        # session_result = {}
+        # try:
+        #     session_result = self._client.search(index=NETWORK_INDEX, body=session_query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in detail session query: %s", exc)
+        #
+        # alert_result = {}
+        # try:
+        #     alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
+        # except OpenSearchException as exc:
+        #     logger.warning("OpenSearch error in detail alert query: %s", exc)
+        #
+        # history_result = {}
+        # try:
+        #     history_result = self._client.search(index=NETWORK_INDEX, body=history_query)
+        # except OpenSearchException as exc:
+        #     logger.warning("OpenSearch error in detail history query: %s", exc)
+        # OLD CODE END
+        session_result = self._client.search(index=NETWORK_INDEX, body=session_query)
+        alert_result = self._client.search(index=NETWORK_INDEX, body=alert_query)
+        history_result = self._client.search(index=NETWORK_INDEX, body=history_query)
 
         # --- Parse session geo/ASN ---
         geo_info = self._parse_session_geo(session_result, dst_ip)
@@ -951,7 +980,9 @@ class LiveConnectionTracker:
         )
         total_bytes = history_aggs.get("total_bytes", {}).get("value", 0) or 0
 
-        timeline_buckets = history_aggs.get("over_time", {}).get("buckets", [])
+        timeline_buckets = histogram_buckets(
+            history_aggs.get("over_time")
+        )  # date_histogram before #120
         timeline = [
             {
                 "timestamp": b.get("key_as_string", b.get("key")),
