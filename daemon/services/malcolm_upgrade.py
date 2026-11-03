@@ -270,7 +270,7 @@ class MalcolmUpgrade:
             step("Checking new records and PCAP arrive")
             await self._wait_arrivals(expected, since)
         except UpgradeError as exc:
-            note = await self._rollback(p, old, target, copied, step)
+            note = await self._rollback(p, old, target, copied, step, expected)
             return {**_result(False, old, old, f"{exc} {note}"), "rolled_back": True}
         step("Removing the backup copy")
         await self._remove_volume(p["backup_volume"])
@@ -643,7 +643,13 @@ class MalcolmUpgrade:
     # -- rollback and state --------------------------------------------------------
 
     async def _rollback(
-        self, p: dict, old: str, target: str, copied: bool, step: "_Steps"
+        self,
+        p: dict,
+        old: str,
+        target: str,
+        copied: bool,
+        step: "_Steps",
+        expected: set[str],
     ) -> str:
         names = [p["services"][s] for s in STOPPED_FOR_BACKUP if s in p["services"]]
         try:
@@ -657,7 +663,13 @@ class MalcolmUpgrade:
             await self._up(p, old, ["opensearch"])
             await self._wait_login(p)
             await self._up(p, old, [s for s in p["services"] if s != "opensearch"])
+            since = self._now()
             await self._wait_healthy(p, old)
+            # healthy containers aren't capture: Logstash took 4 minutes to start its pipelines on the G11
+            step(
+                f"Checking new records and PCAP arrive on Malcolm {old}", advance=False
+            )
+            await self._wait_arrivals(expected, since)
         except UpgradeError as exc:
             self._save_state(old, target, p, "rollback_failed", str(exc))
             kept = (

@@ -104,12 +104,15 @@ class FakeDocker:
 
 
 class FakeOpenSearch:
-    def __init__(self, before: int = 50, after: int = 50) -> None:
+    """after: the count once the update starts, or a function of nothing (e.g. of the running tag)."""
+
+    def __init__(self, before: int = 50, after=50) -> None:
         self.before, self.after = before, after
 
     def count(self, index: str, body: dict) -> dict:
         since = body["query"]["bool"]["filter"][1]["range"]["@timestamp"]["gte"]
-        return {"count": self.before if since < NOW.isoformat() else self.after}
+        after = self.after() if callable(self.after) else self.after
+        return {"count": self.before if since < NOW.isoformat() else after}
 
 
 async def _no_sleep(_s: float) -> None:
@@ -288,16 +291,28 @@ class TestRollback:
 
     def test_capture_that_doesnt_resume_rolls_back(self, tmp_path):
         docker = FakeDocker()
-        result = _apply(
-            _upgrade(
-                docker, client=FakeOpenSearch(before=50, after=0), tmp_path=tmp_path
-            )
+        on_old = FakeOpenSearch(
+            before=50, after=lambda: 0 if docker.tags["logstash"] == "26.10.0" else 50
         )
+        result = _apply(_upgrade(docker, client=on_old, tmp_path=tmp_path))
         assert (
             result["rolled_back"] is True and "no new Zeek records" in result["error"]
         )
         assert set(docker.tags.values()) == {"26.02.0"}
         assert "rolled back to Malcolm 26.02.0" in result["error"]
+
+    def test_a_rollback_waits_for_records_to_arrive_again(self, tmp_path):
+        # healthy 26.02.0 containers with Logstash still starting aren't a working rollback
+        docker = FakeDocker()
+        up = _upgrade(
+            docker, client=FakeOpenSearch(before=50, after=0), tmp_path=tmp_path
+        )
+        result = _apply(up)
+        assert result["rolled_back"] is True and "failed too" in result["error"]
+        assert "no new Zeek records" in result["error"].split("failed too")[1]
+        assert "docker_opensearch-data-before-update" in result["error"]
+        assert not any("volume rm" in t for t in docker.text())  # the backup is kept
+        assert up.take_unfinished()["step"] == "rollback_failed"
 
     def test_pcap_that_stops_rolls_back(self, tmp_path):
         docker = FakeDocker()
