@@ -77,7 +77,7 @@ The installer:
 2. Installed Docker, bridge utilities, and Python dependencies
 3. Tuned kernel parameters for OpenSearch and high-throughput packet capture
 4. Created a transparent Layer 2 bridge (`br0`) between your WAN and LAN NICs
-5. Pulled and deployed 15+ containers (Zeek, Suricata, Arkime, OpenSearch, and more)
+5. Pulled and deployed 15+ containers (Zeek, Suricata, netsniff-ng, OpenSearch, and more)
 6. Registered `nettap.service` in systemd for automatic startup on boot
 7. Configured mDNS so you can reach the dashboard at `nettap.local`
 

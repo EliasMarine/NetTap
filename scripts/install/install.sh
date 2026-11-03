@@ -393,8 +393,12 @@ ExecStartPre=/bin/bash -c '${SCRIPT_DIR}/../bridge/setup-bridge.sh --validate-on
 # Start all containers
 ExecStart=/usr/bin/docker compose -f ${compose_file} up -d
 
-# Stop all containers gracefully
-ExecStop=/usr/bin/docker compose -f ${compose_file} down
+# Stop all containers gracefully, but keep them: a reboot must not recreate
+# OpenSearch and the capture containers (CR-025).
+# OLD CODE START — 'down' removed every container on each stop/reboot
+# ExecStop=/usr/bin/docker compose -f ${compose_file} down
+# OLD CODE END
+ExecStop=/usr/bin/docker compose -f ${compose_file} stop
 
 # Restart policy handled by Docker (restart: unless-stopped)
 TimeoutStartSec=600

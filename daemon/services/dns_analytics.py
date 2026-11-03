@@ -13,6 +13,8 @@ from collections import Counter
 from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
+from storage.all_buckets import all_buckets
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.dns_analytics")
 
@@ -22,6 +24,42 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 _ZEEK_DNS_FILTERS = [
     {"term": {"event.provider": "zeek"}},
     {"term": {"event.dataset": "dns"}},
+]
+
+# Malcolm's capture health check looks up "pcap-monitor" ~5,000 times a day; it is not user DNS
+DNS_NOISE_EXCLUSION = [
+    {"term": {"zeek.dns.query": "pcap-monitor"}},
+]
+
+# DNS analytics count lookups, not local discovery: mDNS (5353), LLMNR (5355) and
+# NetBIOS (137) were ~76% of dns.log on the G11 and pushed the average RTT to ~2 s.
+# Log search keeps showing them (it uses DNS_NOISE_EXCLUSION only).
+# Only local destinations are left out: those ports to an internet host stay counted,
+# so DNS tunneled over 5353 still reaches the tunneling detector.
+LOCAL_NAME_SERVICE_PORTS = [5353, 5355, 137]
+# Names that are long or queried constantly by design, so the long-name and beaconing
+# rules skip them: reverse lookups, and Plex's per-server <ip>.<hex id>.plex.direct names
+_BENIGN_DNS_SUFFIXES = (".in-addr.arpa", ".ip6.arpa", ".plex.direct")
+LOCAL_DESTINATIONS = [
+    "224.0.0.0/4",  # IPv4 multicast (mDNS 224.0.0.251, LLMNR 224.0.0.252)
+    "ff00::/8",  # IPv6 multicast (ff02::fb, ff02::1:3)
+    "255.255.255.255",  # NetBIOS broadcast
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "fe80::/10",
+]
+DNS_LOOKUP_EXCLUSION = [
+    *DNS_NOISE_EXCLUSION,
+    {
+        "bool": {
+            "filter": [
+                {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}},
+                {"terms": {"destination.ip": LOCAL_DESTINATIONS}},
+            ]
+        }
+    },
 ]
 
 
@@ -60,11 +98,18 @@ class DNSAnalytics:
         filters = _base_bool_filter(from_ts, to_ts)
         if extra_filters:
             filters = filters + extra_filters
-        clause: dict = {"filter": filters}
-        excluded = build_excluded_ips_filter(excluded_ips or [])
-        if excluded:
-            clause["must_not"] = excluded
-        return clause
+        # OLD CODE START — replaced 2026-11-01: pcap-monitor lookups were counted as about half of all DNS
+        # clause: dict = {"filter": filters}
+        # excluded = build_excluded_ips_filter(excluded_ips or [])
+        # if excluded:
+        #     clause["must_not"] = excluded
+        # return clause
+        # OLD CODE END
+        return {
+            "filter": filters,
+            "must_not": DNS_LOOKUP_EXCLUSION
+            + build_excluded_ips_filter(excluded_ips or []),
+        }
 
     def get_top_domains(
         self,
@@ -80,15 +125,11 @@ class DNSAnalytics:
             "aggs": {
                 "top_domains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": limit,
                         "order": {"_count": "desc"},
                     },
-                    "aggs": {
-                        "unique_clients": {
-                            "cardinality": {"field": "source.ip.keyword"}
-                        }
-                    },
+                    "aggs": {"unique_clients": {"cardinality": {"field": "source.ip"}}},
                 }
             },
         }
@@ -107,6 +148,37 @@ class DNSAnalytics:
             for b in buckets
         ]
 
+    def _all_domains(
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+        extra_filters: list[dict] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every queried name (get_top_domains' shape), most-queried first, paged to the end (#96)."""
+        buckets, complete = all_buckets(
+            self._client,
+            NETWORK_INDEX,
+            {"bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters)},
+            [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
+            aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
+        )
+        if not complete:
+            logger.warning(
+                "DNS: the name scan hit its bucket cap at %d names; later names were not checked",
+                len(buckets),
+            )
+        names = [
+            {
+                "domain": b["key"]["domain"],
+                "count": b["doc_count"],
+                "unique_clients": b.get("unique_clients", {}).get("value", 0),
+            }
+            for b in buckets
+        ]
+        # the order the top list gave (count, then name), so detections list the same way
+        return sorted(names, key=lambda n: -n["count"])
+
     def get_device_dns(
         self,
         device_ip: str,
@@ -123,21 +195,21 @@ class DNSAnalytics:
                     to_ts,
                     excluded_ips,
                     extra_filters=[
-                        {"term": {"source.ip.keyword": device_ip}},
+                        {"term": {"source.ip": device_ip}},
                     ],
                 )
             },
             "aggs": {
                 "domains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": 200,
                         "order": {"_count": "desc"},
                     },
                     "aggs": {
                         "query_types": {
                             "terms": {
-                                "field": "zeek.dns.qtype_name.keyword",
+                                "field": "zeek.dns.qtype_name",
                                 "size": 10,
                             }
                         }
@@ -176,21 +248,21 @@ class DNSAnalytics:
                     to_ts,
                     excluded_ips,
                     extra_filters=[
-                        {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}},
+                        {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}},
                     ],
                 )
             },
             "aggs": {
                 "nxdomains": {
                     "terms": {
-                        "field": "zeek.dns.query.keyword",
+                        "field": "zeek.dns.query",
                         "size": 100,
                         "order": {"_count": "desc"},
                     },
                     "aggs": {
                         "clients": {
                             "terms": {
-                                "field": "source.ip.keyword",
+                                "field": "source.ip",
                                 "size": 10,
                             }
                         }
@@ -224,7 +296,7 @@ class DNSAnalytics:
             "aggs": {
                 "query_types": {
                     "terms": {
-                        "field": "zeek.dns.qtype_name.keyword",
+                        "field": "zeek.dns.qtype_name",
                         "size": 20,
                     }
                 }
@@ -264,23 +336,24 @@ class DNSAnalytics:
         query = {
             "size": 0,
             "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
-            "aggs": {
-                "timeline": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": interval,
-                        "min_doc_count": 0,
-                        "extended_bounds": {
-                            "min": from_ts,
-                            "max": to_ts,
-                        },
-                    }
-                }
-            },
+            # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+            # "aggs": {
+            #     "timeline": {
+            #         "date_histogram": {
+            #             "field": "@timestamp",
+            #             "fixed_interval": interval,
+            #             "min_doc_count": 0,
+            #             "extended_bounds": {"min": from_ts, "max": to_ts},
+            #         }
+            #     }
+            # },
+            # OLD CODE END
+            "aggs": {"timeline": time_slots(from_ts, to_ts, interval)},
         }
 
         result = self._client.search(index=NETWORK_INDEX, body=query)
-        buckets = result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        # was result["aggregations"]["timeline"]["buckets"] (date_histogram)
+        buckets = histogram_buckets(result.get("aggregations", {}).get("timeline"))
 
         return [
             {
@@ -300,7 +373,20 @@ class DNSAnalytics:
         suspicious: list[dict[str, Any]] = []
 
         # 1. Long domain names (potential DGA/tunneling)
-        top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE START — #96: only the 200 most-queried names were checked; an exfiltration
+        # name is queried about once, and a beaconing name can rank below 200 on a busy network
+        # top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE END
+        top = self._all_domains(from_ts, to_ts, excluded_ips)
+        # OLD CODE START — every name was scored, so reverse lookups and Plex's per-server
+        # hostnames (long and hex by design) were flagged as exfiltration or beaconing (#35)
+        # (the loops below iterated `top`)
+        # OLD CODE END
+        top = [
+            e
+            for e in top
+            if not e["domain"].lower().rstrip(".").endswith(_BENIGN_DNS_SUFFIXES)
+        ]
         for entry in top:
             domain = entry["domain"]
             if len(domain) > 50:
@@ -330,43 +416,54 @@ class DNSAnalytics:
                 )
 
         # 3. TXT record abuse
-        txt_query = {
-            "size": 0,
-            "query": {
-                "bool": self._bool_clause(
-                    from_ts,
-                    to_ts,
-                    excluded_ips,
-                    extra_filters=[
-                        {"term": {"zeek.dns.qtype_name.keyword": "TXT"}},
-                    ],
-                )
-            },
-            "aggs": {
-                "txt_domains": {
-                    "terms": {
-                        "field": "zeek.dns.query.keyword",
-                        "size": 20,
-                        "order": {"_count": "desc"},
-                    }
-                }
-            },
-        }
-
-        result = self._client.search(index=NETWORK_INDEX, body=txt_query)
-        txt_buckets = (
-            result.get("aggregations", {}).get("txt_domains", {}).get("buckets", [])
+        # OLD CODE START — #96: the top 20 TXT names only, so a 21st name over 50 TXT queries
+        # was never flagged
+        # txt_query = {
+        #     "size": 0,
+        #     "query": {
+        #         "bool": self._bool_clause(
+        #             from_ts,
+        #             to_ts,
+        #             excluded_ips,
+        #             extra_filters=[
+        #                 {"term": {"zeek.dns.qtype_name": "TXT"}},
+        #             ],
+        #         )
+        #     },
+        #     "aggs": {
+        #         "txt_domains": {
+        #             "terms": {
+        #                 "field": "zeek.dns.query",
+        #                 "size": 20,
+        #                 "order": {"_count": "desc"},
+        #             }
+        #         }
+        #     },
+        # }
+        #
+        # result = self._client.search(index=NETWORK_INDEX, body=txt_query)
+        # txt_buckets = (
+        #     result.get("aggregations", {}).get("txt_domains", {}).get("buckets", [])
+        # )
+        #
+        # for b in txt_buckets:
+        #     if b["doc_count"] > 50:
+        # OLD CODE END
+        txt = self._all_domains(
+            from_ts,
+            to_ts,
+            excluded_ips,
+            extra_filters=[{"term": {"zeek.dns.qtype_name": "TXT"}}],
         )
-
-        for b in txt_buckets:
-            if b["doc_count"] > 50:
+        for entry in txt:
+            if entry["count"] > 50:
                 suspicious.append(
                     {
                         "type": "txt_abuse",
-                        "domain": b["key"],
-                        "count": b["doc_count"],
+                        "domain": entry["domain"],
+                        "count": entry["count"],
                         "severity": "low",
-                        "description": f"High TXT query volume ({b['doc_count']}) — TXT records can be used for data tunneling",
+                        "description": f"High TXT query volume ({entry['count']}) — TXT records can be used for data tunneling",
                     }
                 )
 
@@ -385,7 +482,11 @@ class DNSAnalytics:
         """
         detections: list[dict[str, Any]] = []
 
-        top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE START — #96: only the 200 most-queried names; tunnel names are each queried
+        # about once, the tail that list cut
+        # top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
+        # OLD CODE END
+        top = self._all_domains(from_ts, to_ts, excluded_ips)
 
         for entry in top:
             domain = entry["domain"]
@@ -427,13 +528,30 @@ class DNSAnalytics:
         """Return hero card stats: total queries, unique domains, NXDOMAIN count."""
         query = {
             "size": 0,
+            # hits.total stops at 10,000 unless OpenSearch is told to count exactly
+            "track_total_hits": True,
             "query": {"bool": self._bool_clause(from_ts, to_ts, excluded_ips)},
             "aggs": {
-                "unique_domains": {"cardinality": {"field": "zeek.dns.query.keyword"}},
+                "unique_domains": {"cardinality": {"field": "zeek.dns.query"}},
                 "nxdomain_count": {
-                    "filter": {"term": {"zeek.dns.rcode_name.keyword": "NXDOMAIN"}}
+                    "filter": {"term": {"zeek.dns.rcode_name": "NXDOMAIN"}}
                 },
-                "avg_rtt": {"avg": {"field": "zeek.dns.rtt", "missing": 0}},
+                # OLD CODE START — replaced 2026-11-01: missing=0 counted unanswered queries as 0 ms
+                # "avg_rtt": {"avg": {"field": "zeek.dns.rtt", "missing": 0}},
+                # OLD CODE END
+                "avg_rtt": {"avg": {"field": "zeek.dns.rtt"}},
+                "median_rtt": {
+                    # OLD CODE START — #93: t-digest, an estimate that changed with how the data
+                    # was split (6.13 ms vs 5.81 ms for the same day)
+                    # "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
+                    # OLD CODE END
+                    # HDR histograms merge exactly in any order; 3 digits = 0.1% resolution
+                    "percentiles": {
+                        "field": "zeek.dns.rtt",
+                        "percents": [50],
+                        "hdr": {"number_of_significant_value_digits": 3},
+                    }
+                },
             },
         }
 
@@ -450,6 +568,11 @@ class DNSAnalytics:
             "nxdomain_count": aggs.get("nxdomain_count", {}).get("doc_count", 0),
             "avg_resolution_ms": round(
                 (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
+            ),
+            # zeek.dns.rtt is in seconds; a few 20 s retries skew the average, so show the median too
+            "median_resolution_ms": round(
+                (aggs.get("median_rtt", {}).get("values", {}).get("50.0") or 0) * 1000,
+                2,
             ),
         }
 

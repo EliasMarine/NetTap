@@ -193,6 +193,20 @@ class TestGetHostnameForIP(unittest.TestCase):
         self.assertIsNone(result)
 
 
+def _conn_mac(source: dict) -> dict:
+    """The conn MAC lookup's reply: one source.mac bucket (the most common) with one hit."""
+    hit = {"_source": source}
+    return {
+        "aggregations": {
+            "mac": {
+                "buckets": [
+                    {"key": "x", "doc_count": 9, "hit": {"hits": {"hits": [hit]}}}
+                ]
+            }
+        }
+    }
+
+
 class TestGetMacForIP(unittest.TestCase):
     """Tests for get_mac_for_ip() DHCP/conn lookup."""
 
@@ -206,10 +220,10 @@ class TestGetMacForIP(unittest.TestCase):
         os.unlink(self._tmp_path)
 
     def test_mac_from_dhcp(self):
-        """Returns MAC from DHCP logs when available."""
+        """Returns MAC from DHCP logs, read from the nested _source."""
         mock_client = MagicMock()
         mock_client.search.return_value = {
-            "hits": {"hits": [{"_source": {"source.mac": "AA:BB:CC:DD:EE:FF"}}]}
+            "hits": {"hits": [{"_source": {"source": {"mac": "AA:BB:CC:DD:EE:FF"}}}]}
         }
 
         result = self.fp.get_mac_for_ip(
@@ -223,7 +237,7 @@ class TestGetMacForIP(unittest.TestCase):
         # First call (DHCP) returns empty, second call (conn) returns MAC
         mock_client.search.side_effect = [
             {"hits": {"hits": []}},
-            {"hits": {"hits": [{"_source": {"source.mac": "11:22:33:44:55:66"}}]}},
+            _conn_mac({"source": {"mac": "11:22:33:44:55:66"}}),
         ]
 
         result = self.fp.get_mac_for_ip(
@@ -231,6 +245,56 @@ class TestGetMacForIP(unittest.TestCase):
         )
         self.assertEqual(result, "11:22:33:44:55:66")
         self.assertEqual(mock_client.search.call_count, 2)
+
+    def test_mac_from_real_malcolm_conn_source(self):
+        """Reads the MAC from a real Zeek conn _source shape (nested, string)."""
+        mock_client = MagicMock()
+        real_source = {
+            "source": {"ip": "192.168.1.10", "mac": "fc:9d:05:98:2a:be"},
+            "event": {"provider": "zeek", "dataset": "conn"},
+        }
+        mock_client.search.side_effect = [
+            {"hits": {"hits": []}},
+            _conn_mac(real_source),
+        ]
+
+        result = self.fp.get_mac_for_ip(
+            mock_client, "192.168.1.10", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+        )
+        self.assertEqual(result, "fc:9d:05:98:2a:be")
+
+    def test_mac_from_list_takes_first_non_empty(self):
+        """Malcolm can store source.mac as a list; the first non-empty value wins."""
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "source": {"mac": ["", None, "fc:9d:05:98:2a:be", "x"]}
+                        }
+                    }
+                ]
+            }
+        }
+
+        result = self.fp.get_mac_for_ip(
+            mock_client, "192.168.1.10", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+        )
+        self.assertEqual(result, "fc:9d:05:98:2a:be")
+
+    def test_empty_mac_list_falls_back_to_conn(self):
+        """An all-empty MAC list in DHCP counts as no MAC, so conn is tried next."""
+        mock_client = MagicMock()
+        mock_client.search.side_effect = [
+            {"hits": {"hits": [{"_source": {"source": {"mac": ["", None]}}}]}},
+            _conn_mac({"source": {"mac": ["11:22:33:44:55:66"]}}),
+        ]
+
+        result = self.fp.get_mac_for_ip(
+            mock_client, "192.168.1.50", "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
+        )
+        self.assertEqual(result, "11:22:33:44:55:66")
 
     def test_mac_not_found(self):
         """Returns None when neither DHCP nor conn logs have a MAC."""
@@ -366,3 +430,213 @@ class TestGetOSHint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestManufacturerFromMalcolm(unittest.TestCase):
+    """#26: prefixes the bundled table lacks use Malcolm's IEEE vendor (source.oui)."""
+
+    def setUp(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("00:17:88\tPhilips Lighting (Hue)\n")
+            self._tmp_path = f.name
+        self.fp = DeviceFingerprint(oui_path=self._tmp_path)
+
+    def tearDown(self):
+        os.unlink(self._tmp_path)
+
+    def _mac(self, source: dict) -> str | None:
+        client = MagicMock()
+        client.search.return_value = {
+            "hits": {"hits": [{"_source": {"source": source}}]}
+        }
+        mac = self.fp.get_mac_for_ip(
+            client, "192.168.1.44", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
+        self.assertIn("source.oui", client.search.call_args.kwargs["body"]["_source"])
+        return mac
+
+    def test_unknown_prefix_uses_malcolm_vendor(self):
+        mac = self._mac(
+            {"mac": "bc:24:11:e9:4e:56", "oui": "Proxmox Server Solutions GmbH"}
+        )
+        self.assertEqual(self.fp.get_manufacturer(mac), "Proxmox Server Solutions GmbH")
+        # any other device with the same prefix gets it too
+        self.assertEqual(
+            self.fp.get_manufacturer("BC-24-11-00-00-01"),
+            "Proxmox Server Solutions GmbH",
+        )
+
+    def test_list_valued_oui(self):
+        mac = self._mac({"mac": ["d0:21:f9:5e:35:32"], "oui": ["Ubiquiti Inc"]})
+        self.assertEqual(self.fp.get_manufacturer(mac), "Ubiquiti Inc")
+
+    def test_bundled_name_wins_and_no_oui_stays_unknown(self):
+        mac = self._mac({"mac": "00:17:88:48:3c:07", "oui": "Philips Lighting BV"})
+        self.assertEqual(self.fp.get_manufacturer(mac), "Philips Lighting (Hue)")
+        mac = self._mac(
+            {"mac": "0e:cc:55:a1:28:66"}
+        )  # randomized MAC: Malcolm has no vendor
+        self.assertEqual(self.fp.get_manufacturer(mac), "Unknown")
+
+    def test_conn_takes_the_most_common_mac(self):
+        """Routed inter-VLAN legs carry the router's MAC; the IP's own MAC is the most common."""
+        client = MagicMock()
+        client.search.side_effect = [
+            {"hits": {"hits": []}},
+            _conn_mac({"source": {"mac": "cc:f4:11:b4:7f:68", "oui": "Google, Inc."}}),
+        ]
+        mac = self.fp.get_mac_for_ip(
+            client, "10.10.0.164", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
+        self.assertEqual(mac, "cc:f4:11:b4:7f:68")
+        body = client.search.call_args.kwargs["body"]
+        self.assertEqual(
+            body["aggs"]["mac"]["terms"], {"field": "source.mac", "size": 1}
+        )
+        self.assertNotIn("sort", body)  # not the newest record
+        self.assertEqual(self.fp.get_manufacturer(mac), "Google, Inc.")
+
+
+class TestLookupMany(unittest.TestCase):
+    """#21: the device list's per-device lookups go out in batched _msearch requests."""
+
+    def setUp(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("")
+            self._tmp_path = f.name
+        self.fp = DeviceFingerprint(oui_path=self._tmp_path)
+
+    def tearDown(self):
+        os.unlink(self._tmp_path)
+
+    def test_one_msearch_with_the_same_precedence(self):
+        dhcp = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "source": {"mac": "aa:bb:cc:00:00:01", "oui": "Vendor A"}
+                        }
+                    }
+                ]
+            }
+        }
+        conn = _conn_mac({"source": {"mac": "aa:bb:cc:00:00:02"}})
+        empty = {"hits": {"hits": []}}
+        dns = {"aggregations": {"top_hostname": {"buckets": [{"key": "nas.local"}]}}}
+        ua = {
+            "aggregations": {
+                "top_ua": {"buckets": [{"key": "Mozilla/5.0 (Windows NT 10.0; Win64)"}]}
+            }
+        }
+        client = MagicMock()
+        client.msearch.return_value = {
+            "responses": [
+                dhcp,
+                conn,
+                dns,
+                ua,
+                empty,
+                conn,
+                {"error": {"type": "x"}, "status": 400},
+                empty,
+            ]
+        }
+
+        found = self.fp.lookup_many(
+            client,
+            ["192.168.1.10", "192.168.1.11"],
+            "2026-11-01T00:00:00Z",
+            "2026-11-02T00:00:00Z",
+        )
+
+        self.assertEqual(
+            found["192.168.1.10"], ("aa:bb:cc:00:00:01", "nas.local", "Windows 10/11")
+        )  # DHCP wins
+        self.assertEqual(
+            found["192.168.1.11"], ("aa:bb:cc:00:00:02", None, None)
+        )  # conn fallback, failed sub-search
+        client.search.assert_not_called()
+        body = client.msearch.call_args.kwargs["body"]
+        self.assertEqual(len(body), 16)  # header + query, 4 lookups, 2 IPs
+        self.assertEqual(self.fp.get_manufacturer("AA:BB:CC:00:00:01"), "Vendor A")
+
+    def test_failed_msearch_falls_back_to_one_ip_at_a_time(self):
+        client = MagicMock()
+        client.msearch.side_effect = ConnectionError("down")
+        client.search.return_value = {
+            "hits": {"hits": [{"_source": {"source": {"mac": "aa:bb:cc:00:00:03"}}}]}
+        }
+
+        found = self.fp.lookup_many(
+            client, ["192.168.1.12"], "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
+
+        self.assertEqual(found["192.168.1.12"][0], "aa:bb:cc:00:00:03")
+        self.assertTrue(client.search.called)
+
+    def test_large_lists_are_chunked(self):
+        client = MagicMock()
+        client.msearch.side_effect = lambda body: {
+            "responses": [{"hits": {"hits": []}}] * (len(body) // 2)
+        }
+        ips = [f"10.0.{i // 250}.{i % 250}" for i in range(250)]
+
+        found = self.fp.lookup_many(
+            client, ips, "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
+
+        self.assertEqual(len(found), 250)
+        self.assertEqual(
+            client.msearch.call_count, 3
+        )  # 100 IPs (400 searches) per request
+
+
+class TestHostnamesAreTiedToTheirIP:
+    """#130: 192.168.1.188 (EliasMacStudio) read "sarabouzeid-fgwk3p497k.local" on Devices."""
+
+    def test_only_unicast_answers_or_mdns_the_device_sent_itself(self):
+        from services.device_fingerprint import _hostname_query
+
+        query = _hostname_query(
+            "192.168.1.188", "2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"
+        )
+        tied = query["query"]["bool"]["filter"][-1]["bool"]
+        assert tied["minimum_should_match"] == 1
+        sent_itself, unicast = tied["should"]
+        assert sent_itself == {"term": {"source.ip": "192.168.1.188"}}
+        assert unicast == {
+            "bool": {
+                "must_not": [
+                    {"term": {"destination.port": 5353}},
+                    {"term": {"source.port": 5353}},
+                ]
+            }
+        }
+
+    def test_service_names_are_not_hostnames(self):
+        from services.device_fingerprint import _hostname_from
+
+        reply = {
+            "aggregations": {
+                "top_hostname": {
+                    "buckets": [
+                        {"key": "elias mac studio m4 max._appsvcprepair._tcp.local"},
+                        {"key": "_adisk._tcp.local"},
+                        {"key": "188.1.168.192.in-addr.arpa"},
+                        {"key": "elias-mac-studio.local"},
+                    ]
+                }
+            }
+        }
+        assert _hostname_from(reply) == "elias-mac-studio.local"
+        assert (
+            _hostname_from(
+                {
+                    "aggregations": {
+                        "top_hostname": {"buckets": [{"key": "_hap._udp.local"}]}
+                    }
+                }
+            )
+            is None
+        )

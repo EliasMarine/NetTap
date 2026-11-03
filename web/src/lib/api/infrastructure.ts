@@ -60,28 +60,30 @@ export interface LogstashPipeline {
 // Defaults
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CLUSTER: OpenSearchCluster = {
-	status: 'red',
-	number_of_nodes: 0,
-	active_primary_shards: 0,
-	active_shards: 0,
-	unassigned_shards: 0,
-	relocating_shards: 0,
-	pending_tasks: 0,
-	total_docs: 0,
-	total_data_size_bytes: 0,
-};
-
-const DEFAULT_LOGSTASH_STATS: LogstashStats = {
-	events_in: 0,
-	events_out: 0,
-	events_filtered: 0,
-	events_duration_millis: 0,
-	heap_used_bytes: 0,
-	heap_max_bytes: 0,
-	heap_used_percent: 0,
-	cpu_percent: 0,
-};
+// OLD CODE START — #96: returned in place of a failed request; the getters now throw
+// const DEFAULT_CLUSTER: OpenSearchCluster = {
+// 	status: 'red',
+// 	number_of_nodes: 0,
+// 	active_primary_shards: 0,
+// 	active_shards: 0,
+// 	unassigned_shards: 0,
+// 	relocating_shards: 0,
+// 	pending_tasks: 0,
+// 	total_docs: 0,
+// 	total_data_size_bytes: 0,
+// };
+//
+// const DEFAULT_LOGSTASH_STATS: LogstashStats = {
+// 	events_in: 0,
+// 	events_out: 0,
+// 	events_filtered: 0,
+// 	events_duration_millis: 0,
+// 	heap_used_bytes: 0,
+// 	heap_max_bytes: 0,
+// 	heap_used_percent: 0,
+// 	cpu_percent: 0,
+// };
+// OLD CODE END
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,38 +150,52 @@ function normalisePipeline(raw: Record<string, unknown>): LogstashPipeline {
  * Get the OpenSearch cluster health summary.
  */
 export async function getOpenSearchCluster(): Promise<OpenSearchCluster> {
-	try {
-		const res = await fetch('/api/opensearch/cluster');
-		if (!res.ok) {
-			return { ...DEFAULT_CLUSTER };
-		}
-		// OLD CODE START — the daemon sends `total_size_bytes`, so the page's
-		// `total_data_size_bytes` was always undefined
-		// return res.json();
-		// OLD CODE END
-		const data = await res.json();
-		return {
-			...data,
-			total_data_size_bytes: typeof data.total_size_bytes === 'number' ? data.total_size_bytes : 0,
-		};
-	} catch {
-		return { ...DEFAULT_CLUSTER };
+	// OLD CODE START — #96: a failed request read as cluster status "Red" with 0 docs
+	// try {
+	// 	const res = await fetch('/api/opensearch/cluster');
+	// 	if (!res.ok) {
+	// 		return { ...DEFAULT_CLUSTER };
+	// 	}
+	// 	... (body below, unchanged)
+	// } catch {
+	// 	return { ...DEFAULT_CLUSTER };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/opensearch/cluster');
+	if (!res.ok) {
+		throw new Error(`OpenSearch cluster request failed: HTTP ${res.status}`);
 	}
+	// OLD CODE START — the daemon sends `total_size_bytes`, so the page's
+	// `total_data_size_bytes` was always undefined
+	// return res.json();
+	// OLD CODE END
+	const data = await res.json();
+	return {
+		...data,
+		total_data_size_bytes: typeof data.total_size_bytes === 'number' ? data.total_size_bytes : 0,
+	};
 }
 
 /**
  * Get the list of OpenSearch indices with doc counts and sizes.
  */
 export async function getOpenSearchIndices(): Promise<{ indices: OpenSearchIndex[]; count: number }> {
-	try {
-		const res = await fetch('/api/opensearch/indices');
-		if (!res.ok) {
-			return { indices: [], count: 0 };
-		}
-		return res.json();
-	} catch {
-		return { indices: [], count: 0 };
+	// OLD CODE START — #96: a failed request read as "0 active indices"
+	// try {
+	// 	const res = await fetch('/api/opensearch/indices');
+	// 	if (!res.ok) {
+	// 		return { indices: [], count: 0 };
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { indices: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/opensearch/indices');
+	if (!res.ok) {
+		throw new Error(`OpenSearch indices request failed: HTTP ${res.status}`);
 	}
+	return res.json();
 }
 
 /**
@@ -210,16 +226,24 @@ export async function getOpenSearchTemplates(): Promise<unknown[]> {
  * Handles both flat (`events_in`) and nested (`events.in`) response formats.
  */
 export async function getLogstashStats(): Promise<LogstashStats> {
-	try {
-		const res = await fetch('/api/logstash/stats');
-		if (!res.ok) {
-			return { ...DEFAULT_LOGSTASH_STATS };
-		}
-		const raw = await res.json();
-		return normaliseLogstashStats(raw);
-	} catch {
-		return { ...DEFAULT_LOGSTASH_STATS };
+	// OLD CODE START — #96: a failed request read as 0 events, "Idle"
+	// try {
+	// 	const res = await fetch('/api/logstash/stats');
+	// 	if (!res.ok) {
+	// 		return { ...DEFAULT_LOGSTASH_STATS };
+	// 	}
+	// 	const raw = await res.json();
+	// 	return normaliseLogstashStats(raw);
+	// } catch {
+	// 	return { ...DEFAULT_LOGSTASH_STATS };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/logstash/stats');
+	if (!res.ok) {
+		throw new Error(`Logstash stats request failed: HTTP ${res.status}`);
 	}
+	const raw = await res.json();
+	return normaliseLogstashStats(raw);
 }
 
 /**

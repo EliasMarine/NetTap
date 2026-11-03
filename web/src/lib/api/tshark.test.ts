@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	analyzePcap,
 	getTSharkStatus,
+	getPcapFiles,
 	getProtocols,
 	getFields,
 	type TSharkAnalyzeRequest,
@@ -131,15 +132,16 @@ describe('tshark API client', () => {
 			expect(result).toEqual(expected);
 		});
 
-		it('returns offline defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting TShark unavailable', async () => {
 			mockFetchFailure(503);
 
-			const result = await getTSharkStatus();
+			await expect(getTSharkStatus()).rejects.toThrow('HTTP 503');
+		});
 
-			expect(result.available).toBe(false);
-			expect(result.version).toBe('');
-			expect(result.container_running).toBe(false);
-			expect(result.container_name).toBe('');
+		it('getPcapFiles throws on HTTP error instead of listing no files', async () => {
+			mockFetchFailure(500);
+
+			await expect(getPcapFiles()).rejects.toThrow('HTTP 500');
 		});
 
 		it('handles network failure gracefully', async () => {

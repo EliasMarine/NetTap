@@ -37,7 +37,7 @@ Generate cryptographically random passwords for all services:
 sudo scripts/generate-secrets.sh
 ```
 
-This writes secrets to your `.env` file for OpenSearch, Redis, Arkime, and Grafana. You can preview what would be generated without writing:
+This writes `OPENSEARCH_ADMIN_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`, `JWT_SECRET` and `API_KEY_SALT` to your `.env` file (`ARKIME_SECRET` comes from `scripts/install/malcolm-config.sh`). You can preview what would be generated without writing:
 
 ```bash
 scripts/generate-secrets.sh --stdout

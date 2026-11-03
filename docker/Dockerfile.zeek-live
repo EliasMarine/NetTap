@@ -1,0 +1,46 @@
+# Zeek for live capture: Malcolm's Zeek image plus one small library that
+# makes std::random_device read /dev/urandom instead of the CPU's RDRAND/RDSEED.
+#
+# Why: some AMD CPUs return the same RDRAND value every time (seen on the
+# GMKtec G11, Ryzen Embedded R2514). Broker then gives every Zeek process the
+# same endpoint ID, the zeekctl cluster never connects, and Zeek writes no
+# logs. /dev/urandom is just as good on every other CPU, so this applies to
+# all boxes. See Debugging/DEPLOYMENT-ISSUES.md Chain 23.
+ARG MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
+ARG MALCOLM_IMAGE_TAG=26.10.0
+
+# Same Debian release as the Malcolm Zeek image, so the libstdc++ ABI matches
+FROM debian:trixie-slim AS build
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY docker/zeek-live/ ./
+RUN g++ -std=c++17 -O2 -Wall -Wextra -Werror -shared -fPIC \
+        -o libnettap_urandom.so random_device_urandom.cpp \
+    && g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+        -o random_device_urandom_test random_device_urandom_test.cpp \
+    && LD_PRELOAD=/src/libnettap_urandom.so ./random_device_urandom_test
+
+FROM ${MALCOLM_IMAGE_REGISTRY}/zeek:${MALCOLM_IMAGE_TAG}
+COPY --from=build /src/libnettap_urandom.so /usr/local/lib/nettap/libnettap_urandom.so
+# /etc/ld.so.preload, not LD_PRELOAD: zeek has file capabilities, so the
+# loader runs in secure mode and ignores LD_PRELOAD paths
+RUN echo /usr/local/lib/nettap/libnettap_urandom.so >> /etc/ld.so.preload
+# Prove it inside this image: the preload file is honoured, and Zeek and
+# Broker still import the libstdc++ function the library replaces. If a new
+# Malcolm image stops importing it, the build fails here instead of Zeek
+# going silent on affected CPUs.
+COPY --from=build /src/random_device_urandom_test /tmp/random_device_urandom_test
+RUN /tmp/random_device_urandom_test \
+    && rm /tmp/random_device_urandom_test \
+    && for f in /usr/local/zeek/bin/zeek /usr/local/zeek/lib/libbroker.so; do \
+         grep -q _ZNSt13random_device7_M_initERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE "$f" \
+           || { echo "$f no longer imports random_device::_M_init; update docker/zeek-live/" >&2; exit 1; }; \
+       done
+
+# No hourly conn-summary report: zeekctl writes it into the logger spool, and
+# Filebeat ships every *.log there, so it arrived as a junk record dated 1970
+# (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #11). zeekdeploy.sh only
+# edits other keys in place, so this line survives startup.
+RUN printf '\nTraceSummary =\n' >> /usr/local/zeek/etc/zeekctl.cfg

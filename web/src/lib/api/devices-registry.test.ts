@@ -81,22 +81,15 @@ describe('devices-registry API client', () => {
 			expect(result.total).toBe(1);
 		});
 
-		it('returns empty array on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getRegistryDevices();
-
-			expect(result.devices).toEqual([]);
-			expect(result.total).toBe(0);
+			await expect(getRegistryDevices()).rejects.toThrow('HTTP 502');
 		});
 
-		it('returns empty array on network error', async () => {
+		it('rejects on network error', async () => {
 			mockFetchReject();
-
-			const result = await getRegistryDevices();
-
-			expect(result.devices).toEqual([]);
-			expect(result.total).toBe(0);
+			await expect(getRegistryDevices()).rejects.toThrow();
 		});
 
 		it('passes limit and offset parameters', async () => {
@@ -126,15 +119,17 @@ describe('devices-registry API client', () => {
 				last_seen: '2026-03-08T12:00:00Z',
 				is_new: false,
 			};
-			mockFetchSuccess(expected);
+			// #89: the daemon wraps the device; the client returned the wrapper and the page crashed
+			mockFetchSuccess({ device: expected });
 
 			const result = await getRegistryDevice('AA:BB:CC:DD:EE:FF');
 
 			expect(result).not.toBeNull();
 			expect(result!.mac).toBe('AA:BB:CC:DD:EE:FF');
+			expect(result!.ips).toEqual(['192.168.1.100']);
 		});
 
-		it('returns null on HTTP error', async () => {
+		it('returns null when the registry has no such device (404)', async () => {
 			mockFetchFailure(404);
 
 			const result = await getRegistryDevice('AA:BB:CC:DD:EE:FF');
@@ -142,26 +137,31 @@ describe('devices-registry API client', () => {
 			expect(result).toBeNull();
 		});
 
-		it('returns null on network error', async () => {
+		// #96: every failure read as "Device not found"
+		it('throws on any other HTTP error', async () => {
+			mockFetchFailure(500);
+			await expect(getRegistryDevice('AA:BB:CC:DD:EE:FF')).rejects.toThrow('HTTP 500');
+		});
+
+		it('rejects on network error', async () => {
 			mockFetchReject();
-
-			const result = await getRegistryDevice('AA:BB:CC:DD:EE:FF');
-
-			expect(result).toBeNull();
+			await expect(getRegistryDevice('AA:BB:CC:DD:EE:FF')).rejects.toThrow();
 		});
 
 		it('encodes MAC address in URL', async () => {
 			mockFetchSuccess({
-				mac: 'AA:BB:CC:DD:EE:FF',
-				ips: [],
-				hostnames: [],
-				manufacturer: null,
-				friendly_name: null,
-				display_name: '',
-				category: 'unknown',
-				first_seen: '',
-				last_seen: '',
-				is_new: false,
+				device: {
+					mac: 'AA:BB:CC:DD:EE:FF',
+					ips: [],
+					hostnames: [],
+					manufacturer: null,
+					friendly_name: null,
+					display_name: '',
+					category: 'unknown',
+					first_seen: '',
+					last_seen: '',
+					is_new: false,
+				},
 			});
 
 			await getRegistryDevice('AA:BB:CC:DD:EE:FF');
@@ -175,29 +175,28 @@ describe('devices-registry API client', () => {
 
 	describe('getDeviceTraffic', () => {
 		it('returns parsed traffic on success', async () => {
-			const expected = {
+			// #89: the daemon's real reply: {from, to, traffic: {...}}, no DNS/alerts/series
+			const traffic = {
 				mac: 'AA:BB:CC:DD:EE:FF',
 				total_bytes: 5000000,
 				inbound_bytes: 3000000,
 				outbound_bytes: 2000000,
 				connection_count: 1000,
+				protocols: ['tcp'],
 				top_destinations: [{ ip: '8.8.8.8', bytes: 50000, connections: 30 }],
 				top_protocols: [{ name: 'tcp', count: 800 }],
-				dns_queries: [{ domain: 'google.com', count: 100 }],
-				alerts: [],
-				bandwidth_series: [{ timestamp: '2026-03-08T00:00:00Z', bytes: 10000 }],
 			};
-			mockFetchSuccess(expected);
+			mockFetchSuccess({ from: '', to: '', traffic });
 
 			const result = await getDeviceTraffic('AA:BB:CC:DD:EE:FF');
 
 			expect(result).not.toBeNull();
 			expect(result!.total_bytes).toBe(5000000);
+			expect(result!.inbound_bytes).toBe(3000000);
 			expect(result!.top_destinations).toHaveLength(1);
-			expect(result!.dns_queries).toHaveLength(1);
 		});
 
-		it('returns null on HTTP error', async () => {
+		it('returns null when the registry has no such device (404)', async () => {
 			mockFetchFailure(404);
 
 			const result = await getDeviceTraffic('AA:BB:CC:DD:EE:FF');
@@ -205,12 +204,15 @@ describe('devices-registry API client', () => {
 			expect(result).toBeNull();
 		});
 
-		it('returns null on network error', async () => {
+		// #96: every failure read as "Device not found"
+		it('throws on any other HTTP error', async () => {
+			mockFetchFailure(500);
+			await expect(getDeviceTraffic('AA:BB:CC:DD:EE:FF')).rejects.toThrow('HTTP 500');
+		});
+
+		it('rejects on network error', async () => {
 			mockFetchReject();
-
-			const result = await getDeviceTraffic('AA:BB:CC:DD:EE:FF');
-
-			expect(result).toBeNull();
+			await expect(getDeviceTraffic('AA:BB:CC:DD:EE:FF')).rejects.toThrow();
 		});
 	});
 

@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getUnifiStatus, getUnifiDnsPolicies, getUnifiVpn } from './unifi';
+import {
+	getUnifiStatus,
+	getUnifiDevices,
+	getUnifiClients,
+	getUnifiNetworks,
+	getUnifiWifi,
+	getUnifiFirewall,
+	getUnifiDnsPolicies,
+	getUnifiWans,
+	getUnifiVpn,
+} from './unifi';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -76,16 +86,15 @@ describe('unifi API client', () => {
 			expect((await getUnifiStatus()).site_id).toBeNull();
 		});
 
-		it('returns a disconnected default on HTTP error', async () => {
+		// #96: a failed status read came back as "not configured" and the page said "Connect your UniFi controller"
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchSuccess({ error: 'boom' }, 500);
-			const status = await getUnifiStatus();
-			expect(status).toMatchObject({ configured: false, connected: false, last_poll_time: 0 });
+			await expect(getUnifiStatus()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns a disconnected default on network error', async () => {
+		it('rejects on network error', async () => {
 			mockFetchReject();
-			const status = await getUnifiStatus();
-			expect(status).toMatchObject({ configured: false, connected: false, site_id: null });
+			await expect(getUnifiStatus()).rejects.toThrow('network error');
 		});
 	});
 
@@ -100,9 +109,10 @@ describe('unifi API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/integrations/unifi/dns-policies');
 		});
 
-		it('returns [] on HTTP error', async () => {
-			mockFetchSuccess({ error: 'UniFi not configured' }, 400);
-			expect(await getUnifiDnsPolicies()).toEqual([]);
+		// #96: a failed read came back as [] and showed "0 DNS policies"
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchSuccess({ error: 'site not selected' }, 400);
+			await expect(getUnifiDnsPolicies()).rejects.toThrow('HTTP 400');
 		});
 	});
 
@@ -117,9 +127,25 @@ describe('unifi API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/integrations/unifi/vpn');
 		});
 
-		it('returns [] on network error', async () => {
+		it('rejects on network error', async () => {
 			mockFetchReject();
-			expect(await getUnifiVpn()).toEqual([]);
+			await expect(getUnifiVpn()).rejects.toThrow('network error');
+		});
+	});
+
+	// #96: every list read came back as [] on failure, so cards said "No ... found" / 0
+	describe.each([
+		['getUnifiDevices', getUnifiDevices],
+		['getUnifiClients', getUnifiClients],
+		['getUnifiNetworks', getUnifiNetworks],
+		['getUnifiWifi', getUnifiWifi],
+		['getUnifiFirewall', getUnifiFirewall],
+		['getUnifiWans', getUnifiWans],
+		['getUnifiVpn', getUnifiVpn],
+	] as const)('%s', (_name, getter) => {
+		it('throws on HTTP error so the page can say it failed', async () => {
+			mockFetchSuccess({ error: 'boom' }, 503);
+			await expect(getter()).rejects.toThrow('HTTP 503');
 		});
 	});
 });

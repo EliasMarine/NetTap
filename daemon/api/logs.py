@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
@@ -18,7 +18,10 @@ from opensearchpy import OpenSearchException
 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
+from api.time_range import parse_time_range
+from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.logs")
 
@@ -508,30 +511,37 @@ _LOG_TYPE_LABELS = {
 # Exclude Suricata alerts from log explorer aggregations (they have their own page)
 _EXCLUDE_ALERTS_FILTER = {"must_not": [{"term": {"event.dataset": "alert"}}]}
 
-# Exclude Zeek internal noise from DNS aggregations
-_EXCLUDE_DNS_NOISE = [
-    {"term": {"zeek.dns.query.keyword": "pcap-monitor"}},
-]
+# OLD CODE START — replaced 2026-11-01: one shared constant so log search and DNS analytics agree
+# # Exclude Zeek internal noise from DNS aggregations
+# _EXCLUDE_DNS_NOISE = [
+#     {"term": {"zeek.dns.query": "pcap-monitor"}},
+# ]
+# OLD CODE END
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Parse and validate from/to time range from query params."""
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-    return (raw_from or default_from, raw_to or default_to)
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Parse and validate from/to time range from query params."""
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
 async def handle_log_search(request: web.Request) -> web.Response:
@@ -568,30 +578,45 @@ async def handle_log_search(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": _EXCLUDE_DNS_NOISE + excluded,
                 # OLD CODE END
-                "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE START — 2026-11-01: unfiltered search included Suricata alerts while
+                # the stat cards left them out, so "Total Events" never matched the results
+                # "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE END
+                # Alerts have their own page; they show here only when "suricata" is chosen
+                "must_not": _EXCLUDE_DNS_NOISE
+                + (
+                    [] if log_type == "suricata" else _EXCLUDE_ALERTS_FILTER["must_not"]
+                ),
             }
         },
         "size": size,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "sort": [],
     }
 
-    # Sort — auto-add .keyword suffix for text fields that need it.
-    # Fields like @timestamp, _id, and numeric fields don't need it.
-    _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
+    # OLD CODE START — replaced 2026-11-01: the .keyword sub-fields only existed
+    # because malcolm_template never applied (its index pattern was a placeholder),
+    # so indices were dynamically mapped. With Malcolm's real mapping these fields
+    # are keyword/ip/long and have no .keyword sub-field, so sorting on one is an
+    # error (Chain 24).
+    # _NO_KEYWORD_PREFIXES = ("@", "_", "event.", "client.", "server.", "network.")
+    # ...
+    #     if (
+    #         not field.startswith(_NO_KEYWORD_PREFIXES)
+    #         and not field.endswith(".keyword")
+    #         and "." in field
+    #         and field not in ("source.port", "destination.port")
+    #     ):
+    #         field = f"{field}.keyword"
+    # OLD CODE END
     for part in sort_param.split(","):
         if ":" in part:
             field, order = part.split(":", 1)
         else:
             field, order = part, "desc"
-        # Add .keyword for text fields (zeek.*, suricata.*, source.*, destination.*)
-        # unless they already have .keyword or are known non-text fields
-        if (
-            not field.startswith(_NO_KEYWORD_PREFIXES)
-            and not field.endswith(".keyword")
-            and "." in field
-            and field not in ("source.port", "destination.port")
-        ):
-            field = f"{field}.keyword"
+        # Old clients may still send the .keyword names
+        field = field.removesuffix(".keyword")
         body["sort"].append({field: {"order": order}})
     # Always add _id tiebreaker for cursor pagination
     if not any("_id" in s for s in body["sort"]):
@@ -677,12 +702,13 @@ async def handle_log_stats(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "unique_sources": {"cardinality": {"field": "source.ip.keyword"}},
-            "protocol_count": {"cardinality": {"field": "event.dataset.keyword"}},
+            "unique_sources": {"cardinality": {"field": "source.ip"}},
+            "protocol_count": {"cardinality": {"field": "event.dataset"}},
             "src_bytes": {"sum": {"field": "source.bytes"}},
             "dst_bytes": {"sum": {"field": "destination.bytes"}},
         },
@@ -736,23 +762,36 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
-        "aggs": {
-            "timeline": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                },
-                "aggs": {
-                    "by_type": {
-                        "terms": {"field": "event.dataset.keyword", "size": 20}
-                    },
-                },
-            }
-        },
+        # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram put up to ~970 records
+        # an hour in the wrong slot on the G11
+        # "aggs": {
+        #     "timeline": {
+        #         "date_histogram": {"field": "@timestamp", "fixed_interval": interval},
+        #         "aggs": {"by_type": {"terms": {"field": "event.dataset", "size": 20}}},
+        #     }
+        # },
+        # OLD CODE END
     }
+    try:
+        body["aggs"] = {
+            "timeline": time_slots(
+                from_ts,
+                to_ts,
+                interval,
+                aggs={"by_type": {"terms": {"field": "event.dataset", "size": 20}}},
+            )
+        }
+    except ValueError:
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     try:
         loop = asyncio.get_running_loop()
@@ -760,9 +799,12 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
             None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
-        raw_buckets = (
-            result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
-        )
+        # OLD CODE START — #120: date_histogram buckets (see above)
+        # raw_buckets = (
+        #     result.get("aggregations", {}).get("timeline", {}).get("buckets", [])
+        # )
+        # OLD CODE END
+        raw_buckets = histogram_buckets(result.get("aggregations", {}).get("timeline"))
         buckets = []
         for b in raw_buckets:
             entry: dict = {
@@ -809,11 +851,12 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "top_sources": {"terms": {"field": "source.ip.keyword", "size": limit}},
+            "top_sources": {"terms": {"field": "source.ip", "size": limit}},
         },
     }
 
@@ -857,11 +900,12 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "protocols": {"terms": {"field": "event.dataset.keyword", "size": 20}},
+            "protocols": {"terms": {"field": "event.dataset", "size": 20}},
         },
     }
 
@@ -914,13 +958,12 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": [{"term": {"event.dataset": "alert"}}] + excluded,
                 # OLD CODE END
-                "must_not": [{"term": {"event.dataset": "alert"}}],
+                # pcap-monitor too, so the stat cards match the search results
+                "must_not": [{"term": {"event.dataset": "alert"}}, *_EXCLUDE_DNS_NOISE],
             }
         },
         "aggs": {
-            "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": limit}
-            },
+            "top_destinations": {"terms": {"field": "destination.ip", "size": limit}},
         },
     }
 
@@ -978,9 +1021,7 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
             }
         },
         "aggs": {
-            "top_queries": {
-                "terms": {"field": "zeek.dns.query.keyword", "size": limit}
-            },
+            "top_queries": {"terms": {"field": "zeek.dns.query", "size": limit}},
         },
     }
 

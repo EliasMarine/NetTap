@@ -17,6 +17,7 @@
 - [Phase 4: Dashboard Polish](#phase-4-dashboard-polish)
 - [Phase 5: Community Release](#phase-5-community-release)
 - [Phase 4C: Network Resilience & Software Update System](#phase-4c-network-resilience--software-update-system)
+- [Phase 4D: DHCP Gateway Capture Mode](#phase-4d-dhcp-gateway-capture-mode)
 - [v2.0 Roadmap: Nice-to-Have Features](#v20-roadmap-nice-to-have-features)
 - [Risk Matrix](#risk-matrix)
 - [Total Effort Summary](#total-effort-summary)
@@ -951,6 +952,28 @@ Self-service update mechanism with full visibility into running software version
 | 4C.13 | Auto-update scheduler (optional) | S | [x] Done | Settings toggle: auto-update Suricata rules (daily), auto-update GeoIP (weekly), auto-update containers (manual only by default). Config stored in `/opt/nettap/.env`. UI in system settings page |
 | 4C.14 | Release notes integration | S | [x] Done | Fetch and display GitHub release notes / changelogs for each component. "What's New" panel on dashboard after updates. Dismiss-able per-user |
 | 4C.15 | Update system tests | M | [x] Done | `daemon/tests/test_version_manager.py` (15+ tests), `daemon/tests/test_update_checker.py` (15+ tests), `daemon/tests/test_update_executor.py` (20+ tests), web component tests (10+ tests) |
+
+---
+
+## Phase 4D: DHCP Gateway Capture Mode
+
+**Timeline:** 2026-10-30
+**Status:** Code complete on `phase-4/dhcp-gateway-mode`; not yet verified on hardware
+**Design:** `docs/plans/2026-10-30-dhcp-gateway-mode-design.md`
+
+An inline bridge between the modem and the router only sees the router's public IP, so it can't tell devices apart. In DHCP gateway mode, NetTap hands out addresses on its own subnet and becomes every device's gateway, so it sees each device before NAT. The only router change is turning its DHCP off.
+
+| # | Task | Size | Status | Description |
+|---|------|------|--------|-------------|
+| 4D.1 | Design doc | S | [x] Done (91635f8) | One-armed gateway, own subnet + NAT, safety rules, recovery |
+| 4D.2 | DHCP gateway daemon services | L | [x] Done | `daemon/services/dhcp_probe.py`, `dhcp_gateway*.py`: dnsmasq, iptables, netplan static address, boot persistence, 30 s reconcile |
+| 4D.3 | Capture-mode plumbing (CR-007) | M | [x] Done | `/etc/nettap/capture.env` + `config/capture/nettap-capture-env.sh`; capture containers restart only when it changes |
+| 4D.4 | API + setup wiring | M | [x] Done | `/api/capture/dhcp/{preflight,enable,disable,status}`; `dhcp_gateway` in `/api/setup/configure`; 409 guards |
+| 4D.5 | Onboarding wizard + Go Live | L | [x] Done | DHCP and Mirror primary, bridge under Advanced; `DhcpGatewayStep`, `DhcpGoLive` with lease table |
+| 4D.6 | Tests | M | [x] Done | pytest 2315, vitest 1942, svelte-check 0 errors, loader bats 10/10 |
+| 4D.7 | Device deploy script | S | [x] Done | `scripts/remote/deploy-dhcp-gateway-mode.sh` (never switches the network to DHCP mode) |
+| 4D.8 | Hardware verification | M | [ ] Todo | Run on the N100: real dnsmasq, iptables against the host Docker, netplan merge, latency under load |
+| 4D.9 | Switch capture mode after first run | M | [ ] Todo | Today the mode is chosen in the wizard only |
 
 ---
 

@@ -12,15 +12,46 @@
 	let sidebarCollapsed = $state(false);
 	let mobileOpen = $state(false);
 	let captureMode = $state<CaptureMode | null>(null);
+	let modeFailed = $state(false); // #96: say "Mode unknown" rather than guess Bridge
+
+	// Top-bar badge per capture mode; anything unknown shows as Bridge (the old default)
+	const MODE_BADGES: Record<string, { label: string; cls: string }> = {
+		mirror: { label: 'Mirror', cls: 'mode-mirror' },
+		dhcp_gateway: { label: 'DHCP Gateway', cls: 'mode-dhcp' },
+	};
+	const BRIDGE_BADGE = { label: 'Bridge', cls: 'mode-bridge' };
+	let modeBadge = $derived(captureMode ? (MODE_BADGES[captureMode.mode] ?? BRIDGE_BADGE) : null);
 
 	$effect(() => {
 		getCaptureMode().then((mode) => {
 			captureMode = mode;
 		}).catch(() => {
-			// Silently fail — badge just won't show
+			modeFailed = true;
 		});
 		// Also populate the global store for drawer components
 		initCaptureMode();
+	});
+
+	// Top-bar status: Online only while the daemon actually answers its liveness check
+	const DAEMON_CHECK_MS = 30_000;
+	const DAEMON_STATUS_TEXT = { checking: 'Checking…', online: 'Online', offline: "Can't reach NetTap" };
+	let daemonStatus = $state<keyof typeof DAEMON_STATUS_TEXT>('checking');
+
+	async function checkDaemon() {
+		try {
+			const res = await fetch('/api/system/ping');
+			// a lapsed session redirects to the login page, which is not the daemon answering
+			const body = res.ok ? await res.json() : null;
+			daemonStatus = body?.status === 'ok' ? 'online' : 'offline';
+		} catch {
+			daemonStatus = 'offline';
+		}
+	}
+
+	$effect(() => {
+		checkDaemon();
+		const timer = setInterval(checkDaemon, DAEMON_CHECK_MS);
+		return () => clearInterval(timer);
 	});
 
 	const navItems = [
@@ -178,15 +209,35 @@
 				<h1 class="topbar-title">{getPageTitle($page.url.pathname)}</h1>
 
 				<div class="topbar-right">
+					<!-- OLD CODE START — two-way badge showed dhcp_gateway as Bridge (2026-10-30)
 					{#if captureMode}
 						<span class="mode-badge {captureMode.mode === 'mirror' ? 'mode-mirror' : 'mode-bridge'}" title="Capture mode: {captureMode.mode}">
 							{captureMode.mode === 'mirror' ? 'Mirror' : 'Bridge'}
 						</span>
 					{/if}
+					OLD CODE END -->
+					{#if captureMode && modeBadge}
+						<span class="mode-badge {modeBadge.cls}" title="Capture mode: {captureMode.mode}">
+							{modeBadge.label}
+						</span>
+					{:else if modeFailed}
+						<span class="mode-badge mode-unknown" title="Capture mode: couldn't be read">Mode unknown</span>
+					{/if}
 
+					<!-- OLD CODE START — always said Online, even with the daemon down
 					<div class="status-indicator">
 						<span class="health-dot green"></span>
 						<span class="status-text">Online</span>
+					</div>
+					OLD CODE END -->
+					<div class="status-indicator" title="Whether the NetTap service answers">
+						<span
+							class="health-dot"
+							class:green={daemonStatus === 'online'}
+							class:red={daemonStatus === 'offline'}
+							class:checking={daemonStatus === 'checking'}
+						></span>
+						<span class="status-text" class:offline={daemonStatus === 'offline'}>{DAEMON_STATUS_TEXT[daemonStatus]}</span>
 					</div>
 
 					<NotificationBell />
@@ -382,6 +433,14 @@
 		font-weight: 500;
 	}
 
+	.status-text.offline {
+		color: var(--red);
+	}
+
+	.health-dot.checking {
+		background: var(--text-dim);
+	}
+
 	.logout-form {
 		display: inline;
 	}
@@ -419,6 +478,16 @@
 	.mode-bridge {
 		background-color: var(--green-dim);
 		color: var(--green);
+	}
+
+	.mode-dhcp {
+		background-color: var(--purple-dim);
+		color: var(--purple);
+	}
+
+	.mode-unknown {
+		background-color: var(--bg-elevated);
+		color: var(--text-muted);
 	}
 
 	.desktop-only {

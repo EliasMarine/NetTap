@@ -25,6 +25,7 @@
 	import DashboardFilters from '$components/DashboardFilters.svelte';
 	import type { FilterState } from '$components/DashboardFilters.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	// Mirror mode components
 	import { getCaptureMode } from '$api/capture';
@@ -32,6 +33,7 @@
 	import { getRegistryDevices } from '$api/devices-registry';
 	import type { RegistryDevice } from '$api/devices-registry';
 	import DeviceGrid from '$components/DeviceGrid.svelte';
+	import { withTraffic } from '$lib/utils/registry-traffic';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
 	import { goto } from '$app/navigation';
 	import CaptureHealthPanel from '$components/CaptureHealthPanel.svelte';
@@ -59,15 +61,38 @@
 	let alertCount = $state<AlertCountResponse | null>(null);
 	let recentAlerts = $state<Alert[]>([]);
 	let systemHealth = $state<SystemHealth | null>(null);
+	let systemHealthFailed = $state(false); // #96: "Unknown", never "Degraded"
 	let categories = $state<TrafficCategory[]>([]);
-	let deviceCount = $state(0);
+	// OLD CODE START — a real 0 devices showed '--'
+	// let deviceCount = $state(0);
+	// OLD CODE END
+	let deviceCount = $state<number | null>(null); // null until a count loads
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertSummary = $state<SmartAlertSummary | null>(null);
+	// #96: a failed request must not read as "No actionable alerts detected"
+	let smartAlertsFailed = $state(false);
 	let topDevices = $state<Device[]>([]);
+	// the device list's range start, once the list for the current range has loaded
+	let deviceListFrom = $state<string | null>(null);
+	const DEVICE_LIST_LIMIT = 500; // the daemon's largest device list, as on the Devices page
+	// device cards with the range's traffic per IP; a list shorter than its limit holds every device
+	const deviceCards = $derived(
+		withTraffic(registryDevices, deviceListFrom ? topDevices : null, topDevices.length < DEVICE_LIST_LIMIT, deviceListFrom ?? ''),
+	);
 
 	// Previous-period data for trend indicators
 	let prevTrafficSummary = $state<TrafficSummary | null>(null);
 	let prevAlertCount = $state<AlertCountResponse | null>(null);
+
+	// #96: a failed request keeps the last good figures and says so; it never shows 0 B or "no data"
+	let summaryFailed = $state(false);
+	let bandwidthFailed = $state(false);
+	let protocolsFailed = $state(false);
+	let categoriesFailed = $state(false);
+	let deviceCountFailed = $state(false);
+	let alertCountFailed = $state(false);
+	let topDevicesFailed = $state(false);
+	let registryFailed = $state(false);
 
 	// Alert detail panel state
 	let selectedAlert = $state<Alert | null>(null);
@@ -128,8 +153,12 @@
 			try {
 				const regResult = await getRegistryDevices({ limit: 200 });
 				registryDevices = regResult.devices;
+				registryFailed = false;
 			} catch {
-				registryDevices = [];
+				// OLD CODE START — #96: a failure read as "No devices detected yet"
+				// registryDevices = [];
+				// OLD CODE END
+				registryFailed = true;
 			}
 		}
 
@@ -161,20 +190,50 @@
 				getSystemHealth(),
 				getTrafficCategories(timeParams),
 				getDeviceCount(timeParams),
-				getTrafficSummary(prevTimeParams),
-				getAlertCount(prevTimeParams),
+				// OLD CODE START — with no range chosen (the default) prevTimeParams stayed {}, so this fetched
+				// the current 24 h again and each trend compared the period with itself
+				// getTrafficSummary(prevTimeParams),
+				// getAlertCount(prevTimeParams),
+				// OLD CODE END
+				// no range, no previous period: no trend rather than a comparison with itself
+				prevTimeParams.from ? getTrafficSummary(prevTimeParams) : Promise.resolve(null),
+				prevTimeParams.from ? getAlertCount(prevTimeParams) : Promise.resolve(null),
 			]);
 
-			trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
-			bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
-			protocols = protocolsRes.status === 'fulfilled' ? protocolsRes.value.protocols : [];
-			services = protocolsRes.status === 'fulfilled' ? protocolsRes.value.services : [];
+			// OLD CODE START — #96: a failure blanked each section, which read as "no data"
+			// trafficSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+			// bandwidthData = bandwidthRes.status === 'fulfilled' ? bandwidthRes.value.series : [];
+			// protocols = protocolsRes.status === 'fulfilled' ? protocolsRes.value.protocols : [];
+			// services = protocolsRes.status === 'fulfilled' ? protocolsRes.value.services : [];
+			// OLD CODE END
+			if (summaryRes.status === 'fulfilled') trafficSummary = summaryRes.value;
+			if (bandwidthRes.status === 'fulfilled') bandwidthData = bandwidthRes.value.series;
+			if (protocolsRes.status === 'fulfilled') {
+				protocols = protocolsRes.value.protocols;
+				services = protocolsRes.value.services;
+			}
+			summaryFailed = summaryRes.status === 'rejected';
+			bandwidthFailed = bandwidthRes.status === 'rejected';
+			protocolsFailed = protocolsRes.status === 'rejected';
 			topTalkers = talkersRes.status === 'fulfilled' ? talkersRes.value.top_talkers : [];
-			alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
+			// OLD CODE START — a failed refresh cleared the last count and the card read '--'
+			// alertCount = alertCountRes.status === 'fulfilled' ? alertCountRes.value : null;
+			// OLD CODE END
+			if (alertCountRes.status === 'fulfilled') alertCount = alertCountRes.value;
+			alertCountFailed = alertCountRes.status === 'rejected';
 			recentAlerts = alertsRes.status === 'fulfilled' ? alertsRes.value.alerts : [];
 			systemHealth = healthRes.status === 'fulfilled' ? healthRes.value : null;
-			categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
-			deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
+			systemHealthFailed = healthRes.status === 'rejected';
+			// OLD CODE START — #96: see above
+			// categories = categoriesRes.status === 'fulfilled' ? categoriesRes.value.categories : [];
+			// OLD CODE END
+			if (categoriesRes.status === 'fulfilled') categories = categoriesRes.value.categories;
+			categoriesFailed = categoriesRes.status === 'rejected';
+			// OLD CODE START — #96: see above
+			// deviceCount = deviceCountRes.status === 'fulfilled' ? deviceCountRes.value.count : 0;
+			// OLD CODE END
+			if (deviceCountRes.status === 'fulfilled') deviceCount = deviceCountRes.value.count;
+			deviceCountFailed = deviceCountRes.status === 'rejected';
 			prevTrafficSummary = prevSummaryRes.status === 'fulfilled' ? prevSummaryRes.value : null;
 			prevAlertCount = prevAlertCountRes.status === 'fulfilled' ? prevAlertCountRes.value : null;
 
@@ -182,11 +241,22 @@
 			Promise.allSettled([
 				getSmartAlerts({ ...timeParams, limit: 10 }),
 				getSmartAlertSummary(timeParams),
-				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
+				// OLD CODE START — the top 5 only; the device cards need every device's traffic
+				// getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: 5 }),
+				// OLD CODE END
+				getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: DEVICE_LIST_LIMIT }),
 			]).then(([smartRes, summaryRes, devicesRes]) => {
 				smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
+				smartAlertsFailed = smartRes.status === 'rejected';
 				smartAlertSummary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
-				topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
+				// OLD CODE START — #96: a failure read as "No device data available"
+				// topDevices = devicesRes.status === 'fulfilled' ? devicesRes.value.devices : [];
+				// OLD CODE END
+				if (devicesRes.status === 'fulfilled') {
+					topDevices = devicesRes.value.devices;
+					deviceListFrom = devicesRes.value.from;
+				}
+				topDevicesFailed = devicesRes.status === 'rejected';
 			});
 
 			lastUpdated = new Date().toLocaleTimeString();
@@ -209,6 +279,17 @@
 	 */
 	function handleFilterChange(filters: FilterState) {
 		activeFilters = filters;
+		// #96: the last range's figures must not stand in for this range if its load fails
+		trafficSummary = null;
+		prevTrafficSummary = null;
+		bandwidthData = [];
+		protocols = [];
+		services = [];
+		categories = [];
+		deviceCount = null;
+		alertCount = null;
+		topDevices = [];
+		deviceListFrom = null;
 		fetchAllData();
 	}
 
@@ -298,7 +379,7 @@
 
 	// Health status
 	let healthStatus = $derived.by(() => {
-		if (!systemHealth) return { label: '--', class: 'badge', healthy: false };
+		if (!systemHealth) return { label: systemHealthFailed ? 'Unknown' : '--', class: 'badge', healthy: false };
 		if (systemHealth.healthy) return { label: 'Healthy', class: 'badge badge-success', healthy: true };
 		return { label: 'Degraded', class: 'badge badge-warning', healthy: false };
 	});
@@ -342,25 +423,47 @@
 		};
 	}
 
+	// OLD CODE START — #96: a failed previous-period request compared against 0 and read "▲ new"
+	// let bandwidthTrend = $derived(
+	// 	trendPercent(
+	// 		trafficSummary?.total_bytes ?? 0,
+	// 		prevTrafficSummary?.total_bytes ?? 0,
+	// 	)
+	// );
+	//
+	// let connectionTrend = $derived(
+	// 	trendPercent(
+	// 		trafficSummary?.connection_count ?? 0,
+	// 		prevTrafficSummary?.connection_count ?? 0,
+	// 	)
+	// );
+	// OLD CODE END
+	const NO_TREND = trendPercent(0, 0);
+
 	let bandwidthTrend = $derived(
-		trendPercent(
-			trafficSummary?.total_bytes ?? 0,
-			prevTrafficSummary?.total_bytes ?? 0,
-		)
+		trafficSummary && prevTrafficSummary
+			? trendPercent(trafficSummary.total_bytes, prevTrafficSummary.total_bytes)
+			: NO_TREND
 	);
 
 	let connectionTrend = $derived(
-		trendPercent(
-			trafficSummary?.connection_count ?? 0,
-			prevTrafficSummary?.connection_count ?? 0,
-		)
+		trafficSummary && prevTrafficSummary
+			? trendPercent(trafficSummary.connection_count, prevTrafficSummary.connection_count)
+			: NO_TREND
 	);
 
+	// OLD CODE START — #96: a failed count compared as 0, so a failure read as "▼ 100%"
+	// let alertTrend = $derived(
+	// 	trendPercent(
+	// 		alertCount?.counts?.total ?? 0,
+	// 		prevAlertCount?.counts?.total ?? 0,
+	// 	)
+	// );
+	// OLD CODE END
 	let alertTrend = $derived(
-		trendPercent(
-			alertCount?.counts?.total ?? 0,
-			prevAlertCount?.counts?.total ?? 0,
-		)
+		alertCount && prevAlertCount
+			? trendPercent(alertCount.counts.total, prevAlertCount.counts.total)
+			: { arrow: '', pct: '', direction: 'flat' as const },
 	);
 
 	// ---------------------------------------------------------------------------
@@ -490,12 +593,21 @@
 			</svg>
 			<span>OpenSearch is not reachable. The daemon is running but cannot connect to OpenSearch. Traffic data will be unavailable until the connection is restored.</span>
 		</div>
+	<!-- OLD CODE START — #96: a failed traffic request would read as "No traffic data yet"
 	{:else if !loading && systemHealth?.opensearch_reachable && !trafficSummary && bandwidthData.length === 0}
+	OLD CODE END -->
+	<!-- OLD CODE START — a loaded summary is never null, so this never showed, even with 0 connections
+	{:else if !loading && systemHealth?.opensearch_reachable && !summaryFailed && !bandwidthFailed && !trafficSummary && bandwidthData.length === 0}
+	OLD CODE END -->
+	{:else if !loading && systemHealth?.opensearch_reachable && !summaryFailed && trafficSummary?.connection_count === 0}
 		<div class="alert alert-info error-banner">
 			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
 			</svg>
+			<!-- OLD CODE START — claimed no logs were indexed at all; the summary only covers the chosen range
 			<span>No traffic data yet. OpenSearch is connected but no network logs have been indexed. Traffic will appear once Zeek and Suricata start capturing.</span>
+			OLD CODE END -->
+			<span>No traffic data yet for this time range. OpenSearch is connected but no network connections have been logged in it. Traffic will appear once Zeek and Suricata are capturing.</span>
 		</div>
 	{/if}
 
@@ -548,7 +660,17 @@
 	{#if isMirrorMode}
 		<div class="grid grid-cols-2 mirror-mode-grid">
 			<div class="mirror-main">
-				<DeviceGrid devices={registryDevices} loading={loading} />
+				{#if registryFailed && registryDevices.length === 0}
+					<div class="card table-empty"><p class="text-warning">{loadFailed('devices')}</p></div>
+				{:else}
+					{#if registryFailed}
+						<p class="text-warning load-note">{loadFailed('devices', true)}</p>
+					{/if}
+					<!-- OLD CODE START — the registry has no traffic, so every card read "--" -->
+					<!-- <DeviceGrid devices={registryDevices} loading={loading} /> -->
+					<!-- OLD CODE END -->
+					<DeviceGrid devices={deviceCards} loading={loading} />
+				{/if}
 			</div>
 			<div class="mirror-sidebar">
 				<CaptureHealthPanel />
@@ -579,8 +701,13 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				{#if trafficSummary}
-					{formatBytesShort(trafficSummary.orig_bytes)} in / {formatBytesShort(trafficSummary.resp_bytes)} out
+				{#if summaryFailed}
+					<span class="text-warning">{loadFailed('traffic totals', trafficSummary !== null)}</span>
+				{:else if trafficSummary}
+					<!-- OLD CODE START — 2026-11-01: orig_bytes (sent by the side that opened the connection, usually a LAN device) was labelled "in" -->
+					<!-- {formatBytesShort(trafficSummary.orig_bytes)} in / {formatBytesShort(trafficSummary.resp_bytes)} out -->
+					<!-- OLD CODE END -->
+					{formatBytesShort(trafficSummary.resp_bytes)} down / {formatBytesShort(trafficSummary.orig_bytes)} up
 				{:else}
 					Inbound + outbound traffic
 				{/if}
@@ -608,7 +735,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				{#if trafficSummary}
+				{#if summaryFailed}
+					<span class="text-warning">{loadFailed('connection totals', trafficSummary !== null)}</span>
+				{:else if trafficSummary}
 					Top protocol: {trafficSummary.top_protocol}
 				{:else}
 					Total observed connections
@@ -628,7 +757,10 @@
 				<div class="skeleton skeleton-value"></div>
 			{:else}
 				<div class="card-value">
-					{totalAlerts > 0 ? formatNumber(totalAlerts) : '--'}
+					<!-- OLD CODE START — a real 0 alerts showed '--' -->
+					<!-- {totalAlerts > 0 ? formatNumber(totalAlerts) : '--'} -->
+					<!-- OLD CODE END -->
+					{alertCount ? formatNumber(totalAlerts) : '\u2014'}
 					{#if alertTrend.arrow}
 						<span class="trend-indicator trend-{alertTrend.direction}" title="vs previous period">
 							{alertTrend.arrow} {alertTrend.pct}
@@ -637,7 +769,9 @@
 				</div>
 			{/if}
 			<p class="card-description">
-				{#if alertCount?.counts}
+				{#if alertCountFailed}
+					<span class="text-warning">{loadFailed('the alert count', alertCount !== null)}</span>
+				{:else if alertCount?.counts}
 					{alertCount.counts.high} high, {alertCount.counts.medium} med, {alertCount.counts.low} low
 				{:else}
 					Suricata IDS detections
@@ -663,6 +797,8 @@
 			<p class="card-description">
 				{#if systemHealth}
 					OpenSearch {systemHealth.opensearch_reachable ? 'connected' : 'unreachable'}
+				{:else if systemHealthFailed}
+					Couldn't check: the request failed
 				{:else}
 					Daemon + OpenSearch status
 				{/if}
@@ -677,15 +813,25 @@
 					<rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
 				</svg>
 			</div>
-			{#if loading && deviceCount === 0}
+			{#if loading && deviceCount === null}
 				<div class="skeleton skeleton-value"></div>
 			{:else}
 				<div class="card-value">
-					{deviceCount > 0 ? formatNumber(deviceCount) : '--'}
+					<!-- OLD CODE START — a real 0 devices showed '--' -->
+					<!-- {deviceCount > 0 ? formatNumber(deviceCount) : '--'} -->
+					<!-- OLD CODE END -->
+					{deviceCount !== null ? formatNumber(deviceCount) : '\u2014'}
 				</div>
 			{/if}
+			<!-- OLD CODE START — 2026-11-01: the count comes from observed traffic, not DHCP leases -->
+			<!-- DHCP-leased devices on network -->
+			<!-- OLD CODE END -->
 			<p class="card-description">
-				DHCP-leased devices on network
+				{#if deviceCountFailed}
+					<span class="text-warning">{loadFailed('the device count', deviceCount !== null)}</span>
+				{:else}
+					Devices seen on the network
+				{/if}
 			</p>
 		</a>
 	</div>
@@ -700,6 +846,8 @@
 			</div>
 			{#if loading && bandwidthData.length === 0}
 				<div class="skeleton skeleton-chart"></div>
+			{:else if bandwidthFailed && bandwidthData.length === 0}
+				<div class="table-empty"><p class="text-warning">{loadFailed('bandwidth over time')}</p></div>
 			{:else}
 				<TimeSeriesChart
 					data={chartData}
@@ -708,6 +856,9 @@
 					label="Bytes"
 					formatValue={formatBytesShort}
 				/>
+				{#if bandwidthFailed}
+					<p class="text-warning load-note">{loadFailed('bandwidth over time', true)}</p>
+				{/if}
 			{/if}
 		</div>
 
@@ -719,7 +870,12 @@
 			</div>
 			{#if loading && protocols.length === 0}
 				<div class="skeleton skeleton-chart"></div>
+			{:else if protocolsFailed && protocols.length === 0 && services.length === 0}
+				<div class="table-empty"><p class="text-warning">{loadFailed('network protocols')}</p></div>
 			{:else}
+				{#if protocolsFailed}
+					<p class="text-warning load-note">{loadFailed('network protocols', true)}</p>
+				{/if}
 				<div class="protocol-dual-panel">
 					<!-- Left: Transport donut -->
 					<div class="transport-panel">
@@ -737,7 +893,14 @@
 							<div class="service-bar-list">
 								{#each services.slice(0, 8) as svc, i (`${svc.name}-${i}`)}
 									<div class="svc-bar-row">
+										<!-- OLD CODE START — "UNKNOWN" read like missing data; it is connections Zeek could not identify (#20)
 										<span class="svc-bar-name">{(svc.name || 'unknown').toUpperCase()}</span>
+										OLD CODE END -->
+										{#if !svc.name || svc.name === 'unknown'}
+											<span class="svc-bar-name" title="Connections where Zeek could not identify the application protocol">UNIDENTIFIED</span>
+										{:else}
+											<span class="svc-bar-name">{svc.name.toUpperCase()}</span>
+										{/if}
 										<div class="svc-bar-track">
 											<div class="svc-bar-fill" style="width: {(svc.count / maxServiceCount) * 100}%; background: {SERVICE_COLORS[i] ?? SERVICE_COLORS[SERVICE_COLORS.length - 1]};"></div>
 										</div>
@@ -758,7 +921,10 @@
 	<div class="card categories-card">
 		<div class="card-header">
 			<span class="card-title">Traffic Categories</span>
-			<span class="card-subtitle">Bandwidth by category</span>
+			<!-- OLD CODE START — read as all traffic: the bars cover only connections to internet services (53.6 of 98.8 GB on the G11) -->
+			<!-- <span class="card-subtitle">Bandwidth by category</span> -->
+			<!-- OLD CODE END -->
+			<span class="card-subtitle">Traffic to internet services; local traffic isn't counted</span>
 		</div>
 		{#if loading && categories.length === 0}
 			<div class="skeleton-table">
@@ -766,11 +932,18 @@
 					<div class="skeleton skeleton-row"></div>
 				{/each}
 			</div>
+		{:else if categoriesFailed && categories.length === 0}
+			<div class="table-empty">
+				<p class="text-warning">{loadFailed('traffic categories')}</p>
+			</div>
 		{:else if categories.length === 0}
 			<div class="table-empty">
 				<p class="text-muted">No category data yet. Traffic will appear once Zeek captures ASN-tagged connections.</p>
 			</div>
 		{:else}
+			{#if categoriesFailed}
+				<p class="text-warning load-note">{loadFailed('traffic categories', true)}</p>
+			{/if}
 			<div class="categories-columns">
 				<div class="categories-col">
 					<HorizontalBarList
@@ -820,9 +993,14 @@
 				<div class="skeleton-table">
 					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
+			{:else if topDevicesFailed && topDevices.length === 0}
+				<div class="table-empty"><p class="text-warning">{loadFailed('top devices')}</p></div>
 			{:else if topDevices.length === 0}
 				<div class="table-empty"><p class="text-muted">No device data available.</p></div>
 			{:else}
+				{#if topDevicesFailed}
+					<p class="text-warning load-note">{loadFailed('top devices', true)}</p>
+				{/if}
 				{#each topDevices.slice(0, 4) as device, i (`td-${device.ip}-${i}`)}
 					<a href="/devices/{encodeURIComponent(device.ip)}" class="td-item">
 						<div class="td-top">
@@ -843,7 +1021,7 @@
 						</div>
 					</a>
 				{/each}
-				<a href="/devices" class="card-link-bottom">View all {deviceCount || topDevices.length} devices &rarr;</a>
+				<a href="/devices" class="card-link-bottom">View all {deviceCount ?? topDevices.length} devices &rarr;</a>
 			{/if}
 		</div>
 
@@ -851,7 +1029,13 @@
 		<div class="card table-card">
 			<div class="card-header">
 				<span class="card-title">Alert Summary</span>
-				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span>
+				<!-- OLD CODE START — 2026-11-01: "394 total" beside "2.2K alerts" read as a contradiction; the summary hides informational alerts -->
+				<!-- <span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} total</span> -->
+				<!-- OLD CODE END -->
+				<!-- #96: with both counts failed this read "0 to review" -->
+				{#if smartAlertSummary || alertCount}
+				<span class="card-subtitle">{formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review{#if smartAlertSummary?.informational_events}{` · ${formatNumber(smartAlertSummary.informational_events)} informational`}{/if}</span>
+				{/if}
 			</div>
 			{#if smartAlerts.length > 0}
 				<!-- Severity summary bar -->
@@ -882,6 +1066,9 @@
 				<div class="skeleton-table">
 					{#each Array(4) as _}<div class="skeleton skeleton-row"></div>{/each}
 				</div>
+			{:else if smartAlertsFailed}
+				<div class="table-empty"><p class="text-muted">Couldn't load the alert summary: the request failed.</p></div>
+				<a href="/alerts" class="card-link-bottom">View raw alerts &rarr;</a>
 			{:else}
 				<div class="table-empty"><p class="text-muted">No actionable alerts detected.</p></div>
 				<a href="/alerts" class="card-link-bottom">View raw alerts &rarr;</a>
@@ -995,6 +1182,12 @@
 	.card-description {
 		font-size: var(--text-xs);
 		color: var(--text-muted);
+	}
+
+	.load-note {
+		margin: 0;
+		padding: var(--space-xs) 0;
+		font-size: var(--text-xs);
 	}
 
 	/* Trend indicators */

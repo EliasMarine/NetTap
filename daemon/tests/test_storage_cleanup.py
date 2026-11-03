@@ -133,8 +133,8 @@ class TestPreviewCleanup:
         assert result["pcap_files"][0]["name"] == "old_capture.pcap"
         assert result["pcap_size_bytes"] == 1000
 
-    def test_handles_opensearch_stats_error(self):
-        """Preview should still work if indices.stats fails (sizes will be 0)."""
+    def test_opensearch_stats_error_raises(self):
+        """#96: failed stats is an error, not a preview of 0-byte indices."""
         client = MagicMock()
         old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
             "%Y.%m.%d"
@@ -149,10 +149,16 @@ class TestPreviewCleanup:
 
         config = RetentionConfig(pcap_dir="/nonexistent")
         mgr = _make_manager(client, config)
-        result = mgr.preview_cleanup(older_than_days=30)
+        with pytest.raises(OpenSearchException):
+            mgr.preview_cleanup(older_than_days=30)
 
-        assert result["total_indices"] == 1
-        assert result["index_size_bytes"] == 0  # No stats available
+    def test_opensearch_list_error_raises(self):
+        """#96: a failed index list is an error, not "nothing to delete"."""
+        client = MagicMock()
+        client.cat.indices.side_effect = OpenSearchException("connection refused")
+        mgr = _make_manager(client, RetentionConfig(pcap_dir="/nonexistent"))
+        with pytest.raises(OpenSearchException):
+            mgr.preview_cleanup(older_than_days=30)
 
     def test_empty_when_no_old_data(self):
         """Preview returns empty when all data is recent."""
@@ -259,6 +265,44 @@ class TestExecuteCleanup:
         assert result["freed_bytes_estimate"] == 2000
         assert not old_pcap.exists()
         assert not sidecar.exists()
+
+    def test_opensearch_down_reports_error_and_still_cleans_pcap(self, tmp_path):
+        """#96: an unlisted index set is an error in the result, not "deleted 0"."""
+        client = MagicMock()
+        client.cat.indices.side_effect = OpenSearchException("connection refused")
+        client.indices.stats.side_effect = OpenSearchException("connection refused")
+        old_pcap = tmp_path / "old.pcap"
+        old_pcap.write_bytes(b"\x00" * 10)
+        import os
+
+        old_time = (datetime.now() - timedelta(days=60)).timestamp()
+        os.utime(old_pcap, (old_time, old_time))
+
+        mgr = _make_manager(client, RetentionConfig(pcap_dir=str(tmp_path)))
+        result = mgr.execute_cleanup(older_than_days=30)
+
+        assert result["deleted_pcap_files"] == 1
+        assert len(result["errors"]) == 1
+        assert "Could not list indices" in result["errors"][0]
+
+    def test_stats_error_reported_when_indices_deleted(self):
+        """#96: freed bytes that leave out indices say so."""
+        client = MagicMock()
+        old_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
+            "%Y.%m.%d"
+        )
+        client.cat.indices.return_value = [
+            _make_index_entry(
+                f"zeek-conn-{old_date}", "50mb", f"{old_date}T00:00:00.000Z"
+            ),
+        ]
+        client.indices.stats.side_effect = OpenSearchException("stats failed")
+
+        mgr = _make_manager(client, RetentionConfig(pcap_dir="/nonexistent"))
+        result = mgr.execute_cleanup(older_than_days=30)
+
+        assert result["deleted_indices"] == 1
+        assert any("index sizes" in e for e in result["errors"])
 
     def test_lock_contention_raises(self):
         """Execute should raise RuntimeError if cleanup lock is held."""

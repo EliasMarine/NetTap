@@ -56,6 +56,7 @@ class TestBridgeHealthCheckDataclass(unittest.TestCase):
             "health_status",
             "issues",
             "last_check",
+            "latency_note",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -183,26 +184,12 @@ class TestDetermineHealthStatus(unittest.TestCase):
         self.assertEqual(status, "not_configured")
 
 
-class TestEstimateLatency(unittest.TestCase):
-    """Tests for BridgeHealthMonitor._estimate_latency()."""
-
-    def setUp(self):
-        self.monitor = BridgeHealthMonitor()
-
-    def test_bridge_not_up_returns_zero(self):
-        """Non-up bridge should return 0 latency."""
-        self.assertEqual(self.monitor._estimate_latency("down", True, True), 0.0)
-        self.assertEqual(self.monitor._estimate_latency("unknown", True, True), 0.0)
-
-    def test_normal_latency(self):
-        """Bridge up with both links should return base latency."""
-        latency = self.monitor._estimate_latency("up", True, True)
-        self.assertEqual(latency, 50.0)
-
-    def test_degraded_latency_higher(self):
-        """Missing link should return higher latency."""
-        latency = self.monitor._estimate_latency("up", False, True)
-        self.assertGreater(latency, 50.0)
+# OLD CODE START — #96: _estimate_latency (a simulated 50 µs) was removed
+# class TestEstimateLatency(unittest.TestCase):
+#     def test_bridge_not_up_returns_zero(self): ... == 0.0
+#     def test_normal_latency(self): ... == 50.0
+#     def test_degraded_latency_higher(self): ... > 50.0
+# OLD CODE END
 
 
 class TestCalculateDeltas(unittest.TestCase):
@@ -305,8 +292,18 @@ class TestCheckHealth(unittest.TestCase):
             "health_status",
             "issues",
             "last_check",
+            "latency_note",
         }
         self.assertEqual(set(result.keys()), expected_keys)
+
+    def test_latency_is_not_measured_not_a_made_up_figure(self):
+        """#96: there is no latency measurement, so none is reported."""
+        monitor = self._make_monitor_with_mocks("up", True, True)
+        result = asyncio.run(monitor.check_health())
+        self.assertIsNone(result["latency_us"])
+        self.assertIn("Not measured", result["latency_note"])
+        stats = asyncio.run(monitor.get_statistics())
+        self.assertIsNone(stats["average_latency_us"])
 
     def test_check_health_normal(self):
         """Bridge up + both links = normal health."""
@@ -630,6 +627,50 @@ class TestBypassMode(unittest.TestCase):
         nsenter_cmds = [" ".join(a) for a in nsenter_calls]
         self.assertTrue(any("promisc on" in c and "eth0" in c for c in nsenter_cmds))
         self.assertTrue(any("promisc on" in c and "eth1" in c for c in nsenter_cmds))
+
+    def _bypass_with_failing_promisc(self, method):
+        monitor = BridgeHealthMonitor()
+        monitor._write_bypass_file = lambda active: None
+
+        async def mock_nsenter(*args):
+            return (
+                (1, "", "RTNETLINK answers: Operation not permitted")
+                if "eth1" in args
+                else (0, "", "")
+            )
+
+        monitor._run_nsenter = mock_nsenter
+        return asyncio.run(getattr(monitor, method)()), monitor
+
+    def test_bypass_that_left_promisc_on_says_so(self):
+        """#96: bypass said "traffic is flowing uninspected" while capture went on."""
+        result, monitor = self._bypass_with_failing_promisc("trigger_bypass")
+        self.assertTrue(result["bypass_active"])  # bypass itself still applies
+        self.assertTrue(monitor._bypass_active)
+        self.assertEqual(
+            result["warnings"],
+            [
+                "Could not turn promiscuous mode off on eth1: RTNETLINK answers: Operation not permitted"
+            ],
+        )
+        self.assertNotIn("uninspected", result["message"])
+
+    def test_leaving_bypass_with_promisc_still_off_says_so(self):
+        result, monitor = self._bypass_with_failing_promisc("disable_bypass")
+        self.assertFalse(result["bypass_active"])
+        self.assertFalse(monitor._bypass_active)
+        self.assertIn("eth1", result["warnings"][0])
+        self.assertNotIn("resumed", result["message"])
+
+    def test_clean_bypass_has_no_warnings(self):
+        monitor = BridgeHealthMonitor()
+        monitor._write_bypass_file = lambda active: None
+
+        async def ok(*args):
+            return (0, "", "")
+
+        monitor._run_nsenter = ok
+        self.assertNotIn("warnings", asyncio.run(monitor.trigger_bypass()))
 
     def test_bypass_affects_health_status(self):
         """Health check during bypass should report 'bypass' status."""

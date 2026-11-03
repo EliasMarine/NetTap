@@ -88,6 +88,17 @@ async def handle_update_rules(request: web.Request) -> web.Response:
         )
 
 
+async def handle_live_status(request: web.Request) -> web.Response:
+    """GET /api/suricata/rules/live
+
+    What Suricata really runs: enabled/disabled rule counts, last refresh,
+    sources and update schedule, read from the Suricata container.
+    """
+    manager: SuricataRuleManager = request.app["suricata_rule_manager"]
+    status = await manager.get_live_status()
+    return web.json_response(status, status=200 if status.get("available") else 502)
+
+
 async def handle_rule_stats(request: web.Request) -> web.Response:
     """GET /api/suricata/rules/stats
 
@@ -205,6 +216,7 @@ def register_suricata_rules_routes(
     app["suricata_rule_manager"] = manager
 
     # Static routes first (before parameterized)
+    app.router.add_get("/api/suricata/rules/live", handle_live_status)
     app.router.add_get("/api/suricata/rules/stats", handle_rule_stats)
     app.router.add_get("/api/suricata/rules/schedule", handle_get_schedule)
     app.router.add_put("/api/suricata/rules/schedule", handle_set_schedule)

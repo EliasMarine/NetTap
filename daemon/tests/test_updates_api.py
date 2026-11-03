@@ -353,16 +353,52 @@ class TestApplyUpdatesEndpoint(AioHTTPTestCase):
         register_update_routes(app, self.mock_vm, self.mock_uc, self.mock_ue)
         return app
 
+    # OLD CODE START — apply ran the whole batch in the request (cut off by the 10 s web proxy)
+    # @unittest_run_loop
+    # async def test_apply_updates_returns_200(self):
+    #     """POST /api/system/updates/apply should return 200."""
+    #     self.mock_ue.apply_update = AsyncMock(return_value=_make_apply_result())
+    #     resp = await self.client.request(
+    #         "POST",
+    #         "/api/system/updates/apply",
+    #         json={"components": ["zeek"]},
+    #     )
+    #     self.assertEqual(resp.status, 200)
+    # OLD CODE END
+
     @unittest_run_loop
-    async def test_apply_updates_returns_200(self):
-        """POST /api/system/updates/apply should return 200."""
-        self.mock_ue.apply_update = AsyncMock(return_value=_make_apply_result())
-        resp = await self.client.request(
-            "POST",
-            "/api/system/updates/apply",
-            json={"components": ["zeek"]},
+    async def test_apply_starts_in_the_background_and_answers_202(self):
+        self.mock_ue.start_update = AsyncMock(
+            return_value=({"state": "in_progress", "components": ["malcolm"]}, 202)
         )
-        self.assertEqual(resp.status, 200)
+        resp = await self.client.request(
+            "POST", "/api/system/updates/apply", json={"components": ["malcolm"]}
+        )
+        self.assertEqual(resp.status, 202)
+        self.assertEqual((await resp.json())["state"], "in_progress")
+        self.mock_ue.start_update.assert_awaited_once_with(["malcolm"])
+
+    @unittest_run_loop
+    async def test_apply_while_one_runs_answers_409(self):
+        self.mock_ue.start_update = AsyncMock(
+            return_value=(
+                {"error": "An update is already running", "state": "in_progress"},
+                409,
+            )
+        )
+        resp = await self.client.request(
+            "POST", "/api/system/updates/apply", json={"components": ["malcolm"]}
+        )
+        self.assertEqual(resp.status, 409)
+
+    @unittest_run_loop
+    async def test_apply_with_a_non_string_component_is_400(self):
+        self.mock_ue.start_update = AsyncMock(return_value=({}, 202))
+        resp = await self.client.request(
+            "POST", "/api/system/updates/apply", json={"components": [{"x": 1}]}
+        )
+        self.assertEqual(resp.status, 400)
+        self.mock_ue.start_update.assert_not_awaited()
 
     @unittest_run_loop
     async def test_apply_updates_invalid_body_returns_400(self):
@@ -599,6 +635,9 @@ class TestRouteRegistration(AioHTTPTestCase):
             }
         )
         self.mock_ue.apply_update = AsyncMock(return_value=_make_apply_result())
+        self.mock_ue.start_update = AsyncMock(
+            return_value=({"state": "in_progress"}, 202)
+        )
         self.mock_ue.get_status = AsyncMock(
             return_value={
                 "status": "idle",

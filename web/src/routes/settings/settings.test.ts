@@ -127,6 +127,27 @@ describe('Settings — retention save', () => {
 		expect(screen.queryByText(/settings saved/i)).not.toBeInTheDocument();
 	});
 
+	it('describes PCAP as continuous capture, not alert-triggered', async () => {
+		stubFetch({});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText(/Raw packet captures of all traffic/)).toBeInTheDocument();
+		expect(screen.queryByText(/alert-triggered/)).not.toBeInTheDocument();
+	});
+
+	it('says Suricata alerts follow the Hot tier, not the Warm tier', async () => {
+		stubFetch({});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByLabelText('Hot Tier (Zeek metadata and Suricata alerts)')).toBeInTheDocument();
+		expect(screen.getByLabelText('Warm Tier (separate Suricata indices)')).toBeInTheDocument();
+		expect(screen.getByText(/Alerts follow the Hot tier/)).toBeInTheDocument();
+	});
+
 	it('will not save the built-in defaults when the daemon did not answer', async () => {
 		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
 		render(Page);
@@ -135,6 +156,80 @@ describe('Settings — retention save', () => {
 
 		expect(screen.getByRole('button', { name: 'Save Retention Config' })).toBeDisabled();
 		expect(screen.getByText(/Could not load the current retention settings/)).toBeInTheDocument();
+	});
+});
+
+describe('Settings — About', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('shows the daemon version and a readable uptime', async () => {
+		stubFetch({
+			'/api/system/health': () => ({ body: { uptime: 21970.08 } }),
+			'/api/system/versions': () => ({
+				body: { versions: [{ name: 'nettap-web', current_version: 'latest' }, { name: 'nettap-daemon', current_version: '0.4.0' }] },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'About' }));
+
+		expect(screen.getByText('0.4.0')).toBeInTheDocument();
+		expect(screen.getByText('6h 6m')).toBeInTheDocument();
+		expect(screen.queryByText('0.3.0')).not.toBeInTheDocument();
+		expect(screen.queryByText('21970.08')).not.toBeInTheDocument();
+	});
+});
+
+describe('Settings — retention health', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('words a single synced ILM policy naturally', async () => {
+		stubFetch({
+			'/api/storage/status': () => ({
+				body: { disk_usage_percent: 6.8, last_prune_at: new Date().toISOString(),
+					ilm_status: { synced: true, last_applied: 'x', pending_retry: false, policies: { 'nettap-hot-policy': 'updated' } } },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText(/Policy synced/)).toBeInTheDocument();
+		expect(screen.queryByText(/All 1 synced/)).not.toBeInTheDocument();
+	});
+
+	// a failed /api/storage/status read showed "Loading..." forever, "Never (daemon starting...)" and a Problem badge
+	it('says the storage status could not be read instead of guessing', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText("Couldn't load the storage status: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText('Unknown', { selector: '.health-badge' })).toBeInTheDocument();
+		expect(screen.queryByText('Problem')).not.toBeInTheDocument();
+		expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+		expect(screen.queryByText('Never (daemon starting...)')).not.toBeInTheDocument();
+	});
+
+	it('still reads Healthy when the storage status loads in sync', async () => {
+		stubFetch({
+			'/api/storage/status': () => ({
+				body: { disk_usage_percent: 6.8, last_prune_at: new Date().toISOString(),
+					ilm_status: { synced: true, last_applied: 'x', pending_retry: false, policies: { a: 'updated', b: 'updated' } } },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+
+		expect(screen.getByText('Healthy', { selector: '.health-badge' })).toBeInTheDocument();
+		expect(screen.getByText(/2 policies synced/)).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't load the storage status/)).not.toBeInTheDocument();
 	});
 });
 
@@ -155,6 +250,82 @@ describe('Settings — capture status label', () => {
 
 		expect(screen.getByText('Enabled — capture container not running')).toBeInTheDocument();
 		expect(screen.queryByText('Enabled — capturing packets')).not.toBeInTheDocument();
+	});
+
+	it('shows the size netsniff really rotates at, and the time limit', async () => {
+		stubFetch({
+			'/api/capture/status': () => ({
+				body: { enabled: true, maxFileSizeMB: 4096, rotateMinutes: 10, containerRunning: true, containerStatus: 'running' },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+
+		expect(screen.getByDisplayValue('4096')).toBeInTheDocument();
+		expect(screen.getByText(/or every 10 minutes, whichever comes first/)).toBeInTheDocument();
+		expect(screen.queryByText(/Default: 100 MB/)).not.toBeInTheDocument();
+	});
+});
+
+describe('Settings — a failed load never saves blanks over real settings', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('Capture: no toggle or Save when the status cannot be read', async () => {
+		stubFetch({ '/api/capture/status': () => ({ status: 502, body: { error: 'Daemon unreachable' } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+
+		expect(screen.getByText(/Could not load the current capture settings/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Save Capture Settings' })).not.toBeInTheDocument();
+		expect(screen.queryByDisplayValue('100')).not.toBeInTheDocument();
+	});
+
+	it('Notifications: Save is off when the config cannot be read', async () => {
+		stubFetch(); // every call 500s
+		render(Page);
+		await flush();
+
+		expect(screen.getByText(/Could not load the current notification settings/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save Notification Settings' })).toBeDisabled();
+	});
+
+	it('Notifications: Save works once the config has loaded', async () => {
+		stubFetch({
+			'/api/notifications/config': () => ({
+				body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: 'https://hooks.example.com/x' } },
+			}),
+		});
+		render(Page);
+		await flush();
+
+		expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
+		expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save Notification Settings' })).toBeEnabled();
+	});
+
+	it('Network: no list editor or Save when the excluded IPs cannot be read', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+
+		expect(screen.getByText(/Could not load the excluded IP list/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Save Excluded IPs' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/No IPs excluded/)).not.toBeInTheDocument();
+	});
+
+	it('Network: shows the saved list when it loads', async () => {
+		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['99.10.70.92'] } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+
+		expect(screen.getByText('99.10.70.92')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save Excluded IPs' })).toBeEnabled();
 	});
 });
 

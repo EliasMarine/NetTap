@@ -65,18 +65,10 @@ describe('system API client', () => {
 			expect(result).toEqual(expected);
 		});
 
-		it('returns unhealthy defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting the system degraded', async () => {
 			mockFetchFailure(503);
 
-			const result = await getSystemHealth();
-
-			expect(result.uptime).toBe(0);
-			expect(result.storage).toBeNull();
-			expect(result.smart).toBeNull();
-			expect(result.opensearch_reachable).toBe(false);
-			expect(result.healthy).toBe(false);
-			// timestamp should be a valid ISO string
-			expect(() => new Date(result.timestamp)).not.toThrow();
+			await expect(getSystemHealth()).rejects.toThrow('HTTP 503');
 		});
 
 		it('handles network failure gracefully', async () => {
@@ -106,17 +98,10 @@ describe('system API client', () => {
 			expect(result).toEqual(expected);
 		});
 
-		it('returns zero-value defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting 0% used', async () => {
 			mockFetchFailure(500);
 
-			const result = await getStorageStatus();
-
-			expect(result.disk_usage_percent).toBe(0);
-			expect(result.disk_total_bytes).toBe(0);
-			expect(result.disk_used_bytes).toBe(0);
-			expect(result.disk_free_bytes).toBe(0);
-			expect(result.retention).toBeNull();
-			expect(result.index_summary).toBeNull();
+			await expect(getStorageStatus()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -151,25 +136,10 @@ describe('system API client', () => {
 			expect(result.serial).toBe('S6B1NJ0TB12345');
 		});
 
-		it('returns unhealthy defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting the drive degraded', async () => {
 			mockFetchFailure(500);
 
-			const result = await getSmartHealth();
-
-			expect(result.device).toBe('');
-			expect(result.device_type).toBe('');
-			expect(result.model).toBe('');
-			expect(result.serial).toBe('');
-			expect(result.temperature_c).toBeNull();
-			expect(result.percentage_used).toBeNull();
-			expect(result.power_on_hours).toBeNull();
-			expect(result.total_bytes_written).toBeNull();
-			expect(result.total_bytes_read).toBeNull();
-			expect(result.media_errors).toBeNull();
-			expect(result.reallocated_sectors).toBeNull();
-			expect(result.healthy).toBe(false);
-			expect(result.warnings).toEqual([]);
-			expect(result.timestamp).toBeDefined();
+			await expect(getSmartHealth()).rejects.toThrow('HTTP 500');
 		});
 	});
 

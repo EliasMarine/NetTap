@@ -235,3 +235,26 @@ WRAPPER
     )
     [[ "$result" == *"ethtool not installed"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# The root .env holds SMTP_PASS once notifications are set; only the installer reads it (#77)
+# ---------------------------------------------------------------------------
+@test "write_env_assignments: leaves the .env readable by its owner only" {
+    source "${REPO_ROOT}/scripts/common.sh"
+    set +uo pipefail
+    # preflight.sh runs main when sourced, so load just the two functions under test
+    sed -n '/^_set_env_value() {/,/^}/p; /^write_env_assignments() {/,/^}/p' \
+        "${REPO_ROOT}/scripts/install/preflight.sh" > "${TEST_TMPDIR}/preflight-fns.sh"
+    source "${TEST_TMPDIR}/preflight-fns.sh"
+    PROJECT_ROOT="${TEST_TMPDIR}"
+    ENV_FILE="${TEST_TMPDIR}/.env"
+    DRY_RUN=false
+    printf 'SMTP_PASS=secret\n' > "$ENV_FILE"
+    chmod 644 "$ENV_FILE"
+
+    write_env_assignments enp2s0 enp3s0 enp1s0
+
+    grep -q "^WAN_INTERFACE=enp2s0$" "$ENV_FILE"
+    grep -q "^SMTP_PASS=secret$" "$ENV_FILE"
+    [ "$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE")" = "600" ]
+}

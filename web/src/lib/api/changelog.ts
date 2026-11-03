@@ -38,19 +38,30 @@ export async function getChangelogEvents(params?: {
 	type?: string;
 	limit?: number;
 }): Promise<ChangelogResponse> {
-	try {
-		const qs = new URLSearchParams();
-		if (params?.from) qs.set('from', params.from);
-		if (params?.to) qs.set('to', params.to);
-		if (params?.type) qs.set('type', params.type);
-		if (params?.limit) qs.set('limit', String(params.limit));
+	// OLD CODE START — #96: a failed request read as "No events found for the selected filters"
+	// try {
+	// 	const qs = new URLSearchParams();
+	// 	if (params?.from) qs.set('from', params.from);
+	// 	if (params?.to) qs.set('to', params.to);
+	// 	if (params?.type) qs.set('type', params.type);
+	// 	if (params?.limit) qs.set('limit', String(params.limit));
+	//
+	// 	const res = await fetch(`/api/changelog?${qs.toString()}`);
+	// 	if (!res.ok) return { events: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { events: [], count: 0 };
+	// }
+	// OLD CODE END
+	const qs = new URLSearchParams();
+	if (params?.from) qs.set('from', params.from);
+	if (params?.to) qs.set('to', params.to);
+	if (params?.type) qs.set('type', params.type);
+	if (params?.limit) qs.set('limit', String(params.limit));
 
-		const res = await fetch(`/api/changelog?${qs.toString()}`);
-		if (!res.ok) return { events: [], count: 0 };
-		return res.json();
-	} catch {
-		return { events: [], count: 0 };
-	}
+	const res = await fetch(`/api/changelog?${qs.toString()}`);
+	if (!res.ok) throw new Error(`Changelog request failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
