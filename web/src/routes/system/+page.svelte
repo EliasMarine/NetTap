@@ -6,6 +6,7 @@
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
+	import { getCaptureMode } from '$api/capture.js';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -13,6 +14,11 @@
 	let tsharkStatus = $state<TSharkStatus | null>(null);
 	let cyberchefStatus = $state<CyberChefStatus | null>(null);
 	let loading = $state(true);
+	// #96: which cards' last request failed; a failure never reads as "Degraded" or "Not Deployed"
+	let failed = $state({ health: false, storage: false, smart: false, tshark: false, cyberchef: false });
+	// BridgeStatus (and its /api/bridge polling) only makes sense in bridge mode
+	let captureModeName = $state<string | null>(null);
+	let captureModeFailed = $state(false);
 
 	function formatBytes(bytes: number | null | undefined): string {
 		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
@@ -48,28 +54,59 @@
 
 	async function fetchAll() {
 		loading = true;
-		try {
-			const [health, storage, smart, tshark, cyberchef] = await Promise.all([
-				getSystemHealth(),
-				getStorageStatus(),
-				getSmartHealth(),
-				getTSharkStatus(),
-				getCyberChefStatus(),
-			]);
-			systemHealth = health;
-			storageStatus = storage;
-			smartHealth = smart;
-			tsharkStatus = tshark;
-			cyberchefStatus = cyberchef;
-		} catch {
-			// Keep existing state on error
-		} finally {
-			loading = false;
-		}
+		// OLD CODE START — #96: the getters faked "unhealthy" defaults on failure, and one
+		// failure blanked every card; they now throw, so each card is settled on its own
+		// try {
+		// 	const [health, storage, smart, tshark, cyberchef] = await Promise.all([
+		// 		getSystemHealth(),
+		// 		getStorageStatus(),
+		// 		getSmartHealth(),
+		// 		getTSharkStatus(),
+		// 		getCyberChefStatus(),
+		// 	]);
+		// 	systemHealth = health;
+		// 	storageStatus = storage;
+		// 	smartHealth = smart;
+		// 	tsharkStatus = tshark;
+		// 	cyberchefStatus = cyberchef;
+		// } catch {
+		// 	// Keep existing state on error
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const [health, storage, smart, tshark, cyberchef] = await Promise.allSettled([
+			getSystemHealth(),
+			getStorageStatus(),
+			getSmartHealth(),
+			getTSharkStatus(),
+			getCyberChefStatus(),
+		]);
+		// a failed refresh keeps the last reading; the card says the refresh failed
+		if (health.status === 'fulfilled') systemHealth = health.value;
+		if (storage.status === 'fulfilled') storageStatus = storage.value;
+		if (smart.status === 'fulfilled') smartHealth = smart.value;
+		if (tshark.status === 'fulfilled') tsharkStatus = tshark.value;
+		if (cyberchef.status === 'fulfilled') cyberchefStatus = cyberchef.value;
+		failed = {
+			health: health.status === 'rejected',
+			storage: storage.status === 'rejected',
+			smart: smart.status === 'rejected',
+			tshark: tshark.status === 'rejected',
+			cyberchef: cyberchef.status === 'rejected',
+		};
+		loading = false;
 	}
 
 	$effect(() => {
 		fetchAll();
+		getCaptureMode()
+			.then((m) => {
+				captureModeName = m.mode;
+			})
+			.catch(() => {
+				captureModeFailed = true; // #96: the getter no longer guesses 'bridge'
+			});
 	});
 </script>
 
@@ -116,7 +153,7 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">System Overview</span>
-					{#if systemHealth}
+					{#if systemHealth && !failed.health}
 						<span class={systemHealth.healthy ? 'badge badge-success' : 'badge badge-danger'}>
 							{systemHealth.healthy ? 'Healthy' : 'Degraded'}
 						</span>
@@ -124,6 +161,9 @@
 						<span class="badge">Unknown</span>
 					{/if}
 				</div>
+				{#if failed.health}
+					<p class="text-muted">Couldn't load system health: the request failed.</p>
+				{/if}
 				<div class="info-grid">
 					<div class="info-row">
 						<span class="info-label">Uptime</span>
@@ -142,7 +182,7 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">OpenSearch</span>
-					{#if systemHealth}
+					{#if systemHealth && !failed.health}
 						<span class={systemHealth.opensearch_reachable ? 'badge badge-success' : 'badge badge-danger'}>
 							{systemHealth.opensearch_reachable ? 'Reachable' : 'Unreachable'}
 						</span>
@@ -154,7 +194,9 @@
 					<div class="info-row">
 						<span class="info-label">Status</span>
 						<span class="info-value">
-							{#if systemHealth?.opensearch_reachable}
+							{#if !systemHealth}
+								<span class="text-muted">--</span>
+							{:else if systemHealth.opensearch_reachable}
 								<span class="text-success">Connected</span>
 							{:else}
 								<span class="text-danger">Disconnected</span>
@@ -162,10 +204,16 @@
 						</span>
 					</div>
 					<div class="info-row">
-						<span class="info-label">Indices</span>
-						<span class="info-value mono">
-							{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
-						</span>
+						<!-- data indices only: the storage manager skips OpenSearch's own "." indices (#39) -->
+						<span class="info-label">Data Indices</span>
+						<!-- #96: the daemon sends indices_error (and null counts) when OpenSearch couldn't be asked -->
+						{#if storageStatus?.indices_error}
+							<span class="info-value text-muted" title={storageStatus.indices_error}>Couldn't read indices</span>
+						{:else}
+							<span class="info-value mono">
+								{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
+							</span>
+						{/if}
 					</div>
 				</div>
 				{#if systemHealth && !systemHealth.opensearch_reachable}
@@ -182,18 +230,33 @@
 		</div>
 
 		<!-- Bridge & Failover Status -->
+		<!-- OLD CODE START — rendered (and polled /api/bridge) in every capture mode (2026-10-30)
 		<BridgeStatus />
+		OLD CODE END -->
+		{#if captureModeName === 'bridge'}
+			<BridgeStatus />
+		{:else if captureModeFailed}
+			<div class="card">
+				<p class="text-muted">Couldn't read the capture mode, so bridge status isn't shown.</p>
+			</div>
+		{/if}
 
 		<!-- Storage card (full width) -->
 		<div class="card">
 			<div class="card-header">
 				<span class="card-title">Storage</span>
+				{#if failed.storage}
+					<span class="badge">Unknown</span>
+				{/if}
 				{#if storageStatus}
 					<span class="storage-percent mono" style="color: {diskUsageColor(storageStatus.disk_usage_percent)}">
 						{storageStatus.disk_usage_percent.toFixed(1)}% used
 					</span>
 				{/if}
 			</div>
+			{#if failed.storage}
+				<p class="text-muted">Couldn't load storage status: the request failed.</p>
+			{/if}
 			{#if storageStatus}
 				<div class="storage-bar-container">
 					<div
@@ -232,7 +295,7 @@
 						</div>
 					</div>
 				{/if}
-			{:else}
+			{:else if !failed.storage}
 				<p class="text-muted">Storage data unavailable</p>
 			{/if}
 		</div>
@@ -243,7 +306,9 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Drive Health</span>
-					{#if smartHealth}
+					{#if failed.smart || smartHealth?.healthy === null}
+						<span class="badge">Unknown</span>
+					{:else if smartHealth}
 						<span class={smartHealth.healthy ? 'badge badge-success' : 'badge badge-danger'}>
 							{smartHealth.healthy ? 'Healthy' : 'Degraded'}
 						</span>
@@ -251,6 +316,12 @@
 						<span class="badge">Unknown</span>
 					{/if}
 				</div>
+				{#if failed.smart}
+					<p class="text-muted">Couldn't load drive health: the request failed.</p>
+				{:else if smartHealth?.healthy === null}
+					<!-- #96: the daemon reports healthy: null (with error) when the drive can't be read -->
+					<p class="text-muted">Drive health unknown: {smartHealth.error || 'the drive could not be read.'}</p>
+				{/if}
 				{#if smartHealth && smartHealth.device}
 					<div class="info-grid">
 						<div class="info-row">
@@ -368,7 +439,7 @@
 							{/each}
 						</div>
 					{/if}
-				{:else}
+				{:else if !failed.smart && smartHealth?.healthy !== null}
 					<p class="text-muted">SMART data unavailable. Drive health monitoring requires smartmontools.</p>
 				{/if}
 			</div>
@@ -389,14 +460,18 @@
 							</svg>
 							<div>
 								<span class="service-name">TShark</span>
-								{#if tsharkStatus?.version}
+								{#if failed.tshark}
+									<span class="service-version">couldn't check</span>
+								{:else if tsharkStatus?.version}
 									<span class="service-version mono">{tsharkStatus.version}</span>
 								{:else if tsharkStatus && !tsharkStatus.available}
 									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
-						{#if tsharkStatus}
+						{#if failed.tshark}
+							<span class="badge" title="The status request failed">Unknown</span>
+						{:else if tsharkStatus}
 							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
 								{tsharkStatus.available ? 'Available' : 'Not Deployed'}
 							</span>
@@ -415,14 +490,18 @@
 							</svg>
 							<div>
 								<span class="service-name">CyberChef</span>
-								{#if cyberchefStatus?.version}
+								{#if failed.cyberchef}
+									<span class="service-version">couldn't check</span>
+								{:else if cyberchefStatus?.version}
 									<span class="service-version mono">{cyberchefStatus.version}</span>
 								{:else if cyberchefStatus && !cyberchefStatus.available}
 									<span class="service-version mono">not deployed</span>
 								{/if}
 							</div>
 						</div>
-						{#if cyberchefStatus}
+						{#if failed.cyberchef}
+							<span class="badge" title="The status request failed">Unknown</span>
+						{:else if cyberchefStatus}
 							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
 								{cyberchefStatus.available ? 'Available' : 'Not Deployed'}
 							</span>

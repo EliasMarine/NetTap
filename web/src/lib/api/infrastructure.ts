@@ -60,28 +60,30 @@ export interface LogstashPipeline {
 // Defaults
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CLUSTER: OpenSearchCluster = {
-	status: 'red',
-	number_of_nodes: 0,
-	active_primary_shards: 0,
-	active_shards: 0,
-	unassigned_shards: 0,
-	relocating_shards: 0,
-	pending_tasks: 0,
-	total_docs: 0,
-	total_data_size_bytes: 0,
-};
-
-const DEFAULT_LOGSTASH_STATS: LogstashStats = {
-	events_in: 0,
-	events_out: 0,
-	events_filtered: 0,
-	events_duration_millis: 0,
-	heap_used_bytes: 0,
-	heap_max_bytes: 0,
-	heap_used_percent: 0,
-	cpu_percent: 0,
-};
+// OLD CODE START — #96: returned in place of a failed request; the getters now throw
+// const DEFAULT_CLUSTER: OpenSearchCluster = {
+// 	status: 'red',
+// 	number_of_nodes: 0,
+// 	active_primary_shards: 0,
+// 	active_shards: 0,
+// 	unassigned_shards: 0,
+// 	relocating_shards: 0,
+// 	pending_tasks: 0,
+// 	total_docs: 0,
+// 	total_data_size_bytes: 0,
+// };
+//
+// const DEFAULT_LOGSTASH_STATS: LogstashStats = {
+// 	events_in: 0,
+// 	events_out: 0,
+// 	events_filtered: 0,
+// 	events_duration_millis: 0,
+// 	heap_used_bytes: 0,
+// 	heap_max_bytes: 0,
+// 	heap_used_percent: 0,
+// 	cpu_percent: 0,
+// };
+// OLD CODE END
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,6 +125,23 @@ function normaliseLogstashStats(raw: Record<string, unknown>): LogstashStats {
 	};
 }
 
+/**
+ * Flatten a daemon pipeline entry (`{ id, events: { in, out, filtered, duration_ms } }`)
+ * into the LogstashPipeline shape.
+ */
+function normalisePipeline(raw: Record<string, unknown>): LogstashPipeline {
+	const events = (raw.events ?? {}) as Record<string, unknown>;
+	const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
+	return {
+		...raw,
+		id: String(raw.id ?? ''),
+		events_in: num(events.in),
+		events_out: num(events.out),
+		events_filtered: num(events.filtered),
+		duration_in_millis: num(events.duration_ms),
+	};
+}
+
 // ---------------------------------------------------------------------------
 // OpenSearch fetch helpers
 // ---------------------------------------------------------------------------
@@ -131,30 +150,52 @@ function normaliseLogstashStats(raw: Record<string, unknown>): LogstashStats {
  * Get the OpenSearch cluster health summary.
  */
 export async function getOpenSearchCluster(): Promise<OpenSearchCluster> {
-	try {
-		const res = await fetch('/api/opensearch/cluster');
-		if (!res.ok) {
-			return { ...DEFAULT_CLUSTER };
-		}
-		return res.json();
-	} catch {
-		return { ...DEFAULT_CLUSTER };
+	// OLD CODE START — #96: a failed request read as cluster status "Red" with 0 docs
+	// try {
+	// 	const res = await fetch('/api/opensearch/cluster');
+	// 	if (!res.ok) {
+	// 		return { ...DEFAULT_CLUSTER };
+	// 	}
+	// 	... (body below, unchanged)
+	// } catch {
+	// 	return { ...DEFAULT_CLUSTER };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/opensearch/cluster');
+	if (!res.ok) {
+		throw new Error(`OpenSearch cluster request failed: HTTP ${res.status}`);
 	}
+	// OLD CODE START — the daemon sends `total_size_bytes`, so the page's
+	// `total_data_size_bytes` was always undefined
+	// return res.json();
+	// OLD CODE END
+	const data = await res.json();
+	return {
+		...data,
+		total_data_size_bytes: typeof data.total_size_bytes === 'number' ? data.total_size_bytes : 0,
+	};
 }
 
 /**
  * Get the list of OpenSearch indices with doc counts and sizes.
  */
 export async function getOpenSearchIndices(): Promise<{ indices: OpenSearchIndex[]; count: number }> {
-	try {
-		const res = await fetch('/api/opensearch/indices');
-		if (!res.ok) {
-			return { indices: [], count: 0 };
-		}
-		return res.json();
-	} catch {
-		return { indices: [], count: 0 };
+	// OLD CODE START — #96: a failed request read as "0 active indices"
+	// try {
+	// 	const res = await fetch('/api/opensearch/indices');
+	// 	if (!res.ok) {
+	// 		return { indices: [], count: 0 };
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { indices: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/opensearch/indices');
+	if (!res.ok) {
+		throw new Error(`OpenSearch indices request failed: HTTP ${res.status}`);
 	}
+	return res.json();
 }
 
 /**
@@ -167,7 +208,10 @@ export async function getOpenSearchTemplates(): Promise<unknown[]> {
 			return [];
 		}
 		const data = await res.json();
-		return Array.isArray(data) ? data : [];
+		// OLD CODE START — the daemon wraps the list as `{ templates, count }`, never a bare array
+		// return Array.isArray(data) ? data : [];
+		// OLD CODE END
+		return Array.isArray(data?.templates) ? data.templates : [];
 	} catch {
 		return [];
 	}
@@ -182,21 +226,29 @@ export async function getOpenSearchTemplates(): Promise<unknown[]> {
  * Handles both flat (`events_in`) and nested (`events.in`) response formats.
  */
 export async function getLogstashStats(): Promise<LogstashStats> {
-	try {
-		const res = await fetch('/api/logstash/stats');
-		if (!res.ok) {
-			return { ...DEFAULT_LOGSTASH_STATS };
-		}
-		const raw = await res.json();
-		return normaliseLogstashStats(raw);
-	} catch {
-		return { ...DEFAULT_LOGSTASH_STATS };
+	// OLD CODE START — #96: a failed request read as 0 events, "Idle"
+	// try {
+	// 	const res = await fetch('/api/logstash/stats');
+	// 	if (!res.ok) {
+	// 		return { ...DEFAULT_LOGSTASH_STATS };
+	// 	}
+	// 	const raw = await res.json();
+	// 	return normaliseLogstashStats(raw);
+	// } catch {
+	// 	return { ...DEFAULT_LOGSTASH_STATS };
+	// }
+	// OLD CODE END
+	const res = await fetch('/api/logstash/stats');
+	if (!res.ok) {
+		throw new Error(`Logstash stats request failed: HTTP ${res.status}`);
 	}
+	const raw = await res.json();
+	return normaliseLogstashStats(raw);
 }
 
 /**
- * Get Logstash pipeline details.
- * The daemon may return `{ pipelines: [...] }` or a bare array.
+ * Get Logstash pipeline details, flattened from the daemon's
+ * `{ pipelines: [{ id, events: { in, out, filtered, duration_ms } }] }`.
  */
 export async function getLogstashPipelines(): Promise<LogstashPipeline[]> {
 	try {
@@ -205,13 +257,18 @@ export async function getLogstashPipelines(): Promise<LogstashPipeline[]> {
 			return [];
 		}
 		const data = await res.json();
-		if (Array.isArray(data)) {
-			return data;
-		}
-		if (data && Array.isArray(data.pipelines)) {
-			return data.pipelines;
-		}
-		return [];
+		// OLD CODE START — returned the daemon's nested `events.{in,out,filtered,duration_ms}`
+		// as-is, so the flat fields the page reads were always undefined
+		// if (Array.isArray(data)) {
+		// 	return data;
+		// }
+		// if (data && Array.isArray(data.pipelines)) {
+		// 	return data.pipelines;
+		// }
+		// return [];
+		// OLD CODE END
+		const list: unknown[] = Array.isArray(data?.pipelines) ? data.pipelines : [];
+		return list.map((raw) => normalisePipeline(raw as Record<string, unknown>));
 	} catch {
 		return [];
 	}

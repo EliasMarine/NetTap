@@ -138,6 +138,19 @@ describe('backup API client', () => {
 			expect(result.success).toBe(false);
 			expect(result.errors).toContain('Schema too new');
 		});
+
+		it("throws with the daemon's reason when the import itself fails (500)", async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 500,
+					json: () => Promise.resolve({ error: 'Config import failed: disk full' }),
+				}),
+			);
+
+			await expect(importConfig({ metadata: {}, sections: {} })).rejects.toThrow('Config import failed: disk full');
+		});
 	});
 
 	// -- readConfigFile ---------------------------------------------------

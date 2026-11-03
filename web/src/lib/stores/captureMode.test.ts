@@ -48,6 +48,24 @@ describe('captureMode store', () => {
 		expect(get(captureMode)).toBe('bridge');
 	});
 
+	it('sets dhcp_gateway when API returns dhcp_gateway', async () => {
+		mockGetCaptureMode.mockResolvedValue({ mode: 'dhcp_gateway' });
+
+		const { captureMode, initCaptureMode } = await import('./captureMode');
+		await initCaptureMode();
+
+		expect(get(captureMode)).toBe('dhcp_gateway');
+	});
+
+	it('maps an unknown mode to bridge', async () => {
+		mockGetCaptureMode.mockResolvedValue({ mode: 'something-new' });
+
+		const { captureMode, initCaptureMode } = await import('./captureMode');
+		await initCaptureMode();
+
+		expect(get(captureMode)).toBe('bridge');
+	});
+
 	it('falls back to bridge on error', async () => {
 		mockGetCaptureMode.mockRejectedValue(new Error('Network error'));
 

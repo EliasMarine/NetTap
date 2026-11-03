@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
+	import { fetchCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
+	import { getUnifiStatus } from '$lib/api/unifi';
+	import { loadFailed } from '$lib/utils/load-failed';
+	import { formatDuration } from '$lib/utils/tshark-helpers';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -15,6 +18,8 @@
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
+	// a failed load leaves blank fields; saving them would wipe the real config
+	let notifLoadFailed = $state(false);
 	let testingSending = $state(false);
 	let testMessage = $state('');
 	let testError = $state(false);
@@ -29,14 +34,19 @@
 	});
 	let diskUsage = $state<number | null>(null);
 	let lastPruneAt = $state<string | null>(null);
+	let storageStatusFailed = $state(false);
 	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
+	// Save stays off until the real values load, so defaults can't overwrite them
+	let retentionLoad = $state<'loading' | 'ok' | 'failed'>('loading');
 
 	// --- Manual Cleanup state ---
 	let cleanupDays = $state(60);
 	let cleanupPreview = $state<CleanupPreview | null>(null);
+	// Days the shown preview was computed for — the delete must use these, not the live input
+	let cleanupPreviewDays = $state<number | null>(null);
 	let cleanupPreviewing = $state(false);
 	let cleanupExecuting = $state(false);
 	let showCleanupConfirm = $state(false);
@@ -50,6 +60,7 @@
 	let networkMessage = $state('');
 	let networkError = $state(false);
 	let networkLoading = $state(true);
+	let networkLoadFailed = $state(false);
 
 	// --- API Keys state ---
 	let apiKeysStatus = $state<Record<string, boolean>>({});
@@ -63,9 +74,11 @@
 	// --- Capture state ---
 	let captureEnabled = $state(true);
 	let captureMaxFileSize = $state(100);
+	let captureRotateMinutes = $state<number | null>(null);
 	let captureContainerRunning = $state(false);
 	let captureContainerStatus = $state('unknown');
 	let captureLoading = $state(true);
+	let captureLoadFailed = $state(false);
 	let captureToggling = $state(false);
 	let captureSaving = $state(false);
 	let captureMessage = $state('');
@@ -88,6 +101,8 @@
 	let unifiCacheCounts = $state<{ clients: number; devices: number } | null>(null);
 	let unifiLastPoll = $state<string | null>(null);
 	let unifiLoading = $state(true);
+	// #96: a failed status read used to show the form as "not configured"
+	let unifiStatusFailed = $state(false);
 	let unifiSaving = $state(false);
 	let unifiTesting = $state(false);
 	let unifiMessage = $state('');
@@ -108,10 +123,13 @@
 				emailEnabled = data.email?.enabled ?? false;
 				emailAddress = data.email?.recipients?.[0] ?? '';
 				webhookUrl = data.webhook?.url ?? '';
+				notifLoadFailed = false;
+				return;
 			}
 		} catch {
-			// Will use defaults
+			// Falls through to failed
 		}
+		notifLoadFailed = true;
 	}
 
 	async function loadRetention() {
@@ -119,17 +137,23 @@
 			const res = await fetch('/api/setup/storage');
 			if (res.ok) {
 				const data = await res.json();
-				// GET /api/setup/storage returns a FLAT StorageStatus object
-				// (hot_days, warm_days, etc. are top-level, not nested under retention)
-				retentionConfig.hot_days = data.hot_days ?? 90;
-				retentionConfig.warm_days = data.warm_days ?? 180;
-				retentionConfig.cold_days = data.cold_days ?? 30;
-				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+				// source 'mock' = the daemon didn't answer and these are built-in defaults
+				if (data.source !== 'mock') {
+					// GET /api/setup/storage returns a FLAT StorageStatus object
+					// (hot_days, warm_days, etc. are top-level, not nested under retention)
+					retentionConfig.hot_days = data.hot_days ?? 90;
+					retentionConfig.warm_days = data.warm_days ?? 180;
+					retentionConfig.cold_days = data.cold_days ?? 30;
+					retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+					retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+					retentionLoad = 'ok';
+					return;
+				}
 			}
 		} catch {
-			// Will use defaults
+			// Falls through to 'failed'
 		}
+		retentionLoad = 'failed';
 	}
 
 	async function loadDiskUsage() {
@@ -140,10 +164,15 @@
 				diskUsage = data.disk_usage_percent ?? data.usage_percent ?? null;
 				lastPruneAt = data.last_prune_at ?? null;
 				ilmStatus = data.ilm_status ?? null;
+				storageStatusFailed = false;
+				return;
 			}
 		} catch {
-			// Will stay null
+			// OLD CODE START — a failure left "Loading...", "Never (daemon starting...)" and a Problem badge
+			// // Will stay null
+			// OLD CODE END
 		}
+		storageStatusFailed = true;
 	}
 
 	// --- Retention health helpers ---
@@ -166,8 +195,12 @@
 		const diskHigh = diskPct >= (retentionConfig.disk_threshold ?? 80);
 		const diskCritical = diskPct >= (retentionConfig.emergency_threshold ?? 90);
 
-		let status: 'healthy' | 'attention' | 'problem' = 'healthy';
-		if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
+		// OLD CODE START — a failed status read scored as a Problem
+		// let status: 'healthy' | 'attention' | 'problem' = 'healthy';
+		// OLD CODE END
+		let status: 'healthy' | 'attention' | 'problem' | 'unknown' = 'healthy';
+		if (storageStatusFailed) status = 'unknown';
+		else if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
 		else if (ilmPending || diskHigh || !pruneOk) status = 'attention';
 
 		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
@@ -179,13 +212,28 @@
 				fetch('/api/system/health'),
 				fetch('/api/system/versions'),
 			]);
+			// OLD CODE START — 2026-11-02: showed raw seconds ("21970.08") and a
+			// hardcoded '0.3.0' (the API returns { versions: [...] }, no top-level version)
+			// if (healthRes.ok) {
+			// 	const data = await healthRes.json();
+			// 	uptime = data.uptime ?? 'Unknown';
+			// }
+			// if (versionsRes.ok) {
+			// 	const data = await versionsRes.json();
+			// 	version = data.nettap ?? data.version ?? '0.3.0';
+			// 	buildInfo = data.build ?? data.commit ?? 'Development build';
+			// }
+			// OLD CODE END
 			if (healthRes.ok) {
 				const data = await healthRes.json();
-				uptime = data.uptime ?? 'Unknown';
+				uptime = typeof data.uptime === 'number' ? formatDuration(data.uptime) : 'Unknown';
 			}
 			if (versionsRes.ok) {
 				const data = await versionsRes.json();
-				version = data.nettap ?? data.version ?? '0.3.0';
+				const daemon = (data.versions ?? []).find(
+					(v: { name?: string }) => v.name === 'nettap-daemon'
+				);
+				version = daemon?.current_version ?? 'Unknown';
 				buildInfo = data.build ?? data.commit ?? 'Development build';
 			}
 		} catch {
@@ -214,9 +262,12 @@
 			if (res.ok) {
 				const data = await res.json();
 				excludedIps = data.excluded_ips ?? [];
+				networkLoadFailed = false;
+				return;
 			}
+			networkLoadFailed = true;
 		} catch {
-			// Will use empty default
+			networkLoadFailed = true;
 		} finally {
 			networkLoading = false;
 		}
@@ -333,13 +384,15 @@
 	async function loadCaptureSettings() {
 		captureLoading = true;
 		try {
-			const status = await getCaptureStatus();
+			const status = await fetchCaptureStatus();
+			captureLoadFailed = false;
 			captureEnabled = status.enabled;
 			captureMaxFileSize = status.maxFileSizeMB;
+			captureRotateMinutes = status.rotateMinutes ?? null;
 			captureContainerRunning = status.containerRunning;
 			captureContainerStatus = status.containerStatus;
 		} catch {
-			// Will use defaults
+			captureLoadFailed = true;
 		} finally {
 			captureLoading = false;
 		}
@@ -382,21 +435,49 @@
 	}
 
 	// --- UniFi functions ---
+	// OLD CODE START — read `last_poll`, which the daemon never sends (it sends
+	// `last_poll_time` in epoch seconds), so "Last Poll" never showed
+	// async function loadUnifiStatus() {
+	// 	unifiLoading = true;
+	// 	try {
+	// 		const res = await fetch('/api/integrations/unifi/status');
+	// 		if (res.ok) {
+	// 			const data = await res.json();
+	// 			unifiConfigured = data.configured ?? false;
+	// 			unifiControllerUrl = data.controller_url ?? '';
+	// 			unifiConnected = data.connected ?? false;
+	// 			unifiCacheCounts = data.cache_counts ?? null;
+	// 			unifiLastPoll = data.last_poll ?? null;
+	// 			if (data.site_id) unifiSiteId = data.site_id;
+	// 		}
+	// 	} catch {
+	// 		// Will use defaults
+	// 	} finally {
+	// 		unifiLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	function unifiPollIso(epochSeconds: unknown): string | null {
+		return typeof epochSeconds === 'number' && epochSeconds > 0
+			? new Date(epochSeconds * 1000).toISOString()
+			: null;
+	}
+
 	async function loadUnifiStatus() {
 		unifiLoading = true;
 		try {
-			const res = await fetch('/api/integrations/unifi/status');
-			if (res.ok) {
-				const data = await res.json();
-				unifiConfigured = data.configured ?? false;
-				unifiControllerUrl = data.controller_url ?? '';
-				unifiConnected = data.connected ?? false;
-				unifiCacheCounts = data.cache_counts ?? null;
-				unifiLastPoll = data.last_poll ?? null;
-				if (data.site_id) unifiSiteId = data.site_id;
-			}
+			const status = await getUnifiStatus();
+			unifiConfigured = status.configured;
+			unifiControllerUrl = status.controller_url ?? '';
+			unifiConnected = status.connected;
+			unifiCacheCounts = status.configured
+				? { clients: status.cache_counts.clients ?? 0, devices: status.cache_counts.devices ?? 0 }
+				: null;
+			unifiLastPoll = unifiPollIso(status.last_poll_time);
+			if (status.site_id) unifiSiteId = status.site_id;
+			unifiStatusFailed = false;
 		} catch {
-			// Will use defaults
+			unifiStatusFailed = true;
 		} finally {
 			unifiLoading = false;
 		}
@@ -443,8 +524,15 @@
 			if (unifiApiKey.trim()) {
 				payload.api_key = unifiApiKey.trim();
 			}
-			if (unifiSiteId) {
-				payload.site_id = unifiSiteId;
+			// OLD CODE START — a whitespace-only site id was posted as-is
+			// if (unifiSiteId) {
+			// 	payload.site_id = unifiSiteId;
+			// }
+			// OLD CODE END
+			// Omit site_id when blank so the daemon keeps the saved site
+			const siteId = unifiSiteId.trim();
+			if (siteId) {
+				payload.site_id = siteId;
 			}
 
 			const res = await fetch('/api/integrations/unifi/configure', {
@@ -485,9 +573,12 @@
 				if (data.status?.cache_counts) {
 					unifiCacheCounts = data.status.cache_counts;
 				}
-				if (data.status?.last_poll) {
-					unifiLastPoll = data.status.last_poll;
-				}
+				// OLD CODE START — `last_poll` is not a daemon field
+				// if (data.status?.last_poll) {
+				// 	unifiLastPoll = data.status.last_poll;
+				// }
+				// OLD CODE END
+				unifiLastPoll = unifiPollIso(data.status?.last_poll_time) ?? unifiLastPoll;
 				// Fetch available sites
 				await loadUnifiSites();
 			} else {
@@ -606,12 +697,21 @@
 					retentionMessage = 'Retention settings saved. OpenSearch policies will sync shortly.';
 				}
 			} else {
-				const data = await res.json();
-				retentionMessage = data.error || 'Failed to save configuration.';
+				// OLD CODE START — didn't separate "not saved" from "may have been saved"
+				// const data = await res.json();
+				// retentionMessage = data.error || 'Failed to save configuration.';
+				// OLD CODE END
+				const data = await res.json().catch(() => ({}));
+				retentionMessage = data.outcome_unknown
+					? `Outcome unknown — check again. ${data.error ?? ''} Reload this page to see whether the settings were saved.`
+					: `Not saved: ${data.error || `HTTP ${res.status}`}`;
 				retentionError = true;
 			}
 		} catch {
-			retentionMessage = 'Failed to connect to server.';
+			// OLD CODE START
+			// retentionMessage = 'Failed to connect to server.';
+			// OLD CODE END
+			retentionMessage = 'Not saved: could not reach the NetTap server.';
 			retentionError = true;
 		} finally {
 			retentionSaving = false;
@@ -631,10 +731,17 @@
 		cleanupMessage = '';
 		cleanupError = false;
 		cleanupPreview = null;
+		cleanupPreviewDays = null;
 		showCleanupConfirm = false;
 
+		const days = cleanupDays;
 		try {
-			cleanupPreview = await previewCleanup(cleanupDays);
+			// OLD CODE START — preview and execute both read the live input, so editing
+			// the days after previewing deleted a different range than the one shown
+			// cleanupPreview = await previewCleanup(cleanupDays);
+			// OLD CODE END
+			cleanupPreview = await previewCleanup(days);
+			cleanupPreviewDays = days;
 		} catch (err: unknown) {
 			cleanupMessage = err instanceof Error ? err.message : 'Failed to preview cleanup';
 			cleanupError = true;
@@ -644,12 +751,16 @@
 	}
 
 	async function handleCleanupExecute() {
+		if (cleanupPreviewDays === null) return;
 		cleanupExecuting = true;
 		cleanupMessage = '';
 		cleanupError = false;
 
 		try {
-			const result = await executeCleanup(cleanupDays);
+			// OLD CODE START — used the live input instead of the previewed days
+			// const result = await executeCleanup(cleanupDays);
+			// OLD CODE END
+			const result = await executeCleanup(cleanupPreviewDays);
 			const freedStr = formatCleanupBytes(result.freed_bytes_estimate);
 			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
 			if (result.errors.length > 0) {
@@ -657,6 +768,7 @@
 			}
 			cleanupError = false;
 			cleanupPreview = null;
+			cleanupPreviewDays = null;
 			showCleanupConfirm = false;
 
 			// Refresh disk usage
@@ -680,6 +792,7 @@
 	function cancelCleanup() {
 		showCleanupConfirm = false;
 		cleanupPreview = null;
+		cleanupPreviewDays = null;
 		cleanupMessage = '';
 	}
 
@@ -785,6 +898,12 @@
 					<span class="card-title">Notification Preferences</span>
 				</div>
 
+				{#if notifLoadFailed}
+					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+						Could not load the current notification settings, so saving is off. Reload the page to try again.
+					</div>
+				{/if}
+
 				{#if notifMessage}
 					<div class="alert {notifError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
 						{notifMessage}
@@ -836,7 +955,7 @@
 				</div>
 
 				<div class="btn-row">
-					<button class="btn btn-primary" onclick={saveNotifications} disabled={notifSaving}>
+					<button class="btn btn-primary" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
 						{notifSaving ? 'Saving...' : 'Save Notification Settings'}
 					</button>
 					<button class="btn btn-secondary" onclick={sendTestNotification} disabled={testingSending}>
@@ -861,20 +980,32 @@
 					<span class="card-title">Retention Health</span>
 					<span class="health-badge health-{retentionHealth.status}">
 						<span class="health-dot"></span>
+						<!-- OLD CODE START — no unknown state
 						{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
+						OLD CODE END -->
+						{{ healthy: 'Healthy', attention: 'Attention', problem: 'Problem', unknown: 'Unknown' }[retentionHealth.status]}
 					</span>
 				</div>
 
+				{#if storageStatusFailed}
+					<p class="text-warning">{loadFailed('the storage status', ilmStatus !== null || lastPruneAt !== null)}</p>
+				{/if}
 				<div class="health-rows">
 					<div class="health-row">
 						<span class="health-label">ILM Policies</span>
 						<span class="health-value">
-							{#if ilmStatus === null}
+							{#if ilmStatus === null && storageStatusFailed}
+								<span class="text-muted">Unknown</span>
+							{:else if ilmStatus === null}
 								<span class="text-muted">Loading...</span>
 							{:else if retentionHealth.ilmPending}
 								<span style="color: var(--amber);">&#x27f3; Syncing...</span>
 							{:else if retentionHealth.ilmOk}
+								<!-- OLD CODE START — 2026-11-02: read "All 1 synced" with one policy
 								<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
+								OLD CODE END -->
+								{@const policyCount = Object.keys(ilmStatus.policies).length}
+								<span style="color: var(--green);">&#x2713; {policyCount === 1 ? 'Policy synced' : `${policyCount || 'All'} policies synced`}</span>
 							{:else}
 								<span style="color: var(--red);">&#x2717; Out of sync</span>
 							{/if}
@@ -900,6 +1031,8 @@
 								<span class="mono" style="color: {retentionHealth.pruneStale ? 'var(--red)' : retentionHealth.pruneOk ? 'var(--green)' : 'var(--amber)'}">
 									{timeAgo(lastPruneAt)}
 								</span>
+							{:else if storageStatusFailed}
+								<span class="text-muted">Unknown</span>
 							{:else}
 								<span class="text-muted">Never (daemon starting...)</span>
 							{/if}
@@ -913,6 +1046,12 @@
 					<span class="card-title">Data Retention Policy</span>
 				</div>
 
+				{#if retentionLoad === 'failed'}
+					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+						Could not load the current retention settings, so saving is off. Reload the page to try again.
+					</div>
+				{/if}
+
 				{#if retentionMessage}
 					<div class="alert {retentionError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
 						{retentionMessage}
@@ -921,20 +1060,33 @@
 
 				<div class="retention-grid">
 					<div class="form-group">
+						<!-- OLD CODE START — 2026-11-02: Malcolm writes Zeek and Suricata to one daily
+						     arkime_sessions3 index, so this setting governs alerts too
 						<label class="label" for="hot-days">Hot Tier (Zeek metadata)</label>
+						OLD CODE END -->
+						<label class="label" for="hot-days">Hot Tier (Zeek metadata and Suricata alerts)</label>
 						<div class="input-with-unit">
 							<input class="input" id="hot-days" type="number" bind:value={retentionConfig.hot_days} min={7} max={365} />
 							<span class="input-unit">days</span>
 						</div>
+						<!-- OLD CODE START
 						<p class="field-help">Structured metadata logs from Zeek.</p>
+						OLD CODE END -->
+						<p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days.</p>
 					</div>
 					<div class="form-group">
+						<!-- OLD CODE START — 2026-11-02: no Malcolm index is warm; alerts follow the Hot tier
 						<label class="label" for="warm-days">Warm Tier (Suricata alerts)</label>
+						OLD CODE END -->
+						<label class="label" for="warm-days">Warm Tier (separate Suricata indices)</label>
 						<div class="input-with-unit">
 							<input class="input" id="warm-days" type="number" bind:value={retentionConfig.warm_days} min={7} max={730} />
 							<span class="input-unit">days</span>
 						</div>
+						<!-- OLD CODE START
 						<p class="field-help">IDS alerts and rule matches.</p>
+						OLD CODE END -->
+						<p class="field-help">Applies only to separate <code>suricata-*</code> indices, which this install doesn't create. Alerts follow the Hot tier.</p>
 					</div>
 					<div class="form-group">
 						<label class="label" for="cold-days">Cold Tier (PCAP files)</label>
@@ -942,7 +1094,10 @@
 							<input class="input" id="cold-days" type="number" bind:value={retentionConfig.cold_days} min={1} max={365} />
 							<span class="input-unit">days</span>
 						</div>
+						<!-- OLD CODE START — 2026-11-02: capture is continuous, not alert-triggered
 						<p class="field-help">Raw packet captures (alert-triggered).</p>
+						OLD CODE END -->
+						<p class="field-help">Raw packet captures of all traffic. The oldest files also go once PCAP passes its share of the disk.</p>
 					</div>
 				</div>
 
@@ -983,7 +1138,7 @@
 					</div>
 				{/if}
 
-				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving}>
+				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving || retentionLoad !== 'ok'}>
 					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
 				</button>
 			</div>
@@ -1007,6 +1162,7 @@
 			<div class="cleanup-input-row">
 				<span class="cleanup-label">Delete data older than</span>
 				<div class="input-with-unit" style="width: 120px;">
+					<!-- OLD CODE START — editing the days left the old preview (and its Delete button) on screen
 					<input
 						class="input"
 						type="number"
@@ -1014,6 +1170,17 @@
 						min={1}
 						max={3650}
 						disabled={cleanupExecuting}
+					/>
+					OLD CODE END -->
+					<input
+						class="input"
+						type="number"
+						aria-label="Delete data older than (days)"
+						bind:value={cleanupDays}
+						oninput={cancelCleanup}
+						min={1}
+						max={3650}
+						disabled={cleanupExecuting || cleanupPreviewing}
 					/>
 					<span class="input-unit">days</span>
 				</div>
@@ -1049,7 +1216,7 @@
 					</div>
 
 					{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
-						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupDays} days.</p>
+						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupPreviewDays} days.</p>
 					{:else}
 						<div class="cleanup-confirm-section">
 							{#if !showCleanupConfirm}
@@ -1099,6 +1266,10 @@
 
 				{#if captureLoading}
 					<p class="text-muted">Loading capture settings...</p>
+				{:else if captureLoadFailed}
+					<div class="alert alert-danger">
+						Could not load the current capture settings, so changes are off. Reload the page to try again.
+					</div>
 				{:else}
 					<!-- Status card -->
 					<div class="capture-status-card" style="margin-bottom: var(--space-lg);">
@@ -1122,7 +1293,20 @@
 							>
 								<span class="capture-toggle-knob" class:loading={captureToggling}></span>
 							</button>
+							<!-- OLD CODE START — claimed "capturing packets" even with the container stopped
 							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
+							OLD CODE END -->
+							<span class="capture-toggle-label">
+								{#if !captureEnabled}
+									Disabled — no new captures
+								{:else if captureContainerRunning}
+									Enabled — capturing packets
+								{:else if captureContainerStatus === 'unknown'}
+									Enabled — capture status unknown
+								{:else}
+									Enabled — capture container not running
+								{/if}
+							</span>
 						</div>
 						<p class="field-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
 					</div>
@@ -1141,7 +1325,12 @@
 							/>
 							<span class="input-unit">MB</span>
 						</div>
+						<!-- OLD CODE START — 2026-11-02: the 100 MB default was never what netsniff used
 						<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
+						OLD CODE END -->
+						<p class="field-help">
+							A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MB.
+						</p>
 					</div>
 
 					<button class="btn btn-primary" onclick={saveCaptureSettings} disabled={captureSaving}>
@@ -1360,6 +1549,10 @@
 
 				{#if networkLoading}
 					<p class="text-muted">Loading...</p>
+				{:else if networkLoadFailed}
+					<div class="alert alert-danger">
+						Could not load the excluded IP list, so changes are off. Reload the page to try again.
+					</div>
 				{:else}
 					<div class="excluded-ip-input-row">
 						<input
@@ -1420,6 +1613,9 @@
 				{#if unifiLoading}
 					<p class="text-muted">Loading UniFi status...</p>
 				{:else}
+					{#if unifiStatusFailed}
+						<p class="text-warning">{loadFailed('the UniFi status')} The controller may already be set up.</p>
+					{/if}
 					<!-- Connection Status Card (only shown when configured) -->
 					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
 						<div class="unifi-status-card">
@@ -1595,7 +1791,8 @@
 					</div>
 					<div class="about-row">
 						<span class="about-label">Stack</span>
-						<span class="about-value">Zeek + Suricata + Arkime + OpenSearch</span>
+						<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
+						<span class="about-value">Zeek + Suricata + OpenSearch</span>
 					</div>
 					<div class="about-row">
 						<span class="about-label">Build</span>
@@ -1623,9 +1820,11 @@
 		gap: var(--space-lg);
 	}
 
+	/* OLD CODE START — 2026-11-02: pages are always full width (design system rule 4, #67)
 	.settings-section {
 		max-width: 720px;
 	}
+	OLD CODE END */
 
 	.field-help {
 		font-size: var(--text-xs);
@@ -2184,6 +2383,13 @@
 	.health-problem .health-dot {
 		background: var(--red);
 		box-shadow: 0 0 6px var(--red);
+	}
+	.health-unknown {
+		color: var(--text-muted);
+		background: var(--bg-elevated);
+	}
+	.health-unknown .health-dot {
+		background: var(--text-dim);
 	}
 
 	.health-rows {

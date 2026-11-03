@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	getCaptureMode,
+	fetchCaptureMode,
 	getCaptureHealth,
 	getCaptureStats,
 	getCaptureStatus,
+	fetchCaptureStatus,
 	toggleCapture,
 	updateCaptureSettings,
+	captureState,
 } from './capture';
 
 // ---------------------------------------------------------------------------
@@ -62,22 +65,86 @@ describe('capture API client', () => {
 			expect(result.interface).toBe('enp2s0');
 		});
 
-		it('returns bridge fallback on HTTP error', async () => {
+		it('throws on HTTP error instead of guessing bridge', async () => {
 			mockFetchFailure(503);
 
-			const result = await getCaptureMode();
-
-			expect(result.mode).toBe('bridge');
-			expect(result.interface).toBe('');
+			await expect(getCaptureMode()).rejects.toThrow('HTTP 503');
 		});
 
-		it('returns bridge fallback on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getCaptureMode();
+			await expect(getCaptureMode()).rejects.toThrow();
+		});
+	});
 
-			expect(result.mode).toBe('bridge');
-			expect(result.interface).toBe('');
+	// -- fetchCaptureMode -----------------------------------------------------
+
+	describe('fetchCaptureMode', () => {
+		it('returns the mode on success', async () => {
+			mockFetchSuccess({ mode: 'dhcp_gateway', interface: 'enp1s0' });
+
+			await expect(fetchCaptureMode()).resolves.toEqual({ mode: 'dhcp_gateway', interface: 'enp1s0' });
+		});
+
+		it('throws the daemon error instead of guessing bridge', async () => {
+			mockFetchSuccess({ error: 'Daemon unreachable: ECONNREFUSED' }, 502);
+
+			await expect(fetchCaptureMode()).rejects.toThrow('Daemon unreachable: ECONNREFUSED');
+		});
+
+		it('throws HTTP <status> when the error body is not JSON', async () => {
+			mockFetchFailure(503);
+
+			await expect(fetchCaptureMode()).rejects.toThrow('HTTP 503');
+		});
+
+		it('throws on a network error', async () => {
+			mockFetchReject();
+
+			await expect(fetchCaptureMode()).rejects.toThrow('network error');
+		});
+
+		it('throws when the response has no mode', async () => {
+			mockFetchSuccess({ error: 'Failed to parse daemon response' });
+
+			await expect(fetchCaptureMode()).rejects.toThrow(/no mode/);
+		});
+	});
+
+	// -- fetchCaptureStatus ---------------------------------------------------
+
+	describe('fetchCaptureStatus', () => {
+		const STATUS = { enabled: true, maxFileSizeMB: 4096, rotateMinutes: 10, containerRunning: true, containerStatus: 'running' };
+
+		it('returns the status on success', async () => {
+			mockFetchSuccess(STATUS);
+
+			await expect(fetchCaptureStatus()).resolves.toEqual(STATUS);
+		});
+
+		it('throws the daemon error instead of returning a guessed 100 MB', async () => {
+			mockFetchSuccess({ error: 'Daemon unreachable: ECONNREFUSED' }, 502);
+
+			await expect(fetchCaptureStatus()).rejects.toThrow('Daemon unreachable: ECONNREFUSED');
+		});
+
+		it('throws HTTP <status> when the error body is not JSON', async () => {
+			mockFetchFailure(503);
+
+			await expect(fetchCaptureStatus()).rejects.toThrow('HTTP 503');
+		});
+
+		it('throws on a network error', async () => {
+			mockFetchReject();
+
+			await expect(fetchCaptureStatus()).rejects.toThrow('network error');
+		});
+
+		it('throws when the response has no file size', async () => {
+			mockFetchSuccess({ enabled: true });
+
+			await expect(fetchCaptureStatus()).rejects.toThrow(/incomplete/);
 		});
 	});
 
@@ -103,22 +170,16 @@ describe('capture API client', () => {
 			expect(result.issues).toEqual([]);
 		});
 
-		it('returns down fallback on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting capture down', async () => {
 			mockFetchFailure(500);
 
-			const result = await getCaptureHealth();
-
-			expect(result.status).toBe('down');
-			expect(result.link_up).toBe(false);
-			expect(result.issues).toHaveLength(1);
+			await expect(getCaptureHealth()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns down fallback on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getCaptureHealth();
-
-			expect(result.status).toBe('down');
+			await expect(getCaptureHealth()).rejects.toThrow();
 		});
 	});
 
@@ -147,24 +208,16 @@ describe('capture API client', () => {
 			expect(result.drop_rate_pct).toBe(0.05);
 		});
 
-		it('returns zeros on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting zero drops', async () => {
 			mockFetchFailure(500);
 
-			const result = await getCaptureStats();
-
-			expect(result.rx_bytes).toBe(0);
-			expect(result.tx_bytes).toBe(0);
-			expect(result.rx_packets).toBe(0);
-			expect(result.rx_dropped).toBe(0);
+			await expect(getCaptureStats()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns zeros on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getCaptureStats();
-
-			expect(result.rx_bytes).toBe(0);
-			expect(result.capture_interface).toBe('');
+			await expect(getCaptureStats()).rejects.toThrow();
 		});
 	});
 
@@ -197,6 +250,37 @@ describe('capture API client', () => {
 			expect(result.maxFileSizeMB).toBe(100);
 			expect(result.containerRunning).toBe(false);
 			expect(result.containerStatus).toBe('unknown');
+		});
+
+		it('maps the failure default to the unknown capture state, not active', async () => {
+			mockFetchReject();
+
+			expect(captureState(await getCaptureStatus())).toBe('unknown');
+		});
+	});
+
+	// -- captureState ---------------------------------------------------------
+
+	describe('captureState', () => {
+		const base = { enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' };
+
+		it('is active only when enabled and the container is running', () => {
+			expect(captureState(base)).toBe('active');
+		});
+
+		it('is stopped when enabled but the container is not running', () => {
+			expect(captureState({ ...base, containerRunning: false, containerStatus: 'exited' })).toBe('stopped');
+		});
+
+		it('is stopped when disabled', () => {
+			expect(captureState({ ...base, enabled: false, containerRunning: false, containerStatus: 'exited' })).toBe(
+				'stopped',
+			);
+		});
+
+		it('is unknown when the status could not be read', () => {
+			expect(captureState(null)).toBe('unknown');
+			expect(captureState({ ...base, containerRunning: false, containerStatus: 'unknown' })).toBe('unknown');
 		});
 	});
 

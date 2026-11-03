@@ -6,8 +6,15 @@ transition, policy structure (states, rollover, ism_template), and
 retry config consistency.
 """
 
+import json
+from pathlib import Path
+
 from storage.ilm_generator import generate_ilm_policies
 from storage.manager import RetentionConfig
+
+STATIC_POLICY_FILE = (
+    Path(__file__).resolve().parents[2] / "config" / "opensearch" / "ilm-policy.json"
+)
 
 
 # =========================================================================
@@ -15,16 +22,18 @@ from storage.manager import RetentionConfig
 # =========================================================================
 
 
-class TestGeneratesThreePolicies:
-    def test_generates_three_policies(self):
-        """generate_ilm_policies() returns exactly 3 policies with correct names."""
-        config = RetentionConfig()
-        policies = generate_ilm_policies(config)
-        assert len(policies) == 3
-        assert "nettap-hot-policy" in policies
-        assert "nettap-warm-policy" in policies
-        assert "nettap-cold-policy" in policies
-
+# OLD CODE START — expected three policies (CR-017/CR-038).
+# class TestGeneratesThreePolicies:
+#     def test_generates_three_policies(self):
+#         """generate_ilm_policies() returns exactly 3 policies with correct names."""
+#         config = RetentionConfig()
+#         policies = generate_ilm_policies(config)
+#         assert len(policies) == 3
+#         assert "nettap-hot-policy" in policies
+#         assert "nettap-warm-policy" in policies
+#         assert "nettap-cold-policy" in policies
+#
+# OLD CODE END
 
 # =========================================================================
 # Per-tier retention days
@@ -44,143 +53,154 @@ class TestHotPolicy:
         assert transition["conditions"]["min_index_age"] == "45d"
         assert transition["state_name"] == "delete"
 
-    def test_hot_policy_structure(self):
-        """Verify hot policy state names, rollover size, retry, ism_template."""
-        config = RetentionConfig()
-        hot = generate_ilm_policies(config)["nettap-hot-policy"]["policy"]
-
-        state_names = [s["name"] for s in hot["states"]]
-        assert state_names == ["hot", "delete"]
-        assert hot["default_state"] == "hot"
-
-        # Rollover config
-        hot_state = hot["states"][0]
-        rollover = hot_state["actions"][0]["rollover"]
-        assert rollover["min_primary_shard_size"] == "10gb"
-        assert rollover["min_index_age"] == "1d"
-
-        # ISM template
-        assert hot["ism_template"][0]["index_patterns"] == ["zeek-*"]
-        assert hot["ism_template"][0]["priority"] == 100
-
-
-class TestWarmPolicy:
-    def test_warm_policy_uses_config_days(self):
-        """Custom warm_days appears in the warm policy's delete transition."""
-        config = RetentionConfig(warm_days=100)
-        policies = generate_ilm_policies(config)
-        warm = policies["nettap-warm-policy"]["policy"]
-
-        # The warm state transitions to delete at warm_days
-        warm_state = next(s for s in warm["states"] if s["name"] == "warm")
-        transition = warm_state["transitions"][0]
-        assert transition["conditions"]["min_index_age"] == "100d"
-        assert transition["state_name"] == "delete"
-
-    def test_warm_transition_stays_7d(self):
-        """The hot->warm transition is always '7d' regardless of config."""
-        config = RetentionConfig(warm_days=365)
-        warm = generate_ilm_policies(config)["nettap-warm-policy"]["policy"]
-
-        hot_state = next(s for s in warm["states"] if s["name"] == "hot")
-        transition = hot_state["transitions"][0]
-        assert transition["conditions"]["min_index_age"] == "7d"
-        assert transition["state_name"] == "warm"
-
-    def test_warm_policy_structure(self):
-        """3 states (hot/warm/delete), force_merge + read_only in warm state."""
-        config = RetentionConfig()
-        warm = generate_ilm_policies(config)["nettap-warm-policy"]["policy"]
-
-        state_names = [s["name"] for s in warm["states"]]
-        assert state_names == ["hot", "warm", "delete"]
-
-        # Warm state actions
-        warm_state = next(s for s in warm["states"] if s["name"] == "warm")
-        action_keys = [
-            list(set(a.keys()) - {"retry"})[0] for a in warm_state["actions"]
-        ]
-        assert "force_merge" in action_keys
-        assert "read_only" in action_keys
-
-        # ISM template
-        assert warm["ism_template"][0]["index_patterns"] == ["suricata-*"]
+    # OLD CODE START — asserted the rollover action and zeek-* only template (CR-017).
+    # def test_hot_policy_structure(self):
+    #     """Verify hot policy state names, rollover size, retry, ism_template."""
+    #     config = RetentionConfig()
+    #     hot = generate_ilm_policies(config)["nettap-hot-policy"]["policy"]
+    #
+    #     state_names = [s["name"] for s in hot["states"]]
+    #     assert state_names == ["hot", "delete"]
+    #     assert hot["default_state"] == "hot"
+    #
+    #     # Rollover config
+    #     hot_state = hot["states"][0]
+    #     rollover = hot_state["actions"][0]["rollover"]
+    #     assert rollover["min_primary_shard_size"] == "10gb"
+    #     assert rollover["min_index_age"] == "1d"
+    #
+    #     # ISM template
+    #     assert hot["ism_template"][0]["index_patterns"] == ["zeek-*"]
+    #     assert hot["ism_template"][0]["priority"] == 100
+    # OLD CODE END
 
 
-class TestColdPolicy:
-    def test_cold_policy_uses_config_days(self):
-        """Custom cold_days appears in the cold policy's delete transition."""
-        config = RetentionConfig(cold_days=7)
-        policies = generate_ilm_policies(config)
-        cold = policies["nettap-cold-policy"]["policy"]
+# OLD CODE START — warm/cold policies and rollover matched no Malcolm
+# index; one rollover-free network policy replaces them (CR-017/CR-038).
+# class TestWarmPolicy:
+#     def test_warm_policy_uses_config_days(self):
+#         """Custom warm_days appears in the warm policy's delete transition."""
+#         config = RetentionConfig(warm_days=100)
+#         policies = generate_ilm_policies(config)
+#         warm = policies["nettap-warm-policy"]["policy"]
+#
+#         # The warm state transitions to delete at warm_days
+#         warm_state = next(s for s in warm["states"] if s["name"] == "warm")
+#         transition = warm_state["transitions"][0]
+#         assert transition["conditions"]["min_index_age"] == "100d"
+#         assert transition["state_name"] == "delete"
+#
+#     def test_warm_transition_stays_7d(self):
+#         """The hot->warm transition is always '7d' regardless of config."""
+#         config = RetentionConfig(warm_days=365)
+#         warm = generate_ilm_policies(config)["nettap-warm-policy"]["policy"]
+#
+#         hot_state = next(s for s in warm["states"] if s["name"] == "hot")
+#         transition = hot_state["transitions"][0]
+#         assert transition["conditions"]["min_index_age"] == "7d"
+#         assert transition["state_name"] == "warm"
+#
+#     def test_warm_policy_structure(self):
+#         """3 states (hot/warm/delete), force_merge + read_only in warm state."""
+#         config = RetentionConfig()
+#         warm = generate_ilm_policies(config)["nettap-warm-policy"]["policy"]
+#
+#         state_names = [s["name"] for s in warm["states"]]
+#         assert state_names == ["hot", "warm", "delete"]
+#
+#         # Warm state actions
+#         warm_state = next(s for s in warm["states"] if s["name"] == "warm")
+#         action_keys = [
+#             list(set(a.keys()) - {"retry"})[0] for a in warm_state["actions"]
+#         ]
+#         assert "force_merge" in action_keys
+#         assert "read_only" in action_keys
+#
+#         # ISM template
+#         assert warm["ism_template"][0]["index_patterns"] == ["suricata-*"]
+#
+# OLD CODE END
 
-        hot_state = next(s for s in cold["states"] if s["name"] == "hot")
-        transition = hot_state["transitions"][0]
-        assert transition["conditions"]["min_index_age"] == "7d"
-        assert transition["state_name"] == "delete"
-
-    def test_cold_policy_structure(self):
-        """Verify arkime-*/pcap-* patterns and 20gb rollover."""
-        config = RetentionConfig()
-        cold = generate_ilm_policies(config)["nettap-cold-policy"]["policy"]
-
-        state_names = [s["name"] for s in cold["states"]]
-        assert state_names == ["hot", "delete"]
-
-        # 20gb rollover
-        hot_state = cold["states"][0]
-        rollover = hot_state["actions"][0]["rollover"]
-        assert rollover["min_primary_shard_size"] == "20gb"
-
-        # ISM template covers both arkime and pcap
-        patterns = cold["ism_template"][0]["index_patterns"]
-        assert "arkime-*" in patterns
-        assert "pcap-*" in patterns
-
+# OLD CODE START — warm/cold policies and rollover matched no Malcolm
+# index; one rollover-free network policy replaces them (CR-017/CR-038).
+# class TestColdPolicy:
+#     def test_cold_policy_uses_config_days(self):
+#         """Custom cold_days appears in the cold policy's delete transition."""
+#         config = RetentionConfig(cold_days=7)
+#         policies = generate_ilm_policies(config)
+#         cold = policies["nettap-cold-policy"]["policy"]
+#
+#         hot_state = next(s for s in cold["states"] if s["name"] == "hot")
+#         transition = hot_state["transitions"][0]
+#         assert transition["conditions"]["min_index_age"] == "7d"
+#         assert transition["state_name"] == "delete"
+#
+#     def test_cold_policy_structure(self):
+#         """Verify arkime-*/pcap-* patterns and 20gb rollover."""
+#         config = RetentionConfig()
+#         cold = generate_ilm_policies(config)["nettap-cold-policy"]["policy"]
+#
+#         state_names = [s["name"] for s in cold["states"]]
+#         assert state_names == ["hot", "delete"]
+#
+#         # 20gb rollover
+#         hot_state = cold["states"][0]
+#         rollover = hot_state["actions"][0]["rollover"]
+#         assert rollover["min_primary_shard_size"] == "20gb"
+#
+#         # ISM template covers both arkime and pcap
+#         patterns = cold["ism_template"][0]["index_patterns"]
+#         assert "arkime-*" in patterns
+#         assert "pcap-*" in patterns
+#
+# OLD CODE END
 
 # =========================================================================
 # Default config matches static expectations
 # =========================================================================
 
 
-class TestDefaultConfigValues:
-    def test_default_config_matches_static_json(self):
-        """Default RetentionConfig(90/180/30) produces the expected policy days."""
-        config = RetentionConfig()  # defaults: 90/180/30
-        policies = generate_ilm_policies(config)
-
-        # Hot: delete after 90d
-        hot = policies["nettap-hot-policy"]["policy"]
-        hot_state = next(s for s in hot["states"] if s["name"] == "hot")
-        assert hot_state["transitions"][0]["conditions"]["min_index_age"] == "90d"
-
-        # Warm: delete after 180d
-        warm = policies["nettap-warm-policy"]["policy"]
-        warm_state = next(s for s in warm["states"] if s["name"] == "warm")
-        assert warm_state["transitions"][0]["conditions"]["min_index_age"] == "180d"
-
-        # Cold: delete after 30d
-        cold = policies["nettap-cold-policy"]["policy"]
-        cold_hot = next(s for s in cold["states"] if s["name"] == "hot")
-        assert cold_hot["transitions"][0]["conditions"]["min_index_age"] == "30d"
-
-    def test_custom_config_values(self):
-        """With (60/120/14), all three policies use those custom values."""
-        config = RetentionConfig(hot_days=60, warm_days=120, cold_days=14)
-        policies = generate_ilm_policies(config)
-
-        hot = policies["nettap-hot-policy"]["policy"]
-        hot_state = next(s for s in hot["states"] if s["name"] == "hot")
-        assert hot_state["transitions"][0]["conditions"]["min_index_age"] == "60d"
-
-        warm = policies["nettap-warm-policy"]["policy"]
-        warm_state = next(s for s in warm["states"] if s["name"] == "warm")
-        assert warm_state["transitions"][0]["conditions"]["min_index_age"] == "120d"
-
-        cold = policies["nettap-cold-policy"]["policy"]
-        cold_hot = next(s for s in cold["states"] if s["name"] == "hot")
-        assert cold_hot["transitions"][0]["conditions"]["min_index_age"] == "14d"
-
+# OLD CODE START — warm/cold policies and rollover matched no Malcolm
+# index; one rollover-free network policy replaces them (CR-017/CR-038).
+# class TestDefaultConfigValues:
+#     def test_default_config_matches_static_json(self):
+#         """Default RetentionConfig(90/180/30) produces the expected policy days."""
+#         config = RetentionConfig()  # defaults: 90/180/30
+#         policies = generate_ilm_policies(config)
+#
+#         # Hot: delete after 90d
+#         hot = policies["nettap-hot-policy"]["policy"]
+#         hot_state = next(s for s in hot["states"] if s["name"] == "hot")
+#         assert hot_state["transitions"][0]["conditions"]["min_index_age"] == "90d"
+#
+#         # Warm: delete after 180d
+#         warm = policies["nettap-warm-policy"]["policy"]
+#         warm_state = next(s for s in warm["states"] if s["name"] == "warm")
+#         assert warm_state["transitions"][0]["conditions"]["min_index_age"] == "180d"
+#
+#         # Cold: delete after 30d
+#         cold = policies["nettap-cold-policy"]["policy"]
+#         cold_hot = next(s for s in cold["states"] if s["name"] == "hot")
+#         assert cold_hot["transitions"][0]["conditions"]["min_index_age"] == "30d"
+#
+#     def test_custom_config_values(self):
+#         """With (60/120/14), all three policies use those custom values."""
+#         config = RetentionConfig(hot_days=60, warm_days=120, cold_days=14)
+#         policies = generate_ilm_policies(config)
+#
+#         hot = policies["nettap-hot-policy"]["policy"]
+#         hot_state = next(s for s in hot["states"] if s["name"] == "hot")
+#         assert hot_state["transitions"][0]["conditions"]["min_index_age"] == "60d"
+#
+#         warm = policies["nettap-warm-policy"]["policy"]
+#         warm_state = next(s for s in warm["states"] if s["name"] == "warm")
+#         assert warm_state["transitions"][0]["conditions"]["min_index_age"] == "120d"
+#
+#         cold = policies["nettap-cold-policy"]["policy"]
+#         cold_hot = next(s for s in cold["states"] if s["name"] == "hot")
+#         assert cold_hot["transitions"][0]["conditions"]["min_index_age"] == "14d"
+#
+# OLD CODE END
 
 # =========================================================================
 # Retry config consistency
@@ -207,3 +227,40 @@ class TestRetryConfigConsistency:
                         assert retry["delay"] == "10m", (
                             f"{policy_name}/{state['name']}: delay != 10m"
                         )
+
+
+# =========================================================================
+# Malcolm index targeting (CR-017 / CR-038)
+# =========================================================================
+
+
+class TestNetworkPolicy:
+    def test_single_policy_targets_malcolm_indices(self):
+        """One policy, matching the indices Malcolm actually writes."""
+        policies = generate_ilm_policies(RetentionConfig())
+        assert list(policies) == ["nettap-hot-policy"]
+        templates = policies["nettap-hot-policy"]["policy"]["ism_template"]
+        patterns = [p for t in templates for p in t["index_patterns"]]
+        assert "arkime_sessions3-*" in patterns
+        assert "malcolm_beats_*" in patterns
+
+    def test_no_rollover_action(self):
+        """Dated indices have no rollover alias, so a rollover would block delete."""
+        policy = generate_ilm_policies(RetentionConfig())["nettap-hot-policy"]["policy"]
+        actions = [a for s in policy["states"] for a in s["actions"]]
+        assert not any("rollover" in a for a in actions)
+
+    def test_network_retention_follows_hot_days_only(self):
+        """warm_days and cold_days do not change network retention."""
+        config = RetentionConfig(hot_days=45, warm_days=365, cold_days=7)
+        policy = generate_ilm_policies(config)["nettap-hot-policy"]["policy"]
+        hot_state = next(s for s in policy["states"] if s["name"] == "hot")
+        assert hot_state["transitions"] == [
+            {"state_name": "delete", "conditions": {"min_index_age": "45d"}}
+        ]
+
+    def test_static_json_matches_generator_defaults(self):
+        """config/opensearch/ilm-policy.json is a copy of the default output."""
+        with open(STATIC_POLICY_FILE, encoding="utf-8") as f:
+            static = json.load(f)["policies"]
+        assert static == generate_ilm_policies(RetentionConfig())

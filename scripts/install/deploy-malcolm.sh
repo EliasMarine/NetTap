@@ -155,7 +155,7 @@ start_services() {
     # Build custom images first (with visible progress)
     # BuildKit hides output by default — use plain progress so users can
     # see what npm/pip/apt are doing during long builds.
-    log "Building custom NetTap images (web, daemon, tshark, cyberchef)..."
+    log "Building custom NetTap images (web, daemon, tshark, cyberchef, zeek-live)..."
     BUILDKIT_PROGRESS=plain run docker compose -f "$COMPOSE_FILE" build
 
     # ---------------------------------------------------------------------------
@@ -196,8 +196,13 @@ start_services() {
     # ---------------------------------------------------------------------------
     monitor_startup
 
-    # Apply ILM policy once OpenSearch is confirmed healthy and auth works
-    apply_ilm_policy
+    # OLD CODE START — the static file's update path overwrote the user's
+    # retention, and it never attached the policy to existing indices. The
+    # storage daemon now applies and attaches ISM on startup and on every
+    # retention save (CR-017/CR-038).
+    # # Apply ILM policy once OpenSearch is confirmed healthy and auth works
+    # apply_ilm_policy
+    # OLD CODE END
 
     # Final status report
     log ""
@@ -227,7 +232,10 @@ monitor_startup() {
     # shellcheck disable=SC2034
     local -a critical_services=(opensearch)
     local -a dependent_services=(dashboards-helper dashboards logstash)
-    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    # OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)
+    # local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture arkime-live)
+    # OLD CODE END
+    local -a pipeline_services=(filebeat zeek-live suricata-live pcap-capture)
     local -a infra_services=(redis api nginx-proxy)
     local -a nettap_services=(nettap-storage-daemon nettap-web nettap-grafana nettap-nginx nettap-tshark nettap-cyberchef)
 
@@ -412,29 +420,52 @@ _show_service_status() {
 # Bootstrap OpenSearch Security Plugin — roles mapping + securityadmin push
 # ---------------------------------------------------------------------------
 # Malcolm's OpenSearch image creates internal_users.yml (with malcolm_internal)
-# via setup-internal-users.sh, but the roles_mapping.yml is left empty.
-# Without a mapping from backend_role "admin" → OpenSearch role "all_access",
-# malcolm_internal authenticates (200) but has no permissions (403).
+# and builds roles_mapping.yml from the ROLE_* env vars on every start, then
+# pushes both with securityadmin.sh a few seconds after the port opens
+# (setup-post-start.sh). docker-compose.yml sets ROLE_* (MS-001).
 #
 # This function:
-#   1. Writes the correct roles_mapping.yml inside the container
-#   2. Runs securityadmin.sh to push all security config to the .opendistro_security index
+#   1. Waits for that push to make malcolm_internal work
+#   2. If it doesn't, runs securityadmin.sh on the same files itself
 #
 # This must run AFTER OpenSearch is healthy but BEFORE any API calls that need auth.
 # ---------------------------------------------------------------------------
+_opensearch_auth_ok() {
+    docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+        curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+        --insecure --silent --fail \
+        "https://localhost:9200/_cluster/health" >/dev/null 2>&1
+}
+
 bootstrap_opensearch_security() {
     log "Bootstrapping OpenSearch security configuration..."
 
-    # Step 1: Write the correct roles_mapping.yml
-    # The admin backend role must map to all_access for malcolm_internal to work.
-    log "  Writing roles_mapping.yml with admin → all_access mapping..."
-    if ! docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-        python3 -c "open('/usr/share/opensearch/config/opensearch-security/roles_mapping.yml','w').write('---\n_meta:\n  type: \"rolesmapping\"\n  config_version: 2\n\nall_access:\n  reserved: false\n  backend_roles:\n  - \"admin\"\n  description: \"Maps admin backend role to all_access\"\n')" 2>/dev/null; then
-        warn "  Failed to write roles_mapping.yml"
-        return 1
-    fi
+    # OLD CODE START — replaced 2026-10-30 (MS-001): writing a minimal mapping
+    # raced Malcolm's own push of the full one, and was only needed because
+    # ROLE_* was missing, which left the generated file empty.
+    # # Step 1: Write the correct roles_mapping.yml
+    # # The admin backend role must map to all_access for malcolm_internal to work.
+    # log "  Writing roles_mapping.yml with admin → all_access mapping..."
+    # if ! docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+    #     python3 -c "open('/usr/share/opensearch/config/opensearch-security/roles_mapping.yml','w').write('---\n_meta:\n  type: \"rolesmapping\"\n  config_version: 2\n\nall_access:\n  reserved: false\n  backend_roles:\n  - \"admin\"\n  description: \"Maps admin backend role to all_access\"\n')" 2>/dev/null; then
+    #     warn "  Failed to write roles_mapping.yml"
+    #     return 1
+    # fi
+    # OLD CODE END
 
-    # Step 2: Push all security config files to the OpenSearch security index.
+    # Step 1: Give Malcolm's own security push up to 60s to land.
+    log "  Waiting for OpenSearch to apply its security config..."
+    local waited=0
+    while (( waited < 60 )); do
+        if _opensearch_auth_ok; then
+            log "  Authentication verified — malcolm_internal has cluster access"
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+
+    # Step 2: Fallback — push the env-generated security config files ourselves.
     # securityadmin.sh uses the admin cert (generated by Malcolm's self_signed_key_gen.sh)
     # to authenticate via the REST API on port 9200.
     log "  Running securityadmin.sh to push security config..."
@@ -449,13 +480,10 @@ bootstrap_opensearch_security() {
 
     # Step 3: Verify auth actually works
     log "  Verifying malcolm_internal authentication..."
-    if docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-        curl --config /var/local/curlrc/.opensearch.primary.curlrc \
-        --insecure --silent --fail \
-        "https://localhost:9200/_cluster/health" >/dev/null 2>&1; then
+    if _opensearch_auth_ok; then
         log "  Authentication verified — malcolm_internal has cluster access"
     else
-        warn "  Authentication verification failed — check roles_mapping"
+        warn "  Authentication verification failed — check ROLE_ADMIN is set on the opensearch service"
     fi
 }
 
@@ -518,9 +546,23 @@ bootstrap_index_templates() {
 
     # Push malcolm_template index template
     local template_code
+    # OLD CODE START — replaced 2026-11-01: the raw file's index pattern is the
+    # placeholder MALCOLM_NETWORK_INDEX_PATTERN_REPLACER, which matches no index,
+    # so every daily arkime_sessions3-* index got guessed field types and
+    # OpenSearch rejected Zeek records (event.id as long, IPs as text). Chain 24.
+    # template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #     curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
+    #     -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+    #     -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    # OLD CODE END
+    # Fill in the placeholder the way Malcolm's own loader does (shared-object-creation.sh)
+    local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}"
     template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        cat /opt/templates/malcolm_template.json \
+        | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
+        | docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
         curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
-        -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+        -H "Content-Type: application/json" -d @- \
         -o /dev/null -w '%{http_code}' 2>/dev/null) || true
 
     if [[ "$template_code" == "200" ]]; then
@@ -529,11 +571,34 @@ bootstrap_index_templates() {
         warn "  Failed to create malcolm_template (HTTP ${template_code})"
         warn "  Logstash may wait for dashboards-helper's idxinit to create it"
     fi
+
+    # dashboards-helper's object loader waits for Arkime's legacy template before it
+    # creates the index pattern and imports Malcolm's dashboards. Arkime is off by
+    # default (#44), so nothing created it and OpenSearch Dashboards stayed empty (#73).
+    # This marker matches no index (malcolm_template governs arkime_sessions3-*), and is
+    # only written when Arkime's real template is absent.
+    if ! docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template" \
+        -o /dev/null 2>/dev/null; then
+        local marker_code
+        marker_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_template/arkime_sessions3_template" \
+            -H "Content-Type: application/json" \
+            -d '{"index_patterns":["nettap-arkime-template-marker"],"mappings":{"properties":{}}}' \
+            -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+        if [[ "$marker_code" == "200" ]]; then
+            log "  arkime_sessions3_template marker created (Arkime is off)"
+        else
+            warn "  Failed to create the arkime_sessions3_template marker (HTTP ${marker_code})"
+            warn "  OpenSearch Dashboards will have no index pattern until it exists"
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
 # Apply OpenSearch ISM (Index State Management) policies
 # ---------------------------------------------------------------------------
+# NOT CALLED since CR-017: the storage daemon owns ISM (see start_services).
 # The ILM JSON contains 3 separate policies under .policies.*:
 #   - nettap-hot-policy   (Zeek metadata, 90-day retention)
 #   - nettap-warm-policy  (Suricata alerts, 180-day retention)

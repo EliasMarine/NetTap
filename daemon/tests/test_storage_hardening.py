@@ -178,21 +178,23 @@ class TestPredictiveExhaustion:
 
 class TestEmergencyCascade:
     def test_emergency_cascade_at_90_percent(self):
-        """At 90%: should prune indices and PCAPs, NOT stop capture."""
+        """At 90%: should prune PCAPs then indices, NOT stop capture."""
         mgr = _make_manager()
 
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.91),
             patch.object(mgr, "prune_emergency", return_value=3) as mock_prune,
             patch.object(mgr, "_delete_oldest_pcaps", return_value=2) as mock_pcap,
-            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "_stop_capture") as mock_stop,
             patch.object(mgr, "is_capture_stopped", return_value=False),
         ):
             deleted = mgr.emergency_cascade()
 
         assert deleted == 5
         mock_prune.assert_called_once()
-        mock_pcap.assert_called_once_with(max_delete=10)
+        mock_pcap.assert_called_once_with(
+            max_delete=StorageManager._EMERGENCY_PCAP_DELETE_CAP
+        )
         mock_stop.assert_not_called()
 
     def test_emergency_stop_capture_at_95_percent(self):
@@ -203,7 +205,7 @@ class TestEmergencyCascade:
             patch.object(mgr, "check_disk_usage", return_value=0.96),
             patch.object(mgr, "prune_emergency", return_value=5) as mock_prune,
             patch.object(mgr, "_delete_oldest_pcaps", return_value=3) as mock_pcap,
-            patch.object(mgr, "_set_capture_stop_flag") as mock_stop,
+            patch.object(mgr, "_stop_capture") as mock_stop,
             patch.object(mgr, "is_capture_stopped", return_value=True),
         ):
             deleted = mgr.emergency_cascade()
@@ -211,7 +213,9 @@ class TestEmergencyCascade:
         assert deleted == 8
         mock_stop.assert_called_once()
         mock_prune.assert_called_once()
-        mock_pcap.assert_called_once_with(max_delete=20)
+        mock_pcap.assert_called_once_with(
+            max_delete=StorageManager._EMERGENCY_PCAP_DELETE_CAP
+        )
 
     def test_emergency_resume_below_85_percent(self, tmp_path):
         """When disk drops below 85%, capture should be resumed."""
@@ -257,8 +261,11 @@ class TestEmergencyCascade:
         assert not mgr.is_capture_stopped()
         assert not flag_file.exists()
 
-    def test_run_cycle_resumes_capture_below_resume_threshold(self, tmp_path):
-        """run_cycle should clear stop flag when disk is below resume threshold."""
+    def test_run_cycle_resumes_capture_below_resume_threshold(
+        self, tmp_path, monkeypatch
+    ):
+        """run_cycle should start capture and clear the flag below resume threshold."""
+        monkeypatch.setenv("NETTAP_ENV_FILE", str(tmp_path / ".env"))
         flag_file = tmp_path / "stop-capture"
         flag_file.write_text("stopped\n")
 
@@ -276,9 +283,12 @@ class TestEmergencyCascade:
         with (
             patch.object(mgr, "check_disk_usage", return_value=0.70),
             patch.object(mgr, "get_disk_prediction", return_value={}),
+            patch("storage.manager.subprocess.run") as mock_run,
         ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             mgr.run_cycle()
 
+        assert mock_run.call_args.args[0] == ["docker", "start", "nettap-pcap-capture"]
         assert not flag_file.exists()
 
 
@@ -305,6 +315,42 @@ class TestIlmPolicyVerification:
         assert result["nettap-cold-policy"] == "created"
         assert mgr._ilm_verified is True
 
+    def test_ilm_verification_keeps_ism_history_without_replicas(self):
+        """Single node: ISM history must ask for 0 replicas or the cluster stays yellow."""
+        mgr = _make_manager()
+        mgr._client = MagicMock()
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = {"nettap-hot-policy": "unchanged"}
+            mgr.verify_ilm_policy()
+
+        settings = mgr._client.cluster.put_settings.call_args.kwargs["body"]
+        assert (
+            settings["persistent"][
+                "plugins.index_state_management.history.number_of_replicas"
+            ]
+            == 0
+        )
+        index_call = mgr._client.indices.put_settings.call_args.kwargs
+        assert index_call["index"] == ".opendistro-ism-managed-index-history-*"
+        assert index_call["body"] == {"index": {"number_of_replicas": 0}}
+        assert index_call["expand_wildcards"] == "all"
+
+    # OLD CODE START — #96: the setting moved from the one-time ILM check to every cycle
+    # until it takes (TestExactCountsRetried below)
+    # def test_ilm_verification_turns_off_concurrent_segment_search(self):
+    #     """#90: OpenSearch 3.x slices each shard for aggregations, so terms top-N counts read low."""
+    #     mgr = _make_manager()
+    #     mgr._client = MagicMock()
+    #
+    #     with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+    #         mock_apply.return_value = {"nettap-hot-policy": "unchanged"}
+    #         mgr.verify_ilm_policy()
+    #
+    #     bodies = [c.kwargs["body"] for c in mgr._client.cluster.put_settings.call_args_list]
+    #     assert {"persistent": {"search.concurrent_segment_search.mode": "none"}} in bodies
+    # OLD CODE END
+
     def test_ilm_policy_verification_passes_when_exists(self):
         """When policies already exist, verify_ilm_policy reports unchanged."""
         mgr = _make_manager()
@@ -319,6 +365,29 @@ class TestIlmPolicyVerification:
 
         assert all(v == "unchanged" for v in result.values())
         assert mgr._ilm_verified is True
+
+    def test_startup_verification_marks_the_health_card_synced(self):
+        """Startup apply records its result, so Settings stops saying "Out of sync"."""
+        mgr = _make_manager()
+        mgr._retention_config_manager = MagicMock()
+        mgr._retention_config_manager.get_ilm_status.return_value = {}
+        results = {"nettap-hot-policy": "updated", "nettap-warm-policy": "unchanged"}
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = results
+            mgr.verify_ilm_policy()
+
+        mgr._retention_config_manager.mark_ilm_applied.assert_called_once_with(results)
+
+    def test_startup_verification_with_errors_does_not_mark_synced(self):
+        mgr = _make_manager()
+        mgr._retention_config_manager = MagicMock()
+
+        with patch("storage.ilm.apply_ilm_policies_from_config") as mock_apply:
+            mock_apply.return_value = {"nettap-hot-policy": "error: 403"}
+            mgr.verify_ilm_policy()
+
+        mgr._retention_config_manager.mark_ilm_applied.assert_not_called()
 
     def test_ilm_policy_verification_handles_missing_file(self):
         """When OpenSearch is unreachable, returns error dict."""
@@ -406,9 +475,15 @@ class TestTierUsageAccounting:
 
             result = mgr.get_tier_usage()
 
-        assert result["hot_bytes"] == 80_000_000  # 50M + 30M
+        # OLD CODE START — arkime_sessions3 was counted as cold (CR-038)
+        # assert result["hot_bytes"] == 80_000_000  # 50M + 30M
+        # assert result["warm_bytes"] == 10_000_000
+        # assert result["cold_bytes"] == 200_000_000
+        # OLD CODE END
+        # arkime_sessions3 holds Zeek metadata and Suricata alerts: hot tier
+        assert result["hot_bytes"] == 280_000_000  # 50M + 30M + 200M
         assert result["warm_bytes"] == 10_000_000
-        assert result["cold_bytes"] == 200_000_000
+        assert result["cold_bytes"] == 0
         assert result["total_bytes"] == 290_000_000
         assert result["disk_capacity_bytes"] == 1_000_000_000_000
 
@@ -593,3 +668,55 @@ class TestReindexFromLogs:
         assert result["files_processed"] == 1
         assert result["documents_indexed"] == 1
         assert result["errors"] == 1
+
+
+_EXACT = {"persistent": {"search.concurrent_segment_search.mode": "none"}}
+
+
+class TestExactCountsRetried:
+    """#96: turning off concurrent segment search (#90) was tried once at startup; a
+    failure was only logged, and top-N counts stayed approximate with nothing saying so."""
+
+    def _cycle(self, mgr):
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "get_disk_prediction", return_value={}),
+            patch.object(mgr, "prune_expired_pcaps"),
+            patch.object(mgr, "prune_pcaps_over_cap"),
+        ):
+            mgr.run_cycle()
+
+    def _exact_calls(self, mgr):
+        return [
+            c
+            for c in mgr._client.cluster.put_settings.call_args_list
+            if c.kwargs.get("body") == _EXACT
+        ]
+
+    def _status(self, mgr):
+        mgr._last_prune_at = None
+        mgr._retention_config_manager = None
+        with (
+            patch.object(mgr, "check_disk_usage", return_value=0.50),
+            patch.object(mgr, "list_indices", return_value=[]),
+        ):
+            return mgr.get_status()
+
+    def test_failure_is_retried_next_cycle_and_shown(self):
+        mgr = _make_manager()
+        mgr._ilm_verified = True
+        mgr._client.cluster.put_settings.side_effect = OpenSearchException("503")
+        self._cycle(mgr)
+        assert self._status(mgr)["exact_counts"] is False
+
+        mgr._client.cluster.put_settings.side_effect = None
+        self._cycle(mgr)
+        assert len(self._exact_calls(mgr)) == 2
+        assert self._status(mgr)["exact_counts"] is True
+
+    def test_not_resent_once_taken(self):
+        mgr = _make_manager()
+        mgr._ilm_verified = True
+        self._cycle(mgr)
+        self._cycle(mgr)
+        assert len(self._exact_calls(mgr)) == 1

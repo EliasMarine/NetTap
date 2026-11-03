@@ -59,6 +59,9 @@
 	let activeTab = $state('overview');
 	let commMapData = $state<CommunicationMap | null>(null);
 	let timelineData = $state<ActivityTimeline | null>(null);
+	// #96: a failed request says so; once the page has loaded, a null section above means it failed
+	let commFailed = $state(false);
+	let timelineFailed = $state(false);
 	let drawerLoading = $state(false);
 
 	// ---------------------------------------------------------------------------
@@ -103,6 +106,28 @@
 	async function fetchAll(range: string) {
 		loading = true;
 		const params = computeTimeParams(range);
+		// The getters throw on HTTP errors, so a failed section is null (its empty
+		// state) instead of fake zeros; a failed fleet summary shows the error state.
+		const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = await Promise.allSettled([
+			getFleetSummary(params),
+			getPrivacyReport(params),
+			getProtocolAudit(params),
+			getNetworkIsolation(params),
+			getManufacturerProfiles(params),
+		]);
+		fleet = fleetRes.status === 'fulfilled' ? fleetRes.value : null;
+		privacy = privacyRes.status === 'fulfilled' ? privacyRes.value : null;
+		protocol = protocolRes.status === 'fulfilled' ? protocolRes.value : null;
+		isolation = isolationRes.status === 'fulfilled' ? isolationRes.value : null;
+		manufacturers = mfgRes.status === 'fulfilled' ? mfgRes.value : null;
+		loading = false;
+	}
+
+	// OLD CODE START — one failed endpoint blanked the whole page
+	/*
+	async function fetchAll(range: string) {
+		loading = true;
+		const params = computeTimeParams(range);
 		try {
 			const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = await Promise.all([
 				getFleetSummary(params),
@@ -126,6 +151,8 @@
 			loading = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	$effect(() => { fetchAll(selectedRange); });
 
@@ -135,19 +162,30 @@
 		activeTab = 'overview';
 		drawerLoading = true;
 		const params = computeTimeParams(selectedRange);
-		try {
-			const [commMap, timeline] = await Promise.all([
-				getCommunicationMap(device.mac, params),
-				getActivityTimeline(device.mac, params),
-			]);
-			commMapData = commMap;
-			timelineData = timeline;
-		} catch {
-			commMapData = null;
-			timelineData = null;
-		} finally {
-			drawerLoading = false;
-		}
+		// OLD CODE START — #96: one failure blanked both tabs, and each read as "no data for this device"
+		// try {
+		// 	const [commMap, timeline] = await Promise.all([
+		// 		getCommunicationMap(device.mac, params),
+		// 		getActivityTimeline(device.mac, params),
+		// 	]);
+		// 	commMapData = commMap;
+		// 	timelineData = timeline;
+		// } catch {
+		// 	commMapData = null;
+		// 	timelineData = null;
+		// } finally {
+		// 	drawerLoading = false;
+		// }
+		// OLD CODE END
+		const [commMap, timeline] = await Promise.allSettled([
+			getCommunicationMap(device.mac, params),
+			getActivityTimeline(device.mac, params),
+		]);
+		commMapData = commMap.status === 'fulfilled' ? commMap.value : null;
+		commFailed = commMap.status === 'rejected';
+		timelineData = timeline.status === 'fulfilled' ? timeline.value : null;
+		timelineFailed = timeline.status === 'rejected';
+		drawerLoading = false;
 	}
 
 	function closeDrawer() {
@@ -243,7 +281,10 @@
 						timestamp: '',
 					});
 				}
-				if (dev.encryption_ratio < 0.9) {
+				// OLD CODE START — 2026-11-01: fired for devices with only local chatter (N/A)
+				// if (dev.encryption_ratio < 0.9) {
+				// OLD CODE END
+				if (dev.encryption_applicable !== false && dev.encryption_ratio < 0.9) {
 					const pct = Math.round(dev.encryption_ratio * 100);
 					items.push({
 						id: `unenc-${idx++}`,
@@ -643,7 +684,7 @@
 								</div>
 								<div class="tc-indicator">
 									<span class="tc-ind-label">Encrypted</span>
-									<span class="tc-ind-value mono">{device.encryption_pct}%</span>
+									<span class="tc-ind-value mono">{device.encryption_applicable === false ? 'N/A' : `${device.encryption_pct}%`}</span>
 								</div>
 								<div class="tc-indicator">
 									<span class="tc-ind-label">Anomalies</span>
@@ -689,6 +730,10 @@
 							showDot={true}
 							labelWidth={130}
 						/>
+					{:else if manufacturers === null}
+						<div class="empty-state-inline">
+							<p class="text-muted">Couldn't load manufacturer profiles: the request failed.</p>
+						</div>
 					{:else}
 						<div class="empty-state-inline">
 							<p class="text-muted">No manufacturer data available.</p>
@@ -706,6 +751,14 @@
 					{/if}
 				</div>
 				<div class="findings-list">
+					<!-- #96: findings come from the privacy and protocol checks; a failed one is not "healthy" -->
+					{#if privacy === null || protocol === null}
+						<div class="empty-state-inline">
+							<p class="text-muted">
+								Couldn't check {privacy === null && protocol === null ? 'privacy or protocols' : privacy === null ? 'privacy' : 'protocols'}: the request failed.
+							</p>
+						</div>
+					{/if}
 					{#if findings.length > 0}
 						{#each findings.slice(0, 20) as finding (finding.id)}
 							<div class="finding-item">
@@ -732,7 +785,7 @@
 								+{findings.length - 20} more findings
 							</div>
 						{/if}
-					{:else}
+					{:else if privacy !== null && protocol !== null}
 						<div class="empty-state-inline">
 							<p class="text-muted">No findings -- all devices look healthy.</p>
 						</div>
@@ -826,6 +879,10 @@
 						<p>{isolation.recommendation}</p>
 					</div>
 				{/if}
+			{:else if isolation === null}
+				<div class="empty-state-inline" style="padding: var(--space-lg);">
+					<p class="text-muted">Couldn't check for cross-segment IoT communication: the request failed.</p>
+				</div>
 			{:else}
 				<div class="empty-state-inline" style="padding: var(--space-lg);">
 					<p class="text-muted">No cross-segment IoT communication detected.</p>
@@ -897,7 +954,7 @@
 				</DrawerSection>
 
 				<DrawerSection title="Quick Stats">
-					<KVRow label="Encryption" value={`${selectedDevice.encryption_pct}%`} mono />
+					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
 					<KVRow label="Trackers" value={String(selectedDevice.tracker_count)} mono />
 					<KVRow label="Anomalies" value={String(selectedDevice.anomaly_count)} mono />
 				</DrawerSection>
@@ -911,6 +968,8 @@
 							showRank={true}
 							labelWidth={160}
 						/>
+					{:else if commFailed}
+						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't load this device's destinations: the request failed.</p>
 					{:else}
 						<p class="text-muted" style="font-size: var(--text-sm);">No communication data for this device.</p>
 					{/if}
@@ -952,6 +1011,10 @@
 							<span class="ph-label">requests/hour</span>
 						</div>
 					</DrawerSection>
+				{:else if privacy === null}
+					<div class="empty-state-inline">
+						<p class="text-muted">Couldn't load the privacy report: the request failed.</p>
+					</div>
 				{:else}
 					<div class="empty-state-inline">
 						<p class="text-muted">No privacy data available for this device.</p>
@@ -1011,6 +1074,10 @@
 							</table>
 						</div>
 					</DrawerSection>
+				{:else if protocol === null}
+					<DrawerSection title="Protocol Audit">
+						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't run the protocol audit: the request failed.</p>
+					</DrawerSection>
 				{:else}
 					<DrawerSection title="Protocol Audit">
 						<div class="proto-compliant">
@@ -1034,6 +1101,8 @@
 							label="Connections"
 							formatValue={(n) => formatNumber(Math.round(n))}
 						/>
+					{:else if timelineFailed}
+						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't load this device's activity: the request failed.</p>
 					{:else}
 						<p class="text-muted" style="font-size: var(--text-sm);">No activity data available.</p>
 					{/if}

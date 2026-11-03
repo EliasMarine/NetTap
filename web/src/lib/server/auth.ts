@@ -1,6 +1,6 @@
 import * as argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'fs';
 import { dirname } from 'path';
 import { randomBytes } from 'crypto';
 
@@ -110,13 +110,49 @@ function ensureDataDir(): void {
 	}
 }
 
-function readUsers(): UsersStore {
-	try {
-		const data = readFileSync(USERS_FILE, 'utf-8');
-		return JSON.parse(data) as UsersStore;
-	} catch {
-		return { users: [] };
+/** The users file exists but cannot be read, parsed or understood. */
+export class UserStoreError extends Error {
+	constructor(reason: string) {
+		super(`User store unusable: ${reason}`);
+		this.name = 'UserStoreError';
 	}
+}
+
+// OLD CODE START — any read/parse failure looked like "no users", so a damaged
+// store reopened first-run setup and createUser could overwrite it (2026-10-29)
+// function readUsers(): UsersStore {
+// 	try {
+// 		const data = readFileSync(USERS_FILE, 'utf-8');
+// 		return JSON.parse(data) as UsersStore;
+// 	} catch {
+// 		return { users: [] };
+// 	}
+// }
+// OLD CODE END
+
+/**
+ * Only a missing file means "no users yet". Anything else throws
+ * UserStoreError so callers fail closed instead of reopening first-run.
+ */
+function readUsers(): UsersStore {
+	let data: string;
+	try {
+		data = readFileSync(USERS_FILE, 'utf-8');
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT') return { users: [] };
+		throw new UserStoreError(code ?? 'unreadable');
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(data);
+	} catch {
+		throw new UserStoreError('invalid JSON');
+	}
+	if (!Array.isArray((parsed as Partial<UsersStore> | null)?.users)) {
+		throw new UserStoreError('missing users array');
+	}
+	return parsed as UsersStore;
 }
 
 function writeUsers(store: UsersStore): void {
@@ -125,7 +161,13 @@ function writeUsers(store: UsersStore): void {
 	if (!existsSync(dir)) {
 		mkdirSync(dir, { recursive: true });
 	}
-	writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), 'utf-8');
+	// OLD CODE START — wrote in place; a crash mid-write left a corrupt store (2026-10-29)
+	// writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), 'utf-8');
+	// OLD CODE END
+	// Write then rename so a crash never leaves a half-written (now fail-closed) store.
+	const tmpFile = `${USERS_FILE}.tmp`;
+	writeFileSync(tmpFile, JSON.stringify(store, null, 2), 'utf-8');
+	renameSync(tmpFile, USERS_FILE);
 }
 
 export function getUser(username: string): User | undefined {
@@ -156,6 +198,38 @@ export async function createUser(
 	store.users.push(user);
 	writeUsers(store);
 	return user;
+}
+
+/** The first admin already exists (another setup request won the race). */
+export class SetupAlreadyComplete extends Error {
+	constructor() {
+		super('Setup is already complete.');
+		this.name = 'SetupAlreadyComplete';
+	}
+}
+
+// One Node process serves every request, so a promise chain serializes setup.
+let firstAdminLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Create the first admin, or throw SetupAlreadyComplete if any user exists.
+ * Serialized and re-checked after the slow password hash, so two concurrent
+ * setup requests can never both create an admin.
+ */
+export function createFirstAdmin(username: string, password: string): Promise<User> {
+	const attempt = firstAdminLock.then(async () => {
+		const passwordHash = await hashPassword(password);
+		const store = readUsers();
+		if (store.users.length > 0) {
+			throw new SetupAlreadyComplete();
+		}
+		const now = new Date().toISOString();
+		const user: User = { username, passwordHash, role: 'admin', createdAt: now, updatedAt: now };
+		writeUsers({ users: [user] });
+		return user;
+	});
+	firstAdminLock = attempt.catch(() => undefined);
+	return attempt;
 }
 
 export async function updatePassword(username: string, newPassword: string): Promise<void> {

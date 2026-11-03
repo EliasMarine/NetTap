@@ -10,15 +10,23 @@ bandwidth time-series, and paginated connection listings.
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.time_range import parse_time_range
 from services.excluded_ips import build_excluded_ips_filter
+from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
+from services.iot_monitor import (
+    ENCRYPTED_CONN_FILTER,
+    LOCAL_CHATTER_EXCLUSION,
+    NO_PAYLOAD_PROTOCOLS,
+)
 from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.traffic")
 
@@ -44,32 +52,42 @@ _ZEEK_CONN_FILTERS = [
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
-    """Extract 'from' and 'to' query parameters as ISO timestamps.
+    """'from'/'to' as ISO timestamps, defaulting to the last 24 hours; unreadable is a 400."""
+    # OLD CODE START — 2026-11-02: an unreadable from/to (e.g. now-5m) silently became the
+    # default window, so the Infrastructure page divided 24 h of events by 5 min
+    # """Extract 'from' and 'to' query parameters as ISO timestamps.
+    #
+    # Defaults to the last 24 hours if not provided or unparseable.
+    # Returns (from_iso, to_iso) strings suitable for OpenSearch range queries.
+    # """
+    # now = datetime.now(timezone.utc)
+    # default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
+    # default_to = now.isoformat()
+    #
+    # raw_from = request.query.get("from", "")
+    # raw_to = request.query.get("to", "")
+    #
+    # # Validate from
+    # if raw_from:
+    #     try:
+    #         datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_from = ""
+    # # Validate to
+    # if raw_to:
+    #     try:
+    #         datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
+    #     except (ValueError, TypeError):
+    #         raw_to = ""
+    #
+    # return (raw_from or default_from, raw_to or default_to)
+    # OLD CODE END
+    return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
-    Defaults to the last 24 hours if not provided or unparseable.
-    Returns (from_iso, to_iso) strings suitable for OpenSearch range queries.
-    """
-    now = datetime.now(timezone.utc)
-    default_from = (now - timedelta(hours=_DEFAULT_RANGE_HOURS)).isoformat()
-    default_to = now.isoformat()
 
-    raw_from = request.query.get("from", "")
-    raw_to = request.query.get("to", "")
-
-    # Validate from
-    if raw_from:
-        try:
-            datetime.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_from = ""
-    # Validate to
-    if raw_to:
-        try:
-            datetime.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            raw_to = ""
-
-    return (raw_from or default_from, raw_to or default_to)
+# OpenSearch's default index.max_result_window: from + size past it returns nothing.
+# shortcut: only the newest 10,000 records can be paged to; use search_after if older pages are needed
+_RESULT_WINDOW = 10_000
 
 
 def _parse_int_param(request: web.Request, name: str, default: int) -> int:
@@ -119,12 +137,26 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     query = {
         "size": 0,
         "track_total_hits": True,
+        # OLD CODE START — replaced 2026-11-01: summary counted the appliance's own
+        # traffic while /api/bandwidth/* excluded it, so the two totals disagreed
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_ZEEK_CONN_FILTERS,
+        #         ]
+        #     }
+        # },
+        # OLD CODE END
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
-                ]
+                ],
+                "must_not": build_excluded_ips_filter(
+                    request.app.get("excluded_ips", [])
+                ),
             }
         },
         "aggs": {
@@ -137,9 +169,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
-            "top_protocol": {
-                "terms": {"field": "network.transport.keyword", "size": 1}
-            },
+            "top_protocol": {"terms": {"field": "network.transport", "size": 1}},
         },
     }
 
@@ -182,7 +212,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
 async def handle_top_talkers(request: web.Request) -> web.Response:
     """GET /api/traffic/top-talkers?from=&to=&limit=20
 
-    Returns top source IPs by total bytes (client.bytes + server.bytes).
+    Returns top source IPs by total bytes (source.bytes + destination.bytes).
     """
     from_ts, to_ts = _parse_time_range(request)
     limit = _parse_int_param(request, "limit", 20)
@@ -203,19 +233,31 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
         "query": {"bool": bool_query},
         "aggs": {
             "top_sources": {
-                "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE END
+                "terms": {
+                    "field": "source.ip",
+                    "size": limit,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                                # "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE END
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             }
         },
@@ -263,6 +305,9 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     if excluded_ips:
         # Exclude from both source and destination for top-destinations
         must_not.append({"terms": {"destination.ip": excluded_ips}})
+        # #80: the source side was missing, so NetTap's own lookups (G11: 37,121 a day to
+        # 9.9.9.9) counted as LAN traffic to those destinations
+        must_not.extend(build_excluded_ips_filter(excluded_ips))
 
     bool_query: dict = {
         "filter": [
@@ -278,19 +323,31 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
         "query": {"bool": bool_query},
         "aggs": {
             "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": limit},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "destination.ip.keyword", "size": limit},
+                # OLD CODE END
+                "terms": {
+                    "field": "destination.ip",
+                    "size": limit,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
                             "script": {
-                                "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE START — 2026-11-01: payload-only client/server.bytes; summary, devices and bandwidth sum source/destination.bytes
+                                # "source": "(doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0) + (doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0)",
+                                # OLD CODE END
+                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
                                 "lang": "painless",
                             }
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             }
         },
@@ -338,23 +395,64 @@ async def handle_protocols(request: web.Request) -> web.Response:
 
     query = {
         "size": 0,
+        # OLD CODE START — counted the excluded IPs' connections, which Home's summary leaves
+        # out: the protocol total (516K) sat beside "Connections (24h)" (477K) on the G11
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_ZEEK_CONN_FILTERS,
+        #         ]
+        #     }
+        # },
+        # OLD CODE END
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
-                ]
+                ],
+                "must_not": build_excluded_ips_filter(
+                    request.app.get("excluded_ips", [])
+                ),
             }
         },
         "aggs": {
-            "by_proto": {"terms": {"field": "network.transport.keyword", "size": 50}},
+            "by_proto": {"terms": {"field": "network.transport", "size": 50}},
             "by_service": {
                 "terms": {
-                    "field": "network.protocol.keyword",
+                    "field": "network.protocol",
                     "size": 50,
                     "missing": "unknown",
                 }
             },
+            # #86: Security Posture's Encryption and DNS cards, with the IoT encryption rule (#42).
+            # Local chatter (pings, DNS/DHCP/NTP, discovery, multicast) and STUN can't be encrypted
+            # traffic, so they are left out of the share
+            "encryption": {
+                "filter": {
+                    "bool": {
+                        "must_not": [
+                            *LOCAL_CHATTER_EXCLUSION,
+                            {"terms": {"network.protocol": NO_PAYLOAD_PROTOCOLS}},
+                        ]
+                    }
+                },
+                "aggs": {"encrypted": {"filter": ENCRYPTED_CONN_FILTER}},
+            },
+            # Plain DNS lookups (mDNS/LLMNR are local name services, as on the DNS page) and
+            # DNS-over-TLS; DNS-over-HTTPS looks like any HTTPS and can't be told apart
+            "dns_plain": {
+                "filter": {
+                    "bool": {
+                        "filter": [{"term": {"network.protocol": "dns"}}],
+                        "must_not": [
+                            {"terms": {"destination.port": LOCAL_NAME_SERVICE_PORTS}}
+                        ],
+                    }
+                }
+            },
+            "dns_over_tls": {"filter": {"term": {"destination.port": 853}}},
         },
     }
 
@@ -380,6 +478,16 @@ async def handle_protocols(request: web.Request) -> web.Response:
             "to": to_ts,
             "protocols": protocols,
             "services": services,
+            "encryption": {
+                "eligible": aggs.get("encryption", {}).get("doc_count", 0),
+                "encrypted": aggs.get("encryption", {})
+                .get("encrypted", {})
+                .get("doc_count", 0),
+            },
+            "dns": {
+                "plain": aggs.get("dns_plain", {}).get("doc_count", 0),
+                "over_tls": aggs.get("dns_over_tls", {}).get("doc_count", 0),
+            },
         }
     )
 
@@ -388,7 +496,7 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     """GET /api/traffic/bandwidth?from=&to=&interval=5m
 
     Returns time-series bandwidth data using a date_histogram on '@timestamp'
-    with sum of client.bytes + server.bytes per bucket.
+    with sum of source.bytes + destination.bytes per bucket.
     """
     from_ts, to_ts = _parse_time_range(request)
     interval = request.query.get("interval", "5m")
@@ -399,30 +507,61 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     if interval not in valid_intervals:
         interval = "5m"
 
+    try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
+        slots = time_slots(from_ts, to_ts, interval)
+    except ValueError:
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
+
     query = {
         "size": 0,
+        # OLD CODE START — replaced 2026-11-01: the series counted the appliance's own
+        # traffic while the summary and /api/bandwidth/* now exclude it
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_ZEEK_CONN_FILTERS,
+        #         ]
+        #     }
+        # },
+        # OLD CODE END
         "query": {
             "bool": {
                 "filter": [
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
-                ]
+                ],
+                "must_not": build_excluded_ips_filter(
+                    request.app.get("excluded_ips", [])
+                ),
             }
         },
         "aggs": {
             "bandwidth_over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {
-                        "min": from_ts,
-                        "max": to_ts,
-                    },
-                },
+                # OLD CODE START — #120
+                # "date_histogram": {
+                #     "field": "@timestamp",
+                #     "fixed_interval": interval,
+                #     "min_doc_count": 0,
+                #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                # },
+                # OLD CODE END
+                **slots,
+                # OLD CODE START — replaced 2026-11-01: client/server.bytes are Zeek
+                # orig_bytes/resp_bytes (payload); the summary sums source/destination.bytes
+                # "aggs": {
+                #     "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+                #     "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                # },
+                # OLD CODE END
                 "aggs": {
-                    "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-                    "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+                    "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+                    "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
                 },
             }
         },
@@ -436,8 +575,13 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    buckets = (
-        result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
+    # OLD CODE START — #120: date_histogram buckets
+    # buckets = (
+    #     result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
+    # )
+    # OLD CODE END
+    buckets = histogram_buckets(
+        result.get("aggregations", {}).get("bandwidth_over_time")
     )
 
     series = [
@@ -497,6 +641,8 @@ async def handle_connections(request: web.Request) -> web.Response:
     query = {
         "size": size,
         "from": offset,
+        # The UI shows this total; without it OpenSearch stops counting at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "must": must_clauses if must_clauses else [{"match_all": {}}],
@@ -532,7 +678,12 @@ async def handle_connections(request: web.Request) -> web.Response:
             "page": page,
             "size": size,
             "total": total,
-            "total_pages": (total + size - 1) // size if size > 0 else 0,
+            # OLD CODE START — #85: pages past OpenSearch's 10,000-result window came back empty
+            # "total_pages": (total + size - 1) // size if size > 0 else 0,
+            # OLD CODE END
+            "total_pages": min(-(-total // size), _RESULT_WINDOW // size)
+            if size > 0
+            else 0,
             "connections": connections,
         }
     )
@@ -582,7 +733,7 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     fingerprint = request.app.get("device_fingerprint")
 
     try:
-        devices, services = await asyncio.gather(
+        breakdown, services = await asyncio.gather(
             traffic_classifier.get_category_devices(
                 client, category, from_ts, to_ts, fingerprint=fingerprint
             ),
@@ -594,19 +745,43 @@ async def handle_category_detail(request: web.Request) -> web.Response:
             {"error": f"Category detail query failed: {exc}"}, status=500
         )
 
-    grand_total = sum(d["total_bytes"] for d in devices)
-    for d in devices:
-        d["percent"] = (
-            round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
-        )
+    # OLD CODE START — #96: totals and shares were taken over the 50 listed devices only
+    # grand_total = sum(d["total_bytes"] for d in devices)
+    # for d in devices:
+    #     d["percent"] = (
+    #         round((d["total_bytes"] / grand_total * 100), 1) if grand_total > 0 else 0
+    #     )
+    #
+    # return web.json_response(
+    #     {
+    #         "category": category,
+    #         "label": traffic_classifier.CATEGORIES[category],
+    #         "device_count": len(devices),
+    #         "total_bytes": grand_total,
+    #         "connection_count": sum(d["connections"] for d in devices),
+    #         "devices": devices,
+    #         "services": services,
+    #     }
+    # )
+    # OLD CODE END
+    grand_total = breakdown["total_bytes"]
+    devices = [
+        {
+            **d,
+            "percent": round(d["total_bytes"] / grand_total * 100, 1)
+            if grand_total > 0
+            else 0,
+        }
+        for d in breakdown["devices"]
+    ]
 
     return web.json_response(
         {
             "category": category,
             "label": traffic_classifier.CATEGORIES[category],
-            "device_count": len(devices),
+            "device_count": breakdown["device_count"],
             "total_bytes": grand_total,
-            "connection_count": sum(d["connections"] for d in devices),
+            "connection_count": breakdown["connection_count"],
             "devices": devices,
             "services": services,
         }
@@ -633,6 +808,13 @@ async def handle_category_bandwidth(request: web.Request) -> web.Response:
     try:
         series = await traffic_classifier.get_category_bandwidth(
             client, category, from_ts, to_ts, interval
+        )
+    except ValueError:  # more time slots than time_slots allows (#120)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
         )
     except Exception as exc:
         logger.error("Error in category bandwidth for %s: %s", category, exc)
@@ -714,9 +896,16 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
         "aggs": {
             "bytes_in": {"sum": {"field": "source.bytes", "missing": 0}},
             "bytes_out": {"sum": {"field": "destination.bytes", "missing": 0}},
-            "protocols": {"terms": {"field": "network.transport.keyword", "size": 20}},
+            "protocols": {"terms": {"field": "network.transport", "size": 20}},
             "top_sources": {
-                "terms": {"field": "source.ip.keyword", "size": 10},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "source.ip.keyword", "size": 10},
+                # OLD CODE END
+                "terms": {
+                    "field": "source.ip",
+                    "size": 10,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -726,13 +915,22 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             },
             "top_destinations": {
-                "terms": {"field": "destination.ip.keyword", "size": 10},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "destination.ip.keyword", "size": 10},
+                # OLD CODE END
+                "terms": {
+                    "field": "destination.ip",
+                    "size": 10,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -742,18 +940,18 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    "asn": {
-                        "terms": {"field": "destination.as.full.keyword", "size": 1}
-                    },
+                    "asn": {"terms": {"field": "destination.as.full", "size": 1}},
                     "geo": {
                         "terms": {
-                            "field": "destination.geo.country_iso_code.keyword",
+                            "field": "destination.geo.country_iso_code",
                             "size": 1,
                         }
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             },
         },
@@ -843,10 +1041,67 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
     )
 
 
+_SANKEY_BYTES_SUM = {
+    "sum": {
+        "script": {
+            "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+            "lang": "painless",
+        }
+    }
+}
+
+
+def _sankey_destinations_query(
+    from_ts: str, to_ts: str, source_ips: list[str], limit: int
+) -> dict:
+    """The top `limit` destinations by bytes from the Sankey's sources, each split by protocol (#96).
+
+    A destination node counts every byte the shown sources sent it, so the third column
+    stays a breakdown of the first.
+    """
+    return {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                    {"terms": {"source.ip": source_ips}},
+                ]
+            }
+        },
+        "aggs": {
+            "by_dest": {
+                "terms": {
+                    "field": "destination.as.full",
+                    "size": limit,
+                    "missing": "Unknown",
+                    "order": {"dest_bytes": "desc"},
+                },
+                "aggs": {
+                    "dest_bytes": _SANKEY_BYTES_SUM,
+                    "geo": {
+                        "terms": {
+                            "field": "destination.geo.country_iso_code",
+                            "size": 1,
+                        }
+                    },
+                    # transport values are a handful, so 10 holds every protocol
+                    "by_proto": {
+                        "terms": {"field": "network.transport", "size": 10},
+                        "aggs": {"proto_bytes": _SANKEY_BYTES_SUM},
+                    },
+                },
+            }
+        },
+    }
+
+
 async def handle_connection_sankey(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/sankey?from=&to=&limit=10
 
-    Nested terms aggregation: source.ip → network.transport → destination.as.full.
+    Top sources by bytes → network.transport, then (second search) those sources'
+    top destination.as.full by bytes → network.transport.
     Flattened into {nodes, links} for Sankey visualization.
     """
     from_ts, to_ts = _parse_time_range(request)
@@ -865,7 +1120,14 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
         },
         "aggs": {
             "by_source": {
-                "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                # "terms": {"field": "source.ip.keyword", "size": limit},
+                # OLD CODE END
+                "terms": {
+                    "field": "source.ip",
+                    "size": limit,
+                    "order": {"total_bytes": "desc"},
+                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -876,7 +1138,7 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                         }
                     },
                     "by_proto": {
-                        "terms": {"field": "network.transport.keyword", "size": 10},
+                        "terms": {"field": "network.transport", "size": 10},
                         "aggs": {
                             "proto_bytes": {
                                 "sum": {
@@ -886,34 +1148,39 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                                     }
                                 }
                             },
-                            "by_dest": {
-                                "terms": {
-                                    "field": "destination.as.full.keyword",
-                                    "size": limit,
-                                    "missing": "Unknown",
-                                },
-                                "aggs": {
-                                    "dest_bytes": {
-                                        "sum": {
-                                            "script": {
-                                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                                                "lang": "painless",
-                                            }
-                                        }
-                                    },
-                                    "geo": {
-                                        "terms": {
-                                            "field": "destination.geo.country_iso_code.keyword",
-                                            "size": 1,
-                                        }
-                                    },
-                                },
-                            },
+                            # OLD CODE START — #96: each source's top-N destinations by connections were summed
+                            # into the destination nodes, so a node missed every source where it ranked lower
+                            # "by_dest": {
+                            #     "terms": {
+                            #         "field": "destination.as.full",
+                            #         "size": limit,
+                            #         "missing": "Unknown",
+                            #     },
+                            #     "aggs": {
+                            #         "dest_bytes": {
+                            #             "sum": {
+                            #                 "script": {
+                            #                     "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                            #                     "lang": "painless",
+                            #                 }
+                            #             }
+                            #         },
+                            #         "geo": {
+                            #             "terms": {
+                            #                 "field": "destination.geo.country_iso_code",
+                            #                 "size": 1,
+                            #             }
+                            #         },
+                            #     },
+                            # },
+                            # OLD CODE END
                         },
                     },
-                    "bucket_sort": {
-                        "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
-                    },
+                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                    # "bucket_sort": {
+                    #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
+                    # },
+                    # OLD CODE END
                 },
             },
         },
@@ -952,24 +1219,57 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
                 }
             )
 
-            for dest_bucket in proto_bucket.get("by_dest", {}).get("buckets", []):
-                dest_name = dest_bucket["key"]
-                dest_bytes = dest_bucket.get("dest_bytes", {}).get("value", 0)
-                geo_buckets = dest_bucket.get("geo", {}).get("buckets", [])
-                country = geo_buckets[0]["key"] if geo_buckets else ""
+            # OLD CODE START — #96: partial per-source destination lists, see the query
+            # for dest_bucket in proto_bucket.get("by_dest", {}).get("buckets", []):
+            #     dest_name = dest_bucket["key"]
+            #     dest_bytes = dest_bucket.get("dest_bytes", {}).get("value", 0)
+            #     geo_buckets = dest_bucket.get("geo", {}).get("buckets", [])
+            #     country = geo_buckets[0]["key"] if geo_buckets else ""
+            #
+            #     if dest_name not in dest_set:
+            #         dest_set[dest_name] = {"bytes": 0, "country": country}
+            #     dest_set[dest_name]["bytes"] += dest_bytes
+            #
+            #     # Link: protocol → destination
+            #     links.append(
+            #         {
+            #             "source": proto_name,
+            #             "target": dest_name,
+            #             "value": dest_bytes,
+            #         }
+            #     )
+            # OLD CODE END
 
-                if dest_name not in dest_set:
-                    dest_set[dest_name] = {"bytes": 0, "country": country}
-                dest_set[dest_name]["bytes"] += dest_bytes
+    if source_nodes:
+        try:
+            dest_result = client.search(
+                index=NETWORK_INDEX,
+                body=_sankey_destinations_query(
+                    from_ts, to_ts, [s["id"] for s in source_nodes], limit
+                ),
+            )
+        except OpenSearchException as exc:
+            logger.error("OpenSearch error in connections/sankey destinations: %s", exc)
+            return web.json_response({"error": str(exc)}, status=502)
 
-                # Link: protocol → destination
-                links.append(
-                    {
-                        "source": proto_name,
-                        "target": dest_name,
-                        "value": dest_bytes,
-                    }
-                )
+        for dest_bucket in (
+            dest_result.get("aggregations", {}).get("by_dest", {}).get("buckets", [])
+        ):
+            dest_name = dest_bucket["key"]
+            geo_buckets = dest_bucket.get("geo", {}).get("buckets", [])
+            dest_set[dest_name] = {
+                "bytes": dest_bucket.get("dest_bytes", {}).get("value", 0),
+                "country": geo_buckets[0]["key"] if geo_buckets else "",
+            }
+            # Link: protocol → destination
+            links.extend(
+                {
+                    "source": proto_bucket["key"],
+                    "target": dest_name,
+                    "value": proto_bucket.get("proto_bytes", {}).get("value", 0),
+                }
+                for proto_bucket in dest_bucket.get("by_proto", {}).get("buckets", [])
+            )
 
     # Aggregate duplicate links (same source→target)
     link_map: dict[str, dict] = {}
@@ -1032,6 +1332,16 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
     if interval not in valid_intervals:
         interval = "15m"
 
+    try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
+        slots = time_slots(from_ts, to_ts, interval)
+    except ValueError:
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
+
     query = {
         "size": 0,
         "query": {
@@ -1044,16 +1354,17 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
         },
         "aggs": {
             "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": interval,
-                    "min_doc_count": 0,
-                    "extended_bounds": {"min": from_ts, "max": to_ts},
-                },
+                # OLD CODE START — #120
+                # "date_histogram": {
+                #     "field": "@timestamp",
+                #     "fixed_interval": interval,
+                #     "min_doc_count": 0,
+                #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                # },
+                # OLD CODE END
+                **slots,
                 "aggs": {
-                    "by_proto": {
-                        "terms": {"field": "network.transport.keyword", "size": 10}
-                    },
+                    "by_proto": {"terms": {"field": "network.transport", "size": 10}},
                 },
             },
         },
@@ -1065,7 +1376,8 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
         logger.error("OpenSearch error in connections/timeline: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    buckets = result.get("aggregations", {}).get("over_time", {}).get("buckets", [])
+    # was result["aggregations"]["over_time"]["buckets"] (date_histogram, #120)
+    buckets = histogram_buckets(result.get("aggregations", {}).get("over_time"))
     timeline = []
     for b in buckets:
         proto_counts: dict[str, int] = {}
@@ -1089,11 +1401,33 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
     )
 
 
+# Rows listed in the Connection drawer's Related tab; its summary figures cover the whole window
+_RELATED_ROWS = 200
+
+
+def _related_summary(result: dict) -> dict:
+    """Pair totals from the related search's aggregations and hit count (every match, not the rows)."""
+    aggs = result.get("aggregations", {})
+    hits_total = result.get("hits", {}).get("total", {})
+    count = hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    src_bytes = aggs.get("src_bytes", {}).get("value") or 0
+    dst_bytes = aggs.get("dst_bytes", {}).get("value") or 0
+    return {
+        "total_connections": count,
+        "total_bytes": int(src_bytes + dst_bytes),
+        "protocols": sorted(
+            b["key"] for b in aggs.get("protocols", {}).get("buckets", [])
+        ),
+        "first_seen": aggs.get("first_seen", {}).get("value_as_string"),
+        "last_seen": aggs.get("last_seen", {}).get("value_as_string"),
+    }
+
+
 async def handle_connection_related(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/related?src_ip=&dst_ip=&from=&to=
 
-    All connections between a specific src-dst pair (up to 200),
-    sorted by timestamp. Includes summary stats.
+    The newest connections between a specific src-dst pair (up to 200),
+    plus summary stats over every connection in the window.
     """
     from_ts, to_ts = _parse_time_range(request)
     src_ip = request.query.get("src_ip", "").strip()
@@ -1107,7 +1441,11 @@ async def handle_connection_related(request: web.Request) -> web.Response:
 
     # Match connections in either direction
     query = {
-        "size": 200,
+        # OLD CODE START — #96: the summary was computed from these 200 rows, so a busy pair read "200"
+        # "size": 200,
+        # OLD CODE END
+        "size": _RELATED_ROWS,
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
@@ -1119,24 +1457,16 @@ async def handle_connection_related(request: web.Request) -> web.Response:
                                 {
                                     "bool": {
                                         "must": [
-                                            {"term": {"source.ip.keyword": src_ip}},
-                                            {
-                                                "term": {
-                                                    "destination.ip.keyword": dst_ip
-                                                }
-                                            },
+                                            {"term": {"source.ip": src_ip}},
+                                            {"term": {"destination.ip": dst_ip}},
                                         ]
                                     }
                                 },
                                 {
                                     "bool": {
                                         "must": [
-                                            {"term": {"source.ip.keyword": dst_ip}},
-                                            {
-                                                "term": {
-                                                    "destination.ip.keyword": src_ip
-                                                }
-                                            },
+                                            {"term": {"source.ip": dst_ip}},
+                                            {"term": {"destination.ip": src_ip}},
                                         ]
                                     }
                                 },
@@ -1147,7 +1477,18 @@ async def handle_connection_related(request: web.Request) -> web.Response:
                 ],
             }
         },
-        "sort": [{"@timestamp": {"order": "asc"}}],
+        # OLD CODE START — #96: oldest first, the capped rows stopped hours before last_seen
+        # "sort": [{"@timestamp": {"order": "asc"}}],
+        # OLD CODE END
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "aggs": {
+            "src_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "dst_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+            "first_seen": {"min": {"field": "@timestamp"}},
+            "last_seen": {"max": {"field": "@timestamp"}},
+            # transport values are a handful (tcp, udp, icmp, ...), so 20 holds them all
+            "protocols": {"terms": {"field": "network.transport", "size": 20}},
+        },
     }
 
     try:
@@ -1157,32 +1498,52 @@ async def handle_connection_related(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=502)
 
     hits = result.get("hits", {}).get("hits", [])
-    connections = []
-    total_bytes = 0
-    protocols_seen: set[str] = set()
-    first_seen = None
-    last_seen = None
-
-    for hit in hits:
-        src = hit.get("_source", {})
-        src["_id"] = hit.get("_id", "")
-        connections.append(src)
-
-        # Accumulate stats
-        sb = src.get("source", {}).get("bytes", 0) or 0
-        db = src.get("destination", {}).get("bytes", 0) or 0
-        total_bytes += sb + db
-
-        proto = src.get("network", {}).get("transport", "")
-        if proto:
-            protocols_seen.add(proto)
-
-        ts = src.get("@timestamp", "")
-        if ts:
-            if first_seen is None or ts < first_seen:
-                first_seen = ts
-            if last_seen is None or ts > last_seen:
-                last_seen = ts
+    # OLD CODE START — #96: count, bytes, protocols and first/last seen came from the capped rows
+    # connections = []
+    # total_bytes = 0
+    # protocols_seen: set[str] = set()
+    # first_seen = None
+    # last_seen = None
+    #
+    # for hit in hits:
+    #     src = hit.get("_source", {})
+    #     src["_id"] = hit.get("_id", "")
+    #     connections.append(src)
+    #
+    #     # Accumulate stats
+    #     sb = src.get("source", {}).get("bytes", 0) or 0
+    #     db = src.get("destination", {}).get("bytes", 0) or 0
+    #     total_bytes += sb + db
+    #
+    #     proto = src.get("network", {}).get("transport", "")
+    #     if proto:
+    #         protocols_seen.add(proto)
+    #
+    #     ts = src.get("@timestamp", "")
+    #     if ts:
+    #         if first_seen is None or ts < first_seen:
+    #             first_seen = ts
+    #         if last_seen is None or ts > last_seen:
+    #             last_seen = ts
+    #
+    # return web.json_response(
+    #     {
+    #         "from": from_ts,
+    #         "to": to_ts,
+    #         "src_ip": src_ip,
+    #         "dst_ip": dst_ip,
+    #         "total_connections": len(connections),
+    #         "total_bytes": total_bytes,
+    #         "protocols": sorted(protocols_seen),
+    #         "first_seen": first_seen,
+    #         "last_seen": last_seen,
+    #         "connections": connections,
+    #     }
+    # )
+    # OLD CODE END
+    connections = [
+        {**hit.get("_source", {}), "_id": hit.get("_id", "")} for hit in hits
+    ]
 
     return web.json_response(
         {
@@ -1190,11 +1551,7 @@ async def handle_connection_related(request: web.Request) -> web.Response:
             "to": to_ts,
             "src_ip": src_ip,
             "dst_ip": dst_ip,
-            "total_connections": len(connections),
-            "total_bytes": total_bytes,
-            "protocols": sorted(protocols_seen),
-            "first_seen": first_seen,
-            "last_seen": last_seen,
+            **_related_summary(result),
             "connections": connections,
         }
     )

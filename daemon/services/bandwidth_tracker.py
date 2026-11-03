@@ -12,9 +12,10 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from opensearchpy import OpenSearch, OpenSearchException
+from opensearchpy import OpenSearch
 
-from services.excluded_ips import build_excluded_ips_filter
+from services.excluded_ips import RFC1918_SOURCE_FILTER, build_excluded_ips_filter
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.bandwidth_tracker")
 
@@ -25,6 +26,18 @@ DEFAULT_MONTHLY_CAP_BYTES = 0
 
 # Settings file for bandwidth cap
 _CAP_FILE = os.environ.get("BANDWIDTH_CAP_FILE", "/opt/nettap/data/bandwidth_cap.json")
+
+
+# Per-connection on-the-wire bytes, so terms can be ordered by device bandwidth
+_TOTAL_BYTES_SUM = {
+    "sum": {
+        "script": {
+            "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+            " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+            "lang": "painless",
+        }
+    }
+}
 
 
 class BandwidthTracker:
@@ -79,9 +92,17 @@ class BandwidthTracker:
 
     def _bytes_aggs(self) -> dict:
         """Return standard byte aggregation fields."""
+        # OLD CODE START — replaced 2026-11-01: client/server.bytes are Zeek orig_bytes/
+        # resp_bytes (payload only), so monthly usage read lower than the 24 h summary
+        # return {
+        #     "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
+        #     "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+        # }
+        # OLD CODE END
+        # source/destination.bytes are Zeek orig_ip_bytes/resp_ip_bytes: bytes on the wire
         return {
-            "orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
-            "resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
+            "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
         }
 
     def get_monthly_usage(
@@ -126,17 +147,14 @@ class BandwidthTracker:
             "aggs": self._bytes_aggs(),
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_monthly_usage: %s", exc)
-            return {
-                "year": year,
-                "month": month,
-                "total_bytes": 0,
-                "orig_bytes": 0,
-                "resp_bytes": 0,
-            }
+        # OLD CODE START — #96: a failed query read as 0 bytes used this month
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_monthly_usage: %s", exc)
+        #     return {"year": year, "month": month, "total_bytes": 0, "orig_bytes": 0, "resp_bytes": 0}
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         aggs = result.get("aggregations", {})
         orig = aggs.get("orig_bytes", {}).get("value", 0) or 0
@@ -181,24 +199,34 @@ class BandwidthTracker:
             "query": {"bool": bool_clause},
             "aggs": {
                 "daily": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "calendar_interval": "1d",
-                        "min_doc_count": 0,
-                        "extended_bounds": {"min": from_ts, "max": to_ts},
-                    },
+                    # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+                    # "date_histogram": {
+                    #     "field": "@timestamp",
+                    #     "calendar_interval": "1d",
+                    #     "min_doc_count": 0,
+                    #     "extended_bounds": {"min": from_ts, "max": to_ts},
+                    # },
+                    # OLD CODE END
+                    **time_slots(
+                        from_ts, to_ts, "1d"
+                    ),  # UTC days, like calendar_interval 1d
                     "aggs": self._bytes_aggs(),
                 }
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_daily_usage: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as no traffic on any day
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_daily_usage: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
-        buckets = result.get("aggregations", {}).get("daily", {}).get("buckets", [])
+        buckets = histogram_buckets(
+            result.get("aggregations", {}).get("daily")
+        )  # date_histogram before #120
         return [
             {
                 "date": b.get("key_as_string", b.get("key", "")),
@@ -217,6 +245,7 @@ class BandwidthTracker:
         to_ts: str,
         limit: int = 50,
         excluded_ips: list[str] | None = None,
+        lan_filter: dict | None = None,
     ) -> list[dict[str, Any]]:
         """Get bandwidth usage per source IP device.
 
@@ -225,18 +254,31 @@ class BandwidthTracker:
             to_ts: ISO timestamp end.
             limit: Max devices to return.
             excluded_ips: Optional list of IPs to exclude from results.
+            lan_filter: Source filter for LAN devices (the device list's rule);
+                defaults to RFC1918 sources.
 
         Returns:
-            List of dicts with ip, total_bytes, orig_bytes, resp_bytes.
+            List of dicts with ip, total_bytes, orig_bytes, resp_bytes, sorted by
+            total bytes; percent_of_total is the share of all LAN traffic.
         """
         if not self._client:
             return []
 
         excluded = build_excluded_ips_filter(excluded_ips or [])
+        # OLD CODE START — replaced 2026-11-01: the top 50 sources by connection count,
+        # sorted by count, internet hosts included, and % of those 50 only. NetTap
+        # itself (6.9 MB, 26K conns) ranked above a 22.7 GB device on the G11.
+        # bool_clause: dict = {"filter": [*self._base_filters(), {"range": ...}]}
+        # "by_device": {"terms": {"field": "source.ip", "size": limit},
+        #     "aggs": {**self._bytes_aggs(), "bucket_sort": {"bucket_sort": {
+        #         "sort": [{"_count": {"order": "desc"}}]}}}}
+        # total_all = sum(orig + resp for b in buckets)
+        # OLD CODE END
         bool_clause: dict = {
             "filter": [
                 *self._base_filters(),
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+                lan_filter or RFC1918_SOURCE_FILTER,
             ]
         }
         if excluded:
@@ -246,31 +288,31 @@ class BandwidthTracker:
             "size": 0,
             "query": {"bool": bool_clause},
             "aggs": {
+                **self._bytes_aggs(),
                 "by_device": {
-                    "terms": {"field": "source.ip.keyword", "size": limit},
-                    "aggs": {
-                        **self._bytes_aggs(),
-                        "bucket_sort": {
-                            "bucket_sort": {
-                                "sort": [{"_count": {"order": "desc"}}],
-                            }
-                        },
+                    "terms": {
+                        "field": "source.ip",
+                        "size": limit,
+                        "order": {"total_bytes": "desc"},
                     },
-                }
+                    "aggs": {**self._bytes_aggs(), "total_bytes": _TOTAL_BYTES_SUM},
+                },
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_per_device_usage: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed query read as no device using bandwidth
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_per_device_usage: %s", exc)
+        #     return []
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
-        buckets = result.get("aggregations", {}).get("by_device", {}).get("buckets", [])
-        total_all = sum(
-            (b.get("orig_bytes", {}).get("value", 0) or 0)
-            + (b.get("resp_bytes", {}).get("value", 0) or 0)
-            for b in buckets
+        aggs = result.get("aggregations", {})
+        buckets = aggs.get("by_device", {}).get("buckets", [])
+        total_all = (aggs.get("orig_bytes", {}).get("value", 0) or 0) + (
+            aggs.get("resp_bytes", {}).get("value", 0) or 0
         )
 
         return [
@@ -364,7 +406,11 @@ class BandwidthTracker:
         return result
 
     def get_hourly_heatmap(
-        self, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+        self,
+        from_ts: str,
+        to_ts: str,
+        excluded_ips: list[str] | None = None,
+        tz: str = "UTC",
     ) -> list[list[int]]:
         """Get a 7x24 hour-of-day x day-of-week bandwidth matrix.
 
@@ -374,6 +420,7 @@ class BandwidthTracker:
             from_ts: ISO timestamp start.
             to_ts: ISO timestamp end.
             excluded_ips: Optional list of IPs to exclude from results.
+            tz: IANA time zone the days and hours are counted in (the caller validates it).
 
         Returns:
             7x24 matrix of byte totals.
@@ -391,6 +438,13 @@ class BandwidthTracker:
         if excluded:
             bool_clause["must_not"] = excluded
 
+        # OLD CODE START — Joda getters OpenSearch 3.x removed ("dynamic getter
+        # [java.time.ZonedDateTime, hourOfDay] not found"): the data shard failed and the heatmap
+        # read empty; and the hours were UTC, so a Pacific evening showed at 02:00-06:00
+        # "script": {"source": "doc['@timestamp'].value.dayOfWeek", "lang": "painless"},
+        # "script": {"source": "doc['@timestamp'].value.hourOfDay", "lang": "painless"},
+        # OLD CODE END
+        local = "doc['@timestamp'].value.withZoneSameInstant(ZoneId.of(params.tz))"
         query = {
             "size": 0,
             "query": {"bool": bool_clause},
@@ -398,8 +452,10 @@ class BandwidthTracker:
                 "by_day_of_week": {
                     "terms": {
                         "script": {
-                            "source": "doc['@timestamp'].value.dayOfWeek",
+                            # 1=Mon..7=Sun
+                            "source": f"{local}.getDayOfWeek().getValue()",
                             "lang": "painless",
+                            "params": {"tz": tz},
                         },
                         "size": 7,
                     },
@@ -407,8 +463,9 @@ class BandwidthTracker:
                         "by_hour": {
                             "terms": {
                                 "script": {
-                                    "source": "doc['@timestamp'].value.hourOfDay",
+                                    "source": f"{local}.getHour()",
                                     "lang": "painless",
+                                    "params": {"tz": tz},
                                 },
                                 "size": 24,
                             },
@@ -419,11 +476,14 @@ class BandwidthTracker:
             },
         }
 
-        try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
-        except OpenSearchException as exc:
-            logger.error("OpenSearch error in get_hourly_heatmap: %s", exc)
-            return [[0] * 24 for _ in range(7)]
+        # OLD CODE START — #96: a failed query read as an all-zero heatmap
+        # try:
+        #     result = self._client.search(index=NETWORK_INDEX, body=query)
+        # except OpenSearchException as exc:
+        #     logger.error("OpenSearch error in get_hourly_heatmap: %s", exc)
+        #     return [[0] * 24 for _ in range(7)]
+        # OLD CODE END
+        result = self._client.search(index=NETWORK_INDEX, body=query)
 
         # Initialize 7x24 matrix
         matrix = [[0] * 24 for _ in range(7)]

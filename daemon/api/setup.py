@@ -5,8 +5,21 @@ Handles the POST /api/setup/configure endpoint that writes the capture mode
 configuration and .env settings when the setup wizard completes.
 
 Writes:
-  - /opt/nettap/data/capture-mode.conf  (capture mode + interfaces)
+  - /opt/nettap/data/capture-mode.conf  (legacy: capture mode + interfaces)
   - /opt/nettap/data/.env               (appends/updates relevant env vars)
+  - /etc/nettap/capture-mode.conf       (INI read by load_capture_config)
+  - /etc/nettap/capture.env             (read by the capture containers)
+
+When capture.env changes, the capture containers are restarted, and
+app["capture_manager"] is swapped for the new mode (an active DHCP gateway is
+torn down first). Fixes CR-007: the wizard's choice now reaches the readers.
+
+Refused before anything is written: leaving an active DHCP gateway while no
+other DHCP server answers (409), and a mirror NIC that carries an address,
+the default route or the live gateway (400).
+
+POST /api/setup/bridge/preview checks the wizard's WAN/LAN pair without
+touching the host and refuses a port this machine still uses (CR-004).
 """
 
 import logging
@@ -15,6 +28,20 @@ from pathlib import Path
 
 from aiohttp import web
 
+from api.capture_control import restart_capture_containers
+from api.dhcp_gateway import ensure_capture_lock
+from services.capture_config import (
+    CaptureConfig,
+    save_capture_config,
+    write_env_file_if_changed,
+)
+from services.bridge_capture_adapter import BridgeCaptureAdapter
+from services.capture_manager import CaptureManager, CaptureMode
+from services.capture_mode_stub import CaptureManagerStub
+from services.dhcp_gateway import DhcpGatewayManager
+from services.dhcp_gateway_host import HostNetOps
+from services.dhcp_gateway_net import validate_interface_name, validate_subnet
+from services.mirror_manager import MirrorManager
 from storage.retention_config import RetentionConfigManager
 
 logger = logging.getLogger("nettap.api.setup")
@@ -23,6 +50,10 @@ logger = logging.getLogger("nettap.api.setup")
 DATA_DIR = os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data")
 CAPTURE_MODE_CONF = os.path.join(DATA_DIR, "capture-mode.conf")
 ENV_FILE = os.environ.get("NETTAP_ENV_FILE", os.path.join(DATA_DIR, ".env"))
+
+CAPTURE_MODES = ("dhcp_gateway", "mirror", "bridge")
+DEFAULT_DHCP_SUBNET = CaptureConfig().dhcp_subnet
+BRIDGE_NAME = "br0"  # BridgeManager's default; Go Live builds this one
 
 
 def _write_capture_mode_conf(config: dict) -> str:
@@ -117,24 +148,97 @@ def _update_env_file(config: dict) -> str:
     return ENV_FILE
 
 
+def _build_capture_config(body: dict) -> CaptureConfig:
+    """The CaptureConfig for the wizard's choice. Raises ValueError on bad input.
+
+    CR-165 / CR-166: interface names (every mode) and the DHCP subnet are
+    validated here, before anything is written.
+    """
+    mode = body["capture_mode"]
+    if mode == "bridge":
+        return CaptureConfig(
+            mode=CaptureMode.BRIDGE,
+            wan_interface=validate_interface_name(body.get("wan_interface")),
+            lan_interface=validate_interface_name(body.get("lan_interface")),
+        )
+    interface = validate_interface_name(body.get("capture_interface"))
+    if mode == "mirror":
+        mgmt = body.get("management_interface") or ""
+        return CaptureConfig(
+            mode=CaptureMode.MIRROR,
+            interface=interface,
+            management=validate_interface_name(mgmt) if mgmt else "",
+        )
+    subnet = body.get("dhcp_subnet")
+    return CaptureConfig(
+        mode=CaptureMode.DHCP_GATEWAY,
+        interface=interface,
+        dhcp_subnet=validate_subnet(DEFAULT_DHCP_SUBNET if subnet is None else subnet),
+    )
+
+
+# OLD CODE START — replaced 2026-10-30: moved to capture_config as
+# write_env_file_if_changed so the DHCP enable endpoint shares it
+# (imports were: _get_env_path, write_env_file from services.capture_config)
+# def _write_capture_env(config: CaptureConfig) -> tuple[str, bool]:
+#     """Write capture.env; returns (path, whether its content changed)."""
+#     try:
+#         with open(_get_env_path(), "r") as f:
+#             before = f.read()
+#     except FileNotFoundError:
+#         before = None
+#     path = write_env_file(config)
+#     with open(path, "r") as f:
+#         return path, f.read() != before
+# OLD CODE END
+
+
+async def _new_capture_manager(config: CaptureConfig) -> CaptureManager:
+    """The manager for a newly configured mode (DHCP gateway is not enabled here)."""
+    if config.mode == CaptureMode.MIRROR:
+        mirror = MirrorManager(
+            interface=config.interface, management_interface=config.management
+        )
+        result = await mirror.setup()
+        if not result.get("success"):
+            logger.error("Mirror interface setup failed: %s", result.get("errors"))
+        return mirror
+    if config.mode == CaptureMode.DHCP_GATEWAY:
+        return DhcpGatewayManager(config)
+    return CaptureManagerStub()
+
+
 async def handle_setup_configure(request: web.Request) -> web.Response:
     """POST /api/setup/configure — Write capture mode config and .env."""
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Body must be a JSON object"}, status=400)
 
     capture_mode = body.get("capture_mode")
-    if capture_mode not in ("mirror", "bridge"):
+    # OLD CODE START — replaced 2026-10-30: DHCP gateway mode added
+    # if capture_mode not in ("mirror", "bridge"):
+    #     return web.json_response(
+    #         {"error": "capture_mode must be 'mirror' or 'bridge'"}, status=400
+    #     )
+    # OLD CODE END
+    if capture_mode not in CAPTURE_MODES:
         return web.json_response(
-            {"error": "capture_mode must be 'mirror' or 'bridge'"}, status=400
+            {"error": "capture_mode must be 'dhcp_gateway', 'mirror' or 'bridge'"},
+            status=400,
         )
 
     # Validate required fields based on mode
-    if capture_mode == "mirror":
+    # OLD CODE START — replaced 2026-10-30: DHCP gateway mode needs the NIC too
+    # if capture_mode == "mirror":
+    # OLD CODE END
+    if capture_mode in ("mirror", "dhcp_gateway"):
         if not body.get("capture_interface"):
             return web.json_response(
-                {"error": "capture_interface is required for mirror mode"}, status=400
+                {"error": f"capture_interface is required for {capture_mode} mode"},
+                status=400,
             )
     else:
         if not body.get("wan_interface") or not body.get("lan_interface"):
@@ -146,11 +250,152 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
             )
 
     try:
+        capture_cfg = _build_capture_config(body)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    async with ensure_capture_lock(request.app):
+        return await _apply_configuration(request.app, body, capture_cfg)
+
+
+async def _gateway_conflict(current: DhcpGatewayManager, config: CaptureConfig):
+    """409 response when the wizard would change a live gateway's NIC or subnet."""
+    state = await current.status()
+    if (state["interface"], state["subnet"]) == (config.interface, config.dhcp_subnet):
+        return None
+    # Changing them under live routing would orphan the old rules and leases
+    return web.json_response(
+        {
+            "error": f"DHCP gateway mode is active on {state['interface']} "
+            f"({state['subnet']}). To change its network card or subnet, turn "
+            "your router's DHCP back on and switch NetTap to another capture "
+            "mode first."
+        },
+        status=409,
+    )
+
+
+async def _router_dhcp_missing(current: DhcpGatewayManager):
+    """409 unless another DHCP server answers, so leaving the gateway keeps the LAN up."""
+    others, error = await current.probe_other_dhcp()
+    if others:
+        return None
+    check = f" (NetTap could not check: {error})" if error else ""
+    return web.json_response(
+        {
+            "error": "Turn your router's DHCP server back on first; NetTap is still "
+            f"handing out addresses on {current.get_capture_interface()}, and "
+            "switching modes now would leave your devices without a network. "
+            f"Nothing was changed{check}."
+        },
+        status=409,
+    )
+
+
+# OLD CODE START — replaced 2026-10-30 (CR-004): the in-use check moved to
+# _nic_in_use_problem so the bridge preview shares it
+# async def _mirror_nic_in_use(current, interface: str):
+#     """400 when the mirror NIC is in use: mirror setup flushes its addresses."""
+#     if (
+#         isinstance(current, DhcpGatewayManager)
+#         and current.routing_active
+#         and current.get_capture_interface() == interface
+#     ):
+#         problem = (
+#             "is the network card DHCP gateway mode is routing your devices through"
+#         )
+#     else:
+#         host = HostNetOps()
+#         routes = await host.ip_json("-4", "route", "show", "default")
+#         addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
+#         if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
+#             problem = "carries this machine's internet connection (its default route)"
+#         elif addrs:
+#             problem = (
+#                 f"has an IP address ({', '.join(addrs)}), so this machine uses it "
+#                 "to reach your network"
+#             )
+#         else:
+#             return None
+# OLD CODE END
+async def _nic_in_use_problem(current, interface: str) -> str | None:
+    """Why this machine still needs ``interface`` (gateway NIC, default route, an
+    address), or None when it is spare. Taking it over cuts that path off."""
+    if (
+        isinstance(current, DhcpGatewayManager)
+        and current.routing_active
+        and current.get_capture_interface() == interface
+    ):
+        return "is the network card DHCP gateway mode is routing your devices through"
+    host = HostNetOps()
+    # Fail closed: ip_json returns [] on failure, which would read as "no route,
+    # no address" and pass any NIC (it did on Ubuntu while AppArmor blocked nsenter)
+    if not await host.ip_json("link", "show", "dev", interface):
+        return "was not found, or NetTap couldn't read its network settings"
+    routes = await host.ip_json("-4", "route", "show", "default")
+    addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
+    if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
+        return "carries this machine's internet connection (its default route)"
+    if addrs:
+        return (
+            f"has an IP address ({', '.join(addrs)}), so this machine uses it "
+            "to reach your network"
+        )
+    return None
+
+
+async def _mirror_nic_in_use(current, interface: str):
+    """400 when the mirror NIC is in use: mirror setup flushes its addresses."""
+    problem = await _nic_in_use_problem(current, interface)
+    if problem is None:
+        return None
+    return web.json_response(
+        {
+            "error": f"{interface} {problem}. Mirror mode takes over the network "
+            "card it captures on, so pick a spare one plugged into your switch's "
+            "mirror port. Nothing was changed."
+        },
+        status=400,
+    )
+
+
+async def _apply_configuration(
+    app: web.Application, body: dict, capture_cfg: CaptureConfig
+) -> web.Response:
+    """Write every file, restart capture if needed and swap the manager (locked)."""
+    capture_mode = body["capture_mode"]
+    current = app.get("capture_manager")
+    gateway_active = isinstance(current, DhcpGatewayManager) and current.routing_active
+    # Same live gateway: the running manager keeps its saved state and dnsmasq
+    keep_gateway = gateway_active and capture_cfg.mode == CaptureMode.DHCP_GATEWAY
+    # A live bridge adapter keeps its health monitor (the stub has none)
+    keep_bridge = capture_cfg.mode == CaptureMode.BRIDGE and isinstance(
+        current, BridgeCaptureAdapter
+    )
+
+    try:
+        if keep_gateway:
+            conflict = await _gateway_conflict(current, capture_cfg)
+            if conflict is not None:
+                return conflict
+        if capture_cfg.mode == CaptureMode.MIRROR:
+            in_use = await _mirror_nic_in_use(current, capture_cfg.interface)
+            if in_use is not None:
+                return in_use
+        if gateway_active and not keep_gateway:
+            missing = await _router_dhcp_missing(current)
+            if missing is not None:
+                return missing
+        teardown = (
+            await current.teardown() if gateway_active and not keep_gateway else None
+        )
+
         conf_path = _write_capture_mode_conf(body)
         env_path = _update_env_file(body)
 
         # Also write retention.json so the daemon picks it up on first start
         storage = body.get("storage")
+        warnings: list[str] = []
         if storage:
             try:
                 config_manager = RetentionConfigManager()
@@ -158,19 +403,44 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
                 logger.info("Wrote retention.json from setup wizard storage config")
             except (ValueError, OSError) as exc:
                 logger.warning("Failed to write retention.json from setup: %s", exc)
+                # #96: the rest of setup still applies; the response says what didn't
+                warnings.append(f"Retention settings were not saved: {exc}")
 
-        logger.info(
-            "Setup configuration saved: mode=%s, conf=%s, env=%s",
-            capture_mode,
-            conf_path,
-            env_path,
+        ini_paths = [] if keep_gateway else [save_capture_config(capture_cfg)]
+        # OLD CODE START — replaced 2026-10-30: helper moved to capture_config
+        # capture_env_path, env_changed = _write_capture_env(capture_cfg)
+        # OLD CODE END
+        capture_env_path, env_changed = write_env_file_if_changed(capture_cfg)
+        capture_restart = (
+            await restart_capture_containers()
+            if env_changed
+            else {"restarted": [], "errors": []}
         )
+        # OLD CODE START — replaced 2026-10-30: a live BridgeCaptureAdapter was
+        # swapped for CaptureManagerStub when the wizard re-saved bridge mode
+        # if not keep_gateway:
+        # OLD CODE END
+        if not (keep_gateway or keep_bridge):
+            app["capture_manager"] = await _new_capture_manager(capture_cfg)
 
+        files_written = [conf_path, env_path, *ini_paths, capture_env_path]
+        logger.info(
+            "Setup configuration saved: mode=%s, files=%s, capture_restart=%s",
+            capture_mode,
+            files_written,
+            capture_restart,
+        )
         return web.json_response(
             {
-                "status": "ok",
+                # OLD CODE START — #96: "ok" even when retention.json wasn't written
+                # "status": "ok",
+                # OLD CODE END
+                "status": "partial" if warnings else "ok",
                 "capture_mode": capture_mode,
-                "files_written": [conf_path, env_path],
+                "files_written": files_written,
+                "capture_restart": capture_restart,
+                **({"warnings": warnings} if warnings else {}),
+                **({"dhcp_teardown": teardown} if teardown is not None else {}),
             }
         )
     except Exception as exc:
@@ -180,6 +450,73 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
         )
 
 
+async def handle_bridge_preview(request: web.Request) -> web.Response:
+    """POST /api/setup/bridge/preview — check a WAN/LAN pair; changes nothing.
+
+    CR-004: the wizard's Verify step called POST /api/setup/bridge, which builds
+    and persists br0. The bridge is built only on Go Live now. A port this
+    machine still uses is refused: bridging it would cut that connection off.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Body must be a JSON object"}, status=400)
+    try:
+        wan = validate_interface_name(body.get("wan_interface"))
+        lan = validate_interface_name(body.get("lan_interface"))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if wan == lan:
+        return web.json_response(
+            {"error": "WAN and LAN interfaces must be different"}, status=400
+        )
+
+    current = request.app.get("capture_manager")
+    for iface in (wan, lan):
+        # Also fails closed when ip can't read the host's interfaces
+        if not await HostNetOps().ip_json("link", "show", "dev", iface):
+            return web.json_response(
+                {"error": f"{iface} was not found on this machine."}, status=400
+            )
+        problem = await _nic_in_use_problem(current, iface)
+        if problem is not None:
+            return web.json_response(
+                {
+                    "error": f"{iface} {problem}. The bridge takes over both of its "
+                    "network cards, so bridging this one would cut that connection "
+                    "off, and you could lose this page. Pick two spare ports for the "
+                    "modem and router, and reach NetTap through a third port or "
+                    "Wi-Fi. Nothing was changed."
+                },
+                status=400,
+            )
+
+    return web.json_response(
+        {
+            "config_preview": "\n".join(
+                [
+                    "# NetTap bridge (created on the Go Live page)",
+                    f"BRIDGE_NAME={BRIDGE_NAME}",
+                    f"WAN_INTERFACE={wan}",
+                    f"LAN_INTERFACE={lan}",
+                    "# Transparent Layer 2 forwarding, no IP address on the bridge",
+                    "# Promiscuous mode on both ports for packet capture",
+                ]
+            ),
+            "wan": wan,
+            "lan": lan,
+            "bridge_name": BRIDGE_NAME,
+            "ready": True,
+            "warnings": [],
+            "source": "daemon",
+        }
+    )
+
+
 def register_setup_routes(app: web.Application) -> None:
     """Register setup wizard API routes."""
+    ensure_capture_lock(app)
     app.router.add_post("/api/setup/configure", handle_setup_configure)
+    app.router.add_post("/api/setup/bridge/preview", handle_bridge_preview)

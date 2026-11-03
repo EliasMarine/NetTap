@@ -145,7 +145,10 @@ print('{SSHA}' + base64.b64encode(h + salt).decode())
         echo "${username}:${hash}" > "${auth_dir}/htpasswd"
     fi
 
-    chmod 644 "${auth_dir}/htpasswd"
+    # OLD CODE START — 644 for Malcolm's nginx-proxy, which NetTap no longer runs; no container mounts it
+    # chmod 644 "${auth_dir}/htpasswd"
+    # OLD CODE END
+    chmod 600 "${auth_dir}/htpasswd"
     log "Auth file created for user '${username}'"
 }
 
@@ -154,12 +157,28 @@ print('{SSHA}' + base64.b64encode(h + salt).decode())
 # Malcolm's entrypoint reads this file to set up the admin user and hashes
 # the password into internal_users.yml via setup-internal-users.sh.
 # ---------------------------------------------------------------------------
+# The OpenSearch login file is owned by the compose PUID with mode 600: Malcolm's entrypoints
+# drop to PUID before reading it, and no other local account can read it. Falls back to 644
+# (the old mode) only if the owner can't be changed, so OpenSearch never loses its login.
+_lock_curlrc() {
+    local file="$1" puid pgid
+    puid=$(grep -oE '^PUID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
+    pgid=$(grep -oE '^PGID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
+    if chown "${puid:-${SUDO_UID:-1000}}:${pgid:-${SUDO_GID:-1000}}" "$file" 2>/dev/null; then
+        chmod 600 "$file"
+    else
+        chmod 644 "$file"
+        warn "Could not give ${file} to the container user; it stays readable by every local account"
+    fi
+}
+
 generate_curlrc() {
     local curlrc_dir="${PROJECT_ROOT}/docker/curlrc"
     local curlrc_file="${curlrc_dir}/.opensearch.primary.curlrc"
 
     if [[ -f "$curlrc_file" ]]; then
         log "OpenSearch credentials already exist, skipping"
+        _lock_curlrc "$curlrc_file"  # earlier installs left it world-readable
         return 0
     fi
 
@@ -181,12 +200,16 @@ user: "malcolm_internal:${os_password}"
 insecure
 CURLRC
 
-    # File must be world-readable: Malcolm's entrypoint drops privileges to the
-    # opensearch user (PUID) BEFORE reading this file via setup-internal-users.sh.
-    # With root:root 600, the opensearch user cannot read the credentials, causing
-    # the security plugin to initialize without valid certs or users.
-    # The file is already in a gitignored directory and mounted :ro in containers.
-    chmod 644 "$curlrc_file"
+    # OLD CODE START — world-readable so the PUID user could read it, but so could every
+    # local account. root:root 600 broke OpenSearch (it reads as PUID); PUID-owned 600 doesn't.
+    # # File must be world-readable: Malcolm's entrypoint drops privileges to the
+    # # opensearch user (PUID) BEFORE reading this file via setup-internal-users.sh.
+    # # With root:root 600, the opensearch user cannot read the credentials, causing
+    # # the security plugin to initialize without valid certs or users.
+    # # The file is already in a gitignored directory and mounted :ro in containers.
+    # chmod 644 "$curlrc_file"
+    # OLD CODE END
+    _lock_curlrc "$curlrc_file"
     log "OpenSearch credentials generated in ${curlrc_dir}"
 }
 
@@ -303,6 +326,23 @@ calculate_heap_sizes() {
 # ---------------------------------------------------------------------------
 # Generate the .env file for docker-compose variable substitution
 # ---------------------------------------------------------------------------
+# 32 hex chars from the kernel RNG (coreutils only, no openssl needed)
+_random_secret() {
+    head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+# Append KEY=<random> to an existing .env when KEY is missing. Compose requires
+# these (no public fallback), so an older .env must gain them (CR-021, CR-022).
+_ensure_compose_secret() {
+    local env_file="$1" key="$2"
+    grep -q "^${key}=." "$env_file" && return 0
+    # Drop an empty KEY= line too: compose's ':?' rejects empty values.
+    local kept
+    kept=$(grep -v "^${key}=$" "$env_file" || true)
+    printf '%s\n%s=%s\n' "$kept" "$key" "$(_random_secret)" > "$env_file"
+    log "Added missing ${key} to ${env_file}"
+}
+
 generate_compose_env() {
     local env_file="${PROJECT_ROOT}/docker/.env"
 
@@ -315,6 +355,8 @@ generate_compose_env() {
 
     if [[ -f "$env_file" ]]; then
         log "Docker .env already exists at ${env_file}, skipping generation"
+        _ensure_compose_secret "$env_file" ARKIME_SECRET
+        _ensure_compose_secret "$env_file" GRAFANA_ADMIN_PASSWORD
         return 0
     fi
 
@@ -331,6 +373,9 @@ generate_compose_env() {
     fi
 
     log "Generating docker-compose .env file..."
+    # 2026-10-30 (CR-021, CR-022): ARKIME_SECRET no longer falls back to the
+    # public "NetTap_Arkime_Secret" when openssl is missing, and Grafana gets a
+    # generated admin password instead of compose's old "nettap" default.
     cat > "$env_file" <<ENVEOF
 # ==========================================================================
 # NetTap Docker Compose Environment
@@ -339,7 +384,9 @@ generate_compose_env() {
 
 # Malcolm image settings
 MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
-MALCOLM_IMAGE_TAG=26.02.0
+MALCOLM_IMAGE_TAG=26.10.0
+# Malcolm's key-value store image for that release (Valkey since 26.04.0)
+MALCOLM_KV_IMAGE=valkey
 
 # Process ownership (must be non-root — OpenSearch refuses to run as UID 0)
 PUID=${puid}
@@ -359,7 +406,8 @@ DASHBOARD_PORT=${DASHBOARD_PORT:-443}
 
 # Auth
 NGINX_AUTH_MODE=basic
-ARKIME_SECRET=${ARKIME_SECRET:-$(openssl rand -hex 16 2>/dev/null || echo "NetTap_Arkime_Secret")}
+ARKIME_SECRET=${ARKIME_SECRET:-$(_random_secret)}
+GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-$(_random_secret)}
 REDIS_PASSWORD=${REDIS_PASSWORD:-$(openssl rand -hex 16 2>/dev/null || echo "NetTap_Redis_Secret")}
 
 # Certificate and auth paths
@@ -373,7 +421,11 @@ RETENTION_COLD=${RETENTION_COLD:-30}
 DISK_THRESHOLD_PERCENT=${DISK_THRESHOLD_PERCENT:-80}
 
 # PCAP rotation
-PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-4096}
+# OLD CODE START — #137: tshark needs ~120 MiB + the file's size; PCAP Search couldn't
+# read 4 GB files in its 1 GiB container (a 787 MB file thrashed to the 5-minute limit)
+# PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-4096}
+# OLD CODE END
+PCAP_ROTATE_MB=${PCAP_ROTATE_MB:-256}
 PCAP_ROTATE_MIN=${PCAP_ROTATE_MIN:-10}
 
 # Arkime

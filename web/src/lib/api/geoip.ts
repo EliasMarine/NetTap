@@ -34,26 +34,29 @@ export interface GeoIPBatchResponse {
 /**
  * Look up GeoIP data for a single IP address.
  *
- * Returns a GeoIPResult on success. On failure (non-ok HTTP response),
- * returns a fallback result with country="Unknown".
+ * Returns a GeoIPResult on success; throws on a non-ok HTTP response (#96: the old
+ * country="Unknown" fallback read as a real answer).
  */
 export async function lookupGeoIP(ip: string): Promise<GeoIPResult> {
 	const encodedIP = encodeURIComponent(ip);
 	const res = await fetch(`/api/geoip/${encodedIP}`);
 
-	if (!res.ok) {
-		return {
-			ip,
-			country: 'Unknown',
-			country_code: 'XX',
-			city: null,
-			latitude: null,
-			longitude: null,
-			asn: null,
-			organization: null,
-			is_private: false,
-		};
-	}
+	// OLD CODE START — #96: a failed lookup read as country "Unknown", not a private address
+	// if (!res.ok) {
+	// 	return {
+	// 		ip,
+	// 		country: 'Unknown',
+	// 		country_code: 'XX',
+	// 		city: null,
+	// 		latitude: null,
+	// 		longitude: null,
+	// 		asn: null,
+	// 		organization: null,
+	// 		is_private: false,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`GeoIP lookup failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -62,8 +65,7 @@ export async function lookupGeoIP(ip: string): Promise<GeoIPResult> {
  * Look up GeoIP data for multiple IP addresses in a single request.
  *
  * Caps at 50 IPs (excess IPs are silently dropped by the daemon).
- * Returns a GeoIPBatchResponse on success. On failure, returns an
- * empty results array.
+ * Returns a GeoIPBatchResponse on success; throws on a non-ok HTTP response.
  */
 export async function lookupGeoIPBatch(ips: string[]): Promise<GeoIPBatchResponse> {
 	if (ips.length === 0) {
@@ -75,9 +77,12 @@ export async function lookupGeoIPBatch(ips: string[]): Promise<GeoIPBatchRespons
 	const ipsParam = capped.map((ip) => encodeURIComponent(ip)).join(',');
 	const res = await fetch(`/api/geoip/batch?ips=${ipsParam}`);
 
-	if (!res.ok) {
-		return { results: [] };
-	}
+	// OLD CODE START — #96: a failed lookup read as no results
+	// if (!res.ok) {
+	// 	return { results: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`GeoIP batch lookup failed: HTTP ${res.status}`);
 
 	return res.json();
 }

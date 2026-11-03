@@ -16,7 +16,11 @@
 		ConnectionTimelineResponse,
 		ConnectionTimelineBucket,
 	} from '$api/traffic';
-	import { getLiveConnections } from '$api/live';
+	// OLD CODE START — getLiveConnections({ limit: 1 }).count is the length of a 1-item list
+	// import { getLiveConnections } from '$api/live';
+	// OLD CODE END
+	import { getLiveDashboard } from '$api/live';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import type { BarItem } from '$components/HorizontalBarList.svelte';
@@ -80,13 +84,23 @@
 
 	// Stats
 	let stats = $state<ConnectionStatsResponse | null>(null);
-	let activeNow = $state(0);
+	// OLD CODE START — #96: 0 before (or without) a successful load read as "0 Active Devices"
+	// let activeNow = $state(0);
+	// OLD CODE END
+	let activeNow = $state<number | null>(null);
+	let liveFailed = $state(false);
 
 	// Sankey
 	let sankey = $state<SankeyResponse | null>(null);
 
 	// Timeline
 	let timeline = $state<ConnectionTimelineBucket[]>([]);
+
+	// #96: a failed request keeps the last good figures and says so, never zeros or "none"
+	let statsFailed = $state(false);
+	let sankeyFailed = $state(false);
+	let timelineFailed = $state(false);
+	let connectionsFailed = $state(false);
 
 	// Connections table
 	let connections = $state<Connection[]>([]);
@@ -281,7 +295,11 @@
 		return parts.join(' ');
 	}
 
-	async function fetchAll() {
+	// OLD CODE START — always reloaded page 1, so auto-refresh threw the user back to the first page
+	// async function fetchAll() {
+	// OLD CODE END
+	/** Reload everything; the table stays on `pg` (the current page unless told otherwise). */
+	async function fetchAll(pg: number = currentPage) {
 		loading = true;
 		const { from, to } = getTimeRange();
 		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
@@ -291,16 +309,30 @@
 				getConnectionStats({ from, to }),
 				getConnectionSankey({ from, to, limit: 10 }),
 				getConnectionTimeline({ from, to, interval }),
-				getLiveConnections({ limit: 1 }),
+				// OLD CODE START — count of a 1-item list, so "Active Now" was only ever 0 or 1
+				// getLiveConnections({ limit: 1 }),
+				// OLD CODE END
+				getLiveDashboard({ limit: 1 }),
 			]);
 
 			if (statsRes.status === 'fulfilled') stats = statsRes.value;
 			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
 			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
-			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
+			statsFailed = statsRes.status === 'rejected';
+			sankeyFailed = sankeyRes.status === 'rejected';
+			timelineFailed = timelineRes.status === 'rejected';
+			// OLD CODE START
+			// if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
+			// OLD CODE END
+			// Distinct source devices seen in the live window (last 5 minutes)
+			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.stats?.active_devices ?? 0;
+			liveFailed = liveRes.status === 'rejected';
 		} catch { /* handled per-request */ }
 
-		await fetchConnections(1);
+		// OLD CODE START
+		// await fetchConnections(1);
+		// OLD CODE END
+		await fetchConnections(pg);
 		loading = false;
 	}
 
@@ -319,10 +351,13 @@
 			currentPage = response.page;
 			totalPages = response.total_pages;
 			totalConnections = response.total;
+			connectionsFailed = false;
 		} catch {
+			// rows are specific to this page and filter set, so they are not kept as stale
 			connections = [];
 			totalPages = 0;
 			totalConnections = 0;
+			connectionsFailed = true;
 		}
 	}
 
@@ -341,7 +376,12 @@
 
 	function handleTimeRangeChange(range: TimeRange) {
 		selectedTimeRange = range;
-		if (initialized) fetchAll();
+		// #96: the last range's figures must not stand in for this range if its load fails
+		stats = null;
+		sankey = null;
+		timeline = [];
+		// A new time range is a new result set: start from page 1
+		if (initialized) fetchAll(1);
 	}
 
 	function handleSankeyNodeClick(type: 'source' | 'protocol' | 'destination', id: string) {
@@ -367,7 +407,10 @@
 	function toggleAutoRefresh() {
 		autoRefresh = !autoRefresh;
 		if (autoRefresh) {
-			refreshInterval = setInterval(fetchAll, 15_000);
+			// OLD CODE START
+			// refreshInterval = setInterval(fetchAll, 15_000);
+			// OLD CODE END
+			refreshInterval = setInterval(() => fetchAll(), 15_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -451,28 +494,43 @@
 	<!-- ================================================================== -->
 	<!-- Stat Cards                                                         -->
 	<!-- ================================================================== -->
+	<!-- OLD CODE START — #96: with no stats (failed or not yet loaded) the cards read 0 sessions, 0 B
+	<span class="stat-value mono">{formatNumber(stats?.total_sessions ?? 0)}</span>
+	<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
+	<span class="stat-value mono">{formatBytes(stats?.bytes_out ?? 0)}</span>
+	<span class="stat-value mono">{formatNumber(stats?.alert_sessions ?? 0)}</span>
+	OLD CODE END -->
+	{#if statsFailed}
+		<p class="text-warning load-note">{loadFailed('connection stats', stats !== null)}</p>
+	{/if}
+	{#if liveFailed}
+		<p class="text-warning load-note">{loadFailed('active devices', activeNow !== null)}</p>
+	{/if}
 	<div class="stat-cards">
 		<div class="stat-card">
-			<span class="stat-value mono">{formatNumber(stats?.total_sessions ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatNumber(stats.total_sessions) : '—'}</span>
 			<span class="stat-label">Total Sessions</span>
 		</div>
 		<div class="stat-card">
 			<span class="stat-value mono">
-				{activeNow}
-				{#if activeNow > 0}<span class="pulse-dot"></span>{/if}
+				{activeNow ?? '—'}
+				{#if activeNow && !liveFailed}<span class="pulse-dot"></span>{/if}
 			</span>
+			<!-- OLD CODE START — the value is now active devices, not a connection count
 			<span class="stat-label">Active Now</span>
+			OLD CODE END -->
+			<span class="stat-label" title="Devices with traffic in the last 5 minutes">Active Devices</span>
 		</div>
 		<div class="stat-card">
-			<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatBytes(stats.bytes_in) : '—'}</span>
 			<span class="stat-label">Bytes In</span>
 		</div>
 		<div class="stat-card">
-			<span class="stat-value mono">{formatBytes(stats?.bytes_out ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatBytes(stats.bytes_out) : '—'}</span>
 			<span class="stat-label">Bytes Out</span>
 		</div>
 		<div class="stat-card" class:has-alerts={stats && stats.alert_sessions > 0}>
-			<span class="stat-value mono">{formatNumber(stats?.alert_sessions ?? 0)}</span>
+			<span class="stat-value mono">{stats ? formatNumber(stats.alert_sessions) : '—'}</span>
 			<span class="stat-label">w/ Alerts</span>
 		</div>
 	</div>
@@ -494,9 +552,16 @@
 					links={sankey.links}
 					onNodeClick={handleSankeyNodeClick}
 				/>
+				{#if sankeyFailed}
+					<p class="text-warning load-note">{loadFailed('the flow diagram', true)}</p>
+				{/if}
 			{:else if loading}
 				<div class="chart-placeholder">
 					<div class="spinner"></div>
+				</div>
+			{:else if sankeyFailed}
+				<div class="chart-placeholder">
+					<p class="text-warning">{loadFailed('the flow diagram')}</p>
 				</div>
 			{:else}
 				<div class="chart-placeholder">
@@ -510,7 +575,10 @@
 	<!-- Session Volume Timeline                                            -->
 	<!-- ================================================================== -->
 	<section class="card">
-		<SessionTimeline buckets={timeline} {loading} />
+		<SessionTimeline buckets={timeline} {loading} emptyMessage={timelineFailed ? loadFailed('the session timeline') : undefined} />
+		{#if timelineFailed && timeline.length > 0}
+			<p class="text-warning load-note">{loadFailed('the session timeline', true)}</p>
+		{/if}
 	</section>
 
 	<!-- ================================================================== -->
@@ -522,20 +590,20 @@
 				<h3>Top Sources</h3>
 				<span class="card-badge">by bytes</span>
 			</div>
-			<HorizontalBarList items={sourceBarItems} showRank labelWidth={130} />
+			<HorizontalBarList items={sourceBarItems} showRank labelWidth={130} emptyMessage={statsFailed ? loadFailed('top sources') : undefined} />
 		</div>
 		<div class="analytics-col card">
 			<div class="analytics-header">
 				<h3>Protocol Distribution</h3>
 			</div>
-			<HorizontalBarList items={protocolBarItems} showDot labelWidth={80} />
+			<HorizontalBarList items={protocolBarItems} showDot labelWidth={80} emptyMessage={statsFailed ? loadFailed('the protocol split') : undefined} />
 		</div>
 		<div class="analytics-col card">
 			<div class="analytics-header">
 				<h3>Top Destinations</h3>
 				<span class="card-badge">by bytes</span>
 			</div>
-			<HorizontalBarList items={destBarItems} showRank labelWidth={160} />
+			<HorizontalBarList items={destBarItems} showRank labelWidth={160} emptyMessage={statsFailed ? loadFailed('top destinations') : undefined} />
 		</div>
 	</div>
 
@@ -625,6 +693,10 @@
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Loading connections...</p>
+		</div>
+	{:else if connectionsFailed && !loading}
+		<div class="empty-state">
+			<p class="text-warning">{loadFailed('connections')}</p>
 		</div>
 	{:else if connections.length === 0 && !loading}
 		<div class="empty-state">
@@ -911,6 +983,12 @@
 		align-items: center;
 		justify-content: center;
 		min-height: 200px;
+	}
+
+	.load-note {
+		margin: 0;
+		padding: var(--space-sm) var(--space-md);
+		font-size: var(--text-sm);
 	}
 
 	/* ================================================================== */

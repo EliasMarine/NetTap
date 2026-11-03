@@ -225,6 +225,8 @@ cd daemon && python3 main.py
 
 **CRITICAL: Every time the OpenSearch container is recreated** (`docker compose down` + `up`, `--force-recreate`, or any operation that resets the container filesystem), the `roles_mapping.yml` reverts to empty. This breaks ALL service authentication (logstash, filebeat, etc. get 403). You MUST re-run these commands. See Chain 11 in `Debugging/DEPLOYMENT-ISSUES.md` for full details.
 
+> **Update 2026-10-30 (MS-001, Chain 21):** the root cause was that the opensearch service had no `ROLE_*` env, so Malcolm rebuilt an empty mapping on every start. The compose file now sets them, so restarts and recreates should keep auth working on their own. **Not yet confirmed on the device.** Until it is, run Step 4 after a recreate. If it fails, run `bash scripts/remote/fix-opensearch.sh`, not Step 1: on a fixed container, Step 1 replaces the full mapping with a minimal one.
+
 ```bash
 # Step 1: Write roles_mapping.yml (admin → all_access)
 sudo docker exec nettap-opensearch python3 -c "open('/usr/share/opensearch/config/opensearch-security/roles_mapping.yml','w').write('---\n_meta:\n  type: \"rolesmapping\"\n  config_version: 2\n\nall_access:\n  reserved: false\n  backend_roles:\n  - \"admin\"\n  description: \"Maps admin backend role to all_access\"\n')"
@@ -365,8 +367,9 @@ sudo scripts/install/install.sh
 # Verify services are healthy
 sudo docker ps --format "table {{.Names}}\t{{.Status}}"
 
-# Test NIC discovery endpoint
-curl -s http://localhost:8880/api/setup/nics | python3 -m json.tool
+# Test NIC discovery endpoint (every daemon route except /api/health needs the token)
+TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)
+curl -s -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/setup/nics | python3 -m json.tool
 ```
 
 This applies to all deployment, testing, debugging, and diagnostic instructions.
@@ -409,6 +412,7 @@ sudo docker logs nettap-storage-daemon --tail 50
 3. **Deploy scripts live in `scripts/remote/` in the repo.** They are committed, pushed, and pulled onto the device via `git pull`. The device runs them with `bash scripts/remote/deploy-*.sh` after pulling.
 4. **`sudo` changes `$HOME` to `/root`.** If a script uses `$HOME/NetTap` and runs with `sudo`, it resolves to `/root/NetTap` which doesn't exist. Either: (a) don't use `sudo` for the whole script — only `sudo` individual commands that need it, or (b) hardcode `REPO_DIR="/home/nettap/NetTap"`, or (c) use `$(getent passwd nettap | cut -d: -f6)/NetTap`.
 5. **The device runs Ubuntu Server 22.04** with Docker and Docker Compose. That's it. No Node.js, no npm, no Python pip packages outside of containers.
+6. **The daemon API (port 8880) requires a token.** The daemon runs with host networking, so `X-NetTap-Daemon-Token` is required on every route except `GET /api/health`, including from localhost. The token lives at `/run/nettap-auth/daemon-token` on the `daemon-auth` volume, which only the daemon and `nettap-web` mount. Read it with `sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token`. Never print it in script output or logs.
 
 ### Rules for Claude Code
 
@@ -478,7 +482,9 @@ done
 echo ""
 
 echo "→ Step 6: Test relevant API endpoint..."
-# Use: sudo docker exec nettap-storage-daemon curl -s http://localhost:8880/api/...
+# Every daemon route except /api/health needs the shared token (the daemon image has no curl):
+# TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token)
+# curl -s -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/...
 # Parse with python3 -c inside the curl pipeline
 echo ""
 

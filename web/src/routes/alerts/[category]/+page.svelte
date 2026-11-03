@@ -79,6 +79,10 @@
 	// Data
 	let categoryData = $state<CategoryDetailResponse | null>(null);
 	let timelineData = $state<CategoryTimelineResponse | null>(null);
+	// #96: each request on its own; a failed one says so instead of "No alerts in <category>"
+	let detailFailed = $state(false);
+	let timelineFailed = $state(false);
+	let alertsFailed = $state(false);
 	let alerts = $state<Alert[]>([]);
 	let loading = $state(true);
 	let alertsLoading = $state(false);
@@ -108,6 +112,7 @@
 
 	// Auto-refresh
 	let autoRefresh = $state(false);
+	let actionError = $state('');
 	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 	// ---------------------------------------------------------------------------
@@ -221,25 +226,43 @@
 		const { from, to } = getTimeRange();
 		const interval = INTERVAL_MAP[range] ?? '1h';
 
-		try {
-			const [detail, timeline, alertsResult] = await Promise.all([
-				getAlertCategoryDetail(cat, { from, to }),
-				getAlertCategoryTimeline(cat, { from, to, interval }),
-				getAlerts({ from, to, page: 1, size: pageSize, category: cat }),
-			]);
-			categoryData = detail;
-			timelineData = timeline;
-			alerts = alertsResult.alerts;
-			totalPages = alertsResult.total_pages;
-			totalAlerts = alertsResult.total;
-			currentPage = 1;
-		} catch (err) {
-			console.error('[alerts/category] fetchData error:', err);
-			categoryData = null;
-			timelineData = null;
-		} finally {
-			loading = false;
-		}
+		// OLD CODE START — #96: one failure blanked the page as "No alerts in <category>"
+		// try {
+		// 	const [detail, timeline, alertsResult] = await Promise.all([
+		// 		getAlertCategoryDetail(cat, { from, to }),
+		// 		getAlertCategoryTimeline(cat, { from, to, interval }),
+		// 		getAlerts({ from, to, page: 1, size: pageSize, category: cat }),
+		// 	]);
+		// 	categoryData = detail;
+		// 	timelineData = timeline;
+		// 	alerts = alertsResult.alerts;
+		// 	totalPages = alertsResult.total_pages;
+		// 	totalAlerts = alertsResult.total;
+		// 	currentPage = 1;
+		// } catch (err) {
+		// 	console.error('[alerts/category] fetchData error:', err);
+		// 	categoryData = null;
+		// 	timelineData = null;
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const [detail, timeline, alertsResult] = await Promise.allSettled([
+			getAlertCategoryDetail(cat, { from, to }),
+			getAlertCategoryTimeline(cat, { from, to, interval }),
+			getAlerts({ from, to, page: 1, size: pageSize, category: cat }),
+		]);
+		categoryData = detail.status === 'fulfilled' ? detail.value : null;
+		detailFailed = detail.status === 'rejected';
+		timelineData = timeline.status === 'fulfilled' ? timeline.value : null;
+		timelineFailed = timeline.status === 'rejected';
+		alertsFailed = alertsResult.status === 'rejected';
+		// a failure clears the table: the rows on screen may be another category's or range's
+		alerts = alertsResult.status === 'fulfilled' ? alertsResult.value.alerts : [];
+		totalPages = alertsResult.status === 'fulfilled' ? alertsResult.value.total_pages : 0;
+		totalAlerts = alertsResult.status === 'fulfilled' ? alertsResult.value.total : 0;
+		currentPage = 1;
+		loading = false;
 	}
 
 	async function fetchAlerts(pg: number = 1) {
@@ -251,8 +274,12 @@
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
 			currentPage = r.page;
+			alertsFailed = false;
 		} catch (err) {
 			console.error('[alerts/category] fetchAlerts error:', err);
+			alerts = [];
+			totalPages = 0;
+			alertsFailed = true;
 		} finally {
 			alertsLoading = false;
 		}
@@ -366,16 +393,37 @@
 	});
 
 	// Alert table action handlers
+	// OLD CODE START — no error handling; the helpers now throw when the daemon refuses
+	// async function handleSuppress(alert: Alert) {
+	// 	if (!alert.alert?.signature_id) return;
+	// 	await suppressAlert(alert.alert.signature_id, alert.src_ip);
+	// 	fetchAlerts(currentPage);
+	// }
+	//
+	// async function handleFalsePositive(alert: Alert) {
+	// 	if (!alert.alert?.signature_id) return;
+	// 	await markFalsePositive(alert.alert.signature_id);
+	// 	fetchAlerts(currentPage);
+	// }
+	// OLD CODE END
+	async function runAlertAction(action: () => Promise<void>) {
+		actionError = '';
+		try {
+			await action();
+			fetchAlerts(currentPage);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Action failed';
+		}
+	}
+
 	async function handleSuppress(alert: Alert) {
-		if (!alert.alert?.signature_id) return;
-		await suppressAlert(alert.alert.signature_id, alert.src_ip);
-		fetchAlerts(currentPage);
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => suppressAlert(sigId, alert.src_ip));
 	}
 
 	async function handleFalsePositive(alert: Alert) {
-		if (!alert.alert?.signature_id) return;
-		await markFalsePositive(alert.alert.signature_id);
-		fetchAlerts(currentPage);
+		const sigId = alert.alert?.signature_id;
+		if (sigId) await runAlertAction(() => markFalsePositive(sigId));
 	}
 
 	function openDrawer(alert: Alert) {
@@ -409,12 +457,14 @@
 					{#if categoryData?.category?.description}
 						<p class="subtitle">{categoryData.category.description}</p>
 					{/if}
+					<!-- OLD CODE START — dead badge: the daemon never sends category.mitre_tactic
 					{#if categoryData?.category?.mitre_tactic}
 						<span class="mitre-badge">
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
 							{categoryData.category.mitre_tactic.id}: {categoryData.category.mitre_tactic.name}
 						</span>
 					{/if}
+					OLD CODE END -->
 				</div>
 			</div>
 		</div>
@@ -476,7 +526,12 @@
 			<div class="loading-spinner"></div>
 			<span class="text-muted">Loading {displayName} data...</span>
 		</div>
-	{:else if !categoryData || categoryData.stats.total === 0}
+	{:else if detailFailed || !categoryData}
+		<div class="empty-state">
+			<p class="empty-text">Couldn't load {displayName}</p>
+			<p class="empty-hint">The request failed. Try again in a moment.</p>
+		</div>
+	{:else if categoryData.stats.total === 0}
 		<div class="empty-state">
 			<div class="empty-icon">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -592,6 +647,10 @@
 						{/each}
 					</svg>
 				</div>
+			</section>
+		{:else if timelineFailed}
+			<section class="card fade-up">
+				<p class="card-empty">Couldn't load the alert volume over time: the request failed.</p>
 			</section>
 		{/if}
 
@@ -721,8 +780,11 @@
 		<section class="card fade-up">
 			<div class="card-header">
 				<span class="card-title">Recent Alerts</span>
-				<span class="card-badge">{formatNumber(totalAlerts)} total</span>
+				<span class="card-badge">{alertsFailed ? 'check failed' : `${formatNumber(totalAlerts)} total`}</span>
 			</div>
+			{#if actionError}
+				<div class="alert alert-danger" role="alert">Not applied: {actionError}</div>
+			{/if}
 			<div class="alert-table-wrap">
 				<table class="alert-table">
 					<thead>
@@ -784,7 +846,7 @@
 							</tr>
 						{:else}
 							<tr>
-								<td colspan="7" class="table-empty-cell">No alerts found in this time range.</td>
+								<td colspan="7" class="table-empty-cell">{alertsFailed ? "Couldn't load alerts: the request failed." : 'No alerts found in this time range.'}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -905,6 +967,7 @@
 		margin-top: 2px;
 	}
 
+	/* OLD CODE START — style for the removed mitre_tactic badge
 	.mitre-badge {
 		display: inline-flex;
 		align-items: center;
@@ -919,6 +982,7 @@
 		margin-top: var(--space-sm);
 		border: 1px solid rgba(68, 138, 255, 0.15);
 	}
+	OLD CODE END */
 
 	.header-right {
 		display: flex;

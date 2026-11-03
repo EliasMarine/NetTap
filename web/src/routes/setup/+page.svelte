@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import Collapsible from '$components/Collapsible.svelte';
+	import DhcpGatewayStep from '$components/setup/DhcpGatewayStep.svelte';
+	import { DEFAULT_DHCP_SUBNET } from '$lib/utils/dhcpSubnet';
 
 	// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
 	// Port 8880 is Docker-internal only. Use relative paths through SvelteKit proxy.
@@ -17,19 +20,26 @@
 	// const stepLabels = ['Welcome', 'Interfaces', 'Bridge', 'Storage', 'Account'];
 	// OLD CODE END
 
-	// Capture mode: 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge)
-	type CaptureMode = 'mirror' | 'bridge' | '';
+	// OLD CODE START — two modes only; DHCP gateway added 2026-10-30
+	// // Capture mode: 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge)
+	// type CaptureMode = 'mirror' | 'bridge' | '';
+	// OLD CODE END
+	// Capture mode: 'dhcp_gateway' (DHCP Gateway), 'mirror' (Mirror/SPAN) or 'bridge' (Inline Bridge, under Advanced)
+	type CaptureMode = 'dhcp_gateway' | 'mirror' | 'bridge' | '';
 	let selectedMode = $state<CaptureMode>('');
 
 	// Dynamic step labels based on mode
 	// Mirror: Welcome -> Capture Mode -> Interfaces (mirror) -> Storage -> Enrichment -> Account -> Verification
 	// Bridge: Welcome -> Capture Mode -> Interfaces (bridge) -> Bridge Config -> Storage -> Enrichment -> Account -> Verification
+	// DHCP gateway: Welcome -> Capture Mode -> Interfaces (router port) -> DHCP Gateway -> Storage -> Enrichment -> Account -> Verification
 	// Before mode selected: Welcome -> Capture Mode (only 2 steps available)
 	let stepLabels = $derived.by(() => {
 		if (selectedMode === 'mirror') {
 			return ['Welcome', 'Capture Mode', 'Interfaces', 'Storage', 'Enrichment', 'Account', 'Verification'];
 		} else if (selectedMode === 'bridge') {
 			return ['Welcome', 'Capture Mode', 'Interfaces', 'Bridge', 'Storage', 'Enrichment', 'Account', 'Verification'];
+		} else if (selectedMode === 'dhcp_gateway') {
+			return ['Welcome', 'Capture Mode', 'Interfaces', 'DHCP Gateway', 'Storage', 'Enrichment', 'Account', 'Verification'];
 		}
 		return ['Welcome', 'Capture Mode'];
 	});
@@ -63,6 +73,7 @@
 	let nicsLoading = $state(false);
 	let nicsError = $state('');
 	let nicsSource = $state('');
+	const NICS_UNREACHABLE = "Couldn't detect the network cards: NetTap's service didn't answer.";
 
 	// Bridge mode NIC selection
 	let selectedWan = $state('');
@@ -71,6 +82,9 @@
 	// Mirror mode NIC selection
 	let selectedMirrorNic = $state('');
 	let selectedManagementNic = $state('');
+
+	// DHCP gateway NIC selection (the one port plugged into the router)
+	let selectedDhcpNic = $state('');
 
 	// Filter to only usable (non-loopback) interfaces for NIC selection
 	let selectableInterfaces = $derived(
@@ -93,9 +107,16 @@
 		interfaces.find((iface) => iface.name === selectedManagementNic)
 	);
 
+	let selectedDhcpNicDetails = $derived(
+		interfaces.find((iface) => iface.name === selectedDhcpNic)
+	);
+
 	let nicSelectionValid = $derived.by(() => {
 		if (selectedMode === 'mirror') {
 			return selectedMirrorNic !== '';
+		}
+		if (selectedMode === 'dhcp_gateway') {
+			return selectedDhcpNic !== '';
 		}
 		return selectedWan !== '' && selectedLan !== '' && selectedWan !== selectedLan;
 	});
@@ -115,6 +136,14 @@
 	let bridgeLoading = $state(false);
 	let bridgeError = $state('');
 	let bridgeVerified = $state(false);
+
+	// ----- Step 4 (DHCP gateway mode): subnet NetTap hands out -----
+	let dhcpSubnet = $state(DEFAULT_DHCP_SUBNET);
+	let dhcpSubnetValid = $state(false);
+	// The subnet must not contain any address NetTap already uses
+	let dhcpNicAddresses = $derived(
+		interfaces.map((iface) => iface.ipv4 || '').filter((ip) => ip !== '')
+	);
 
 	// ----- Storage Configuration -----
 	interface StorageStatus {
@@ -200,6 +229,7 @@
 	// ----- Saving config on completion -----
 	let configSaving = $state(false);
 	let configSaveError = $state('');
+	let configSaveWarnings = $state<string[]>([]);
 
 	// ----- Helper: get the logical step name for the current step number -----
 	function getStepName(step: number): string {
@@ -218,6 +248,8 @@
 				return nicSelectionValid;
 			case 'Bridge':
 				return true; // Bridge verification is optional
+			case 'DHCP Gateway':
+				return dhcpSubnetValid;
 			case 'Storage':
 				return true; // Storage config has defaults
 			case 'Enrichment':
@@ -284,6 +316,8 @@
 			} catch {
 				throw new Error('Server returned invalid data');
 			}
+			// the proxy answers built-in sample cards when the daemon doesn't; they passed this check
+			if (nicData.source === 'mock') throw new Error(NICS_UNREACHABLE);
 			// Count non-loopback, non-virtual interfaces available
 			const bridgeableNics = (nicData.interfaces || []).filter(
 				(iface: NetworkInterface) => iface.type === 'ethernet'
@@ -303,34 +337,68 @@
 			interfaces = nicData.interfaces || [];
 			nicsSource = nicData.source || '';
 		} catch {
-			requirements.nics = { ...requirements.nics, status: 'fail' };
+			// OLD CODE START — a failed check read as "you don't have the network cards"
+			// requirements.nics = { ...requirements.nics, status: 'fail' };
+			// OLD CODE END
+			requirements.nics = { ...requirements.nics, label: "Network interfaces: couldn't check", status: 'fail' };
 		}
 
-		// Check Docker — use the health endpoint
+		// OLD CODE START — every branch passed, a failed request included
+		// // Check Docker — use the health endpoint
+		// try {
+		// 	const healthRes = await fetch('/api/health');
+		// 	if (healthRes.ok) {
+		// 		requirements.docker = { ...requirements.docker, status: 'pass' };
+		// 	} else {
+		// 		// Health endpoint exists but returned non-ok — still means server is running
+		// 		requirements.docker = { ...requirements.docker, status: 'pass' };
+		// 	}
+		// } catch {
+		// 	// In development, if the health endpoint works, we consider Docker "available"
+		// 	requirements.docker = { ...requirements.docker, status: 'pass' };
+		// }
+		// OLD CODE END
+		// /api/health always answers 200 from the web container; whether the daemon (and so the
+		// Docker stack behind it) runs is in its `daemon` field
 		try {
 			const healthRes = await fetch('/api/health');
-			if (healthRes.ok) {
-				requirements.docker = { ...requirements.docker, status: 'pass' };
-			} else {
-				// Health endpoint exists but returned non-ok — still means server is running
-				requirements.docker = { ...requirements.docker, status: 'pass' };
-			}
+			if (!healthRes.ok) throw new Error(`HTTP ${healthRes.status}`);
+			const health = await healthRes.json();
+			const up = health?.daemon && health.daemon.status !== 'unreachable';
+			requirements.docker = up
+				? { ...requirements.docker, label: 'Docker is running', status: 'pass' }
+				: { ...requirements.docker, label: "Docker: the NetTap daemon isn't answering", status: 'fail' };
 		} catch {
-			// In development, if the health endpoint works, we consider Docker "available"
-			requirements.docker = { ...requirements.docker, status: 'pass' };
+			requirements.docker = { ...requirements.docker, label: "Docker: couldn't check", status: 'fail' };
 		}
 
 		// Check Disk via storage
+		// OLD CODE START — a failed read passed, and so did the proxy's sample reply (911 GB free)
+		// try {
+		// 	const storageRes = await fetch('/api/setup/storage');
+		// 	const storageData = await storageRes.json();
+		// 	const freeGb = storageData.disk_free_gb || 0;
+		// 	requirements.disk = {
+		// 		...requirements.disk,
+		// 		status: freeGb >= 100 ? 'pass' : 'fail',
+		// 	};
+		// } catch {
+		// 	requirements.disk = { ...requirements.disk, status: 'pass' };
+		// }
+		// OLD CODE END
 		try {
 			const storageRes = await fetch('/api/setup/storage');
+			if (!storageRes.ok) throw new Error(`HTTP ${storageRes.status}`);
 			const storageData = await storageRes.json();
-			const freeGb = storageData.disk_free_gb || 0;
+			if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+				throw new Error('no disk reading');
+			}
 			requirements.disk = {
 				...requirements.disk,
-				status: freeGb >= 100 ? 'pass' : 'fail',
+				status: storageData.disk_free_gb >= 100 ? 'pass' : 'fail',
 			};
 		} catch {
-			requirements.disk = { ...requirements.disk, status: 'pass' };
+			requirements.disk = { ...requirements.disk, label: "Disk space: couldn't check", status: 'fail' };
 		}
 
 		requirementsChecked = true;
@@ -351,6 +419,11 @@
 			} catch {
 				throw new Error('Server returned invalid data — daemon may need restart');
 			}
+			// OLD CODE START — offered the proxy's sample cards (eth0/eth1/wlan0) for selection when the daemon didn't answer
+			// interfaces = data.interfaces || [];
+			// nicsSource = data.source || '';
+			// OLD CODE END
+			if (data.source === 'mock') throw new Error(NICS_UNREACHABLE);
 			interfaces = data.interfaces || [];
 			nicsSource = data.source || '';
 		} catch (err) {
@@ -481,9 +554,15 @@
 					api_key: unifiApiKey,
 				}),
 			});
-			if (!res.ok) {
-				const data = await res.json();
-				throw new Error(data.error || `HTTP ${res.status}`);
+			// OLD CODE START — the daemon answers 200 with success:false for a bad key
+			// if (!res.ok) {
+			// 	const data = await res.json();
+			// 	throw new Error(data.error || `HTTP ${res.status}`);
+			// }
+			// OLD CODE END
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || data.status?.last_error || `Connection test failed (HTTP ${res.status})`);
 			}
 			unifiTestResult = 'success';
 		} catch (err) {
@@ -536,6 +615,9 @@
 				const exData = await exRes.json();
 				const count = (exData.excluded_ips || []).length;
 				healthChecks[2] = { label: 'Self-Traffic Exclusion', status: count > 0 ? 'pass' : 'warn', detail: count > 0 ? `${count} IP(s) excluded` : 'No IPs configured' };
+			} else {
+				// OLD CODE: no else branch — a non-OK response left the row "Checking..." forever (2026-10-29)
+				healthChecks[2] = { label: 'Self-Traffic Exclusion', status: 'warn', detail: `Could not check (HTTP ${exRes.status})` };
 			}
 		} catch { healthChecks[2] = { label: 'Self-Traffic Exclusion', status: 'warn', detail: 'Could not check' }; }
 
@@ -546,7 +628,13 @@
 				const brRes = await fetch('/api/bridge/health');
 				if (brRes.ok) {
 					const brData = await brRes.json();
-					healthChecks[idx] = { label: 'Bridge Health', status: brData.healthy ? 'pass' : 'warn', detail: brData.healthy ? 'Bridge active' : 'Bridge not fully healthy' };
+					// OLD CODE START — the daemon never sends `healthy`, so this row always warned (2026-10-29)
+					// healthChecks[idx] = { label: 'Bridge Health', status: brData.healthy ? 'pass' : 'warn', detail: brData.healthy ? 'Bridge active' : 'Bridge not fully healthy' };
+					// OLD CODE END
+					const bridgeNormal = brData.health_status === 'normal';
+					healthChecks[idx] = { label: 'Bridge Health', status: bridgeNormal ? 'pass' : 'warn', detail: bridgeNormal ? 'Bridge active' : 'Bridge not fully healthy' };
+				} else {
+					healthChecks[idx] = { label: 'Bridge Health', status: 'warn', detail: `Could not check (HTTP ${brRes.status})` };
 				}
 			} catch { healthChecks[idx] = { label: 'Bridge Health', status: 'warn', detail: 'Could not check' }; }
 			idx++;
@@ -558,7 +646,15 @@
 				const uRes = await fetch('/api/integrations/unifi/status');
 				if (uRes.ok) {
 					const uData = await uRes.json();
-					healthChecks[idx] = { label: 'UniFi Controller', status: uData.configured ? 'pass' : 'warn', detail: uData.configured ? `Connected (${uData.cache_counts?.clients || 0} clients)` : 'Not configured' };
+					// OLD CODE START — "configured" was reported as connected before any poll succeeded (2026-10-29)
+					// healthChecks[idx] = { label: 'UniFi Controller', status: uData.configured ? 'pass' : 'warn', detail: uData.configured ? `Connected (${uData.cache_counts?.clients || 0} clients)` : 'Not configured' };
+					// OLD CODE END
+					const unifiDetail = uData.connected
+						? `Connected (${uData.cache_counts?.clients || 0} clients)`
+						: uData.configured ? 'Configured, not connected yet' : 'Not configured';
+					healthChecks[idx] = { label: 'UniFi Controller', status: uData.connected ? 'pass' : 'warn', detail: unifiDetail };
+				} else {
+					healthChecks[idx] = { label: 'UniFi Controller', status: 'warn', detail: `Could not check (HTTP ${uRes.status})` };
 				}
 			} catch { healthChecks[idx] = { label: 'UniFi Controller', status: 'warn', detail: 'Could not check' }; }
 		}
@@ -571,6 +667,7 @@
 	async function saveSetupConfig(): Promise<void> {
 		configSaving = true;
 		configSaveError = '';
+		configSaveWarnings = [];
 		try {
 			const payload: Record<string, unknown> = {
 				capture_mode: selectedMode,
@@ -581,6 +678,9 @@
 				if (selectedManagementNic) {
 					payload.management_interface = selectedManagementNic;
 				}
+			} else if (selectedMode === 'dhcp_gateway') {
+				payload.capture_interface = selectedDhcpNic;
+				payload.dhcp_subnet = dhcpSubnet;
 			} else {
 				payload.wan_interface = selectedWan;
 				payload.lan_interface = selectedLan;
@@ -610,6 +710,11 @@
 			if (!res.ok) {
 				const data = await res.json();
 				throw new Error(data.error || `HTTP ${res.status}`);
+			}
+			// res.ok alone isn't "all saved": the daemon answers "partial" when e.g. retention wasn't written
+			const saved: { status?: string; warnings?: string[] } = await res.json();
+			if (saved.status === 'partial') {
+				configSaveWarnings = saved.warnings?.length ? saved.warnings : ['Some settings were not saved.'];
 			}
 		} catch (err) {
 			configSaveError = err instanceof Error ? err.message : 'Failed to save configuration';
@@ -699,7 +804,10 @@
 					<div class="info-box">
 						<h3>What this wizard will configure:</h3>
 						<ol class="setup-list">
+							<!-- OLD CODE START — listed two modes; DHCP gateway added 2026-10-30
 							<li>Choose your capture mode (Mirror/SPAN or Inline Bridge)</li>
+							OLD CODE END -->
+							<li>Choose your capture mode (DHCP Gateway, Mirror/SPAN, or Inline Bridge under Advanced)</li>
 							<li>Detect and select network interfaces</li>
 							<li>Set up storage retention policies</li>
 							<li>Create your admin account</li>
@@ -767,11 +875,41 @@
 					<div class="mode-cards">
 						<button
 							class="mode-card"
+							class:selected={selectedMode === 'dhcp_gateway'}
+							onclick={() => { selectedMode = 'dhcp_gateway'; }}
+							type="button"
+						>
+							<div class="mode-badge recommended">Recommended</div>
+							<div class="mode-icon">
+								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
+									<rect x="10" y="4" width="12" height="8" rx="2"/>
+									<path d="M16 12v6M6 18h20M6 18v4M16 18v4M26 18v4"/>
+									<circle cx="6" cy="25" r="2.5"/>
+									<circle cx="16" cy="25" r="2.5"/>
+									<circle cx="26" cy="25" r="2.5"/>
+								</svg>
+							</div>
+							<h3>DHCP Gateway</h3>
+							<p class="mode-desc">
+								NetTap hands out addresses to your devices and passes their traffic on to your router.
+								Works with any router, no special switch needed.
+							</p>
+							<ul class="mode-features">
+								<li>Requires 1 NIC, plugged into your router</li>
+								<li>You turn off your router's DHCP at Go Live</li>
+								<li>See traffic per device, with each device's own address</li>
+							</ul>
+						</button>
+
+						<button
+							class="mode-card"
 							class:selected={selectedMode === 'mirror'}
 							onclick={() => { selectedMode = 'mirror'; }}
 							type="button"
 						>
+							<!-- OLD CODE START — Mirror was the recommended mode until DHCP gateway (2026-10-30)
 							<div class="mode-badge recommended">Recommended</div>
+							OLD CODE END -->
 							<div class="mode-icon">
 								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
 									<rect x="4" y="8" width="24" height="16" rx="3"/>
@@ -791,32 +929,43 @@
 								<li>See traffic per device on the LAN</li>
 							</ul>
 						</button>
+					</div>
 
-						<button
-							class="mode-card"
-							class:selected={selectedMode === 'bridge'}
-							onclick={() => { selectedMode = 'bridge'; }}
-							type="button"
+					<!-- Inline bridge stays available, but only under Advanced; open when it is the current choice -->
+					<div class="advanced-modes">
+						<Collapsible
+							title="Advanced"
+							subtitle="Put NetTap between your modem and router (needs two NICs)"
+							expanded={selectedMode === 'bridge'}
 						>
-							<div class="mode-icon">
-								<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
-									<rect x="2" y="12" width="12" height="8" rx="2"/>
-									<rect x="18" y="12" width="12" height="8" rx="2"/>
-									<path d="M14 16h4"/>
-									<path d="M8 12V8M24 12V8"/>
-								</svg>
+							<div class="mode-cards">
+								<button
+									class="mode-card"
+									class:selected={selectedMode === 'bridge'}
+									onclick={() => { selectedMode = 'bridge'; }}
+									type="button"
+								>
+									<div class="mode-icon">
+										<svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5">
+											<rect x="2" y="12" width="12" height="8" rx="2"/>
+											<rect x="18" y="12" width="12" height="8" rx="2"/>
+											<path d="M14 16h4"/>
+											<path d="M8 12V8M24 12V8"/>
+										</svg>
+									</div>
+									<h3>Inline Bridge</h3>
+									<p class="mode-desc">
+										NetTap sits between your modem and router. Sees all WAN traffic.
+										Requires two dedicated NICs.
+									</p>
+									<ul class="mode-features">
+										<li>Requires 2 NICs (WAN + LAN)</li>
+										<li>Transparent Layer 2 bridge</li>
+										<li>Sees all WAN ingress/egress</li>
+									</ul>
+								</button>
 							</div>
-							<h3>Inline Bridge</h3>
-							<p class="mode-desc">
-								NetTap sits between your modem and router. Sees all WAN traffic.
-								Requires two dedicated NICs.
-							</p>
-							<ul class="mode-features">
-								<li>Requires 2 NICs (WAN + LAN)</li>
-								<li>Transparent Layer 2 bridge</li>
-								<li>Sees all WAN ingress/egress</li>
-							</ul>
-						</button>
+						</Collapsible>
 					</div>
 
 					{#if selectedMode === 'bridge' && detectedEthernetNicCount < 2}
@@ -950,6 +1099,73 @@
 												<span class="badge">{selectedManagementNicDetails.ipv4}</span>
 											{/if}
 										</div>
+									{/if}
+								</div>
+							</div>
+
+							<button class="btn btn-sm btn-secondary" onclick={fetchNics} type="button" style="margin-top: var(--space-sm);">
+								Refresh Interfaces
+							</button>
+						{/if}
+					{:else if selectedMode === 'dhcp_gateway'}
+						<!-- DHCP gateway mode: the one NIC plugged into the router -->
+						<h2>Select Router Port</h2>
+						<p class="text-muted step-desc">
+							Choose the port plugged into your router. NetTap keeps its current address on this port
+							and hands out addresses to your devices through it.
+						</p>
+
+						{#if nicsSource === 'mock'}
+							<div class="alert alert-warning" style="margin-bottom: var(--space-md);">
+								Daemon unavailable — showing sample interface data. Actual interfaces will be detected on the target system.
+							</div>
+						{/if}
+
+						{#if nicsError}
+							<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
+								{nicsError}
+								<button class="btn btn-sm" style="margin-left: var(--space-sm);" onclick={fetchNics} type="button">Retry</button>
+							</div>
+						{/if}
+
+						{#if nicsLoading}
+							<div class="loading-container">
+								<span class="spinner"></span>
+								<span>Detecting network interfaces...</span>
+							</div>
+						{:else}
+							<div class="nic-selectors">
+								<div class="form-group">
+									<label for="dhcp-nic-select" class="label">
+										Router Port
+										<span class="text-muted">(the port plugged into your router)</span>
+									</label>
+									<select id="dhcp-nic-select" class="input" bind:value={selectedDhcpNic}>
+										<option value="">-- Select the port plugged into your router --</option>
+										{#each selectableInterfaces as iface}
+											<option value={iface.name}>
+												{iface.name} ({iface.mac}) - {iface.speed || 'unknown speed'} [{iface.state}]
+												{#if iface.ipv4} ({iface.ipv4}){/if}
+											</option>
+										{/each}
+									</select>
+									{#if selectedDhcpNicDetails}
+										<div class="nic-details">
+											<span class="badge badge-accent">{selectedDhcpNicDetails.driver || 'unknown'}</span>
+											<span class="badge">{selectedDhcpNicDetails.speed || 'N/A'}</span>
+											<span class="badge" class:badge-success={selectedDhcpNicDetails.state === 'up'} class:badge-danger={selectedDhcpNicDetails.state === 'down'}>
+												{selectedDhcpNicDetails.state}
+											</span>
+											{#if selectedDhcpNicDetails.ipv4}
+												<span class="badge mono">{selectedDhcpNicDetails.ipv4}</span>
+											{/if}
+										</div>
+										{#if !selectedDhcpNicDetails.ipv4}
+											<div class="alert alert-warning" style="margin-top: var(--space-sm);">
+												This port has no IPv4 address. NetTap needs an address from your router on this port
+												to pass traffic on. Check that it's plugged into your router, then refresh.
+											</div>
+										{/if}
 									{/if}
 								</div>
 							</div>
@@ -1206,6 +1422,23 @@
 					</div>
 				</div>
 
+			<!-- ===== STEP: DHCP Gateway (dhcp_gateway mode only) ===== -->
+			{:else if getStepName(currentStep) === 'DHCP Gateway'}
+				<div class="step-panel">
+					<h2>DHCP Gateway</h2>
+					<p class="text-muted step-desc">
+						Pick the address range NetTap gives your devices. Keep the default unless your network
+						already uses it.
+					</p>
+
+					<DhcpGatewayStep
+						bind:subnet={dhcpSubnet}
+						bind:valid={dhcpSubnetValid}
+						nicAddresses={dhcpNicAddresses}
+						selectedInterface={selectedDhcpNic}
+					/>
+				</div>
+
 			<!-- ===== STEP: Storage Configuration ===== -->
 			{:else if getStepName(currentStep) === 'Storage'}
 				<div class="step-panel">
@@ -1270,7 +1503,10 @@
 									<span class="tier-dot hot"></span>
 									<h4>Hot Tier</h4>
 								</div>
+								<!-- OLD CODE START — 2026-11-02: alerts share the Zeek index (see Settings → Retention)
 								<p class="text-muted tier-desc">Zeek metadata logs (conn, DNS, HTTP, TLS, etc.)</p>
+								OLD CODE END -->
+								<p class="text-muted tier-desc">Zeek logs (conn, DNS, HTTP, TLS, etc.) and Suricata alerts, kept in one daily index</p>
 								<div class="form-group">
 									<label for="hot-days" class="label">Retention (days)</label>
 									<input
@@ -1290,7 +1526,10 @@
 									<span class="tier-dot warm"></span>
 									<h4>Warm Tier</h4>
 								</div>
+								<!-- OLD CODE START
 								<p class="text-muted tier-desc">Suricata IDS alerts and signatures</p>
+								OLD CODE END -->
+								<p class="text-muted tier-desc">Separate <code>suricata-*</code> indices only. This install doesn't create them; alerts follow the Hot tier</p>
 								<div class="form-group">
 									<label for="warm-days" class="label">Retention (days)</label>
 									<input
@@ -1310,7 +1549,10 @@
 									<span class="tier-dot cold"></span>
 									<h4>Cold Tier</h4>
 								</div>
+								<!-- OLD CODE START — 2026-11-02: capture is continuous (owner decision, #37)
 								<p class="text-muted tier-desc">Raw PCAP files (alert-triggered only)</p>
+								OLD CODE END -->
+								<p class="text-muted tier-desc">Raw PCAP files of all traffic, also capped by disk share</p>
 								<div class="form-group">
 									<label for="cold-days" class="label">Retention (days)</label>
 									<input
@@ -1659,6 +1901,33 @@
 						Checking that all services are running correctly...
 					</p>
 
+					{#if configSaveWarnings.length > 0}
+						<div class="alert alert-warning" role="alert">
+							<strong>Setup is only partly done.</strong>
+							Your capture settings were saved, but not everything else was:
+							<ul class="config-warnings">
+								{#each configSaveWarnings as warning}
+									<li>{warning}</li>
+								{/each}
+							</ul>
+							<button class="btn btn-secondary btn-sm" type="button" onclick={saveSetupConfig} disabled={configSaving}>
+								{configSaving ? 'Saving...' : 'Try saving again'}
+							</button>
+						</div>
+					{/if}
+
+					{#if configSaveError}
+						<div class="alert alert-danger" role="alert">
+							<strong>Your capture settings were not saved.</strong>
+							{configSaveError}
+							<div style="margin-top: var(--space-sm);">
+								<button class="btn btn-secondary btn-sm" type="button" onclick={saveSetupConfig} disabled={configSaving}>
+									{configSaving ? 'Saving...' : 'Try saving again'}
+								</button>
+							</div>
+						</div>
+					{/if}
+
 					<div class="verification-list" style="margin-top: var(--space-lg);">
 						{#each healthChecks as check}
 							<div class="verification-item" style="display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-dim);">
@@ -1682,7 +1951,13 @@
 					{#if verificationDone}
 						<div style="margin-top: var(--space-xl); display: flex; gap: var(--space-sm);">
 							<a href="/" class="btn btn-primary">Go to Dashboard</a>
+							<!-- OLD CODE START — offered Go Live even when the capture settings failed to save (2026-10-30)
 							<a href="/go-live" class="btn btn-secondary">Go Live Setup</a>
+							OLD CODE END -->
+							<!-- Go Live acts on the saved capture mode, so wait for a successful save -->
+							{#if !configSaveError}
+								<a href="/go-live" class="btn btn-secondary">Go Live Setup</a>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -1915,6 +2190,11 @@
 		margin-bottom: var(--space-md);
 	}
 
+	.config-warnings {
+		margin: var(--space-sm) 0;
+		padding-left: var(--space-lg);
+	}
+
 	.requirement-item {
 		display: flex;
 		align-items: center;
@@ -2033,6 +2313,14 @@
 		color: var(--accent);
 		font-weight: bold;
 		margin-right: var(--space-xs);
+	}
+
+	.advanced-modes {
+		margin-top: var(--space-lg);
+	}
+
+	.advanced-modes .mode-cards {
+		margin-top: var(--space-md);
 	}
 
 	/* ===== Network Interfaces ===== */

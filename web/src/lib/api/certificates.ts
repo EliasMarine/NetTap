@@ -23,8 +23,28 @@ export interface Certificate {
 	destination_port: number | string;
 	validation_status: string;
 	status: 'valid' | 'expiring' | 'expired' | 'self-signed';
-	days_until_expiry?: number;
+	// OLD CODE START — 2026-11-01: now sent on every row (null when the cert has no expiry date)
+	// days_until_expiry?: number;
+	// OLD CODE END
+	days_until_expiry: number | null;
 	detection_reason?: string;
+	// One row per certificate (Zeek x509.log), joined to the TLS sessions that sent it
+	fingerprint: string;
+	subject_cn: string;
+	subject_full: string;
+	issuer_org: string;
+	issuer_full: string;
+	key_type: string;
+	key_length: number | null;
+	sig_alg: string;
+	serial: string;
+	san_dns: string[];
+	server_names: string[];
+	clients: string[];
+	first_seen: string;
+	last_seen: string;
+	times_seen: number;
+	self_signed: boolean;
 }
 
 export interface CertificatesResponse {
@@ -51,6 +71,7 @@ export interface IssuerChangesResponse {
 export interface CertStats {
 	total_certs: number;
 	expiring_count: number;
+	expired_count: number;
 	self_signed_count: number;
 	issuer_changes_count: number;
 	from: string;
@@ -72,83 +93,124 @@ function buildTimeQuery(from?: string, to?: string): string {
  * List observed TLS certificates.
  */
 export async function getCertificates(from?: string, to?: string): Promise<CertificatesResponse> {
-	try {
-		const res = await fetch(`/api/certificates?${buildTimeQuery(from, to)}`);
-		if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
-		return res.json();
-	} catch {
-		return { from: '', to: '', certificates: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failure read as "No certificates found"
+	// try {
+	// 	const res = await fetch(`/api/certificates?${buildTimeQuery(from, to)}`);
+	// 	if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { from: '', to: '', certificates: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/certificates?${buildTimeQuery(from, to)}`);
+	if (!res.ok) throw new Error(`Certificates failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
  * Get certificates expiring within N days.
  */
 export async function getExpiringCerts(days = 30, from?: string, to?: string): Promise<CertificatesResponse> {
-	try {
-		const qs = new URLSearchParams();
-		qs.set('days', String(days));
-		if (from) qs.set('from', from);
-		if (to) qs.set('to', to);
-		const res = await fetch(`/api/certificates/expiring?${qs.toString()}`);
-		if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
-		return res.json();
-	} catch {
-		return { from: '', to: '', certificates: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failure read as "No certificates found"
+	// try {
+	// 	const qs = new URLSearchParams();
+	// 	qs.set('days', String(days));
+	// 	if (from) qs.set('from', from);
+	// 	if (to) qs.set('to', to);
+	// 	const res = await fetch(`/api/certificates/expiring?${qs.toString()}`);
+	// 	if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { from: '', to: '', certificates: [], count: 0 };
+	// }
+	// OLD CODE END
+	const qs = new URLSearchParams();
+	qs.set('days', String(days));
+	if (from) qs.set('from', from);
+	if (to) qs.set('to', to);
+	const res = await fetch(`/api/certificates/expiring?${qs.toString()}`);
+	if (!res.ok) throw new Error(`Expiring certificates failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
  * Get self-signed certificates.
  */
 export async function getSelfSignedCerts(from?: string, to?: string): Promise<CertificatesResponse> {
-	try {
-		const res = await fetch(`/api/certificates/self-signed?${buildTimeQuery(from, to)}`);
-		if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
-		return res.json();
-	} catch {
-		return { from: '', to: '', certificates: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failure read as "No certificates found"
+	// try {
+	// 	const res = await fetch(`/api/certificates/self-signed?${buildTimeQuery(from, to)}`);
+	// 	if (!res.ok) return { from: '', to: '', certificates: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { from: '', to: '', certificates: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/certificates/self-signed?${buildTimeQuery(from, to)}`);
+	if (!res.ok) throw new Error(`Self-signed certificates failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
  * Get issuer change detections.
  */
 export async function getIssuerChanges(from?: string, to?: string): Promise<IssuerChangesResponse> {
-	try {
-		const res = await fetch(`/api/certificates/issuer-changes?${buildTimeQuery(from, to)}`);
-		if (!res.ok) return { from: '', to: '', changes: [], count: 0 };
-		return res.json();
-	} catch {
-		return { from: '', to: '', changes: [], count: 0 };
-	}
+	// OLD CODE START — #96: a failure hid the MITM warning as if no issuer had changed
+	// try {
+	// 	const res = await fetch(`/api/certificates/issuer-changes?${buildTimeQuery(from, to)}`);
+	// 	if (!res.ok) return { from: '', to: '', changes: [], count: 0 };
+	// 	return res.json();
+	// } catch {
+	// 	return { from: '', to: '', changes: [], count: 0 };
+	// }
+	// OLD CODE END
+	const res = await fetch(`/api/certificates/issuer-changes?${buildTimeQuery(from, to)}`);
+	if (!res.ok) throw new Error(`Issuer change check failed: HTTP ${res.status}`);
+	return res.json();
 }
 
+// OLD CODE START — 2026-11-02: zeros on failure showed "0 certificates" as fact
+// /**
+//  * Get certificate hero card stats.
+//  */
+// export async function getCertStats(from?: string, to?: string): Promise<CertStats> {
+// 	try {
+// 		const res = await fetch(`/api/certificates/stats?${buildTimeQuery(from, to)}`);
+// 		if (!res.ok) {
+// 			return {
+// 				total_certs: 0,
+// 				expiring_count: 0,
+// 				expired_count: 0,
+// 				self_signed_count: 0,
+// 				issuer_changes_count: 0,
+// 				from: '',
+// 				to: '',
+// 			};
+// 		}
+// 		return res.json();
+// 	} catch {
+// 		return {
+// 			total_certs: 0,
+// 			expiring_count: 0,
+// 			expired_count: 0,
+// 			self_signed_count: 0,
+// 			issuer_changes_count: 0,
+// 			from: '',
+// 			to: '',
+// 		};
+// 	}
+// }
+// OLD CODE END
+
 /**
- * Get certificate hero card stats.
+ * Get certificate hero card stats; null when they couldn't be loaded, so the page
+ * shows a dash instead of zeros that look like real counts.
  */
-export async function getCertStats(from?: string, to?: string): Promise<CertStats> {
+export async function getCertStats(from?: string, to?: string): Promise<CertStats | null> {
 	try {
 		const res = await fetch(`/api/certificates/stats?${buildTimeQuery(from, to)}`);
-		if (!res.ok) {
-			return {
-				total_certs: 0,
-				expiring_count: 0,
-				self_signed_count: 0,
-				issuer_changes_count: 0,
-				from: '',
-				to: '',
-			};
-		}
-		return res.json();
+		return res.ok ? await res.json() : null;
 	} catch {
-		return {
-			total_certs: 0,
-			expiring_count: 0,
-			self_signed_count: 0,
-			issuer_changes_count: 0,
-			from: '',
-			to: '',
-		};
+		return null;
 	}
 }

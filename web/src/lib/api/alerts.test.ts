@@ -6,6 +6,9 @@ import {
 	getAlertTopSignatures,
 	getAlertTopIps,
 	getAlertCategories,
+	getEnhancedCategories,
+	suppressAlert,
+	markFalsePositive,
 	formatNumber,
 	severityLabel,
 	severityBadgeClass,
@@ -64,15 +67,11 @@ describe('alerts API client', () => {
 			expect(result.counts.high).toBe(3);
 		});
 
-		it('returns zero counts on HTTP error', async () => {
+		// #96: zero counts read as "no alerts"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(502);
 
-			const result = await getAlertCount();
-
-			expect(result.counts.total).toBe(0);
-			expect(result.counts.high).toBe(0);
-			expect(result.counts.medium).toBe(0);
-			expect(result.counts.low).toBe(0);
+			await expect(getAlertCount()).rejects.toThrow('HTTP 502');
 		});
 
 		it('passes time range parameters', async () => {
@@ -121,13 +120,11 @@ describe('alerts API client', () => {
 			expect(result.alerts[0].alert?.signature).toBe('ET MALWARE Test');
 		});
 
-		it('returns empty list on HTTP error', async () => {
+		// #96: an empty list read as "No Alerts"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(500);
 
-			const result = await getAlerts();
-
-			expect(result.alerts).toEqual([]);
-			expect(result.total).toBe(0);
+			await expect(getAlerts()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes severity filter', async () => {
@@ -155,10 +152,9 @@ describe('alerts API client', () => {
 			expect(result.buckets[0].high).toBe(3);
 		});
 
-		it('returns empty buckets on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertTimeline();
-			expect(result.buckets).toEqual([]);
+			await expect(getAlertTimeline()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes interval in URL', async () => {
@@ -184,10 +180,9 @@ describe('alerts API client', () => {
 			expect(result.signatures[0].count).toBe(42);
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertTopSignatures();
-			expect(result.signatures).toEqual([]);
+			await expect(getAlertTopSignatures()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes limit in URL', async () => {
@@ -213,10 +208,9 @@ describe('alerts API client', () => {
 			expect(result.ips[0].ip).toBe('192.168.1.5');
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertTopIps();
-			expect(result.ips).toEqual([]);
+			await expect(getAlertTopIps()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes direction in URL', async () => {
@@ -242,10 +236,106 @@ describe('alerts API client', () => {
 			expect(result.categories[0].count).toBe(88);
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertCategories();
-			expect(result.categories).toEqual([]);
+			await expect(getAlertCategories()).rejects.toThrow('HTTP 502');
+		});
+	});
+
+	// -- suppressAlert / markFalsePositive ------------------------------------
+
+	describe('suppressAlert', () => {
+		it('resolves when the daemon accepts', async () => {
+			mockFetchSuccess({ status: 'suppressed', signature_id: 2001 });
+
+			await expect(suppressAlert(2001, '10.0.0.5')).resolves.toBeUndefined();
+			const [url, init] = vi.mocked(fetch).mock.calls[0];
+			expect(url).toBe('/api/alerts/suppress');
+			expect(JSON.parse(String(init?.body))).toMatchObject({ signature_id: 2001, device_ip: '10.0.0.5' });
+		});
+
+		it('throws the daemon error on a non-OK response', async () => {
+			mockFetchSuccess({ error: 'signature_id is required' }, 400);
+
+			await expect(suppressAlert(0)).rejects.toThrow('signature_id is required');
+		});
+
+		it('throws with the status when the body is unreadable', async () => {
+			mockFetchFailure(502);
+
+			await expect(suppressAlert(2001)).rejects.toThrow('Suppress failed: 502');
+		});
+	});
+
+	describe('markFalsePositive', () => {
+		it('resolves when the daemon accepts', async () => {
+			mockFetchSuccess({ status: 'marked_false_positive', signature_id: 2001 });
+
+			await expect(markFalsePositive(2001)).resolves.toBeUndefined();
+			expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/alerts/false-positive');
+		});
+
+		it('throws on a non-OK response', async () => {
+			mockFetchFailure(500);
+
+			await expect(markFalsePositive(2001)).rejects.toThrow('Mark false positive failed: 500');
+		});
+	});
+
+	// -- getEnhancedCategories -------------------------------------------------
+
+	describe('getEnhancedCategories', () => {
+		/** Shape of one entry from daemon/api/alerts.py handle_alerts_categories */
+		function daemonCategory(overrides: Record<string, unknown> = {}) {
+			return {
+				id: 'malware',
+				label: 'Malware',
+				icon: 'bug',
+				color: 'red',
+				description: 'Malware activity',
+				count: 42,
+				severity_breakdown: { critical: 2, high: 10, medium: 30, low: 0, info: 0 },
+				trend: 'increasing',
+				sparkline: [
+					{ timestamp: '2026-10-29T10:00:00.000Z', count: 3 },
+					{ timestamp: '2026-10-29T11:00:00.000Z', count: 9 },
+				],
+				sub_categories: [{ id: 'trojan', label: 'Trojan', count: 12 }],
+				mitre_techniques: [],
+				...overrides,
+			};
+		}
+
+		it('maps the trend string to { direction, percentage: 0 }', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', interval: '1h', categories: [daemonCategory()] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].trend).toEqual({ direction: 'increasing', percentage: 0 });
+		});
+
+		it('maps sparkline points to their counts', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory()] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].sparkline).toEqual([3, 9]);
+		});
+
+		it('falls back to stable for an unknown trend and keeps other fields', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory({ trend: 'sideways', sparkline: undefined })] });
+
+			const { categories } = await getEnhancedCategories();
+
+			expect(categories[0].trend.direction).toBe('stable');
+			expect(categories[0].sparkline).toEqual([]);
+			expect(categories[0]).toMatchObject({ id: 'malware', count: 42, sub_categories: [{ id: 'trojan' }] });
+		});
+
+		// #96: an empty list read as "No category data available"
+		it('throws on HTTP error', async () => {
+			mockFetchFailure(500);
+			await expect(getEnhancedCategories()).rejects.toThrow('HTTP 500');
 		});
 	});
 

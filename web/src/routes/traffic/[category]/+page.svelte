@@ -14,6 +14,8 @@
 	 *   9. Trend indicators vs previous period
 	 */
 
+	import { partOfWhole } from '$lib/utils/part-of-whole';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import { page } from '$app/stores';
 	import { onDestroy } from 'svelte';
 	import {
@@ -88,6 +90,12 @@
 
 	// Trend data
 	let prevData = $state<CategoryDetailResponse | null>(null);
+
+	// #96: a failed request says so instead of "No traffic data"
+	let detailFailed = $state(false);
+	let bandwidthFailed = $state(false);
+	/** category|range of the figures on screen (not reactive: only fetchData reads it) */
+	let loadedView = '';
 
 	// UI state
 	let searchQuery = $state('');
@@ -238,35 +246,73 @@
 		const prevParams = computePrevTimeParams(range);
 		const interval = INTERVAL_MAP[range] ?? '15m';
 
-		try {
-			const [detailResult, bandwidthResult, summaryResult, prevResult] = await Promise.all([
-				getCategoryDetail(cat, timeParams),
-				getCategoryBandwidth(cat, { ...timeParams, interval }),
-				getTrafficSummary(timeParams),
-				getCategoryDetail(cat, prevParams),
-			]);
-
-			data = detailResult;
-			topServices = detailResult?.services ?? [];
-			bandwidthSeries = bandwidthResult?.series ?? [];
-			prevData = prevResult;
-
-			// Calculate % of total network
-			if (summaryResult.total_bytes > 0 && detailResult.total_bytes > 0) {
-				networkPercent = (detailResult.total_bytes / summaryResult.total_bytes) * 100;
-			} else {
-				networkPercent = 0;
-			}
-
-			lastUpdated = new Date();
-		} catch (err) {
-			console.error('[traffic/category] fetchData error:', err);
+		// OLD CODE START — #96: the getters faked zeros on failure, which read as "No traffic data"
+		// try {
+		// 	const [detailResult, bandwidthResult, summaryResult, prevResult] = await Promise.all([
+		// 		getCategoryDetail(cat, timeParams),
+		// 		getCategoryBandwidth(cat, { ...timeParams, interval }),
+		// 		getTrafficSummary(timeParams),
+		// 		getCategoryDetail(cat, prevParams),
+		// 	]);
+		//
+		// 	data = detailResult;
+		// 	topServices = detailResult?.services ?? [];
+		// 	bandwidthSeries = bandwidthResult?.series ?? [];
+		// 	prevData = prevResult;
+		//
+		// 	// Calculate % of total network
+		// 	if (summaryResult.total_bytes > 0 && detailResult.total_bytes > 0) {
+		// 		networkPercent = (detailResult.total_bytes / summaryResult.total_bytes) * 100;
+		// 	} else {
+		// 		networkPercent = 0;
+		// 	}
+		//
+		// 	lastUpdated = new Date();
+		// } catch (err) {
+		// 	console.error('[traffic/category] fetchData error:', err);
+		// 	data = null;
+		// 	topServices = [];
+		// 	bandwidthSeries = [];
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		// A refresh of the same view keeps its last good figures; another view must not show them
+		const view = `${cat}|${range}`;
+		if (view !== loadedView) {
 			data = null;
+			prevData = null;
 			topServices = [];
 			bandwidthSeries = [];
-		} finally {
-			loading = false;
+			networkPercent = null;
 		}
+
+		const [detailRes, bandwidthRes, summaryRes, prevRes] = await Promise.allSettled([
+			getCategoryDetail(cat, timeParams),
+			getCategoryBandwidth(cat, { ...timeParams, interval }),
+			getTrafficSummary(timeParams),
+			getCategoryDetail(cat, prevParams),
+		]);
+		detailFailed = detailRes.status === 'rejected';
+		bandwidthFailed = bandwidthRes.status === 'rejected';
+
+		if (detailRes.status === 'fulfilled') {
+			data = detailRes.value;
+			topServices = detailRes.value.services ?? [];
+			loadedView = view;
+			lastUpdated = new Date();
+		} else {
+			console.error('[traffic/category] detail failed:', detailRes.reason);
+		}
+		if (bandwidthRes.status === 'fulfilled') bandwidthSeries = bandwidthRes.value.series ?? [];
+		// a failed previous period hides the trend instead of comparing against zero
+		if (prevRes.status === 'fulfilled') prevData = prevRes.value;
+		// % of total network needs both figures; without them the card shows a dash
+		if (detailRes.status === 'fulfilled' && summaryRes.status === 'fulfilled') {
+			const total = summaryRes.value.total_bytes;
+			networkPercent = total > 0 && detailRes.value.total_bytes > 0 ? (detailRes.value.total_bytes / total) * 100 : 0;
+		}
+		loading = false;
 	}
 
 	// Refetch when selectedRange or category changes
@@ -364,11 +410,20 @@
 		</div>
 	</div>
 
+	{#if detailFailed && data && !loading}
+		<p class="text-warning load-note">{loadFailed(`${displayName} traffic`, true)}</p>
+	{/if}
+
 	<!-- Loading state -->
 	{#if loading}
 		<div class="loading-state">
 			<div class="loading-spinner"></div>
 			<span class="text-muted">Loading category data...</span>
+		</div>
+	{:else if detailFailed && !data}
+		<div class="empty-state">
+			<div class="empty-icon">{meta.icon}</div>
+			<p class="empty-text">{loadFailed(`${displayName} traffic`)}</p>
 		</div>
 	{:else if !data || (data.device_count === 0 && data.total_bytes === 0)}
 		<div class="empty-state">
@@ -430,7 +485,12 @@
 						formatValue={formatBytes}
 					/>
 				</div>
+				{#if bandwidthFailed}
+					<p class="text-warning load-note">{loadFailed('bandwidth over time', true)}</p>
+				{/if}
 			</div>
+		{:else if bandwidthFailed}
+			<p class="text-warning load-note">{loadFailed('bandwidth over time')}</p>
 		{/if}
 
 		<!-- Content Grid: Table + Sidebar -->
@@ -439,7 +499,7 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Per-Device Breakdown</span>
-					<span class="card-badge">{filteredDevices.length}{filteredDevices.length !== data.devices.length ? ` / ${data.devices.length}` : ''} devices</span>
+					<span class="card-badge">{filteredDevices.length}{filteredDevices.length !== data.devices.length ? ` / ${data.devices.length}` : ''} devices{data.device_count > data.devices.length ? ` · top ${partOfWhole(data.devices.length, data.device_count)}` : ''}</span>
 				</div>
 
 				<!-- Search toolbar -->
@@ -718,6 +778,11 @@
 	.empty-state {
 		text-align: center;
 		padding: var(--space-3xl);
+	}
+
+	.load-note {
+		margin: 0;
+		font-size: var(--text-sm);
 	}
 
 	.empty-icon {

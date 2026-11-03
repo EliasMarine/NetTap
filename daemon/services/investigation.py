@@ -6,9 +6,13 @@ an analyst would need: host profile, connection history, related alerts,
 DNS context, and actionable recommendations.
 """
 
+import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from functools import partial
+
+from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.investigation")
 
@@ -54,11 +58,13 @@ def _get_host_profile(client, ip: str) -> dict:
     """Get basic host profile from connection data."""
     query = {
         "size": 0,
+        # hits.total is shown as a count; without this OpenSearch stops at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": "now-24h"}}},
-                    {"term": {"source.ip.keyword": ip}},
+                    {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "conn"}},
                 ]
@@ -66,16 +72,19 @@ def _get_host_profile(client, ip: str) -> dict:
         },
         "aggs": {
             "total_bytes": {"sum": {"field": "source.bytes"}},
-            "unique_dests": {"cardinality": {"field": "destination.ip.keyword"}},
-            "protocols": {"terms": {"field": "network.transport.keyword", "size": 5}},
+            "unique_dests": {"cardinality": {"field": "destination.ip"}},
+            "protocols": {"terms": {"field": "network.transport", "size": 5}},
             "top_ports": {"terms": {"field": "destination.port", "size": 5}},
         },
     }
 
-    try:
-        result = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        return {"ip": ip, "error": "Query failed"}
+    # OLD CODE START — #96: the page read the missing counts as 0 connections and 0 bytes
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     return {"ip": ip, "error": "Query failed"}
+    # OLD CODE END
+    result = client.search(index=NETWORK_INDEX, body=query)
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
@@ -95,14 +104,17 @@ def _get_host_profile(client, ip: str) -> dict:
 
 def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
     """Get connection history between two IPs over last 7 days."""
+    now = datetime.now(timezone.utc)
     query = {
         "size": 0,
+        # hits.total is shown as a count; without this OpenSearch stops at 10,000
+        "track_total_hits": True,
         "query": {
             "bool": {
                 "filter": [
                     {"range": {"@timestamp": {"gte": "now-7d"}}},
-                    {"term": {"source.ip.keyword": src_ip}},
-                    {"term": {"destination.ip.keyword": dst_ip}},
+                    {"term": {"source.ip": src_ip}},
+                    {"term": {"destination.ip": dst_ip}},
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "conn"}},
                 ]
@@ -119,20 +131,24 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
             },
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
-            "by_day": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "calendar_interval": "day",
-                    "min_doc_count": 0,
-                },
-            },
+            # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+            # "by_day": {
+            #     "date_histogram": {"field": "@timestamp", "calendar_interval": "day", "min_doc_count": 0},
+            # },
+            # OLD CODE END
+            "by_day": time_slots(
+                now - timedelta(days=7), now, "1d"
+            ),  # the query's now-7d, UTC days
         },
     }
 
-    try:
-        result = client.search(index=NETWORK_INDEX, body=query)
-    except Exception:
-        return {"error": "Query failed"}
+    # OLD CODE START — #96: the page read the missing history as no connections
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except Exception:
+    #     return {"error": "Query failed"}
+    # OLD CODE END
+    result = client.search(index=NETWORK_INDEX, body=query)
 
     aggs = result.get("aggregations", {})
     hits_total = result.get("hits", {}).get("total", {})
@@ -142,7 +158,7 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
 
     daily = [
         {"date": b.get("key_as_string", ""), "count": b["doc_count"]}
-        for b in aggs.get("by_day", {}).get("buckets", [])
+        for b in histogram_buckets(aggs.get("by_day"))  # date_histogram before #120
     ]
 
     return {
@@ -197,40 +213,97 @@ async def generate_threat_report(
     from services.alert_intelligence import (
         get_smart_alerts,
         get_smart_alert_summary,
-        detect_kill_chains,
+        # OLD CODE START — #96: kill chains now come from the summary (every group)
+        # detect_kill_chains,
+        # OLD CODE END
     )
     from services.threat_detection import (
         detect_beaconing,
         detect_lateral_movement,
         analyze_dns_anomalies,
     )
-    from services.excluded_ips import build_excluded_ips_filter
 
-    excluded = build_excluded_ips_filter(excluded_ips or [])
-
-    summary = await get_smart_alert_summary(
-        client, from_ts, to_ts, excluded_ips=excluded
-    )
-    alerts = await get_smart_alerts(
-        client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded
-    )
+    # OLD CODE START — investigation reports must not hide alerts for excluded IPs
+    # from services.excluded_ips import build_excluded_ips_filter
+    #
+    # excluded = build_excluded_ips_filter(excluded_ips or [])
+    #
+    # summary = await get_smart_alert_summary(
+    #     client, from_ts, to_ts, excluded_ips=excluded
+    # )
+    # alerts = await get_smart_alerts(
+    #     client, from_ts, to_ts, include_info=False, limit=200, excluded_ips=excluded
+    # )
+    # OLD CODE END
+    # #139: the three checks block on OpenSearch and don't depend on each other or on the
+    # alerts: run them side by side in threads, so the report waits for the slowest one only
+    loop = asyncio.get_running_loop()
+    running = {
+        name: loop.run_in_executor(
+            None, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
+        )
+        for name, detect in (
+            ("beaconing", detect_beaconing),
+            ("dns_anomalies", analyze_dns_anomalies),
+            ("lateral_movement", detect_lateral_movement),
+        )
+    }
+    try:
+        summary = await get_smart_alert_summary(client, from_ts, to_ts)
+        alerts = await get_smart_alerts(
+            client, from_ts, to_ts, include_info=False, limit=200
+        )
+    except BaseException:
+        await asyncio.gather(*running.values(), return_exceptions=True)
+        raise
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": {"from": from_ts, "to": to_ts},
         "summary": summary,
-        "kill_chains": detect_kill_chains(alerts),
-        "beaconing": detect_beaconing(
-            client, from_ts, to_ts, excluded_ips=excluded_ips
-        ),
-        "dns_anomalies": analyze_dns_anomalies(
-            client, from_ts, to_ts, excluded_ips=excluded_ips
-        ),
-        "lateral_movement": detect_lateral_movement(
-            client, from_ts, to_ts, excluded_ips=excluded_ips
-        ),
+        # OLD CODE START — #96: chains from the top 200 groups disagreed with summary.kill_chains
+        # "kill_chains": detect_kill_chains(alerts),
+        # OLD CODE END
+        "kill_chains": summary.get("kill_chains", []),
+        # OLD CODE START — #96: a failed detector returned [], shown as "No ... detected"
+        # "beaconing": detect_beaconing(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        # "dns_anomalies": analyze_dns_anomalies(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        # "lateral_movement": detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips),
+        # OLD CODE END
+        "beaconing": [],
+        "dns_anomalies": {
+            "dga_suspects": [],
+            "tunnel_suspects": [],
+            "nxdomain_spikes": [],
+            "suspicious_tlds": [],
+        },
+        "lateral_movement": [],
+        # checks that could not run, and checks a bucket cap stopped part way
+        "failed_checks": [],
+        "incomplete_checks": [],
         "investigations": [],
     }
+    # OLD CODE START — #139: each check ran after the previous one, on the request loop
+    # for name, detect in (
+    #     ("beaconing", detect_beaconing),
+    #     ("dns_anomalies", analyze_dns_anomalies),
+    #     ("lateral_movement", detect_lateral_movement),
+    # ):
+    #     try:
+    #         found = detect(client, from_ts, to_ts, excluded_ips=excluded_ips)
+    #     except Exception:
+    #         logger.error("Threat report: the %s check failed", name, exc_info=True)
+    #         report["failed_checks"] = [*report["failed_checks"], name]
+    #         continue
+    #     if isinstance(found, dict):  # DNS anomalies: findings plus "complete"
+    #         complete = found.get("complete", True)
+    #         found = {k: v for k, v in found.items() if k != "complete"}
+    #     else:
+    #         found, complete = found
+    #     report[name] = found
+    #     if not complete:
+    #         report["incomplete_checks"] = [*report["incomplete_checks"], name]
+    # OLD CODE END
 
     # Auto-investigate top critical alerts (cap at 3)
     critical = [a for a in alerts if a.get("severity", 5) <= 2]
@@ -238,11 +311,33 @@ async def generate_threat_report(
         try:
             inv = await auto_investigate(client, alert)
             report["investigations"].append(inv)
+        # OLD CODE START — #96: a failed investigation just left the list shorter
+        # except Exception:
+        #     logger.warning("Auto-investigation failed for alert %s", alert.get("signature"), exc_info=True)
+        # OLD CODE END
         except Exception:
             logger.warning(
                 "Auto-investigation failed for alert %s",
                 alert.get("signature"),
                 exc_info=True,
             )
+            if "investigations" not in report["failed_checks"]:
+                report["failed_checks"] = [*report["failed_checks"], "investigations"]
+
+    for name, check in running.items():
+        try:
+            found = await check
+        except Exception:
+            logger.error("Threat report: the %s check failed", name, exc_info=True)
+            report["failed_checks"] = [*report["failed_checks"], name]
+            continue
+        if isinstance(found, dict):  # DNS anomalies: findings plus "complete"
+            complete = found.get("complete", True)
+            found = {k: v for k, v in found.items() if k != "complete"}
+        else:
+            found, complete = found
+        report[name] = found
+        if not complete:
+            report["incomplete_checks"] = [*report["incomplete_checks"], name]
 
     return report

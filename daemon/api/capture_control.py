@@ -9,18 +9,44 @@ Endpoints:
     GET  /api/capture/status     Read capture state + container status
     PUT  /api/capture/toggle     Start or stop the pcap-capture container
     PUT  /api/capture/settings   Update max file size (10-10000 MB)
+
+Also provides restart_capture_containers(), used after /etc/nettap/capture.env
+changes so the capture containers' entrypoints re-read it.
 """
 
 import asyncio
 import logging
+import os
+from dataclasses import replace
 
 from aiohttp import web
 
 from api.settings import _load_env_file, _save_env_file
+from services.capture_config import (
+    capture_config_exists,
+    load_capture_config,
+    save_capture_config,
+    write_env_file_if_changed,
+)
 
 logger = logging.getLogger("nettap.api.capture_control")
 
 CONTAINER_NAME = "nettap-pcap-capture"
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile
+# "arkime", tracking-fixes/2026-11-01-dashboard-data-accuracy.md #44)
+# CAPTURE_CONTAINERS = (
+#     "nettap-zeek-live",
+#     "nettap-suricata-live",
+#     "nettap-arkime-live",
+#     CONTAINER_NAME,
+# )
+# OLD CODE END
+# Containers whose entrypoint reads /etc/nettap/capture.env
+CAPTURE_CONTAINERS = (
+    "nettap-zeek-live",
+    "nettap-suricata-live",
+    CONTAINER_NAME,
+)
 DEFAULT_ENV_FILE = "/opt/nettap/data/.env"
 DEFAULT_MAX_FILE_SIZE_MB = 100
 MIN_FILE_SIZE_MB = 10
@@ -46,11 +72,28 @@ def _read_capture_config(env_file: str) -> dict:
     env = _load_env_file(env_file)
     enabled_str = env.get("PCAP_CAPTURE_ENABLED", "true").lower()
     enabled = enabled_str != "false"
+    # OLD CODE START — 2026-11-02: read a value pcap-capture never sees, so the page
+    # showed 100 MB while netsniff rotated at 4096 MiB (docker/.env)
+    # try:
+    #     max_file_size = int(env.get("PCAP_ROTATE_MB", str(DEFAULT_MAX_FILE_SIZE_MB)))
+    # except (ValueError, TypeError):
+    #     max_file_size = DEFAULT_MAX_FILE_SIZE_MB
+    # OLD CODE END
+    return {"enabled": enabled, "maxFileSizeMB": _effective_rotate_mb()}
+
+
+def _env_int(name: str, default: int) -> int:
     try:
-        max_file_size = int(env.get("PCAP_ROTATE_MB", str(DEFAULT_MAX_FILE_SIZE_MB)))
-    except (ValueError, TypeError):
-        max_file_size = DEFAULT_MAX_FILE_SIZE_MB
-    return {"enabled": enabled, "maxFileSizeMB": max_file_size}
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def _effective_rotate_mb() -> int:
+    """The size netsniff rotates at: the saved setting, else the compose value
+    pcap-capture starts with (PCAP_ROTATE_MB, passed to the daemon the same way)."""
+    saved = load_capture_config().pcap_rotate_mb if capture_config_exists() else 0
+    return saved or _env_int("PCAP_ROTATE_MB", DEFAULT_MAX_FILE_SIZE_MB)
 
 
 async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
@@ -110,6 +153,46 @@ async def _get_container_status(container: str) -> dict:
     return {"running": running, "status": status}
 
 
+async def _restart_if_running(container: str) -> tuple[bool, str]:
+    """Restart one container if it is running.
+
+    Returns (restarted, error). A stopped container is left stopped:
+    ``docker restart`` would start it, and the PCAP toggle stops
+    nettap-pcap-capture on purpose. It reads capture.env when it next starts.
+    """
+    try:
+        status = await _get_container_status(container)
+        if not status["running"]:
+            logger.info("Not restarting %s: it is %s", container, status["status"])
+            return False, ""
+        returncode, output = await _docker_cmd("restart", container)
+    except Exception as exc:  # docker CLI missing, socket unreachable
+        returncode, output = -1, str(exc)
+    if returncode != 0:
+        logger.warning(
+            "docker restart %s failed (rc=%d): %s", container, returncode, output
+        )
+        return False, f"{container}: {output or f'exit code {returncode}'}"
+    return True, ""
+
+
+async def restart_capture_containers() -> dict:
+    """Restart the running capture containers so they re-read capture.env.
+
+    Best effort and never raises: one failure doesn't stop the others.
+    Containers are never created or removed.
+
+    Returns:
+        {"restarted": [container, ...], "errors": [message, ...]}
+    """
+    results = await asyncio.gather(
+        *(_restart_if_running(c) for c in CAPTURE_CONTAINERS)
+    )
+    restarted = [c for c, (ok, _) in zip(CAPTURE_CONTAINERS, results) if ok]
+    errors = [err for _, err in results if err]
+    return {"restarted": restarted, "errors": errors}
+
+
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
@@ -127,6 +210,8 @@ async def handle_capture_status(request: web.Request) -> web.Response:
         {
             "enabled": config["enabled"],
             "maxFileSizeMB": config["maxFileSizeMB"],
+            # netsniff-roll.sh also starts a new file after this many minutes
+            "rotateMinutes": _env_int("PCAP_ROTATE_MIN", 10),
             "containerRunning": container["running"],
             "containerStatus": container["status"],
         }
@@ -214,10 +299,21 @@ async def handle_capture_settings(request: web.Request) -> web.Response:
             status=400,
         )
 
-    env_file = _get_env_file(request.app)
-
-    # Persist to env file
-    _save_env_file(env_file, {"PCAP_ROTATE_MB": str(max_size)})
+    # OLD CODE START — 2026-11-02: saved where pcap-capture never reads it
+    # env_file = _get_env_file(request.app)
+    #
+    # # Persist to env file
+    # _save_env_file(env_file, {"PCAP_ROTATE_MB": str(max_size)})
+    # OLD CODE END
+    # capture.env is what pcap-capture's loader reads on (re)start
+    if not capture_config_exists():
+        return web.json_response(
+            {"error": "Finish the setup wizard first: no capture mode is saved yet."},
+            status=409,
+        )
+    config = replace(load_capture_config(), pcap_rotate_mb=max_size)
+    save_capture_config(config)
+    write_env_file_if_changed(config)
 
     # Restart container if it is currently running so it picks up the new size
     container = await _get_container_status(CONTAINER_NAME)

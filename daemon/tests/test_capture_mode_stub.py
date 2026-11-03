@@ -143,5 +143,22 @@ class TestCaptureManagerStubMirrorMode(unittest.TestCase):
         self.assertEqual(stats.capture_interface, "enp2s0")
 
 
+class TestCaptureManagerStubUnreadableConfig(unittest.TestCase):
+    """The stub is the CR-167 fallback, so a bad config file must not break it."""
+
+    def test_unreadable_config_uses_defaults(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
+            f.write("no section header here\n")
+        try:
+            with patch.dict(os.environ, {"CAPTURE_CONFIG_PATH": f.name}):
+                stub = CaptureManagerStub()
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(stub.mode, CaptureMode.BRIDGE)
+        self.assertEqual(stub.get_capture_interface(), "br0")
+
+
 if __name__ == "__main__":
     unittest.main()

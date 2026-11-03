@@ -14,6 +14,10 @@ export interface UnifiStatus {
 	configured: boolean;
 	controller_url: string | null;
 	site_id: string | null;
+	/** True once the current configuration has polled successfully. */
+	connected: boolean;
+	/** Epoch seconds of the last successful poll; 0 = never. */
+	last_poll_time: number;
 	last_error: string | null;
 	cache_counts: Record<string, number>;
 }
@@ -107,6 +111,18 @@ export interface UnifiVpnTunnel {
 
 const DAEMON = '/api/integrations/unifi';
 
+// OLD CODE START — #96: the fallback a failed status read returned; it read as "not configured"
+// const EMPTY_STATUS: UnifiStatus = {
+// 	configured: false,
+// 	controller_url: null,
+// 	site_id: null,
+// 	connected: false,
+// 	last_poll_time: 0,
+// 	last_error: null,
+// 	cache_counts: {},
+// };
+// OLD CODE END
+
 // ---------------------------------------------------------------------------
 // API functions
 // ---------------------------------------------------------------------------
@@ -115,124 +131,211 @@ const DAEMON = '/api/integrations/unifi';
  * Get UniFi integration status (configured, controller URL, errors).
  */
 export async function getUnifiStatus(): Promise<UnifiStatus> {
-	try {
-		const res = await fetch(`${DAEMON}/status`);
-		if (!res.ok) {
-			return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
-		}
-		return res.json();
-	} catch {
-		return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
-	}
+	// OLD CODE START — returned the raw payload, so fields an older daemon omits came back undefined
+	// try {
+	// 	const res = await fetch(`${DAEMON}/status`);
+	// 	if (!res.ok) {
+	// 		return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
+	// 	}
+	// 	return res.json();
+	// } catch {
+	// 	return { configured: false, controller_url: null, site_id: null, last_error: null, cache_counts: {} };
+	// }
+	// OLD CODE END
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/status`);
+	// 	if (!res.ok) return { ...EMPTY_STATUS };
+	// 	const raw: Partial<UnifiStatus> = await res.json();
+	// 	// `connected` and `site_id` are absent on daemons older than this contract
+	// 	return {
+	// 		configured: raw.configured ?? false,
+	// 		controller_url: raw.controller_url ?? null,
+	// 		site_id: raw.site_id || null,
+	// 		connected: raw.connected ?? false,
+	// 		last_poll_time: typeof raw.last_poll_time === 'number' ? raw.last_poll_time : 0,
+	// 		last_error: raw.last_error ?? null,
+	// 		cache_counts: raw.cache_counts ?? {},
+	// 	};
+	// } catch {
+	// 	return { ...EMPTY_STATUS };
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/status`);
+	if (!res.ok) throw new Error(`UniFi status failed: HTTP ${res.status}`);
+	const raw: Partial<UnifiStatus> = await res.json();
+	// `connected` and `site_id` are absent on daemons older than this contract
+	return {
+		configured: raw.configured ?? false,
+		controller_url: raw.controller_url ?? null,
+		site_id: raw.site_id || null,
+		connected: raw.connected ?? false,
+		last_poll_time: typeof raw.last_poll_time === 'number' ? raw.last_poll_time : 0,
+		last_error: raw.last_error ?? null,
+		cache_counts: raw.cache_counts ?? {},
+	};
 }
 
 /**
  * Get UniFi network devices (APs, switches, gateway).
  */
 export async function getUnifiDevices(): Promise<UnifiDevice[]> {
-	try {
-		const res = await fetch(`${DAEMON}/devices`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.devices || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/devices`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.devices || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/devices`);
+	if (!res.ok) throw new Error(`UniFi devices failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data.devices || [];
 }
 
 /**
  * Get connected clients from the UniFi controller.
  */
 export async function getUnifiClients(): Promise<UnifiClient[]> {
-	try {
-		const res = await fetch(`${DAEMON}/clients`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.clients || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/clients`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.clients || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/clients`);
+	if (!res.ok) throw new Error(`UniFi clients failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data.clients || [];
 }
 
 /**
  * Get UniFi networks (VLANs, subnets).
  */
 export async function getUnifiNetworks(): Promise<UnifiNetwork[]> {
-	try {
-		const res = await fetch(`${DAEMON}/networks`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.networks || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/networks`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.networks || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/networks`);
+	if (!res.ok) throw new Error(`UniFi networks failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data.networks || [];
 }
 
 /**
  * Get UniFi WiFi SSIDs and radio configuration.
  */
 export async function getUnifiWifi(): Promise<UnifiWifi[]> {
-	try {
-		const res = await fetch(`${DAEMON}/wifi`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.wifi || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/wifi`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.wifi || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/wifi`);
+	if (!res.ok) throw new Error(`UniFi WiFi failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data.wifi || [];
 }
 
 /**
  * Get firewall policies and zones from the UniFi controller.
  */
 export async function getUnifiFirewall(): Promise<UnifiFirewall> {
-	try {
-		const res = await fetch(`${DAEMON}/firewall`);
-		if (!res.ok) return { policies: [], zones: [] };
-		return res.json();
-	} catch {
-		return { policies: [], zones: [] };
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/firewall`);
+	// 	if (!res.ok) return { policies: [], zones: [] };
+	// 	return res.json();
+	// } catch {
+	// 	return { policies: [], zones: [] };
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/firewall`);
+	if (!res.ok) throw new Error(`UniFi firewall failed: HTTP ${res.status}`);
+	return res.json();
 }
 
 /**
  * Get DNS content filtering policies.
  */
 export async function getUnifiDnsPolicies(): Promise<DnsPolicy[]> {
-	try {
-		const res = await fetch(`${DAEMON}/dns-policies`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.dns_policies || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/dns-policies`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.policies || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/dns-policies`);
+	if (!res.ok) throw new Error(`UniFi DNS policies failed: HTTP ${res.status}`);
+	const data = await res.json();
+	// OLD CODE START — the daemon sends `policies`; `dns_policies` never existed
+	// return data.dns_policies || [];
+	// OLD CODE END
+	return data.policies || [];
 }
 
 /**
  * Get WAN interface information.
  */
 export async function getUnifiWans(): Promise<UnifiWan[]> {
-	try {
-		const res = await fetch(`${DAEMON}/wans`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.wans || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/wans`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.wans || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/wans`);
+	if (!res.ok) throw new Error(`UniFi WANs failed: HTTP ${res.status}`);
+	const data = await res.json();
+	return data.wans || [];
 }
 
 /**
  * Get VPN tunnel status and configuration.
  */
 export async function getUnifiVpn(): Promise<UnifiVpnTunnel[]> {
-	try {
-		const res = await fetch(`${DAEMON}/vpn`);
-		if (!res.ok) return [];
-		const data = await res.json();
-		return data.vpn_tunnels || [];
-	} catch {
-		return [];
-	}
+	// OLD CODE START — #96: a failed read came back as "not configured" / [] and showed as fact
+	// try {
+	// 	const res = await fetch(`${DAEMON}/vpn`);
+	// 	if (!res.ok) return [];
+	// 	const data = await res.json();
+	// 	return data.tunnels || [];
+	// } catch {
+	// 	return [];
+	// }
+	// OLD CODE END
+	const res = await fetch(`${DAEMON}/vpn`);
+	if (!res.ok) throw new Error(`UniFi VPN failed: HTTP ${res.status}`);
+	const data = await res.json();
+	// OLD CODE START — the daemon sends `tunnels`; `vpn_tunnels` never existed
+	// return data.vpn_tunnels || [];
+	// OLD CODE END
+	return data.tunnels || [];
 }

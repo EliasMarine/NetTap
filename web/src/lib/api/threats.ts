@@ -56,6 +56,9 @@ export interface BeaconSuspect {
 	jitter_coefficient: number;
 	confidence: number;
 	assessment: string;
+	/** #96: 'many_hosts' = one of host_count internet hosts this source contacts on schedules */
+	pattern?: 'beacon' | 'many_hosts';
+	host_count?: number;
 }
 
 export interface LateralMovement {
@@ -123,6 +126,10 @@ export interface ThreatReport {
 	dns_anomalies: DnsAnomalies;
 	lateral_movement: LateralMovement[];
 	investigations: Investigation[];
+	/** #96: detectors that could not run (their lists are empty because nothing was checked) */
+	failed_checks?: string[];
+	/** #96: detectors a bucket cap stopped part way (their lists are partial) */
+	incomplete_checks?: string[];
 }
 
 export interface ThreatIntelInfo {
@@ -149,51 +156,60 @@ export async function getThreatReport(
 ): Promise<ThreatReport> {
 	const q = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/threats/report${q}`, { signal: AbortSignal.timeout(30_000) });
-	if (!res.ok) {
-		return {
-			from: '',
-			to: '',
-			generated_at: '',
-			summary: {
-				threat_score: 0,
-				threat_level: 'none',
-				total_groups: 0,
-				total_events: 0,
-				categories: {},
-				top_threats: [],
-				kill_chains: [],
-				baseline: null
-			},
-			kill_chains: [],
-			beaconing: [],
-			dns_anomalies: {
-				dga_suspects: [],
-				tunnel_suspects: [],
-				nxdomain_spikes: [],
-				suspicious_tlds: []
-			},
-			lateral_movement: [],
-			investigations: []
-		};
-	}
+	// OLD CODE START — #96: a failed report read as threat level "none" with nothing detected
+	// if (!res.ok) {
+	// 	return {
+	// 		from: '',
+	// 		to: '',
+	// 		generated_at: '',
+	// 		summary: {
+	// 			threat_score: 0,
+	// 			threat_level: 'none',
+	// 			total_groups: 0,
+	// 			total_events: 0,
+	// 			categories: {},
+	// 			top_threats: [],
+	// 			kill_chains: [],
+	// 			baseline: null
+	// 		},
+	// 		kill_chains: [],
+	// 		beaconing: [],
+	// 		dns_anomalies: {
+	// 			dga_suspects: [],
+	// 			tunnel_suspects: [],
+	// 			nxdomain_spikes: [],
+	// 			suspicious_tlds: []
+	// 		},
+	// 		lateral_movement: [],
+	// 		investigations: []
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Threat report failed: HTTP ${res.status}`);
 	return res.json();
 }
 
 export async function getBeaconing(
 	opts: { from?: string; to?: string } = {}
-): Promise<{ beacons: BeaconSuspect[]; total: number }> {
+): Promise<{ beacons: BeaconSuspect[]; total: number; complete: boolean }> {
 	const q = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/threats/beaconing${q}`);
-	if (!res.ok) return { beacons: [], total: 0 };
+	// OLD CODE START — #96: a failure read as "none found"
+	// if (!res.ok) return { beacons: [], total: 0 };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Beaconing check failed: HTTP ${res.status}`);
 	return res.json();
 }
 
 export async function getLateralMovement(
 	opts: { from?: string; to?: string } = {}
-): Promise<{ movements: LateralMovement[]; total: number }> {
+): Promise<{ movements: LateralMovement[]; total: number; complete: boolean }> {
 	const q = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/threats/lateral${q}`);
-	if (!res.ok) return { movements: [], total: 0 };
+	// OLD CODE START — #96: a failure read as "none found"
+	// if (!res.ok) return { movements: [], total: 0 };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Lateral movement check failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -202,13 +218,11 @@ export async function getDnsAnomalies(
 ): Promise<DnsAnomalies> {
 	const q = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/threats/dns-anomalies${q}`);
-	if (!res.ok)
-		return {
-			dga_suspects: [],
-			tunnel_suspects: [],
-			nxdomain_spikes: [],
-			suspicious_tlds: []
-		};
+	// OLD CODE START — #96: a failure read as "No DNS anomalies detected"
+	// if (!res.ok)
+	// 	return { dga_suspects: [], tunnel_suspects: [], nxdomain_spikes: [], suspicious_tlds: [] };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`DNS anomaly check failed: HTTP ${res.status}`);
 	return res.json();
 }
 
@@ -217,6 +231,9 @@ export async function getThreatIntel(
 ): Promise<ThreatIntelInfo> {
 	const q = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/threats/intel${q}`);
-	if (!res.ok) return { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 };
+	// OLD CODE START — #96: a failure read as "none found"
+	// if (!res.ok) return { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 };
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Threat intel failed: HTTP ${res.status}`);
 	return res.json();
 }

@@ -91,7 +91,16 @@ export async function importConfig(data: unknown): Promise<ImportResult> {
 		body: JSON.stringify(data),
 	});
 
-	return res.json();
+	// OLD CODE START — #96: a 500 `{error}` body was returned as an ImportResult with no
+	// success/errors fields, which broke the page and hid the reason
+	// return res.json();
+	// OLD CODE END
+	const result = await res.json().catch(() => ({}));
+	// A 400 carries a real ImportResult (rejected sections); anything else without one is a failure
+	if (!res.ok && typeof result.success !== 'boolean') {
+		throw new Error(result.error || `Config import failed: HTTP ${res.status}`);
+	}
+	return result;
 }
 
 /**

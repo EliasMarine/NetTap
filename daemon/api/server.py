@@ -2,8 +2,9 @@
 NetTap Daemon HTTP API Server
 
 Provides aiohttp-based REST endpoints for storage status, SMART health,
-ILM policy management, and system health checks. Designed for LAN-only
-access from the NetTap web dashboard.
+ILM policy management, and system health checks. Every request except
+``GET /api/health`` must carry the shared daemon token (see daemon_auth.py);
+the web dashboard reaches the daemon only through its server-side proxy.
 
 Endpoints:
     GET  /api/health             Liveness check
@@ -18,18 +19,30 @@ Endpoints:
 """
 
 import asyncio
+import functools
 import logging
 import os
+import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from aiohttp import web
 
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
-from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
+
+# OLD CODE START — apply_ilm_policies (static file) is no longer used (CR-038)
+# from storage.ilm import apply_ilm_policies, apply_ilm_policies_from_config
+# OLD CODE END
+from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
+from api.daemon_auth import (
+    load_or_create_token,
+    make_auth_middleware,
+    DEFAULT_TOKEN_FILE,
+)
 from api.tshark import register_tshark_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
@@ -41,11 +54,11 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
+from services.capture_config import load_capture_config
 from services.excluded_ips import (
     load_excluded_ips,
     detect_and_build_lan_filter,
     detect_appliance_ip,
-    save_excluded_ips,
 )
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
@@ -60,6 +73,7 @@ from api.logstash import register_logstash_routes
 from api.lookup import register_lookup_routes
 from api.tools import register_tools_routes
 from api.capture import register_capture_routes
+from api.dhcp_gateway import register_dhcp_gateway_routes
 from api.devices_v2 import register_devices_v2_routes
 from api.live import register_live_routes
 from api.bandwidth import register_bandwidth_routes
@@ -93,6 +107,7 @@ from services.network_diag_service import NetworkDiagService
 from services.ssl_cert_service import SslCertService
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
+from services.malcolm_upgrade import MalcolmUpgrade
 from services.update_executor import UpdateExecutor
 from services.device_registry import DeviceRegistry
 from services.unifi_integration import UnifiIntegration
@@ -115,28 +130,32 @@ logger = logging.getLogger("nettap.api")
 # ---------------------------------------------------------------------------
 
 
-@web.middleware
-async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
-    """Add CORS headers to every response for LAN-only dashboard access.
-
-    Allows all origins since the appliance runs on a private network
-    segment and the dashboard may be accessed from any local IP.
-    """
-    # Handle preflight OPTIONS requests
-    if request.method == "OPTIONS":
-        response = web.Response(status=204)
-    else:
-        try:
-            response = await handler(request)
-        except web.HTTPException as exc:
-            response = exc
-
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
-    response.headers["Access-Control-Max-Age"] = "3600"
-
-    return response
+# OLD CODE START — CORS "*" let any web page on the LAN call the daemon from a
+# browser. The browser never calls the daemon directly (everything goes through
+# the SvelteKit proxy), and the daemon now requires a shared token (2026-10-29).
+# @web.middleware
+# async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
+#     """Add CORS headers to every response for LAN-only dashboard access.
+#
+#     Allows all origins since the appliance runs on a private network
+#     segment and the dashboard may be accessed from any local IP.
+#     """
+#     # Handle preflight OPTIONS requests
+#     if request.method == "OPTIONS":
+#         response = web.Response(status=204)
+#     else:
+#         try:
+#             response = await handler(request)
+#         except web.HTTPException as exc:
+#             response = exc
+#
+#     response.headers["Access-Control-Allow-Origin"] = "*"
+#     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+#     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+#     response.headers["Access-Control-Max-Age"] = "3600"
+#
+#     return response
+# OLD CODE END
 
 
 @web.middleware
@@ -197,6 +216,15 @@ async def handle_storage_status(request: web.Request) -> web.Response:
     try:
         storage: StorageManager = request.app["storage"]
         status = storage.get_status()
+        # #96: the saved retention isn't in OpenSearch yet, so ILM isn't in sync,
+        # however long ago an earlier apply succeeded
+        if "ilm_sync" in request.app and not _ilm_in_sync(request.app):
+            task = request.app.get("_ilm_retry_task")
+            status["ilm_status"] = {
+                **status["ilm_status"],
+                "synced": False,
+                "pending_retry": task is not None and not task.done(),
+            }
         return web.json_response(status)
     except Exception as exc:
         logger.exception("Error fetching storage status")
@@ -312,19 +340,26 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
                         changelog = val
                         break
             if changelog:
+                # OLD CODE START — 2026-11-01: the dict went in as the third positional
+                # argument, which is log_event's description string, not its metadata
+                # await loop.run_in_executor(None, changelog.log_event, "storage_pruned",
+                #     f"Manual cleanup: ...", {...})
+                # OLD CODE END
                 await loop.run_in_executor(
                     None,
-                    changelog.log_event,
-                    "storage_pruned",
-                    f"Manual cleanup: deleted data older than {older_than_days} days",
-                    {
-                        "older_than_days": older_than_days,
-                        "deleted_indices": result["deleted_indices"],
-                        "deleted_pcap_files": result["deleted_pcap_files"],
-                        "freed_bytes": result["freed_bytes_estimate"],
-                        "cutoff_date": result["cutoff_date"],
-                        "trigger": "manual",
-                    },
+                    functools.partial(
+                        changelog.log_event,
+                        "storage_pruned",
+                        f"Manual cleanup: deleted data older than {older_than_days} days",
+                        metadata={
+                            "older_than_days": older_than_days,
+                            "deleted_indices": result["deleted_indices"],
+                            "deleted_pcap_files": result["deleted_pcap_files"],
+                            "freed_bytes": result["freed_bytes_estimate"],
+                            "cutoff_date": result["cutoff_date"],
+                            "trigger": "manual",
+                        },
+                    ),
                 )
         except Exception:
             logger.warning("Failed to log cleanup to changelog", exc_info=True)
@@ -420,6 +455,15 @@ async def handle_indices(request: web.Request) -> web.Response:
         )
 
 
+def _host_uptime_seconds() -> float | None:
+    """Machine uptime; /proc/uptime isn't namespaced, so the container sees the host's."""
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 async def handle_system_health(request: web.Request) -> web.Response:
     """GET /api/system/health -- Combined system health check.
 
@@ -432,8 +476,14 @@ async def handle_system_health(request: web.Request) -> web.Response:
     # opensearch_url: str = request.app["opensearch_url"]
     # OLD CODE END
 
+    # OLD CODE START — replaced 2026-11-01: the System page shows "uptime" as the
+    # machine's, but this was the daemon's (minutes after any redeploy).
+    # result: dict = {
+    #     "uptime": round(uptime, 2),
+    # OLD CODE END
     result: dict = {
-        "uptime": round(uptime, 2),
+        "uptime": round(_host_uptime_seconds() or uptime, 2),
+        "daemon_uptime": round(uptime, 2),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "storage": None,
         "smart": None,
@@ -481,9 +531,14 @@ async def handle_system_health(request: web.Request) -> web.Response:
 async def handle_ilm_apply(request: web.Request) -> web.Response:
     """POST /api/ilm/apply -- Apply ILM policies to OpenSearch."""
     try:
-        opensearch_url: str = request.app["opensearch_url"]
+        # OLD CODE START — applied the static ilm-policy.json (fixed days, no
+        # auth, not in the daemon image), overwriting the user's retention (CR-038).
+        # opensearch_url: str = request.app["opensearch_url"]
+        # loop = asyncio.get_running_loop()
+        # results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
+        # OLD CODE END
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
+        results = await loop.run_in_executor(None, _apply_current_ilm, request.app)
         return web.json_response(
             {
                 "result": "ilm_policies_applied",
@@ -503,24 +558,142 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
+# OLD CODE START — the retry kept the policies of the save that scheduled it,
+# so after a later successful save it could reapply older (shorter) retention.
+# Saves were not serialized either, so two could apply out of order (2026-10-29)
+# async def _ilm_retry_background(
+#     app: web.Application,
+#     config_manager: RetentionConfigManager,
+#     opensearch_url: str,
+#     policies: dict[str, dict],
+#     http_auth: tuple[str, str] | None,
+#     max_retries: int = 20,
+#     base_delay: float = 30.0,
+# ) -> None:
+#     """Retry ILM policy application with exponential backoff.
+#
+#     Called as a background ``asyncio.Task`` when ``handle_storage_config``
+#     fails to apply ILM policies because OpenSearch is temporarily
+#     unavailable. Retries up to *max_retries* times with exponential
+#     backoff capped at 10 minutes.
+#
+#     On success, calls ``config_manager.mark_ilm_applied()`` to persist
+#     the result in ``retention.json``.
+#     """
+#     loop = asyncio.get_running_loop()
+#
+#     for attempt in range(1, max_retries + 1):
+#         delay = min(base_delay * (2 ** (attempt - 1)), 600)  # cap at 10 min
+#         await asyncio.sleep(delay)
+#         try:
+#             results = await loop.run_in_executor(
+#                 None,
+#                 lambda: apply_ilm_policies_from_config(
+#                     opensearch_url, policies, http_auth=http_auth
+#                 ),
+#             )
+#             config_manager.mark_ilm_applied(results)
+#             logger.info("ILM retry succeeded on attempt %d", attempt)
+#             app["_ilm_retry_task"] = None
+#             return
+#         except Exception as exc:
+#             logger.warning(
+#                 "ILM retry attempt %d/%d failed: %s", attempt, max_retries, exc
+#             )
+#
+#     logger.error("ILM retry exhausted %d attempts", max_retries)
+#     app["_ilm_retry_task"] = None
+# OLD CODE END
+
+
+@dataclass
+class IlmSyncState:
+    """Which retention-config revision the OpenSearch ILM policies reflect.
+
+    Every config save bumps ``config_revision`` on the event loop.
+    ``applied_revision`` is the newest revision whose policies were applied.
+    ``lock`` is taken inside the executor thread, so applications never
+    overlap, and a running one is never cancelled.
+    """
+
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    config_revision: int = 0
+    applied_revision: int = 0
+
+
+class IlmApplyError(Exception):
+    """OpenSearch answered, but at least one policy came back as an error."""
+
+    def __init__(self, results: dict[str, str]):
+        failed = {k: v for k, v in results.items() if str(v).startswith("error")}
+        super().__init__(f"ILM policies failed: {failed}")
+        self.results = results
+
+
+def _apply_latest_ilm(app: web.Application) -> dict[str, str] | None:
+    """Apply ILM for the newest saved config; skip if it is already applied.
+
+    Runs in an executor thread and is shared by config saves and the retry.
+    A save queued behind a newer one therefore applies the newest config or
+    skips: a request's own (older) policy snapshot is never applied.
+
+    Returns:
+        The per-policy results, or None if an equal-or-newer revision is
+        already applied.
+
+    Raises:
+        IlmApplyError: If any policy result is ``"error: ..."``.
+        Exception: If OpenSearch is unreachable.
+    """
+    state: IlmSyncState = app["ilm_sync"]
+    with state.lock:
+        # Read the revision before the config: a save stores its config and
+        # then bumps the revision, so the config read below is at least this new.
+        revision = state.config_revision
+        if state.applied_revision >= revision:
+            return None
+        config_manager: RetentionConfigManager = app["retention_config_manager"]
+        policies = generate_ilm_policies(config_manager.get_config())
+        results = apply_ilm_policies_from_config(
+            app["opensearch_url"], policies, http_auth=app.get("http_auth")
+        )
+        if any(str(status).startswith("error") for status in results.values()):
+            raise IlmApplyError(results)
+        config_manager.mark_ilm_applied(results)
+        state.applied_revision = revision
+        return results
+
+
+def _apply_current_ilm(app: web.Application) -> dict[str, str]:
+    """Apply ILM for the current retention config, even if already applied.
+
+    Holds the same lock as ``_apply_latest_ilm`` so a concurrent save is
+    never overwritten with an older config.
+    """
+    with app["ilm_sync"].lock:
+        policies = generate_ilm_policies(app["storage"].config)
+        return apply_ilm_policies_from_config(
+            app["opensearch_url"], policies, http_auth=app.get("http_auth")
+        )
+
+
+def _ilm_in_sync(app: web.Application) -> bool:
+    state: IlmSyncState = app["ilm_sync"]
+    return state.applied_revision >= state.config_revision
+
+
 async def _ilm_retry_background(
     app: web.Application,
-    config_manager: RetentionConfigManager,
-    opensearch_url: str,
-    policies: dict[str, dict],
-    http_auth: tuple[str, str] | None,
     max_retries: int = 20,
     base_delay: float = 30.0,
 ) -> None:
-    """Retry ILM policy application with exponential backoff.
+    """Retry ILM application with exponential backoff until it is in sync.
 
-    Called as a background ``asyncio.Task`` when ``handle_storage_config``
-    fails to apply ILM policies because OpenSearch is temporarily
-    unavailable. Retries up to *max_retries* times with exponential
-    backoff capped at 10 minutes.
-
-    On success, calls ``config_manager.mark_ilm_applied()`` to persist
-    the result in ``retention.json``.
+    Called as a background ``asyncio.Task`` when a config save could not
+    apply its ILM policies. Each attempt sleeps (backoff capped at 10
+    minutes), then runs ``_apply_latest_ilm``, which applies the *current*
+    config or skips if it is already applied. It never reapplies the
+    policies of the save that scheduled it.
     """
     loop = asyncio.get_running_loop()
 
@@ -528,23 +701,29 @@ async def _ilm_retry_background(
         delay = min(base_delay * (2 ** (attempt - 1)), 600)  # cap at 10 min
         await asyncio.sleep(delay)
         try:
-            results = await loop.run_in_executor(
-                None,
-                lambda: apply_ilm_policies_from_config(
-                    opensearch_url, policies, http_auth=http_auth
-                ),
-            )
-            config_manager.mark_ilm_applied(results)
-            logger.info("ILM retry succeeded on attempt %d", attempt)
-            app["_ilm_retry_task"] = None
-            return
+            await loop.run_in_executor(None, _apply_latest_ilm, app)
         except Exception as exc:
             logger.warning(
                 "ILM retry attempt %d/%d failed: %s", attempt, max_retries, exc
             )
+            continue
+        # A newer save may have landed meanwhile; keep going until it is applied.
+        if _ilm_in_sync(app):
+            logger.info("ILM retry succeeded on attempt %d", attempt)
+            app["_ilm_retry_task"] = None
+            return
 
     logger.error("ILM retry exhausted %d attempts", max_retries)
     app["_ilm_retry_task"] = None
+
+
+def _schedule_ilm_retry(app: web.Application) -> None:
+    """Start the single background retry task unless one is already pending."""
+    existing_task = app.get("_ilm_retry_task")
+    if existing_task is None or existing_task.done():
+        app["_ilm_retry_task"] = asyncio.create_task(
+            _ilm_retry_background(app), name="ilm-retry"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -593,71 +772,151 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     storage: StorageManager = request.app["storage"]
     storage.config = new_config
 
-    # --- Generate and apply ILM policies ---
-    policies = generate_ilm_policies(new_config)
-    opensearch_url: str = request.app["opensearch_url"]
-    http_auth: tuple[str, str] | None = request.app.get("http_auth")
+    # OLD CODE START — applied this request's own snapshot without ordering, and
+    # an "error: ..." result counted as success (2026-10-29)
+    # # --- Generate and apply ILM policies ---
+    # policies = generate_ilm_policies(new_config)
+    # opensearch_url: str = request.app["opensearch_url"]
+    # http_auth: tuple[str, str] | None = request.app.get("http_auth")
+    #
+    # try:
+    #     loop = asyncio.get_running_loop()
+    #     results = await loop.run_in_executor(
+    #         None,
+    #         lambda: apply_ilm_policies_from_config(
+    #             opensearch_url, policies, http_auth=http_auth
+    #         ),
+    #     )
+    #     config_manager.mark_ilm_applied(results)
+    #     return web.json_response(
+    #         {
+    #             "saved": True,
+    #             "ilm_applied": True,
+    #             "ilm_results": results,
+    #             "config": {
+    #                 "hot_days": new_config.hot_days,
+    #                 "warm_days": new_config.warm_days,
+    #                 "cold_days": new_config.cold_days,
+    #                 "disk_threshold_percent": round(new_config.disk_threshold * 100),
+    #                 "emergency_threshold_percent": round(
+    #                     new_config.emergency_threshold * 100
+    #                 ),
+    #             },
+    #         }
+    #     )
+    # except Exception as exc:
+    #     # OpenSearch is down — config is saved, schedule background retry
+    #     logger.warning(
+    #         "ILM application failed after config save, scheduling retry: %s", exc
+    #     )
+    #     existing_task = request.app.get("_ilm_retry_task")
+    #     if existing_task is None or existing_task.done():
+    #         request.app["_ilm_retry_task"] = asyncio.create_task(
+    #             _ilm_retry_background(
+    #                 request.app, config_manager, opensearch_url, policies, http_auth
+    #             ),
+    #             name="ilm-retry",
+    #         )
+    #     return web.json_response(
+    #         {
+    #             "saved": True,
+    #             "ilm_applied": False,
+    #             "ilm_retry_scheduled": True,
+    #             "ilm_error": str(exc),
+    #             "config": {
+    #                 "hot_days": new_config.hot_days,
+    #                 "warm_days": new_config.warm_days,
+    #                 "cold_days": new_config.cold_days,
+    #                 "disk_threshold_percent": round(new_config.disk_threshold * 100),
+    #                 "emergency_threshold_percent": round(
+    #                     new_config.emergency_threshold * 100
+    #                 ),
+    #             },
+    #         }
+    #     )
+    # OLD CODE END
 
-    try:
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: apply_ilm_policies_from_config(
-                opensearch_url, policies, http_auth=http_auth
-            ),
-        )
-        config_manager.mark_ilm_applied(results)
+    # --- Apply ILM for the newest config (serialized, revision-aware) ---
+    state: IlmSyncState = request.app["ilm_sync"]
+    state.config_revision += 1
+    revision = state.config_revision
+    results, ilm_error = await _run_ilm_worker(request.app)
+    config_summary = {
+        "hot_days": new_config.hot_days,
+        "warm_days": new_config.warm_days,
+        "cold_days": new_config.cold_days,
+        "disk_threshold_percent": round(new_config.disk_threshold * 100),
+        "emergency_threshold_percent": round(new_config.emergency_threshold * 100),
+    }
+
+    # Applied for this save if this revision, or a newer one, is in OpenSearch.
+    if state.applied_revision >= revision:
         return web.json_response(
             {
                 "saved": True,
                 "ilm_applied": True,
-                "ilm_results": results,
-                "config": {
-                    "hot_days": new_config.hot_days,
-                    "warm_days": new_config.warm_days,
-                    "cold_days": new_config.cold_days,
-                    "disk_threshold_percent": round(new_config.disk_threshold * 100),
-                    "emergency_threshold_percent": round(
-                        new_config.emergency_threshold * 100
-                    ),
-                },
+                "ilm_results": results or {},
+                "config": config_summary,
             }
         )
+
+    # OpenSearch is down or rejected a policy — config is saved, retry later
+    ilm_error = ilm_error or "ILM policies not applied yet"
+    logger.warning(
+        "ILM application failed after config save, scheduling retry: %s", ilm_error
+    )
+    _schedule_ilm_retry(request.app)
+    return web.json_response(
+        {
+            "saved": True,
+            "ilm_applied": False,
+            "ilm_retry_scheduled": True,
+            "ilm_error": ilm_error,
+            "config": config_summary,
+        }
+    )
+
+
+async def _run_ilm_worker(
+    app: web.Application,
+) -> tuple[dict[str, str] | None, str | None]:
+    """Run ``_apply_latest_ilm`` in the executor; return (results, error)."""
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(None, _apply_latest_ilm, app), None
     except Exception as exc:
-        # OpenSearch is down — config is saved, schedule background retry
-        logger.warning(
-            "ILM application failed after config save, scheduling retry: %s", exc
-        )
-        existing_task = request.app.get("_ilm_retry_task")
-        if existing_task is None or existing_task.done():
-            request.app["_ilm_retry_task"] = asyncio.create_task(
-                _ilm_retry_background(
-                    request.app, config_manager, opensearch_url, policies, http_auth
-                ),
-                name="ilm-retry",
-            )
-        return web.json_response(
-            {
-                "saved": True,
-                "ilm_applied": False,
-                "ilm_retry_scheduled": True,
-                "ilm_error": str(exc),
-                "config": {
-                    "hot_days": new_config.hot_days,
-                    "warm_days": new_config.warm_days,
-                    "cold_days": new_config.cold_days,
-                    "disk_threshold_percent": round(new_config.disk_threshold * 100),
-                    "emergency_threshold_percent": round(
-                        new_config.emergency_threshold * 100
-                    ),
-                },
-            }
-        )
+        return None, str(exc)
 
 
 # ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
+
+
+def _load_daemon_token() -> str | None:
+    """Load the shared API token, or None so the API fails closed."""
+    path = os.environ.get("DAEMON_TOKEN_FILE", DEFAULT_TOKEN_FILE)
+    try:
+        return load_or_create_token(path)
+    except OSError as exc:
+        logger.error(
+            "Daemon API token unavailable at %s (%s); rejecting all API requests "
+            "except /api/health until it can be created",
+            path,
+            exc,
+        )
+        return None
+
+
+def _management_interface() -> str:
+    """The management NIC from the capture config, or "" if it can't be read."""
+    try:
+        return load_capture_config().management
+    except Exception as exc:  # a broken capture config must not stop the API starting
+        logger.warning(
+            "Could not read the management NIC from the capture config: %s", exc
+        )
+        return ""
 
 
 def create_app(
@@ -685,7 +944,13 @@ def create_app(
     Returns:
         Configured aiohttp.web.Application ready to be served.
     """
-    app = web.Application(middlewares=[cors_middleware, logging_middleware])
+    # OLD CODE START — CORS middleware removed, token auth added (2026-10-29)
+    # app = web.Application(middlewares=[cors_middleware, logging_middleware])
+    # OLD CODE END
+    # Auth runs first so unauthenticated requests never reach any handler.
+    app = web.Application(
+        middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware]
+    )
 
     # Store subsystem references for handler access
     app["storage"] = storage
@@ -695,6 +960,7 @@ def create_app(
     app["start_time"] = time.monotonic()
     if retention_config_manager is not None:
         app["retention_config_manager"] = retention_config_manager
+    app["ilm_sync"] = IlmSyncState()
 
     # Register routes
     app.router.add_get("/api/health", handle_health)
@@ -740,7 +1006,10 @@ def create_app(
 
     # Network tools (DNS Recon, MAC Lookup, Ping, Traceroute, SSL Cert)
     dns_recon = DnsReconService()
-    mac_lookup = MacLookupService()
+    # OLD CODE START — #26: no OpenSearch, so only the 208 bundled prefixes were known
+    # mac_lookup = MacLookupService()
+    # OLD CODE END
+    mac_lookup = MacLookupService(opensearch_client=storage._client)
     network_diag = NetworkDiagService()
     ssl_cert = SslCertService()
     register_tools_routes(app, dns_recon, mac_lookup, network_diag, ssl_cert)
@@ -780,11 +1049,23 @@ def create_app(
     logger.info("Loaded %d excluded IPs", len(app["excluded_ips"]))
 
     # Auto-detect and exclude appliance management IP
-    appliance_ip = detect_appliance_ip()
+    # OLD CODE START — #79: the detected IP was saved into the owner's list, so a wrong one
+    # (the .env.example placeholder) stayed excluded after the detection was fixed
+    # appliance_ip = detect_appliance_ip()
+    # if appliance_ip and appliance_ip not in app["excluded_ips"]:
+    #     app["excluded_ips"].append(appliance_ip)
+    #     save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+    #     logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
+    # OLD CODE END
+    appliance_ip = detect_appliance_ip(_management_interface())
     if appliance_ip and appliance_ip not in app["excluded_ips"]:
-        app["excluded_ips"].append(appliance_ip)
-        save_excluded_ips(app["excluded_ips"], excluded_ips_file)
+        # Runtime only: detected again at every start, never written into the owner's list
+        app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
         logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
+    elif not appliance_ip:
+        logger.warning(
+            "Appliance management IP not found; NetTap's own traffic is counted"
+        )
 
     # Auto-detect LAN subnets from OpenSearch traffic data
     # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback
@@ -839,7 +1120,14 @@ def create_app(
 
     version_manager = VersionManager(compose_file=compose_file)
     update_checker = UpdateChecker(github_repo=github_repo)
-    update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
+    # OLD CODE START — the Malcolm update needs the OpenSearch client to see records arrive
+    # update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
+    # OLD CODE END
+    update_executor = UpdateExecutor(
+        compose_file=compose_file,
+        backup_dir=backup_dir,
+        malcolm_upgrade=MalcolmUpgrade(client=storage._client),
+    )
 
     # Wire up cross-service references
     update_checker.set_version_manager(version_manager)
@@ -874,8 +1162,18 @@ def create_app(
         app["capture_manager"] = CaptureManagerStub()
     register_capture_routes(app)
 
+    # DHCP gateway go-live (preflight / enable / disable / status)
+    register_dhcp_gateway_routes(app)
+
     # Device Registry v2 (MAC-keyed device inventory + UniFi integration)
-    device_registry = DeviceRegistry(client=storage._client)
+    # The changelog is built first so the registry can log each new device to it
+    changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE START — 2026-11-01: the registry now logs new devices to the changelog
+    # device_registry = DeviceRegistry(client=storage._client)
+    # OLD CODE END
+    device_registry = DeviceRegistry(
+        client=storage._client, changelog=changelog_service
+    )
     unifi_integration = UnifiIntegration()
     if unifi_integration.load_config():
         logger.info("UniFi integration restored from saved config")
@@ -897,7 +1195,9 @@ def create_app(
     register_notification_hub_routes(app, notification_hub)
 
     # Changelog (network event audit log)
-    changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE START — 2026-11-01: built above, before the device registry, which logs new devices to it
+    # changelog_service = ChangelogService(client=storage._client)
+    # OLD CODE END
     app["changelog_service"] = changelog_service
     register_changelog_routes(app, changelog_service)
 
