@@ -7,7 +7,7 @@
 # logs. /dev/urandom is just as good on every other CPU, so this applies to
 # all boxes. See Debugging/DEPLOYMENT-ISSUES.md Chain 23.
 ARG MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
-ARG MALCOLM_IMAGE_TAG=26.02.0
+ARG MALCOLM_IMAGE_TAG=26.10.0
 
 # Same Debian release as the Malcolm Zeek image, so the libstdc++ ABI matches
 FROM debian:trixie-slim AS build

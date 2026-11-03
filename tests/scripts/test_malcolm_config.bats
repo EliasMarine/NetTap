@@ -540,7 +540,7 @@ EOF
     generate_compose_env
 
     local env_file="${TEST_TMPDIR}/docker/.env"
-    grep -q "^MALCOLM_IMAGE_TAG=26.02.0$" "$env_file"
+    grep -q "^MALCOLM_IMAGE_TAG=26.10.0$" "$env_file"
 }
 
 # ==========================================================================

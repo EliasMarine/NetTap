@@ -24,7 +24,7 @@
 # ==========================================================================
 
 x-malcolm-image: &malcolm-registry "ghcr.io/idaholab/malcolm"
-x-malcolm-tag: &malcolm-tag "26.02.0"
+x-malcolm-tag: &malcolm-tag "26.10.0"
 
 x-process-env: &process-env
   PUID: ${PUID:-1000}
@@ -77,7 +77,7 @@ services:
   # ========================================================================
 
   opensearch:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-opensearch
     restart: unless-stopped
     <<: *logging-defaults
@@ -156,7 +156,7 @@ services:
   # ========================================================================
 
   dashboards-helper:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-dashboards-helper
     restart: unless-stopped
     <<: *logging-defaults
@@ -204,7 +204,7 @@ services:
       start_period: 90s
 
   dashboards:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-dashboards
     restart: unless-stopped
     <<: *logging-defaults
@@ -234,7 +234,7 @@ services:
   # ========================================================================
 
   logstash:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-logstash
     restart: unless-stopped
     <<: *logging-defaults
@@ -290,7 +290,7 @@ services:
       start_period: 600s
 
   filebeat:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-filebeat
     restart: unless-stopped
     <<: *logging-defaults
@@ -350,16 +350,16 @@ services:
     # OLD CODE START — replaced 2026-11-01: the stock image takes Broker
     # endpoint IDs from RDRAND, which is constant on some AMD CPUs, so the
     # zeekctl cluster never connected and Zeek wrote no logs (Chain 23).
-    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.10.0}"
     # OLD CODE END
     build:
       context: ..
       dockerfile: docker/Dockerfile.zeek-live
       args:
         MALCOLM_IMAGE_REGISTRY: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}"
-        MALCOLM_IMAGE_TAG: "${MALCOLM_IMAGE_TAG:-26.02.0}"
+        MALCOLM_IMAGE_TAG: "${MALCOLM_IMAGE_TAG:-26.10.0}"
     # Keeps the Malcolm tag, so the version page still reports it
-    image: "nettap/zeek-live:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "nettap/zeek-live:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-zeek-live
     restart: unless-stopped
     network_mode: host
@@ -424,7 +424,7 @@ services:
         condition: service_healthy
 
   suricata-live:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-suricata-live
     restart: unless-stopped
     network_mode: host
@@ -499,7 +499,7 @@ services:
         condition: service_healthy
 
   pcap-capture:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-pcap-capture
     restart: unless-stopped
     network_mode: host
@@ -571,7 +571,7 @@ services:
     # Naming it on a compose command line also starts it, so scripts must not list it.
     # ARKIME_SECRET below stays required: compose interpolates every service.
     profiles: ["arkime"]
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-arkime-live
     restart: unless-stopped
     network_mode: host
@@ -646,7 +646,7 @@ services:
   # ========================================================================
 
   redis:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-redis
     restart: unless-stopped
     <<: *logging-defaults
@@ -693,7 +693,7 @@ services:
       start_period: 30s
 
   api:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-api
     restart: unless-stopped
     <<: *logging-defaults
@@ -735,7 +735,7 @@ services:
   # :9200 OpenSearch proxy unreachable. OpenSearch now binds 127.0.0.1:9200
   # directly, making nginx-proxy unnecessary. Kept commented for reference.
   # nginx-proxy:
-  #   image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
+  #   image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.10.0}"
   #   container_name: nettap-nginx-proxy
   #   restart: unless-stopped
   #   ports:
