@@ -324,7 +324,8 @@ class TestInfoColumn(unittest.TestCase):
     @patch("os.path.exists", return_value=True)
     def test_info_text_is_merged_by_frame_number(self, _mock_exists):
         json_out = json.dumps([self._pkt("1"), self._pkt("2")])
-        fields_out = "1\t443 \u2192 51234 [ACK] Seq=1 Ack=1 Len=1448\n2\tStandard query 0x1a2b A example.com\n"
+        # #141: number, Wireshark's Protocol column, then Info
+        fields_out = "1\tTCP\t443 \u2192 51234 [ACK] Seq=1 Ack=1 Len=1448\n2\tDNS\tStandard query 0x1a2b A example.com\n"
 
         async def run():
             with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
@@ -343,7 +344,15 @@ class TestInfoColumn(unittest.TestCase):
                     result = await self.svc.analyze(req)
                 info_cmd = ex.call_args_list[2].args[0]
                 self.assertEqual(
-                    info_cmd[-4:], ["-e", "frame.number", "-e", "_ws.col.Info"]
+                    info_cmd[-6:],
+                    [
+                        "-e",
+                        "frame.number",
+                        "-e",
+                        "_ws.col.Protocol",
+                        "-e",
+                        "_ws.col.Info",
+                    ],
                 )
                 self.assertIn("dns", info_cmd)
                 return result
@@ -357,6 +366,30 @@ class TestInfoColumn(unittest.TestCase):
                 "Standard query 0x1a2b A example.com",
             ],
         )
+        protocols = [p["_source"]["layers"]["_ws.col.Protocol"] for p in result.packets]
+        self.assertEqual(protocols, ["TCP", "DNS"])
+
+    def test_undecoded_payload_keeps_wiresharks_protocol(self):
+        # #141: frame.protocols ends in "data" when tshark can't decode the payload
+        pkt = {
+            "_source": {
+                "layers": {
+                    "frame": {
+                        "frame.number": "1",
+                        "frame.protocols": "eth:ethertype:ip:udp:data",
+                    }
+                }
+            }
+        }
+        (merged,) = TSharkService._with_info_column(
+            [pkt], "1\tUDP\t443 \u2192 56647 Len=1452\tsplit\n"
+        )
+        layers = merged["_source"]["layers"]
+        self.assertEqual(layers["_ws.col.Protocol"], "UDP")
+        self.assertEqual(layers["_ws.col.Info"], "443 \u2192 56647 Len=1452\tsplit")
+        self.assertNotIn(
+            "_ws.col.Protocol", pkt["_source"]["layers"]
+        )  # input left alone
 
     @patch("os.path.exists", return_value=True)
     def test_packets_survive_a_failed_info_pass(self, _mock_exists):

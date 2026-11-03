@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Deploy the sortable-tables fix (#140) from main and check it.
+# Deploy the sortable-tables fix (#140) and the packet-table protocol fix (#141) from main.
 # Tracking: tracking-fixes/2026-11-01-dashboard-data-accuracy.md
 #
 #   #140: every table sorts by every column, both ways. IPs, ports and tshark's numeric
 #     text now sort by value (10.10.0.26 before 10.10.0.235). A device's Connections table
 #     sorts on the daemon, across all its connections, not just the page on screen.
+#   #141: the TShark table and PCAP preview show Wireshark's own Protocol, Source and
+#     Destination columns: QUIC packets read "DATA" (Wireshark: UDP), IPv6/ARP had no address.
 #   Moves this box from fix/dashboard-data-accuracy to main (everything is merged there).
 #   Rebuilds the web UI and the daemon; each is down for under a minute while it restarts.
 #
@@ -33,7 +35,7 @@ wait_healthy() {  # wait_healthy CONTAINER
     if [ "$status" = "healthy" ]; then check "$1 health" 0 "$status"; else check "$1 health" 1 "$status"; fi
 }
 
-echo "=== Deploy: sortable tables (#140) from $BRANCH ==="
+echo "=== Deploy: sortable tables (#140) + packet protocol column (#141) from $BRANCH ==="
 echo ""
 
 echo "→ Step 1: Pull latest code..."
@@ -64,12 +66,17 @@ sudo docker exec nettap-storage-daemon python3 -c "$(cat "$REPO_DIR/scripts/remo
 [ "${PIPESTATUS[0]}" -eq 0 ] || FAILED=1
 echo ""
 
-echo "→ Step 5: Acceptance check for the whole goal..."
+echo "→ Step 5: Packet tables show Wireshark's columns (#141)..."
+sudo docker exec nettap-storage-daemon python3 -c "$(cat "$REPO_DIR/scripts/remote/verify_protocol_column.py")" 2>&1 | sed 's/^/   /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || FAILED=1
+echo ""
+
+echo "→ Step 6: Acceptance check for the whole goal..."
 bash "$REPO_DIR/scripts/remote/verify-acceptance.sh" | sed 's/^/   /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || FAILED=1
 echo ""
 
-echo "→ Step 6: Logs since the restart..."
+echo "→ Step 7: Logs since the restart..."
 for c in nettap-storage-daemon nettap-web; do
     ERRS=$(sudo docker logs "$c" --since 10m 2>&1 | grep -cE "ERROR|Traceback")
     if [ "$ERRS" -eq 0 ]; then rc=0; else rc=1; fi
@@ -79,7 +86,7 @@ done
 echo ""
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "=== Sortable tables deployed and verified — the box now runs $BRANCH ==="
+    echo "=== #140 and #141 deployed and verified — the box now runs $BRANCH ==="
 else
     echo "=== Finished with ✗ lines above — paste this output back ==="
 fi

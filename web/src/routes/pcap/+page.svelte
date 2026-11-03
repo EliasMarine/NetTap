@@ -161,11 +161,19 @@
 		count: number;
 	}
 
+	/** Wireshark's Protocol column as given (#141); an old frame.protocols chain shows its last entry. */
+	function protocolLabel(protocol: string): string {
+		return protocol.includes(':') ? (protocol.split(':').at(-1) ?? protocol).toUpperCase() : protocol;
+	}
+
 	function buildProtocolBreakdown(packets: PcapPacket[]): ProtoEntry[] {
 		const counts = new Map<string, number>();
 		for (const pkt of packets) {
-			const parts = pkt.protocol.split(':');
-			const proto = (parts[parts.length - 1] || pkt.protocol).toUpperCase();
+			// OLD CODE START — #141: the daemon now sends Wireshark's column, and TLSv1.3 isn't TLSV1.3
+			// const parts = pkt.protocol.split(':');
+			// const proto = (parts[parts.length - 1] || pkt.protocol).toUpperCase();
+			// OLD CODE END
+			const proto = protocolLabel(pkt.protocol);
 			counts.set(proto, (counts.get(proto) ?? 0) + 1);
 		}
 		return [...counts.entries()]
@@ -203,7 +211,10 @@
 	const packetSort = new TableSort<PacketSortKey>('frame_number', 'asc');
 
 	function packetProtocol(pkt: PcapPacket): string {
-		return pkt.protocol.split(':').at(-1)?.toUpperCase() ?? pkt.protocol;
+		// OLD CODE START — #141: upper-cased the last frame.protocols entry
+		// return pkt.protocol.split(':').at(-1)?.toUpperCase() ?? pkt.protocol;
+		// OLD CODE END
+		return protocolLabel(pkt.protocol);
 	}
 
 	let sortedPreviewPackets = $derived(

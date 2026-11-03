@@ -58,11 +58,21 @@ _TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
 # -c counts packets read, not matches, so a filtered preview pipes through head instead.
 # User values reach tshark only as positional args ($1 file, $2 filter, $3 limit).
 # -l flushes each line so tshark stops right after head quits, not a 4 KB buffer later (#78)
+# Source, Destination and Protocol are Wireshark's own columns (#141): ip.src was blank
+# for IPv6 and ARP, and frame.protocols' last entry read "DATA" where Wireshark says UDP
 _FILTERED_PREVIEW_SCRIPT = (
-    'tshark -l -r "$1" -Y "$2" -T fields -e frame.number -e frame.time -e ip.src '
-    "-e ip.dst -e frame.protocols -e frame.len -e _ws.col.Info -E separator='|' "
+    'tshark -l -r "$1" -Y "$2" -T fields -e frame.number -e frame.time '
+    "-e _ws.col.Source -e _ws.col.Destination -e _ws.col.Protocol -e frame.len "
+    "-e _ws.col.Info -E separator='|' "
     '| head -n "$3"'
 )
+# OLD CODE START — #141: IPv4-only addresses and the last frame.protocols entry
+# _FILTERED_PREVIEW_SCRIPT = (
+#     'tshark -l -r "$1" -Y "$2" -T fields -e frame.number -e frame.time -e ip.src '
+#     "-e ip.dst -e frame.protocols -e frame.len -e _ws.col.Info -E separator='|' "
+#     '| head -n "$3"'
+# )
+# OLD CODE END
 # OLD CODE START — #78: without -l a rare filter read on after the limit (35 s vs 26 s)
 # _FILTERED_PREVIEW_SCRIPT = (
 #     'tshark -r "$1" -Y "$2" -T fields -e frame.number -e frame.time -e ip.src '
@@ -445,12 +455,20 @@ class PcapSearchService:
             "frame.number",
             "-e",
             "frame.time",
+            # OLD CODE START — #141: IPv4-only addresses and the last frame.protocols entry
+            # "-e",
+            # "ip.src",
+            # "-e",
+            # "ip.dst",
+            # "-e",
+            # "frame.protocols",
+            # OLD CODE END
             "-e",
-            "ip.src",
+            "_ws.col.Source",
             "-e",
-            "ip.dst",
+            "_ws.col.Destination",
             "-e",
-            "frame.protocols",
+            "_ws.col.Protocol",
             "-e",
             "frame.len",
             "-e",

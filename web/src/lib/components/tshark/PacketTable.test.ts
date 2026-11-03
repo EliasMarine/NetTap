@@ -149,6 +149,23 @@ describe('PacketTable component', () => {
 		expect(firstCells()).toEqual(['3', '1', '2']);
 	});
 
+	// #141: frame.protocols ends in "data" when tshark can't decode the payload
+	it("shows Wireshark's Protocol column, not the last frame.protocols entry", () => {
+		const onselect = vi.fn();
+		const pkt = {
+			_source: {
+				layers: {
+					frame: { 'frame.number': '1', 'frame.protocols': 'eth:ethertype:ip:udp:data', 'frame.len': '1494' },
+					ip: { 'ip.src': '52.84.234.39', 'ip.dst': '192.168.1.151' },
+					'_ws.col.Protocol': 'UDP',
+					'_ws.col.Info': '443 → 56647 Len=1452',
+				},
+			},
+		};
+		const { container } = render(PacketTable, { props: { packets: [pkt], onselect } });
+		expect(container.querySelector('tbody .col-proto')!.textContent?.trim()).toBe('UDP');
+	});
+
 	it('does not show empty-state message when packets exist', () => {
 		const onselect = vi.fn();
 		render(PacketTable, { props: { packets: samplePackets, onselect } });

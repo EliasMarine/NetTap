@@ -460,6 +460,23 @@ class TestFilteredPreview:
         )  # #78: flushed lines let tshark stop when head quits
         assert "-c" not in argv[10:]
 
+    # #141: ip.src was blank for IPv6/ARP and frame.protocols' last entry read "DATA"
+    @pytest.mark.asyncio
+    async def test_both_previews_use_wiresharks_columns(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"1|t|fe80::1|ff02::fb|MDNS|90|Standard query\n", 0)
+        await service.preview(str(pcap_dir / "capture_001.pcap"), bpf_filter="mdns")
+        packets = await service.preview(str(pcap_dir / "capture_001.pcap"))
+        assert len(fake_tshark.calls) == 2  # filtered, then unfiltered
+        for argv in fake_tshark.calls:
+            text = " ".join(argv)
+            for column in ("_ws.col.Source", "_ws.col.Destination", "_ws.col.Protocol"):
+                assert column in text
+            assert "frame.protocols" not in text and "ip.src" not in text
+        assert packets[0]["source"] == "fe80::1"
+        assert packets[0]["protocol"] == "MDNS"
+
     @pytest.mark.asyncio
     async def test_unfiltered_preview_still_uses_packet_count(
         self, service, pcap_dir, fake_tshark

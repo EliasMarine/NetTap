@@ -49,7 +49,11 @@
 				case 'dst':
 					return layers?.ip?.['ip.dst'] ?? layers?.ipv6?.['ipv6.dst'] ?? layers?.eth?.['eth.dst'] ?? '';
 				case 'protocol':
-					return layers?.frame?.['frame.protocols']?.split(':').pop() ?? '';
+					// OLD CODE START — #141: frame.protocols' last entry is "data" when tshark can't decode the payload
+					// return layers?.frame?.['frame.protocols']?.split(':').pop() ?? '';
+					// OLD CODE END
+					// Wireshark's own Protocol column (UDP, TLSv1.3, …) from the daemon's second pass
+					return layers?.['_ws.col.Protocol'] ?? layers?.frame?.['frame.protocols']?.split(':').pop() ?? '';
 				case 'length':
 					return layers?.frame?.['frame.len'] ?? '';
 				case 'info':

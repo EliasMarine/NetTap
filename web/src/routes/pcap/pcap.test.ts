@@ -462,6 +462,29 @@ describe('PCAP page — preview time limit', () => {
 		expect(screen.getByText(/No packets to display/)).toBeInTheDocument();
 		expect(screen.queryByText(/within 45 seconds/)).not.toBeInTheDocument();
 	});
+
+	it("shows Wireshark's protocol names and sorts packets by number, not text", async () => {
+		const pkt = (n: string, protocol: string, length: string) => ({
+			frame_number: n, timestamp: 't', source: 'fe80::1', destination: 'ff02::fb', protocol, length, info: '',
+		});
+		await previewWith({
+			packets: [pkt('10', 'UDP', '1494'), pkt('2', 'TLSv1.3', '90'), pkt('9', 'eth:ethertype:ip:udp:dns', '74')],
+			count: 3,
+			timed_out: false,
+		});
+		const table = document.querySelector('table.packet-table')!;
+		const column = (i: number) => [...table.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[i].textContent);
+
+		// #141: TLSv1.3 as Wireshark writes it; an old frame.protocols chain still shows its last entry
+		expect(column(4)).toEqual(['TLSv1.3', 'DNS', 'UDP']);
+		// #140: capture order by number (2, 9, 10), then any column both ways
+		expect(column(0)).toEqual(['2', '9', '10']);
+		const header = (label: string) => [...table.querySelectorAll('th button')].find((b) => b.textContent?.startsWith(label))!;
+		await fireEvent.click(header('Length'));
+		expect(column(5)).toEqual(['1494', '90', '74']);
+		await fireEvent.click(header('Length'));
+		expect(column(5)).toEqual(['74', '90', '1494']);
+	});
 });
 
 // ---------------------------------------------------------------------------
