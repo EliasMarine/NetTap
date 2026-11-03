@@ -247,25 +247,66 @@ class TestAlertsListHandler(AioHTTPTestCase):
         )
         self.assertTrue(has_severity)
 
-    @unittest_run_loop
-    async def test_alerts_list_category_filter_uses_rule_name(self):
-        """Category wildcards target rule.name (a keyword field), case-insensitively."""
-        from services.alert_intelligence import THREAT_CATEGORIES
+    # OLD CODE START — #147: the list matched any of the category's patterns, not the category
+    # @unittest_run_loop
+    # async def test_alerts_list_category_filter_uses_rule_name(self):
+    #     """Category wildcards target rule.name (a keyword field), case-insensitively."""
+    #     from services.alert_intelligence import THREAT_CATEGORIES
 
+    #     self.mock_client.search.return_value = {
+    #         "hits": {"total": {"value": 0}, "hits": []}
+    #     }
+    #     category = next(iter(THREAT_CATEGORIES))
+
+    #     resp = await self.client.request("GET", f"/api/alerts?category={category}")
+    #     self.assertEqual(resp.status, 200)
+
+    #     body = self.mock_client.search.call_args.kwargs["body"]
+    #     should = body["query"]["bool"]["filter"][-1]["bool"]["should"]
+    #     self.assertEqual(len(should), len(THREAT_CATEGORIES[category]["patterns"]))
+    #     for clause in should:
+    #         self.assertEqual(list(clause["wildcard"]), ["rule.name"])
+    #         self.assertTrue(clause["wildcard"]["rule.name"]["case_insensitive"])
+    # OLD CODE END
+
+    def _listed_signatures(self) -> list[str]:
+        body = self.mock_client.search.call_args.kwargs["body"]
+        return body["query"]["bool"]["filter"][-1]["bool"]["should"][0]["terms"][
+            "rule.name"
+        ]
+
+    @unittest_run_loop
+    async def test_alerts_list_category_lists_the_signatures_the_category_counts(self):
+        """#147: Exploit listed 99 alerts under a 6-alert header. A signature counts under its first
+        matching category, as the category totals do; Informational keeps the unmatched ones."""
+        names = [
+            "ET EXPLOIT Possible CVE-2021-44228",
+            "ET EXPLOIT Possible DOS",  # DoS comes first, so it counts there
+            "ET INFO Observed DNS",
+            "Something unmatched",
+            "ET POLICY Tor exit INFO",
+        ]
         self.mock_client.search.return_value = {
             "hits": {"total": {"value": 0}, "hits": []}
         }
-        category = next(iter(THREAT_CATEGORIES))
+        buckets = [{"key": n, "doc_count": 1} for n in names]
+        with patch("api.alerts._every_signature", return_value=buckets):
+            await self.client.request("GET", "/api/alerts?category=exploit")
+            exploit = self._listed_signatures()
+            await self.client.request("GET", "/api/alerts?category=informational")
+            info = self._listed_signatures()
+            await self.client.request("GET", "/api/alerts?category=exploit&sub=cve")
+            cve = self._listed_signatures()
+        self.assertEqual(exploit, ["ET EXPLOIT Possible CVE-2021-44228"])
+        self.assertEqual(info, ["ET INFO Observed DNS", "Something unmatched"])
+        self.assertEqual(cve, ["ET EXPLOIT Possible CVE-2021-44228"])
 
-        resp = await self.client.request("GET", f"/api/alerts?category={category}")
-        self.assertEqual(resp.status, 200)
-
-        body = self.mock_client.search.call_args.kwargs["body"]
-        should = body["query"]["bool"]["filter"][-1]["bool"]["should"]
-        self.assertEqual(len(should), len(THREAT_CATEGORIES[category]["patterns"]))
-        for clause in should:
-            self.assertEqual(list(clause["wildcard"]), ["rule.name"])
-            self.assertTrue(clause["wildcard"]["rule.name"]["case_insensitive"])
+    @unittest_run_loop
+    async def test_alerts_list_refuses_unknown_category_or_sub(self):
+        for query in ("category=bogus", "category=exploit&sub=tor", "sub=cve"):
+            resp = await self.client.request("GET", f"/api/alerts?{query}")
+            self.assertEqual(resp.status, 400, query)
+        self.mock_client.search.assert_not_called()
 
     @unittest_run_loop
     async def test_alerts_list_invalid_severity_ignored(self):

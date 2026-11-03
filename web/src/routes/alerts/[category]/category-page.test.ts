@@ -85,3 +85,28 @@ describe('Alert category page — sorting (#146)', () => {
 		});
 	});
 });
+
+describe('Alert category page — sub-category filter (#147)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('really filters the alert table when a sub-category is picked, and clears back', async () => {
+		const detail = { ...DETAIL, sub_categories: [{ id: 'port_scan', label: 'Port Scan', count: 3 }] };
+		const alerts = { from: '', to: '', page: 1, size: 25, total: 3, total_pages: 1, alerts: [] };
+		stubDaemon({ '/api/alerts/categories/scan': detail, '/api/alerts': alerts });
+		render(Page);
+		const listCalls = () => vi.mocked(fetch).mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('/api/alerts?'));
+		const lastParams = () => new URLSearchParams(listCalls().at(-1)!.split('?')[1]);
+		await vi.waitFor(() => expect(screen.getByText('Port Scan')).toBeInTheDocument());
+		const before = listCalls().length;
+
+		screen.getByText('Port Scan').closest('button')!.click();
+		await vi.waitFor(() => expect(lastParams().get('sub')).toBe('port_scan'));
+		expect(lastParams().get('category')).toBe('scan');
+		expect(listCalls().length).toBe(before + 1); // the list only, not the whole page again
+
+		screen.getByText('Clear filter').click();
+		await vi.waitFor(() => expect(lastParams().get('sub')).toBeNull());
+	});
+});

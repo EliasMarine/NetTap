@@ -25,8 +25,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (signature) params.set('signature', signature);
 	const category = url.searchParams.get('category');
 	if (category) params.set('category', category);
-	// #146: the alert tables' sort; the daemon validates it
-	for (const key of ['sort', 'order']) {
+	// #146: the alert tables' sort; #147: a category's sub-category. The daemon validates them
+	for (const key of ['sort', 'order', 'sub']) {
 		const value = url.searchParams.get(key);
 		if (value) params.set(key, value);
 	}

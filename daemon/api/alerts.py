@@ -329,7 +329,7 @@ def _alert_sort(sort_key: str, order: str) -> list[dict]:
 
 
 async def handle_alerts_list(request: web.Request) -> web.Response:
-    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc
+    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc&category=&sub=
 
     Returns a paginated list of Suricata alerts with optional severity filter,
     sorted by any of the alert tables' columns across every page (#146).
@@ -391,49 +391,97 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             }
         )
 
-    # Optional category filter — match signatures belonging to a threat category
-    category_filter = request.query.get("category", "")
-    if category_filter:
-        from services.alert_intelligence import THREAT_CATEGORIES
+    # OLD CODE START — #147: any of the category's patterns, while the category's own totals give each
+    # signature its first matching category (informational when none): Exploit listed 99 alerts
+    # under a 6-alert header, Informational 83,490 of 120,066
+    # # Optional category filter — match signatures belonging to a threat category
+    # category_filter = request.query.get("category", "")
+    # if category_filter:
+    #     from services.alert_intelligence import THREAT_CATEGORIES
 
-        cat_info = THREAT_CATEGORIES.get(category_filter)
-        if cat_info:
-            # Build a bool/should with wildcard matches on rule.name for each
-            # pattern in the category.  Case-insensitive wildcard on .keyword.
-            should_clauses = []
-            for pattern in cat_info["patterns"]:
-                # OLD CODE START — analyzed rule.name holds single tokens, so
-                # multi-word patterns never matched; wildcard needs the keyword
-                # should_clauses.append(
-                #     {
-                #         "wildcard": {
-                #             "rule.name": {
-                #                 "value": f"*{pattern}*",
-                #                 "case_insensitive": True,
-                #             }
-                #         }
-                #     }
-                # )
-                # OLD CODE END
-                should_clauses.append(
-                    {
-                        "wildcard": {
-                            "rule.name": {
-                                "value": f"*{pattern}*",
-                                "case_insensitive": True,
-                            }
-                        }
-                    }
+    #     cat_info = THREAT_CATEGORIES.get(category_filter)
+    #     if cat_info:
+    #         # Build a bool/should with wildcard matches on rule.name for each
+    #         # pattern in the category.  Case-insensitive wildcard on .keyword.
+    #         should_clauses = []
+    #         for pattern in cat_info["patterns"]:
+    #             # OLD CODE START — analyzed rule.name holds single tokens, so
+    #             # multi-word patterns never matched; wildcard needs the keyword
+    #             # should_clauses.append(
+    #             #     {
+    #             #         "wildcard": {
+    #             #             "rule.name": {
+    #             #                 "value": f"*{pattern}*",
+    #             #                 "case_insensitive": True,
+    #             #             }
+    #             #         }
+    #             #     }
+    #             # )
+    #             # OLD CODE END
+    #             should_clauses.append(
+    #                 {
+    #                     "wildcard": {
+    #                         "rule.name": {
+    #                             "value": f"*{pattern}*",
+    #                             "case_insensitive": True,
+    #                         }
+    #                     }
+    #                 }
+    #             )
+    #         if should_clauses:
+    #             filter_clauses.append(
+    #                 {
+    #                     "bool": {
+    #                         "should": should_clauses,
+    #                         "minimum_should_match": 1,
+    #                     }
+    #                 }
+    #             )
+    # OLD CODE END
+    # Optional category (and sub-category) filter: the signatures the category page counts (#147)
+    category_filter = request.query.get("category", "")
+    sub_filter = request.query.get("sub", "")
+    if category_filter or sub_filter:
+        from services.alert_intelligence import (
+            SUB_CATEGORIES,
+            THREAT_CATEGORIES,
+            categorize_alert,
+            categorize_sub_category,
+        )
+
+        subs = [s["id"] for s in SUB_CATEGORIES.get(category_filter, [])]
+        if category_filter not in THREAT_CATEGORIES or (
+            sub_filter and sub_filter not in subs
+        ):
+            return web.json_response(
+                {"error": "unknown category, or a sub-category not in that category"},
+                status=400,
+            )
+        base = {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_SURICATA_ALERT_FILTERS,
+                ],
+                "must_not": _SURICATA_NOISE_EXCLUSION,
+            }
+        }
+        try:
+            names = [
+                b["key"]
+                for b in _every_signature(client, base)
+                if categorize_alert(b["key"]) == category_filter
+                and (
+                    not sub_filter
+                    or categorize_sub_category(b["key"], category_filter) == sub_filter
                 )
-            if should_clauses:
-                filter_clauses.append(
-                    {
-                        "bool": {
-                            "should": should_clauses,
-                            "minimum_should_match": 1,
-                        }
-                    }
-                )
+            ]
+        except OpenSearchException as exc:
+            logger.error("OpenSearch error in alerts list (category): %s", exc)
+            return web.json_response(
+                {"error": f"OpenSearch query failed: {exc}"}, status=502
+            )
+        filter_clauses.append(_signature_filter(names))
 
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))

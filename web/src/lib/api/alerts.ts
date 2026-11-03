@@ -173,6 +173,8 @@ export async function getAlerts(
 		ip?: string;
 		signature?: string;
 		category?: string;
+		/** a sub-category of `category` (#147) */
+		sub?: string;
 		sort?: AlertSort;
 		order?: 'asc' | 'desc';
 	} = {}
@@ -186,6 +188,7 @@ export async function getAlerts(
 		ip: opts.ip,
 		signature: opts.signature,
 		category: opts.category,
+		sub: opts.sub,
 		sort: opts.sort,
 		order: opts.order,
 	});

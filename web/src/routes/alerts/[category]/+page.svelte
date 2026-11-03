@@ -14,7 +14,7 @@
 	 */
 
 	import { page } from '$app/stores';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import {
 		getAlertCategoryDetail,
 		getAlertCategoryTimeline,
@@ -289,7 +289,7 @@
 		const [detail, timeline, alertsResult] = await Promise.allSettled([
 			getAlertCategoryDetail(cat, { from, to }),
 			getAlertCategoryTimeline(cat, { from, to, interval }),
-			getAlerts({ from, to, page: 1, size: pageSize, category: cat, sort: SERVER_SORT[sortKey], order: sortDir }),
+			getAlerts({ from, to, page: 1, size: pageSize, category: cat, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir }),
 		]);
 		categoryData = detail.status === 'fulfilled' ? detail.value : null;
 		detailFailed = detail.status === 'rejected';
@@ -308,7 +308,7 @@
 		alertsLoading = true;
 		const { from, to } = getTimeRange();
 		try {
-			const r = await getAlerts({ from, to, page: pg, size: pageSize, category, sort: SERVER_SORT[sortKey], order: sortDir });
+			const r = await getAlerts({ from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir });
 			alerts = r.alerts;
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
@@ -324,11 +324,25 @@
 		}
 	}
 
-	// Refetch when category or time range changes
+	// OLD CODE START — #146/#147: fetchData now reads the sort and sub-category, which would make
+	// every header click reload the whole page from here as well
+	// // Refetch when category or time range changes
+	// $effect(() => {
+	// 	const cat = category;
+	// 	const range = selectedRange;
+	// 	fetchData(cat, range);
+	// });
+	// OLD CODE END
+	// Refetch when category or time range changes; a new category drops the old one's sub-category
+	let loadedCategory = '';
 	$effect(() => {
 		const cat = category;
 		const range = selectedRange;
-		fetchData(cat, range);
+		untrack(() => {
+			if (cat !== loadedCategory) subCatFilter = null;
+			loadedCategory = cat;
+			fetchData(cat, range);
+		});
 	});
 
 	// Auto-refresh
@@ -373,6 +387,8 @@
 
 	function toggleSubFilter(id: string) {
 		subCatFilter = subCatFilter === id ? null : id;
+		// #147: the bar said "Filtered" while the table still listed the whole category
+		fetchAlerts(1);
 	}
 
 	function formatTimestamp(ts: string): string {
@@ -638,7 +654,8 @@
 				{#if subCatFilter}
 					<div class="sub-cat-filter-bar">
 						<span class="filter-text">Filtered: <strong>{categoryData.sub_categories.find(s => s.id === subCatFilter)?.label ?? subCatFilter}</strong></span>
-						<button class="clear-filter-btn" onclick={() => (subCatFilter = null)}>Clear filter</button>
+						<!-- OLD CODE START: <button class="clear-filter-btn" onclick={() => (subCatFilter = null)}>Clear filter</button> OLD CODE END -->
+						<button class="clear-filter-btn" onclick={() => { subCatFilter = null; fetchAlerts(1); }}>Clear filter</button>
 					</div>
 				{/if}
 			</section>
