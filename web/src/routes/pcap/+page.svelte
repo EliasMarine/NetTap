@@ -17,7 +17,7 @@
 		PcapPacket,
 	} from '$lib/api/pcap';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
-	import { TableSort } from '$lib/utils/table-sort.svelte';
+	import { TableSort, compareValues } from '$lib/utils/table-sort.svelte';
 	// OLD CODE START — getCaptureStatus fakes enabled: true when the request fails
 	// import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	// OLD CODE END
@@ -190,14 +190,20 @@
 
 	let sortedFiles = $derived(
 		[...files].sort((a, b) => {
-			const cmp = fileSortKey === 'name' ? a.name.localeCompare(b.name) : (a[fileSortKey] as number | string) < (b[fileSortKey] as number | string) ? -1 : 1;
+			// OLD CODE START — never returned 0 for equal values, and compared names as plain text
+			// const cmp = fileSortKey === 'name' ? a.name.localeCompare(b.name) : (a[fileSortKey] as number | string) < (b[fileSortKey] as number | string) ? -1 : 1;
+			// OLD CODE END
+			const cmp = compareValues(a[fileSortKey], b[fileSortKey]);
 			return fileSortDir === 'asc' ? cmp : -cmp;
 		})
 	);
 
 	let sortedResults = $derived(
 		[...searchResults].sort((a, b) => {
-			const cmp = resultSortKey === 'name' ? a.name.localeCompare(b.name) : (a[resultSortKey] as number | string) < (b[resultSortKey] as number | string) ? -1 : 1;
+			// OLD CODE START — never returned 0 for equal values, and compared names as plain text
+			// const cmp = resultSortKey === 'name' ? a.name.localeCompare(b.name) : (a[resultSortKey] as number | string) < (b[resultSortKey] as number | string) ? -1 : 1;
+			// OLD CODE END
+			const cmp = compareValues(a[resultSortKey], b[resultSortKey]);
 			return resultSortDir === 'asc' ? cmp : -cmp;
 		})
 	);

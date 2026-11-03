@@ -34,7 +34,7 @@
 	import IPAddress from '$components/IPAddress.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
-	import { TableSort, compareValues } from '$lib/utils/table-sort.svelte';
+	import { TableSort, compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -190,7 +190,10 @@
 					cmp = compareValues(a.timestamp || '', b.timestamp || '');
 					break;
 				case 'severity':
-					cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
+					// OLD CODE START — Suricata's 1 is the most severe, so the first (descending) click put LOW on top
+					// cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
+					// OLD CODE END
+					cmp = severityRank(a.alert?.severity) - severityRank(b.alert?.severity);
 					break;
 				case 'signature':
 					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
@@ -342,7 +345,10 @@
 			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
 		} else {
 			sortKey = key;
-			sortDir = key === 'timestamp' ? 'desc' : 'asc';
+			// OLD CODE START — severity is now a rank (higher = worse), so it starts descending like time
+			// sortDir = key === 'timestamp' ? 'desc' : 'asc';
+			// OLD CODE END
+			sortDir = key === 'timestamp' || key === 'severity' ? 'desc' : 'asc';
 		}
 	}
 

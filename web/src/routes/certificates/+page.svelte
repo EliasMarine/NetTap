@@ -81,6 +81,7 @@
 			// if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
 			// return 0;
 			// OLD CODE END
+			if (!aVal !== !bVal) return aVal ? -1 : 1; // a blank (no source IP, no date) goes last both ways
 			const cmp = compareValues(aVal, bVal);
 			return sortDir === 'asc' ? cmp : -cmp;
 		});

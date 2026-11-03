@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { byteSize, compareValues } from '$lib/utils/table-sort.svelte';
 	import { getBridgeHealth } from '$api/bridge.js';
 	import { getCaptureStats, getCaptureMode, getCaptureHealth } from '$api/capture';
 	import { getSystemHealth, getStorageStatus } from '$api/system.js';
@@ -386,18 +387,29 @@
 		return indexSortDir === 'asc' ? ' \u2191' : ' \u2193';
 	}
 
+	// red is worst, so the first (descending) click puts it on top
+	const HEALTH_RANK: Record<string, number> = { red: 2, yellow: 1, green: 0 };
+
 	let sortedIndices = $derived.by(() => {
 		if (!Array.isArray(indices) || indices.length === 0) return indices;
 		const list = [...indices];
 		list.sort((a, b) => {
 			let cmp = 0;
 			switch (indexSortKey) {
-				case 'health': cmp = (a.health || '').localeCompare(b.health || ''); break;
-				case 'index': cmp = (a.index ?? '').localeCompare(b.index ?? ''); break;
+				// OLD CODE START — sizes compared as text ("100mb" above "1.2gb") and health alphabetically
+				// case 'health': cmp = (a.health || '').localeCompare(b.health || ''); break;
+				// case 'index': cmp = (a.index ?? '').localeCompare(b.index ?? ''); break;
+				// case 'docs': cmp = (Number(a.docs_count) || 0) - (Number(b.docs_count) || 0); break;
+				// case 'pri_size': cmp = (a.pri_store_size ?? '').localeCompare(b.pri_store_size ?? ''); break;
+				// case 'total_size': cmp = (a.store_size ?? '').localeCompare(b.store_size ?? ''); break;
+				// case 'created': cmp = (a.creation_date ?? '').localeCompare(b.creation_date ?? ''); break;
+				// OLD CODE END
+				case 'health': cmp = (HEALTH_RANK[a.health] ?? -1) - (HEALTH_RANK[b.health] ?? -1); break;
+				case 'index': cmp = compareValues(a.index ?? '', b.index ?? ''); break;
 				case 'docs': cmp = (Number(a.docs_count) || 0) - (Number(b.docs_count) || 0); break;
-				case 'pri_size': cmp = (a.pri_store_size ?? '').localeCompare(b.pri_store_size ?? ''); break;
-				case 'total_size': cmp = (a.store_size ?? '').localeCompare(b.store_size ?? ''); break;
-				case 'created': cmp = (a.creation_date ?? '').localeCompare(b.creation_date ?? ''); break;
+				case 'pri_size': cmp = (byteSize(a.pri_store_size) ?? -1) - (byteSize(b.pri_store_size) ?? -1); break;
+				case 'total_size': cmp = (byteSize(a.store_size) ?? -1) - (byteSize(b.store_size) ?? -1); break;
+				case 'created': cmp = compareValues(a.creation_date ?? '', b.creation_date ?? ''); break;
 			}
 			return indexSortDir === 'asc' ? cmp : -cmp;
 		});
@@ -425,7 +437,10 @@
 		list.sort((a, b) => {
 			let cmp = 0;
 			switch (pipelineSortKey) {
-				case 'name': cmp = (a.id ?? '').localeCompare(b.id ?? ''); break;
+				// OLD CODE START — text order put pipeline 10 before 9
+				// case 'name': cmp = (a.id ?? '').localeCompare(b.id ?? ''); break;
+				// OLD CODE END
+				case 'name': cmp = compareValues(a.id ?? '', b.id ?? ''); break;
 				case 'events_in': cmp = (a.events_in ?? 0) - (b.events_in ?? 0); break;
 				case 'events_out': cmp = (a.events_out ?? 0) - (b.events_out ?? 0); break;
 				case 'duration': cmp = (a.duration_in_millis ?? 0) - (b.duration_in_millis ?? 0); break;
@@ -456,10 +471,19 @@
 		list.sort((a, b) => {
 			let cmp = 0;
 			switch (templateSortKey) {
-				case 'name': cmp = (a.name ?? '').localeCompare(b.name ?? ''); break;
+				// OLD CODE START — text order instead of reading order for numbers in names
+				// case 'name': cmp = (a.name ?? '').localeCompare(b.name ?? ''); break;
+				// case 'patterns':
+				// 	cmp = String(Array.isArray(a.index_patterns) ? a.index_patterns.join(', ') : a.index_patterns ?? '')
+				// 		.localeCompare(String(Array.isArray(b.index_patterns) ? b.index_patterns.join(', ') : b.index_patterns ?? ''));
+				// 	break;
+				// OLD CODE END
+				case 'name': cmp = compareValues(a.name ?? '', b.name ?? ''); break;
 				case 'patterns':
-					cmp = String(Array.isArray(a.index_patterns) ? a.index_patterns.join(', ') : a.index_patterns ?? '')
-						.localeCompare(String(Array.isArray(b.index_patterns) ? b.index_patterns.join(', ') : b.index_patterns ?? ''));
+					cmp = compareValues(
+						String(Array.isArray(a.index_patterns) ? a.index_patterns.join(', ') : a.index_patterns ?? ''),
+						String(Array.isArray(b.index_patterns) ? b.index_patterns.join(', ') : b.index_patterns ?? '')
+					);
 					break;
 				case 'order': cmp = (a.order ?? a.priority ?? 0) - (b.order ?? b.priority ?? 0); break;
 			}
@@ -489,11 +513,18 @@
 		list.sort((a, b) => {
 			let cmp = 0;
 			switch (unifiDeviceSortKey) {
-				case 'name': cmp = (a.name ?? '').localeCompare(b.name ?? ''); break;
-				case 'model': cmp = (a.model ?? '').localeCompare(b.model ?? ''); break;
-				case 'ipAddress': cmp = (a.ipAddress ?? '').localeCompare(b.ipAddress ?? ''); break;
-				case 'state': cmp = (a.state ?? '').localeCompare(b.state ?? ''); break;
-				case 'firmwareVersion': cmp = (a.firmwareVersion ?? '').localeCompare(b.firmwareVersion ?? ''); break;
+				// OLD CODE START — text order put 192.168.1.10 before 192.168.1.9 and firmware 7.10 before 7.9
+				// case 'name': cmp = (a.name ?? '').localeCompare(b.name ?? ''); break;
+				// case 'model': cmp = (a.model ?? '').localeCompare(b.model ?? ''); break;
+				// case 'ipAddress': cmp = (a.ipAddress ?? '').localeCompare(b.ipAddress ?? ''); break;
+				// case 'state': cmp = (a.state ?? '').localeCompare(b.state ?? ''); break;
+				// case 'firmwareVersion': cmp = (a.firmwareVersion ?? '').localeCompare(b.firmwareVersion ?? ''); break;
+				// OLD CODE END
+				case 'name': cmp = compareValues(a.name ?? '', b.name ?? ''); break;
+				case 'model': cmp = compareValues(a.model ?? '', b.model ?? ''); break;
+				case 'ipAddress': cmp = compareValues(a.ipAddress ?? '', b.ipAddress ?? ''); break;
+				case 'state': cmp = compareValues(a.state ?? '', b.state ?? ''); break;
+				case 'firmwareVersion': cmp = compareValues(a.firmwareVersion ?? '', b.firmwareVersion ?? ''); break;
 			}
 			return unifiDeviceSortDir === 'asc' ? cmp : -cmp;
 		});

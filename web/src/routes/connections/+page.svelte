@@ -141,11 +141,23 @@
 	// Derived
 	// ---------------------------------------------------------------------------
 
+	/** A port as text (asString drops numbers); '' when missing. */
+	function portText(conn: Connection, field: string): string {
+		const v = getField(conn, field);
+		const first = Array.isArray(v) ? v[0] : v;
+		return first === undefined || first === null ? '' : String(first);
+	}
+
 	function sortValue(conn: Connection, key: SortKey): string | number {
 		switch (key) {
 			case 'timestamp': return conn['@timestamp'] as string ?? '';
-			case 'src': return asString(getField(conn, 'source.ip'));
-			case 'dst': return asString(getField(conn, 'destination.ip'));
+			// OLD CODE START — IP only, so one device's connections kept their ports out of order
+			// case 'src': return asString(getField(conn, 'source.ip'));
+			// case 'dst': return asString(getField(conn, 'destination.ip'));
+			// OLD CODE END
+			// IP, then port: compareValues reads both numbers ("192.168.1.9 443" before "192.168.1.10 80")
+			case 'src': return `${asString(getField(conn, 'source.ip'))} ${portText(conn, 'source.port')}`.trim();
+			case 'dst': return `${asString(getField(conn, 'destination.ip'))} ${portText(conn, 'destination.port')}`.trim();
 			case 'protocol': return asString(getField(conn, 'network.transport'));
 			case 'service': return asString(getField(conn, 'protocol'));
 			case 'duration': {

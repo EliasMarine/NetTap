@@ -153,3 +153,39 @@ describe('Alerts — failed requests', () => {
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Rendered page: sorting (sort sweep on the G11)
+// ---------------------------------------------------------------------------
+
+describe('Alerts — sorting', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const alert = (id: string, severity: number, proto: string, src: string) => ({
+		_id: id, _index: 'suricata-x', timestamp: '2026-10-29T10:00:00Z',
+		alert: { signature: `Sig ${id}`, signature_id: 1, severity, category: 'misc' },
+		src_ip: src, dest_ip: '8.8.8.8', proto, acknowledged: false,
+	});
+
+	it('puts the most severe first on the first Severity click, and sorts Protocol', async () => {
+		vi.mocked(getAlerts).mockResolvedValue({
+			from: '', to: '', page: 1, size: 50, total: 3, total_pages: 1,
+			alerts: [alert('low', 3, 'udp', '10.0.0.26'), alert('high', 1, 'tcp', '10.0.0.235'), alert('med', 2, 'icmp', '10.0.0.9')],
+		});
+		const { container } = render(Page);
+		await flush();
+		const sigs = () => [...container.querySelectorAll('td.sig-cell')].map((td) => td.textContent?.trim());
+		const header = (label: string) => [...container.querySelectorAll('th button.sort-btn')].find((b) => b.textContent?.startsWith(label))!;
+
+		// Suricata's 1 is the most severe: the first (descending) click used to put LOW on top
+		await fireEvent.click(header('Severity'));
+		expect(sigs()).toEqual(['Sig high', 'Sig med', 'Sig low']);
+
+		await fireEvent.click(header('Protocol')); // text columns start A→Z
+		expect(sigs()).toEqual(['Sig med', 'Sig high', 'Sig low']); // icmp, tcp, udp
+		await fireEvent.click(header('Protocol'));
+		expect(sigs()).toEqual(['Sig low', 'Sig high', 'Sig med']);
+	});
+});
