@@ -287,7 +287,9 @@
 
 <style>
 	.page-container {
-		max-width: 800px;
+		/* OLD CODE START — design system: page containers are always full width */
+		/* max-width: 800px; */
+		/* OLD CODE END */
 		margin: 0 auto;
 		padding: 1.5rem;
 	}

@@ -432,5 +432,36 @@ class TestMirrorNicInUse(_Base):
         self.mirror_cls.assert_called_once()
 
 
+class TestRetentionSaveReported(_Base):
+    """#96: a failed retention.json write was only logged and setup said "ok"."""
+
+    STORAGE = {"hot_days": 30, "warm_days": 60, "cold_days": 15}
+
+    async def _post_with_save(self, save):
+        manager = MagicMock()
+        manager.return_value.save = save
+        with patch(f"{MODULE}.RetentionConfigManager", manager):
+            resp = await self._post({**MIRROR_BODY, "storage": self.STORAGE})
+        self.assertEqual(resp.status, 200)  # the capture settings still apply
+        return await resp.json()
+
+    async def test_failed_write_is_reported(self):
+        data = await self._post_with_save(
+            MagicMock(side_effect=OSError(30, "Read-only file system"))
+        )
+        self.assertEqual(data["status"], "partial")
+        self.assertEqual(len(data["warnings"]), 1)
+        self.assertIn("Retention settings were not saved", data["warnings"][0])
+        self.assertIn("Read-only file system", data["warnings"][0])
+        self.assertEqual(load_capture_config().mode, CaptureMode.MIRROR)
+
+    async def test_saved_retention_is_ok(self):
+        save = MagicMock()
+        data = await self._post_with_save(save)
+        save.assert_called_once_with(self.STORAGE)
+        self.assertEqual(data["status"], "ok")
+        self.assertNotIn("warnings", data)
+
+
 if __name__ == "__main__":
     unittest.main()

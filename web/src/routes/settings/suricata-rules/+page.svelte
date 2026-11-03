@@ -19,11 +19,18 @@
 		getCustomRules,
 		configureCommercial,
 		getCommercialConfig,
+		getLiveRuleStatus,
+		type LiveRuleStatus,
 		type RuleSource,
 		type RuleStats,
 		type UpdateSchedule,
 		type CommercialConfig,
 	} from '$lib/api/suricata-rules';
+
+	// What Suricata really runs (#58). The source toggles, schedule picker, custom rules and
+	// commercial keys below are not wired into suricata-update yet, so they are shown as such.
+	let live = $state<LiveRuleStatus | null>(null);
+	let liveError = $state('');
 
 	// State
 	let sources = $state<RuleSource[]>([]);
@@ -55,8 +62,64 @@
 		setTimeout(() => { message = ''; }, 5000);
 	}
 
+	async function loadLive() {
+		try {
+			live = await getLiveRuleStatus();
+			liveError = '';
+		} catch (err) {
+			live = null;
+			liveError = err instanceof Error ? err.message : 'unknown error';
+		}
+	}
+
+	function sourceName(url: string): string {
+		if (url.includes('emergingthreats.net')) return 'Emerging Threats Open';
+		if (url.includes('sslbl.abuse.ch')) return 'abuse.ch SSL Blacklist';
+		try {
+			return new URL(url).hostname;
+		} catch {
+			return url;
+		}
+	}
+
+	function scheduleText(cron: string | null | undefined): string {
+		if (cron === '0 0 * * *') return 'Rules refresh automatically every day at 00:00 UTC.';
+		if (cron) return `Rules refresh automatically on the cron schedule "${cron}" (UTC).`;
+		return 'No automatic refresh is scheduled. Use Update Rules Now.';
+	}
+
+	// #96: custom rules and the commercial key load on their own; a failure says so in its section
+	let customFailed = $state(false);
+	let commercialFailed = $state(false);
+
 	async function loadData() {
 		loading = true;
+		await loadLive();
+		const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.allSettled([
+			getRuleSources(),
+			getRuleStats(),
+			getUpdateSchedule(),
+			getCustomRules(),
+			getCommercialConfig(),
+		]);
+		if (sourcesRes.status === 'fulfilled') {
+			sources = sourcesRes.value.sources;
+			lastUpdate = sourcesRes.value.last_update;
+		}
+		if (statsRes.status === 'fulfilled') stats = statsRes.value;
+		if (scheduleRes.status === 'fulfilled') schedule = scheduleRes.value;
+		if (customRes.status === 'fulfilled') customRulesContent = customRes.value;
+		customFailed = customRes.status === 'rejected';
+		if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
+		commercialFailed = commRes.status === 'rejected';
+		loading = false;
+	}
+
+	// OLD CODE START — #96: one failed request left every section on its defaults
+	/*
+	async function loadData() {
+		loading = true;
+		await loadLive();
 		try {
 			const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.all([
 				getRuleSources(),
@@ -77,6 +140,8 @@
 			loading = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	async function toggleSource(source: RuleSource) {
 		togglingSource = source.id;
@@ -203,6 +268,7 @@
 	{:else}
 		<!-- Hero card -->
 		<div class="hero-card">
+			<!-- OLD CODE START — counted update-sources.yaml, which suricata-update never reads (#58)
 			<div class="hero-stats">
 				<div class="stat">
 					<span class="stat-value">{stats?.enabled_sources ?? 0}</span>
@@ -217,6 +283,21 @@
 					<span class="stat-label">Last Updated</span>
 				</div>
 			</div>
+			OLD CODE END -->
+			<div class="hero-stats">
+				<div class="stat">
+					<span class="stat-value">{live ? live.enabled_rules.toLocaleString() : '--'}</span>
+					<span class="stat-label">Enabled Rules</span>
+				</div>
+				<div class="stat">
+					<span class="stat-value">{live ? live.sources.length : '--'}</span>
+					<span class="stat-label">Sources</span>
+				</div>
+				<div class="stat">
+					<span class="stat-value">{live ? formatDate(live.last_updated) : '--'}</span>
+					<span class="stat-label">Last Updated</span>
+				</div>
+			</div>
 			<div class="hero-actions">
 				<button class="btn btn-primary" onclick={handleUpdateNow} disabled={updating}>
 					{updating ? 'Updating...' : 'Update Rules Now'}
@@ -224,7 +305,26 @@
 			</div>
 		</div>
 
-		<!-- Rule Sources Table -->
+		{#if liveError}
+			<div class="message error">Could not read Suricata's rules: {liveError}</div>
+		{/if}
+
+		<!-- Rule Sources: what the rule updater really downloads (#58) -->
+		<section class="card">
+			<h2>Rule Sources</h2>
+			<p class="section-desc">The feeds Suricata's rule updater downloads. Turning feeds on or off from this page is not available yet.</p>
+			{#if live && live.sources.length > 0}
+				<ul class="source-list">
+					{#each live.sources as url}
+						<li><span class="source-name">{sourceName(url)}</span> <code class="source-url">{url}</code></li>
+					{/each}
+				</ul>
+			{:else if live}
+				<p class="section-desc">No sources are listed in the rule updater's configuration.</p>
+			{/if}
+		</section>
+
+		<!-- OLD CODE START — toggled update-sources.yaml, which suricata-update never reads (#58)
 		<section class="card">
 			<h2>Rule Sources</h2>
 			<p class="section-desc">Enable or disable community rule feeds. Changes take effect on next update.</p>
@@ -257,7 +357,15 @@
 			</table>
 		</section>
 
-		<!-- Update Schedule -->
+		OLD CODE END -->
+
+		<!-- Update Schedule: the real cron entry in the Suricata container (#58) -->
+		<section class="card">
+			<h2>Update Schedule</h2>
+			<p class="section-desc">{live ? scheduleText(live.schedule) : 'Unknown: the schedule could not be read.'}</p>
+		</section>
+
+		<!-- OLD CODE START — saved a schedule nothing ran (#58)
 		<section class="card">
 			<h2>Update Schedule</h2>
 			<p class="section-desc">How often should rules be automatically updated from upstream sources?</p>
@@ -274,14 +382,21 @@
 			</div>
 		</section>
 
+		OLD CODE END -->
+
 		<!-- Custom Rules -->
 		<section class="card">
 			<h2>Custom Rules</h2>
 			<p class="section-desc">
 				Add your own Suricata rules. One rule per line. Lines starting with # are comments.
 			</p>
+			<p class="not-wired">Not connected to Suricata yet: rules saved here are not loaded, so saving is off.</p>
+			{#if customFailed}
+				<p class="section-desc">Couldn't load the saved custom rules: the request failed.</p>
+			{/if}
 			<textarea
 				class="custom-rules-editor"
+				readonly
 				bind:value={customRulesContent}
 				placeholder='alert tcp any any -> any any (msg:"Custom rule"; sid:9999001; rev:1;)'
 				rows="8"
@@ -289,7 +404,7 @@
 			<button
 				class="btn btn-secondary"
 				onclick={handleSaveCustomRules}
-				disabled={savingCustomRules}
+				disabled
 			>
 				{savingCustomRules ? 'Saving...' : 'Save Custom Rules'}
 			</button>
@@ -301,6 +416,10 @@
 			<p class="section-desc">
 				Configure ET Pro or Snort Subscriber license keys for premium rule feeds.
 			</p>
+			<p class="not-wired">Not connected to Suricata yet: a key saved here would not add any rules, so this is off.</p>
+			{#if commercialFailed}
+				<p class="section-desc">Couldn't load the commercial license status: the request failed.</p>
+			{/if}
 			{#if commercialConfig.configured}
 				<div class="commercial-status">
 					<span>Active: <strong>{commercialConfig.source_type === 'etpro' ? 'ET Pro' : 'Snort Subscriber'}</strong></span>
@@ -336,7 +455,7 @@
 					</div>
 				</div>
 			{:else}
-				<button class="btn btn-secondary" onclick={() => { showCommercialForm = true; }}>
+				<button class="btn btn-secondary" disabled onclick={() => { showCommercialForm = true; }}>
 					{commercialConfig.configured ? 'Update License' : 'Add Commercial License'}
 				</button>
 			{/if}
@@ -345,8 +464,36 @@
 </div>
 
 <style>
+	.source-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.source-name {
+		color: var(--text-primary);
+		font-weight: 600;
+	}
+
+	.source-url {
+		color: var(--text-muted);
+		font-size: var(--text-xs);
+		word-break: break-all;
+	}
+
+	.not-wired {
+		color: var(--amber);
+		font-size: var(--text-sm);
+		margin: 0 0 var(--space-sm);
+	}
+
 	.page-container {
-		max-width: 960px;
+		/* OLD CODE START — design system: page containers are always full width */
+		/* max-width: 960px; */
+		/* OLD CODE END */
 		margin: 0 auto;
 		padding: 2rem;
 	}
@@ -463,6 +610,7 @@
 		margin: 0 0 1rem;
 	}
 
+	/* OLD CODE START — styles for the source toggles and schedule picker kept as OLD CODE in the markup (#58)
 	.sources-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -548,6 +696,7 @@
 		font-size: 0.8125rem;
 		color: var(--text-secondary, #a1a1aa);
 	}
+	OLD CODE END */
 
 	.custom-rules-editor {
 		width: 100%;

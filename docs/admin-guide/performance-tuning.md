@@ -144,19 +144,9 @@ The `workers` runmode is the most efficient for multi-core systems. Each worker 
 
 ---
 
-## Arkime Packet Threads
+## Arkime
 
-Arkime's packet processing threads:
-
-```ini title=".env"
-ARKIME_PACKET_THREADS=2    # Default: 2 threads
-```
-
-| CPU Cores | Recommended Threads |
-|---|---|
-| 2 | 1 |
-| 4 | 2 |
-| 8+ | 4 |
+Arkime is off by default (compose profile `arkime`), so no packet-thread tuning applies to a standard install.
 
 ---
 
@@ -210,11 +200,13 @@ sudo smartctl -a /dev/nvme0n1
 Control how raw packet capture operates:
 
 ```ini title=".env"
-PCAP_ROTATE_MB=4096     # Rotate PCAP files at this size (MB)
+PCAP_ROTATE_MB=256      # Rotate PCAP files at this size (MB)
 PCAP_ROTATE_MIN=10      # Rotate PCAP files at this interval (minutes)
 ```
 
 Larger rotation sizes reduce file overhead but increase recovery time if a write is interrupted.
+
+PCAP Search and TShark read a whole file at a time, and tshark needs about 120 MiB plus roughly the file's own size in memory. The TShark container has 1 GiB, so files over about 700 MB can't be searched: the search reports them as out of memory. The installer's 256 MB keeps every file searchable (about 11 s each at the container's 1 CPU).
 
 ---
 

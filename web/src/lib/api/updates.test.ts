@@ -133,13 +133,10 @@ describe('updates API client', () => {
 			expect(result.last_scan).toBe('2026-02-26T12:00:00Z');
 		});
 
-		it('returns empty versions on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no versions', async () => {
 			mockFetchFailure(500);
 
-			const result = await getVersions();
-
-			expect(result.versions).toEqual({});
-			expect(result.last_scan).toBe('');
+			await expect(getVersions()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -180,13 +177,10 @@ describe('updates API client', () => {
 			expect(result.last_check).toBe('2026-02-26T12:00:00Z');
 		});
 
-		it('returns empty updates on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting everything up to date', async () => {
 			mockFetchFailure(502);
 
-			const result = await getAvailableUpdates();
-
-			expect(result.updates).toEqual([]);
-			expect(result.last_check).toBe('');
+			await expect(getAvailableUpdates()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -204,12 +198,10 @@ describe('updates API client', () => {
 			expect(result.updates).toHaveLength(1);
 		});
 
-		it('returns empty updates on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no updates', async () => {
 			mockFetchFailure(500);
 
-			const result = await checkForUpdates();
-
-			expect(result.updates).toEqual([]);
+			await expect(checkForUpdates()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -240,6 +232,43 @@ describe('updates API client', () => {
 			expect(result.results).toEqual([]);
 		});
 
+		// the daemon now starts the work in the background and answers at once
+		it('treats a 202 as started and returns its status', async () => {
+			const started = { ...sampleUpdateStatus, state: 'in_progress', components: ['malcolm'], progress_percent: 0, results: [] };
+			mockFetchSuccess(started, 202);
+
+			const result = await applyUpdates(['malcolm']);
+
+			expect(result).toEqual(started);
+			expect(result.already_running).toBeUndefined();
+		});
+
+		it('returns the running update, flagged already_running, on a 409', async () => {
+			const running = {
+				error: 'An update is already running', state: 'in_progress', components: ['malcolm'], current_component: 'malcolm',
+				current_step: 'Downloading Malcolm 26.10.0\'s images', progress_percent: 40, started_at: '2026-11-02T20:00:00Z',
+				completed_at: null, results: [],
+			};
+			mockFetchSuccess(running, 409);
+
+			const result = await applyUpdates(['suricata-rules']);
+
+			expect(result.already_running).toBe(true);
+			expect(result.state).toBe('in_progress');
+			expect(result.components).toEqual(['malcolm']);
+			expect(result.current_step).toBe("Downloading Malcolm 26.10.0's images");
+		});
+
+		it('still returns an empty error status on a 400', async () => {
+			mockFetchSuccess({ error: 'components array is required and must not be empty' }, 400);
+
+			const result = await applyUpdates([]);
+
+			expect(result.state).toBe('error');
+			expect(result.results).toEqual([]);
+			expect(result.already_running).toBeUndefined();
+		});
+
 		it('sends a single component correctly', async () => {
 			mockFetchSuccess(sampleUpdateStatus);
 
@@ -267,22 +296,19 @@ describe('updates API client', () => {
 			expect(result.results[0].success).toBe(true);
 		});
 
-		it('returns idle status on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting idle', async () => {
 			mockFetchFailure(500);
 
-			const result = await getUpdateStatus();
-
-			expect(result.state).toBe('idle');
-			expect(result.current_component).toBeNull();
-			expect(result.results).toEqual([]);
+			await expect(getUpdateStatus()).rejects.toThrow('HTTP 500');
 		});
 	});
 
 	// -- getUpdateHistory -----------------------------------------------------
 
 	describe('getUpdateHistory', () => {
-		it('returns history array on success', async () => {
-			mockFetchSuccess(sampleHistory);
+		// the daemon replies {history, count}; the old client returned that object as the list
+		it('returns the history list from the daemon reply', async () => {
+			mockFetchSuccess({ history: sampleHistory, count: 1 });
 
 			const result = await getUpdateHistory();
 
@@ -292,12 +318,16 @@ describe('updates API client', () => {
 			expect(result[0].success).toBe(true);
 		});
 
-		it('returns empty array on HTTP error', async () => {
+		it('returns an empty list when there are no past updates', async () => {
+			mockFetchSuccess({ history: [], count: 0 });
+
+			expect(await getUpdateHistory()).toEqual([]);
+		});
+
+		it('throws on HTTP error instead of reporting no past updates', async () => {
 			mockFetchFailure(500);
 
-			const result = await getUpdateHistory();
-
-			expect(result).toEqual([]);
+			await expect(getUpdateHistory()).rejects.toThrow('HTTP 500');
 		});
 	});
 

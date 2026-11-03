@@ -228,7 +228,9 @@
 
 <style>
 	.dns-recon-page {
-		max-width: 960px;
+		/* OLD CODE START — 2026-11-02: pages are always full width (design system rule 4, #67) */
+		/* max-width: 960px; */
+		/* OLD CODE END */
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);

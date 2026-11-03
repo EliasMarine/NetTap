@@ -67,15 +67,11 @@ describe('alerts API client', () => {
 			expect(result.counts.high).toBe(3);
 		});
 
-		it('returns zero counts on HTTP error', async () => {
+		// #96: zero counts read as "no alerts"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(502);
 
-			const result = await getAlertCount();
-
-			expect(result.counts.total).toBe(0);
-			expect(result.counts.high).toBe(0);
-			expect(result.counts.medium).toBe(0);
-			expect(result.counts.low).toBe(0);
+			await expect(getAlertCount()).rejects.toThrow('HTTP 502');
 		});
 
 		it('passes time range parameters', async () => {
@@ -124,13 +120,11 @@ describe('alerts API client', () => {
 			expect(result.alerts[0].alert?.signature).toBe('ET MALWARE Test');
 		});
 
-		it('returns empty list on HTTP error', async () => {
+		// #96: an empty list read as "No Alerts"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(500);
 
-			const result = await getAlerts();
-
-			expect(result.alerts).toEqual([]);
-			expect(result.total).toBe(0);
+			await expect(getAlerts()).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes severity filter', async () => {
@@ -158,10 +152,9 @@ describe('alerts API client', () => {
 			expect(result.buckets[0].high).toBe(3);
 		});
 
-		it('returns empty buckets on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertTimeline();
-			expect(result.buckets).toEqual([]);
+			await expect(getAlertTimeline()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes interval in URL', async () => {
@@ -187,10 +180,9 @@ describe('alerts API client', () => {
 			expect(result.signatures[0].count).toBe(42);
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertTopSignatures();
-			expect(result.signatures).toEqual([]);
+			await expect(getAlertTopSignatures()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes limit in URL', async () => {
@@ -216,10 +208,9 @@ describe('alerts API client', () => {
 			expect(result.ips[0].ip).toBe('192.168.1.5');
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertTopIps();
-			expect(result.ips).toEqual([]);
+			await expect(getAlertTopIps()).rejects.toThrow('HTTP 502');
 		});
 
 		it('includes direction in URL', async () => {
@@ -245,10 +236,9 @@ describe('alerts API client', () => {
 			expect(result.categories[0].count).toBe(88);
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchFailure(502);
-			const result = await getAlertCategories();
-			expect(result.categories).toEqual([]);
+			await expect(getAlertCategories()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -342,10 +332,10 @@ describe('alerts API client', () => {
 			expect(categories[0]).toMatchObject({ id: 'malware', count: 42, sub_categories: [{ id: 'trojan' }] });
 		});
 
-		it('returns empty on HTTP error', async () => {
+		// #96: an empty list read as "No category data available"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure(500);
-			const result = await getEnhancedCategories();
-			expect(result.categories).toEqual([]);
+			await expect(getEnhancedCategories()).rejects.toThrow('HTTP 500');
 		});
 	});
 

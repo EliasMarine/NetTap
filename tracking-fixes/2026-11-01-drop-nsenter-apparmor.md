@@ -1,6 +1,6 @@
 # 2026-11-01 — Drop nsenter: Ubuntu AppArmor blocked every daemon host command
 
-**Status:** Fixed in code; device check pending.
+**Status:** Fixed and verified on the G11 (2026-11-01): after `deploy-drop-nsenter.sh` and a reboot, `verify-mirror-mode.sh` passes every check, ~3,800 packets/s.
 **Linear:** NET-126.
 **Branch:** `fix/daemon-drop-nsenter`, off `chore/mirror-mode-verify`.
 **Chain:** DEPLOYMENT-ISSUES.md Chain 22.
@@ -57,7 +57,7 @@ On Ubuntu 24.04 (the G11), the kernel logged this every 30 s:
 - `ruff check` and `ruff format --check` are clean.
 - `shellcheck -S warning` is clean on both scripts.
 - The admin-UP regex was self-checked against five flag strings.
-- Device run: pending. Command: `bash /home/nettap/NetTap/scripts/remote/deploy-drop-nsenter.sh`.
+- Device run (2026-11-01): `deploy-drop-nsenter.sh`, then a reboot; `verify-mirror-mode.sh` all pass, ~3,800 packets/s.
 
 ## Lessons
 - Read `journalctl -k | grep DENIED` before assuming a capability is missing. The `adm` group can read it without sudo.

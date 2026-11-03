@@ -388,6 +388,39 @@ class TestIlmErrorResultsAreFailures(_IlmTestCase):
         self.assertEqual(self.app["ilm_sync"].applied_revision, 0)
 
 
+class TestStatusShowsUnappliedSave(_IlmTestCase):
+    """#96: after a save whose ILM apply failed, storage status is not "synced"."""
+
+    async def get_application(self):
+        from api.server import handle_storage_status
+
+        app = _make_app_with_config_route(self._tmp_dir)
+        app["storage"]._retention_config_manager = app["retention_config_manager"]
+        app.router.add_get("/api/storage/status", handle_storage_status)
+        return app
+
+    async def _ilm_status(self) -> dict:
+        resp = await self.client.get("/api/storage/status")
+        self.assertEqual(resp.status, 200)
+        return (await resp.json())["ilm_status"]
+
+    async def test_failed_save_after_success_is_not_synced(self):
+        with patch(
+            "api.server.apply_ilm_policies_from_config", return_value=OK_RESULTS
+        ):
+            await self._save(SAVE_A)
+        self.assertTrue((await self._ilm_status())["synced"])
+
+        with patch(
+            "api.server.apply_ilm_policies_from_config", return_value=ERROR_RESULTS
+        ):
+            await self._save(SAVE_B)
+            ilm = await self._ilm_status()
+
+        self.assertFalse(ilm["synced"])
+        self.assertTrue(ilm["pending_retry"])
+
+
 class TestRetryNeverReappliesOlderSave(_IlmTestCase):
     async def test_failed_a_then_successful_b_then_retry(self):
         from api.server import _ilm_retry_background

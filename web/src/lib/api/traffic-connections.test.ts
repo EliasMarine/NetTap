@@ -68,13 +68,10 @@ describe('connections v3 API client', () => {
 			expect(result.protocols).toHaveLength(1);
 		});
 
-		it('returns empty defaults on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getConnectionStats();
-
-			expect(result.total_sessions).toBe(0);
-			expect(result.protocols).toEqual([]);
+			await expect(getConnectionStats()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -102,13 +99,10 @@ describe('connections v3 API client', () => {
 			expect(result.links).toHaveLength(1);
 		});
 
-		it('returns empty data on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getConnectionSankey();
-
-			expect(result.nodes.sources).toEqual([]);
-			expect(result.links).toEqual([]);
+			await expect(getConnectionSankey()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -134,12 +128,10 @@ describe('connections v3 API client', () => {
 			expect(result.buckets[0].protocols.tcp).toBe(100);
 		});
 
-		it('returns empty buckets on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getConnectionTimeline();
-
-			expect(result.buckets).toEqual([]);
+			await expect(getConnectionTimeline()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -169,14 +161,10 @@ describe('connections v3 API client', () => {
 			expect(result.protocols).toContain('tcp');
 		});
 
-		it('returns empty defaults on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(400);
-
-			const result = await getRelatedConnections('10.0.0.1', '10.0.0.2');
-
-			expect(result.total_connections).toBe(0);
-			expect(result.connections).toEqual([]);
-			expect(result.first_seen).toBeNull();
+			await expect(getRelatedConnections('10.0.0.1', '10.0.0.2')).rejects.toThrow('HTTP 400');
 		});
 	});
 });

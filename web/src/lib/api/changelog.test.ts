@@ -82,16 +82,14 @@ describe('changelog API client', () => {
 			expect(calledUrl).toContain('limit=50');
 		});
 
-		it('returns empty on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no events', async () => {
 			mockFetchFailure();
-			const result = await getChangelogEvents();
-			expect(result.events).toEqual([]);
+			await expect(getChangelogEvents()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns empty on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
-			const result = await getChangelogEvents();
-			expect(result.events).toEqual([]);
+			await expect(getChangelogEvents()).rejects.toThrow('network error');
 		});
 	});
 

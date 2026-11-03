@@ -68,21 +68,39 @@ class TestParseTimeRange(unittest.TestCase):
         self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
         self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
 
-    def test_invalid_from_falls_back_to_default(self):
-        """Invalid from param should fall back to default."""
+    # OLD CODE START — 2026-11-02: an unreadable bound is now a 400, not the default window
+    # def test_invalid_from_falls_back_to_default(self):
+    #     """Invalid from param should fall back to default."""
+    #     req = self._make_request(
+    #         {"from": "not-a-date", "to": "2026-02-26T00:00:00+00:00"}
+    #     )
+    #     from_ts, to_ts = _parse_time_range(req)
+    #     self.assertNotEqual(from_ts, "not-a-date")
+    #     self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
+    #
+    # def test_invalid_to_falls_back_to_default(self):
+    #     """Invalid to param should fall back to default."""
+    #     req = self._make_request({"from": "2026-02-25T00:00:00+00:00", "to": "garbage"})
+    #     from_ts, to_ts = _parse_time_range(req)
+    #     self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
+    #     self.assertNotEqual(to_ts, "garbage")
+    # OLD CODE END
+
+    def test_invalid_from_is_rejected(self):
+        """An unreadable from is a 400, not the last 24 hours."""
         req = self._make_request(
             {"from": "not-a-date", "to": "2026-02-26T00:00:00+00:00"}
         )
-        from_ts, to_ts = _parse_time_range(req)
-        self.assertNotEqual(from_ts, "not-a-date")
-        self.assertEqual(to_ts, "2026-02-26T00:00:00+00:00")
+        with self.assertRaises(web.HTTPBadRequest) as ctx:
+            _parse_time_range(req)
+        self.assertIn("from must be an ISO 8601 time", ctx.exception.text)
 
-    def test_invalid_to_falls_back_to_default(self):
-        """Invalid to param should fall back to default."""
+    def test_invalid_to_is_rejected(self):
+        """An unreadable to is a 400, not now."""
         req = self._make_request({"from": "2026-02-25T00:00:00+00:00", "to": "garbage"})
-        from_ts, to_ts = _parse_time_range(req)
-        self.assertEqual(from_ts, "2026-02-25T00:00:00+00:00")
-        self.assertNotEqual(to_ts, "garbage")
+        with self.assertRaises(web.HTTPBadRequest) as ctx:
+            _parse_time_range(req)
+        self.assertIn("to must be an ISO 8601 time", ctx.exception.text)
 
 
 class TestParseIntParam(unittest.TestCase):
@@ -369,6 +387,37 @@ class TestProtocolsHandler(AioHTTPTestCase):
         self.assertEqual(len(data["services"]), 2)
         self.assertEqual(data["services"][0]["name"], "dns")
 
+    @unittest_run_loop
+    async def test_protocols_encryption_and_dns_use_the_iot_rule(self):
+        """#86: Security Posture's cards used service names only: QUIC and unparsed TLS on 443
+        counted as plaintext, pings and discovery sat in the denominator (G11: 19%), and DNS
+        could never rise above 0% (Zeek has no dns_over_tls service; DoT is ssl on 853)."""
+        from services.iot_monitor import ENCRYPTED_CONN_FILTER, LOCAL_CHATTER_EXCLUSION
+
+        self.mock_client.search.return_value = {
+            "aggregations": {
+                "encryption": {"doc_count": 200, "encrypted": {"doc_count": 120}},
+                "dns_plain": {"doc_count": 90},
+                "dns_over_tls": {"doc_count": 10},
+            }
+        }
+        resp = await self.client.request("GET", "/api/traffic/protocols")
+        data = await resp.json()
+        self.assertEqual(data["encryption"], {"eligible": 200, "encrypted": 120})
+        self.assertEqual(data["dns"], {"plain": 90, "over_tls": 10})
+
+        aggs = self.mock_client.search.call_args.kwargs["body"]["aggs"]
+        must_not = aggs["encryption"]["filter"]["bool"]["must_not"]
+        for clause in LOCAL_CHATTER_EXCLUSION:
+            self.assertIn(clause, must_not)
+        self.assertIn({"terms": {"network.protocol": ["stun"]}}, must_not)
+        self.assertEqual(
+            aggs["encryption"]["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER
+        )
+        self.assertEqual(
+            aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}}
+        )
+
 
 class TestBandwidthHandler(AioHTTPTestCase):
     """Tests for GET /api/traffic/bandwidth."""
@@ -494,6 +543,28 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertTrue(any("query_string" in clause for clause in must))
 
     @unittest_run_loop
+    async def test_connections_total_counts_past_10000(self):
+        """total and total_pages are shown; OpenSearch stops at 10,000 unless asked."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/traffic/connections")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertIs(body["track_total_hits"], True)
+
+    @unittest_run_loop
+    async def test_connections_pages_stop_at_the_result_window(self):
+        """#85: OpenSearch returns nothing past 10,000 results, so later pages came back empty."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 600000}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/traffic/connections?size=50")
+        data = await resp.json()
+        self.assertEqual(data["total"], 600000)
+        self.assertEqual(data["total_pages"], 200)
+
+    @unittest_run_loop
     async def test_connections_size_capped(self):
         """Page size is capped at 200."""
         self.mock_client.search.return_value = {
@@ -560,6 +631,94 @@ class TestTopByBytesOrdering(AioHTTPTestCase):
             self.assertEqual(agg["terms"].get("order"), {"total_bytes": "desc"}, path)
             self.assertIn("total_bytes", agg["aggs"], path)
             self.assertNotIn("bucket_sort", agg["aggs"], path)
+
+
+def _byte_fields(aggs: dict) -> set[str]:
+    """Collect every *.bytes field summed anywhere in an aggs tree."""
+    found: set[str] = set()
+    for value in aggs.values():
+        if not isinstance(value, dict):
+            continue
+        field = value.get("sum", {}).get("field", "")
+        if field.endswith(".bytes"):
+            found.add(field)
+        found |= _byte_fields(value.get("aggs", {}))
+    return found
+
+
+class TestBandwidthFiltersMatch(AioHTTPTestCase):
+    """Summary, bandwidth series and /api/bandwidth/* must count the same bytes.
+
+    On the G11 the monthly total (1.004 GB) and the 24 h summary (1.077 GB)
+    disagreed with all data from the same day.
+    """
+
+    EXCLUDED = ["192.168.1.2"]
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []},
+            "aggregations": {},
+        }
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        app["excluded_ips"] = self.EXCLUDED
+        register_traffic_routes(app, self.storage)
+        return app
+
+    async def _api_body(self, path: str) -> dict:
+        self.mock_client.search.reset_mock()
+        resp = await self.client.request("GET", path)
+        self.assertEqual(resp.status, 200, path)
+        return self.mock_client.search.call_args.kwargs["body"]
+
+    def _tracker_bodies(self) -> list[dict]:
+        from services.bandwidth_tracker import BandwidthTracker
+
+        client = MagicMock()
+        client.search.return_value = {"aggregations": {}}
+        tracker = BandwidthTracker(client)
+        tracker.get_monthly_usage(2026, 11, excluded_ips=self.EXCLUDED)
+        tracker.get_daily_usage(
+            "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z", excluded_ips=self.EXCLUDED
+        )
+        return [c.kwargs["body"] for c in client.search.call_args_list]
+
+    @unittest_run_loop
+    async def test_same_exclusions_and_byte_fields(self):
+        bodies = {
+            "summary": await self._api_body("/api/traffic/summary"),
+            "series": await self._api_body("/api/traffic/bandwidth"),
+        }
+        monthly, daily = self._tracker_bodies()
+        bodies["monthly"] = monthly
+        bodies["daily"] = daily
+
+        expected_must_not = [{"terms": {"source.ip": self.EXCLUDED}}]
+        for name, body in bodies.items():
+            self.assertEqual(
+                body["query"]["bool"].get("must_not"), expected_must_not, name
+            )
+            self.assertEqual(
+                _byte_fields(body["aggs"]),
+                {"source.bytes", "destination.bytes"},
+                name,
+            )
+
+    @unittest_run_loop
+    async def test_protocol_counts_leave_out_what_the_connection_count_leaves_out(self):
+        # Home's protocol total (516K) sat beside "Connections (24h)" (477K) on the G11
+        summary = await self._api_body("/api/traffic/summary")
+        protocols = await self._api_body("/api/traffic/protocols")
+
+        self.assertEqual(
+            protocols["query"]["bool"].get("must_not"),
+            summary["query"]["bool"]["must_not"],
+        )
 
 
 if __name__ == "__main__":

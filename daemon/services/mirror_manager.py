@@ -297,6 +297,10 @@ class MirrorManager(CaptureManager):
                 f"IP address assigned to {self._interface} — mirror NIC "
                 f"should have no IP (capture-only)"
             )
+        elif has_ip is None:
+            issues.append(
+                f"Could not check whether {self._interface} has an IP address"
+            )
 
         # Determine overall status
         if not link_up and not carrier_up:
@@ -433,19 +437,24 @@ class MirrorManager(CaptureManager):
         except ValueError:
             return False
 
-    async def _check_has_ip(self) -> bool:
+    async def _check_has_ip(self) -> bool | None:
         """Check if the mirror interface has any IP address assigned.
 
         Mirror NICs should be capture-only with no L3 configuration.
 
         Returns:
-            True if any IP address is assigned, False otherwise.
+            True if any IP address is assigned, False if none, None if
+            ``ip`` failed or its output couldn't be read (not checked).
         """
         rc, stdout, _ = await self._run_nsenter(
             "ip", "-j", "addr", "show", "dev", self._interface
         )
+        # OLD CODE START — #96: a failed check read as "no IP", so health could say normal
+        # if rc != 0:
+        #     return False
+        # OLD CODE END
         if rc != 0:
-            return False
+            return None
 
         try:
             import json
@@ -462,8 +471,12 @@ class MirrorManager(CaptureManager):
                     if family == "inet6" and not local.startswith("fe80"):
                         return True
             return False
-        except (ValueError, KeyError, IndexError):
-            return False
+        # OLD CODE START — #96: unreadable output read as "no IP"
+        # except (ValueError, KeyError, IndexError):
+        #     return False
+        # OLD CODE END
+        except (ValueError, KeyError, IndexError, AttributeError):
+            return None
 
     def _write_networkd_config(self) -> list[str]:
         """Write systemd-networkd config to prevent DHCP on the mirror NIC.

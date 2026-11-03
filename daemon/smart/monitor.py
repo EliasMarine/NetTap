@@ -174,7 +174,7 @@ class SmartMetrics:
     total_bytes_read: int | None
     media_errors: int | None  # NVMe specific
     reallocated_sectors: int | None  # SATA specific
-    healthy: bool
+    healthy: bool | None  # None = the drive's health could not be read
     warnings: list[str] = field(default_factory=list)
     timestamp: str = ""  # ISO 8601, set at creation time
 
@@ -897,9 +897,23 @@ class SmartMonitor:
             extracted = self._extract_sata_metrics(raw_data)
 
         # Determine overall health status
-        # Consider the drive healthy unless we find a concerning metric
-        healthy = True
-        warnings: list[str] = []
+        # OLD CODE START — #96: a drive that gave no overall assessment (unreadable,
+        # no permission, no SMART) was reported healthy
+        # # Consider the drive healthy unless we find a concerning metric
+        # healthy = True
+        # warnings: list[str] = []
+        # OLD CODE END
+        if raw_data.get("_source") == "nvme-cli":
+            assessed = (
+                raw_data.get("_nvme_smart_log", {}).get("critical_warning") is not None
+            )
+        else:
+            assessed = "passed" in (raw_data.get("smart_status") or {})
+        # None = unknown: without the drive's own assessment nothing was checked
+        healthy: bool | None = True if assessed else None
+        warnings: list[str] = (
+            [] if assessed else [f"SMART health could not be read from {self.device}"]
+        )
 
         # Check overall health assessment
         if raw_data.get("_source") == "nvme-cli":
@@ -988,6 +1002,9 @@ class SmartMonitor:
             sysfs_info = self._sysfs_fallback()
             if sysfs_info:
                 result.update(sysfs_info)
+
+        if result["healthy"] is None:
+            result["error"] = f"SMART health could not be read from {self.device}"
 
         return result
 

@@ -233,7 +233,7 @@ class ConfigBackup:
         # Apply notification channels + rules
         if "notification_channels" in sections or "notification_rules" in sections:
             existing = self._read_json(
-                self._paths.get("notification_config", ""), default={}
+                self._paths.get("notification_config", ""), default={}, lenient=True
             )
             if "notification_channels" in sections:
                 existing["channels"] = sections["notification_channels"]
@@ -252,7 +252,7 @@ class ConfigBackup:
         # Apply device aliases
         if "device_aliases" in sections:
             existing = self._read_json(
-                self._paths.get("device_baseline", ""), default={}
+                self._paths.get("device_baseline", ""), default={}, lenient=True
             )
             existing["aliases"] = sections["device_aliases"]
             ok = self._write_json(self._paths.get("device_baseline", ""), existing)
@@ -300,8 +300,12 @@ class ConfigBackup:
     # File I/O helpers
     # ------------------------------------------------------------------
 
-    def _read_json(self, path: str, default: Any = None) -> Any:
-        """Read a JSON file, returning default on any error."""
+    def _read_json(self, path: str, default: Any = None, lenient: bool = False) -> Any:
+        """Read a JSON file; default when it isn't there yet.
+
+        A file that exists but can't be read raises, unless ``lenient`` (an
+        import about to overwrite it), so an export never drops it silently.
+        """
         if not path:
             return default
         p = Path(path)
@@ -311,7 +315,12 @@ class ConfigBackup:
             return json.loads(p.read_text())
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to read %s: %s", path, exc)
-            return default
+            # OLD CODE START — #96: the export left the section empty and still "succeeded"
+            # return default
+            # OLD CODE END
+            if lenient:
+                return default
+            raise ValueError(f"Could not read {path}: {exc}") from exc
 
     def _write_json(self, path: str, data: Any) -> bool:
         """Write data as JSON to a file. Returns True on success."""

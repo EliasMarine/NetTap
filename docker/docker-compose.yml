@@ -24,7 +24,7 @@
 # ==========================================================================
 
 x-malcolm-image: &malcolm-registry "ghcr.io/idaholab/malcolm"
-x-malcolm-tag: &malcolm-tag "26.02.0"
+x-malcolm-tag: &malcolm-tag "26.10.0"
 
 x-process-env: &process-env
   PUID: ${PUID:-1000}
@@ -77,7 +77,7 @@ services:
   # ========================================================================
 
   opensearch:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/opensearch:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-opensearch
     restart: unless-stopped
     <<: *logging-defaults
@@ -156,7 +156,7 @@ services:
   # ========================================================================
 
   dashboards-helper:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards-helper:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-dashboards-helper
     restart: unless-stopped
     <<: *logging-defaults
@@ -169,9 +169,30 @@ services:
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
       DASHBOARDS_DARKMODE: "true"
       DASHBOARDS_TIMEPICKER_FROM: "now-24h"
+      # Same EACCES as logstash (NET-54): after the entrypoint's su, supervisord
+      # can't reopen /dev/fd/1, so idxinit and cron never ran and Dashboards had no
+      # index pattern or dashboards (#73). supervisord runs as root; the mounted
+      # config runs every program as helper.
+      PUSER_PRIV_DROP: "false"
+      # shared-object-creation.sh runs under `set -u` and reads these unguarded (Malcolm
+      # passes them from arkime.env). Empty = its own defaults: shards and replicas from
+      # the node count (#73).
+      ARKIME_INIT_SHARDS: ""
+      ARKIME_INIT_REPLICAS: ""
+      ARKIME_INIT_SHARDS_PER_NODE: ""
+      # It also stamps malcolm_template with refresh_interval=${ARKIME_INIT_REFRESH_SEC:-60}s.
+      # Keep OpenSearch's 1 s default (what indices have today) so new data and alerts
+      # show up within seconds, not a minute.
+      ARKIME_INIT_REFRESH_SEC: "1"
+      # Read unguarded as ${VAR%?} near the end ("create initial indices"), so every
+      # run stopped there before the anomaly detectors and alerting objects. Values are
+      # the script's own defaults.
+      MALCOLM_NETWORK_INDEX_PATTERN: "arkime_sessions3-*"
+      MALCOLM_OTHER_INDEX_PATTERN: "malcolm_beats_*"
     volumes:
       - dashboards-helper-data:/opt/dashboards-helper
       - ./curlrc:/var/local/curlrc:ro
+      - ../config/dashboards-helper/supervisord.conf:/etc/supervisord.conf:ro
     networks:
       - default
     depends_on:
@@ -183,7 +204,7 @@ services:
       start_period: 90s
 
   dashboards:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/dashboards:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-dashboards
     restart: unless-stopped
     <<: *logging-defaults
@@ -213,7 +234,7 @@ services:
   # ========================================================================
 
   logstash:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/logstash-oss:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-logstash
     restart: unless-stopped
     <<: *logging-defaults
@@ -255,6 +276,9 @@ services:
       - logstash-persistent-queue:/usr/share/logstash/data/queue
       - ./curlrc:/var/local/curlrc:ro
       - ../config/logstash/supervisord.conf:/etc/supervisord.conf:ro
+    # Monitoring API for the daemon (host network, so no Docker DNS). Loopback only.
+    ports:
+      - "127.0.0.1:9600:9600"
     networks:
       - default
     depends_on:
@@ -266,7 +290,7 @@ services:
       start_period: 600s
 
   filebeat:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/filebeat-oss:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-filebeat
     restart: unless-stopped
     <<: *logging-defaults
@@ -296,6 +320,11 @@ services:
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+      # the same under the names Malcolm 26.04.0+ reads (filebeat-zeek-files-logs.yml: without
+      # VALKEY_PASSWORD that program exits "missing field accessing 'output.redis.password'")
+      VALKEY_HOST: "redis"
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
     # NOTE: No cert mount needed — BEATS_SSL is false. If enabled in the future,
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
@@ -326,16 +355,16 @@ services:
     # OLD CODE START — replaced 2026-11-01: the stock image takes Broker
     # endpoint IDs from RDRAND, which is constant on some AMD CPUs, so the
     # zeekctl cluster never connected and Zeek wrote no logs (Chain 23).
-    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/zeek:${MALCOLM_IMAGE_TAG:-26.10.0}"
     # OLD CODE END
     build:
       context: ..
       dockerfile: docker/Dockerfile.zeek-live
       args:
         MALCOLM_IMAGE_REGISTRY: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}"
-        MALCOLM_IMAGE_TAG: "${MALCOLM_IMAGE_TAG:-26.02.0}"
+        MALCOLM_IMAGE_TAG: "${MALCOLM_IMAGE_TAG:-26.10.0}"
     # Keeps the Malcolm tag, so the version page still reports it
-    image: "nettap/zeek-live:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "nettap/zeek-live:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-zeek-live
     restart: unless-stopped
     network_mode: host
@@ -374,6 +403,10 @@ services:
     environment:
       <<: *process-env
       ZEEK_LIVE_CAPTURE: "true"
+      # No offline PCAP processor: it subscribes to Malcolm's pcap-monitor, which NetTap
+      # doesn't run, so it retried forever and leaked thousands of "pcap-monitor" DNS
+      # lookups an hour to the LAN resolver (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #32)
+      ZEEK_PCAP_PROCESSOR: "false"
       ZEEK_JSON: "true"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
@@ -387,7 +420,11 @@ services:
       EXTRA_TAGS: ""
     volumes:
       - zeek-live-logs:/zeek/live
-      - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+      # OLD CODE START — 2026-11-03 (#122): Zeek runs /usr/local/zeek/share/zeek/site/local.zeek
+      # (Malcolm's), so this mount was never read. Don't point it there: nettap.zeek is the
+      # first scaffold and loads extract-all-files, which writes every transferred file to disk.
+      # - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+      # OLD CODE END
       # Capture settings written by the daemon (capture.env) + their loader
       - /etc/nettap:/etc/nettap:ro
       - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
@@ -396,7 +433,7 @@ services:
         condition: service_healthy
 
   suricata-live:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/suricata:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-suricata-live
     restart: unless-stopped
     network_mode: host
@@ -428,6 +465,10 @@ services:
     environment:
       <<: *process-env
       SURICATA_LIVE_CAPTURE: "true"
+      # No offline PCAP processor: it subscribes to Malcolm's pcap-monitor, which NetTap
+      # doesn't run, so it retried forever and leaked thousands of "pcap-monitor" DNS
+      # lookups an hour to the LAN resolver (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #32)
+      SURICATA_PCAP_PROCESSOR: "false"
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       PCAP_IFACE_TWEAK: "true"
       # NOTE: Do NOT set SURICATA_RUNMODE here. Malcolm's entrypoint selects
@@ -436,6 +477,19 @@ services:
       # conflicts with Malcolm's internal UNIX_SOCKET initialization in
       # Suricata 8.x and causes: "The custom type workers doesn't exist for
       # this runmode type UNIX_SOCKET".
+      # Suricata reassembles IP fragments itself. With kernel defrag (Malcolm's default) a
+      # reassembled datagram is bigger than default-packet-size (1514), so Suricata inspected
+      # only its first 1514 bytes and raised ~124 "AF-PACKET/IPv4 truncated packet" alerts a
+      # day. Safe with the autofp runmode Malcolm picks: the kernel hashes every fragment of a
+      # datagram to the same capture thread, then autofp hands the packet to its flow's worker.
+      # (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #27)
+      SURICATA_AF_PACKET_DEFRAG: "false"
+      # Decoder rules that fire on ordinary switch traffic seen on a mirror port: ~13k alerts a
+      # day each, two-thirds of all alerts on the G11 (dashboard data accuracy #57).
+      #   2200121 "SURICATA Ethertype unknown": STP BPDUs (802.3/LLC frames) and LLDP
+      #   2231001 "SURICATA QUIC error on data": QUIC packets Suricata's parser cannot read
+      # Malcolm's entrypoint writes these to disable.conf and regenerates the rules at start.
+      SURICATA_DISABLE_SIDS: "2200121,2231001"
       SURICATA_UPDATE_RULES: "true"
       SURICATA_UPDATE_ETOPEN: "true"
       SURICATA_ROTATED_PCAP: "false"
@@ -454,7 +508,7 @@ services:
         condition: service_healthy
 
   pcap-capture:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/pcap-capture:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-pcap-capture
     restart: unless-stopped
     network_mode: host
@@ -520,7 +574,13 @@ services:
         condition: service_healthy
 
   arkime-live:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # Off by default (owner decision 2026-11-02, tracking-fixes/2026-11-01-dashboard-data-accuracy.md #44):
+    # it never started (no curlrc mount) and nothing in NetTap uses it; PCAP Search and
+    # TShark read the netsniff files from pcap-capture. Start it only with --profile arkime.
+    # Naming it on a compose command line also starts it, so scripts must not list it.
+    # ARKIME_SECRET below stays required: compose interpolates every service.
+    profiles: ["arkime"]
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/arkime:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-arkime-live
     restart: unless-stopped
     network_mode: host
@@ -560,6 +620,10 @@ services:
       # doesn't resolve on the host network. nginx-proxy binds 127.0.0.1:9200.
       OPENSEARCH_URL: "https://localhost:9200"
       ARKIME_LIVE_CAPTURE: "true"
+      # No offline PCAP processor: it subscribes to Malcolm's pcap-monitor, which NetTap
+      # doesn't run, so it retried forever and leaked thousands of "pcap-monitor" DNS
+      # lookups an hour to the LAN resolver (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #32)
+      ARKIME_PCAP_PROCESSOR: "false"
       ARKIME_VIEWER_PORT: "8005"
       ARKIME_ROTATE_INDEX: "daily"
       ARKIME_PACKET_THREADS: "${ARKIME_PACKET_THREADS:-2}"
@@ -591,7 +655,14 @@ services:
   # ========================================================================
 
   redis:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    # OLD CODE START — 2026-11-03: Malcolm 26.04.0+ ships Valkey instead of Redis (no redis image)
+    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.10.0}"
+    # OLD CODE END
+    # MALCOLM_KV_IMAGE is "valkey" from Malcolm 26.04.0 on, "redis" before; docker/.env sets it
+    # with MALCOLM_IMAGE_TAG (installer, System → Updates). The default keeps boxes whose .env
+    # predates it (26.02.0) on Redis. Valkey's image ships redis-server/redis-cli too, so the
+    # command and healthcheck below serve both. The service keeps its name: clients use "redis".
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/${MALCOLM_KV_IMAGE:-redis}:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-redis
     restart: unless-stopped
     <<: *logging-defaults
@@ -629,7 +700,11 @@ services:
       REDIS_MAXMEMORY: "${REDIS_MAXMEMORY:-0}"
       REDIS_MAXMEMORY_POLICY: "${REDIS_MAXMEMORY_POLICY:-allkeys-lru}"
     volumes:
-      - redis-data:/data
+      # OLD CODE START — 2026-11-03: each image keeps its own data (Valkey 8.1 can't read
+      # Redis 7.4's RDB files), so a rollback finds Redis's untouched; NetTap stores no keys
+      # - redis-data:/data
+      # OLD CODE END
+      - ${MALCOLM_KV_IMAGE:-redis}-data:/data
     networks:
       - default
     healthcheck:
@@ -638,7 +713,7 @@ services:
       start_period: 30s
 
   api:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.02.0}"
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/api:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-api
     restart: unless-stopped
     <<: *logging-defaults
@@ -656,6 +731,10 @@ services:
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+      # the same store under the names Malcolm 26.04.0+ reads
+      VALKEY_HOST: "redis"
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
       NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
       ARKIME_VIEWER_PORT: "8005"
@@ -671,7 +750,11 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
+      # OLD CODE START — 2026-11-03 (#133): "/" answered 200 on 26.02.0 only; 26.10.0 gives 404
+      # test: ["CMD-SHELL", "curl -sf http://localhost:5000/ || exit 1"]
+      # OLD CODE END
+      # the endpoint Malcolm's own container_health.sh checks, in every release since 26.02.0
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/mapi/ping || exit 1"]
       start_period: 60s
 
   # OLD CODE START — nginx-proxy disabled. Malcolm's baked-in nginx.conf
@@ -680,7 +763,7 @@ services:
   # :9200 OpenSearch proxy unreachable. OpenSearch now binds 127.0.0.1:9200
   # directly, making nginx-proxy unnecessary. Kept commented for reference.
   # nginx-proxy:
-  #   image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.02.0}"
+  #   image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/nginx-proxy:${MALCOLM_IMAGE_TAG:-26.10.0}"
   #   container_name: nettap-nginx-proxy
   #   restart: unless-stopped
   #   ports:
@@ -775,12 +858,20 @@ services:
       # Without this, StorageManager gets 403 on all API calls.
       - ./curlrc:/var/local/curlrc:ro
       # Docker socket — daemon uses docker exec for TShark PCAP analysis.
+      # OLD CODE START — no longer true: System → Updates runs docker compose through it
       # Read-only: daemon only inspects/execs, never creates/removes containers.
+      # OLD CODE END
+      # :ro only keeps the socket file from being replaced; the Docker API through it is
+      # full access (root on the host). System → Updates recreates Malcolm's containers.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Host sysfs — mount ALL of /sys so that symlinks resolve correctly.
       # /sys/class/net/<iface> is a symlink to /sys/devices/pci.../net/<iface>;
       # mounting only /sys/class/net leaves dangling targets inside the container.
       - /sys:/host/sys:ro
+      # Host OS version for System → Updates (the container's own file names the image's OS)
+      - /etc/os-release:/host/etc/os-release:ro
+      # Ubuntu's own count of pending package updates, for System → Updates' OS row
+      - /var/lib/update-notifier:/host/var/lib/update-notifier:ro
       # Writable overlay for igc NIC LED blink (sysfs timer trigger writes)
       - /sys/class/leds:/host/sys/class/leds
       # Bridge persistence — daemon writes config to host filesystem
@@ -801,11 +892,19 @@ services:
       # doesn't resolve on the host network. OpenSearch binds 127.0.0.1:9200
       # directly on the host. Same pattern as arkime-live.
       OPENSEARCH_URL: "https://localhost:9200"
+      # Same reason: Docker names (logstash, nettap-cyberchef) don't resolve on the host network
+      LOGSTASH_API_URL: "http://127.0.0.1:9600"
+      CYBERCHEF_URL: "http://127.0.0.1:8443"
       RETENTION_HOT: "${RETENTION_HOT:-90}"
       RETENTION_WARM: "${RETENTION_WARM:-180}"
       RETENTION_COLD: "${RETENTION_COLD:-30}"
       DISK_THRESHOLD_PERCENT: "${DISK_THRESHOLD_PERCENT:-80}"
       PCAP_DIR: "/opt/nettap/pcap"
+      # Most of the disk PCAP may use (percent, 0 = no cap); oldest files go first (#37)
+      PCAP_MAX_DISK_PCT: "${PCAP_MAX_DISK_PCT:-25}"
+      # same values pcap-capture gets, so the Settings page shows what netsniff uses
+      PCAP_ROTATE_MB: "${PCAP_ROTATE_MB:-100}"
+      PCAP_ROTATE_MIN: "${PCAP_ROTATE_MIN:-10}"
       HOST_SYS_NET: "/host/sys/class/net"
       HOST_SYS_LEDS: "/host/sys/class/leds"
       HOST_NETPLAN_DIR: "/host/etc/netplan"
@@ -817,6 +916,8 @@ services:
       PCAP_IFACE: "${PCAP_IFACE:-br0}"
       MGMT_IP: "${MGMT_IP:-}"
       MGMT_INTERFACE: "${MGMT_INTERFACE:-}"
+      # Optional LAN override, e.g. 192.168.1.0/24,10.10.0.0/24; empty = detect from traffic (#47)
+      LAN_SUBNETS: "${LAN_SUBNETS:-}"
     # OLD CODE START — expose not needed with network_mode: host (port is
     # directly on the host network, no Docker port mapping required)
     # expose:
@@ -894,6 +995,13 @@ services:
       start_period: 15s
 
   nettap-grafana:
+    # Off by default (2026-11-02, tracking-fixes/2026-11-01-dashboard-data-accuracy.md #71):
+    # its dashboards never showed data. The datasources point at http://opensearch:9200 with
+    # no login and at zeek-*/suricata-* indices Malcolm never creates, and all 40 panels
+    # query raw Zeek/Suricata field names instead of Malcolm's ECS ones. NetTap's own pages
+    # cover the same views. Start it only with --profile grafana (nginx copes either way).
+    # GRAFANA_ADMIN_PASSWORD below stays required: compose interpolates every service.
+    profiles: ["grafana"]
     image: grafana/grafana:10.4.2
     container_name: nettap-grafana
     restart: unless-stopped
@@ -936,7 +1044,10 @@ services:
       retries: 3
 
   nettap-nginx:
-    image: nginx:stable-alpine
+    # OLD CODE START — #138: a floating tag; nginx.conf's upstream "resolve" needs 1.27.3+
+    # image: nginx:stable-alpine
+    # OLD CODE END
+    image: nginx:1.30-alpine
     container_name: nettap-nginx
     restart: unless-stopped
     <<: *logging-defaults
@@ -966,10 +1077,16 @@ services:
       - SETGID           # nginx master needs to set worker group
     networks:
       - default
+    # OLD CODE START — 2026-11-02: Grafana is off by default (#71); a depends_on
+    # would pull it back in, and nginx now resolves it at request time
+    # depends_on:
+    #   - nettap-web
+    #   - nettap-cyberchef
+    #   - nettap-grafana
+    # OLD CODE END
     depends_on:
       - nettap-web
       - nettap-cyberchef
-      - nettap-grafana
     healthcheck:
       <<: *healthcheck-defaults
       test: ["CMD-SHELL", "wget -q --spider --no-check-certificate https://localhost:443/ || exit 1"]
@@ -993,7 +1110,10 @@ services:
     volumes:
       - pcap-data:/pcap:ro
     mem_limit: 1g
-    cpus: 0.5
+    # OLD CODE START — #137: a whole-file search read ~11 MB/s at 0.5 CPU
+    # cpus: 0.5
+    # OLD CODE END
+    cpus: 1.0  # ~23 MB/s per search on the G11; tshark is single-threaded
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -1035,6 +1155,9 @@ services:
       - CHOWN            # nginx needs to chown cache directories
       - SETUID           # nginx master needs to switch to worker user
       - SETGID           # nginx master needs to set worker group
+    # Status checks from the daemon (host network, so no Docker DNS). Loopback only.
+    ports:
+      - "127.0.0.1:8443:8443"
     networks:
       - default
     healthcheck:
@@ -1053,6 +1176,7 @@ volumes:
   logstash-persistent-queue:
   filebeat-registry:
   redis-data:
+  valkey-data:
   pcap-data:
 
   # Shared log volumes (written by capture, read by filebeat)
