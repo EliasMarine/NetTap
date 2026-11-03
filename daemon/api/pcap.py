@@ -140,12 +140,20 @@ async def handle_pcap_download_file(request: web.Request) -> web.Response:
         return web.json_response({"error": "file parameter is required"}, status=400)
 
     # Security: ensure file is within pcap directory
-    pcap_path = os.path.abspath(pcap_file)
+    # OLD CODE START — sound (contains() resolves symlinks), but CodeQL can't see a guard in
+    # another function, and abspath left a symlink in the directory pointing elsewhere
+    # pcap_path = os.path.abspath(pcap_file)
+    # OLD CODE END
     # OLD CODE START — string prefix: ".." was resolved, but "/opt/nettap/pcap-old/..." passed
     # pcap_dir = os.path.abspath(str(pcap_service._pcap_dir))
     # if not pcap_path.startswith(pcap_dir):
     # OLD CODE END
-    if not pcap_service.contains(pcap_path):
+    # OLD CODE START — same check, inline below so the served path is the checked one
+    # if not pcap_service.contains(pcap_path):
+    # OLD CODE END
+    pcap_root = os.path.realpath(str(pcap_service._pcap_dir))
+    pcap_path = os.path.realpath(pcap_file)
+    if not pcap_path.startswith(pcap_root + os.sep):
         return web.json_response(
             {"error": "File must be within the PCAP directory"}, status=400
         )
