@@ -298,7 +298,9 @@ class MirrorManager(CaptureManager):
                 f"should have no IP (capture-only)"
             )
         elif has_ip is None:
-            issues.append(f"Could not check whether {self._interface} has an IP address")
+            issues.append(
+                f"Could not check whether {self._interface} has an IP address"
+            )
 
         # Determine overall status
         if not link_up and not carrier_up:

@@ -142,7 +142,9 @@ class TestCategoryStats(unittest.TestCase):
 
         with self.assertRaises(Exception):
             asyncio.run(
-                get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+                get_category_stats(
+                    client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                )
             )
 
 

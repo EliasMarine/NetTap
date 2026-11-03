@@ -222,7 +222,9 @@ class TestGetHealthMapping(unittest.TestCase):
     def test_unmeasured_latency_stays_unmeasured(self):
         """#96: no latency is passed on as None with its reason, never 0 µs."""
         adapter = _make_adapter()
-        health_dict = self._make_health_dict(latency_us=None, latency_note="Not measured")
+        health_dict = self._make_health_dict(
+            latency_us=None, latency_note="Not measured"
+        )
         d = self._run_health(adapter, health_dict).to_dict()
         self.assertIsNone(d["latency_us"])
         self.assertEqual(d["latency_note"], "Not measured")

@@ -109,7 +109,9 @@ def test_a_device_summary_has_no_network_baseline():
         patch.object(alert_intelligence, "update_baseline") as update,
         patch.object(alert_intelligence, "reclassify_severity", return_value=3),
     ):
-        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO, "192.168.1.44"))
+        summary = asyncio.run(
+            get_smart_alert_summary(client, _FROM, _TO, "192.168.1.44")
+        )
     update.assert_not_called()
     assert summary["baseline"] is None
 
@@ -131,7 +133,10 @@ def test_later_page_failure_raises():
         _page([_bucket(n) for n in range(1_000)], {"sig_name": "x"}),
         RuntimeError("timeout"),
     ]
-    with patch.object(alert_intelligence, "is_suppressed", return_value=False), pytest.raises(RuntimeError):
+    with (
+        patch.object(alert_intelligence, "is_suppressed", return_value=False),
+        pytest.raises(RuntimeError),
+    ):
         asyncio.run(get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True))
 
 

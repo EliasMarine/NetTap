@@ -148,17 +148,32 @@ class _AlertIndex:
         if "composite" in agg:
             if "after" in agg["composite"]:
                 return {"aggregations": {name: {"buckets": []}}}
-            buckets = [{"key": {"ip": ip}, "doc_count": n} for ip, n in sorted(self.counts.items())]
-            return {"aggregations": {name: {"buckets": buckets, "after_key": buckets[-1]["key"]}}}
-        top = sorted(self.counts.items(), key=lambda kv: kv[1], reverse=True)[: agg["terms"]["size"]]
-        return {"aggregations": {name: {"buckets": [{"key": ip, "doc_count": n} for ip, n in top]}}}
+            buckets = [
+                {"key": {"ip": ip}, "doc_count": n}
+                for ip, n in sorted(self.counts.items())
+            ]
+            return {
+                "aggregations": {
+                    name: {"buckets": buckets, "after_key": buckets[-1]["key"]}
+                }
+            }
+        top = sorted(self.counts.items(), key=lambda kv: kv[1], reverse=True)[
+            : agg["terms"]["size"]
+        ]
+        return {
+            "aggregations": {
+                name: {"buckets": [{"key": ip, "doc_count": n} for ip, n in top]}
+            }
+        }
 
 
 class TestPopulateFromSuricata:
     """#96: indicators come from every alerted IP, and only unknown ones count as new."""
 
     def test_every_alerted_ip_becomes_an_indicator(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+        monkeypatch.setattr(
+            "services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json"
+        )
         counts = {f"198.51.{i // 250}.{i % 250}": 10 for i in range(500)}
         index = _AlertIndex({**counts, "203.0.113.9": 1})
         svc = ThreatIntelService()
@@ -167,7 +182,9 @@ class TestPopulateFromSuricata:
         assert svc.lookup_ip("203.0.113.9")  # the 501st, least-alerted IP
 
     def test_new_indicators_counts_only_unknown_ips(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+        monkeypatch.setattr(
+            "services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json"
+        )
         index = _AlertIndex({"203.0.113.1": 5, "203.0.113.2": 3})
         svc = ThreatIntelService()
         svc.add_indicators("et_compromised", ["203.0.113.1"])
@@ -177,7 +194,9 @@ class TestPopulateFromSuricata:
 
     def test_failed_alert_scan_raises(self, tmp_path, monkeypatch):
         """#96: 0 new indicators read as "nothing new" when the alerts were never read."""
-        monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+        monkeypatch.setattr(
+            "services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json"
+        )
         client = MagicMock()
         client.search.side_effect = Exception("Connection refused")
 
@@ -186,7 +205,9 @@ class TestPopulateFromSuricata:
 
 
 @pytest.mark.asyncio
-async def test_intel_endpoint_answers_500_when_the_alert_scan_fails(tmp_path, monkeypatch):
+async def test_intel_endpoint_answers_500_when_the_alert_scan_fails(
+    tmp_path, monkeypatch
+):
     """#96: GET /api/threats/intel must not report 0 new indicators for a scan that never ran."""
     from aiohttp import web
     from aiohttp.test_utils import make_mocked_request
@@ -199,6 +220,8 @@ async def test_intel_endpoint_answers_500_when_the_alert_scan_fails(tmp_path, mo
     app = web.Application()
     app["storage"] = storage
 
-    resp = await handle_threat_intel(make_mocked_request("GET", "/api/threats/intel", app=app))
+    resp = await handle_threat_intel(
+        make_mocked_request("GET", "/api/threats/intel", app=app)
+    )
     assert resp.status == 500
     assert "error" in json.loads(resp.text)

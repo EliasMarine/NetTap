@@ -33,8 +33,13 @@ class TestLiveStatusEndpoint(AioHTTPTestCase):
 
     async def test_unreadable_is_502_not_zero_rules(self):
         self.manager.get_live_status = AsyncMock(
-            return_value={"available": False, "error": "Could not reach the Suricata container."}
+            return_value={
+                "available": False,
+                "error": "Could not reach the Suricata container.",
+            }
         )
         resp = await self.client.get("/api/suricata/rules/live")
         self.assertEqual(resp.status, 502)
-        self.assertEqual((await resp.json())["error"], "Could not reach the Suricata container.")
+        self.assertEqual(
+            (await resp.json())["error"], "Could not reach the Suricata container."
+        )

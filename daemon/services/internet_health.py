@@ -184,7 +184,8 @@ class InternetHealthMonitor:
             return float(match.group(1))
         error = stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(
-            error or f"ping to {target} exited with code {proc.returncode} and no result"
+            error
+            or f"ping to {target} exited with code {proc.returncode} and no result"
         )
 
     def _determine_status(
@@ -330,7 +331,9 @@ class InternetHealthMonitor:
         # non_down = sum(1 for h in self._history if h.status != "down")
         # uptime_pct = round((non_down / len(self._history)) * 100, 2)
         # OLD CODE END
-        losses = [h.packet_loss_pct for h in self._history if h.packet_loss_pct is not None]
+        losses = [
+            h.packet_loss_pct for h in self._history if h.packet_loss_pct is not None
+        ]
 
         # Uptime = percentage of measured checks that are NOT 'down'
         measured = [h for h in self._history if h.status != "unknown"]
@@ -360,7 +363,9 @@ class InternetHealthMonitor:
             "min_latency_ms": (round(min(latencies), 2) if latencies else None),
             "max_latency_ms": (round(max(latencies), 2) if latencies else None),
             "avg_dns_ms": (round(statistics.mean(dns_times), 2) if dns_times else None),
-            "avg_packet_loss_pct": round(statistics.mean(losses), 2) if losses else None,
+            "avg_packet_loss_pct": round(statistics.mean(losses), 2)
+            if losses
+            else None,
             "uptime_pct": uptime_pct,
             "total_checks": len(self._history),
             "history_span_hours": span_hours,

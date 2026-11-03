@@ -331,27 +331,57 @@ class TestLogSearchAPI(AioHTTPTestCase):
         from datetime import datetime
 
         first = call_body["aggs"]["timeline"]["date_range"]["ranges"][0]
-        span = datetime.fromisoformat(first["to"].replace("Z", "+00:00")) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
+        span = datetime.fromisoformat(
+            first["to"].replace("Z", "+00:00")
+        ) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
         self.assertEqual(span.total_seconds(), 3600)
 
     async def test_timeline_slots_come_back_as_buckets(self):
         """#120: date_range slots read as the timeline's buckets, in time order."""
         self.mock_client.search.return_value = {
             "hits": {"total": {"value": 3}, "hits": []},
-            "aggregations": {"timeline": {"buckets": [
-                {"key": "x", "from": 1793581200000.0, "to": 1793584800000.0, "doc_count": 1,
-                 "by_type": {"buckets": [{"key": "dns", "doc_count": 1}]}},
-                {"key": "y", "from": 1793577600000.0, "to": 1793581200000.0, "doc_count": 2,
-                 "by_type": {"buckets": [{"key": "conn", "doc_count": 2}]}},
-            ]}},
+            "aggregations": {
+                "timeline": {
+                    "buckets": [
+                        {
+                            "key": "x",
+                            "from": 1793581200000.0,
+                            "to": 1793584800000.0,
+                            "doc_count": 1,
+                            "by_type": {"buckets": [{"key": "dns", "doc_count": 1}]},
+                        },
+                        {
+                            "key": "y",
+                            "from": 1793577600000.0,
+                            "to": 1793581200000.0,
+                            "doc_count": 2,
+                            "by_type": {"buckets": [{"key": "conn", "doc_count": 2}]},
+                        },
+                    ]
+                }
+            },
         }
-        resp = await self.client.request("GET", "/api/logs/timeline?from=2026-11-02T00:00:00Z&to=2026-11-02T01:30:00Z")
+        resp = await self.client.request(
+            "GET",
+            "/api/logs/timeline?from=2026-11-02T00:00:00Z&to=2026-11-02T01:30:00Z",
+        )
         data = await resp.json()
-        self.assertEqual([(b["timestamp"], b["total"], b["conn"], b["dns"]) for b in data["buckets"]],
-                         [("2026-11-02T00:00:00.000Z", 2, 2, 0), ("2026-11-02T01:00:00.000Z", 1, 0, 1)])
+        self.assertEqual(
+            [
+                (b["timestamp"], b["total"], b["conn"], b["dns"])
+                for b in data["buckets"]
+            ],
+            [
+                ("2026-11-02T00:00:00.000Z", 2, 2, 0),
+                ("2026-11-02T01:00:00.000Z", 1, 0, 1),
+            ],
+        )
 
     async def test_timeline_interval_too_fine_for_the_range_is_400(self):
-        resp = await self.client.request("GET", "/api/logs/timeline?interval=1m&from=2026-01-01T00:00:00Z&to=2026-11-01T00:00:00Z")
+        resp = await self.client.request(
+            "GET",
+            "/api/logs/timeline?interval=1m&from=2026-01-01T00:00:00Z&to=2026-11-01T00:00:00Z",
+        )
         self.assertEqual(resp.status, 400)
 
     # ── Top talkers endpoint tests ────────────────────────────────────

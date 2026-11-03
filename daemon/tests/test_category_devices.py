@@ -23,9 +23,16 @@ _EMPTY = {"devices": [], "device_count": 0, "total_bytes": 0, "connection_count"
 
 def _asn_page(*asns):
     """The ASN listing page every category detail reads first (#96: Home's classify_asn decides)."""
-    return {"aggregations": {"all": {"buckets": [
-        {"key": {"asn": a}, "doc_count": 1, "total_bytes": {"value": 0}} for a in asns
-    ]}}}
+    return {
+        "aggregations": {
+            "all": {
+                "buckets": [
+                    {"key": {"asn": a}, "doc_count": 1, "total_bytes": {"value": 0}}
+                    for a in asns
+                ]
+            }
+        }
+    }
 
 
 def _mock_device_response(device_buckets):
@@ -94,7 +101,9 @@ class TestCategoryDevices(unittest.TestCase):
         client.search = MagicMock(
             side_effect=[
                 _asn_page("AS2906 Netflix Inc"),
-                _mock_device_response([("192.168.1.10", 50, 1_000_000, 800_000, 200_000)]),
+                _mock_device_response(
+                    [("192.168.1.10", 50, 1_000_000, 800_000, 200_000)]
+                ),
             ]
         )
 
@@ -122,7 +131,10 @@ class TestCategoryDevices(unittest.TestCase):
             with self.assertRaises(Exception, msg=failing):
                 asyncio.run(
                     get_category_devices(
-                        client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                        client,
+                        "streaming",
+                        "2026-03-01T00:00:00Z",
+                        "2026-03-02T00:00:00Z",
                     )
                 )
 
@@ -143,7 +155,11 @@ class TestCategoryDevices(unittest.TestCase):
         client = MagicMock()
         client.search = MagicMock(
             side_effect=[
-                _asn_page("AS2906 NETFLIX INC", "AS19700 RingCentral, Inc.", "AS64500 Spotify AB"),
+                _asn_page(
+                    "AS2906 NETFLIX INC",
+                    "AS19700 RingCentral, Inc.",
+                    "AS64500 Spotify AB",
+                ),
                 _mock_device_response([]),
             ]
         )
@@ -157,7 +173,17 @@ class TestCategoryDevices(unittest.TestCase):
         self.assertNotIn("wildcard", str(body))
         by_asn = body["query"]["bool"]["filter"][-1]["bool"]["should"]
         self.assertEqual(
-            by_asn, [{"terms": {"destination.as.full": ["AS2906 NETFLIX INC", "AS64500 Spotify AB"]}}]
+            by_asn,
+            [
+                {
+                    "terms": {
+                        "destination.as.full": [
+                            "AS2906 NETFLIX INC",
+                            "AS64500 Spotify AB",
+                        ]
+                    }
+                }
+            ],
         )
 
 

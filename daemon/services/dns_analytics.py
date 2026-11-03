@@ -164,7 +164,10 @@ class DNSAnalytics:
             aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
         )
         if not complete:
-            logger.warning("DNS: the name scan hit its bucket cap at %d names; later names were not checked", len(buckets))
+            logger.warning(
+                "DNS: the name scan hit its bucket cap at %d names; later names were not checked",
+                len(buckets),
+            )
         names = [
             {
                 "domain": b["key"]["domain"],
@@ -379,7 +382,11 @@ class DNSAnalytics:
         # hostnames (long and hex by design) were flagged as exfiltration or beaconing (#35)
         # (the loops below iterated `top`)
         # OLD CODE END
-        top = [e for e in top if not e["domain"].lower().rstrip(".").endswith(_BENIGN_DNS_SUFFIXES)]
+        top = [
+            e
+            for e in top
+            if not e["domain"].lower().rstrip(".").endswith(_BENIGN_DNS_SUFFIXES)
+        ]
         for entry in top:
             domain = entry["domain"]
             if len(domain) > 50:
@@ -443,7 +450,10 @@ class DNSAnalytics:
         #     if b["doc_count"] > 50:
         # OLD CODE END
         txt = self._all_domains(
-            from_ts, to_ts, excluded_ips, extra_filters=[{"term": {"zeek.dns.qtype_name": "TXT"}}]
+            from_ts,
+            to_ts,
+            excluded_ips,
+            extra_filters=[{"term": {"zeek.dns.qtype_name": "TXT"}}],
         )
         for entry in txt:
             if entry["count"] > 50:
@@ -536,7 +546,11 @@ class DNSAnalytics:
                     # "percentiles": {"field": "zeek.dns.rtt", "percents": [50]}
                     # OLD CODE END
                     # HDR histograms merge exactly in any order; 3 digits = 0.1% resolution
-                    "percentiles": {"field": "zeek.dns.rtt", "percents": [50], "hdr": {"number_of_significant_value_digits": 3}}
+                    "percentiles": {
+                        "field": "zeek.dns.rtt",
+                        "percents": [50],
+                        "hdr": {"number_of_significant_value_digits": 3},
+                    }
                 },
             },
         }

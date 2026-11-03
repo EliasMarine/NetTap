@@ -41,7 +41,7 @@ MATCH_SCAN_SECONDS = 15
 # reads the rest of the file, so every scan ran the full MATCH_SCAN_SECONDS (#78)
 _LAST_MATCH_SCRIPT = (
     'timeout -k 2 "$4" tshark -l -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
-    ' | head -n "$3" | awk \'END { print NR, $1 }\''
+    " | head -n \"$3\" | awk 'END { print NR, $1 }'"
 )
 # OLD CODE START — #78: without -l the scan always used the whole 15 s budget
 # _LAST_MATCH_SCRIPT = (
@@ -79,7 +79,9 @@ def bounded_exec(cmd: list[str], seconds: int) -> list[str]:
     return [*cmd[:3], "timeout", "-k", "5", str(seconds), *cmd[3:]]
 
 
-_ROOT_WARNING = 'Running as user "root"'  # tshark prints this on every run in the container
+_ROOT_WARNING = (
+    'Running as user "root"'  # tshark prints this on every run in the container
+)
 
 
 def filter_check_cmd(pcap_path: str, display_filter: str) -> list[str]:
@@ -90,17 +92,35 @@ def filter_check_cmd(pcap_path: str, display_filter: str) -> list[str]:
     same code it gives a filter it refuses.
     """
     return [
-        "docker", "exec", TSHARK_CONTAINER, "tshark", "-r", pcap_path, "-Y", display_filter,
-        "-c", "1", "-T", "fields", "-e", "frame.number",
+        "docker",
+        "exec",
+        TSHARK_CONTAINER,
+        "tshark",
+        "-r",
+        pcap_path,
+        "-Y",
+        display_filter,
+        "-c",
+        "1",
+        "-T",
+        "fields",
+        "-e",
+        "frame.number",
     ]
 
 
-def raise_filter_check_failure(returncode: int, stderr: str, refused: type[Exception]) -> None:
+def raise_filter_check_failure(
+    returncode: int, stderr: str, refused: type[Exception]
+) -> None:
     """Return if the check passed. Raise `refused` carrying tshark's message when tshark
     refused the filter (or file), RuntimeError when docker exec itself failed."""
     if returncode == 0:
         return
-    lines = [line for line in stderr.strip().splitlines() if not line.startswith(_ROOT_WARNING)]
+    lines = [
+        line
+        for line in stderr.strip().splitlines()
+        if not line.startswith(_ROOT_WARNING)
+    ]
     message = "\n".join(lines).strip() or f"tshark exited with code {returncode}"
     raise (refused if message.startswith("tshark:") else RuntimeError)(message)
 
@@ -424,8 +444,17 @@ class TSharkService:
         100 packets of a file (#64). Reading up to this frame returns the first N matches.
         """
         cmd = [
-            "docker", "exec", TSHARK_CONTAINER, "sh", "-c", _LAST_MATCH_SCRIPT, "_",
-            request.pcap_path, request.display_filter, str(request.max_packets), str(MATCH_SCAN_SECONDS),
+            "docker",
+            "exec",
+            TSHARK_CONTAINER,
+            "sh",
+            "-c",
+            _LAST_MATCH_SCRIPT,
+            "_",
+            request.pcap_path,
+            request.display_filter,
+            str(request.max_packets),
+            str(MATCH_SCAN_SECONDS),
         ]
         loop = asyncio.get_running_loop()
         started = loop.time()
@@ -440,10 +469,15 @@ class TSharkService:
         found_n = int(found) if found.isdigit() else 0
         if not found_n:
             # a filter tshark refused also prints "0" here: its error went to /dev/null (#96)
-            await self.validate_filter_dry_run(request.display_filter, request.pcap_path)
+            await self.validate_filter_dry_run(
+                request.display_filter, request.pcap_path
+            )
         # Cut short = fewer than N matches and the whole time budget used. shortcut: a file
         # that really ends right at the budget is reported the same way
-        timed_out = found_n < request.max_packets and loop.time() - started >= MATCH_SCAN_SECONDS
+        timed_out = (
+            found_n < request.max_packets
+            and loop.time() - started >= MATCH_SCAN_SECONDS
+        )
         return (int(last) if found_n and last.isdigit() else 0), timed_out
 
     async def analyze(self, request: TSharkRequest) -> TSharkResult:
@@ -679,7 +713,9 @@ class TSharkService:
         pcaps.sort(key=lambda p: p["modified"], reverse=True)
         return pcaps
 
-    async def validate_filter_dry_run(self, display_filter: str, pcap_path: str) -> None:
+    async def validate_filter_dry_run(
+        self, display_filter: str, pcap_path: str
+    ) -> None:
         """Raise TSharkValidationError carrying tshark's message if it refuses the filter.
 
         Reads one packet of pcap_path (a path inside the container) with the filter.
@@ -706,5 +742,7 @@ class TSharkService:
         #     return False
         # OLD CODE END
         self.validate_display_filter(display_filter)  # Basic sanitization first
-        _, stderr, rc = await self._exec_tshark(filter_check_cmd(pcap_path, display_filter))
+        _, stderr, rc = await self._exec_tshark(
+            filter_check_cmd(pcap_path, display_filter)
+        )
         raise_filter_check_failure(rc, stderr, TSharkValidationError)

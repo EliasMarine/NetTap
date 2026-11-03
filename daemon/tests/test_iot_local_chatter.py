@@ -76,7 +76,9 @@ def _body_with_agg(client: MagicMock, agg_name: str) -> dict:
 def _paged_body(client: MagicMock, source: dict) -> dict:
     """#96: the query whose composite aggregation pages over `source`."""
     for body in _bodies(client):
-        sources = body.get("aggs", {}).get("all", {}).get("composite", {}).get("sources", [])
+        sources = (
+            body.get("aggs", {}).get("all", {}).get("composite", {}).get("sources", [])
+        )
         if source in sources:
             return body
     raise AssertionError(f"no paged query over {source}")
@@ -409,7 +411,9 @@ def test_fleet_alert_counts_leave_out_suricata_engine_events():
     client.search.return_value = _empty()
     monitor = IoTMonitor(client=client)
 
-    monitor._query_alert_counts([HUE_MAC], FROM_TS, TO_TS, [{"terms": {"source.ip": ["10.0.0.9"]}}])
+    monitor._query_alert_counts(
+        [HUE_MAC], FROM_TS, TO_TS, [{"terms": {"source.ip": ["10.0.0.9"]}}]
+    )
 
     must_not = _bodies(client)[0]["query"]["bool"]["must_not"]
     assert {"prefix": {"rule.name": "SURICATA "}} in must_not

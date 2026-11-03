@@ -389,12 +389,16 @@ class TestGetDeviceTraffic:
         filters = mock_client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
         assert {"term": {"event.dataset": "conn"}} in filters
 
-    def test_get_device_traffic_has_what_the_mac_page_shows(self, registry, mock_client):
+    def test_get_device_traffic_has_what_the_mac_page_shows(
+        self, registry, mock_client
+    ):
         """#89: the MAC page shows in/out bytes, bytes per destination and protocol counts.
 
         Without them it read "0 in / 0 out" and drew every destination bar as 0 bytes.
         """
-        mock_client.get.return_value = {"_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}}
+        mock_client.get.return_value = {
+            "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}
+        }
         mock_client.search.return_value = {
             "hits": {"total": {"value": 42}},
             "aggregations": {
@@ -410,15 +414,23 @@ class TestGetDeviceTraffic:
             },
         }
 
-        result = registry.get_device_traffic("AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = registry.get_device_traffic(
+            "AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
 
         assert result["inbound_bytes"] == 1000
         assert result["outbound_bytes"] == 500
-        assert result["top_destinations"] == [{"ip": "8.8.8.8", "connections": 10, "bytes": 1000}]
+        assert result["top_destinations"] == [
+            {"ip": "8.8.8.8", "connections": 10, "bytes": 1000}
+        ]
         assert result["top_protocols"] == [{"name": "tcp", "count": 30}]
         aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
-        assert aggs["outbound_bytes"] == {"sum": {"field": "source.bytes", "missing": 0}}
-        assert aggs["inbound_bytes"] == {"sum": {"field": "destination.bytes", "missing": 0}}
+        assert aggs["outbound_bytes"] == {
+            "sum": {"field": "source.bytes", "missing": 0}
+        }
+        assert aggs["inbound_bytes"] == {
+            "sum": {"field": "destination.bytes", "missing": 0}
+        }
         # ranked by the bytes the page draws, not by connection count
         assert aggs["top_destinations"]["terms"]["order"] == {"bytes": "desc"}
         # #90: ranking by a sum is only exact when each shard returns every destination
@@ -618,7 +630,16 @@ class TestDHCPEnrichment:
 
         mock_client.get.side_effect = NotFoundError(404, "not found", {})
         mock_client.search.return_value = {
-            "hits": {"hits": [{"_source": {"source": {"mac": "2A:37:F4:D9:20:F5", "ip": "0.0.0.0"}, "dhcp": {"id": "d1"}}}]}
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "source": {"mac": "2A:37:F4:D9:20:F5", "ip": "0.0.0.0"},
+                            "dhcp": {"id": "d1"},
+                        }
+                    }
+                ]
+            }
         }
 
         registry.enrich_from_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
@@ -1030,7 +1051,9 @@ class TestIPTracking:
         "/api/devices/registry/search?q=192.168",
     ],
 )
-async def test_registry_endpoints_answer_502_when_opensearch_fails(registry, mock_client, path):
+async def test_registry_endpoints_answer_502_when_opensearch_fails(
+    registry, mock_client, path
+):
     """#96: a failed query listed no devices, a known device as "not found", or zero traffic."""
     from aiohttp import web
     from aiohttp.test_utils import TestClient, TestServer

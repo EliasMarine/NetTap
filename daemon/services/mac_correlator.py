@@ -237,7 +237,11 @@ class MACCorrelator:
         # OLD CODE END
         try:
             pages, complete = all_buckets(
-                self._client, NETWORK_INDEX, _in_range(from_ts, to_ts), _BY_MAC, _RANDOMIZED_AGGS
+                self._client,
+                NETWORK_INDEX,
+                _in_range(from_ts, to_ts),
+                _BY_MAC,
+                _RANDOMIZED_AGGS,
             )
         # OLD CODE START — #96: [] read as "no randomized MACs on this network"
         # except OpenSearchException as exc:
@@ -248,7 +252,9 @@ class MACCorrelator:
             logger.error("OpenSearch error detecting randomized MACs: %s", exc)
             raise
         if not complete:
-            logger.warning("MAC scan stopped at %d MACs; the list is partial", len(pages))
+            logger.warning(
+                "MAC scan stopped at %d MACs; the list is partial", len(pages)
+            )
         buckets = _busiest_first(pages)
         randomized = []
 
@@ -380,7 +386,9 @@ class MACCorrelator:
                     "hour": b.get("key_as_string", b.get("key")),
                     "connections": b["doc_count"],
                 }
-                for b in histogram_buckets(aggs.get("hourly_activity"))  # date_histogram before #120
+                for b in histogram_buckets(
+                    aggs.get("hourly_activity")
+                )  # date_histogram before #120
             ]
 
             orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
@@ -490,7 +498,10 @@ class MACCorrelator:
             logger.error("OpenSearch error fingerprinting MACs: %s", exc)
             raise
         if not complete:
-            logger.warning("MAC fingerprints stopped at %d MACs; suggestions are partial", len(pages))
+            logger.warning(
+                "MAC fingerprints stopped at %d MACs; suggestions are partial",
+                len(pages),
+            )
         return {b["key"]: _similarity_fingerprint(b) for b in _busiest_first(pages)}
 
     def suggest_merges(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:

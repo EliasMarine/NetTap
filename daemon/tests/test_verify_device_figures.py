@@ -3,7 +3,12 @@
 import importlib.util
 from pathlib import Path
 
-_PATH = Path(__file__).resolve().parents[2] / "scripts" / "remote" / "verify_device_figures.py"
+_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "remote"
+    / "verify_device_figures.py"
+)
 _spec = importlib.util.spec_from_file_location("verify_device_figures", _PATH)
 vdf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(vdf)
@@ -24,20 +29,46 @@ def test_check_top_flags_wrong_counts_order_and_missing_entries():
     before = {"a": 50, "b": 30, "c": 20, "d": 5}
     after = {"a": 51, "b": 30, "c": 20, "d": 5}
     ok: list = []
-    vdf.check_top("top", [{"k": "a", "n": 51}, {"k": "b", "n": 30}], "k", "n", before, after, ok)
+    vdf.check_top(
+        "top", [{"k": "a", "n": 51}, {"k": "b", "n": 30}], "k", "n", before, after, ok
+    )
     assert ok == []
 
     wrong: list = []
-    vdf.check_top("top", [{"k": "a", "n": 60}, {"k": "b", "n": 30}], "k", "n", before, after, wrong)
+    vdf.check_top(
+        "top",
+        [{"k": "a", "n": 60}, {"k": "b", "n": 30}],
+        "k",
+        "n",
+        before,
+        after,
+        wrong,
+    )
     assert any("top a" in p for p in wrong)
 
     unsorted: list = []
-    vdf.check_top("top", [{"k": "b", "n": 30}, {"k": "a", "n": 50}], "k", "n", before, after, unsorted)
+    vdf.check_top(
+        "top",
+        [{"k": "b", "n": 30}, {"k": "a", "n": 50}],
+        "k",
+        "n",
+        before,
+        after,
+        unsorted,
+    )
     assert any("not sorted" in p for p in unsorted)
 
     # b (30) was left out while c (20) is shown: not the real top 2
     missed: list = []
-    vdf.check_top("top", [{"k": "a", "n": 50}, {"k": "c", "n": 20}], "k", "n", before, after, missed)
+    vdf.check_top(
+        "top",
+        [{"k": "a", "n": 50}, {"k": "c", "n": 20}],
+        "k",
+        "n",
+        before,
+        after,
+        missed,
+    )
     assert any("left out" in p for p in missed)
 
 
@@ -49,19 +80,42 @@ def test_same_reply_sum_allows_float_rounding_only():
     assert len(problems) == 1
 
 
-_SPLIT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "remote" / "verify_split_invariance.py"
-_split_spec = importlib.util.spec_from_file_location("verify_split_invariance", _SPLIT_PATH)
+_SPLIT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "remote"
+    / "verify_split_invariance.py"
+)
+_split_spec = importlib.util.spec_from_file_location(
+    "verify_split_invariance", _SPLIT_PATH
+)
 vsi = importlib.util.module_from_spec(_split_spec)
 _split_spec.loader.exec_module(vsi)
 
 
 def test_first_difference_finds_the_changed_figure():
     a = {"talkers": [{"ip": "1.1.1.1", "count": 40046}], "total": 3.0}
-    assert vsi.first_difference(a, {"talkers": [{"ip": "1.1.1.1", "count": 40046}], "total": 3.0 + 1e-12}) is None
-    assert vsi.first_difference(a, {"talkers": [{"ip": "1.1.1.1", "count": 38678}], "total": 3.0}) == ".talkers[0].count: 40046 vs 38678"
+    assert (
+        vsi.first_difference(
+            a, {"talkers": [{"ip": "1.1.1.1", "count": 40046}], "total": 3.0 + 1e-12}
+        )
+        is None
+    )
+    assert (
+        vsi.first_difference(
+            a, {"talkers": [{"ip": "1.1.1.1", "count": 38678}], "total": 3.0}
+        )
+        == ".talkers[0].count: 40046 vs 38678"
+    )
     assert "2 vs 1 items" in vsi.first_difference({"x": [1, 2]}, {"x": [1]})
     assert "only in one" in vsi.first_difference({"x": 1}, {"y": 1})
 
 
 def test_first_difference_skips_request_times():
-    assert vsi.first_difference({"detected_at": "19:26:24.33", "n": 1}, {"detected_at": "19:26:24.47", "n": 1}) is None
+    assert (
+        vsi.first_difference(
+            {"detected_at": "19:26:24.33", "n": 1},
+            {"detected_at": "19:26:24.47", "n": 1},
+        )
+        is None
+    )

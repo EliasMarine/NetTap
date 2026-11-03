@@ -92,7 +92,9 @@ async def handle_live_connections(request: web.Request) -> web.Response:
             limit=limit,
         )
     except OpenSearchException as exc:
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response(
         {

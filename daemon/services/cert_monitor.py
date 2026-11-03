@@ -330,7 +330,9 @@ class CertificateMonitor:
             logger.error("Failed to query %s: %s", what, exc)
             raise CertQueryFailed(f"{what} query failed") from exc
         if not complete:
-            logger.warning("%s stopped at %d buckets; result is partial", what, len(buckets))
+            logger.warning(
+                "%s stopped at %d buckets; result is partial", what, len(buckets)
+            )
         return buckets
 
     def _leaf_certs(
@@ -392,7 +394,11 @@ class CertificateMonitor:
             row
             for chunk in chunks
             for row in self._inventory(
-                from_ts, to_ts, [{"terms": {_FINGERPRINT: chunk}}], len(chunk), excluded_ips
+                from_ts,
+                to_ts,
+                [{"terms": {_FINGERPRINT: chunk}}],
+                len(chunk),
+                excluded_ips,
             )
         ]
 
@@ -546,7 +552,9 @@ class CertificateMonitor:
             from_ts, to_ts = _default_range()
         changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
         fps = sorted({c["fingerprint"] for ch in changes for c in ch["certificates"]})
-        rows = {r["fingerprint"]: r for r in self._rows(fps, from_ts, to_ts, excluded_ips)}
+        rows = {
+            r["fingerprint"]: r for r in self._rows(fps, from_ts, to_ts, excluded_ips)
+        }
         return [
             {
                 **ch,

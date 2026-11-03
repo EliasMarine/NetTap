@@ -44,9 +44,16 @@ def _mock_bandwidth_response(time_buckets):
 
 def _asn_page(*asns):
     """The ASN listing page every category detail reads first (#96: Home's classify_asn decides)."""
-    return {"aggregations": {"all": {"buckets": [
-        {"key": {"asn": a}, "doc_count": 1, "total_bytes": {"value": 0}} for a in asns
-    ]}}}
+    return {
+        "aggregations": {
+            "all": {
+                "buckets": [
+                    {"key": {"asn": a}, "doc_count": 1, "total_bytes": {"value": 0}}
+                    for a in asns
+                ]
+            }
+        }
+    }
 
 
 class TestCategoryBandwidth(unittest.TestCase):
@@ -109,7 +116,10 @@ class TestCategoryBandwidth(unittest.TestCase):
             with self.assertRaises(Exception, msg=failing):
                 asyncio.run(
                     get_category_bandwidth(
-                        client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
+                        client,
+                        "streaming",
+                        "2026-03-01T00:00:00Z",
+                        "2026-03-02T00:00:00Z",
                     )
                 )
 
@@ -118,7 +128,9 @@ class TestCategoryBandwidth(unittest.TestCase):
         client.search = MagicMock(
             side_effect=[
                 _asn_page("AS2906 Netflix Inc"),
-                _mock_bandwidth_response([("2026-03-01T00:00:00Z", 5, 500_000, 100_000)]),
+                _mock_bandwidth_response(
+                    [("2026-03-01T00:00:00Z", 5, 500_000, 100_000)]
+                ),
             ]
         )
 

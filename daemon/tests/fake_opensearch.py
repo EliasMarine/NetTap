@@ -32,7 +32,11 @@ def matches(doc: dict, clause: dict) -> bool:
         return (
             all(matches(doc, c) for c in b.get("filter", []) + b.get("must", []))
             and not any(matches(doc, c) for c in b.get("must_not", []))
-            and (not should or sum(matches(doc, c) for c in should) >= b.get("minimum_should_match", 1))
+            and (
+                not should
+                or sum(matches(doc, c) for c in should)
+                >= b.get("minimum_should_match", 1)
+            )
         )
     if "term" in clause:
         ((field, wanted),) = clause["term"].items()
@@ -63,17 +67,28 @@ class FakeOpenSearch:
 
     def search(self, index=None, body=None, **_):
         self.bodies.append(body)
-        docs = [d for d in self.docs if matches(d, body.get("query", {"match_all": {}}))]
+        docs = [
+            d for d in self.docs if matches(d, body.get("query", {"match_all": {}}))
+        ]
         self._buckets = 0
-        aggs = {name: self._agg(spec, docs) for name, spec in (body.get("aggs") or {}).items()}
+        aggs = {
+            name: self._agg(spec, docs)
+            for name, spec in (body.get("aggs") or {}).items()
+        }
         self.bucket_counts.append(self._buckets)
         if self._buckets > self.max_buckets:
-            raise TooManyBuckets(f"{self._buckets} buckets > search.max_buckets {self.max_buckets}")
+            raise TooManyBuckets(
+                f"{self._buckets} buckets > search.max_buckets {self.max_buckets}"
+            )
         return {"hits": {"total": {"value": len(docs)}}, "aggregations": aggs}
 
     def _bucket(self, extra: dict, docs: list[dict], subs: dict) -> dict:
         self._buckets += 1
-        return {**extra, "doc_count": len(docs), **{n: self._agg(s, docs) for n, s in subs.items()}}
+        return {
+            **extra,
+            "doc_count": len(docs),
+            **{n: self._agg(s, docs) for n, s in subs.items()},
+        }
 
     def _agg(self, spec: dict, docs: list[dict]) -> dict:
         subs = spec.get("aggs", {})
@@ -81,41 +96,80 @@ class FakeOpenSearch:
             return self._composite(spec["composite"], docs, subs)
         if "filters" in spec:
             named = spec["filters"]["filters"]
-            return {"buckets": {n: self._bucket({}, [d for d in docs if matches(d, q)], subs) for n, q in named.items()}}
+            return {
+                "buckets": {
+                    n: self._bucket({}, [d for d in docs if matches(d, q)], subs)
+                    for n, q in named.items()
+                }
+            }
         if "date_histogram" in spec:
             h = spec["date_histogram"]
             step = _ms(h["fixed_interval"])
-            groups = _group(docs, lambda d: d[h["field"]] // step * step if h["field"] in d else None)
-            return {"buckets": [self._bucket({"key": k}, groups[k], subs) for k in sorted(groups)]}
+            groups = _group(
+                docs,
+                lambda d: d[h["field"]] // step * step if h["field"] in d else None,
+            )
+            return {
+                "buckets": [
+                    self._bucket({"key": k}, groups[k], subs) for k in sorted(groups)
+                ]
+            }
         if "multi_terms" in spec:
             t = spec["multi_terms"]
             fields = [f["field"] for f in t["terms"]]
-            groups = _group(docs, lambda d: tuple(d[f] for f in fields) if all(f in d for f in fields) else None)
+            groups = _group(
+                docs,
+                lambda d: (
+                    tuple(d[f] for f in fields) if all(f in d for f in fields) else None
+                ),
+            )
             kept = [k for k in groups if len(groups[k]) >= t.get("min_doc_count", 1)]
             ranked = sorted(kept, key=lambda k: (-len(groups[k]), k))
-            top, rest = ranked[: t.get("size", 10)], ranked[t.get("size", 10):]
+            top, rest = ranked[: t.get("size", 10)], ranked[t.get("size", 10) :]
             return {
                 "doc_count_error_upper_bound": 0,
                 "sum_other_doc_count": sum(len(groups[k]) for k in rest),
-                "buckets": [self._bucket({"key": list(k)}, groups[k], subs) for k in top],
+                "buckets": [
+                    self._bucket({"key": list(k)}, groups[k], subs) for k in top
+                ],
             }
         if "terms" in spec:
             t = spec["terms"]
             groups = _group(docs, lambda d: d.get(t["field"]))
-            top = sorted(groups, key=lambda k: (-len(groups[k]), k))[: t.get("size", 10)]
-            return {"doc_count_error_upper_bound": 0, "buckets": [self._bucket({"key": k}, groups[k], subs) for k in top]}
+            top = sorted(groups, key=lambda k: (-len(groups[k]), k))[
+                : t.get("size", 10)
+            ]
+            return {
+                "doc_count_error_upper_bound": 0,
+                "buckets": [self._bucket({"key": k}, groups[k], subs) for k in top],
+            }
         if "filter" in spec:
             kept = [d for d in docs if matches(d, spec["filter"])]
-            return {"doc_count": len(kept), **{n: self._agg(s, kept) for n, s in subs.items()}}
+            return {
+                "doc_count": len(kept),
+                **{n: self._agg(s, kept) for n, s in subs.items()},
+            }
         if "cardinality" in spec:
-            return {"value": len({d[spec["cardinality"]["field"]] for d in docs if spec["cardinality"]["field"] in d})}
+            return {
+                "value": len(
+                    {
+                        d[spec["cardinality"]["field"]]
+                        for d in docs
+                        if spec["cardinality"]["field"] in d
+                    }
+                )
+            }
         if "value_count" in spec:
             return {"value": sum(spec["value_count"]["field"] in d for d in docs)}
         for op in ("min", "max"):
             if op in spec:
                 values = [d[spec[op]["field"]] for d in docs if spec[op]["field"] in d]
                 v = (min if op == "min" else max)(values) if values else None
-                as_string = datetime.fromtimestamp(v / 1000, tz=timezone.utc).isoformat() if v is not None else None
+                as_string = (
+                    datetime.fromtimestamp(v / 1000, tz=timezone.utc).isoformat()
+                    if v is not None
+                    else None
+                )
                 return {"value": v, "value_as_string": as_string}
         raise NotImplementedError(spec)
 
@@ -129,7 +183,10 @@ class FakeOpenSearch:
                 if "terms" in src:
                     value = d.get(src["terms"]["field"])
                 else:
-                    field, step = src["date_histogram"]["field"], _ms(src["date_histogram"]["fixed_interval"])
+                    field, step = (
+                        src["date_histogram"]["field"],
+                        _ms(src["date_histogram"]["fixed_interval"]),
+                    )
                     value = d[field] // step * step if field in d else None
                 if value is None:
                     return None
@@ -139,5 +196,10 @@ class FakeOpenSearch:
         groups = _group(docs, key)
         after = tuple(c["after"][n] for n in names) if c.get("after") else None
         page = [k for k in sorted(groups) if after is None or k > after][: c["size"]]
-        buckets = [self._bucket({"key": dict(zip(names, k))}, groups[k], subs) for k in page]
-        return {"buckets": buckets, **({"after_key": dict(zip(names, page[-1]))} if page else {})}
+        buckets = [
+            self._bucket({"key": dict(zip(names, k))}, groups[k], subs) for k in page
+        ]
+        return {
+            "buckets": buckets,
+            **({"after_key": dict(zip(names, page[-1]))} if page else {}),
+        }

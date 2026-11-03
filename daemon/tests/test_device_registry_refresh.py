@@ -34,13 +34,32 @@ LAN_FILTER = {"terms": {"source.ip": ["192.168.1.0/24"]}}
 LAST_RECORD = "2026-11-02T21:30:00+00:00"
 
 
-def _bucket(ip: str, mac: str | list[str] | None, oui: str | None = None, last: str = LAST_RECORD) -> dict:
+def _bucket(
+    ip: str,
+    mac: str | list[str] | None,
+    oui: str | None = None,
+    last: str = LAST_RECORD,
+) -> dict:
     """A conn terms bucket as OpenSearch returns it for _conn_devices_query."""
     source = {"mac": mac, **({"oui": oui} if oui else {})}
-    macs = [] if mac is None else [{"key": "x", "doc_count": 12, "latest": {"hits": {"hits": [{"_source": {"source": source}}]}}}]
+    macs = (
+        []
+        if mac is None
+        else [
+            {
+                "key": "x",
+                "doc_count": 12,
+                "latest": {"hits": {"hits": [{"_source": {"source": source}}]}},
+            }
+        ]
+    )
     last_ms = datetime.fromisoformat(last).timestamp() * 1000
-    return {"key": ip, "doc_count": 12, "with_mac": {"doc_count_error_upper_bound": 0, "buckets": macs},
-            "last_record": {"value": last_ms, "value_as_string": last}}
+    return {
+        "key": ip,
+        "doc_count": 12,
+        "with_mac": {"doc_count_error_upper_bound": 0, "buckets": macs},
+        "last_record": {"value": last_ms, "value_as_string": last},
+    }
 
 
 def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
@@ -71,15 +90,37 @@ def _fake_client(buckets: list[dict], store: dict | None = None) -> MagicMock:
     def search(index: str, body: dict) -> dict:
         aggs = body.get("aggs", {})
         if "devices" in aggs:  # a terms list, top `size` like OpenSearch
-            return {"aggregations": {"devices": {"buckets": buckets[: aggs["devices"]["terms"]["size"]]}}}
+            return {
+                "aggregations": {
+                    "devices": {"buckets": buckets[: aggs["devices"]["terms"]["size"]]}
+                }
+            }
         if "all" in aggs:  # a composite, page by page in key order
             composite = aggs["all"]["composite"]
             after = (composite.get("after") or {}).get("ip")
-            rest = [b for b in sorted(buckets, key=lambda b: b["key"]) if after is None or b["key"] > after]
+            rest = [
+                b
+                for b in sorted(buckets, key=lambda b: b["key"])
+                if after is None or b["key"] > after
+            ]
             page = [{**b, "key": {"ip": b["key"]}} for b in rest[: composite["size"]]]
-            return {"aggregations": {"all": {"buckets": page, **({"after_key": page[-1]["key"]} if page else {})}}}
+            return {
+                "aggregations": {
+                    "all": {
+                        "buckets": page,
+                        **({"after_key": page[-1]["key"]} if page else {}),
+                    }
+                }
+            }
         if "match_all" in body.get("query", {}):  # registry listing
-            return {"hits": {"hits": [{"_source": copy.deepcopy(d)} for d in client.searchable.values()]}}
+            return {
+                "hits": {
+                    "hits": [
+                        {"_source": copy.deepcopy(d)}
+                        for d in client.searchable.values()
+                    ]
+                }
+            }
         return {"hits": {"hits": []}}
 
     def delete(index: str, id: str) -> dict:
@@ -161,18 +202,30 @@ class TestRegisterFromConn:
         #     "min_doc_count": _MIN_CONNECTIONS,
         # }
         # OLD CODE END
-        assert body["aggs"]["all"]["composite"]["sources"] == [{"ip": {"terms": {"field": "source.ip"}}}]
+        assert body["aggs"]["all"]["composite"]["sources"] == [
+            {"ip": {"terms": {"field": "source.ip"}}}
+        ]
 
     def test_ips_under_min_connections_are_not_devices(self):
-        quiet = {**_bucket("192.168.1.10", "aa:bb:cc:00:00:01"), "doc_count": _MIN_CONNECTIONS - 1}
+        quiet = {
+            **_bucket("192.168.1.10", "aa:bb:cc:00:00:01"),
+            "doc_count": _MIN_CONNECTIONS - 1,
+        }
         client = _fake_client([quiet])
 
         assert refresh_device_registry(_app(client)) == 0
 
     def test_registers_past_500_devices(self):
         """#96: the refresh kept a terms list of 500 IPs; devices past it were never registered."""
-        ips = [f"192.168.{i // 200}.{i % 200 + 1}" for i in range(_MAX_DEVICE_LIMIT + 100)]
-        client = _fake_client([_bucket(ip, f"aa:bb:cc:00:{i // 256:02x}:{i % 256:02x}") for i, ip in enumerate(ips)])
+        ips = [
+            f"192.168.{i // 200}.{i % 200 + 1}" for i in range(_MAX_DEVICE_LIMIT + 100)
+        ]
+        client = _fake_client(
+            [
+                _bucket(ip, f"aa:bb:cc:00:{i // 256:02x}:{i % 256:02x}")
+                for i, ip in enumerate(ips)
+            ]
+        )
 
         assert refresh_device_registry(_app(client)) == len(ips)
         assert len(client.store) == len(ips)
@@ -213,7 +266,15 @@ class TestLastSeenIsTheLastRecord:
     registry update, a vendor or OS lookup included, set last_seen to the time it ran."""
 
     def test_last_seen_is_the_devices_last_record_not_the_refresh_time(self):
-        client = _fake_client([_bucket("192.168.1.20", "aa:bb:cc:00:00:01", last="2026-11-02T21:05:00+00:00")])
+        client = _fake_client(
+            [
+                _bucket(
+                    "192.168.1.20",
+                    "aa:bb:cc:00:00:01",
+                    last="2026-11-02T21:05:00+00:00",
+                )
+            ]
+        )
 
         refresh_device_registry(_app(client))
 
@@ -223,9 +284,25 @@ class TestLastSeenIsTheLastRecord:
 
     def test_an_older_record_does_not_move_last_seen_back(self):
         newer = "2026-11-02T21:40:00+00:00"
-        store = {"AA:BB:CC:00:00:01": {"mac": "AA:BB:CC:00:00:01", "ips": ["192.168.1.20"], "category": "unknown",
-                                       "first_seen": "2026-11-01T00:00:00+00:00", "last_seen": newer}}
-        client = _fake_client([_bucket("192.168.1.20", "aa:bb:cc:00:00:01", last="2026-11-02T21:05:00+00:00")], store)
+        store = {
+            "AA:BB:CC:00:00:01": {
+                "mac": "AA:BB:CC:00:00:01",
+                "ips": ["192.168.1.20"],
+                "category": "unknown",
+                "first_seen": "2026-11-01T00:00:00+00:00",
+                "last_seen": newer,
+            }
+        }
+        client = _fake_client(
+            [
+                _bucket(
+                    "192.168.1.20",
+                    "aa:bb:cc:00:00:01",
+                    last="2026-11-02T21:05:00+00:00",
+                )
+            ],
+            store,
+        )
 
         refresh_device_registry(_app(client))
 
@@ -234,8 +311,17 @@ class TestLastSeenIsTheLastRecord:
     def test_a_vendor_lookup_leaves_last_seen_alone(self):
         quiet = "2026-11-02T04:00:00+00:00"
         mac = "70:A7:41:3F:1B:59"
-        store = {mac: {"mac": mac, "ips": ["192.168.1.220"], "manufacturer": None, "category": "unknown",
-                       "first_seen": quiet, "last_seen": quiet, "enrichment_sources": {}}}
+        store = {
+            mac: {
+                "mac": mac,
+                "ips": ["192.168.1.220"],
+                "manufacturer": None,
+                "category": "unknown",
+                "first_seen": quiet,
+                "last_seen": quiet,
+                "enrichment_sources": {},
+            }
+        }
         client = _fake_client([], store)
         mac_lookup = MagicMock()
         mac_lookup.lookup.return_value = {"found": True, "vendor": "Ubiquiti Inc"}
@@ -259,7 +345,11 @@ class TestCorrectLastSeen:
             if "newest" not in body.get("aggs", {}):
                 return serve(index=index, body=body)
             mac = body["query"]["bool"]["should"][1]["term"]["source.mac"]
-            value = datetime.fromisoformat(newest[mac]).timestamp() * 1000 if mac in newest else None
+            value = (
+                datetime.fromisoformat(newest[mac]).timestamp() * 1000
+                if mac in newest
+                else None
+            )
             return {"aggregations": {"newest": {"value": value}}}
 
         client.search.side_effect = search
@@ -267,18 +357,40 @@ class TestCorrectLastSeen:
 
     def test_a_last_seen_later_than_every_record_moves_back_to_the_newest_record(self):
         mac, real = "FC:9D:05:98:2A:BE", "2026-11-02T05:10:00+00:00"
-        store = {mac: {"mac": mac, "ips": ["192.168.1.10"], "category": "computer",
-                       "first_seen": "2026-11-02T08:04:00+00:00", "last_seen": "2026-11-02T08:51:00+00:00"}}
+        store = {
+            mac: {
+                "mac": mac,
+                "ips": ["192.168.1.10"],
+                "category": "computer",
+                "first_seen": "2026-11-02T08:04:00+00:00",
+                "last_seen": "2026-11-02T08:51:00+00:00",
+            }
+        }
         client = self._client(store, {mac.lower(): real})
 
         assert DeviceRegistry(client=client).correct_last_seen() == 1
-        assert (client.store[mac]["last_seen"], client.store[mac]["first_seen"]) == (real, real)
+        assert (client.store[mac]["last_seen"], client.store[mac]["first_seen"]) == (
+            real,
+            real,
+        )
 
-    def test_a_last_seen_at_or_before_the_newest_record_and_aged_out_devices_are_left_alone(self):
+    def test_a_last_seen_at_or_before_the_newest_record_and_aged_out_devices_are_left_alone(
+        self,
+    ):
         ok, gone = "AA:00:00:00:00:01", "AA:00:00:00:00:02"
         store = {
-            ok: {"mac": ok, "ips": ["192.168.1.20"], "first_seen": "2026-11-01T00:00:00+00:00", "last_seen": "2026-11-02T21:00:00+00:00"},
-            gone: {"mac": gone, "ips": ["192.168.1.21"], "first_seen": "2026-10-01T00:00:00+00:00", "last_seen": "2026-10-02T00:00:00+00:00"},
+            ok: {
+                "mac": ok,
+                "ips": ["192.168.1.20"],
+                "first_seen": "2026-11-01T00:00:00+00:00",
+                "last_seen": "2026-11-02T21:00:00+00:00",
+            },
+            gone: {
+                "mac": gone,
+                "ips": ["192.168.1.21"],
+                "first_seen": "2026-10-01T00:00:00+00:00",
+                "last_seen": "2026-10-02T00:00:00+00:00",
+            },
         }
         client = self._client(store, {ok.lower(): "2026-11-02T21:30:00+00:00"})
 
@@ -387,7 +499,9 @@ class TestDeviceRegistryLoop:
         calls = asyncio.run(scenario())
         assert len(calls) == 2
 
-    def test_last_seen_is_corrected_once_at_start_and_a_failure_does_not_stop_refreshes(self, monkeypatch):
+    def test_last_seen_is_corrected_once_at_start_and_a_failure_does_not_stop_refreshes(
+        self, monkeypatch
+    ):
         registry = MagicMock()
         registry.correct_last_seen.side_effect = RuntimeError("OpenSearch not ready")
 
@@ -403,7 +517,12 @@ class TestDeviceRegistryLoop:
                 return 0
 
             monkeypatch.setattr(main, "refresh_device_registry", refresh)
-            await asyncio.wait_for(main.device_registry_loop({"device_registry": registry}, 0.01, shutdown), timeout=5)
+            await asyncio.wait_for(
+                main.device_registry_loop(
+                    {"device_registry": registry}, 0.01, shutdown
+                ),
+                timeout=5,
+            )
             return len(refreshes)
 
         assert asyncio.run(scenario()) == 2
@@ -436,7 +555,9 @@ class TestLanSubnetsFollowTheNetwork:
 
             monkeypatch.setattr(main, "refresh_device_registry", refresh)
             app = {"lan_filter": lan_filter, "storage": MagicMock()}
-            await asyncio.wait_for(main.device_registry_loop(app, 0.01, shutdown), timeout=5)
+            await asyncio.wait_for(
+                main.device_registry_loop(app, 0.01, shutdown), timeout=5
+            )
 
         asyncio.run(scenario())
         return before, lan_filter, seen
@@ -446,14 +567,20 @@ class TestLanSubnetsFollowTheNetwork:
 
         _, lan_filter, seen = self._run(monkeypatch, [(192, 168, 1), (10, 10, 0)])
         assert lan_filter == build_lan_filter([(192, 168, 1), (10, 10, 0)])
-        assert seen == [lan_filter]  # the same dict every handler reads, updated before the pass
+        assert seen == [
+            lan_filter
+        ]  # the same dict every handler reads, updated before the pass
 
     def test_failed_detection_keeps_the_subnets(self, monkeypatch):
-        before, lan_filter, _ = self._run(monkeypatch, [])  # not the all-RFC1918 fallback
+        before, lan_filter, _ = self._run(
+            monkeypatch, []
+        )  # not the all-RFC1918 fallback
         assert lan_filter == before
 
     def test_manual_subnets_are_never_replaced(self, monkeypatch):
-        before, lan_filter, _ = self._run(monkeypatch, [(10, 10, 0)], manual="192.168.1.0/24")
+        before, lan_filter, _ = self._run(
+            monkeypatch, [(10, 10, 0)], manual="192.168.1.0/24"
+        )
         assert lan_filter == before
 
 
@@ -463,16 +590,26 @@ class TestVendorFromMalcolm:
     def test_registers_vendor_and_category(self):
         hue = _bucket("192.168.1.154", "00:17:88:48:3c:07", "Philips Lighting BV")
         apple = _bucket("192.168.1.95", "7c:01:3e:74:d2:1c", "Apple, Inc.")
-        client = _fake_client([hue, apple, _bucket("192.168.1.151", "0e:cc:55:a1:28:66")])
+        client = _fake_client(
+            [hue, apple, _bucket("192.168.1.151", "0e:cc:55:a1:28:66")]
+        )
 
         refresh_device_registry(_app(client))
 
         assert "source.oui" in str(_conn_query(client)[1])
         hue_doc = client.store["00:17:88:48:3C:07"]
-        assert (hue_doc["manufacturer"], hue_doc["category"]) == ("Philips Lighting BV", "iot")
+        assert (hue_doc["manufacturer"], hue_doc["category"]) == (
+            "Philips Lighting BV",
+            "iot",
+        )
         apple_doc = client.store["7C:01:3E:74:D2:1C"]
-        assert (apple_doc["manufacturer"], apple_doc["category"]) == ("Apple, Inc.", "unknown")
-        assert client.store["0E:CC:55:A1:28:66"]["manufacturer"] is None  # randomized MAC
+        assert (apple_doc["manufacturer"], apple_doc["category"]) == (
+            "Apple, Inc.",
+            "unknown",
+        )
+        assert (
+            client.store["0E:CC:55:A1:28:66"]["manufacturer"] is None
+        )  # randomized MAC
 
     def test_category_outside_the_grid_groups_is_unknown(self):
         sonos = _bucket("192.168.1.30", "48:a6:b8:00:00:01", "Sonos, Inc.")
@@ -499,11 +636,21 @@ class TestIpOwnership:
     def test_ip_moves_off_the_router_and_0000_is_dropped(self):
         udm = "D0:21:F9:5E:35:32"
         store = {
-            udm: {"mac": udm, "ips": ["192.168.1.1", "192.168.1.164"], "category": "infrastructure"},
-            "AA:BB:CC:00:00:05": {"mac": "AA:BB:CC:00:00:05", "ips": ["0.0.0.0", "192.168.1.116"]},
+            udm: {
+                "mac": udm,
+                "ips": ["192.168.1.1", "192.168.1.164"],
+                "category": "infrastructure",
+            },
+            "AA:BB:CC:00:00:05": {
+                "mac": "AA:BB:CC:00:00:05",
+                "ips": ["0.0.0.0", "192.168.1.116"],
+            },
         }
         client = _fake_client(
-            [_bucket("192.168.1.164", "cc:f4:11:b4:7f:68"), _bucket("192.168.1.1", "d0:21:f9:5e:35:32")],
+            [
+                _bucket("192.168.1.164", "cc:f4:11:b4:7f:68"),
+                _bucket("192.168.1.1", "d0:21:f9:5e:35:32"),
+            ],
             store,
         )
 
@@ -520,12 +667,26 @@ class TestCategoryLikeDevicesPage:
 
     def test_os_hint_hostnames_and_vendor_decide(self):
         fingerprint = MagicMock()
-        fingerprint.get_os_hint.side_effect = lambda client, ip, f, t: {"192.168.1.10": "Linux"}.get(ip)
-        fingerprint.get_hostname_for_ip.side_effect = lambda client, ip, f, t: {"192.168.1.95": "elias-mac-studio.local"}.get(ip)
-        quiet = {"mac": "70:A7:41:3F:1B:59", "ips": ["192.168.1.220"], "manufacturer": "Ubiquiti Inc",
-                 "category": "unknown", "last_seen": "2026-11-02T04:00:00+00:00"}
+        fingerprint.get_os_hint.side_effect = lambda client, ip, f, t: {
+            "192.168.1.10": "Linux"
+        }.get(ip)
+        fingerprint.get_hostname_for_ip.side_effect = lambda client, ip, f, t: {
+            "192.168.1.95": "elias-mac-studio.local"
+        }.get(ip)
+        quiet = {
+            "mac": "70:A7:41:3F:1B:59",
+            "ips": ["192.168.1.220"],
+            "manufacturer": "Ubiquiti Inc",
+            "category": "unknown",
+            "last_seen": "2026-11-02T04:00:00+00:00",
+        }
         store = {
-            "2A:37:F4:D9:20:F5": {"mac": "2A:37:F4:D9:20:F5", "ips": [], "hostnames": ["saras-macbook-air-2.local"], "category": "unknown"},
+            "2A:37:F4:D9:20:F5": {
+                "mac": "2A:37:F4:D9:20:F5",
+                "ips": [],
+                "hostnames": ["saras-macbook-air-2.local"],
+                "category": "unknown",
+            },
             "70:A7:41:3F:1B:59": quiet,  # not seen this hour: vendor still decides, last_seen kept
         }
         client = _fake_client(
@@ -554,11 +715,22 @@ class TestRefreshSpeed:
         old = "2026-11-01T00:00:00+00:00"
         mac = "00:17:88:48:3C:07"
         # Known device that held .154 and .155; this hour it is seen on .154 only
-        store = {mac: {"mac": mac, "ips": ["192.168.1.154", "192.168.1.155"], "category": "unknown",
-                       "manufacturer": None, "first_seen": old, "last_seen": old, "enrichment_sources": {}}}
+        store = {
+            mac: {
+                "mac": mac,
+                "ips": ["192.168.1.154", "192.168.1.155"],
+                "category": "unknown",
+                "manufacturer": None,
+                "first_seen": old,
+                "last_seen": old,
+                "enrichment_sources": {},
+            }
+        }
         client = _fake_client(
-            [_bucket("192.168.1.154", "00:17:88:48:3c:07", "Philips Lighting BV"),
-             _bucket("192.168.1.155", "cc:f4:11:b4:7f:68")],
+            [
+                _bucket("192.168.1.154", "00:17:88:48:3c:07", "Philips Lighting BV"),
+                _bucket("192.168.1.155", "cc:f4:11:b4:7f:68"),
+            ],
             store,
         )
         mac_lookup = MagicMock()
@@ -578,16 +750,35 @@ class TestLongMacs:
     """#76: Zeek printed a UniFi AP's DHCP chaddr as 8 bytes, which became a second device."""
 
     def test_dhcp_mac_longer_than_6_octets_files_under_the_real_device(self):
-        assert DeviceRegistry._normalize_mac("f4:e2:c6:ff:98:21:62:72") == "F4:E2:C6:FF:98:21"
+        assert (
+            DeviceRegistry._normalize_mac("f4:e2:c6:ff:98:21:62:72")
+            == "F4:E2:C6:FF:98:21"
+        )
         assert DeviceRegistry._normalize_mac("f4-e2-c6-ff-98-21") == "F4:E2:C6:FF:98:21"
 
     def test_existing_long_entry_merges_into_the_real_device(self):
-        real = {"mac": "F4:E2:C6:FF:98:21", "ips": ["192.168.1.198"], "hostnames": ["U7Pro"],
-                "category": "infrastructure", "last_seen": "2026-11-02T10:16:31+00:00"}
-        phantom = {"mac": "F4:E2:C6:FF:98:21:62:72", "ips": ["192.168.40.198"], "hostnames": ["U7Pro"],
-                   "category": "unknown", "last_seen": "2026-11-02T06:45:37+00:00"}
-        orphan = {"mac": "AA:BB:CC:00:00:01:02:03", "ips": ["10.10.0.9"], "last_seen": "2026-11-02T05:00:00+00:00"}
-        client = _fake_client([], {real["mac"]: real, phantom["mac"]: phantom, orphan["mac"]: orphan})
+        real = {
+            "mac": "F4:E2:C6:FF:98:21",
+            "ips": ["192.168.1.198"],
+            "hostnames": ["U7Pro"],
+            "category": "infrastructure",
+            "last_seen": "2026-11-02T10:16:31+00:00",
+        }
+        phantom = {
+            "mac": "F4:E2:C6:FF:98:21:62:72",
+            "ips": ["192.168.40.198"],
+            "hostnames": ["U7Pro"],
+            "category": "unknown",
+            "last_seen": "2026-11-02T06:45:37+00:00",
+        }
+        orphan = {
+            "mac": "AA:BB:CC:00:00:01:02:03",
+            "ips": ["10.10.0.9"],
+            "last_seen": "2026-11-02T05:00:00+00:00",
+        }
+        client = _fake_client(
+            [], {real["mac"]: real, phantom["mac"]: phantom, orphan["mac"]: orphan}
+        )
 
         refresh_device_registry(_app(client))
 
@@ -595,5 +786,10 @@ class TestLongMacs:
         ap = client.store["F4:E2:C6:FF:98:21"]
         assert ap["ips"] == ["192.168.1.198", "192.168.40.198"]
         assert ap["hostnames"] == ["U7Pro"]
-        assert (ap["category"], ap["last_seen"]) == ("infrastructure", real["last_seen"])
-        assert client.store["AA:BB:CC:00:00:01"]["ips"] == ["10.10.0.9"]  # no real entry: renamed
+        assert (ap["category"], ap["last_seen"]) == (
+            "infrastructure",
+            real["last_seen"],
+        )
+        assert client.store["AA:BB:CC:00:00:01"]["ips"] == [
+            "10.10.0.9"
+        ]  # no real entry: renamed

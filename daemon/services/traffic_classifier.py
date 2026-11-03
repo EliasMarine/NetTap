@@ -920,14 +920,22 @@ def _asn_buckets(client, from_ts: str, to_ts: str) -> list[dict]:
         aggs={"total_bytes": _CONN_BYTES_SUM},
     )
     if not complete:
-        logger.warning("traffic categories: stopped at %d ASNs; totals are short", len(buckets))
+        logger.warning(
+            "traffic categories: stopped at %d ASNs; totals are short", len(buckets)
+        )
     return buckets
 
 
-def _category_asn_buckets(client, category: str, from_ts: str, to_ts: str) -> list[dict]:
+def _category_asn_buckets(
+    client, category: str, from_ts: str, to_ts: str
+) -> list[dict]:
     """The ASN buckets Home's bar counts for `category`: classify_asn() decides, so a detail
     page holds exactly what its Home bar holds (#96)."""
-    return [b for b in _asn_buckets(client, from_ts, to_ts) if classify_asn(b["key"]["asn"]) == category]
+    return [
+        b
+        for b in _asn_buckets(client, from_ts, to_ts)
+        if classify_asn(b["key"]["asn"]) == category
+    ]
 
 
 def _category_conn_query(asns: list[str], from_ts: str, to_ts: str) -> dict:
@@ -941,10 +949,17 @@ def _category_conn_query(asns: list[str], from_ts: str, to_ts: str) -> dict:
             "minimum_should_match": 1,
         }
     }
-    return {"bool": {"filter": [*_conn_query(from_ts, to_ts)["bool"]["filter"], by_asn]}}
+    return {
+        "bool": {"filter": [*_conn_query(from_ts, to_ts)["bool"]["filter"], by_asn]}
+    }
 
 
-_NO_CATEGORY_DEVICES = {"devices": [], "device_count": 0, "total_bytes": 0, "connection_count": 0}
+_NO_CATEGORY_DEVICES = {
+    "devices": [],
+    "device_count": 0,
+    "total_bytes": 0,
+    "connection_count": 0,
+}
 
 
 def _category_device_row(bucket: dict) -> dict:
@@ -982,7 +997,9 @@ async def get_category_devices(
     # OLD CODE END
     if category not in CATEGORIES:
         return {**_NO_CATEGORY_DEVICES}
-    asns = [b["key"]["asn"] for b in _category_asn_buckets(client, category, from_ts, to_ts)]
+    asns = [
+        b["key"]["asn"] for b in _category_asn_buckets(client, category, from_ts, to_ts)
+    ]
     if not asns:
         return {**_NO_CATEGORY_DEVICES}
 
@@ -1081,10 +1098,15 @@ async def get_category_devices(
         aggs=per_device,
     )
     if not complete:
-        logger.warning("get_category_devices: stopped at %d devices; totals are short", len(buckets))
+        logger.warning(
+            "get_category_devices: stopped at %d devices; totals are short",
+            len(buckets),
+        )
 
     every = sorted(
-        (_category_device_row(b) for b in buckets), key=lambda d: d["total_bytes"], reverse=True
+        (_category_device_row(b) for b in buckets),
+        key=lambda d: d["total_bytes"],
+        reverse=True,
     )
     devices = every[:limit]
 
@@ -1236,7 +1258,9 @@ async def get_category_bandwidth(
     # OLD CODE END
     if category not in CATEGORIES:
         return []
-    asns = [b["key"]["asn"] for b in _category_asn_buckets(client, category, from_ts, to_ts)]
+    asns = [
+        b["key"]["asn"] for b in _category_asn_buckets(client, category, from_ts, to_ts)
+    ]
     if not asns:
         return []
 
@@ -1277,7 +1301,9 @@ async def get_category_bandwidth(
 
     series = []
     # was resp["aggregations"]["bandwidth_over_time"]["buckets"] (date_histogram, #120)
-    for bucket in histogram_buckets(resp.get("aggregations", {}).get("bandwidth_over_time")):
+    for bucket in histogram_buckets(
+        resp.get("aggregations", {}).get("bandwidth_over_time")
+    ):
         dl = int(bucket.get("download_bytes", {}).get("value", 0) or 0)
         ul = int(bucket.get("upload_bytes", {}).get("value", 0) or 0)
         series.append(

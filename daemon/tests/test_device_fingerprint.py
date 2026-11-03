@@ -196,7 +196,15 @@ class TestGetHostnameForIP(unittest.TestCase):
 def _conn_mac(source: dict) -> dict:
     """The conn MAC lookup's reply: one source.mac bucket (the most common) with one hit."""
     hit = {"_source": source}
-    return {"aggregations": {"mac": {"buckets": [{"key": "x", "doc_count": 9, "hit": {"hits": {"hits": [hit]}}}]}}}
+    return {
+        "aggregations": {
+            "mac": {
+                "buckets": [
+                    {"key": "x", "doc_count": 9, "hit": {"hits": {"hits": [hit]}}}
+                ]
+            }
+        }
+    }
 
 
 class TestGetMacForIP(unittest.TestCase):
@@ -438,16 +446,25 @@ class TestManufacturerFromMalcolm(unittest.TestCase):
 
     def _mac(self, source: dict) -> str | None:
         client = MagicMock()
-        client.search.return_value = {"hits": {"hits": [{"_source": {"source": source}}]}}
-        mac = self.fp.get_mac_for_ip(client, "192.168.1.44", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        client.search.return_value = {
+            "hits": {"hits": [{"_source": {"source": source}}]}
+        }
+        mac = self.fp.get_mac_for_ip(
+            client, "192.168.1.44", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
         self.assertIn("source.oui", client.search.call_args.kwargs["body"]["_source"])
         return mac
 
     def test_unknown_prefix_uses_malcolm_vendor(self):
-        mac = self._mac({"mac": "bc:24:11:e9:4e:56", "oui": "Proxmox Server Solutions GmbH"})
+        mac = self._mac(
+            {"mac": "bc:24:11:e9:4e:56", "oui": "Proxmox Server Solutions GmbH"}
+        )
         self.assertEqual(self.fp.get_manufacturer(mac), "Proxmox Server Solutions GmbH")
         # any other device with the same prefix gets it too
-        self.assertEqual(self.fp.get_manufacturer("BC-24-11-00-00-01"), "Proxmox Server Solutions GmbH")
+        self.assertEqual(
+            self.fp.get_manufacturer("BC-24-11-00-00-01"),
+            "Proxmox Server Solutions GmbH",
+        )
 
     def test_list_valued_oui(self):
         mac = self._mac({"mac": ["d0:21:f9:5e:35:32"], "oui": ["Ubiquiti Inc"]})
@@ -456,7 +473,9 @@ class TestManufacturerFromMalcolm(unittest.TestCase):
     def test_bundled_name_wins_and_no_oui_stays_unknown(self):
         mac = self._mac({"mac": "00:17:88:48:3c:07", "oui": "Philips Lighting BV"})
         self.assertEqual(self.fp.get_manufacturer(mac), "Philips Lighting (Hue)")
-        mac = self._mac({"mac": "0e:cc:55:a1:28:66"})  # randomized MAC: Malcolm has no vendor
+        mac = self._mac(
+            {"mac": "0e:cc:55:a1:28:66"}
+        )  # randomized MAC: Malcolm has no vendor
         self.assertEqual(self.fp.get_manufacturer(mac), "Unknown")
 
     def test_conn_takes_the_most_common_mac(self):
@@ -466,10 +485,14 @@ class TestManufacturerFromMalcolm(unittest.TestCase):
             {"hits": {"hits": []}},
             _conn_mac({"source": {"mac": "cc:f4:11:b4:7f:68", "oui": "Google, Inc."}}),
         ]
-        mac = self.fp.get_mac_for_ip(client, "10.10.0.164", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        mac = self.fp.get_mac_for_ip(
+            client, "10.10.0.164", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
         self.assertEqual(mac, "cc:f4:11:b4:7f:68")
         body = client.search.call_args.kwargs["body"]
-        self.assertEqual(body["aggs"]["mac"]["terms"], {"field": "source.mac", "size": 1})
+        self.assertEqual(
+            body["aggs"]["mac"]["terms"], {"field": "source.mac", "size": 1}
+        )
         self.assertNotIn("sort", body)  # not the newest record
         self.assertEqual(self.fp.get_manufacturer(mac), "Google, Inc.")
 
@@ -487,18 +510,52 @@ class TestLookupMany(unittest.TestCase):
         os.unlink(self._tmp_path)
 
     def test_one_msearch_with_the_same_precedence(self):
-        dhcp = {"hits": {"hits": [{"_source": {"source": {"mac": "aa:bb:cc:00:00:01", "oui": "Vendor A"}}}]}}
+        dhcp = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "source": {"mac": "aa:bb:cc:00:00:01", "oui": "Vendor A"}
+                        }
+                    }
+                ]
+            }
+        }
         conn = _conn_mac({"source": {"mac": "aa:bb:cc:00:00:02"}})
         empty = {"hits": {"hits": []}}
         dns = {"aggregations": {"top_hostname": {"buckets": [{"key": "nas.local"}]}}}
-        ua = {"aggregations": {"top_ua": {"buckets": [{"key": "Mozilla/5.0 (Windows NT 10.0; Win64)"}]}}}
+        ua = {
+            "aggregations": {
+                "top_ua": {"buckets": [{"key": "Mozilla/5.0 (Windows NT 10.0; Win64)"}]}
+            }
+        }
         client = MagicMock()
-        client.msearch.return_value = {"responses": [dhcp, conn, dns, ua, empty, conn, {"error": {"type": "x"}, "status": 400}, empty]}
+        client.msearch.return_value = {
+            "responses": [
+                dhcp,
+                conn,
+                dns,
+                ua,
+                empty,
+                conn,
+                {"error": {"type": "x"}, "status": 400},
+                empty,
+            ]
+        }
 
-        found = self.fp.lookup_many(client, ["192.168.1.10", "192.168.1.11"], "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        found = self.fp.lookup_many(
+            client,
+            ["192.168.1.10", "192.168.1.11"],
+            "2026-11-01T00:00:00Z",
+            "2026-11-02T00:00:00Z",
+        )
 
-        self.assertEqual(found["192.168.1.10"], ("aa:bb:cc:00:00:01", "nas.local", "Windows 10/11"))  # DHCP wins
-        self.assertEqual(found["192.168.1.11"], ("aa:bb:cc:00:00:02", None, None))  # conn fallback, failed sub-search
+        self.assertEqual(
+            found["192.168.1.10"], ("aa:bb:cc:00:00:01", "nas.local", "Windows 10/11")
+        )  # DHCP wins
+        self.assertEqual(
+            found["192.168.1.11"], ("aa:bb:cc:00:00:02", None, None)
+        )  # conn fallback, failed sub-search
         client.search.assert_not_called()
         body = client.msearch.call_args.kwargs["body"]
         self.assertEqual(len(body), 16)  # header + query, 4 lookups, 2 IPs
@@ -507,19 +564,29 @@ class TestLookupMany(unittest.TestCase):
     def test_failed_msearch_falls_back_to_one_ip_at_a_time(self):
         client = MagicMock()
         client.msearch.side_effect = ConnectionError("down")
-        client.search.return_value = {"hits": {"hits": [{"_source": {"source": {"mac": "aa:bb:cc:00:00:03"}}}]}}
+        client.search.return_value = {
+            "hits": {"hits": [{"_source": {"source": {"mac": "aa:bb:cc:00:00:03"}}}]}
+        }
 
-        found = self.fp.lookup_many(client, ["192.168.1.12"], "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        found = self.fp.lookup_many(
+            client, ["192.168.1.12"], "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
 
         self.assertEqual(found["192.168.1.12"][0], "aa:bb:cc:00:00:03")
         self.assertTrue(client.search.called)
 
     def test_large_lists_are_chunked(self):
         client = MagicMock()
-        client.msearch.side_effect = lambda body: {"responses": [{"hits": {"hits": []}}] * (len(body) // 2)}
+        client.msearch.side_effect = lambda body: {
+            "responses": [{"hits": {"hits": []}}] * (len(body) // 2)
+        }
         ips = [f"10.0.{i // 250}.{i % 250}" for i in range(250)]
 
-        found = self.fp.lookup_many(client, ips, "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")
+        found = self.fp.lookup_many(
+            client, ips, "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
+        )
 
         self.assertEqual(len(found), 250)
-        self.assertEqual(client.msearch.call_count, 3)  # 100 IPs (400 searches) per request
+        self.assertEqual(
+            client.msearch.call_count, 3
+        )  # 100 IPs (400 searches) per request

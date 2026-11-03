@@ -258,7 +258,10 @@ class TestGetDnsTimeline:
         # assert call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"] == "5m"
         # OLD CODE END
         ranges = call_body["aggs"]["timeline"]["date_range"]["ranges"]
-        assert (ranges[0]["from"], ranges[0]["to"]) == ("2026-01-01T00:00:00.000Z", "2026-01-01T00:05:00.000Z")
+        assert (ranges[0]["from"], ranges[0]["to"]) == (
+            "2026-01-01T00:00:00.000Z",
+            "2026-01-01T00:05:00.000Z",
+        )
         assert len(ranges) == 289  # 24 h of 5 min slots, plus the slot holding the end
 
 
@@ -288,7 +291,11 @@ def _over(reply: dict) -> DNSAnalytics:
         for b in aggs.get("top_domains", {}).get("buckets", [])
         for n in range(b["doc_count"])
     ]
-    txt = [_dns_doc(b["key"], qtype="TXT") for b in aggs.get("txt_domains", {}).get("buckets", []) for _ in range(b["doc_count"])]
+    txt = [
+        _dns_doc(b["key"], qtype="TXT")
+        for b in aggs.get("txt_domains", {}).get("buckets", [])
+        for _ in range(b["doc_count"])
+    ]
     return DNSAnalytics(FakeOpenSearch(names + txt))
 
 
@@ -303,10 +310,16 @@ class TestDetectionsSeeEveryName:
 
         result = dns.get_suspicious_dns(_FROM, _TO)
 
-        assert [(r["type"], r["domain"]) for r in result] == [("long_domain", long_name)]
+        assert [(r["type"], r["domain"]) for r in result] == [
+            ("long_domain", long_name)
+        ]
 
     def test_every_txt_name_over_50_is_flagged(self):
-        docs = [_dns_doc(f"t{i:02d}.mail.example.com", qtype="TXT") for i in range(25) for _ in range(60)]
+        docs = [
+            _dns_doc(f"t{i:02d}.mail.example.com", qtype="TXT")
+            for i in range(25)
+            for _ in range(60)
+        ]
 
         result = DNSAnalytics(FakeOpenSearch(docs)).get_suspicious_dns(_FROM, _TO)
 
@@ -337,7 +350,9 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns(
+            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
 
         long_findings = [r for r in result if r["type"] == "long_domain"]
         assert len(long_findings) >= 1
@@ -359,7 +374,9 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns(
+            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
 
         hf = [r for r in result if r["type"] == "high_frequency"]
         assert len(hf) >= 1
@@ -375,17 +392,28 @@ class TestGetSuspiciousDns:
             "aggregations": {
                 "top_domains": {
                     "buckets": [
-                        {"key": n, "doc_count": 1000, "unique_clients": {"value": 1}} for n in names
+                        {"key": n, "doc_count": 1000, "unique_clients": {"value": 1}}
+                        for n in names
                     ]
-                    + [{"key": "beacon.evil.com", "doc_count": 1000, "unique_clients": {"value": 1}}]
+                    + [
+                        {
+                            "key": "beacon.evil.com",
+                            "doc_count": 1000,
+                            "unique_clients": {"value": 1},
+                        }
+                    ]
                 },
                 "txt_domains": {"buckets": []},
             }
         }
 
-        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns(
+            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
 
-        assert [(r["type"], r["domain"]) for r in result] == [("high_frequency", "beacon.evil.com")]
+        assert [(r["type"], r["domain"]) for r in result] == [
+            ("high_frequency", "beacon.evil.com")
+        ]
 
     def test_detects_txt_abuse(self, dns, mock_client):
         reply = {
@@ -397,7 +425,9 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        result = _over(reply).get_suspicious_dns(
+            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
 
         txt = [r for r in result if r["type"] == "txt_abuse"]
         assert len(txt) >= 1
@@ -569,7 +599,11 @@ class TestStatsAccuracy:
         assert aggs["avg_rtt"] == {"avg": {"field": "zeek.dns.rtt"}}
         # #93: HDR, not t-digest, so the median doesn't change with how the data is split
         assert aggs["median_rtt"] == {
-            "percentiles": {"field": "zeek.dns.rtt", "percents": [50], "hdr": {"number_of_significant_value_digits": 3}}
+            "percentiles": {
+                "field": "zeek.dns.rtt",
+                "percents": [50],
+                "hdr": {"number_of_significant_value_digits": 3},
+            }
         }
 
     def test_median_resolution_ms(self, dns, mock_client):

@@ -8,7 +8,11 @@ from aiohttp.test_utils import AioHTTPTestCase
 from api.tools import register_tools_routes
 from services.mac_lookup_service import MacLookupService
 
-PROXMOX_HIT = {"hits": {"hits": [{"_source": {"source": {"oui": "Proxmox Server Solutions GmbH"}}}]}}
+PROXMOX_HIT = {
+    "hits": {
+        "hits": [{"_source": {"source": {"oui": "Proxmox Server Solutions GmbH"}}}]
+    }
+}
 
 
 class TestMacLookupNetworkFallback(AioHTTPTestCase):
@@ -24,13 +28,19 @@ class TestMacLookupNetworkFallback(AioHTTPTestCase):
         resp = await self.client.get("/api/tools/mac-lookup/BC:24:11:E9:4E:56")
         body = await resp.json()
         self.assertEqual(resp.status, 200)
-        self.assertEqual((body["vendor"], body["found"]), ("Proxmox Server Solutions GmbH", True))
-        query = self.client_os.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
+        self.assertEqual(
+            (body["vendor"], body["found"]), ("Proxmox Server Solutions GmbH", True)
+        )
+        query = self.client_os.search.call_args.kwargs["body"]["query"]["bool"][
+            "filter"
+        ]
         self.assertIn({"prefix": {"source.mac": "bc:24:11"}}, query)
 
     async def test_never_seen_prefix_stays_not_found(self):
         self.client_os.search.return_value = {"hits": {"hits": []}}
-        body = await (await self.client.get("/api/tools/mac-lookup/BC:24:11:E9:4E:56")).json()
+        body = await (
+            await self.client.get("/api/tools/mac-lookup/BC:24:11:E9:4E:56")
+        ).json()
         self.assertEqual((body["vendor"], body["found"]), (None, False))
 
     async def test_opensearch_down_still_answers(self):
@@ -53,10 +63,18 @@ def test_registry_vendor_pass_uses_the_fallback():
 
     client = MagicMock()
     client.search.side_effect = [
-        {"hits": {"hits": [{"_source": {"mac": "70:A7:41:3F:1B:59", "ips": ["192.168.1.220"]}}]}},
+        {
+            "hits": {
+                "hits": [
+                    {"_source": {"mac": "70:A7:41:3F:1B:59", "ips": ["192.168.1.220"]}}
+                ]
+            }
+        },
         {"hits": {"hits": [{"_source": {"source": {"oui": "Ubiquiti Inc"}}}]}},
     ]
-    client.get.return_value = {"_source": {"mac": "70:A7:41:3F:1B:59", "ips": ["192.168.1.220"]}}
+    client.get.return_value = {
+        "_source": {"mac": "70:A7:41:3F:1B:59", "ips": ["192.168.1.220"]}
+    }
     registry = DeviceRegistry(client=client)
 
     assert registry.enrich_with_oui(MacLookupService(opensearch_client=client)) == 1

@@ -35,13 +35,22 @@ class TestGenerateRecommendation:
 def test_threat_report_kill_chains_match_the_summary():
     """#96: the report rebuilt kill chains from the top 200 groups only, so a chain whose
     alerts ranked lower showed in summary.kill_chains but not in the report's own list."""
-    chain = {"source_ip": "192.168.1.66", "stages": [1, 3], "alert_count": 2, "alerts": []}
+    chain = {
+        "source_ip": "192.168.1.66",
+        "stages": [1, 3],
+        "alert_count": 2,
+        "alerts": [],
+    }
     summary = AsyncMock(return_value={"kill_chains": [chain]})
     with (
         patch("services.alert_intelligence.get_smart_alert_summary", summary),
-        patch("services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])),
+        patch(
+            "services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])
+        ),
         patch("services.threat_detection.detect_beaconing", return_value=([], True)),
-        patch("services.threat_detection.detect_lateral_movement", return_value=([], True)),
+        patch(
+            "services.threat_detection.detect_lateral_movement", return_value=([], True)
+        ),
         patch("services.threat_detection.analyze_dns_anomalies", return_value={}),
     ):
         report = asyncio.run(generate_threat_report(MagicMock(), "now-1h", "now"))
@@ -53,14 +62,30 @@ def test_threat_report_names_failed_and_partial_checks():
     """#96: a failed detector returned [] and /threats said "No beaconing patterns detected"."""
     move = {"source_ip": "192.168.1.66", "destination_ip": "192.168.1.10", "port": 445}
     with (
-        patch("services.alert_intelligence.get_smart_alert_summary", AsyncMock(return_value={})),
-        patch("services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])),
-        patch("services.threat_detection.detect_beaconing", side_effect=ConnectionError("down")),
-        patch("services.threat_detection.detect_lateral_movement", return_value=([move], False)),
+        patch(
+            "services.alert_intelligence.get_smart_alert_summary",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])
+        ),
+        patch(
+            "services.threat_detection.detect_beaconing",
+            side_effect=ConnectionError("down"),
+        ),
+        patch(
+            "services.threat_detection.detect_lateral_movement",
+            return_value=([move], False),
+        ),
         patch(
             "services.threat_detection.analyze_dns_anomalies",
-            return_value={"dga_suspects": [{"domain": "x"}], "tunnel_suspects": [], "nxdomain_spikes": [],
-                          "suspicious_tlds": [], "complete": True},
+            return_value={
+                "dga_suspects": [{"domain": "x"}],
+                "tunnel_suspects": [],
+                "nxdomain_spikes": [],
+                "suspicious_tlds": [],
+                "complete": True,
+            },
         ),
     ):
         report = asyncio.run(generate_threat_report(MagicMock(), "now-1h", "now"))
@@ -74,16 +99,31 @@ def test_threat_report_names_failed_and_partial_checks():
 
 def test_failed_investigation_is_a_failed_check_not_zero_counts():
     """#96: a failed section query left {"error": ...}, which the page showed as 0 connections."""
-    critical = {"severity": 1, "signature": "ET MALWARE x", "source_ip": "192.168.1.66",
-                "destination_ip": "203.0.113.9"}
+    critical = {
+        "severity": 1,
+        "signature": "ET MALWARE x",
+        "source_ip": "192.168.1.66",
+        "destination_ip": "203.0.113.9",
+    }
     client = MagicMock()
     client.search.side_effect = ConnectionError("down")
     with (
-        patch("services.alert_intelligence.get_smart_alert_summary", AsyncMock(return_value={})),
-        patch("services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[critical])),
+        patch(
+            "services.alert_intelligence.get_smart_alert_summary",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "services.alert_intelligence.get_smart_alerts",
+            AsyncMock(return_value=[critical]),
+        ),
         patch("services.threat_detection.detect_beaconing", return_value=([], True)),
-        patch("services.threat_detection.detect_lateral_movement", return_value=([], True)),
-        patch("services.threat_detection.analyze_dns_anomalies", return_value={"complete": True}),
+        patch(
+            "services.threat_detection.detect_lateral_movement", return_value=([], True)
+        ),
+        patch(
+            "services.threat_detection.analyze_dns_anomalies",
+            return_value={"complete": True},
+        ),
     ):
         report = asyncio.run(generate_threat_report(client, "now-1h", "now"))
 

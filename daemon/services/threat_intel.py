@@ -214,7 +214,9 @@ class ThreatIntelService:
             page_size=_IP_PAGE,
         )
         if not complete:
-            logger.warning("TI scan stopped at %d IPs; indicators are partial", len(buckets))
+            logger.warning(
+                "TI scan stopped at %d IPs; indicators are partial", len(buckets)
+            )
 
         known = self._ip_sets.get("et_compromised", set())
         new_ips = sorted({b["key"]["ip"] for b in buckets} - known)

@@ -16,7 +16,11 @@ from opensearchpy import OpenSearchException
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.cert_monitor import CertificateMonitor, CertQueryFailed, CertStatsUnavailable
+from services.cert_monitor import (
+    CertificateMonitor,
+    CertQueryFailed,
+    CertStatsUnavailable,
+)
 
 
 def _iso(days: int) -> str:
@@ -121,8 +125,11 @@ class FakeOpenSearch:
 
     def _certs(self, body: dict) -> list[dict]:
         wanted = next(
-            (f["terms"]["zeek.x509.fingerprint"] for f in _filters(body)
-             if "zeek.x509.fingerprint" in f.get("terms", {})),
+            (
+                f["terms"]["zeek.x509.fingerprint"]
+                for f in _filters(body)
+                if "zeek.x509.fingerprint" in f.get("terms", {})
+            ),
             None,
         )
         certs = [c for c in self.certs if wanted is None or c["key"] in wanted]
@@ -140,7 +147,11 @@ class FakeOpenSearch:
             return {"buckets": []}
         if {"term": {"event.dataset": "x509"}} in _filters(body):
             buckets = [
-                {"key": {"fp": c["key"]}, "doc_count": c["doc_count"], "latest": c["latest"]}
+                {
+                    "key": {"fp": c["key"]},
+                    "doc_count": c["doc_count"],
+                    "latest": c["latest"],
+                }
                 for c in self.certs
             ]
         else:
@@ -149,7 +160,10 @@ class FakeOpenSearch:
                 for s in self.sessions
                 for n in s["server_names"]["buckets"]
             ]
-        return {"buckets": buckets, **({"after_key": buckets[-1]["key"]} if buckets else {})}
+        return {
+            "buckets": buckets,
+            **({"after_key": buckets[-1]["key"]} if buckets else {}),
+        }
 
     def body(self, kind: str) -> dict:
         return next(b for b in self.bodies if _kind(b) == kind)
@@ -244,7 +258,11 @@ class TestInventory(unittest.TestCase):
         """#96: [] read as "no certificates seen"."""
         fake = FakeOpenSearch(certs=[_x509_bucket("aa")], fail={"certs"})
         monitor = CertificateMonitor(fake)
-        for read in (monitor.get_certificates, monitor.get_expiring_certs, monitor.detect_self_signed):
+        for read in (
+            monitor.get_certificates,
+            monitor.get_expiring_certs,
+            monitor.detect_self_signed,
+        ):
             with self.assertLogs("nettap.services.cert_monitor", "ERROR"):
                 with self.assertRaises(CertQueryFailed, msg=read.__name__):
                     read()
@@ -377,7 +395,10 @@ class TestIssuerChanges(unittest.TestCase):
                 _x509_bucket("wild", "*.example.com"),
                 _x509_bucket("other", "shop.example.com", issuer_org="Evil CA"),
             ],
-            [_session_bucket("wild", names), _session_bucket("other", ("shop.example.com",))],
+            [
+                _session_bucket("wild", names),
+                _session_bucket("other", ("shop.example.com",)),
+            ],
         )
         self.assertEqual([c["domain"] for c in changes], ["shop.example.com"])
 

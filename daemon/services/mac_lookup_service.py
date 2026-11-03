@@ -64,7 +64,9 @@ class MacLookupService:
         try:
             hits = self._client.search(index=NETWORK_INDEX, body=body)["hits"]["hits"]
         except Exception as exc:
-            logger.warning("OUI fallback to OpenSearch failed for %s: %s", oui_prefix, exc)
+            logger.warning(
+                "OUI fallback to OpenSearch failed for %s: %s", oui_prefix, exc
+            )
             return None
         oui = hits[0].get("_source", {}).get("source", {}).get("oui") if hits else None
         if isinstance(oui, list):

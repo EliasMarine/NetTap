@@ -17,6 +17,7 @@ from opensearchpy import OpenSearchException
 from api.time_range import parse_time_range
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.devices import _lan_device_bool_query, _lan_device_buckets
+
 # OLD CODE START — #96: the population's filters come from api.devices._lan_device_bool_query now
 # from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 # OLD CODE END
@@ -117,10 +118,16 @@ def _all_unsafe_ports(client, bool_query: dict, ips: list[str]) -> dict[str, lis
             ],
         }
     }
-    sources = [{"ip": {"terms": {"field": "source.ip"}}}, {"port": {"terms": {"field": "destination.port"}}}]
+    sources = [
+        {"ip": {"terms": {"field": "source.ip"}}},
+        {"port": {"terms": {"field": "destination.port"}}},
+    ]
     buckets, complete = all_buckets(client, NETWORK_INDEX, query, sources)
     if not complete:
-        logger.warning("Port lists stopped at %d device ports; scores cover those only", len(buckets))
+        logger.warning(
+            "Port lists stopped at %d device ports; scores cover those only",
+            len(buckets),
+        )
     # Composite buckets come in key order, so each IP's ports are together
     return {
         ip: [int(b["key"]["port"]) for b in group]
@@ -150,7 +157,9 @@ def _build_device_stats(
     # OLD CODE START — #96: the top 50 ports only, so a busy device's rare port 4444 went unseen
     # ports = [int(pb["key"]) for pb in port_buckets]
     # OLD CODE END
-    ports = list(dict.fromkeys([*(int(pb["key"]) for pb in port_buckets), *(more_ports or [])]))
+    ports = list(
+        dict.fromkeys([*(int(pb["key"]) for pb in port_buckets), *(more_ports or [])])
+    )
 
     return {
         "ip": ip,
@@ -325,7 +334,12 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     # #96: every device the device list can show, so the baseline and the ranking are complete
     try:
         device_buckets = _lan_device_buckets(
-            client, request.app, from_ts, to_ts, aggs=_device_score_aggs(), page_size=_SCORE_PAGE_SIZE
+            client,
+            request.app,
+            from_ts,
+            to_ts,
+            aggs=_device_score_aggs(),
+            page_size=_SCORE_PAGE_SIZE,
         )
         more_ports = _all_unsafe_ports(
             client,
@@ -337,7 +351,9 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
-    network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in device_buckets])
+    network_avg, network_stddev = _baseline(
+        [b.get("doc_count", 0) for b in device_buckets]
+    )
 
     # Collect all device IPs for batch alert count query
     device_ips = [b["key"] for b in device_buckets]
@@ -379,17 +395,19 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
                     "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
-            "aggs": {
-                "by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}
-            },
+            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
         }
 
         try:
             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
         except OpenSearchException as exc:
             logger.error("Alert count query failed in risk scores: %s", exc)
-            return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
-        for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+            return web.json_response(
+                {"error": f"OpenSearch query failed: {exc}"}, status=502
+            )
+        for ab in (
+            alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+        ):
             alert_counts[ab["key"]] = ab["doc_count"]
 
     # Score each device
@@ -419,7 +437,9 @@ async def handle_risk_scores(request: web.Request) -> web.Response:
     # scored_devices.sort(key=lambda d: d["score"], reverse=True)
     # OLD CODE END
     # Highest risk first, the busier device first on a tie; then the top `limit` if one was asked for
-    scored_devices = sorted(scored_devices, key=lambda d: (d["score"], d["connection_count"]), reverse=True)[:limit]
+    scored_devices = sorted(
+        scored_devices, key=lambda d: (d["score"], d["connection_count"]), reverse=True
+    )[:limit]
 
     return web.json_response(
         {
@@ -534,7 +554,9 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     more_ports: list[int] = []
     if _ports_cut_short(pseudo_bucket):
         try:
-            more_ports = _all_unsafe_ports(client, conn_query["query"]["bool"], [ip]).get(ip, [])
+            more_ports = _all_unsafe_ports(
+                client, conn_query["query"]["bool"], [ip]
+            ).get(ip, [])
         except OpenSearchException as exc:
             logger.error("OpenSearch error in single risk score ports: %s", exc)
             return web.json_response(
@@ -600,7 +622,9 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
         devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
     except OpenSearchException as exc:
         logger.error("Network stats query failed in single risk score: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
 
     # Alert count for this device
@@ -643,7 +667,9 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     # OLD CODE END
     except OpenSearchException as exc:
         logger.error("Alert count query failed for %s: %s", ip, exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     device_stats = _build_device_stats(
         ip=ip,

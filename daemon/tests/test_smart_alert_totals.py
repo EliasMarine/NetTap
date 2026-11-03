@@ -15,11 +15,29 @@ _FROM, _TO = "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"
 
 def _group(sig: str, n: int) -> dict:
     return {
-        "key": {"sig_name": sig, "src_ip": "192.168.1.10", "dst_ip": f"10.{n // 65536}.{n // 256 % 256}.{n % 256}"},
+        "key": {
+            "sig_name": sig,
+            "src_ip": "192.168.1.10",
+            "dst_ip": f"10.{n // 65536}.{n // 256 % 256}.{n % 256}",
+        },
         "doc_count": 3,
         "first_seen": {"value_as_string": "2026-11-01T01:00:00Z"},
         "last_seen": {"value_as_string": "2026-11-01T02:00:00Z"},
-        "sample": {"hits": {"hits": [{"_source": {"alert": {"signature": sig, "signature_id": 1, "severity": 2}}}]}},
+        "sample": {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "alert": {
+                                "signature": sig,
+                                "signature_id": 1,
+                                "severity": 2,
+                            }
+                        }
+                    }
+                ]
+            }
+        },
     }
 
 
@@ -52,12 +70,18 @@ def test_summary_counts_the_signatures_that_sort_last():
 
     assert summary["total_groups"] == 5_200
     assert summary["total_events"] == 15_600
-    assert summary["categories"]["malware_c2"] == {"label": "Malware & C2", "groups": 200, "events": 600}
+    assert summary["categories"]["malware_c2"] == {
+        "label": "Malware & C2",
+        "groups": 200,
+        "events": 600,
+    }
     assert summary["threat_level"] == "critical"
 
 
 def test_the_sample_fetches_only_the_fields_it_reads():
     client = _client([])
     asyncio.run(alert_intelligence.get_smart_alerts(client, _FROM, _TO))
-    top_hits = client.search.call_args.kwargs["body"]["aggs"]["grouped"]["aggs"]["sample"]["top_hits"]
+    top_hits = client.search.call_args.kwargs["body"]["aggs"]["grouped"]["aggs"][
+        "sample"
+    ]["top_hits"]
     assert "alert" in top_hits["_source"] and "suricata.alert" in top_hits["_source"]

@@ -575,7 +575,12 @@ class TestBaseline:
         # Ten earlier hours of a 24 h view at 10 events per window
         baselines = {
             "history": [
-                {"hour": f"2026-11-02T{h:02d}", "window_hours": 24, "events_per_hour": 10 / 24, "threat_score": 5}
+                {
+                    "hour": f"2026-11-02T{h:02d}",
+                    "window_hours": 24,
+                    "events_per_hour": 10 / 24,
+                    "threat_score": 5,
+                }
                 for h in range(10)
             ]
         }
@@ -603,7 +608,9 @@ class TestBaselineIsFactual:
     def ai(self, monkeypatch, tmp_path):
         from services import alert_intelligence
 
-        monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json")
+        monkeypatch.setattr(
+            alert_intelligence, "_BASELINE_PATH", tmp_path / "baselines.json"
+        )
         return alert_intelligence
 
     def _now(self, hour, minute=0):
@@ -613,12 +620,19 @@ class TestBaselineIsFactual:
 
     def test_many_requests_in_one_hour_are_one_snapshot(self, ai):
         for minute in range(0, 60, 2):
-            result = ai.update_baseline({"total_events": 50 + minute}, 24.0, now=self._now(9, minute))
+            result = ai.update_baseline(
+                {"total_events": 50 + minute}, 24.0, now=self._now(9, minute)
+            )
         assert result["history_points"] == 1
 
     def test_only_recorded_views_are_kept(self, ai):
         ai.update_baseline({"total_events": 50}, 24.0, record=False, now=self._now(9))
-        assert ai.update_baseline({"total_events": 50}, 24.0, record=False, now=self._now(10))["history_points"] == 0
+        assert (
+            ai.update_baseline(
+                {"total_events": 50}, 24.0, record=False, now=self._now(10)
+            )["history_points"]
+            == 0
+        )
 
     def test_window_lengths_are_compared_separately(self, ai):
         for hour in range(8):  # 7 d views with a high rate
@@ -630,18 +644,39 @@ class TestBaselineIsFactual:
         assert result["history_points"] == 9
 
     def test_per_request_points_from_before_are_dropped(self, ai, tmp_path):
-        old = {"history": [{"timestamp": "2026-11-02T09:00:00Z", "total_events": 1, "threat_score": 0, "categories": {}}] * 100}
+        old = {
+            "history": [
+                {
+                    "timestamp": "2026-11-02T09:00:00Z",
+                    "total_events": 1,
+                    "threat_score": 0,
+                    "categories": {},
+                }
+            ]
+            * 100
+        }
         (tmp_path / "baselines.json").write_text(json.dumps(old))
         result = ai.update_baseline({"total_events": 500}, 24.0, now=self._now(10))
-        assert result == {"deviation": 1.0, "avg_events": 0.0, "avg_threat_score": 0.0, "history_points": 1, "is_anomalous": False}
+        assert result == {
+            "deviation": 1.0,
+            "avg_events": 0.0,
+            "avg_threat_score": 0.0,
+            "history_points": 1,
+            "is_anomalous": False,
+        }
 
     def test_live_means_the_window_ends_now(self, ai):
         from datetime import datetime, timedelta, timezone
 
         now = datetime.now(timezone.utc)
-        hours, live = ai._window_hours((now - timedelta(hours=24)).isoformat(), now.isoformat())
+        hours, live = ai._window_hours(
+            (now - timedelta(hours=24)).isoformat(), now.isoformat()
+        )
         assert round(hours) == 24 and live
-        assert ai._window_hours("2026-10-01T00:00:00Z", "2026-10-08T00:00:00Z") == (168.0, False)
+        assert ai._window_hours("2026-10-01T00:00:00Z", "2026-10-08T00:00:00Z") == (
+            168.0,
+            False,
+        )
 
 
 # ---------------------------------------------------------------------------

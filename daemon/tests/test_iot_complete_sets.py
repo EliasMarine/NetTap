@@ -32,7 +32,9 @@ def _composite_reply(body: dict, rows: list[dict]) -> dict[str, Any]:
     buckets = [{**r, "key": {names[f]: v for f, v in r["key"].items()}} for r in rows]
     start = 0
     if "after" in composite:
-        start = 1 + next(i for i, b in enumerate(buckets) if b["key"] == composite["after"])
+        start = 1 + next(
+            i for i, b in enumerate(buckets) if b["key"] == composite["after"]
+        )
     page = buckets[start : start + composite["size"]]
     after = {"after_key": page[-1]["key"]} if page else {}
     return {"aggregations": {"all": {"buckets": page, **after}}}
@@ -48,7 +50,9 @@ def _composite_field(body: dict) -> str | None:
 
 def _top(values: list, size: int) -> list[dict]:
     """A terms aggregation's reply: the `size` busiest values (they arrive busiest first)."""
-    return [{"key": v, "doc_count": len(values) - i} for i, v in enumerate(values)][:size]
+    return [{"key": v, "doc_count": len(values) - i} for i, v in enumerate(values)][
+        :size
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -71,13 +75,19 @@ TERMS_AGG_FIELDS = {
 
 def _terms_reply(body: dict, values_by_field: dict[str, list]) -> dict[str, Any]:
     aggs = {
-        name: {"buckets": _top(values_by_field[field], body["aggs"][name]["terms"]["size"])}
+        name: {
+            "buckets": _top(values_by_field[field], body["aggs"][name]["terms"]["size"])
+        }
         for name, field in TERMS_AGG_FIELDS.items()
         if name in body["aggs"]
     }
     return {
         "hits": {"total": {"value": 5000}},
-        "aggregations": {**aggs, "hourly_activity": {"buckets": []}, "total_bytes": {"value": 0}},
+        "aggregations": {
+            **aggs,
+            "hourly_activity": {"buckets": []},
+            "total_bytes": {"value": 0},
+        },
     }
 
 
@@ -148,7 +158,9 @@ TO_TS = "2026-11-02T00:00:00Z"
 
 def _composite_fields(body: dict) -> list[str]:
     composite = body.get("aggs", {}).get("all", {}).get("composite", {})
-    return [next(iter(s.values()))["terms"]["field"] for s in composite.get("sources", [])]
+    return [
+        next(iter(s.values()))["terms"]["field"] for s in composite.get("sources", [])
+    ]
 
 
 def _by_mac(buckets: list[dict]) -> dict[str, Any]:
@@ -161,7 +173,10 @@ def _ports_search(ports: list[int]):
     def search(index: str, body: dict) -> dict[str, Any]:
         if _composite_fields(body) == ["source.mac", "destination.port"]:
             rows = [
-                {"key": {"source.mac": MAC.lower(), "destination.port": p}, "doc_count": 1}
+                {
+                    "key": {"source.mac": MAC.lower(), "destination.port": p},
+                    "doc_count": 1,
+                }
                 for p in ports
             ]
             return _composite_reply(body, rows)
@@ -169,7 +184,11 @@ def _ports_search(ports: list[int]):
             return _composite_reply(body, [])
         sub = body.get("aggs", {}).get("by_mac", {}).get("aggs", {})
         if "encrypted" in sub:
-            bucket = {"key": MAC.lower(), "doc_count": 1000, "encrypted": {"doc_count": 1000}}
+            bucket = {
+                "key": MAC.lower(),
+                "doc_count": 1000,
+                "encrypted": {"doc_count": 1000},
+            }
             if "dest_ports" in sub:
                 size = sub["dest_ports"]["terms"]["size"]
                 bucket = {**bucket, "dest_ports": {"buckets": _top(ports, size)}}
@@ -185,7 +204,12 @@ def _ports_search(ports: list[int]):
 def _monitor_with_device(client: MagicMock) -> IoTMonitor:
     iot = IoTMonitor(client=client)
     iot._iot_devices = {
-        MAC: {"mac": MAC, "manufacturer": "Tuya Smart Inc.", "hostname": None, "ip": "192.168.1.40"}
+        MAC: {
+            "mac": MAC,
+            "manufacturer": "Tuya Smart Inc.",
+            "hostname": None,
+            "ip": "192.168.1.40",
+        }
     }
     return iot
 
@@ -195,7 +219,9 @@ class TestEveryPortCounts:
         """250 ports, telnet the quietest: the old top 200 dropped the one high-severity finding."""
         client = MagicMock()
         client.search.side_effect = _ports_search([*range(20_000, 20_249), 23])
-        [device] = _monitor_with_device(client).get_protocol_audit(FROM_TS, TO_TS)["devices"]
+        [device] = _monitor_with_device(client).get_protocol_audit(FROM_TS, TO_TS)[
+            "devices"
+        ]
 
         telnet = [f for f in device["findings"] if f["port"] == 23]
         assert [f["severity"] for f in telnet] == ["high"]
@@ -207,7 +233,11 @@ class TestEveryPortCounts:
         client = MagicMock()
         client.search.side_effect = _ports_search(ports)
         iot = _monitor_with_device(client)
-        baseline = {"known_ports": ports[:100], "known_destinations": [], "active_hours": []}
+        baseline = {
+            "known_ports": ports[:100],
+            "known_destinations": [],
+            "active_hours": [],
+        }
 
         conn = iot._query_conn_stats_batch([MAC], FROM_TS, TO_TS, [])[MAC]
         stats = iot._build_device_stats(MAC, conn, {}, baseline, set())
@@ -224,9 +254,17 @@ class TestEveryPortCounts:
         )
 
         bodies = [c.kwargs["body"] for c in client.search.call_args_list]
-        paged = next(b for b in bodies if _composite_fields(b) == ["source.mac", "destination.port"])
-        assert {"terms": {"source.mac": [MAC, MAC.lower()]}} in paged["query"]["bool"]["filter"]
-        assert {"terms": {"source.ip": ["10.0.0.9"]}} in paged["query"]["bool"]["must_not"]
+        paged = next(
+            b
+            for b in bodies
+            if _composite_fields(b) == ["source.mac", "destination.port"]
+        )
+        assert {"terms": {"source.mac": [MAC, MAC.lower()]}} in paged["query"]["bool"][
+            "filter"
+        ]
+        assert {"terms": {"source.ip": ["10.0.0.9"]}} in paged["query"]["bool"][
+            "must_not"
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +302,12 @@ def _network_search(macs: list[dict]):
 class TestDiscoverySeesEveryMac:
     def test_a_quiet_iot_device_on_a_busy_network_is_counted(self):
         """520 busier non-IoT MACs: the old top 500 never reached the plug, so 0 devices."""
-        busy = [_mac_bucket(f"00:00:00:00:{i // 256:02x}:{i % 256:02x}", "Dell Inc.", 1000 - i) for i in range(520)]
+        busy = [
+            _mac_bucket(
+                f"00:00:00:00:{i // 256:02x}:{i % 256:02x}", "Dell Inc.", 1000 - i
+            )
+            for i in range(520)
+        ]
         plug = _mac_bucket("d8:1f:12:00:00:01", "Tuya Smart Inc.", 3)
         client = MagicMock()
         client.search.side_effect = _network_search([*busy, plug])
@@ -322,7 +365,9 @@ class TestEveryTrackerCounts:
     def test_privacy_report_lists_every_tracker(self):
         client = MagicMock()
         client.search.side_effect = _dns_search
-        [device] = _monitor_with_device(client).get_privacy_report(FROM_TS, TO_TS)["devices"]
+        [device] = _monitor_with_device(client).get_privacy_report(FROM_TS, TO_TS)[
+            "devices"
+        ]
 
         assert device["tracker_count"] == 6  # was 0
         assert {t["domain"] for t in device["tracker_domains"]} == set(TRACKERS)
@@ -354,7 +399,9 @@ def _isolation_search(pairs: list[tuple[str, dict[int, int], int]]):
     """MAC reached each (LAN host, {port: connections}, pings); busiest pair first."""
     ordered = sorted(pairs, key=lambda p: -(sum(p[1].values()) + p[2]))
 
-    def pair_bucket(key: Any, dest: str, ports: dict[int, int], pings: int, spec: dict) -> dict:
+    def pair_bucket(
+        key: Any, dest: str, ports: dict[int, int], pings: int, spec: dict
+    ) -> dict:
         return {
             "key": key,
             "doc_count": sum(ports.values()) + pings,
@@ -366,17 +413,33 @@ def _isolation_search(pairs: list[tuple[str, dict[int, int], int]]):
         if _composite_fields(body) == ["source.mac", "destination.ip"]:
             spec = body["aggs"]["all"]["aggs"]["not_icmp"]
             rows = [
-                pair_bucket({"source.mac": MAC.lower(), "destination.ip": d}, d, ports, pings, spec)
+                pair_bucket(
+                    {"source.mac": MAC.lower(), "destination.ip": d},
+                    d,
+                    ports,
+                    pings,
+                    spec,
+                )
                 for d, ports, pings in ordered
             ]
             return _composite_reply(body, rows)
         if _composite_fields(body):
             return _composite_reply(body, [])
-        by_dest = body.get("aggs", {}).get("by_source_mac", {}).get("aggs", {}).get("by_dest_ip")
+        by_dest = (
+            body.get("aggs", {})
+            .get("by_source_mac", {})
+            .get("aggs", {})
+            .get("by_dest_ip")
+        )
         if by_dest:
             spec = by_dest["aggs"]["not_icmp"]
-            dests = [pair_bucket(d, d, ports, pings, spec) for d, ports, pings in ordered]
-            mac = {"key": MAC.lower(), "by_dest_ip": {"buckets": dests[: by_dest["terms"]["size"]]}}
+            dests = [
+                pair_bucket(d, d, ports, pings, spec) for d, ports, pings in ordered
+            ]
+            mac = {
+                "key": MAC.lower(),
+                "by_dest_ip": {"buckets": dests[: by_dest["terms"]["size"]]},
+            }
             return {"aggregations": {"by_source_mac": {"buckets": [mac]}}}
         return _by_mac([])
 

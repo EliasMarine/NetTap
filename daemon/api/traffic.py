@@ -510,7 +510,12 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
         slots = time_slots(from_ts, to_ts, interval)
     except ValueError:
-        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     query = {
         "size": 0,
@@ -575,7 +580,9 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     #     result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
     # )
     # OLD CODE END
-    buckets = histogram_buckets(result.get("aggregations", {}).get("bandwidth_over_time"))
+    buckets = histogram_buckets(
+        result.get("aggregations", {}).get("bandwidth_over_time")
+    )
 
     series = [
         {
@@ -674,7 +681,9 @@ async def handle_connections(request: web.Request) -> web.Response:
             # OLD CODE START — #85: pages past OpenSearch's 10,000-result window came back empty
             # "total_pages": (total + size - 1) // size if size > 0 else 0,
             # OLD CODE END
-            "total_pages": min(-(-total // size), _RESULT_WINDOW // size) if size > 0 else 0,
+            "total_pages": min(-(-total // size), _RESULT_WINDOW // size)
+            if size > 0
+            else 0,
             "connections": connections,
         }
     )
@@ -759,7 +768,9 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     devices = [
         {
             **d,
-            "percent": round(d["total_bytes"] / grand_total * 100, 1) if grand_total > 0 else 0,
+            "percent": round(d["total_bytes"] / grand_total * 100, 1)
+            if grand_total > 0
+            else 0,
         }
         for d in breakdown["devices"]
     ]
@@ -799,7 +810,12 @@ async def handle_category_bandwidth(request: web.Request) -> web.Response:
             client, category, from_ts, to_ts, interval
         )
     except ValueError:  # more time slots than time_slots allows (#120)
-        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
     except Exception as exc:
         logger.error("Error in category bandwidth for %s: %s", category, exc)
         return web.json_response(
@@ -1065,7 +1081,10 @@ def _sankey_destinations_query(
                 "aggs": {
                     "dest_bytes": _SANKEY_BYTES_SUM,
                     "geo": {
-                        "terms": {"field": "destination.geo.country_iso_code", "size": 1}
+                        "terms": {
+                            "field": "destination.geo.country_iso_code",
+                            "size": 1,
+                        }
                     },
                     # transport values are a handful, so 10 holds every protocol
                     "by_proto": {
@@ -1316,7 +1335,12 @@ async def handle_connection_timeline(request: web.Request) -> web.Response:
     try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
         slots = time_slots(from_ts, to_ts, interval)
     except ValueError:
-        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     query = {
         "size": 0,
@@ -1391,7 +1415,9 @@ def _related_summary(result: dict) -> dict:
     return {
         "total_connections": count,
         "total_bytes": int(src_bytes + dst_bytes),
-        "protocols": sorted(b["key"] for b in aggs.get("protocols", {}).get("buckets", [])),
+        "protocols": sorted(
+            b["key"] for b in aggs.get("protocols", {}).get("buckets", [])
+        ),
         "first_seen": aggs.get("first_seen", {}).get("value_as_string"),
         "last_seen": aggs.get("last_seen", {}).get("value_as_string"),
     }
@@ -1515,7 +1541,9 @@ async def handle_connection_related(request: web.Request) -> web.Response:
     #     }
     # )
     # OLD CODE END
-    connections = [{**hit.get("_source", {}), "_id": hit.get("_id", "")} for hit in hits]
+    connections = [
+        {**hit.get("_source", {}), "_id": hit.get("_id", "")} for hit in hits
+    ]
 
     return web.json_response(
         {

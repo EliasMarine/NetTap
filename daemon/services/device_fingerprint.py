@@ -64,7 +64,15 @@ _MSEARCH_IPS = 100  # 4 searches per IP: at most 400 in one _msearch request
 
 
 def _in_range(from_ts: str, to_ts: str) -> dict:
-    return {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts, "format": "strict_date_optional_time"}}}
+    return {
+        "range": {
+            "@timestamp": {
+                "gte": from_ts,
+                "lte": to_ts,
+                "format": "strict_date_optional_time",
+            }
+        }
+    }
 
 
 def _hostname_query(ip: str, from_ts: str, to_ts: str) -> dict:
@@ -126,7 +134,11 @@ def _conn_mac_query(ip: str, from_ts: str, to_ts: str) -> dict:
         "aggs": {
             "mac": {
                 "terms": {"field": "source.mac", "size": 1},
-                "aggs": {"hit": {"top_hits": {"size": 1, "_source": ["source.mac", "source.oui"]}}},
+                "aggs": {
+                    "hit": {
+                        "top_hits": {"size": 1, "_source": ["source.mac", "source.oui"]}
+                    }
+                },
             }
         },
     }
@@ -273,7 +285,11 @@ class DeviceFingerprint:
         Returns the most frequently seen domain name, or None.
         """
         try:
-            return _hostname_from(client.search(index=NETWORK_INDEX, body=_hostname_query(ip, from_ts, to_ts)))
+            return _hostname_from(
+                client.search(
+                    index=NETWORK_INDEX, body=_hostname_query(ip, from_ts, to_ts)
+                )
+            )
         except Exception as exc:
             logger.debug("Hostname lookup failed for %s: %s", ip, exc)
         return None
@@ -285,13 +301,21 @@ class DeviceFingerprint:
         source.mac field in connection logs.
         """
         try:
-            hit = _dhcp_hit(client.search(index=NETWORK_INDEX, body=_dhcp_mac_query(ip, from_ts, to_ts)))
+            hit = _dhcp_hit(
+                client.search(
+                    index=NETWORK_INDEX, body=_dhcp_mac_query(ip, from_ts, to_ts)
+                )
+            )
             if hit:
                 return self._take_mac(hit)
         except Exception as exc:
             logger.debug("DHCP MAC lookup failed for %s: %s", ip, exc)
         try:
-            hit = _conn_hit(client.search(index=NETWORK_INDEX, body=_conn_mac_query(ip, from_ts, to_ts)))
+            hit = _conn_hit(
+                client.search(
+                    index=NETWORK_INDEX, body=_conn_mac_query(ip, from_ts, to_ts)
+                )
+            )
             if hit:
                 return self._take_mac(hit)
         except Exception as exc:
@@ -306,7 +330,11 @@ class DeviceFingerprint:
         currently available in Arkime native sessions.
         """
         try:
-            return _os_from(client.search(index=NETWORK_INDEX, body=_user_agent_query(ip, from_ts, to_ts)))
+            return _os_from(
+                client.search(
+                    index=NETWORK_INDEX, body=_user_agent_query(ip, from_ts, to_ts)
+                )
+            )
         except Exception as exc:
             logger.debug("User-Agent lookup failed for %s: %s", ip, exc)
 
@@ -325,7 +353,12 @@ class DeviceFingerprint:
         The device list sent 4 searches per device one at a time: 2.9 s for 53 devices
         on the G11 (#21). A failed batch falls back to the per-IP methods.
         """
-        builders = (_dhcp_mac_query, _conn_mac_query, _hostname_query, _user_agent_query)
+        builders = (
+            _dhcp_mac_query,
+            _conn_mac_query,
+            _hostname_query,
+            _user_agent_query,
+        )
         found: dict[str, tuple[str | None, str | None, str | None]] = {}
         for start in range(0, len(ips), _MSEARCH_IPS):
             chunk = ips[start : start + _MSEARCH_IPS]
@@ -335,10 +368,16 @@ class DeviceFingerprint:
                     body += [{"index": NETWORK_INDEX}, build(ip, from_ts, to_ts)]
             try:
                 responses = client.msearch(body=body)["responses"]
-                if not isinstance(responses, list) or len(responses) != len(chunk) * len(builders):
-                    raise ValueError(f"msearch returned {type(responses).__name__}, expected {len(body) // 2} responses")
+                if not isinstance(responses, list) or len(responses) != len(
+                    chunk
+                ) * len(builders):
+                    raise ValueError(
+                        f"msearch returned {type(responses).__name__}, expected {len(body) // 2} responses"
+                    )
             except Exception as exc:
-                logger.warning("Batched device lookup failed, querying one IP at a time: %s", exc)
+                logger.warning(
+                    "Batched device lookup failed, querying one IP at a time: %s", exc
+                )
                 for ip in chunk:
                     found[ip] = (
                         self.get_mac_for_ip(client, ip, from_ts, to_ts),
@@ -348,6 +387,12 @@ class DeviceFingerprint:
                 continue
             for i, ip in enumerate(chunk):
                 dhcp, conn, dns, ua = responses[i * 4 : i * 4 + 4]
-                hit = _dhcp_hit(dhcp) or _conn_hit(conn)  # DHCP first, as get_mac_for_ip
-                found[ip] = (self._take_mac(hit) if hit else None, _hostname_from(dns), _os_from(ua))
+                hit = _dhcp_hit(dhcp) or _conn_hit(
+                    conn
+                )  # DHCP first, as get_mac_for_ip
+                found[ip] = (
+                    self._take_mac(hit) if hit else None,
+                    _hostname_from(dns),
+                    _os_from(ua),
+                )
         return found

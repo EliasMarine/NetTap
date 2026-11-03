@@ -32,7 +32,11 @@ def with_exact_terms(aggs: dict, shard_size: int = EXACT_SHARD_SIZE) -> dict:
         for kind in ("terms", "multi_terms"):  # multi_terms: beacon candidates (#96)
             terms = agg.get(kind)
             if isinstance(terms, dict):
-                wanted = max(shard_size, int(terms.get("size", 10)), int(terms.get("shard_size", 0)))
+                wanted = max(
+                    shard_size,
+                    int(terms.get("size", 10)),
+                    int(terms.get("shard_size", 0)),
+                )
                 new[kind] = {**terms, "shard_size": wanted}
         for key in ("aggs", "aggregations"):
             if isinstance(agg.get(key), dict):
@@ -66,7 +70,11 @@ def _any_truncated(reply: Any) -> bool:
     if not isinstance(reply, dict):
         return False
     if "responses" in reply:  # msearch
-        return any(truncated(r.get("aggregations")) for r in reply["responses"] if isinstance(r, dict))
+        return any(
+            truncated(r.get("aggregations"))
+            for r in reply["responses"]
+            if isinstance(r, dict)
+        )
     return truncated(reply.get("aggregations"))
 
 
@@ -94,20 +102,25 @@ class ExactTermsOpenSearch(OpenSearch):
             # By default OpenSearch answers from the shards that worked; a figure from part of the
             # data must be an error, not a smaller number
             if failed := _failed_shards(reply):
-                raise PartialResultsError(f"{failed} shard(s) failed on {kwargs.get('index', '?')}; the reply is partial")
+                raise PartialResultsError(
+                    f"{failed} shard(s) failed on {kwargs.get('index', '?')}; the reply is partial"
+                )
             if not _any_truncated(reply):
                 return reply
             if shard_size >= MAX_SHARD_SIZE:
                 logger.warning(
                     "A terms list on %s still has more terms than %d per shard; its counts are estimates",
-                    kwargs.get("index", "?"), shard_size,
+                    kwargs.get("index", "?"),
+                    shard_size,
                 )
                 return reply
             shard_size = min(shard_size * 10, MAX_SHARD_SIZE)
 
     def search(self, *, body: Any = None, **kwargs: Any) -> Any:
         def send(body: Any, shard_size: int, **kw: Any) -> Any:
-            return super(ExactTermsOpenSearch, self).search(body=exact_body(body, shard_size), **kw)
+            return super(ExactTermsOpenSearch, self).search(
+                body=exact_body(body, shard_size), **kw
+            )
 
         return self._exact(send, body, **kwargs)
 

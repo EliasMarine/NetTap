@@ -161,15 +161,22 @@ class TestDgaRegisteredName:
         # }
         # OLD CODE END
         client = FakeOpenSearch([_dns(d) for d in domains for _ in range(5)])
-        found = analyze_dns_anomalies(client, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        found = analyze_dns_anomalies(
+            client, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
         return [f["domain"] for f in found["dga_suspects"]]
 
     def test_random_hostname_under_real_domain_not_flagged(self):
-        assert self._dga([
-            "7b18d6de7a0148e5ae70caf5253e933c-7a0ef8ad28aa.cdn.forter.com",
-            "23o27znco77ezwi2qraa3vul2diwfioswcqputkh0e9e8735e3b694b2sac.d.aa.online-metrix.net",
-            "s3-figma-force-client-reloads-production.figma.com",
-        ]) == []
+        assert (
+            self._dga(
+                [
+                    "7b18d6de7a0148e5ae70caf5253e933c-7a0ef8ad28aa.cdn.forter.com",
+                    "23o27znco77ezwi2qraa3vul2diwfioswcqputkh0e9e8735e3b694b2sac.d.aa.online-metrix.net",
+                    "s3-figma-force-client-reloads-production.figma.com",
+                ]
+            )
+            == []
+        )
 
     def test_single_label_lan_hostname_not_flagged(self):
         assert self._dga(["sarabouzeid-fgwk3p497k"]) == []
@@ -179,7 +186,9 @@ class TestDgaRegisteredName:
 
     def test_random_registered_name_flagged(self):
         # equal counts and entropy: name order, as OpenSearch breaks count ties
-        assert self._dga(["www.kq3z8wxv1m7tbn5r6yhp.com", "kq3z8wxv1m7tbn5r6yhp.co.uk"]) == [
+        assert self._dga(
+            ["www.kq3z8wxv1m7tbn5r6yhp.com", "kq3z8wxv1m7tbn5r6yhp.co.uk"]
+        ) == [
             "kq3z8wxv1m7tbn5r6yhp.co.uk",
             "www.kq3z8wxv1m7tbn5r6yhp.com",
         ]
@@ -218,7 +227,9 @@ def _dns(name: str, src: str = "192.168.1.10", rcode: str = "NOERROR") -> dict:
 
 
 def _beacon_docs(src: str, every_s: int, count: int) -> list[dict]:
-    return [_conn(src, "203.0.113.9", 443, _T0 + k * every_s * 1000) for k in range(count)]
+    return [
+        _conn(src, "203.0.113.9", 443, _T0 + k * every_s * 1000) for k in range(count)
+    ]
 
 
 class TestBeaconingSeesEveryPair:
@@ -227,14 +238,18 @@ class TestBeaconingSeesEveryPair:
         from services.threat_detection import detect_beaconing
         from tests.fake_opensearch import FakeOpenSearch
 
-        noise = [_conn(f"10.0.{i // 200}.{i % 200}", "198.51.100.1", 443, _T0) for i in range(400)]
+        noise = [
+            _conn(f"10.0.{i // 200}.{i % 200}", "198.51.100.1", 443, _T0)
+            for i in range(400)
+        ]
         client = FakeOpenSearch(noise + _beacon_docs("192.168.1.50", 60, 20))
 
         beacons, complete = detect_beaconing(client, *_DAY)
 
-        assert [(b["source_ip"], b["interval_seconds"], b["connection_count"]) for b in beacons] == [
-            ("192.168.1.50", 60.0, 20)
-        ]
+        assert [
+            (b["source_ip"], b["interval_seconds"], b["connection_count"])
+            for b in beacons
+        ] == [("192.168.1.50", 60.0, 20)]
         assert complete is True
 
     def test_requests_stay_under_max_buckets(self, monkeypatch):
@@ -244,9 +259,13 @@ class TestBeaconingSeesEveryPair:
 
         monkeypatch.setattr(td, "HISTOGRAM_BUCKETS_PER_REQUEST", 500, raising=False)
         irregular = [
-            _conn(f"10.0.0.{i}", "198.51.100.1", 443, _T0 + k * k * 10_000) for i in range(29) for k in range(40)
+            _conn(f"10.0.0.{i}", "198.51.100.1", 443, _T0 + k * k * 10_000)
+            for i in range(29)
+            for k in range(40)
         ]
-        client = FakeOpenSearch(irregular + _beacon_docs("192.168.1.50", 300, 40), max_buckets=1_000)
+        client = FakeOpenSearch(
+            irregular + _beacon_docs("192.168.1.50", 300, 40), max_buckets=1_000
+        )
 
         beacons, complete = td.detect_beaconing(client, *_DAY)
 
@@ -262,9 +281,12 @@ class TestBeaconingSeesEveryPair:
 
         beacons, complete = td.detect_beaconing(client, "now-1h", "now")
 
-        assert [(b["source_ip"], b["connection_count"]) for b in beacons] == [("192.168.1.50", 30)]
+        assert [(b["source_ip"], b["connection_count"]) for b in beacons] == [
+            ("192.168.1.50", 30)
+        ]
         assert any(
-            "date_histogram" in str(b.get("aggs", {}).get("all", {}).get("composite", {}).get("sources"))
+            "date_histogram"
+            in str(b.get("aggs", {}).get("all", {}).get("composite", {}).get("sources"))
             for b in client.bodies
         )
 
@@ -280,13 +302,20 @@ class TestLateralMovementSeesEveryPair:
         from services.threat_detection import detect_lateral_movement
         from tests.fake_opensearch import FakeOpenSearch
 
-        scans = [_conn(f"1.2.{i // 200}.{i % 200}", "192.168.1.10", 22, _T0) for i in range(400)]
-        fan_out = [_conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)]
+        scans = [
+            _conn(f"1.2.{i // 200}.{i % 200}", "192.168.1.10", 22, _T0)
+            for i in range(400)
+        ]
+        fan_out = [
+            _conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)
+        ]
         client = FakeOpenSearch(scans + fan_out)
 
         moves, complete = detect_lateral_movement(client, *_DAY)
 
-        assert sorted((m["source_ip"], m["destination_ip"], m.get("fan_out")) for m in moves) == [
+        assert sorted(
+            (m["source_ip"], m["destination_ip"], m.get("fan_out")) for m in moves
+        ) == [
             ("192.168.1.66", "192.168.1.10", 3),
             ("192.168.1.66", "192.168.1.11", 3),
             ("192.168.1.66", "192.168.1.12", 3),
@@ -302,20 +331,34 @@ class TestDnsAnomaliesSeeEveryNameAndSource:
 
         tunnel = "x" * 55 + ".t.evil-tunnel.com"
         docs = (
-            [_dns("www.example.com", f"10.1.0.{s}") for s in range(1, 101) for _ in range(80)]
-            + [_dns(f"site{i}.example.org", "10.1.0.1") for i in range(600) for _ in range(3)]
-            + [_dns(f"zz{k}.invalid-test.net", "10.9.9.9", "NXDOMAIN") for k in range(45)]
+            [
+                _dns("www.example.com", f"10.1.0.{s}")
+                for s in range(1, 101)
+                for _ in range(80)
+            ]
+            + [
+                _dns(f"site{i}.example.org", "10.1.0.1")
+                for i in range(600)
+                for _ in range(3)
+            ]
+            + [
+                _dns(f"zz{k}.invalid-test.net", "10.9.9.9", "NXDOMAIN")
+                for k in range(45)
+            ]
             + [_dns("www.example.com", "10.9.9.9") for _ in range(15)]
             + [_dns(tunnel, "10.9.9.8"), _dns("kq3z8wxv1m7tbn5r6yhp.com", "10.9.9.8")]
         )
 
         found = analyze_dns_anomalies(FakeOpenSearch(docs), *_DAY)
 
-        assert [d["domain"] for d in found["dga_suspects"]] == ["kq3z8wxv1m7tbn5r6yhp.com"]
-        assert [t["domain"] for t in found["tunnel_suspects"]] == [tunnel]
-        assert [(s["source_ip"], s["nxdomain_count"], s["unique_domains"]) for s in found["nxdomain_spikes"]] == [
-            ("10.9.9.9", 45, 46)
+        assert [d["domain"] for d in found["dga_suspects"]] == [
+            "kq3z8wxv1m7tbn5r6yhp.com"
         ]
+        assert [t["domain"] for t in found["tunnel_suspects"]] == [tunnel]
+        assert [
+            (s["source_ip"], s["nxdomain_count"], s["unique_domains"])
+            for s in found["nxdomain_spikes"]
+        ] == [("10.9.9.9", 45, 46)]
         assert found["complete"] is True
 
 
@@ -332,9 +375,17 @@ class TestDetectorsDoNotHideFailures:
     def test_each_detector_raises_when_its_query_fails(self):
         import pytest
 
-        from services.threat_detection import analyze_dns_anomalies, detect_beaconing, detect_lateral_movement
+        from services.threat_detection import (
+            analyze_dns_anomalies,
+            detect_beaconing,
+            detect_lateral_movement,
+        )
 
-        for detect in (detect_beaconing, detect_lateral_movement, analyze_dns_anomalies):
+        for detect in (
+            detect_beaconing,
+            detect_lateral_movement,
+            analyze_dns_anomalies,
+        ):
             with pytest.raises(ConnectionError):
                 detect(self._failing_client(), *_DAY)
 
@@ -343,8 +394,14 @@ class TestDetectorsDoNotHideFailures:
         from tests.fake_opensearch import FakeOpenSearch
 
         real = td.all_buckets
-        monkeypatch.setattr(td, "all_buckets", lambda *a, **kw: real(*a, **{**kw, "page_size": 1, "max_buckets": 1}))
-        fan_out = [_conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)]
+        monkeypatch.setattr(
+            td,
+            "all_buckets",
+            lambda *a, **kw: real(*a, **{**kw, "page_size": 1, "max_buckets": 1}),
+        )
+        fan_out = [
+            _conn("192.168.1.66", f"192.168.1.{h}", 445, _T0 + h) for h in (10, 11, 12)
+        ]
 
         moves, complete = td.detect_lateral_movement(FakeOpenSearch(fan_out), *_DAY)
 
@@ -360,24 +417,42 @@ class TestBeaconsAreCallsHome:
         from services.threat_detection import detect_beaconing
         from tests.fake_opensearch import FakeOpenSearch
 
-        ntp = [_conn("192.168.1.154", "203.107.6.88", 123, _T0 + k * 545_000) for k in range(20)]
-        mdns = [_conn("10.10.0.1", "10.10.0.27", 5353, _T0 + k * 60_000) for k in range(20)]
-        lan = [_conn("192.168.1.20", "192.168.1.10", 8443, _T0 + k * 60_000) for k in range(20)]
+        ntp = [
+            _conn("192.168.1.154", "203.107.6.88", 123, _T0 + k * 545_000)
+            for k in range(20)
+        ]
+        mdns = [
+            _conn("10.10.0.1", "10.10.0.27", 5353, _T0 + k * 60_000) for k in range(20)
+        ]
+        lan = [
+            _conn("192.168.1.20", "192.168.1.10", 8443, _T0 + k * 60_000)
+            for k in range(20)
+        ]
         client = FakeOpenSearch(ntp + mdns + lan + _beacon_docs("192.168.1.50", 60, 20))
 
         beacons, complete = detect_beaconing(client, *_DAY)
 
-        assert [(b["source_ip"], b["pattern"]) for b in beacons] == [("192.168.1.50", "beacon")]
+        assert [(b["source_ip"], b["pattern"]) for b in beacons] == [
+            ("192.168.1.50", "beacon")
+        ]
         assert "C2" not in beacons[0]["assessment"]
         assert complete is True
 
-    def test_a_device_on_schedules_with_many_hosts_is_one_pattern_not_many_suspects(self):
+    def test_a_device_on_schedules_with_many_hosts_is_one_pattern_not_many_suspects(
+        self,
+    ):
         from services.threat_detection import MANY_HOSTS_MIN, detect_beaconing
         from tests.fake_opensearch import FakeOpenSearch
 
         peers = [
-            _conn("192.168.1.205", f"198.51.100.{h}", 6881, _T0 + h * 1_000 + k * 2_200_000)
-            for h in range(MANY_HOSTS_MIN + 2) for k in range(12)
+            _conn(
+                "192.168.1.205",
+                f"198.51.100.{h}",
+                6881,
+                _T0 + h * 1_000 + k * 2_200_000,
+            )
+            for h in range(MANY_HOSTS_MIN + 2)
+            for k in range(12)
         ]
         client = FakeOpenSearch(peers + _beacon_docs("192.168.1.50", 60, 20))
 
@@ -385,18 +460,28 @@ class TestBeaconsAreCallsHome:
 
         by_source = {}
         for b in beacons:
-            by_source.setdefault(b["source_ip"], set()).add((b["pattern"], b.get("host_count")))
-        assert by_source == {"192.168.1.205": {("many_hosts", MANY_HOSTS_MIN + 2)}, "192.168.1.50": {("beacon", None)}}
+            by_source.setdefault(b["source_ip"], set()).add(
+                (b["pattern"], b.get("host_count"))
+            )
+        assert by_source == {
+            "192.168.1.205": {("many_hosts", MANY_HOSTS_MIN + 2)},
+            "192.168.1.50": {("beacon", None)},
+        }
 
     def test_more_candidates_than_one_list_are_paged(self, monkeypatch):
         import services.threat_detection as td
         from tests.fake_opensearch import FakeOpenSearch
 
         monkeypatch.setattr(td, "CANDIDATE_LIST_SIZE", 1)
-        client = FakeOpenSearch(_beacon_docs("192.168.1.50", 60, 20) + _beacon_docs("192.168.1.51", 300, 20))
+        client = FakeOpenSearch(
+            _beacon_docs("192.168.1.50", 60, 20) + _beacon_docs("192.168.1.51", 300, 20)
+        )
 
         beacons, complete = td.detect_beaconing(client, *_DAY)
 
-        assert sorted(b["source_ip"] for b in beacons) == ["192.168.1.50", "192.168.1.51"]
+        assert sorted(b["source_ip"] for b in beacons) == [
+            "192.168.1.50",
+            "192.168.1.51",
+        ]
         assert complete is True
         assert any("composite" in str(b.get("aggs")) for b in client.bodies)

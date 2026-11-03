@@ -35,7 +35,9 @@ def all_buckets(
         agg: dict = {"composite": composite}
         if aggs:
             agg["aggs"] = aggs
-        reply = client.search(index=index, body={"size": 0, "query": query, "aggs": {"all": agg}})
+        reply = client.search(
+            index=index, body={"size": 0, "query": query, "aggs": {"all": agg}}
+        )
         page = (reply.get("aggregations") or {}).get("all") or {}
         # OLD CODE START — a reply with an after_key and no bucket list paged forever, and a
         # short last page cost one more (empty) search
@@ -73,7 +75,9 @@ def complete_terms(
     """
     if not terms_reply.get("sum_other_doc_count"):
         return terms_reply.get("buckets", [])
-    buckets, _complete = all_buckets(client, index, query, [{"value": source}], aggs=aggs)
+    buckets, _complete = all_buckets(
+        client, index, query, [{"value": source}], aggs=aggs
+    )
     return [
         {**b, "key": missing if b["key"]["value"] is None else b["key"]["value"]}
         for b in buckets

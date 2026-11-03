@@ -41,8 +41,8 @@ def _matches(doc: dict, q: dict | None) -> bool:
             and not any(_matches(doc, c) for c in b.get("must_not", []))
             and sum(_matches(doc, c) for c in should) >= (need if should else 0)
         )
-    (kind, spec), = q.items()
-    (field, value), = spec.items()
+    ((kind, spec),) = q.items()
+    ((field, value),) = spec.items()
     if kind == "term":
         return _field(doc, field) == value
     if kind == "terms":
@@ -55,7 +55,9 @@ def _matches(doc: dict, q: dict | None) -> bool:
 def _metric(docs: list[dict], agg: dict) -> dict:
     if "sum" in agg:
         spec = agg["sum"]
-        if "script" in spec:  # every bytes script in traffic code is source + destination bytes
+        if (
+            "script" in spec
+        ):  # every bytes script in traffic code is source + destination bytes
             assert "source.bytes" in spec["script"]["source"]
             assert "destination.bytes" in spec["script"]["source"]
             fields = ["source.bytes", "destination.bytes"]
@@ -87,7 +89,7 @@ def _terms(docs: list[dict], spec: dict, sub: dict) -> dict:
     groups = _groups(docs, spec["field"], spec.get("missing"))
     buckets = [_bucket(k, g, sub) for k, g in groups.items()]
     if spec.get("order"):
-        (metric, _direction), = spec["order"].items()
+        ((metric, _direction),) = spec["order"].items()
         buckets = sorted(buckets, key=lambda b: -b[metric]["value"])
     else:
         buckets = sorted(buckets, key=lambda b: -b["doc_count"])
@@ -100,7 +102,7 @@ def _terms(docs: list[dict], spec: dict, sub: dict) -> dict:
 
 
 def _composite(docs: list[dict], spec: dict, sub: dict) -> dict:
-    (name, source), = spec["sources"][0].items()
+    ((name, source),) = spec["sources"][0].items()
     groups = _groups(docs, source["terms"]["field"])
     after = (spec.get("after") or {}).get(name)
     keys = [k for k in sorted(groups) if after is None or k > after][: spec["size"]]
@@ -117,16 +119,37 @@ def _aggregate(docs: list[dict], aggs: dict) -> dict:
         elif "composite" in agg:
             out[name] = _composite(docs, agg["composite"], sub)
         elif "date_range" in agg:  # time_slots (#120): from <= @timestamp < to
-            def ms(t: str) -> float:
-                return datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp() * 1000
 
-            out[name] = {"buckets": [
-                {**_bucket(r["from"], [d for d in docs if ms(r["from"]) <= ms(d["@timestamp"]) < ms(r["to"])], sub), "from": ms(r["from"])}
-                for r in agg["date_range"]["ranges"]
-            ]}
+            def ms(t: str) -> float:
+                return (
+                    datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp() * 1000
+                )
+
+            out[name] = {
+                "buckets": [
+                    {
+                        **_bucket(
+                            r["from"],
+                            [
+                                d
+                                for d in docs
+                                if ms(r["from"]) <= ms(d["@timestamp"]) < ms(r["to"])
+                            ],
+                            sub,
+                        ),
+                        "from": ms(r["from"]),
+                    }
+                    for r in agg["date_range"]["ranges"]
+                ]
+            }
         elif "date_histogram" in agg:  # one bucket per distinct @timestamp
             groups = _groups(docs, "@timestamp")
-            out[name] = {"buckets": [{**_bucket(k, groups[k], sub), "key_as_string": k} for k in sorted(groups)]}
+            out[name] = {
+                "buckets": [
+                    {**_bucket(k, groups[k], sub), "key_as_string": k}
+                    for k in sorted(groups)
+                ]
+            }
         else:
             out[name] = _metric(docs, agg)
     return out
@@ -137,13 +160,22 @@ def fake_search(docs: list[dict]):
 
     def search(index: str, body: dict) -> dict:
         matched = [d for d in docs if _matches(d, body.get("query"))]
-        sort = (body.get("sort") or [{"@timestamp": {"order": "asc"}}])[0]["@timestamp"]["order"]
-        rows = sorted(matched, key=lambda d: d.get("@timestamp", ""), reverse=sort == "desc")
-        total = len(matched) if body.get("track_total_hits") else min(len(matched), 10_000)
+        sort = (body.get("sort") or [{"@timestamp": {"order": "asc"}}])[0][
+            "@timestamp"
+        ]["order"]
+        rows = sorted(
+            matched, key=lambda d: d.get("@timestamp", ""), reverse=sort == "desc"
+        )
+        total = (
+            len(matched) if body.get("track_total_hits") else min(len(matched), 10_000)
+        )
         return {
             "hits": {
                 "total": {"value": total},
-                "hits": [{"_id": str(i), "_source": d} for i, d in enumerate(rows[: body.get("size", 10)])],
+                "hits": [
+                    {"_id": str(i), "_source": d}
+                    for i, d in enumerate(rows[: body.get("size", 10)])
+                ],
             },
             "aggregations": _aggregate(matched, body.get("aggs", {})),
         }
@@ -151,7 +183,9 @@ def fake_search(docs: list[dict]):
     return search
 
 
-def _conn(src: str, dst: str, asn: str | None, src_bytes: int, dst_bytes: int, **extra) -> dict:
+def _conn(
+    src: str, dst: str, asn: str | None, src_bytes: int, dst_bytes: int, **extra
+) -> dict:
     doc = {
         "@timestamp": "2026-11-01T12:00:00.000Z",
         "event": {"provider": "zeek", "dataset": "conn"},
@@ -172,7 +206,9 @@ class _FakeOpenSearchCase(AioHTTPTestCase):
     async def get_application(self):
         self.mock_client = MagicMock()
         self.mock_client.search.side_effect = fake_search(self.DOCS)
-        with patch.object(StorageManager, "_create_client", return_value=self.mock_client):
+        with patch.object(
+            StorageManager, "_create_client", return_value=self.mock_client
+        ):
             storage = StorageManager(RetentionConfig(), "http://localhost:9200")
         app = web.Application()
         app["storage"] = storage
@@ -181,7 +217,8 @@ class _FakeOpenSearchCase(AioHTTPTestCase):
 
     async def _get(self, path: str) -> dict:
         resp = await self.client.request(
-            "GET", f"{path}{'&' if '?' in path else '?'}from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z"
+            "GET",
+            f"{path}{'&' if '?' in path else '?'}from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z",
         )
         self.assertEqual(resp.status, 200, path)
         return await resp.json()
@@ -208,26 +245,41 @@ class TestRelatedConnectionsWholeWindow(_FakeOpenSearchCase):
 
     @unittest_run_loop
     async def test_summary_covers_all_250_connections(self):
-        data = await self._get("/api/traffic/connections/related?src_ip=192.168.1.50&dst_ip=192.168.1.1")
+        data = await self._get(
+            "/api/traffic/connections/related?src_ip=192.168.1.50&dst_ip=192.168.1.1"
+        )
 
         self.assertEqual(data["total_connections"], 250)  # was 200
         self.assertEqual(data["total_bytes"], 250 * 400)  # was 80,000
-        self.assertEqual(data["protocols"], ["tcp", "udp"])  # the newest (UDP) row was cut
+        self.assertEqual(
+            data["protocols"], ["tcp", "udp"]
+        )  # the newest (UDP) row was cut
         self.assertEqual(data["first_seen"], "2026-11-01T00:00:00.000Z")
         self.assertEqual(data["last_seen"], "2026-11-01T04:09:00.000Z")  # was 03:19
         # the listed rows stay capped, newest first
         self.assertEqual(len(data["connections"]), 200)
-        self.assertEqual(data["connections"][0]["@timestamp"], "2026-11-01T04:09:00.000Z")
+        self.assertEqual(
+            data["connections"][0]["@timestamp"], "2026-11-01T04:09:00.000Z"
+        )
 
 
 def _past_500_asns() -> list[dict]:
     """600 busy unclassified ASNs (2 connections each) and one quiet Netflix ASN (1 connection)."""
     busy = [
-        _conn("192.168.1.10", f"203.0.113.{n % 250}", f"AS{64_000 + n} Hosting Org {n}", 400, 600)
+        _conn(
+            "192.168.1.10",
+            f"203.0.113.{n % 250}",
+            f"AS{64_000 + n} Hosting Org {n}",
+            400,
+            600,
+        )
         for n in range(600)
         for _ in range(2)
     ]
-    return [*busy, _conn("192.168.1.11", "198.51.100.7", "AS2906 Netflix Inc", 400, 600)]
+    return [
+        *busy,
+        _conn("192.168.1.11", "198.51.100.7", "AS2906 Netflix Inc", 400, 600),
+    ]
 
 
 class TestCategoriesPast500Asns(_FakeOpenSearchCase):
@@ -237,7 +289,10 @@ class TestCategoriesPast500Asns(_FakeOpenSearchCase):
 
     @unittest_run_loop
     async def test_every_asn_reaches_its_category(self):
-        cats = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        cats = {
+            c["name"]: c
+            for c in (await self._get("/api/traffic/categories"))["categories"]
+        }
 
         self.assertIn("streaming", cats)  # the 601st ASN was dropped
         self.assertEqual(cats["streaming"]["total_bytes"], 1_000)
@@ -253,7 +308,10 @@ def _office_streaming() -> list[dict]:
         for n in range(50)
         for _ in range(2)
     ]
-    heavy = [_conn(f"10.0.1.{n}", "198.51.100.7", "AS2906 Netflix Inc", 1_000, 9_000) for n in range(10)]
+    heavy = [
+        _conn(f"10.0.1.{n}", "198.51.100.7", "AS2906 Netflix Inc", 1_000, 9_000)
+        for n in range(10)
+    ]
     return [*light, *heavy]
 
 
@@ -269,8 +327,12 @@ class TestCategoryDetailPast50Devices(_FakeOpenSearchCase):
         self.assertEqual(data["device_count"], 60)  # was 50
         self.assertEqual(data["total_bytes"], 200_000)  # was 100,000
         self.assertEqual(data["connection_count"], 110)  # was 100
-        self.assertEqual(len(data["devices"]), 50)  # the list stays top 50, now by bytes
-        self.assertEqual(data["devices"][0]["total_bytes"], 10_000)  # heavy devices were missing
+        self.assertEqual(
+            len(data["devices"]), 50
+        )  # the list stays top 50, now by bytes
+        self.assertEqual(
+            data["devices"][0]["total_bytes"], 10_000
+        )  # heavy devices were missing
         self.assertEqual(data["devices"][0]["percent"], 5.0)
         self.assertEqual(data["devices"][-1]["percent"], 1.0)  # was 2.0
 
@@ -299,13 +361,19 @@ class TestSankeyDestinationTotals(_FakeOpenSearchCase):
     async def test_destination_nodes_rank_and_sum_by_bytes(self):
         data = await self._get("/api/traffic/connections/sankey?limit=2")
 
-        self.assertEqual([s["id"] for s in data["nodes"]["sources"]], ["10.0.0.1", "10.0.0.2"])
+        self.assertEqual(
+            [s["id"] for s in data["nodes"]["sources"]], ["10.0.0.1", "10.0.0.2"]
+        )
         dests = [(d["id"], d["value"]) for d in data["nodes"]["destinations"]]
         # was [("AS2 Many Small", 100), ("AS3 Spread Org", 60)]: each device's top 2 by connections
         self.assertEqual(dests, [("AS1 Big Transfer", 2_000), ("AS2 Many Small", 100)])
-        links = {(link["source"], link["target"]): link["value"] for link in data["links"]}
+        links = {
+            (link["source"], link["target"]): link["value"] for link in data["links"]
+        }
         self.assertEqual(links[("tcp", "AS1 Big Transfer")], 2_000)
-        self.assertEqual(links[("tcp", "AS2 Many Small")], 100)  # the 3rd device is not shown
+        self.assertEqual(
+            links[("tcp", "AS2 Many Small")], 100
+        )  # the 3rd device is not shown
         self.assertNotIn(("tcp", "AS3 Spread Org"), links)
 
 
@@ -313,9 +381,15 @@ def _home_vs_detail() -> list[dict]:
     """A Netflix ASN spelled in capitals, a RingCentral ASN that also holds the IoT substring
     "Ring", and a real IoT ASN: each must sit in exactly the category Home's bar puts it in."""
     return [
-        _conn("10.0.0.1", "198.51.100.1", "AS2906 NETFLIX INC", 100, 900),  # Home: streaming
-        _conn("10.0.0.2", "198.51.100.2", "AS2906 Netflix Inc", 300, 2_700),  # streaming
-        _conn("10.0.0.3", "198.51.100.3", "AS19700 RingCentral, Inc.", 200, 1_800),  # communication
+        _conn(
+            "10.0.0.1", "198.51.100.1", "AS2906 NETFLIX INC", 100, 900
+        ),  # Home: streaming
+        _conn(
+            "10.0.0.2", "198.51.100.2", "AS2906 Netflix Inc", 300, 2_700
+        ),  # streaming
+        _conn(
+            "10.0.0.3", "198.51.100.3", "AS19700 RingCentral, Inc.", 200, 1_800
+        ),  # communication
         _conn("10.0.0.4", "198.51.100.4", "AS64600 Ring LLC", 50, 450),  # iot
     ]
 
@@ -327,7 +401,10 @@ class TestCategoryDetailMatchesHome(_FakeOpenSearchCase):
 
     @unittest_run_loop
     async def test_detail_and_chart_totals_equal_the_home_bar(self):
-        home = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        home = {
+            c["name"]: c
+            for c in (await self._get("/api/traffic/categories"))["categories"]
+        }
         self.assertEqual(home["streaming"]["total_bytes"], 4_000)
         self.assertEqual(home["communication"]["total_bytes"], 2_000)
         self.assertEqual(home["iot"]["total_bytes"], 500)
@@ -336,20 +413,31 @@ class TestCategoryDetailMatchesHome(_FakeOpenSearchCase):
             detail = await self._get(f"/api/traffic/categories/{name}")
             # was streaming 3,000 (capitals missed) and iot 2,500 (RingCentral counted twice)
             self.assertEqual(detail["total_bytes"], home[name]["total_bytes"], name)
-            self.assertEqual(detail["connection_count"], home[name]["connection_count"], name)
+            self.assertEqual(
+                detail["connection_count"], home[name]["connection_count"], name
+            )
             chart = await self._get(f"/api/traffic/categories/{name}/bandwidth")
-            self.assertEqual(sum(b["total_bytes"] for b in chart["series"]), home[name]["total_bytes"], name)
+            self.assertEqual(
+                sum(b["total_bytes"] for b in chart["series"]),
+                home[name]["total_bytes"],
+                name,
+            )
 
     @unittest_run_loop
     async def test_services_are_the_home_bars_services(self):
-        home = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        home = {
+            c["name"]: c
+            for c in (await self._get("/api/traffic/categories"))["categories"]
+        }
         detail = await self._get("/api/traffic/categories/streaming")
         self.assertEqual(
             [(s["name"], s["bytes"]) for s in detail["services"]],
             [(s["name"], s["bytes"]) for s in home["streaming"]["top_services"]],
         )
         iot = await self._get("/api/traffic/categories/iot")
-        self.assertEqual([s["name"] for s in iot["services"]], ["Ring LLC"])  # not RingCentral
+        self.assertEqual(
+            [s["name"] for s in iot["services"]], ["Ring LLC"]
+        )  # not RingCentral
 
 
 def _many_small_streams() -> list[dict]:
@@ -359,7 +447,10 @@ def _many_small_streams() -> list[dict]:
         for n in range(10)
         for _ in range(2)
     ]
-    return [*small, _conn("10.0.0.2", "198.51.100.99", "AS2906 Netflix Inc", 1_000, 49_000)]
+    return [
+        *small,
+        _conn("10.0.0.2", "198.51.100.99", "AS2906 Netflix Inc", 1_000, 49_000),
+    ]
 
 
 class TestCategoryTopServicesByBytes(_FakeOpenSearchCase):
@@ -371,9 +462,15 @@ class TestCategoryTopServicesByBytes(_FakeOpenSearchCase):
     async def test_high_byte_service_with_few_connections_is_listed(self):
         detail = await self._get("/api/traffic/categories/streaming")
 
-        self.assertEqual(detail["services"][0], {"name": "Netflix Inc", "bytes": 50_000, "connections": 1})
+        self.assertEqual(
+            detail["services"][0],
+            {"name": "Netflix Inc", "bytes": 50_000, "connections": 1},
+        )
         self.assertEqual(len(detail["services"]), 10)
-        home = {c["name"]: c for c in (await self._get("/api/traffic/categories"))["categories"]}
+        home = {
+            c["name"]: c
+            for c in (await self._get("/api/traffic/categories"))["categories"]
+        }
         self.assertEqual(
             [(s["name"], s["bytes"]) for s in detail["services"]],
             [(s["name"], s["bytes"]) for s in home["streaming"]["top_services"]],

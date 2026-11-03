@@ -116,7 +116,9 @@ async def handle_self_signed(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        certs = monitor.detect_self_signed(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        certs = monitor.detect_self_signed(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except CertQueryFailed:
         # the service already logged the OpenSearch error; [] would read as "none found"
         return web.json_response(

@@ -688,7 +688,8 @@ class TestExactCountsRetried:
 
     def _exact_calls(self, mgr):
         return [
-            c for c in mgr._client.cluster.put_settings.call_args_list
+            c
+            for c in mgr._client.cluster.put_settings.call_args_list
             if c.kwargs.get("body") == _EXACT
         ]
 

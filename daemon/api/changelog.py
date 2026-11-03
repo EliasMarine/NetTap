@@ -59,7 +59,9 @@ async def handle_get_events(request: web.Request) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in changelog: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response({"events": events, "count": len(events)})
 

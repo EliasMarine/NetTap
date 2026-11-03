@@ -633,7 +633,11 @@ class TestBypassMode(unittest.TestCase):
         monitor._write_bypass_file = lambda active: None
 
         async def mock_nsenter(*args):
-            return (1, "", "RTNETLINK answers: Operation not permitted") if "eth1" in args else (0, "", "")
+            return (
+                (1, "", "RTNETLINK answers: Operation not permitted")
+                if "eth1" in args
+                else (0, "", "")
+            )
 
         monitor._run_nsenter = mock_nsenter
         return asyncio.run(getattr(monitor, method)()), monitor
@@ -645,7 +649,9 @@ class TestBypassMode(unittest.TestCase):
         self.assertTrue(monitor._bypass_active)
         self.assertEqual(
             result["warnings"],
-            ["Could not turn promiscuous mode off on eth1: RTNETLINK answers: Operation not permitted"],
+            [
+                "Could not turn promiscuous mode off on eth1: RTNETLINK answers: Operation not permitted"
+            ],
         )
         self.assertNotIn("uninspected", result["message"])
 

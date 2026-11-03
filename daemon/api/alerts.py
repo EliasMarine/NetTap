@@ -459,7 +459,9 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             # OLD CODE START — #85: pages past OpenSearch's 10,000-result window came back empty
             # "total_pages": (total + size - 1) // size if size > 0 else 0,
             # OLD CODE END
-            "total_pages": min(-(-total // size), _RESULT_WINDOW // size) if size > 0 else 0,
+            "total_pages": min(-(-total // size), _RESULT_WINDOW // size)
+            if size > 0
+            else 0,
             "alerts": alerts,
         }
     )
@@ -697,11 +699,23 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
     try:
         query["aggs"] = {
             "over_time": time_slots(
-                from_ts, to_ts, interval, aggs={"by_severity": {"terms": {"field": "suricata.alert.severity", "size": 5}}}
+                from_ts,
+                to_ts,
+                interval,
+                aggs={
+                    "by_severity": {
+                        "terms": {"field": "suricata.alert.severity", "size": 5}
+                    }
+                },
             )
         }
     except ValueError:
-        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     try:
         result = client.search(index=NETWORK_INDEX, body=query)
@@ -1030,7 +1044,9 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
         #     }
         # },
         # OLD CODE END
-        "over_time": time_slots(from_ts, to_ts, interval),  # the sparkline interval fits any range
+        "over_time": time_slots(
+            from_ts, to_ts, interval
+        ),  # the sparkline interval fits any range
     }
 
     try:
@@ -1268,7 +1284,9 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     # device_counts: dict[str, int] = {}  # ip → total alert count
     # device_severity: dict[str, int] = {}  # ip → worst severity (lowest = worst)
     # OLD CODE END
-    sig_severity: dict[str, int] = {}  # signature → primary severity, for the IP queries
+    sig_severity: dict[
+        str, int
+    ] = {}  # signature → primary severity, for the IP queries
     top_signatures: list[dict] = []
 
     # OLD CODE START — #96: the top 500 signatures only; the rest fell out of the category
@@ -1506,11 +1524,18 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
     except ValueError:  # more slots than time_slots allows
-        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     series = []
     # was result["aggregations"]["over_time"]["buckets"] (date_histogram, #120)
-    for time_bucket in histogram_buckets(result.get("aggregations", {}).get("over_time")):
+    for time_bucket in histogram_buckets(
+        result.get("aggregations", {}).get("over_time")
+    ):
         ts = time_bucket.get("key_as_string", "")
         # OLD CODE START — #96: 50 signatures per time bucket; a busier hour's total lost the rest
         # category_count = 0

@@ -33,7 +33,10 @@ def _tool_error(returncode: int | None, stdout: str, stderr: bytes) -> str | Non
     """The tool's own message when it failed and printed nothing to parse, else None."""
     if not returncode or stdout.strip():
         return None
-    return stderr.decode("utf-8", errors="replace").strip() or f"exited with code {returncode}"
+    return (
+        stderr.decode("utf-8", errors="replace").strip()
+        or f"exited with code {returncode}"
+    )
 
 
 class NetworkDiagValidationError(Exception):

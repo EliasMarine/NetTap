@@ -163,7 +163,9 @@ class TestUpdateRules:
             with patch("asyncio.create_subprocess_exec") as mock_exec:
                 update_proc = AsyncMock()
                 update_proc.returncode = 0
-                update_proc.communicate = AsyncMock(return_value=(b"30000 loaded", None))
+                update_proc.communicate = AsyncMock(
+                    return_value=(b"30000 loaded", None)
+                )
                 reload_proc = AsyncMock()
                 reload_proc.returncode = 1
                 reload_proc.communicate = AsyncMock(
@@ -393,7 +395,9 @@ CRON 0 0 * * *
 
 
 def _gnu_stat() -> bool:
-    return subprocess.run(["stat", "-c", "%Y", "/"], capture_output=True).returncode == 0
+    return (
+        subprocess.run(["stat", "-c", "%Y", "/"], capture_output=True).returncode == 0
+    )
 
 
 class TestParseLiveStatus:
@@ -411,7 +415,10 @@ class TestParseLiveStatus:
         assert status["error"] is None
 
     def test_no_rules_file(self):
-        assert parse_live_status("MISSING\n") == {"available": False, "error": "Suricata has no rules file yet."}
+        assert parse_live_status("MISSING\n") == {
+            "available": False,
+            "error": "Suricata has no rules file yet.",
+        }
 
     def test_unreadable_output_is_not_reported_as_zero_rules(self):
         status = parse_live_status("grep: something broke\n")
@@ -431,23 +438,38 @@ class TestGetLiveStatus:
         proc = AsyncMock()
         proc.returncode = 0
         proc.communicate = AsyncMock(return_value=(_LIVE_OUTPUT.encode(), b""))
-        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)) as mock_exec:
+        with patch(
+            "asyncio.create_subprocess_exec", AsyncMock(return_value=proc)
+        ) as mock_exec:
             status = self._run(manager.get_live_status())
         args = mock_exec.call_args.args
-        assert args[:4] == ("docker", "exec", "test-suricata", "timeout")  # timeout -k 5 N inside
+        assert args[:4] == (
+            "docker",
+            "exec",
+            "test-suricata",
+            "timeout",
+        )  # timeout -k 5 N inside
         assert args[-3:-1] == ("sh", "-c")
         assert status["enabled_rules"] == 64307
 
     def test_exec_failure_is_unavailable(self, manager):
         proc = AsyncMock()
         proc.returncode = 1
-        proc.communicate = AsyncMock(return_value=(b"", b"Error: No such container: test-suricata"))
+        proc.communicate = AsyncMock(
+            return_value=(b"", b"Error: No such container: test-suricata")
+        )
         with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
             status = self._run(manager.get_live_status())
-        assert status == {"available": False, "error": "Could not read Suricata's rules."}
+        assert status == {
+            "available": False,
+            "error": "Could not read Suricata's rules.",
+        }
 
     def test_docker_missing_is_unavailable(self, manager):
-        with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=OSError("no docker"))):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=OSError("no docker")),
+        ):
             status = self._run(manager.get_live_status())
         assert status["available"] is False
 
@@ -470,14 +492,21 @@ class TestLiveStatusScript:
         cron = tmp_path / "crontab"
         cron.write_text("0 0 * * * /bin/bash /usr/local/bin/suricata-update-rules.sh\n")
         script = (
-            _LIVE_STATUS_SCRIPT.replace("/var/lib/suricata/rules/suricata.rules", str(rules))
+            _LIVE_STATUS_SCRIPT.replace(
+                "/var/lib/suricata/rules/suricata.rules", str(rules)
+            )
             .replace("/etc/suricata/update.yaml", str(update))
             .replace("/etc/crontab", str(cron))
         )
-        out = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=True).stdout
+        out = subprocess.run(
+            ["sh", "-c", script], capture_output=True, text=True, check=True
+        ).stdout
         status = parse_live_status(out)
         assert status["enabled_rules"] == 2
         assert status["disabled_rules"] == 1
-        assert status["sources"] == ["https://a.example/r.tar.gz", "https://b.example/r.rules"]
+        assert status["sources"] == [
+            "https://a.example/r.tar.gz",
+            "https://b.example/r.rules",
+        ]
         assert status["schedule"] == "0 0 * * *"
         assert status["last_updated"]

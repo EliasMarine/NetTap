@@ -25,7 +25,9 @@ from api.alerts import (  # noqa: E402
 _HOUR = "2026-11-01T10:00:00.000Z"
 
 
-def _doc(sig: str, src: str = "203.0.113.1", dst: str = "192.168.1.10", sev: int = 2) -> dict:
+def _doc(
+    sig: str, src: str = "203.0.113.1", dst: str = "192.168.1.10", sev: int = 2
+) -> dict:
     return {"sig": sig, "src": src, "dst": dst, "sev": sev}
 
 
@@ -39,7 +41,9 @@ def _sig_aggs(docs: list[dict], aggs: dict) -> dict:
     if "by_severity" in aggs:
         out["by_severity"] = {"buckets": _top(Counter(d["sev"] for d in docs), 5)}
     if "over_time" in aggs:
-        out["over_time"] = {"buckets": [{"key_as_string": _HOUR, "doc_count": len(docs)}]}
+        out["over_time"] = {
+            "buckets": [{"key_as_string": _HOUR, "doc_count": len(docs)}]
+        }
     for name, field in (("by_src_ip", "src"), ("by_dst_ip", "dst")):
         if name in aggs:
             size = aggs[name]["terms"]["size"]
@@ -70,7 +74,11 @@ def _timeline(docs: list[dict], body: dict) -> dict:
     if "by_signature" in sub_aggs:  # old shape: top signatures per time bucket
         size = sub_aggs["by_signature"]["terms"]["size"]
         sigs = _top(Counter(d["sig"] for d in docs), size)
-        bucket = {"key_as_string": _HOUR, "doc_count": len(docs), "by_signature": {"buckets": sigs}}
+        bucket = {
+            "key_as_string": _HOUR,
+            "doc_count": len(docs),
+            "by_signature": {"buckets": sigs},
+        }
         return {"aggregations": {"over_time": {"buckets": [bucket]}}}
     names = _names(body["query"]["bool"]["filter"][1])
     mine = [d for d in docs if d["sig"] in names]
@@ -78,21 +86,29 @@ def _timeline(docs: list[dict], body: dict) -> dict:
     if "by_sub" in sub_aggs:
         per_sub = sub_aggs["by_sub"]["filters"]["filters"]
         bucket["by_sub"] = {
-            "buckets": {s: {"doc_count": sum(d["sig"] in _names(f) for d in mine)} for s, f in per_sub.items()}
+            "buckets": {
+                s: {"doc_count": sum(d["sig"] in _names(f) for d in mine)}
+                for s, f in per_sub.items()
+            }
         }
     return {"aggregations": {"over_time": {"buckets": [bucket]}}}
 
 
 def _ip_page(docs: list[dict], body: dict, comp: dict, sub: dict) -> dict:
     """Every source or destination IP of the queried signatures, split by severity filter."""
-    field = {"source.ip": "src", "destination.ip": "dst"}[comp["sources"][0]["ip"]["terms"]["field"]]
+    field = {"source.ip": "src", "destination.ip": "dst"}[
+        comp["sources"][0]["ip"]["terms"]["field"]
+    ]
     names = _names(body["query"]["bool"]["filter"][1])
     mine = [d for d in docs if d["sig"] in names]
     per_sev = sub["sev"]["filters"]["filters"]
 
     def bucket(ip: str) -> dict:
         hits = [d for d in mine if d[field] == ip]
-        sev = {s: {"doc_count": sum(d["sig"] in _names(f) for d in hits)} for s, f in per_sev.items()}
+        sev = {
+            s: {"doc_count": sum(d["sig"] in _names(f) for d in hits)}
+            for s, f in per_sev.items()
+        }
         return {"doc_count": len(hits), "sev": {"buckets": sev}}
 
     return _composite_page(sorted({d[field] for d in mine}), comp, bucket)
@@ -105,7 +121,12 @@ def _fake_client(docs: list[dict]) -> MagicMock:
             terms = aggs["by_signature"]
             top = Counter(d["sig"] for d in docs).most_common(terms["terms"]["size"])
             buckets = [
-                {"key": n, **_sig_aggs([d for d in docs if d["sig"] == n], terms.get("aggs", {}))}
+                {
+                    "key": n,
+                    **_sig_aggs(
+                        [d for d in docs if d["sig"] == n], terms.get("aggs", {})
+                    ),
+                }
                 for n, _ in top
             ]
             return {"aggregations": {"by_signature": {"buckets": buckets}}}
@@ -115,7 +136,9 @@ def _fake_client(docs: list[dict]) -> MagicMock:
         sub = aggs["all"].get("aggs") or {}
         if "sig" in comp["sources"][0]:
             keys = sorted({d["sig"] for d in docs})
-            return _composite_page(keys, comp, lambda k: _sig_aggs([d for d in docs if d["sig"] == k], sub))
+            return _composite_page(
+                keys, comp, lambda k: _sig_aggs([d for d in docs if d["sig"] == k], sub)
+            )
         if "ip" in comp["sources"][0]:
             return _ip_page(docs, body, comp, sub)
         raise AssertionError(f"unexpected query {json.dumps(body)[:200]}")
@@ -142,7 +165,11 @@ _MANY_SIGNATURES = [_doc(f"ET SCAN Probe {n:03d}") for n in range(600)] + [
 
 
 def test_categories_count_every_signature():
-    body = _get(handle_alerts_categories, _fake_client(_MANY_SIGNATURES), "/api/alerts/categories")
+    body = _get(
+        handle_alerts_categories,
+        _fake_client(_MANY_SIGNATURES),
+        "/api/alerts/categories",
+    )
     by_id = {c["id"]: c for c in body["categories"]}
 
     assert by_id["reconnaissance"]["count"] == 600  # was 499
@@ -153,11 +180,18 @@ def test_categories_count_every_signature():
 
 def test_category_detail_total_counts_every_signature():
     client = _fake_client(_MANY_SIGNATURES)
-    body = _get(handle_alert_category_detail, client, "/api/alerts/categories/reconnaissance", "reconnaissance")
+    body = _get(
+        handle_alert_category_detail,
+        client,
+        "/api/alerts/categories/reconnaissance",
+        "reconnaissance",
+    )
 
     assert body["stats"]["total"] == 600  # was 499
     assert sum(body["severity_breakdown"].values()) == 600
-    assert body["sub_categories"] == [{"id": "port_scan", "label": body["sub_categories"][0]["label"], "count": 600}]
+    assert body["sub_categories"] == [
+        {"id": "port_scan", "label": body["sub_categories"][0]["label"], "count": 600}
+    ]
 
 
 def test_category_timeline_totals_every_signature_in_a_bucket():
@@ -192,11 +226,22 @@ def test_category_detail_counts_every_source_and_target():
     """'ET DROP Dshield' fired by 400 scanners read as 50 sources (top 50 per signature)."""
     scanners = [f"198.51.{n // 250}.{n % 250}" for n in range(400)]
     docs = [_doc("ET DROP Dshield Block Listed Source", src=ip) for ip in scanners] + [
-        _doc("ET TROJAN Zeus", src="192.168.1.20", dst="203.0.113.9", sev=1) for _ in range(5)
+        _doc("ET TROJAN Zeus", src="192.168.1.20", dst="203.0.113.9", sev=1)
+        for _ in range(5)
     ]
-    body = _get(handle_alert_category_detail, _fake_client(docs), "/api/alerts/categories/malware_c2", "malware_c2")
+    body = _get(
+        handle_alert_category_detail,
+        _fake_client(docs),
+        "/api/alerts/categories/malware_c2",
+        "malware_c2",
+    )
 
-    assert body["stats"] == {"total": 405, "unique_sources": 401, "unique_targets": 2, "affected_devices": 403}
+    assert body["stats"] == {
+        "total": 405,
+        "unique_sources": 401,
+        "unique_targets": 2,
+        "affected_devices": 403,
+    }
     assert body["affected_devices"][0]["ip"] == "192.168.1.10"
     assert body["affected_devices"][0]["count"] == 400
     assert len(body["affected_devices"]) == 20
@@ -210,10 +255,17 @@ def test_device_severity_is_the_worst_signature_it_appears_in():
         _doc("ET DROP Dshield Block Listed Source", src="192.168.1.20", sev=3),
         _doc("ET DROP Dshield Block Listed Source", src="192.168.1.30", sev=3),
     ]
-    body = _get(handle_alert_category_detail, _fake_client(docs), "/api/alerts/categories/malware_c2", "malware_c2")
+    body = _get(
+        handle_alert_category_detail,
+        _fake_client(docs),
+        "/api/alerts/categories/malware_c2",
+        "malware_c2",
+    )
     severity = {d["ip"]: d["severity"] for d in body["affected_devices"]}
     by_sig = {s["signature"]: s["severity_label"] for s in body["top_signatures"]}
-    worst = min(by_sig.values(), key=["critical", "high", "medium", "low", "info"].index)
+    worst = min(
+        by_sig.values(), key=["critical", "high", "medium", "low", "info"].index
+    )
 
     assert severity["192.168.1.20"] == worst
     assert severity["192.168.1.30"] == by_sig["ET DROP Dshield Block Listed Source"]

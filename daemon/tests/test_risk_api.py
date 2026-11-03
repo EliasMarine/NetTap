@@ -26,7 +26,9 @@ def _alert_bodies(mock_search):
     bodies = []
     for c in mock_search.call_args_list:
         body = c.kwargs.get("body") or c[1].get("body")
-        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"].get("filter", []):
+        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"].get(
+            "filter", []
+        ):
             bodies.append(body)
     return bodies
 
@@ -109,7 +111,9 @@ def _make_network_stats_result(buckets=None):
         # OLD CODE START — #96: the baseline was a terms aggregation
         # "aggregations": {"devices": {"buckets": buckets}},
         # OLD CODE END
-        "aggregations": {"all": {"buckets": [{**b, "key": {"ip": b["key"]}} for b in buckets]}},
+        "aggregations": {
+            "all": {"buckets": [{**b, "key": {"ip": b["key"]}} for b in buckets]}
+        },
     }
 
 
@@ -169,7 +173,10 @@ class TestRiskScoresEndpoint(AioHTTPTestCase):
         # Suricata engine events are sensor noise, not the device's alerts (#60)
         bodies = _alert_bodies(self.mock_storage._client.search)
         self.assertEqual(len(bodies), 1)
-        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, bodies[0]["query"]["bool"]["must_not"])
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            bodies[0]["query"]["bool"]["must_not"],
+        )
 
     @unittest_run_loop
     async def test_scores_contain_required_fields(self):
@@ -312,7 +319,10 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
         self.assertIn("factors", data)
         bodies = _alert_bodies(self.mock_storage._client.search)
         self.assertEqual(len(bodies), 1)
-        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, bodies[0]["query"]["bool"]["must_not"])  # (#60)
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            bodies[0]["query"]["bool"]["must_not"],
+        )  # (#60)
 
     @unittest_run_loop
     async def test_single_device_not_found(self):
@@ -520,7 +530,6 @@ class TestRiskQueryConsistency(AioHTTPTestCase):
         )
         self.assertEqual(baseline_bool, list_bool)
 
-
     @unittest_run_loop
     async def test_single_counts_past_10000(self):
         """#83: without track_total_hits, hits.total stops at 10,000 (busy devices read 10,000)."""
@@ -571,16 +580,33 @@ def _risk_search(conns: dict[str, int], alerts: dict[str, int] | None = None):
     def search(index=None, body=None, **_kwargs):
         aggs = body.get("aggs", {})
         if "devices" in aggs:
-            busiest = sorted(conns, key=lambda ip: -conns[ip])[: aggs["devices"]["terms"]["size"]]
-            return {"hits": {"total": {"value": 0}}, "aggregations": {"devices": {"buckets": [bucket(ip) for ip in busiest]}}}
+            busiest = sorted(conns, key=lambda ip: -conns[ip])[
+                : aggs["devices"]["terms"]["size"]
+            ]
+            return {
+                "hits": {"total": {"value": 0}},
+                "aggregations": {
+                    "devices": {"buckets": [bucket(ip) for ip in busiest]}
+                },
+            }
         if "all" in aggs:
             composite = aggs["all"]["composite"]
             after = (composite.get("after") or {}).get("ip")
-            page = [ip for ip in sorted(conns) if after is None or ip > after][: composite["size"]]
-            return {"aggregations": {"all": {"buckets": [{**bucket(ip), "key": {"ip": ip}} for ip in page],
-                                             **({"after_key": {"ip": page[-1]}} if page else {})}}}
+            page = [ip for ip in sorted(conns) if after is None or ip > after][
+                : composite["size"]
+            ]
+            return {
+                "aggregations": {
+                    "all": {
+                        "buckets": [{**bucket(ip), "key": {"ip": ip}} for ip in page],
+                        **({"after_key": {"ip": page[-1]}} if page else {}),
+                    }
+                }
+            }
         if "by_ip" in aggs:
-            return _make_alert_search_result({ip: n for ip, n in alerts.items() if ip in conns})
+            return _make_alert_search_result(
+                {ip: n for ip, n in alerts.items() if ip in conns}
+            )
         # The single device's own connection and alert searches
         if {"term": {"event.dataset": "alert"}} in body["query"]["bool"]["filter"]:
             return _make_single_alert_result(total=0)
@@ -622,11 +648,15 @@ class TestRiskCoversEveryDevice(AioHTTPTestCase):
     async def test_single_baseline_is_every_device(self):
         self.mock_storage._client.search.side_effect = _risk_search(self.CONNS)
 
-        data = await (await self.client.request("GET", "/api/risk/scores/192.168.1.1")).json()
+        data = await (
+            await self.client.request("GET", "/api/risk/scores/192.168.1.1")
+        ).json()
 
         anomaly = next(f for f in data["factors"] if f["name"] == "connection_anomaly")
         # 100 conns vs 85 +/- 33.5 is normal; from the busiest 500 (stddev 0) it was "insufficient data"
-        self.assertEqual(anomaly["description"], "Connection count within normal range (100 conns)")
+        self.assertEqual(
+            anomaly["description"], "Connection count within normal range (100 conns)"
+        )
 
     @unittest_run_loop
     async def test_list_has_every_device_and_only_devices(self):
@@ -641,14 +671,21 @@ class TestRiskCoversEveryDevice(AioHTTPTestCase):
         data = await (await self.client.request("GET", "/api/risk/scores")).json()
 
         self.assertEqual(data["device_count"], 150)
-        self.assertEqual({d["ip"] for d in data["devices"]}, {f"192.168.1.{i + 1}" for i in range(150)})
+        self.assertEqual(
+            {d["ip"] for d in data["devices"]},
+            {f"192.168.1.{i + 1}" for i in range(150)},
+        )
 
     @unittest_run_loop
     async def test_limit_takes_the_highest_scores_of_every_device(self):
         """A quiet device with many alerts ranks first; the list used to score only the busiest."""
-        self.mock_storage._client.search.side_effect = _risk_search(self.CONNS, {"192.168.9.7": 20})
+        self.mock_storage._client.search.side_effect = _risk_search(
+            self.CONNS, {"192.168.9.7": 20}
+        )
 
-        data = await (await self.client.request("GET", "/api/risk/scores?limit=1")).json()
+        data = await (
+            await self.client.request("GET", "/api/risk/scores?limit=1")
+        ).json()
 
         self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.9.7"])
 
@@ -660,16 +697,27 @@ class TestRiskCoversEveryDevice(AioHTTPTestCase):
 
         def search(index=None, body=None, **kwargs):
             if "by_ip" in body.get("aggs", {}):
-                ips = next(f["terms"]["source.ip"] for f in body["query"]["bool"]["filter"] if "terms" in f)
+                ips = next(
+                    f["terms"]["source.ip"]
+                    for f in body["query"]["bool"]["filter"]
+                    if "terms" in f
+                )
                 asked.append(ips)
                 reply = answer(index=index, body=body, **kwargs)
                 buckets = reply["aggregations"]["by_ip"]["buckets"]
-                return {**reply, "aggregations": {"by_ip": {"buckets": [b for b in buckets if b["key"] in ips]}}}
+                return {
+                    **reply,
+                    "aggregations": {
+                        "by_ip": {"buckets": [b for b in buckets if b["key"] in ips]}
+                    },
+                }
             return answer(index=index, body=body, **kwargs)
 
         self.mock_storage._client.search.side_effect = search
         with patch("api.risk._ALERT_IP_CHUNK", 250):
-            data = await (await self.client.request("GET", "/api/risk/scores?limit=1")).json()
+            data = await (
+                await self.client.request("GET", "/api/risk/scores?limit=1")
+            ).json()
 
         self.assertEqual([len(ips) for ips in asked], [250, 250, 100])
         self.assertEqual(sorted(ip for ips in asked for ip in ips), sorted(self.CONNS))
@@ -687,12 +735,18 @@ def _port_search(ports_by_ip: dict[str, dict[int, int]]):
         top = sorted(ports, key=lambda port: -ports[port])[:50]
         return {
             "buckets": [{"key": port, "doc_count": ports[port]} for port in top],
-            "sum_other_doc_count": sum(n for port, n in ports.items() if port not in top),
+            "sum_other_doc_count": sum(
+                n for port, n in ports.items() if port not in top
+            ),
         }
 
     def device(ip, key):
         ports = ports_by_ip[ip]
-        return {**_make_device_bucket(ip, doc_count=sum(ports.values())), "key": key, "ports_used": ports_used(ports)}
+        return {
+            **_make_device_bucket(ip, doc_count=sum(ports.values())),
+            "key": key,
+            "ports_used": ports_used(ports),
+        }
 
     def composite_page(body):
         composite = body["aggs"]["all"]["composite"]
@@ -702,14 +756,37 @@ def _port_search(ports_by_ip: dict[str, dict[int, int]]):
             keys = [{"ip": ip} for ip in sorted(ports_by_ip)]
             make = lambda key: device(key["ip"], key)  # noqa: E731
         else:
-            ips = [c["terms"]["source.ip"] for c in bool_query["filter"] if "source.ip" in c.get("terms", {})][-1]
-            safe = [c["terms"]["destination.port"] for c in bool_query["must_not"] if "destination.port" in c.get("terms", {})][0]
-            keys = [{"ip": ip, "port": port} for ip in sorted(ips) for port in sorted(ports_by_ip[ip]) if port not in safe]
-            make = lambda key: {"key": key, "doc_count": ports_by_ip[key["ip"]][key["port"]]}  # noqa: E731
+            ips = [
+                c["terms"]["source.ip"]
+                for c in bool_query["filter"]
+                if "source.ip" in c.get("terms", {})
+            ][-1]
+            safe = [
+                c["terms"]["destination.port"]
+                for c in bool_query["must_not"]
+                if "destination.port" in c.get("terms", {})
+            ][0]
+            keys = [
+                {"ip": ip, "port": port}
+                for ip in sorted(ips)
+                for port in sorted(ports_by_ip[ip])
+                if port not in safe
+            ]
+            make = lambda key: {  # noqa: E731
+                "key": key,
+                "doc_count": ports_by_ip[key["ip"]][key["port"]],
+            }
         after = composite.get("after")
         start = keys.index(after) + 1 if after else 0
         page = keys[start : start + composite["size"]]
-        return {"aggregations": {"all": {"buckets": [make(k) for k in page], **({"after_key": page[-1]} if page else {})}}}
+        return {
+            "aggregations": {
+                "all": {
+                    "buckets": [make(k) for k in page],
+                    **({"after_key": page[-1]} if page else {}),
+                }
+            }
+        }
 
     def search(index=None, body=None, **_kwargs):
         aggs = body.get("aggs", {})
@@ -720,10 +797,15 @@ def _port_search(ports_by_ip: dict[str, dict[int, int]]):
         filters = body["query"]["bool"]["filter"]
         if {"term": {"event.dataset": "alert"}} in filters:
             return _make_single_alert_result(total=0)
-        ip = next(c["term"]["source.ip"] for c in filters if "source.ip" in c.get("term", {}))
+        ip = next(
+            c["term"]["source.ip"] for c in filters if "source.ip" in c.get("term", {})
+        )
         ports = ports_by_ip[ip]
         single = _make_single_conn_result(total=sum(ports.values()))
-        return {**single, "aggregations": {**single["aggregations"], "ports_used": ports_used(ports)}}
+        return {
+            **single,
+            "aggregations": {**single["aggregations"], "ports_used": ports_used(ports)},
+        }
 
     return search
 
@@ -735,7 +817,11 @@ class TestRiskPortsAreComplete(AioHTTPTestCase):
     CONSOLE = {443: 500, **{20_000 + i: 10 for i in range(59)}, 4444: 1}
     # A torrent host: 70 peer ports, none on the suspicious list
     TORRENT = {443: 500, **{40_000 + i: 10 for i in range(70)}}
-    PORTS = {"192.168.1.20": CONSOLE, "192.168.1.30": TORRENT, "192.168.1.40": {443: 100, 53: 20}}
+    PORTS = {
+        "192.168.1.20": CONSOLE,
+        "192.168.1.30": TORRENT,
+        "192.168.1.40": {443: 100, 53: 20},
+    }
 
     def setUp(self):
         self.mock_storage = _make_mock_storage()
@@ -759,23 +845,44 @@ class TestRiskPortsAreComplete(AioHTTPTestCase):
         by_ip = {d["ip"]: self._port_factor(d) for d in data["devices"]}
         # The top 50 left 4444 out: 8 points and "49 unusual port(s) detected"
         self.assertEqual(by_ip["192.168.1.20"]["score"], 15)
-        self.assertEqual(by_ip["192.168.1.20"]["description"], "Known suspicious ports used: 4444")
-        self.assertEqual(by_ip["192.168.1.30"]["description"], "70 unusual port(s) detected")
-        self.assertEqual(by_ip["192.168.1.40"]["description"], "Only common protocols/ports used")
+        self.assertEqual(
+            by_ip["192.168.1.20"]["description"], "Known suspicious ports used: 4444"
+        )
+        self.assertEqual(
+            by_ip["192.168.1.30"]["description"], "70 unusual port(s) detected"
+        )
+        self.assertEqual(
+            by_ip["192.168.1.40"]["description"], "Only common protocols/ports used"
+        )
         # Only the two devices whose list was cut short are read in full
         port_bodies = [
-            c.kwargs["body"] for c in self.mock_storage._client.search.call_args_list
-            if len(c.kwargs["body"].get("aggs", {}).get("all", {}).get("composite", {}).get("sources", [])) == 2
+            c.kwargs["body"]
+            for c in self.mock_storage._client.search.call_args_list
+            if len(
+                c.kwargs["body"]
+                .get("aggs", {})
+                .get("all", {})
+                .get("composite", {})
+                .get("sources", [])
+            )
+            == 2
         ]
-        self.assertIn({"terms": {"source.ip": ["192.168.1.20", "192.168.1.30"]}}, port_bodies[0]["query"]["bool"]["filter"])
+        self.assertIn(
+            {"terms": {"source.ip": ["192.168.1.20", "192.168.1.30"]}},
+            port_bodies[0]["query"]["bool"]["filter"],
+        )
 
     @unittest_run_loop
     async def test_single_sees_a_rare_suspicious_port(self):
         self.mock_storage._client.search.side_effect = _port_search(self.PORTS)
 
-        data = await (await self.client.request("GET", "/api/risk/scores/192.168.1.20")).json()
+        data = await (
+            await self.client.request("GET", "/api/risk/scores/192.168.1.20")
+        ).json()
 
-        self.assertEqual(self._port_factor(data)["description"], "Known suspicious ports used: 4444")
+        self.assertEqual(
+            self._port_factor(data)["description"], "Known suspicious ports used: 4444"
+        )
 
 
 class TestRiskRouteRegistration(AioHTTPTestCase):

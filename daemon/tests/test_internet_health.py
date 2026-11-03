@@ -525,7 +525,9 @@ class TestPingThatCouldNotRunIsUnknown(unittest.TestCase):
         self.assertEqual(self._loss(_Ping(1, out=out)), 100.0)
 
     def test_run_check_reports_unknown_with_the_error(self):
-        monitor = InternetHealthMonitor(ping_targets=["8.8.8.8"], dns_targets=["example.com"])
+        monitor = InternetHealthMonitor(
+            ping_targets=["8.8.8.8"], dns_targets=["example.com"]
+        )
 
         async def no_latency(target, timeout=5.0):
             return None
@@ -547,14 +549,18 @@ class TestPingThatCouldNotRunIsUnknown(unittest.TestCase):
         monitor = InternetHealthMonitor()
         monitor._history.append(HealthCheck("ts1", 10.0, 20.0, 0.0, "healthy"))
         monitor._history.append(HealthCheck("ts2", None, None, 100.0, "down"))
-        monitor._history.append(HealthCheck("ts3", None, 20.0, None, "unknown", "no ping"))
+        monitor._history.append(
+            HealthCheck("ts3", None, 20.0, None, "unknown", "no ping")
+        )
         stats = monitor.get_statistics()
         self.assertEqual(stats["uptime_pct"], 50.0)
         self.assertEqual(stats["avg_packet_loss_pct"], 50.0)
 
     def test_only_unknown_checks_give_no_uptime(self):
         monitor = InternetHealthMonitor()
-        monitor._history.append(HealthCheck("ts1", None, 20.0, None, "unknown", "no ping"))
+        monitor._history.append(
+            HealthCheck("ts1", None, 20.0, None, "unknown", "no ping")
+        )
         stats = monitor.get_statistics()
         self.assertIsNone(stats["uptime_pct"])
         self.assertIsNone(stats["avg_packet_loss_pct"])

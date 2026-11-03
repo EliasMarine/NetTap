@@ -298,13 +298,17 @@ async def smart_loop(
 LAN_REDETECT_INTERVAL_S = 3600
 
 
-async def _redetect_lan(app: Mapping[str, Any], loop: asyncio.AbstractEventLoop) -> None:
+async def _redetect_lan(
+    app: Mapping[str, Any], loop: asyncio.AbstractEventLoop
+) -> None:
     """Pick up a LAN subnet first seen since startup before the registry pass (#116)."""
     current, storage = app.get("lan_filter"), app.get("storage")
     if current is None or storage is None:
         return
     try:
-        new = await loop.run_in_executor(None, changed_lan_filter, storage._client, current)
+        new = await loop.run_in_executor(
+            None, changed_lan_filter, storage._client, current
+        )
     except Exception:
         logger.exception("LAN re-detection failed; keeping the current LAN subnets")
         return
@@ -330,7 +334,10 @@ async def device_registry_loop(
     if registry is not None:
         try:
             fixed = await loop.run_in_executor(None, registry.correct_last_seen)
-            logger.info("Device registry: %d last-seen times were later than the last record; corrected", fixed)
+            logger.info(
+                "Device registry: %d last-seen times were later than the last record; corrected",
+                fixed,
+            )
         except Exception:
             logger.exception("Device registry: last-seen correction failed")
     next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S  # startup just detected them

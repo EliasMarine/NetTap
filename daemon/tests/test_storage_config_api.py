@@ -405,7 +405,9 @@ class TestStatusShowsUnappliedSave(_IlmTestCase):
         return (await resp.json())["ilm_status"]
 
     async def test_failed_save_after_success_is_not_synced(self):
-        with patch("api.server.apply_ilm_policies_from_config", return_value=OK_RESULTS):
+        with patch(
+            "api.server.apply_ilm_policies_from_config", return_value=OK_RESULTS
+        ):
             await self._save(SAVE_A)
         self.assertTrue((await self._ilm_status())["synced"])
 

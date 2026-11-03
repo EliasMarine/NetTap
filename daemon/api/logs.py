@@ -779,11 +779,19 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
     try:
         body["aggs"] = {
             "timeline": time_slots(
-                from_ts, to_ts, interval, aggs={"by_type": {"terms": {"field": "event.dataset", "size": 20}}}
+                from_ts,
+                to_ts,
+                interval,
+                aggs={"by_type": {"terms": {"field": "event.dataset", "size": 20}}},
             )
         }
     except ValueError:
-        return web.json_response({"error": f"{interval} is too fine for this time range; choose a larger interval"}, status=400)
+        return web.json_response(
+            {
+                "error": f"{interval} is too fine for this time range; choose a larger interval"
+            },
+            status=400,
+        )
 
     try:
         loop = asyncio.get_running_loop()

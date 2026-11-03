@@ -86,7 +86,13 @@ async def handle_beaconing(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     return web.json_response(
-        {"from": from_ts, "to": to_ts, "beacons": beacons, "total": len(beacons), "complete": complete}
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "beacons": beacons,
+            "total": len(beacons),
+            "complete": complete,
+        }
     )
 
 
@@ -107,7 +113,13 @@ async def handle_lateral_movement(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     return web.json_response(
-        {"from": from_ts, "to": to_ts, "movements": movements, "total": len(movements), "complete": complete}
+        {
+            "from": from_ts,
+            "to": to_ts,
+            "movements": movements,
+            "total": len(movements),
+            "complete": complete,
+        }
     )
 
 

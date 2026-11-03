@@ -318,7 +318,6 @@ class TestLiveDashboardQueries(unittest.TestCase):
         self.assertEqual(result["stats"]["connections_in_window"], 1690)
 
 
-
 class TestLiveQueryFailures(unittest.TestCase):
     """#96: a failed live query raises; the handlers answer 502 instead of zeros or "no alert"."""
 
@@ -368,8 +367,14 @@ class TestLiveQueryFailures(unittest.TestCase):
         from api.live import handle_live_connections
 
         app = web.Application()
-        app["live_tracker"] = LiveConnectionTracker(client=self._client(OpenSearchException("timeout")))
-        resp = asyncio.run(handle_live_connections(make_mocked_request("GET", "/api/live/connections", app=app)))
+        app["live_tracker"] = LiveConnectionTracker(
+            client=self._client(OpenSearchException("timeout"))
+        )
+        resp = asyncio.run(
+            handle_live_connections(
+                make_mocked_request("GET", "/api/live/connections", app=app)
+            )
+        )
         self.assertEqual(resp.status, 502)
 
 

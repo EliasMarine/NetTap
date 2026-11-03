@@ -211,11 +211,14 @@ def _lan_device_buckets(
         page_size=page_size,
     )
     if not complete:
-        logger.warning("Device buckets stopped at %d IPs; figures cover those only", len(buckets))
+        logger.warning(
+            "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+        )
     return [
         {**b, "key": b["key"]["ip"]}
         for b in buckets
-        if b.get("doc_count", 0) >= _MIN_CONNECTIONS and not _is_skipped_device_ip(b["key"]["ip"])
+        if b.get("doc_count", 0) >= _MIN_CONNECTIONS
+        and not _is_skipped_device_ip(b["key"]["ip"])
     ]
 
 
@@ -238,26 +241,62 @@ def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
 # Vendors that make one kind of device, as lowercase substrings of the IEEE vendor name.
 # Mixed vendors (Apple, Google, Samsung, Amazon, TP-Link) are left out on purpose.
 _VENDOR_CATEGORIES: tuple[tuple[str, str], ...] = (
-    ("philips lighting", "iot"), ("signify", "iot"), ("tuya", "iot"), ("espressif", "iot"),
-    ("shelly", "iot"), ("lifx", "iot"), ("ecobee", "iot"), ("wyze", "iot"), ("itead", "iot"),
-    ("nest labs", "iot"), ("ring llc", "iot"), ("belkin", "iot"),
-    ("sonos", "media"), ("roku", "media"),
-    ("ubiquiti", "infrastructure"), ("cisco", "infrastructure"), ("netgear", "infrastructure"),
-    ("aruba", "infrastructure"), ("juniper", "infrastructure"), ("mikrotik", "infrastructure"),
+    ("philips lighting", "iot"),
+    ("signify", "iot"),
+    ("tuya", "iot"),
+    ("espressif", "iot"),
+    ("shelly", "iot"),
+    ("lifx", "iot"),
+    ("ecobee", "iot"),
+    ("wyze", "iot"),
+    ("itead", "iot"),
+    ("nest labs", "iot"),
+    ("ring llc", "iot"),
+    ("belkin", "iot"),
+    ("sonos", "media"),
+    ("roku", "media"),
+    ("ubiquiti", "infrastructure"),
+    ("cisco", "infrastructure"),
+    ("netgear", "infrastructure"),
+    ("aruba", "infrastructure"),
+    ("juniper", "infrastructure"),
+    ("mikrotik", "infrastructure"),
     # Arcadyan left out: it makes ISP routers but also the Wi-Fi modules in LG TVs ("LGwebOSTV")
     ("routerboard", "infrastructure"),
-    ("synology", "infrastructure"), ("qnap", "infrastructure"),
+    ("synology", "infrastructure"),
+    ("qnap", "infrastructure"),
     ("western digital", "infrastructure"),
-    ("raspberry pi", "computer"), ("proxmox", "computer"), ("micro-star", "computer"),
-    ("jwipc", "computer"), ("dell", "computer"), ("lenovo", "computer"),
+    ("raspberry pi", "computer"),
+    ("proxmox", "computer"),
+    ("micro-star", "computer"),
+    ("jwipc", "computer"),
+    ("dell", "computer"),
+    ("lenovo", "computer"),
 )
 _PHONE_HOSTNAME_HINTS = ("iphone", "ipad", "android", "galaxy", "pixel")
-_COMPUTER_HOSTNAME_HINTS = ("macbook", "imac", "mac-studio", "mac-mini", "desktop", "laptop")
+_COMPUTER_HOSTNAME_HINTS = (
+    "macbook",
+    "imac",
+    "mac-studio",
+    "mac-mini",
+    "desktop",
+    "laptop",
+)
 # Checked first: "nintendo-switch" must not match the IoT hint "switch", and a
 # Chromecast's UA says "Linux"
 _MEDIA_HOSTNAME_HINTS = (
-    "xbox", "playstation", "ps4", "ps5", "nintendo", "roku", "appletv", "apple-tv",
-    "chromecast", "firetv", "fire-tv", "webostv",
+    "xbox",
+    "playstation",
+    "ps4",
+    "ps5",
+    "nintendo",
+    "roku",
+    "appletv",
+    "apple-tv",
+    "chromecast",
+    "firetv",
+    "fire-tv",
+    "webostv",
 )
 
 
@@ -457,11 +496,17 @@ async def handle_device_list(request: web.Request) -> web.Response:
         if sort_field == "alerts":
             # Every device: alert counts aren't in conn records, so the top `limit` is picked below
             buckets = _lan_device_buckets(
-                client, request.app, from_ts, to_ts, aggs=query["aggs"]["devices"]["aggs"]
+                client,
+                request.app,
+                from_ts,
+                to_ts,
+                aggs=query["aggs"]["devices"]["aggs"],
             )
         else:
             result = client.search(index=NETWORK_INDEX, body=query)
-            buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+            buckets = (
+                result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+            )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices list: %s", exc)
         return web.json_response(
@@ -512,30 +557,41 @@ async def handle_device_list(request: web.Request) -> web.Response:
                     "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
-            "aggs": {
-                "by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}
-            },
+            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
         }
 
         try:
             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
         except OpenSearchException as exc:
             logger.error("Alert count query failed in devices list: %s", exc)
-            return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
-        for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+            return web.json_response(
+                {"error": f"OpenSearch query failed: {exc}"}, status=502
+            )
+        for ab in (
+            alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+        ):
             alert_counts[ab["key"]] = ab["doc_count"]
 
     if sort_field == "alerts":
         # Bytes (largest first) breaks ties, as the bytes-ordered list did before
-        by_bytes = sorted(buckets, key=lambda b: b.get("total_bytes", {}).get("value", 0) or 0, reverse=True)
+        by_bytes = sorted(
+            buckets,
+            key=lambda b: b.get("total_bytes", {}).get("value", 0) or 0,
+            reverse=True,
+        )
         buckets = sorted(
-            by_bytes, key=lambda b: alert_counts.get(b["key"], 0), reverse=(sort_order == "desc")
+            by_bytes,
+            key=lambda b: alert_counts.get(b["key"], 0),
+            reverse=(sort_order == "desc"),
         )[:limit]
 
     # Build device list with enrichment — skip broadcast/gateway IPs
     # Fingerprint lookups for every device at once (#21: 4 round trips per device before)
     lookups = fingerprint.lookup_many(
-        client, [b["key"] for b in buckets if not _is_skipped_device_ip(b["key"])], from_ts, to_ts
+        client,
+        [b["key"] for b in buckets if not _is_skipped_device_ip(b["key"])],
+        from_ts,
+        to_ts,
     )
     devices = []
     for b in buckets:
@@ -724,7 +780,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 #     "extended_bounds": {"min": from_ts, "max": to_ts},
                 # },
                 # OLD CODE END
-                **time_slots(from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)),  # at most ~720 slots
+                **time_slots(
+                    from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)
+                ),  # at most ~720 slots
                 "aggs": {
                     "bytes": {
                         "sum": {
@@ -761,7 +819,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     unique_dest_count = int(aggs.get("unique_destinations", {}).get("value", 0) or 0)
     all_dests = aggs.get("top_destinations", {})
     if all_dests.get("buckets") and not all_dests.get("sum_other_doc_count"):
-        unique_dest_count = len(all_dests["buckets"])  # #90: exact; the estimate stays past _ALL_TERMS
+        unique_dest_count = len(
+            all_dests["buckets"]
+        )  # #90: exact; the estimate stays past _ALL_TERMS
 
     # Top services: strip ASN prefix and merge duplicates
     svc_merged: dict[str, dict] = {}
@@ -781,7 +841,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     # OLD CODE START — #96: sorted the 10 ASNs with the most connections
     # top_services_list.sort(key=lambda s: s["bytes"], reverse=True)
     # OLD CODE END
-    top_services_list = sorted(top_services_list, key=lambda s: s["bytes"], reverse=True)[:10]
+    top_services_list = sorted(
+        top_services_list, key=lambda s: s["bytes"], reverse=True
+    )[:10]
 
     first_seen = aggs.get("first_seen", {}).get("value_as_string", "")
     last_seen = aggs.get("last_seen", {}).get("value_as_string", "")
@@ -800,7 +862,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     ]
 
     # Bandwidth series
-    bw_buckets = histogram_buckets(aggs.get("bandwidth_series"))  # date_histogram before #120
+    bw_buckets = histogram_buckets(
+        aggs.get("bandwidth_series")
+    )  # date_histogram before #120
     bandwidth_series = [
         {
             "timestamp": bwb.get("key_as_string", bwb.get("key")),
@@ -825,7 +889,15 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                 "must_not": DNS_LOOKUP_EXCLUSION,
             }
         },
-        "aggs": {"dns_queries": {"terms": {"field": "zeek.dns.query", "size": 50, "shard_size": _ALL_TERMS}}},
+        "aggs": {
+            "dns_queries": {
+                "terms": {
+                    "field": "zeek.dns.query",
+                    "size": 50,
+                    "shard_size": _ALL_TERMS,
+                }
+            }
+        },
     }
 
     # OLD CODE START — #96: a failure showed the device as having made no DNS queries
@@ -839,7 +911,9 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         dns_result = client.search(index=NETWORK_INDEX, body=dns_query)
     except OpenSearchException as exc:
         logger.error("DNS query lookup failed for %s: %s", ip, exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     dns_buckets = (
         dns_result.get("aggregations", {}).get("dns_queries", {}).get("buckets", [])
     )
@@ -883,12 +957,12 @@ async def handle_device_detail(request: web.Request) -> web.Response:
         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
     except OpenSearchException as exc:
         logger.error("Alert count lookup failed for %s: %s", ip, exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     alert_total = alert_result.get("hits", {}).get("total", {})
     alert_count = (
-        alert_total.get("value", 0)
-        if isinstance(alert_total, dict)
-        else alert_total
+        alert_total.get("value", 0) if isinstance(alert_total, dict) else alert_total
     )
 
     # Passive fingerprinting enrichment
@@ -1001,7 +1075,9 @@ async def handle_device_connections(request: web.Request) -> web.Response:
             # OLD CODE START — #85: pages past OpenSearch's 10,000-result window came back empty
             # "total_pages": (total + size - 1) // size if size > 0 else 0,
             # OLD CODE END
-            "total_pages": min(-(-total // size), _RESULT_WINDOW // size) if size > 0 else 0,
+            "total_pages": min(-(-total // size), _RESULT_WINDOW // size)
+            if size > 0
+            else 0,
             "connections": connections,
         }
     )
@@ -1191,7 +1267,11 @@ async def handle_device_ports(request: web.Request) -> web.Response:
         },
         "aggs": {
             "top_ports": {
-                "terms": {"field": "destination.port", "size": 20, "shard_size": _ALL_TERMS},
+                "terms": {
+                    "field": "destination.port",
+                    "size": 20,
+                    "shard_size": _ALL_TERMS,
+                },
             }
         },
     }

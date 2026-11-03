@@ -21,7 +21,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from services.tshark_service import bounded_exec, filter_check_cmd, raise_filter_check_failure
+from services.tshark_service import (
+    bounded_exec,
+    filter_check_cmd,
+    raise_filter_check_failure,
+)
 
 logger = logging.getLogger("nettap.services.pcap_search")
 
@@ -528,7 +532,9 @@ class PcapSearchService:
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
-        raise_filter_check_failure(proc.returncode, stderr.decode(errors="replace"), ValueError)
+        raise_filter_check_failure(
+            proc.returncode, stderr.decode(errors="replace"), ValueError
+        )
 
     # ------------------------------------------------------------------
     # Download (merge + filter)

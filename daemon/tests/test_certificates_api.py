@@ -6,7 +6,11 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
 from api.certificates import register_certificate_routes
-from services.cert_monitor import CertificateMonitor, CertQueryFailed, CertStatsUnavailable
+from services.cert_monitor import (
+    CertificateMonitor,
+    CertQueryFailed,
+    CertStatsUnavailable,
+)
 
 
 class TestCertStatsEndpoint(AioHTTPTestCase):

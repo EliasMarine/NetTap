@@ -44,11 +44,14 @@ def hit_time(hit: dict) -> str | None:
 def _later(current: str | None, seen_at: str) -> str:
     """The later of a stored last_seen and a record time; an unreadable stored value gives way."""
     try:
-        if current and datetime.fromisoformat(current) >= datetime.fromisoformat(seen_at):
+        if current and datetime.fromisoformat(current) >= datetime.fromisoformat(
+            seen_at
+        ):
             return current
     except (TypeError, ValueError):
         pass
     return seen_at
+
 
 DEVICES_INDEX = "nettap-devices"
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
@@ -264,7 +267,11 @@ class DeviceRegistry:
             #     index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category}, refresh="wait_for"
             # )
             # OLD CODE END
-            self._client.index(index=DEVICES_INDEX, id=device["mac"], body={**device, "category": category})
+            self._client.index(
+                index=DEVICES_INDEX,
+                id=device["mac"],
+                body={**device, "category": category},
+            )
             return True
         except OpenSearchException as exc:
             logger.error("Failed to set category on %s: %s", device["mac"], exc)
@@ -286,20 +293,35 @@ class DeviceRegistry:
                 continue
             body = {
                 "size": 0,
-                "query": {"bool": {
-                    "should": [{"terms": {"source.ip": device.get("ips") or []}}, {"term": {"source.mac": mac.lower()}}],
-                    "minimum_should_match": 1,
-                }},
+                "query": {
+                    "bool": {
+                        "should": [
+                            {"terms": {"source.ip": device.get("ips") or []}},
+                            {"term": {"source.mac": mac.lower()}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
                 "aggs": {"newest": {"max": {"field": "@timestamp"}}},
             }
             reply = self._client.search(index=NETWORK_INDEX, body=body)
-            newest = record_time((reply.get("aggregations") or {}).get("newest", {}).get("value"))
+            newest = record_time(
+                (reply.get("aggregations") or {}).get("newest", {}).get("value")
+            )
             if newest is None or _later(newest, stored) == newest:
                 continue  # last_seen is no later than the newest record
             first = device.get("first_seen")
-            self._client.index(index=DEVICES_INDEX, id=mac, body={
-                **device, "last_seen": newest, "first_seen": newest if not first or _later(first, newest) == first else first,
-            })
+            self._client.index(
+                index=DEVICES_INDEX,
+                id=mac,
+                body={
+                    **device,
+                    "last_seen": newest,
+                    "first_seen": newest
+                    if not first or _later(first, newest) == first
+                    else first,
+                },
+            )
             fixed += 1
         return fixed
 
@@ -325,7 +347,9 @@ class DeviceRegistry:
                 # OLD CODE START — wait_for per write (see register_device)
                 # self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}, refresh="wait_for")
                 # OLD CODE END
-                self._client.index(index=DEVICES_INDEX, id=mac, body={**device, "ips": keep})
+                self._client.index(
+                    index=DEVICES_INDEX, id=mac, body={**device, "ips": keep}
+                )
                 count += 1
             except OpenSearchException as exc:
                 logger.error("Failed to drop moved IPs from %s: %s", mac, exc)
@@ -353,8 +377,17 @@ class DeviceRegistry:
                 else:
                     merged = {
                         **real,
-                        "ips": list(dict.fromkeys((real.get("ips") or []) + (device.get("ips") or []))),
-                        "hostnames": list(dict.fromkeys((real.get("hostnames") or []) + (device.get("hostnames") or []))),
+                        "ips": list(
+                            dict.fromkeys(
+                                (real.get("ips") or []) + (device.get("ips") or [])
+                            )
+                        ),
+                        "hostnames": list(
+                            dict.fromkeys(
+                                (real.get("hostnames") or [])
+                                + (device.get("hostnames") or [])
+                            )
+                        ),
                     }
                 self._client.index(index=DEVICES_INDEX, id=mac, body=merged)
                 self._client.delete(index=DEVICES_INDEX, id=long_mac)
@@ -443,7 +476,8 @@ class DeviceRegistry:
     def count_first_seen_since(self, since: str) -> int:
         """How many devices NetTap first saw at or after `since` (an ISO timestamp)."""
         result = self._client.count(
-            index=DEVICES_INDEX, body={"query": {"range": {"first_seen": {"gte": since}}}}
+            index=DEVICES_INDEX,
+            body={"query": {"range": {"first_seen": {"gte": since}}}},
         )
         return int(result.get("count", 0))
 
@@ -515,7 +549,12 @@ class DeviceRegistry:
                 # its #1 read 673 KB and its #8 507 MB)
                 "top_destinations": {
                     # #90: ordered by a sum, so each shard must return every destination to rank exactly
-                    "terms": {"field": "destination.ip", "size": 20, "order": {"bytes": "desc"}, "shard_size": 10_000},
+                    "terms": {
+                        "field": "destination.ip",
+                        "size": 20,
+                        "order": {"bytes": "desc"},
+                        "shard_size": 10_000,
+                    },
                     "aggs": {
                         "bytes": {
                             "sum": {
@@ -574,7 +613,9 @@ class DeviceRegistry:
             "connection_count": connection_count,
             "protocols": protocols,
             # the shape the MAC page reads; `protocols` stays for other callers
-            "top_protocols": [{"name": b["key"], "count": b["doc_count"]} for b in protocol_buckets],
+            "top_protocols": [
+                {"name": b["key"], "count": b["doc_count"]} for b in protocol_buckets
+            ],
             "top_destinations": top_destinations,
         }
 
@@ -735,7 +776,9 @@ class DeviceRegistry:
                 # OLD CODE END
                 zeek_dhcp = src.get("zeek", {}).get("dhcp", {})
                 ip = zeek_dhcp.get("assigned_ip") or src.get("source", {}).get("ip")
-                if ip == "0.0.0.0":  # a DISCOVER/REQUEST from a client with no address yet
+                if (
+                    ip == "0.0.0.0"
+                ):  # a DISCOVER/REQUEST from a client with no address yet
                     ip = None
                 hostname = zeek_dhcp.get("host_name")
                 # vendor_class not reliably available in Arkime DHCP data
@@ -747,7 +790,13 @@ class DeviceRegistry:
                 if vendor_class:
                     metadata["vendor_class"] = vendor_class
 
-                self.register_device(mac=mac, ip=ip, source="dhcp", metadata=metadata, seen_at=hit_time(hit))
+                self.register_device(
+                    mac=mac,
+                    ip=ip,
+                    source="dhcp",
+                    metadata=metadata,
+                    seen_at=hit_time(hit),
+                )
                 count += 1
 
         except OpenSearchException as exc:
@@ -957,7 +1006,13 @@ class DeviceRegistry:
                     if parts:
                         metadata["hostname"] = parts[0].replace("-", " ")
 
-                self.register_device(mac=mac, ip=ip, source="ssdp", metadata=metadata, seen_at=hit_time(hit))
+                self.register_device(
+                    mac=mac,
+                    ip=ip,
+                    source="ssdp",
+                    metadata=metadata,
+                    seen_at=hit_time(hit),
+                )
                 count += 1
 
         except OpenSearchException as exc:

@@ -1008,7 +1008,9 @@ def _window_hours(from_ts: str, to_ts: str) -> tuple[float, bool]:
         end = datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
     except ValueError:
         return 24.0, False
-    start, end = (t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in (start, end))
+    start, end = (
+        t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in (start, end)
+    )
     live = abs((datetime.now(timezone.utc) - end).total_seconds()) <= 15 * 60
     return max((end - start).total_seconds() / 3600, 1e-9), live
 
@@ -1082,7 +1084,9 @@ def _save_baselines(data: dict) -> None:
 #         "is_anomalous": deviation > 2.0,
 #     }
 # OLD CODE END
-_MIN_BASELINE_HOURS = 6  # earlier hours of the same window length before a deviation is shown
+_MIN_BASELINE_HOURS = (
+    6  # earlier hours of the same window length before a deviation is shown
+)
 
 
 def update_baseline(
@@ -1103,10 +1107,16 @@ def update_baseline(
     rate = current_summary.get("total_events", 0) / max(window_hours, 1e-9)
 
     # Per-request points from before #95 have no "hour" and are dropped
-    history = [h for h in _load_baselines().get("history", []) if "hour" in h and h["hour"] >= hours_kept_from]
+    history = [
+        h
+        for h in _load_baselines().get("history", [])
+        if "hour" in h and h["hour"] >= hours_kept_from
+    ]
     same_window = [h for h in history if h.get("window_hours") == window]
     earlier = [h for h in same_window if h["hour"] != hour]
-    if record and len(earlier) == len(same_window):  # nothing recorded for this hour yet
+    if record and len(earlier) == len(
+        same_window
+    ):  # nothing recorded for this hour yet
         snapshot = {
             "hour": hour,
             "window_hours": window,
@@ -1217,7 +1227,13 @@ _GROUP_PAGE_SIZE = 1_000
 # shortcut: stops with a warning at all_buckets' MAX_BUCKETS (500,000 groups); raise both together
 _MAX_GROUP_PAGES = MAX_BUCKETS // _GROUP_PAGE_SIZE
 # Sample fields read by _normalize_alert_source and get_smart_alerts; the rest is not fetched
-_SAMPLE_FIELDS = ["alert", "rule", "suricata.alert", "suricata.severity", "destination.port"]
+_SAMPLE_FIELDS = [
+    "alert",
+    "rule",
+    "suricata.alert",
+    "suricata.severity",
+    "destination.port",
+]
 
 
 def _all_composite_buckets(client, query: dict) -> list[dict]:
@@ -1555,7 +1571,11 @@ async def get_smart_alert_summary(
     # but not recorded (#95)
     window_hours, live = _window_hours(from_ts, to_ts)
     try:
-        baseline = None if device_ip else update_baseline(summary_for_baseline, window_hours, record=live)
+        baseline = (
+            None
+            if device_ip
+            else update_baseline(summary_for_baseline, window_hours, record=live)
+        )
     except Exception:
         logger.warning("Baseline update failed", exc_info=True)
         baseline = None

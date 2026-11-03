@@ -27,7 +27,10 @@ def _fake_ip(argv, **_kw):
 
 
 def _detect(env, fallback=""):
-    with patch.dict(os.environ, env, clear=False), patch("subprocess.run", side_effect=_fake_ip):
+    with (
+        patch.dict(os.environ, env, clear=False),
+        patch("subprocess.run", side_effect=_fake_ip),
+    ):
         return detect_appliance_ip(fallback)
 
 
@@ -37,7 +40,9 @@ class TestDetectApplianceIp(unittest.TestCase):
         self.assertEqual(_detect(env, fallback="eno1"), "192.168.1.199")
 
     def test_mgmt_ip_this_host_holds_is_used(self):
-        self.assertEqual(_detect({"MGMT_IP": "192.168.1.199", "MGMT_INTERFACE": ""}), "192.168.1.199")
+        self.assertEqual(
+            _detect({"MGMT_IP": "192.168.1.199", "MGMT_INTERFACE": ""}), "192.168.1.199"
+        )
 
     def test_mgmt_interface_beats_the_capture_config(self):
         env = {"MGMT_IP": "", "MGMT_INTERFACE": "eno1"}
@@ -48,7 +53,10 @@ class TestDetectApplianceIp(unittest.TestCase):
 
     def test_mgmt_ip_is_trusted_when_addresses_cannot_be_listed(self):
         env = {"MGMT_IP": "10.1.2.3", "MGMT_INTERFACE": ""}
-        with patch.dict(os.environ, env), patch("subprocess.run", side_effect=FileNotFoundError):
+        with (
+            patch.dict(os.environ, env),
+            patch("subprocess.run", side_effect=FileNotFoundError),
+        ):
             self.assertEqual(detect_appliance_ip(), "10.1.2.3")
 
 
@@ -65,7 +73,10 @@ class TestApplianceIpNotSaved(unittest.TestCase):
             client = MagicMock(**{"search.return_value": {}})
             with patch.object(StorageManager, "_create_client", return_value=client):
                 storage = StorageManager(RetentionConfig(), "http://localhost:9200")
-            env = {"DAEMON_TOKEN_FILE": os.path.join(tmp, "auth", "token"), "EXCLUDED_IPS_FILE": saved}
+            env = {
+                "DAEMON_TOKEN_FILE": os.path.join(tmp, "auth", "token"),
+                "EXCLUDED_IPS_FILE": saved,
+            }
             with (
                 patch.dict(os.environ, env),
                 patch("api.server.detect_appliance_ip", return_value="192.168.1.199"),

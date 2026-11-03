@@ -93,7 +93,9 @@ async def handle_monthly(request: web.Request) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/monthly: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response(
         {
@@ -116,7 +118,9 @@ async def handle_daily(request: web.Request) -> web.Response:
         daily = tracker.get_daily_usage(from_ts, to_ts, excluded_ips=excluded_ips_list)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/daily: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response(
         {
@@ -153,7 +157,9 @@ async def handle_devices(request: web.Request) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/devices: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response(
         {
@@ -186,7 +192,9 @@ async def handle_heatmap(request: web.Request) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/heatmap: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response(
         {
@@ -217,7 +225,9 @@ async def handle_cap(request: web.Request) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/cap: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     cap["current_usage_bytes"] = usage["total_bytes"]
     if cap["monthly_cap_bytes"] > 0:

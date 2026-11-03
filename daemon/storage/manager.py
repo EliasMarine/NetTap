@@ -1856,7 +1856,11 @@ class StorageManager:
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
         unknown_indices = (
-            {"index_counts": None, "total_indices": None, "indices_error": indices_error}
+            {
+                "index_counts": None,
+                "total_indices": None,
+                "indices_error": indices_error,
+            }
             if indices_error
             else {}
         )

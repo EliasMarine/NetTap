@@ -161,7 +161,9 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
             page_size=_SOURCE_PAGE,
         )
         if not complete:
-            logger.warning("LAN detection stopped at %d sources; shares are partial", len(pages))
+            logger.warning(
+                "LAN detection stopped at %d sources; shares are partial", len(pages)
+            )
         buckets = [{**b, "key": b["key"]["ip"]} for b in pages]
 
         if not buckets:
@@ -415,9 +417,13 @@ def detect_appliance_ip(fallback_iface: str = "") -> str | None:
     mgmt_ip = os.environ.get("MGMT_IP", "").strip()
     if mgmt_ip:
         local = _local_ipv4s()
-        if local is None or mgmt_ip in local:  # can't list addresses: trust it, as before
+        if (
+            local is None or mgmt_ip in local
+        ):  # can't list addresses: trust it, as before
             return mgmt_ip
-        logger.warning("MGMT_IP %s is not an address of this host; ignoring it", mgmt_ip)
+        logger.warning(
+            "MGMT_IP %s is not an address of this host; ignoring it", mgmt_ip
+        )
 
     for iface in (os.environ.get("MGMT_INTERFACE", "").strip(), fallback_iface.strip()):
         if iface:
@@ -433,7 +439,10 @@ def _local_ipv4s() -> set[str] | None:
 
     try:
         result = subprocess.run(
-            ["ip", "-j", "-4", "addr", "show"], capture_output=True, text=True, timeout=5
+            ["ip", "-j", "-4", "addr", "show"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             import json as _json

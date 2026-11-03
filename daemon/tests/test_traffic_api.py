@@ -411,8 +411,12 @@ class TestProtocolsHandler(AioHTTPTestCase):
         for clause in LOCAL_CHATTER_EXCLUSION:
             self.assertIn(clause, must_not)
         self.assertIn({"terms": {"network.protocol": ["stun"]}}, must_not)
-        self.assertEqual(aggs["encryption"]["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER)
-        self.assertEqual(aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}})
+        self.assertEqual(
+            aggs["encryption"]["aggs"]["encrypted"]["filter"], ENCRYPTED_CONN_FILTER
+        )
+        self.assertEqual(
+            aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}}
+        )
 
 
 class TestBandwidthHandler(AioHTTPTestCase):

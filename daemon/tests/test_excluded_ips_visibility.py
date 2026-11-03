@@ -72,7 +72,9 @@ async def test_threat_report_alerts_ignore_excluded_ips():
         patch("services.alert_intelligence.get_smart_alerts", smart_alerts),
         patch("services.alert_intelligence.get_smart_alert_summary", summary),
         patch("services.threat_detection.detect_beaconing", return_value=([], True)),
-        patch("services.threat_detection.detect_lateral_movement", return_value=([], True)),
+        patch(
+            "services.threat_detection.detect_lateral_movement", return_value=([], True)
+        ),
         patch("services.threat_detection.analyze_dns_anomalies", return_value={}),
     ):
         await generate_threat_report(MagicMock(), "now-1h", "now", [EXCLUDED])

@@ -20,10 +20,17 @@ logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 # an ARP record where the sender announces its own address (sender IP = target IP)
-GRATUITOUS_ARP = {"script": {"script": {"lang": "painless", "source": (
-    "doc['source.ip'].size() > 0 && doc['destination.ip'].size() > 0 "
-    "&& doc['source.ip'].value.equals(doc['destination.ip'].value)"
-)}}}
+GRATUITOUS_ARP = {
+    "script": {
+        "script": {
+            "lang": "painless",
+            "source": (
+                "doc['source.ip'].size() > 0 && doc['destination.ip'].size() > 0 "
+                "&& doc['source.ip'].value.equals(doc['destination.ip'].value)"
+            ),
+        }
+    }
+}
 DHCP_SERVER_PORT = 67
 # broadcast and "no address yet": a request to these names no server
 NOT_A_HOST = ["255.255.255.255", "0.0.0.0"]
@@ -59,7 +66,11 @@ def _ips_with_many_macs(client: Any, bool_clause: dict, ip_field: str) -> list[d
         _MAC_AGGS,
     )
     if not complete:
-        logger.warning("ARP scan by %s stopped at %d IPs; result is partial", ip_field, len(buckets))
+        logger.warning(
+            "ARP scan by %s stopped at %d IPs; result is partial",
+            ip_field,
+            len(buckets),
+        )
     many = [
         {**b, "key": b["key"]["ip"]}
         for b in buckets
@@ -276,32 +287,54 @@ class LANAnomalyDetector:
         # OLD CODE END
         excluded = build_excluded_ips_filter(excluded_ips or [])
         servers: dict[str, dict[str, Any]] = {}
-        for side, answered in (("source", []), ("destination", [{"range": {"destination.packets": {"gt": 0}}}])):
-            query = {"bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    CONN_RECORDS,
-                    {"term": {"network.transport": "udp"}},
-                    {"term": {f"{side}.port": DHCP_SERVER_PORT}},
-                    *answered,
+        for side, answered in (
+            ("source", []),
+            ("destination", [{"range": {"destination.packets": {"gt": 0}}}]),
+        ):
+            query = {
+                "bool": {
+                    "filter": [
+                        _time_range_filter(from_ts, to_ts),
+                        CONN_RECORDS,
+                        {"term": {"network.transport": "udp"}},
+                        {"term": {f"{side}.port": DHCP_SERVER_PORT}},
+                        *answered,
+                    ],
+                    "must_not": [*excluded, {"terms": {f"{side}.ip": NOT_A_HOST}}],
+                }
+            }
+            pairs, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                query,
+                [
+                    {
+                        "mac": {
+                            "terms": {"field": f"{side}.mac", "missing_bucket": True}
+                        }
+                    },
+                    {"ip": {"terms": {"field": f"{side}.ip"}}},
                 ],
-                "must_not": [*excluded, {"terms": {f"{side}.ip": NOT_A_HOST}}],
-            }}
-            pairs, complete = all_buckets(self._client, NETWORK_INDEX, query, [
-                {"mac": {"terms": {"field": f"{side}.mac", "missing_bucket": True}}},
-                {"ip": {"terms": {"field": f"{side}.ip"}}},
-            ])
+            )
             if not complete:
-                logger.warning("Rogue DHCP: %s scan stopped at %d MAC/IP pairs", side, len(pairs))
+                logger.warning(
+                    "Rogue DHCP: %s scan stopped at %d MAC/IP pairs", side, len(pairs)
+                )
             for b in pairs:
                 mac, ip = b["key"]["mac"], b["key"]["ip"]
                 seen = servers.get(mac or ip, {"mac": mac, "ips": set(), "count": 0})
-                servers[mac or ip] = {**seen, "ips": seen["ips"] | {ip}, "count": seen["count"] + b["doc_count"]}
+                servers[mac or ip] = {
+                    **seen,
+                    "ips": seen["ips"] | {ip},
+                    "count": seen["count"] + b["doc_count"],
+                }
 
         alerts: list[dict[str, Any]] = []
         if len(servers) > 1:
             # the busiest is taken as the network's own; every other one is flagged
-            main, *others = sorted(servers.values(), key=lambda v: v["count"], reverse=True)
+            main, *others = sorted(
+                servers.values(), key=lambda v: v["count"], reverse=True
+            )
             legitimate = sorted(main["ips"])[0]
             for v in others:
                 ips = sorted(v["ips"])
@@ -403,7 +436,10 @@ class LANAnomalyDetector:
         # buckets = _ips_with_many_macs(self._client, bool_clause, "destination.ip")
         # OLD CODE END
         # gratuitous ARP only (a host announcing its own address: sender IP = target IP), by sender
-        announcements = {**bool_clause, "filter": [*bool_clause["filter"], GRATUITOUS_ARP]}
+        announcements = {
+            **bool_clause,
+            "filter": [*bool_clause["filter"], GRATUITOUS_ARP],
+        }
         buckets = _ips_with_many_macs(self._client, announcements, "source.ip")
 
         alerts: list[dict[str, Any]] = []
@@ -434,11 +470,20 @@ class LANAnomalyDetector:
     def arp_recorded(self, from_ts: str, to_ts: str) -> bool:
         """Whether any ARP record exists in the range. Zeek logs no ARP unless a package adds
         it; without records, ARP spoofing and IP conflicts can't be seen, only not found."""
-        reply = self._client.count(index=NETWORK_INDEX, body={"query": {"bool": {"filter": [
-            _time_range_filter(from_ts, to_ts),
-            {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "arp"}},
-        ]}}})
+        reply = self._client.count(
+            index=NETWORK_INDEX,
+            body={
+                "query": {
+                    "bool": {
+                        "filter": [
+                            _time_range_filter(from_ts, to_ts),
+                            {"term": {"event.provider": "zeek"}},
+                            {"term": {"event.dataset": "arp"}},
+                        ]
+                    }
+                }
+            },
+        )
         return reply.get("count", 0) > 0
 
     def get_all_anomalies(

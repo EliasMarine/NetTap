@@ -199,7 +199,6 @@ class TestChangelogServiceGetEventTypes(unittest.TestCase):
         self.assertEqual(types, sorted(CHANGELOG_EVENT_TYPES))
 
 
-
 class TestChangelogApiQueryFailure(AioHTTPTestCase):
     """#96: a failed changelog query is a 502, not an empty timeline."""
 
@@ -218,6 +217,7 @@ class TestChangelogApiQueryFailure(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/changelog")
         self.assertEqual(resp.status, 502)
         self.assertIn("error", await resp.json())
+
 
 if __name__ == "__main__":
     unittest.main()

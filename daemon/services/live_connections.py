@@ -980,7 +980,9 @@ class LiveConnectionTracker:
         )
         total_bytes = history_aggs.get("total_bytes", {}).get("value", 0) or 0
 
-        timeline_buckets = histogram_buckets(history_aggs.get("over_time"))  # date_histogram before #120
+        timeline_buckets = histogram_buckets(
+            history_aggs.get("over_time")
+        )  # date_histogram before #120
         timeline = [
             {
                 "timestamp": b.get("key_as_string", b.get("key")),

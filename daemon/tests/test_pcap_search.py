@@ -409,7 +409,9 @@ class TestFilteredPreview:
         assert argv[7:9] == ["sh", "-c"]
         assert argv[-3:] == ["/pcap/capture_001.pcap", "dns", "50"]
         assert '| head -n "$3"' in argv[9]
-        assert "tshark -l -r" in argv[9]  # #78: flushed lines let tshark stop when head quits
+        assert (
+            "tshark -l -r" in argv[9]
+        )  # #78: flushed lines let tshark stop when head quits
         assert "-c" not in argv[10:]
 
     @pytest.mark.asyncio
@@ -539,7 +541,9 @@ class TestRefusedFilterInPreview:
         return state
 
     @pytest.mark.asyncio
-    async def test_refused_filter_raises_tshark_message(self, service, pcap_dir, tshark_runs):
+    async def test_refused_filter_raises_tshark_message(
+        self, service, pcap_dir, tshark_runs
+    ):
         tshark_runs.check = (2, _BAD_FILTER_STDERR)
         with pytest.raises(ValueError, match="not ip.srcc") as exc:
             await service.preview_with_status(
@@ -549,12 +553,23 @@ class TestRefusedFilterInPreview:
         check = tshark_runs.calls[1]
         assert check[3:6] == ["timeout", "-k", "5"]
         assert check[7:] == [
-            "tshark", "-r", "/pcap/capture_001.pcap", "-Y", "ip.srcc == 1", "-c", "1",
-            "-T", "fields", "-e", "frame.number",
+            "tshark",
+            "-r",
+            "/pcap/capture_001.pcap",
+            "-Y",
+            "ip.srcc == 1",
+            "-c",
+            "1",
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
         ]
 
     @pytest.mark.asyncio
-    async def test_valid_filter_without_matches_is_empty(self, service, pcap_dir, tshark_runs):
+    async def test_valid_filter_without_matches_is_empty(
+        self, service, pcap_dir, tshark_runs
+    ):
         result = await service.preview_with_status(
             str(pcap_dir / "capture_001.pcap"), bpf_filter="udp.port == 7"
         )
@@ -564,7 +579,10 @@ class TestRefusedFilterInPreview:
     async def test_docker_failure_in_check_is_not_a_filter_error(
         self, service, pcap_dir, tshark_runs
     ):
-        tshark_runs.check = (1, b"Error response from daemon: container is not running\n")
+        tshark_runs.check = (
+            1,
+            b"Error response from daemon: container is not running\n",
+        )
         with pytest.raises(RuntimeError, match="not running"):
             await service.preview_with_status(
                 str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
@@ -583,7 +601,9 @@ class TestContains:
         svc = PcapSearchService(pcap_dir=str(root))
 
         assert svc.contains(str(root / "a.pcap"))
-        assert not svc.contains(str(tmp_path / "pcap-old" / "x.pcap"))  # sibling with the same prefix
+        assert not svc.contains(
+            str(tmp_path / "pcap-old" / "x.pcap")
+        )  # sibling with the same prefix
         assert not svc.contains(str(root / ".." / ".." / "etc" / "passwd"))
         assert not svc.contains(str(root / "link.pcap"))  # symlink out of the directory
 

@@ -442,7 +442,9 @@ class TestHeatmapScriptsAndTimeZone(AioHTTPTestCase):
         from api.bandwidth import register_bandwidth_routes
 
         self.mock_client = MagicMock()
-        self.mock_client.search.return_value = {"aggregations": {"by_day_of_week": {"buckets": []}}}
+        self.mock_client.search.return_value = {
+            "aggregations": {"by_day_of_week": {"buckets": []}}
+        }
         with patch("services.bandwidth_tracker._CAP_FILE", "/nonexistent/path"):
             tracker = BandwidthTracker(client=self.mock_client)
         app = web.Application()
@@ -461,11 +463,15 @@ class TestHeatmapScriptsAndTimeZone(AioHTTPTestCase):
         for script in (day, hour):
             self.assertNotIn(".dayOfWeek", script["source"])
             self.assertNotIn(".hourOfDay", script["source"])
-        self.assertTrue(day["source"].endswith(".getDayOfWeek().getValue()"))  # 1=Mon..7=Sun
+        self.assertTrue(
+            day["source"].endswith(".getDayOfWeek().getValue()")
+        )  # 1=Mon..7=Sun
         self.assertTrue(hour["source"].endswith(".getHour()"))
 
     async def test_viewer_zone_reaches_the_scripts_and_is_echoed(self):
-        resp = await self.client.request("GET", "/api/bandwidth/heatmap?tz=America/Los_Angeles")
+        resp = await self.client.request(
+            "GET", "/api/bandwidth/heatmap?tz=America/Los_Angeles"
+        )
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["tz"], "America/Los_Angeles")
         for script in self._scripts():

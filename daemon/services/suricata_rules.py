@@ -270,10 +270,17 @@ class SuricataRuleManager:
             )
         except (OSError, asyncio.TimeoutError) as exc:
             logger.error("Could not read Suricata's rule status: %s", exc)
-            return {"available": False, "error": "Could not reach the Suricata container."}
+            return {
+                "available": False,
+                "error": "Could not reach the Suricata container.",
+            }
         if proc.returncode != 0:
             detail = (stderr or b"").decode("utf-8", errors="replace").strip()[:200]
-            logger.error("Reading Suricata's rule status failed (rc=%s): %s", proc.returncode, detail)
+            logger.error(
+                "Reading Suricata's rule status failed (rc=%s): %s",
+                proc.returncode,
+                detail,
+            )
             return {"available": False, "error": "Could not read Suricata's rules."}
         return parse_live_status((stdout or b"").decode("utf-8", errors="replace"))
 

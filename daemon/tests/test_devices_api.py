@@ -29,7 +29,9 @@ def _alert_bodies(mock_search):
     bodies = []
     for c in mock_search.call_args_list:
         body = c.kwargs.get("body") or c[1].get("body")
-        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"].get("filter", []):
+        if {"term": {"event.dataset": "alert"}} in body["query"]["bool"].get(
+            "filter", []
+        ):
             bodies.append(body)
     return bodies
 
@@ -367,7 +369,10 @@ class TestDeviceListHandler(AioHTTPTestCase):
         # Suricata engine events are sensor noise, not the device's alerts (#60)
         bodies = _alert_bodies(self.mock_client.search)
         self.assertEqual(len(bodies), 1)
-        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, bodies[0]["query"]["bool"]["must_not"])
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            bodies[0]["query"]["bool"]["must_not"],
+        )
 
 
 class TestDeviceDetailHandler(AioHTTPTestCase):
@@ -556,7 +561,10 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         self.assertEqual(device["alert_count"], 2)
         alert_bodies = _alert_bodies(self.mock_client.search)
         self.assertEqual(len(alert_bodies), 1)
-        self.assertIn({"prefix": {"rule.name": "SURICATA "}}, alert_bodies[0]["query"]["bool"]["must_not"])  # (#60)
+        self.assertIn(
+            {"prefix": {"rule.name": "SURICATA "}},
+            alert_bodies[0]["query"]["bool"]["must_not"],
+        )  # (#60)
         self.assertEqual(len(device["dns_queries"]), 1)
         self.assertEqual(device["dns_queries"][0]["domain"], "example.com")
         # Malcolm's own pcap-monitor lookups are not the device's DNS
@@ -795,9 +803,17 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
 def _composite_page(buckets, composite):
     """One page of a composite aggregation over terms-style `buckets` keyed by IP, in key order."""
     after = (composite.get("after") or {}).get("ip")
-    rest = [b for b in sorted(buckets, key=lambda b: b["key"]) if after is None or b["key"] > after]
+    rest = [
+        b
+        for b in sorted(buckets, key=lambda b: b["key"])
+        if after is None or b["key"] > after
+    ]
     page = [{**b, "key": {"ip": b["key"]}} for b in rest[: composite["size"]]]
-    return {"aggregations": {"all": {"buckets": page, **({"after_key": page[-1]["key"]} if page else {})}}}
+    return {
+        "aggregations": {
+            "all": {"buckets": page, **({"after_key": page[-1]["key"]} if page else {})}
+        }
+    }
 
 
 def _route_device_searches(device_response, alerts=None):
@@ -809,12 +825,20 @@ def _route_device_searches(device_response, alerts=None):
     def _search(index=None, body=None, **_kwargs):
         aggs = (body or {}).get("aggs", {})
         if "by_ip" in aggs and alerts:
-            asked = next(f["terms"]["source.ip"] for f in body["query"]["bool"]["filter"] if "terms" in f)
-            hits = [{"key": ip, "doc_count": n} for ip, n in alerts.items() if ip in asked]
+            asked = next(
+                f["terms"]["source.ip"]
+                for f in body["query"]["bool"]["filter"]
+                if "terms" in f
+            )
+            hits = [
+                {"key": ip, "doc_count": n} for ip, n in alerts.items() if ip in asked
+            ]
             return {"aggregations": {"by_ip": {"buckets": hits}}}
         if "devices" in aggs:
             terms = aggs["devices"]["terms"]
-            kept = [b for b in buckets if b["doc_count"] >= terms.get("min_doc_count", 1)]
+            kept = [
+                b for b in buckets if b["doc_count"] >= terms.get("min_doc_count", 1)
+            ]
             return {"aggregations": {"devices": {"buckets": kept[: terms["size"]]}}}
         if "all" in aggs:
             return _composite_page(buckets, aggs["all"]["composite"])
@@ -924,8 +948,13 @@ class TestDeviceCountHandler(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_count_drops_ips_under_min_connections(self):
-        buckets = [_device_bucket("192.168.1.10", doc_count=3), _device_bucket("192.168.1.11", doc_count=2)]
-        self.mock_client.search.side_effect = _route_device_searches(_device_list_response(buckets))
+        buckets = [
+            _device_bucket("192.168.1.10", doc_count=3),
+            _device_bucket("192.168.1.11", doc_count=2),
+        ]
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response(buckets)
+        )
 
         resp = await self.client.request("GET", "/api/devices/count" + self._RANGE)
 
@@ -934,14 +963,21 @@ class TestDeviceCountHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_count_is_exact_past_500_devices(self):
         """#96: the count kept the top 500 IPs; 30 days of DHCP churn on a bigger network passes that."""
-        buckets = [_device_bucket(f"192.168.{i // 200}.{i % 200 + 1}", doc_count=5) for i in range(1200)]
-        self.mock_client.search.side_effect = _route_device_searches(_device_list_response(buckets))
+        buckets = [
+            _device_bucket(f"192.168.{i // 200}.{i % 200 + 1}", doc_count=5)
+            for i in range(1200)
+        ]
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response(buckets)
+        )
 
         resp = await self.client.request("GET", "/api/devices/count" + self._RANGE)
 
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["count"], 1200)
-        self.assertEqual(self.mock_client.search.call_count, 2)  # a full page of 1,000 and the short last one
+        self.assertEqual(
+            self.mock_client.search.call_count, 2
+        )  # a full page of 1,000 and the short last one
 
 
 class TestDeviceListAlertSort(AioHTTPTestCase):
@@ -949,7 +985,10 @@ class TestDeviceListAlertSort(AioHTTPTestCase):
 
     # Ten busy devices, then a quiet one with the most alerts
     BUCKETS = [
-        *(_device_bucket(f"192.168.1.{i}", total_bytes=1_000_000 - i) for i in range(10, 20)),
+        *(
+            _device_bucket(f"192.168.1.{i}", total_bytes=1_000_000 - i)
+            for i in range(10, 20)
+        ),
         _device_bucket("192.168.1.50", total_bytes=10),
     ]
     ALERTS = {"192.168.1.50": 7, "192.168.1.11": 2}
@@ -985,7 +1024,11 @@ class TestDeviceListAlertSort(AioHTTPTestCase):
             listed = await self._listed("?sort=alerts&limit=2")
         self.assertEqual(listed, [("192.168.1.50", 7), ("192.168.1.11", 2)])
         chunks = [
-            next(f["terms"]["source.ip"] for f in b["query"]["bool"]["filter"] if "terms" in f)
+            next(
+                f["terms"]["source.ip"]
+                for f in b["query"]["bool"]["filter"]
+                if "terms" in f
+            )
             for b in _alert_bodies(self.mock_client.search)
         ]
         self.assertEqual([len(c) for c in chunks], [4, 4, 3])
@@ -1066,11 +1109,20 @@ class TestDeviceCategoryFallbacks:
     def test_single_purpose_vendor(self):
         from api.devices import _device_category
 
-        assert _device_category(None, "001788483c07.local", "Philips Lighting (Hue)") == "iot"
+        assert (
+            _device_category(None, "001788483c07.local", "Philips Lighting (Hue)")
+            == "iot"
+        )
         assert _device_category(None, None, "Ubiquiti Inc") == "infrastructure"
-        assert _device_category(None, None, "Proxmox Server Solutions GmbH") == "computer"
-        assert _device_category(None, None, "Apple, Inc.") == "unknown"  # makes phones and computers
-        assert _device_category(None, None, "Arcadyan Corporation") == "unknown"  # routers and TV Wi-Fi
+        assert (
+            _device_category(None, None, "Proxmox Server Solutions GmbH") == "computer"
+        )
+        assert (
+            _device_category(None, None, "Apple, Inc.") == "unknown"
+        )  # makes phones and computers
+        assert (
+            _device_category(None, None, "Arcadyan Corporation") == "unknown"
+        )  # routers and TV Wi-Fi
         assert _device_category(None, None, None) == "unknown"
 
     def test_os_and_hostname_still_win(self):
@@ -1086,7 +1138,14 @@ class TestDeviceCategoryFallbacks:
         from api.devices import _device_category
 
         # "nintendo-switch" used to hit the IoT hint "switch"
-        for host in ("nintendo-switch", "xbox-one", "PlayStation-5", "ps5-living", "Roku-Ultra", "LGwebOSTV"):
+        for host in (
+            "nintendo-switch",
+            "xbox-one",
+            "PlayStation-5",
+            "ps5-living",
+            "Roku-Ultra",
+            "LGwebOSTV",
+        ):
             assert _device_category(None, host, None) == "media", host
         assert _device_category("Linux", "chromecast-ultra", None) == "media"
         # the IoT and infrastructure hostname rules still apply
@@ -1124,7 +1183,10 @@ class TestDeviceTotalsPast10000(AioHTTPTestCase):
         return app
 
     def _bodies(self):
-        return [c.kwargs.get("body") or c[1].get("body") for c in self.mock_client.search.call_args_list]
+        return [
+            c.kwargs.get("body") or c[1].get("body")
+            for c in self.mock_client.search.call_args_list
+        ]
 
     @unittest_run_loop
     async def test_detail_counts_connections_and_alerts_exactly(self):
@@ -1151,7 +1213,9 @@ class TestDeviceTotalsPast10000(AioHTTPTestCase):
     @unittest_run_loop
     async def test_connections_pages_stop_at_the_result_window(self):
         """#85: OpenSearch returns nothing past 10,000 results, so page 201 of 50 was empty."""
-        resp = await self.client.request("GET", "/api/devices/192.168.1.1/connections?size=50")
+        resp = await self.client.request(
+            "GET", "/api/devices/192.168.1.1/connections?size=50"
+        )
         data = await resp.json()
         self.assertEqual(data["total"], 48158)
         self.assertEqual(data["total_pages"], 200)
@@ -1162,8 +1226,19 @@ class TestDeviceTopServicesByBytes(AioHTTPTestCase):
 
     # Eleven chatty ASNs with little data, and one video service with few, huge flows
     ASNS = [
-        *({"key": f"AS{100 + i} Chatty {i}", "doc_count": 500 - i, "bytes": {"value": 1_000 + i}} for i in range(11)),
-        {"key": "AS2906 Netflix Inc", "doc_count": 4, "bytes": {"value": 9_000_000_000}},
+        *(
+            {
+                "key": f"AS{100 + i} Chatty {i}",
+                "doc_count": 500 - i,
+                "bytes": {"value": 1_000 + i},
+            }
+            for i in range(11)
+        ),
+        {
+            "key": "AS2906 Netflix Inc",
+            "doc_count": 4,
+            "bytes": {"value": 9_000_000_000},
+        },
     ]
 
     def setUp(self):
@@ -1182,7 +1257,10 @@ class TestDeviceTopServicesByBytes(AioHTTPTestCase):
         if not terms:
             return {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
         by_bytes = terms.get("order") == {"bytes": "desc"}
-        ranked = sorted(self.ASNS, key=lambda b: -(b["bytes"]["value"] if by_bytes else b["doc_count"]))
+        ranked = sorted(
+            self.ASNS,
+            key=lambda b: -(b["bytes"]["value"] if by_bytes else b["doc_count"]),
+        )
         return {
             "hits": {"total": {"value": 6000}, "hits": []},
             "aggregations": {"top_services": {"buckets": ranked[: terms["size"]]}},
@@ -1195,9 +1273,14 @@ class TestDeviceTopServicesByBytes(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/devices/192.168.1.44")
 
         services = (await resp.json())["device"]["top_services"]
-        self.assertEqual(services[0], {"name": "Netflix Inc", "bytes": 9_000_000_000, "connections": 4})
+        self.assertEqual(
+            services[0],
+            {"name": "Netflix Inc", "bytes": 9_000_000_000, "connections": 4},
+        )
         self.assertEqual(len(services), 10)
-        self.assertEqual([s["name"] for s in services[1:]], [f"Chatty {i}" for i in range(10, 1, -1)])
+        self.assertEqual(
+            [s["name"] for s in services[1:]], [f"Chatty {i}" for i in range(10, 1, -1)]
+        )
 
 
 class TestDeviceBandwidthInterval(AioHTTPTestCase):
@@ -1205,7 +1288,10 @@ class TestDeviceBandwidthInterval(AioHTTPTestCase):
 
     def setUp(self):
         self.storage, self.mock_client = _make_mock_storage()
-        self.mock_client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []},
+            "aggregations": {},
+        }
         super().setUp()
 
     async def get_application(self):
@@ -1217,7 +1303,9 @@ class TestDeviceBandwidthInterval(AioHTTPTestCase):
     async def _interval(self, from_ts):
         self.mock_client.search.reset_mock()
         resp = await self.client.request(
-            "GET", "/api/devices/192.168.1.1", params={"from": from_ts, "to": "2026-11-02T00:00:00Z"}
+            "GET",
+            "/api/devices/192.168.1.1",
+            params={"from": from_ts, "to": "2026-11-02T00:00:00Z"},
         )
         self.assertEqual(resp.status, 200)
         body = self.mock_client.search.call_args_list[0].kwargs["body"]
@@ -1225,14 +1313,20 @@ class TestDeviceBandwidthInterval(AioHTTPTestCase):
         # return body["aggs"]["bandwidth_series"]["date_histogram"]["fixed_interval"]
         # OLD CODE END
         first = body["aggs"]["bandwidth_series"]["date_range"]["ranges"][0]
-        span = datetime.fromisoformat(first["to"].replace("Z", "+00:00")) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
+        span = datetime.fromisoformat(
+            first["to"].replace("Z", "+00:00")
+        ) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
         return {300: "5m", 3600: "1h", 10800: "3h"}[int(span.total_seconds())]
 
     @unittest_run_loop
     async def test_interval_scales_with_the_range(self):
-        self.assertEqual(await self._interval("2026-11-01T00:00:00Z"), "5m")  # 24 h: 288 points
+        self.assertEqual(
+            await self._interval("2026-11-01T00:00:00Z"), "5m"
+        )  # 24 h: 288 points
         self.assertEqual(await self._interval("2026-10-26T00:00:00Z"), "1h")  # 7 d: 168
-        self.assertEqual(await self._interval("2026-10-03T00:00:00Z"), "3h")  # 30 d: 240
+        self.assertEqual(
+            await self._interval("2026-10-03T00:00:00Z"), "3h"
+        )  # 30 d: 240
 
 
 class TestDeviceTermsAreExact(AioHTTPTestCase):
@@ -1245,7 +1339,14 @@ class TestDeviceTermsAreExact(AioHTTPTestCase):
 
     def setUp(self):
         self.storage, self.mock_client = _make_mock_storage()
-        dests = [{"key": f"10.0.{i // 256}.{i % 256}", "doc_count": 100 - i % 90, "bytes": {"value": 10}} for i in range(25)]
+        dests = [
+            {
+                "key": f"10.0.{i // 256}.{i % 256}",
+                "doc_count": 100 - i % 90,
+                "bytes": {"value": 10},
+            }
+            for i in range(25)
+        ]
         self.mock_client.search.return_value = {
             "hits": {"total": {"value": 2000}, "hits": []},
             "aggregations": {
@@ -1274,7 +1375,10 @@ class TestDeviceTermsAreExact(AioHTTPTestCase):
         return found
 
     def _bodies(self):
-        return [c.kwargs.get("body") or c[1].get("body") for c in self.mock_client.search.call_args_list]
+        return [
+            c.kwargs.get("body") or c[1].get("body")
+            for c in self.mock_client.search.call_args_list
+        ]
 
     @unittest_run_loop
     async def test_detail_counts_every_destination(self):
@@ -1285,12 +1389,19 @@ class TestDeviceTermsAreExact(AioHTTPTestCase):
         terms = self._terms(self._bodies()[0])
         self.assertGreaterEqual(terms["top_destinations"]["size"], 10_000)
         self.assertGreaterEqual(terms["top_services"]["shard_size"], 10_000)
-        dns = [t for b in self._bodies() for n, t in self._terms(b).items() if n == "dns_queries"]
+        dns = [
+            t
+            for b in self._bodies()
+            for n, t in self._terms(b).items()
+            if n == "dns_queries"
+        ]
         self.assertGreaterEqual(dns[0]["shard_size"], 10_000)
 
     @unittest_run_loop
     async def test_unique_destinations_falls_back_past_the_list(self):
-        self.mock_client.search.return_value["aggregations"]["top_destinations"]["sum_other_doc_count"] = 5
+        self.mock_client.search.return_value["aggregations"]["top_destinations"][
+            "sum_other_doc_count"
+        ] = 5
         resp = await self.client.request("GET", "/api/devices/192.168.1.44")
         self.assertEqual((await resp.json())["device"]["unique_destinations"], 24)
 

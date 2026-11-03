@@ -122,7 +122,9 @@ def _conn_device_aggs() -> dict:
     }
 
 
-def _register_conn_devices(registry: DeviceRegistry, buckets: list[dict]) -> dict[str, str]:
+def _register_conn_devices(
+    registry: DeviceRegistry, buckets: list[dict]
+) -> dict[str, str]:
     """Register each IP bucket under its MAC, skipping the IPs the device list skips.
 
     Returns the {ip: mac} pairs registered.
@@ -142,13 +144,19 @@ def _register_conn_devices(registry: DeviceRegistry, buckets: list[dict]) -> dic
         # OLD CODE START — the vendor came only from the bundled 208-prefix table (#26)
         # registry.register_device(mac=mac, ip=ip, source="conn")
         # OLD CODE END
-        oui = _oui_from_hit(hits[0])  # Malcolm's IEEE vendor name, absent for randomized MACs
-        metadata = {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None
+        oui = _oui_from_hit(
+            hits[0]
+        )  # Malcolm's IEEE vendor name, absent for randomized MACs
+        metadata = (
+            {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None
+        )
         # OLD CODE START — no record time: last_seen became the refresh time
         # registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata)
         # OLD CODE END
         seen_at = record_time(bucket.get("last_record", {}).get("value"))
-        registry.register_device(mac=mac, ip=ip, source="conn", metadata=metadata, seen_at=seen_at)
+        registry.register_device(
+            mac=mac, ip=ip, source="conn", metadata=metadata, seen_at=seen_at
+        )
         assigned[ip] = mac
     return assigned
 
@@ -179,7 +187,9 @@ def _register_conn_devices(registry: DeviceRegistry, buckets: list[dict]) -> dic
 # OLD CODE END
 
 
-def _categorize_unknown(app: Mapping[str, Any], registry: DeviceRegistry, from_ts: str, to_ts: str) -> int:
+def _categorize_unknown(
+    app: Mapping[str, Any], registry: DeviceRegistry, from_ts: str, to_ts: str
+) -> int:
     """Give every still-"unknown" registry device the Devices page's category (#26).
 
     The registry only got categories from vendor metadata, so Home's grid called devices
@@ -197,8 +207,12 @@ def _categorize_unknown(app: Mapping[str, Any], registry: DeviceRegistry, from_t
         os_hint = dns_name = None
         if fingerprint and ip:
             os_hint = fingerprint.get_os_hint(registry._client, ip, from_ts, to_ts)
-            dns_name = fingerprint.get_hostname_for_ip(registry._client, ip, from_ts, to_ts)
-        names = " ".join([*(device.get("hostnames") or []), dns_name or ""]).strip() or None
+            dns_name = fingerprint.get_hostname_for_ip(
+                registry._client, ip, from_ts, to_ts
+            )
+        names = (
+            " ".join([*(device.get("hostnames") or []), dns_name or ""]).strip() or None
+        )
         category = _device_category(os_hint, names, device.get("manufacturer"))
         if category != "unknown" and registry.set_category(device, category):
             count += 1
@@ -228,7 +242,9 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     # query = _conn_devices_query(app, from_ts, to_ts)
     # result = registry._client.search(index=NETWORK_INDEX, body=query)
     # OLD CODE END
-    buckets = _lan_device_buckets(registry._client, app, from_ts, to_ts, aggs=_conn_device_aggs())
+    buckets = _lan_device_buckets(
+        registry._client, app, from_ts, to_ts, aggs=_conn_device_aggs()
+    )
     # OLD CODE START — #26: the {ip: mac} pairs are needed to drop IPs that moved
     # count = _register_conn_devices(registry, result)
     # OLD CODE END
@@ -253,7 +269,9 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     # logger.info("Device registry refresh: %d LAN devices from conn traffic", count)
     # OLD CODE END
     logger.info(
-        "Device registry refresh: %d LAN devices from conn traffic in %.1f s", count, time.monotonic() - started
+        "Device registry refresh: %d LAN devices from conn traffic in %.1f s",
+        count,
+        time.monotonic() - started,
     )
     return count
 
@@ -329,7 +347,9 @@ async def handle_registry_list(request: web.Request) -> web.Response:
         devices = registry.get_all_devices(limit=limit, offset=offset)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     # Add display_name to each device
     for device in devices:
@@ -354,7 +374,9 @@ async def handle_registry_detail(request: web.Request) -> web.Response:
         device = registry.get_device(mac)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     if device is None:
         return web.json_response({"error": f"Device not found: {mac}"}, status=404)
 
@@ -375,7 +397,9 @@ async def handle_registry_traffic(request: web.Request) -> web.Response:
         traffic = registry.get_device_traffic(mac, from_ts, to_ts)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     return web.json_response(
         {
             "from": from_ts,
@@ -400,7 +424,9 @@ async def handle_registry_new_count(request: web.Request) -> web.Response:
             else datetime.now(timezone.utc) - timedelta(hours=24)
         )
     except ValueError:
-        return web.json_response({"error": "since must be an ISO timestamp"}, status=400)
+        return web.json_response(
+            {"error": "since must be an ISO timestamp"}, status=400
+        )
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
     since_iso = since.astimezone(timezone.utc).isoformat()
@@ -408,7 +434,9 @@ async def handle_registry_new_count(request: web.Request) -> web.Response:
         count = registry.count_first_seen_since(since_iso)
     except OpenSearchException as exc:
         logger.error("OpenSearch error counting new devices: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     return web.json_response({"count": count, "since": since_iso})
 
 
@@ -426,7 +454,9 @@ async def handle_registry_search(request: web.Request) -> web.Response:
         devices = registry.search_devices(query_str)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
-        return web.json_response({"error": f"OpenSearch query failed: {exc}"}, status=502)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     for device in devices:
         device["display_name"] = registry.get_display_name(device)
 

@@ -122,9 +122,13 @@ class TestDetectRandomizedMacs:
         mock_client.search.side_effect = OpenSearchException("connection error")
 
         with pytest.raises(OpenSearchException):
-            correlator.detect_randomized_macs("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+            correlator.detect_randomized_macs(
+                "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+            )
 
-    def test_fingerprint_and_merge_suggestions_raise_on_error(self, correlator, mock_client):
+    def test_fingerprint_and_merge_suggestions_raise_on_error(
+        self, correlator, mock_client
+    ):
         """#96: an empty fingerprint or suggestion list read as facts about the device."""
         from opensearchpy import OpenSearchException
 
@@ -418,11 +422,21 @@ class _MacIndex:
             if "after" in aggs["all"]["composite"]:
                 return {"aggregations": {"all": {"buckets": []}}}
             buckets = [{"key": {"mac": m}, **self._aggs(m)} for m in sorted(self.macs)]
-            return {"aggregations": {"all": {"buckets": buckets, "after_key": buckets[-1]["key"]}}}
+            return {
+                "aggregations": {
+                    "all": {"buckets": buckets, "after_key": buckets[-1]["key"]}
+                }
+            }
         if "macs" in aggs:
-            busiest = sorted(self.macs, key=lambda m: self.macs[m]["docs"], reverse=True)
+            busiest = sorted(
+                self.macs, key=lambda m: self.macs[m]["docs"], reverse=True
+            )
             top = busiest[: aggs["macs"]["terms"]["size"]]
-            return {"aggregations": {"macs": {"buckets": [{"key": m, **self._aggs(m)} for m in top]}}}
+            return {
+                "aggregations": {
+                    "macs": {"buckets": [{"key": m, **self._aggs(m)} for m in top]}
+                }
+            }
         mac = body["query"]["bool"]["filter"][1]["term"]["source.mac"]
         return {"aggregations": self._aggs(mac)}
 
@@ -434,32 +448,43 @@ def _device(docs: int, dns: str, dest: str, ja3: str, total: int) -> dict:
 def _busy(n: int) -> dict[str, dict]:
     """n busy hardware MACs that all look alike."""
     return {
-        f"00:00:00:00:{i // 256:02x}:{i % 256:02x}": _device(1000, "busy.example", "9.9.9.9", "B", 10**6)
+        f"00:00:00:00:{i // 256:02x}:{i % 256:02x}": _device(
+            1000, "busy.example", "9.9.9.9", "B", 10**6
+        )
         for i in range(n)
     }
 
 
 def test_quiet_randomized_mac_outside_the_busiest_500_is_listed(tmp_path):
     """#96: only the 500 busiest MACs were checked, so this listed none."""
-    index = _MacIndex({**_busy(500), "02:aa:bb:cc:dd:ee": _device(1, "a.example", "1.2.3.4", "J", 10)})
-    macs = MACCorrelator(index, merge_file=str(tmp_path / "m.json")).detect_randomized_macs(
-        "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    index = _MacIndex(
+        {**_busy(500), "02:aa:bb:cc:dd:ee": _device(1, "a.example", "1.2.3.4", "J", 10)}
     )
+    macs = MACCorrelator(
+        index, merge_file=str(tmp_path / "m.json")
+    ).detect_randomized_macs("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
     assert [m["mac"] for m in macs] == ["02:aa:bb:cc:dd:ee"]
 
 
 def test_real_device_outside_the_busiest_500_is_suggested(tmp_path):
     """#96: candidates were the 500 busiest MACs, and every pair cost a query."""
     phone = _device(2000, "phone.example", "1.2.3.4", "J", 5000)
-    index = _MacIndex({
-        **_busy(499),
-        "02:aa:bb:cc:dd:ee": phone,  # randomized, busy
-        "00:11:22:33:44:55": {**phone, "docs": 1},  # the same phone's hardware MAC, quiet
-    })
-    suggestions = MACCorrelator(index, merge_file=str(tmp_path / "m.json")).suggest_merges(
-        "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    index = _MacIndex(
+        {
+            **_busy(499),
+            "02:aa:bb:cc:dd:ee": phone,  # randomized, busy
+            "00:11:22:33:44:55": {
+                **phone,
+                "docs": 1,
+            },  # the same phone's hardware MAC, quiet
+        }
     )
-    assert [(s["mac_randomized"], s["mac_real"], s["confidence"]) for s in suggestions] == [
-        ("02:aa:bb:cc:dd:ee", "00:11:22:33:44:55", 1.0)
-    ]
-    assert index.calls <= 2  # one composite page (and the empty end page), not one per pair
+    suggestions = MACCorrelator(
+        index, merge_file=str(tmp_path / "m.json")
+    ).suggest_merges("2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z")
+    assert [
+        (s["mac_randomized"], s["mac_real"], s["confidence"]) for s in suggestions
+    ] == [("02:aa:bb:cc:dd:ee", "00:11:22:33:44:55", 1.0)]
+    assert (
+        index.calls <= 2
+    )  # one composite page (and the empty end page), not one per pair

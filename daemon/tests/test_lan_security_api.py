@@ -41,6 +41,13 @@ def test_with_arp_records_a_zero_is_a_real_zero():
 def test_the_arp_count_reads_zeek_arp_records_in_the_range():
     client = MagicMock()
     client.count.return_value = {"count": 0}
-    assert LANAnomalyDetector(client=client).arp_recorded("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z") is False
+    assert (
+        LANAnomalyDetector(client=client).arp_recorded(
+            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
+        is False
+    )
     flt = client.count.call_args.kwargs["body"]["query"]["bool"]["filter"]
-    assert {"term": {"event.dataset": "arp"}} in flt and {"term": {"event.provider": "zeek"}} in flt
+    assert {"term": {"event.dataset": "arp"}} in flt and {
+        "term": {"event.provider": "zeek"}
+    } in flt

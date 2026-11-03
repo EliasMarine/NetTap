@@ -207,7 +207,9 @@ class BandwidthTracker:
                     #     "extended_bounds": {"min": from_ts, "max": to_ts},
                     # },
                     # OLD CODE END
-                    **time_slots(from_ts, to_ts, "1d"),  # UTC days, like calendar_interval 1d
+                    **time_slots(
+                        from_ts, to_ts, "1d"
+                    ),  # UTC days, like calendar_interval 1d
                     "aggs": self._bytes_aggs(),
                 }
             },
@@ -222,7 +224,9 @@ class BandwidthTracker:
         # OLD CODE END
         result = self._client.search(index=NETWORK_INDEX, body=query)
 
-        buckets = histogram_buckets(result.get("aggregations", {}).get("daily"))  # date_histogram before #120
+        buckets = histogram_buckets(
+            result.get("aggregations", {}).get("daily")
+        )  # date_histogram before #120
         return [
             {
                 "date": b.get("key_as_string", b.get("key", "")),

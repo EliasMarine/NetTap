@@ -719,7 +719,9 @@ class IoTMonitor:
 
         try:
             result = self._client.search(index=NETWORK_INDEX, body=query)
-            ports_by_mac = self._counts_by_mac({"bool": bool_clause}, "destination.port")
+            ports_by_mac = self._counts_by_mac(
+                {"bool": bool_clause}, "destination.port"
+            )
         except Exception as exc:
             logger.error("Fleet conn stats query failed: %s", exc)
             # OLD CODE START — #96: every device was scored as having no traffic
@@ -1118,7 +1120,9 @@ class IoTMonitor:
         # OLD CODE END
 
         # Calculate active hours from histogram
-        hourly = histogram_buckets(aggs.get("hourly_activity"))  # date_histogram before #120
+        hourly = histogram_buckets(
+            aggs.get("hourly_activity")
+        )  # date_histogram before #120
         active_hours: set[int] = set()
         for bucket in hourly:
             if bucket.get("doc_count", 0) > 0:
@@ -1249,8 +1253,12 @@ class IoTMonitor:
         def every(name: str, known: str) -> list[dict]:
             # #96: the hour's top 100/20/50/10 only; a new value ranked past them went unreported
             return complete_terms(
-                self._client, NETWORK_INDEX, {"bool": bool_clause}, aggs.get(name, {}),
-                BASELINE_KNOWN_SOURCES[known], missing="Unknown",
+                self._client,
+                NETWORK_INDEX,
+                {"bool": bool_clause},
+                aggs.get(name, {}),
+                BASELINE_KNOWN_SOURCES[known],
+                missing="Unknown",
             )
 
         anomalies: list[dict[str, Any]] = []
@@ -1857,7 +1865,9 @@ class IoTMonitor:
             # OLD CODE END
             raise
 
-        hourly_buckets = histogram_buckets(result.get("aggregations", {}).get("hourly"))  # date_histogram before #120
+        hourly_buckets = histogram_buckets(
+            result.get("aggregations", {}).get("hourly")
+        )  # date_histogram before #120
 
         buckets: list[dict[str, Any]] = []
         for hb in hourly_buckets:

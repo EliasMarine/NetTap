@@ -110,8 +110,15 @@ class TestDetectArpSpoofing:
 
 def _pairs(*pairs):
     """One composite page of (mac, ip, count) buckets."""
-    return {"aggregations": {"all": {"buckets": [
-        {"key": {"mac": m, "ip": ip}, "doc_count": n} for m, ip, n in pairs]}}}
+    return {
+        "aggregations": {
+            "all": {
+                "buckets": [
+                    {"key": {"mac": m, "ip": ip}, "doc_count": n} for m, ip, n in pairs
+                ]
+            }
+        }
+    }
 
 
 GATEWAY = "d0:21:f9:5e:35:32"
@@ -119,40 +126,65 @@ GATEWAY = "d0:21:f9:5e:35:32"
 
 class TestDetectRogueDhcp:
     def _detect(self, detector, mock_client, sent_from_67, answered_on_67):
-        mock_client.search.side_effect = [_pairs(*sent_from_67), _pairs(*answered_on_67)]
-        return detector.detect_rogue_dhcp("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        mock_client.search.side_effect = [
+            _pairs(*sent_from_67),
+            _pairs(*answered_on_67),
+        ]
+        return detector.detect_rogue_dhcp(
+            "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+        )
 
     def test_one_gateway_on_three_networks_is_one_server(self, detector, mock_client):
         """The G11: Zeek's DHCP records name clients, and 192.168.1.89 and 10.10.0.108 (devices
         renewing leases) were reported as critical rogue servers."""
         alerts = self._detect(
-            detector, mock_client,
+            detector,
+            mock_client,
             [(GATEWAY, "192.168.1.1", 1), (GATEWAY, "192.168.40.1", 1)],
-            [(GATEWAY, "10.10.0.1", 47), (GATEWAY, "192.168.1.1", 180), (GATEWAY, "192.168.40.1", 4)],
+            [
+                (GATEWAY, "10.10.0.1", 47),
+                (GATEWAY, "192.168.1.1", 180),
+                (GATEWAY, "192.168.40.1", 4),
+            ],
         )
         assert alerts == []
 
     def test_a_second_server_device_is_flagged(self, detector, mock_client):
         alerts = self._detect(
-            detector, mock_client,
+            detector,
+            mock_client,
             [(GATEWAY, "192.168.1.1", 2), ("aa:bb:cc:00:00:99", "192.168.1.99", 3)],
             [(GATEWAY, "192.168.1.1", 180), (GATEWAY, "10.10.0.1", 40)],
         )
         assert len(alerts) == 1
         a = alerts[0]
         assert (a["type"], a["server_ip"], a["server_mac"], a["offer_count"]) == (
-            "rogue_dhcp", "192.168.1.99", "aa:bb:cc:00:00:99", 3)
-        assert a["legitimate_server"] == "10.10.0.1"  # lowest of the main server's addresses
+            "rogue_dhcp",
+            "192.168.1.99",
+            "aa:bb:cc:00:00:99",
+            3,
+        )
+        assert (
+            a["legitimate_server"] == "10.10.0.1"
+        )  # lowest of the main server's addresses
         assert a["severity"] == "critical"
         assert "192.168.1.99" in a["description"]
 
     def test_clients_only_means_no_alert(self, detector, mock_client):
         assert self._detect(detector, mock_client, [], []) == []
 
-    def test_a_server_without_a_recorded_mac_counts_by_address(self, detector, mock_client):
+    def test_a_server_without_a_recorded_mac_counts_by_address(
+        self, detector, mock_client
+    ):
         alerts = self._detect(
-            detector, mock_client, [], [(GATEWAY, "192.168.1.1", 100), (None, "192.168.1.250", 4)])
-        assert [(a["server_ip"], a["server_mac"]) for a in alerts] == [("192.168.1.250", "unknown")]
+            detector,
+            mock_client,
+            [],
+            [(GATEWAY, "192.168.1.1", 100), (None, "192.168.1.250", 4)],
+        )
+        assert [(a["server_ip"], a["server_mac"]) for a in alerts] == [
+            ("192.168.1.250", "unknown")
+        ]
 
     def test_reads_who_sent_from_and_answered_on_udp_67(self, detector, mock_client):
         self._detect(detector, mock_client, [], [])
@@ -161,9 +193,15 @@ class TestDetectRogueDhcp:
             q = body["query"]["bool"]
             assert {"term": {f"{side}.port": 67}} in q["filter"]
             assert {"term": {"event.dataset": "conn"}} in q["filter"]
-            assert {"terms": {f"{side}.ip": ["255.255.255.255", "0.0.0.0"]}} in q["must_not"]
-            assert [list(src) for src in body["aggs"]["all"]["composite"]["sources"]] == [["mac"], ["ip"]]
-        assert {"range": {"destination.packets": {"gt": 0}}} in answered["query"]["bool"]["filter"]
+            assert {"terms": {f"{side}.ip": ["255.255.255.255", "0.0.0.0"]}} in q[
+                "must_not"
+            ]
+            assert [
+                list(src) for src in body["aggs"]["all"]["composite"]["sources"]
+            ] == [["mac"], ["ip"]]
+        assert {"range": {"destination.packets": {"gt": 0}}} in answered["query"][
+            "bool"
+        ]["filter"]
 
     def test_opensearch_error_raises(self, detector, mock_client):
         """#96: [] read as "no rogue DHCP server"."""
@@ -370,35 +408,57 @@ class _ArpIndex:
             if "cardinality" in agg:
                 bucket[name] = {"value": len(set(macs))}
             elif "terms" in agg:
-                top = sorted(sorted(set(macs)), key=macs.count, reverse=True)[: agg["terms"]["size"]]
-                bucket[name] = {"buckets": [{"key": m, "doc_count": macs.count(m)} for m in top]}
+                top = sorted(sorted(set(macs)), key=macs.count, reverse=True)[
+                    : agg["terms"]["size"]
+                ]
+                bucket[name] = {
+                    "buckets": [{"key": m, "doc_count": macs.count(m)} for m in top]
+                }
         return bucket
 
     def search(self, index: str, body: dict) -> dict:
         ((name, agg),) = body["aggs"].items()
         filters = body.get("query", {}).get("bool", {}).get("filter", [])
         if any("script" in f for f in filters):  # GRATUITOUS_ARP: sender IP = target IP
-            return _ArpIndex([r for r in self.records if r["source.ip"] == r["destination.ip"]]).search(
-                index, {**body, "query": {}})
+            return _ArpIndex(
+                [r for r in self.records if r["source.ip"] == r["destination.ip"]]
+            ).search(index, {**body, "query": {}})
         if "composite" in agg:
             if "after" in agg["composite"]:
                 return {"aggregations": {name: {"buckets": []}}}
             field = agg["composite"]["sources"][0]["ip"]["terms"]["field"]
             ips = sorted({r[field] for r in self.records})
-            buckets = [{"key": {"ip": ip}, **self._bucket(ip, field, agg["aggs"])} for ip in ips]
-            return {"aggregations": {name: {"buckets": buckets, "after_key": buckets[-1]["key"]}}}
+            buckets = [
+                {"key": {"ip": ip}, **self._bucket(ip, field, agg["aggs"])}
+                for ip in ips
+            ]
+            return {
+                "aggregations": {
+                    name: {"buckets": buckets, "after_key": buckets[-1]["key"]}
+                }
+            }
         field = agg["terms"]["field"]
         ips = sorted({r[field] for r in self.records})
         buckets = [{"key": ip, **self._bucket(ip, field, agg["aggs"])} for ip in ips]
-        top = sorted(buckets, key=lambda b: b["doc_count"], reverse=True)[: agg["terms"]["size"]]
+        top = sorted(buckets, key=lambda b: b["doc_count"], reverse=True)[
+            : agg["terms"]["size"]
+        ]
         count = next(k for k, v in agg["aggs"].items() if "cardinality" in v)
-        return {"aggregations": {name: {"buckets": [b for b in top if b[count]["value"] > 1]}}}
+        return {
+            "aggregations": {
+                name: {"buckets": [b for b in top if b[count]["value"] > 1]}
+            }
+        }
 
 
 def _arp_records() -> list[dict]:
     """500 busy IPs with one MAC each, then one quiet IP that two MACs used."""
     busy = [
-        {"source.ip": ip, "destination.ip": ip, "source.mac": f"00:00:00:00:{i // 256:02x}:{i % 256:02x}"}
+        {
+            "source.ip": ip,
+            "destination.ip": ip,
+            "source.mac": f"00:00:00:00:{i // 256:02x}:{i % 256:02x}",
+        }
         for i in range(500)
         for ip in [f"10.0.{i // 250}.{i % 250}"]
         for _ in range(3)
@@ -430,10 +490,19 @@ def test_conflict_on_an_ip_outside_the_busiest_500_is_found():
 def test_hosts_asking_for_the_router_are_not_an_ip_conflict():
     """Grouped by target IP, every "who has 192.168.1.1?" counted its asker's MAC, so the router
     was an IP conflict on any network; only announcements of one's own address count."""
-    asks = [{"source.ip": f"192.168.1.{n}", "destination.ip": "192.168.1.1", "source.mac": f"aa:00:00:00:00:{n:02x}"}
-            for n in range(10, 20)]
-    announce = [{"source.ip": "192.168.1.50", "destination.ip": "192.168.1.50", "source.mac": m}
-                for m in ("cc:cc:cc:cc:cc:01", "cc:cc:cc:cc:cc:02")]
+    asks = [
+        {
+            "source.ip": f"192.168.1.{n}",
+            "destination.ip": "192.168.1.1",
+            "source.mac": f"aa:00:00:00:00:{n:02x}",
+        }
+        for n in range(10, 20)
+    ]
+    announce = [
+        {"source.ip": "192.168.1.50", "destination.ip": "192.168.1.50", "source.mac": m}
+        for m in ("cc:cc:cc:cc:cc:01", "cc:cc:cc:cc:cc:02")
+    ]
     alerts = LANAnomalyDetector(_ArpIndex(asks + announce)).detect_ip_conflicts(
-        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+    )
     assert [a["ip"] for a in alerts] == ["192.168.1.50"]

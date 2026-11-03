@@ -134,7 +134,9 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
             #     "date_histogram": {"field": "@timestamp", "calendar_interval": "day", "min_doc_count": 0},
             # },
             # OLD CODE END
-            "by_day": time_slots(now - timedelta(days=7), now, "1d"),  # the query's now-7d, UTC days
+            "by_day": time_slots(
+                now - timedelta(days=7), now, "1d"
+            ),  # the query's now-7d, UTC days
         },
     }
 
@@ -250,7 +252,12 @@ async def generate_threat_report(
         # "lateral_movement": detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips),
         # OLD CODE END
         "beaconing": [],
-        "dns_anomalies": {"dga_suspects": [], "tunnel_suspects": [], "nxdomain_spikes": [], "suspicious_tlds": []},
+        "dns_anomalies": {
+            "dga_suspects": [],
+            "tunnel_suspects": [],
+            "nxdomain_spikes": [],
+            "suspicious_tlds": [],
+        },
         "lateral_movement": [],
         # checks that could not run, and checks a bucket cap stopped part way
         "failed_checks": [],

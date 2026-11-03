@@ -27,7 +27,8 @@ from services.tshark_service import (
 # stderr of TShark 4.0.17 (the debian:bookworm container) refusing a filter, exit code 2
 _ROOT_WARNING = 'Running as user "root" and group "root". This could be dangerous.'
 _BAD_FILTER_STDERR = (
-    _ROOT_WARNING + '\ntshark: Left side of "==" expression must be a field or function, '
+    _ROOT_WARNING
+    + '\ntshark: Left side of "==" expression must be a field or function, '
     "not ip.srcc.\n    ip.srcc == 1\n    ^~~~~~~\n"
 )
 
@@ -328,7 +329,11 @@ class TestInfoColumn(unittest.TestCase):
         async def run():
             with patch.object(self.svc, "_exec_tshark", new_callable=AsyncMock) as ex:
                 # a filter first scans for its matches (#64)
-                ex.side_effect = [("2 2\n", "", 0), (json_out, "", 0), (fields_out, "", 0)]
+                ex.side_effect = [
+                    ("2 2\n", "", 0),
+                    (json_out, "", 0),
+                    (fields_out, "", 0),
+                ]
                 with patch.object(self.svc, "get_version", new_callable=AsyncMock):
                     req = TSharkRequest(
                         pcap_path="test.pcap",
@@ -616,7 +621,12 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
                 ex.side_effect = responses
                 with patch.object(self.svc, "get_version", new_callable=AsyncMock):
                     result = await self.svc.analyze(
-                        TSharkRequest(pcap_path="test.pcap", output_format="text", display_filter="dns", **kw)
+                        TSharkRequest(
+                            pcap_path="test.pcap",
+                            output_format="text",
+                            display_filter="dns",
+                            **kw,
+                        )
                     )
                 return result, [c.args[0] for c in ex.call_args_list]
 
@@ -624,7 +634,9 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
             return asyncio.run(run())
 
     def test_reads_up_to_the_nth_match(self):
-        result, calls = self._run([("100 48211\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100)
+        result, calls = self._run(
+            [("100 48211\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100
+        )
         scan, main = calls
         self.assertEqual(scan[:5], ["docker", "exec", "nettap-tshark", "sh", "-c"])
         self.assertEqual(scan[-4:-1], ["/pcap/test.pcap", "dns", "100"])
@@ -648,7 +660,9 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
         with self.assertRaises(TSharkValidationError) as ctx:
             self._run([("0 \n", "", 0), ("", _BAD_FILTER_STDERR, 2)])
         message = str(ctx.exception)
-        self.assertTrue(message.startswith('tshark: Left side of "==" expression'), message)
+        self.assertTrue(
+            message.startswith('tshark: Left side of "==" expression'), message
+        )
         self.assertNotIn("Running as user", message)
 
     def test_matches_need_no_filter_check(self):
@@ -662,12 +676,16 @@ class TestFilterSearchesWholeFile(unittest.TestCase):
 
     def test_scan_cut_short_by_time_is_flagged(self):
         with patch("services.tshark_service.MATCH_SCAN_SECONDS", 0):
-            result, _ = self._run([("7 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100)
+            result, _ = self._run(
+                [("7 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=100
+            )
         self.assertTrue(result.truncated)
 
     def test_slow_scan_that_found_all_n_is_not_truncated(self):
         with patch("services.tshark_service.MATCH_SCAN_SECONDS", 0):
-            result, _ = self._run([("50 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=50)
+            result, _ = self._run(
+                [("50 900\n", "", 0), ("1 0.0 a -> b DNS", "", 0)], max_packets=50
+            )
         self.assertFalse(result.truncated)
 
     def test_filter_and_path_are_not_parsed_by_the_shell(self):
@@ -738,10 +756,22 @@ class TestFilterDryRun(unittest.TestCase):
 
     def test_valid_filter_passes_reading_one_packet_of_the_file(self):
         cmd = self._check(("", _ROOT_WARNING, 0))
-        self.assertEqual(cmd[3:], [
-            "tshark", "-r", "/pcap/test.pcap", "-Y", "dns", "-c", "1",
-            "-T", "fields", "-e", "frame.number",
-        ])
+        self.assertEqual(
+            cmd[3:],
+            [
+                "tshark",
+                "-r",
+                "/pcap/test.pcap",
+                "-Y",
+                "dns",
+                "-c",
+                "1",
+                "-T",
+                "fields",
+                "-e",
+                "frame.number",
+            ],
+        )
 
     def test_refused_filter_raises_tshark_message(self):
         with self.assertRaises(TSharkValidationError) as ctx:

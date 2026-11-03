@@ -117,27 +117,31 @@ class TestClassifyAsIot:
 
 class TestBuildBaseline:
     def test_builds_baseline_from_opensearch(self, iot, mock_client):
-        mock_client.search.side_effect = _baseline_search({
-            "hits": {"total": {"value": 1000}},
-            "aggregations": {
-                "destinations": {
-                    "buckets": [
-                        {"key": "8.8.8.8", "doc_count": 100},
-                        {"key": "1.1.1.1", "doc_count": 50},
-                    ]
+        mock_client.search.side_effect = _baseline_search(
+            {
+                "hits": {"total": {"value": 1000}},
+                "aggregations": {
+                    "destinations": {
+                        "buckets": [
+                            {"key": "8.8.8.8", "doc_count": 100},
+                            {"key": "1.1.1.1", "doc_count": 50},
+                        ]
+                    },
+                    "dest_ports": {
+                        "buckets": [
+                            {"key": 443, "doc_count": 800},
+                            {"key": 80, "doc_count": 200},
+                        ]
+                    },
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 1000}]},
+                    "hourly_activity": {"buckets": []},
+                    "total_bytes": {"value": 5000000},
+                    "countries": {
+                        "buckets": [{"key": "United States", "doc_count": 900}]
+                    },
                 },
-                "dest_ports": {
-                    "buckets": [
-                        {"key": 443, "doc_count": 800},
-                        {"key": 80, "doc_count": 200},
-                    ]
-                },
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 1000}]},
-                "hourly_activity": {"buckets": []},
-                "total_bytes": {"value": 5000000},
-                "countries": {"buckets": [{"key": "United States", "doc_count": 900}]},
-            },
-        })
+            }
+        )
 
         baseline = iot.build_baseline("AA:BB:CC:DD:EE:FF", days=7)
 
@@ -182,17 +186,21 @@ class TestBuildBaseline:
 class TestCheckAnomalies:
     def _setup_baseline(self, iot, mock_client):
         """Pre-populate a baseline for testing anomaly detection."""
-        mock_client.search.side_effect = _baseline_search({
-            "hits": {"total": {"value": 1000}},
-            "aggregations": {
-                "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 100}]},
-                "dest_ports": {"buckets": [{"key": 443, "doc_count": 800}]},
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 1000}]},
-                "hourly_activity": {"buckets": []},
-                "total_bytes": {"value": 240000},  # ~10K/hr average
-                "countries": {"buckets": [{"key": "United States", "doc_count": 900}]},
-            },
-        })
+        mock_client.search.side_effect = _baseline_search(
+            {
+                "hits": {"total": {"value": 1000}},
+                "aggregations": {
+                    "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 100}]},
+                    "dest_ports": {"buckets": [{"key": 443, "doc_count": 800}]},
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 1000}]},
+                    "hourly_activity": {"buckets": []},
+                    "total_bytes": {"value": 240000},  # ~10K/hr average
+                    "countries": {
+                        "buckets": [{"key": "United States", "doc_count": 900}]
+                    },
+                },
+            }
+        )
         iot.build_baseline("AA:BB:CC:DD:EE:FF")
         # the tests set return_value for the hourly check, which a side_effect would override
         mock_client.search.side_effect = None
@@ -306,20 +314,33 @@ class TestCheckAnomalies:
         """#96: only the hour's top 100 destinations were compared with the baseline."""
         self._setup_baseline(iot, mock_client)
         mock_client.search.side_effect = [
-            {"aggregations": {
-                "destinations": {"buckets": [{"key": "8.8.8.8", "doc_count": 10}], "sum_other_doc_count": 2},
-                "dest_ports": {"buckets": [{"key": 443, "doc_count": 12}]},
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 12}]},
-                "total_bytes": {"value": 500},
-                "countries": {"buckets": [{"key": "Unknown", "doc_count": 12}]},
-            }},
-            {"aggregations": {"all": {"buckets": [
-                {"key": {"value": "8.8.8.8"}, "doc_count": 10},
-                {"key": {"value": "203.0.113.9"}, "doc_count": 2},
-            ]}}},
+            {
+                "aggregations": {
+                    "destinations": {
+                        "buckets": [{"key": "8.8.8.8", "doc_count": 10}],
+                        "sum_other_doc_count": 2,
+                    },
+                    "dest_ports": {"buckets": [{"key": 443, "doc_count": 12}]},
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 12}]},
+                    "total_bytes": {"value": 500},
+                    "countries": {"buckets": [{"key": "Unknown", "doc_count": 12}]},
+                }
+            },
+            {
+                "aggregations": {
+                    "all": {
+                        "buckets": [
+                            {"key": {"value": "8.8.8.8"}, "doc_count": 10},
+                            {"key": {"value": "203.0.113.9"}, "doc_count": 2},
+                        ]
+                    }
+                }
+            },
         ]
         anomalies = iot.check_anomalies("AA:BB:CC:DD:EE:FF")
-        assert [a["detail"] for a in anomalies if a["type"] == ANOMALY_NEW_DESTINATION] == ["203.0.113.9"]
+        assert [
+            a["detail"] for a in anomalies if a["type"] == ANOMALY_NEW_DESTINATION
+        ] == ["203.0.113.9"]
         # a missing country still reads "Unknown", never "None"
         assert not [a for a in anomalies if a["type"] == ANOMALY_NEW_COUNTRY]
 
@@ -616,7 +637,9 @@ class TestFleetSummary:
 
     def test_failed_stats_after_discovery_raise(self, iot, monkeypatch):
         """Each fleet query on its own: conn stats, DNS trackers, then the anomaly check."""
-        devices = {"AA:BB:CC:DD:EE:FF": {"mac": "AA:BB:CC:DD:EE:FF", "manufacturer": "Ring"}}
+        devices = {
+            "AA:BB:CC:DD:EE:FF": {"mac": "AA:BB:CC:DD:EE:FF", "manufacturer": "Ring"}
+        }
         monkeypatch.setattr(iot, "_discover_iot_devices_from_arkime", lambda *a: None)
         iot._iot_devices = devices
         iot._baselines = {"AA:BB:CC:DD:EE:FF": {"known_destinations": []}}
@@ -1126,7 +1149,9 @@ class TestManufacturerProfiles:
         mock_client.search.side_effect = Exception("Connection refused")
 
         with pytest.raises(Exception, match="Connection refused"):
-            iot.get_manufacturer_profiles("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
+            iot.get_manufacturer_profiles(
+                "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1198,21 +1223,25 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_discovers_tuya_from_oui(self, iot, mock_client):
         """Tuya Smart Inc. OUI should be classified as IoT."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "aa:bb:cc:dd:ee:ff",
-                            "doc_count": 100,
-                            "oui": {"buckets": [{"key": "Tuya Smart Inc."}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "aa:bb:cc:dd:ee:ff",
+                                "doc_count": 100,
+                                "oui": {"buckets": [{"key": "Tuya Smart Inc."}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1226,28 +1255,34 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_excludes_ubiquiti(self, iot, mock_client):
         """Ubiquiti Inc OUI should NOT be classified as IoT."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "aa:bb:cc:dd:ee:ff",
-                            "doc_count": 100,
-                            "oui": {"buckets": [{"key": "Tuya Smart Inc."}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                        {
-                            "key": "11:22:33:44:55:66",
-                            "doc_count": 500,
-                            "oui": {"buckets": [{"key": "Ubiquiti Inc"}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.1"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "aa:bb:cc:dd:ee:ff",
+                                "doc_count": 100,
+                                "oui": {"buckets": [{"key": "Tuya Smart Inc."}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                            {
+                                "key": "11:22:33:44:55:66",
+                                "doc_count": 500,
+                                "oui": {"buckets": [{"key": "Ubiquiti Inc"}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.1"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1259,32 +1294,38 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_always_iot_oui(self, iot, mock_client):
         """IOT_OUI_ALWAYS entries are classified as IoT even without keyword match."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "aa:bb:cc:11:22:33",
-                            "doc_count": 50,
-                            "oui": {"buckets": [{"key": "Philips Lighting BV"}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.60"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                        {
-                            "key": "dd:ee:ff:11:22:33",
-                            "doc_count": 30,
-                            "oui": {
-                                "buckets": [
-                                    {"key": "Sichuan AI-Link Technology Co., Ltd."}
-                                ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "aa:bb:cc:11:22:33",
+                                "doc_count": 50,
+                                "oui": {"buckets": [{"key": "Philips Lighting BV"}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.60"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
                             },
-                            "latest_ip": {"buckets": [{"key": "192.168.1.61"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+                            {
+                                "key": "dd:ee:ff:11:22:33",
+                                "doc_count": 30,
+                                "oui": {
+                                    "buckets": [
+                                        {"key": "Sichuan AI-Link Technology Co., Ltd."}
+                                    ]
+                                },
+                                "latest_ip": {"buckets": [{"key": "192.168.1.61"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1296,34 +1337,42 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_never_iot_oui(self, iot, mock_client):
         """IOT_OUI_NEVER entries are never classified as IoT."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "aa:bb:cc:dd:ee:ff",
-                            "doc_count": 200,
-                            "oui": {
-                                "buckets": [{"key": "Proxmox Server Solutions GmbH"}]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "aa:bb:cc:dd:ee:ff",
+                                "doc_count": 200,
+                                "oui": {
+                                    "buckets": [
+                                        {"key": "Proxmox Server Solutions GmbH"}
+                                    ]
+                                },
+                                "latest_ip": {"buckets": [{"key": "192.168.1.5"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
                             },
-                            "latest_ip": {"buckets": [{"key": "192.168.1.5"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                        {
-                            "key": "11:22:33:44:55:66",
-                            "doc_count": 300,
-                            "oui": {
-                                "buckets": [
-                                    {"key": "Western Digital Technologies, Inc."}
-                                ]
+                            {
+                                "key": "11:22:33:44:55:66",
+                                "doc_count": 300,
+                                "oui": {
+                                    "buckets": [
+                                        {"key": "Western Digital Technologies, Inc."}
+                                    ]
+                                },
+                                "latest_ip": {"buckets": [{"key": "192.168.1.10"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
                             },
-                            "latest_ip": {"buckets": [{"key": "192.168.1.10"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1341,21 +1390,25 @@ class TestDiscoverIotDevicesFromArkime:
             "classified_at": "2026-04-04T00:00:00Z",
             "is_iot": True,
         }
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "AA:BB:CC:DD:EE:FF",
-                            "doc_count": 100,
-                            "oui": {"buckets": [{"key": "Ring LLC"}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "AA:BB:CC:DD:EE:FF",
+                                "doc_count": 100,
+                                "oui": {"buckets": [{"key": "Ring LLC"}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1367,21 +1420,25 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_espressif_matches(self, iot, mock_client):
         """Espressif Inc. matches via IOT_OUI_ALWAYS."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "cc:dd:ee:11:22:33",
-                            "doc_count": 80,
-                            "oui": {"buckets": [{"key": "Espressif Inc."}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.70"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "cc:dd:ee:11:22:33",
+                                "doc_count": 80,
+                                "oui": {"buckets": [{"key": "Espressif Inc."}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.70"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1392,21 +1449,25 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_no_oui_bucket_skipped(self, iot, mock_client):
         """MACs with no OUI bucket are skipped."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "aa:bb:cc:dd:ee:ff",
-                            "doc_count": 100,
-                            "oui": {"buckets": []},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "aa:bb:cc:dd:ee:ff",
+                                "doc_count": 100,
+                                "oui": {"buckets": []},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
@@ -1424,21 +1485,27 @@ class TestDiscoverIotDevicesFromArkime:
 
     def test_raspberry_pi_matches_keyword(self, iot, mock_client):
         """Raspberry Pi (Trading) Ltd matches 'raspberry pi' keyword."""
-        mock_client.search.return_value = _discovery_page({
-            "aggregations": {
-                "by_mac": {
-                    "buckets": [
-                        {
-                            "key": "ff:ee:dd:cc:bb:aa",
-                            "doc_count": 40,
-                            "oui": {"buckets": [{"key": "Raspberry Pi (Trading) Ltd"}]},
-                            "latest_ip": {"buckets": [{"key": "192.168.1.80"}]},
-                            "last_seen": {"value_as_string": "2026-04-05T12:00:00Z"},
-                        },
-                    ]
+        mock_client.search.return_value = _discovery_page(
+            {
+                "aggregations": {
+                    "by_mac": {
+                        "buckets": [
+                            {
+                                "key": "ff:ee:dd:cc:bb:aa",
+                                "doc_count": 40,
+                                "oui": {
+                                    "buckets": [{"key": "Raspberry Pi (Trading) Ltd"}]
+                                },
+                                "latest_ip": {"buckets": [{"key": "192.168.1.80"}]},
+                                "last_seen": {
+                                    "value_as_string": "2026-04-05T12:00:00Z"
+                                },
+                            },
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"

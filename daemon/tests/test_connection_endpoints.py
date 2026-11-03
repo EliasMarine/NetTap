@@ -241,12 +241,20 @@ class TestConnectionSankey(AioHTTPTestCase):
                         {
                             "key": "10.0.0.1",
                             "total_bytes": {"value": 200},
-                            "by_proto": {"buckets": [{"key": "tcp", "proto_bytes": {"value": 200}}]},
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "proto_bytes": {"value": 200}}
+                                ]
+                            },
                         },
                         {
                             "key": "10.0.0.2",
                             "total_bytes": {"value": 100},
-                            "by_proto": {"buckets": [{"key": "tcp", "proto_bytes": {"value": 100}}]},
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "proto_bytes": {"value": 100}}
+                                ]
+                            },
                         },
                     ]
                 },
@@ -261,7 +269,11 @@ class TestConnectionSankey(AioHTTPTestCase):
                             "key": "Unknown",
                             "dest_bytes": {"value": 300},
                             "geo": {"buckets": []},
-                            "by_proto": {"buckets": [{"key": "tcp", "proto_bytes": {"value": 300}}]},
+                            "by_proto": {
+                                "buckets": [
+                                    {"key": "tcp", "proto_bytes": {"value": 300}}
+                                ]
+                            },
                         },
                     ]
                 },
@@ -279,7 +291,9 @@ class TestConnectionSankey(AioHTTPTestCase):
         ]
         self.assertEqual(len(tcp_to_unknown), 1)
         self.assertEqual(tcp_to_unknown[0]["value"], 300)
-        dest_filters = self.mock_client.search.call_args_list[1].kwargs["body"]["query"]["bool"]["filter"]
+        dest_filters = self.mock_client.search.call_args_list[1].kwargs["body"][
+            "query"
+        ]["bool"]["filter"]
         self.assertIn({"terms": {"source.ip": ["10.0.0.1", "10.0.0.2"]}}, dest_filters)
 
 
@@ -409,7 +423,7 @@ class TestConnectionRelated(AioHTTPTestCase):
                             "network": {"transport": "udp"},
                         },
                     },
-                ]
+                ],
             },
         }
 

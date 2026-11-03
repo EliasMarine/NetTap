@@ -32,7 +32,9 @@ def _request(params: dict) -> MagicMock:
 
 
 def _span(from_ts: str, to_ts: str) -> float:
-    return (datetime.fromisoformat(to_ts) - datetime.fromisoformat(from_ts)).total_seconds()
+    return (
+        datetime.fromisoformat(to_ts) - datetime.fromisoformat(from_ts)
+    ).total_seconds()
 
 
 class TestParseTimeRange(unittest.TestCase):
@@ -48,24 +50,38 @@ class TestParseTimeRange(unittest.TestCase):
 
     def test_rejects_bad_to_by_name(self):
         with self.assertRaises(web.HTTPBadRequest) as ctx:
-            parse_time_range(_request({"from": "2026-11-02T21:00:00Z", "to": "now"}), DAY)
+            parse_time_range(
+                _request({"from": "2026-11-02T21:00:00Z", "to": "now"}), DAY
+            )
         self.assertIn("to must be", json.loads(ctx.exception.text)["error"])
 
     def test_accepts_z_and_offset(self):
-        req = _request({"from": "2026-11-02T21:00:00Z", "to": "2026-11-02T21:05:00+00:00"})
+        req = _request(
+            {"from": "2026-11-02T21:00:00Z", "to": "2026-11-02T21:05:00+00:00"}
+        )
         self.assertEqual(
-            parse_time_range(req, DAY), ("2026-11-02T21:00:00Z", "2026-11-02T21:05:00+00:00")
+            parse_time_range(req, DAY),
+            ("2026-11-02T21:00:00Z", "2026-11-02T21:05:00+00:00"),
         )
 
     def test_a_backwards_range_is_400(self):
         """#120: it went on to OpenSearch; the time slots can't be built for it."""
         with self.assertRaises(web.HTTPBadRequest) as ctx:
-            parse_time_range(_request({"from": "2026-11-02T22:00:00Z", "to": "2026-11-02T23:00:00+02:00"}), DAY)
-        self.assertEqual(json.loads(ctx.exception.text), {"error": "from must not be later than to"})
+            parse_time_range(
+                _request(
+                    {"from": "2026-11-02T22:00:00Z", "to": "2026-11-02T23:00:00+02:00"}
+                ),
+                DAY,
+            )
+        self.assertEqual(
+            json.loads(ctx.exception.text), {"error": "from must not be later than to"}
+        )
 
     def test_a_time_without_a_zone_is_utc(self):
         req = _request({"from": "2026-11-02T21:00:00", "to": "2026-11-02T21:30:00Z"})
-        self.assertEqual(parse_time_range(req, DAY), ("2026-11-02T21:00:00", "2026-11-02T21:30:00Z"))
+        self.assertEqual(
+            parse_time_range(req, DAY), ("2026-11-02T21:00:00", "2026-11-02T21:30:00Z")
+        )
 
     def test_empty_and_absent_use_default_span(self):
         for params in ({}, {"from": "", "to": ""}):
@@ -74,7 +90,9 @@ class TestParseTimeRange(unittest.TestCase):
 
     def test_changelog_keeps_none_and_empty(self):
         self.assertEqual(changelog_time_range(_request({})), (None, None))
-        self.assertEqual(changelog_time_range(_request({"from": "", "to": ""})), ("", ""))
+        self.assertEqual(
+            changelog_time_range(_request({"from": "", "to": ""})), ("", "")
+        )
         with self.assertRaises(web.HTTPBadRequest):
             changelog_time_range(_request({"from": "now-7d"}))
 
@@ -132,7 +150,9 @@ class TestEndpointsRejectUnreadableTimes(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/traffic/summary?from=&to=")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertAlmostEqual(_span(data["from"], data["to"]), DAY.total_seconds(), delta=5)
+        self.assertAlmostEqual(
+            _span(data["from"], data["to"]), DAY.total_seconds(), delta=5
+        )
 
 
 if __name__ == "__main__":
