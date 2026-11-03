@@ -133,6 +133,17 @@ async def check_preflight(mu) -> None:
     tags = {line.rsplit(":", 1)[-1] for line in out.split() if "malcolm/" in line or "zeek-live" in line}
     check("update preflight: docker compose runs in the helper with the new tag", rc == 0 and tags == {mu.TESTED_MALCOLM_TAG},
           f"exit {rc}, Malcolm images resolve to {sorted(tags) or out.strip()[-200:]}")
+    # the first real run failed here: 26.04.0+ has no malcolm/redis image (#129)
+    pulled = sorted({line for line in out.split() if "idaholab/malcolm/" in line})
+    kv = mu.release_env(mu.TESTED_MALCOLM_TAG)["MALCOLM_KV_IMAGE"]
+    missing = []
+    for image in pulled:
+        _, code = await up._run(["docker", "manifest", "inspect", image], 120)
+        if code != 0:
+            missing.append(image)
+    check("update preflight: every image the tested release needs is in the registry", bool(pulled) and not missing,
+          f"{len(pulled)} images, missing {missing or 'none'}; key-value image {kv}: "
+          f"{[i for i in pulled if f'/{kv}:' in i] or 'not in the list'}")
     # take_unfinished() would delete the file; only look
     check("no unfinished update left behind", not os.path.exists(mu.STATE_FILE), f"{mu.STATE_FILE} absent")
 

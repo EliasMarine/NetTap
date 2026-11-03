@@ -33,6 +33,9 @@ logger = logging.getLogger("nettap.services.malcolm_upgrade")
 # The Malcolm release this NetTap version was tested with (docker/docker-compose.yml defaults,
 # scripts/install/malcolm-versions.conf and malcolm-config.sh say the same; a test checks it).
 TESTED_MALCOLM_TAG = "26.10.0"
+# Malcolm replaced Redis with Valkey here: a new image (the compose "redis" service keeps its
+# name) and a new data volume, since Valkey 8.1 can't read Redis 7.4's RDB files
+VALKEY_SINCE = "26.04.0"
 
 # compose services that run on MALCOLM_IMAGE_TAG; zeek-live is built from Malcolm's Zeek image
 MALCOLM_SERVICES = (
@@ -88,6 +91,20 @@ ARRIVAL_TIMEOUT_S = 600
 POLL_S = 10
 
 _TAG_RE = re.compile(r"^\d+\.\d+\.\d+$")
+# sets each KEY=VALUE in an env file, adding the lines that are missing; keeps the file's mode
+_SET_ENV = (
+    "import os,re,sys\n"
+    "p=sys.argv[1]\n"
+    "s=open(p).read() if os.path.exists(p) else ''\n"
+    "for kv in sys.argv[2:]:\n"
+    " k=kv.split('=',1)[0]\n"
+    " n,c=re.subn(r'(?m)^'+re.escape(k)+r'=.*$',lambda m:kv,s)\n"
+    " s=n if c else (s.rstrip('\\n')+'\\n' if s else '')+kv+'\\n'\n"
+    "m=os.stat(p).st_mode if os.path.exists(p) else 0o600\n"
+    "open(p,'w').write(s)\n"
+    "os.chmod(p,m)\n"
+)
+# OLD CODE START — 2026-11-03: the key-value image moves with the tag now (_SET_ENV)
 # sets MALCOLM_IMAGE_TAG in an env file, adding the line if it's missing; keeps the file's mode
 _SET_TAG = (
     "import os,re,sys\n"
@@ -99,6 +116,7 @@ _SET_TAG = (
     "open(p,'w').write(s)\n"
     "os.chmod(p,m)\n"
 )
+# OLD CODE END
 
 Runner = Callable[[list[str], float], Awaitable[tuple[str, int]]]
 OnStep = Callable[[str, int, int], None]
@@ -136,6 +154,14 @@ def newer(a: str, b: str) -> bool:
     if not (_TAG_RE.match(a) and _TAG_RE.match(b)):
         return False
     return tuple(map(int, a.split("."))) > tuple(map(int, b.split(".")))
+
+
+def release_env(tag: str) -> dict[str, str]:
+    """What docker/.env and compose need to run a Malcolm release: its tag and key-value image."""
+    return {
+        "MALCOLM_IMAGE_TAG": tag,
+        "MALCOLM_KV_IMAGE": "redis" if newer(VALKEY_SINCE, tag) else "valkey",
+    }
 
 
 def malcolm_changelog(offered: str, latest: str, tested: bool) -> str:
@@ -361,8 +387,11 @@ class MalcolmUpgrade:
             f"{p['repo']}:{p['repo']}",
             "-w",
             p["workdir"],
-            "-e",
-            f"MALCOLM_IMAGE_TAG={tag}",
+            # OLD CODE START — 2026-11-03: the key-value image follows the release too
+            # "-e",
+            # f"MALCOLM_IMAGE_TAG={tag}",
+            # OLD CODE END
+            *[a for k, v in release_env(tag).items() for a in ("-e", f"{k}={v}")],
             p["image"],
             "compose",
             "-p",
@@ -446,10 +475,23 @@ class MalcolmUpgrade:
 
     async def _set_tag(self, p: dict, tag: str) -> None:
         env = os.path.join(p["workdir"], ".env")
+        # OLD CODE START — 2026-11-03: writes the release's key-value image with its tag
+        # cmd = self._in_helper(
+        #     p, [f"{p['workdir']}:{p['workdir']}"], "python3", "-c", _SET_TAG, env, tag
+        # )
+        # await self._must(cmd, 60, f"Writing MALCOLM_IMAGE_TAG={tag} to {env}")
+        # OLD CODE END
+        pairs = [f"{k}={v}" for k, v in release_env(tag).items()]
         cmd = self._in_helper(
-            p, [f"{p['workdir']}:{p['workdir']}"], "python3", "-c", _SET_TAG, env, tag
+            p,
+            [f"{p['workdir']}:{p['workdir']}"],
+            "python3",
+            "-c",
+            _SET_ENV,
+            env,
+            *pairs,
         )
-        await self._must(cmd, 60, f"Writing MALCOLM_IMAGE_TAG={tag} to {env}")
+        await self._must(cmd, 60, f"Writing {' '.join(pairs)} to {env}")
 
     async def _up(self, p: dict, tag: str, services: list[str]) -> None:
         if services:

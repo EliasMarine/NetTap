@@ -650,7 +650,14 @@ services:
   # ========================================================================
 
   redis:
-    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.10.0}"
+    # OLD CODE START — 2026-11-03: Malcolm 26.04.0+ ships Valkey instead of Redis (no redis image)
+    # image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/redis:${MALCOLM_IMAGE_TAG:-26.10.0}"
+    # OLD CODE END
+    # MALCOLM_KV_IMAGE is "valkey" from Malcolm 26.04.0 on, "redis" before; docker/.env sets it
+    # with MALCOLM_IMAGE_TAG (installer, System → Updates). The default keeps boxes whose .env
+    # predates it (26.02.0) on Redis. Valkey's image ships redis-server/redis-cli too, so the
+    # command and healthcheck below serve both. The service keeps its name: clients use "redis".
+    image: "${MALCOLM_IMAGE_REGISTRY:-ghcr.io/idaholab/malcolm}/${MALCOLM_KV_IMAGE:-redis}:${MALCOLM_IMAGE_TAG:-26.10.0}"
     container_name: nettap-redis
     restart: unless-stopped
     <<: *logging-defaults
@@ -688,7 +695,11 @@ services:
       REDIS_MAXMEMORY: "${REDIS_MAXMEMORY:-0}"
       REDIS_MAXMEMORY_POLICY: "${REDIS_MAXMEMORY_POLICY:-allkeys-lru}"
     volumes:
-      - redis-data:/data
+      # OLD CODE START — 2026-11-03: each image keeps its own data (Valkey 8.1 can't read
+      # Redis 7.4's RDB files), so a rollback finds Redis's untouched; NetTap stores no keys
+      # - redis-data:/data
+      # OLD CODE END
+      - ${MALCOLM_KV_IMAGE:-redis}-data:/data
     networks:
       - default
     healthcheck:
@@ -715,6 +726,10 @@ services:
       REDIS_HOST: "redis"
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+      # the same store under the names Malcolm 26.04.0+ reads
+      VALKEY_HOST: "redis"
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
       NGINX_AUTH_MODE: "${NGINX_AUTH_MODE:-basic}"
       DASHBOARDS_URL: "http://dashboards:5601/dashboards"
       ARKIME_VIEWER_PORT: "8005"
@@ -1146,6 +1161,7 @@ volumes:
   logstash-persistent-queue:
   filebeat-registry:
   redis-data:
+  valkey-data:
   pcap-data:
 
   # Shared log volumes (written by capture, read by filebeat)

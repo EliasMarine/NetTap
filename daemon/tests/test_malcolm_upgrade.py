@@ -159,7 +159,7 @@ class TestHappyPath:
             < first(" build ")
             < first("docker stop")
             < first("cp -a")
-            < first("MALCOLM_IMAGE_TAG='+t")
+            < first("/home/nettap/NetTap/docker/.env MALCOLM_IMAGE_TAG=26.10.0")
             < first(" up -d ")
         )
         assert (
@@ -205,6 +205,18 @@ class TestHappyPath:
             and pull[pull.index("-w") + 1] == "/home/nettap/NetTap/docker"
         )
         assert pull[pull.index("-p") + 1] == "docker" and "sha256:daemonimage" in pull
+
+    def test_compose_gets_the_release_key_value_image_with_the_tag(self, tmp_path):
+        # Malcolm replaced Redis with Valkey in 26.04.0: a new image and a new data volume
+        docker = FakeDocker()
+        _apply(_upgrade(docker, tmp_path=tmp_path))
+        composes = [c for c in docker.calls if "compose" in c]
+        assert composes and all(
+            "MALCOLM_IMAGE_TAG=26.10.0" in c and "MALCOLM_KV_IMAGE=valkey" in c
+            for c in composes
+        )
+        write = next(c for c in docker.calls if "/home/nettap/NetTap/docker/.env" in c)
+        assert write[-2:] == ["MALCOLM_IMAGE_TAG=26.10.0", "MALCOLM_KV_IMAGE=valkey"]
 
     def test_every_helper_runs_as_root(self, tmp_path):
         # the daemon image's USER is nettap; only compose's user: root makes the daemon root,
@@ -266,6 +278,13 @@ class TestRollback:
             restore[-1][restore[-1].index("-v") + 1]
             == "docker_opensearch-data-before-update:/from:ro"
         )
+        writes = [c for c in docker.calls if "/home/nettap/NetTap/docker/.env" in c]
+        assert writes[-1][-2:] == [
+            "MALCOLM_IMAGE_TAG=26.02.0",
+            "MALCOLM_KV_IMAGE=redis",
+        ]
+        ups = [c for c in docker.calls if " up -d " in " ".join(c)]
+        assert "MALCOLM_KV_IMAGE=redis" in ups[-1]
 
     def test_capture_that_doesnt_resume_rolls_back(self, tmp_path):
         docker = FakeDocker()
@@ -324,7 +343,35 @@ class TestHelpers:
         assert tag_of("ghcr.io/idaholab/malcolm/api:26.02.0") == "26.02.0"
         assert tag_of("localhost:5000/x") == ""
 
-    def test_set_tag_script_replaces_or_adds(self, tmp_path):
+    def test_release_env_follows_malcolms_switch_to_valkey(self):
+        assert mu.release_env("26.02.0") == {
+            "MALCOLM_IMAGE_TAG": "26.02.0",
+            "MALCOLM_KV_IMAGE": "redis",
+        }
+        assert mu.release_env("26.04.0")["MALCOLM_KV_IMAGE"] == "valkey"
+        assert mu.release_env("26.10.0")["MALCOLM_KV_IMAGE"] == "valkey"
+
+    def test_set_env_script_replaces_or_adds_each_line(self, tmp_path):
+        env = tmp_path / ".env"
+        env.write_text("PUID=1000\nMALCOLM_IMAGE_TAG=26.02.0\nX=1\n")
+        os.chmod(env, 0o600)
+        pairs = ["MALCOLM_IMAGE_TAG=26.10.0", "MALCOLM_KV_IMAGE=valkey"]
+        subprocess.run(
+            [sys.executable, "-c", mu._SET_ENV, str(env), *pairs], check=True
+        )
+        assert env.read_text() == (
+            "PUID=1000\nMALCOLM_IMAGE_TAG=26.10.0\nX=1\nMALCOLM_KV_IMAGE=valkey\n"
+        )
+        assert oct(env.stat().st_mode & 0o777) == "0o600"
+        subprocess.run(
+            [sys.executable, "-c", mu._SET_ENV, str(env), "MALCOLM_KV_IMAGE=redis"],
+            check=True,
+        )
+        assert "MALCOLM_KV_IMAGE=redis\n" in env.read_text()
+        assert "valkey" not in env.read_text()
+
+    # OLD CODE START — 2026-11-03: _SET_TAG became _SET_ENV (the key-value image moves too)
+    def _old_test_set_tag_script_replaces_or_adds(self, tmp_path):
         env = tmp_path / ".env"
         env.write_text("PUID=1000\nMALCOLM_IMAGE_TAG=26.02.0\n")
         os.chmod(env, 0o600)
@@ -341,6 +388,8 @@ class TestHelpers:
             [sys.executable, "-c", mu._SET_TAG, str(added), "26.10.0"], check=True
         )
         assert added.read_text() == "PUID=1000\nMALCOLM_IMAGE_TAG=26.10.0\n"
+
+    # OLD CODE END
 
 
 def _compose_tags() -> set[str]:
@@ -363,6 +412,25 @@ class TestTheTestedReleaseIsTheOneNetTapInstalls:
         assert f"MALCOLM_IMAGE_TAG={mu.TESTED_MALCOLM_TAG}\n" in gen
         dockerfile = open(os.path.join(REPO, "docker", "Dockerfile.zeek-live")).read()
         assert f"ARG MALCOLM_IMAGE_TAG={mu.TESTED_MALCOLM_TAG}" in dockerfile
+
+    def test_install_and_compose_use_the_tested_key_value_image(self):
+        kv = mu.release_env(mu.TESTED_MALCOLM_TAG)["MALCOLM_KV_IMAGE"]
+        conf = open(
+            os.path.join(REPO, "scripts", "install", "malcolm-versions.conf")
+        ).read()
+        assert f'MALCOLM_IMG_REDIS="{kv}"' in conf
+        gen = open(os.path.join(REPO, "scripts", "install", "malcolm-config.sh")).read()
+        assert f"MALCOLM_KV_IMAGE={kv}\n" in gen
+        compose = yaml.safe_load(
+            open(os.path.join(REPO, "docker", "docker-compose.yml"))
+        )
+        redis = compose["services"]["redis"]
+        assert "/${MALCOLM_KV_IMAGE:-redis}:" in redis["image"]
+        assert "${MALCOLM_KV_IMAGE:-redis}-data:/data" in redis["volumes"]
+        # each image keeps its own data: Valkey 8.1 can't read Redis 7.4's RDB files
+        assert {"redis-data", "valkey-data"} <= set(compose["volumes"])
+        api = compose["services"]["api"]["environment"]
+        assert api["VALKEY_HOST"] == api["REDIS_HOST"] == "redis"
 
     def test_malcolm_services_are_the_compose_services_on_the_tag(self):
         services = yaml.safe_load(

@@ -385,6 +385,8 @@ generate_compose_env() {
 # Malcolm image settings
 MALCOLM_IMAGE_REGISTRY=ghcr.io/idaholab/malcolm
 MALCOLM_IMAGE_TAG=26.10.0
+# Malcolm's key-value store image for that release (Valkey since 26.04.0)
+MALCOLM_KV_IMAGE=valkey
 
 # Process ownership (must be non-root — OpenSearch refuses to run as UID 0)
 PUID=${puid}
