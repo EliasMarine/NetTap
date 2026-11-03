@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the Connections accuracy fixes (#144, #145) from main. Rebuilds the web UI and the daemon.
+# Deploy the Connections and Alerts accuracy fixes (#144, #145, #146) from main. Rebuilds the web UI and the daemon.
 # Tracking: tracking-fixes/2026-11-01-dashboard-data-accuracy.md
 #
 #   #144: connection durations — Malcolm 26.x writes event start/end as epoch-ms text, so
@@ -7,6 +7,8 @@
 #     Connections drawer read nanoseconds as seconds. They now read `length`.
 #   #145: the Connections table sorts and filters by State across every page (it reordered or
 #     filtered only the 50 rows on screen), and its Service column shows dns/ssl/http, not udp/tcp.
+#   #146: Alerts and alert categories sort every page on the daemon: "most severe first" ranked
+#     only the 50 newest alerts, so a range with 368 high alerts showed a medium one on top.
 #   The web UI and the daemon are down for under a minute while they restart.
 #
 # The full output is also saved to ~/nettap-connections-accuracy.log.
@@ -34,7 +36,7 @@ wait_healthy() {  # wait_healthy CONTAINER
     if [ "$status" = "healthy" ]; then check "$1 health" 0 "$status"; else check "$1 health" 1 "$status"; fi
 }
 
-echo "=== Deploy: Connections accuracy (#144, #145) from $BRANCH ==="
+echo "=== Deploy: Connections and Alerts accuracy (#144, #145, #146) from $BRANCH ==="
 echo ""
 
 echo "→ Step 1: Pull latest code..."
@@ -65,6 +67,11 @@ sudo docker exec nettap-storage-daemon python3 -c "$(cat "$REPO_DIR/scripts/remo
 [ "${PIPESTATUS[0]}" -eq 0 ] || FAILED=1
 echo ""
 
+echo "→ Step 4b: Alert tables sort every page; most severe first finds the range's worst (#146)..."
+sudo docker exec nettap-storage-daemon python3 -c "$(cat "$REPO_DIR/scripts/remote/verify_alert_sort.py")" 2>&1 | sed 's/^/   /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || FAILED=1
+echo ""
+
 echo "→ Step 5: A device's connections still sort by every column (#140, shared sort map)..."
 sudo docker exec nettap-storage-daemon python3 -c "$(cat "$REPO_DIR/scripts/remote/verify_connection_sort.py")" 2>&1 | sed 's/^/   /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || FAILED=1
@@ -85,7 +92,7 @@ done
 echo ""
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "=== #144 and #145 deployed and verified — open Connections and click Duration ==="
+    echo "=== #144, #145 and #146 deployed and verified — open Connections and click Duration, then Alerts and click Severity ==="
 else
     echo "=== Finished with ✗ lines above — paste this output back ==="
 fi
