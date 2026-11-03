@@ -75,8 +75,13 @@ export function formatDuration(val: unknown): string {
 	if (n < 0.001) return `${(n * 1_000_000).toFixed(0)}\u00b5s`;
 	if (n < 1) return `${(n * 1000).toFixed(0)}ms`;
 	if (n < 60) return `${n.toFixed(1)}s`;
-	if (n < 3600) return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
-	return `${Math.floor(n / 3600)}h ${Math.floor((n % 3600) / 60)}m`;
+	// OLD CODE START — split before rounding, so 30 min 59.6 s read "30m 60s"
+	// if (n < 3600) return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
+	// return `${Math.floor(n / 3600)}h ${Math.floor((n % 3600) / 60)}m`;
+	// OLD CODE END
+	const total = Math.round(n);
+	if (total < 3600) return `${Math.floor(total / 60)}m ${total % 60}s`;
+	return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
 }
 
 /**

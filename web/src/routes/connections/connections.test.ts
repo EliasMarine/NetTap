@@ -258,12 +258,14 @@ describe('Connections — duration', () => {
 			connections: [
 				conn('a', { event: { start: '1793683365306', end: '1793683365561', duration: 255397081 } }),
 				conn('b', { length: 1500, event: { start: '1793683365306', end: '1793683366806' } }),
+				// 30 min 59.6 s rounds to 31m 0s, not "30m 60s"
+				conn('c', { length: 1859600 }),
 			],
 		});
 		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
 		const { container } = render(Page);
 		await flush();
 		const durations = [...container.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[5]?.textContent?.trim());
-		expect(durations).toEqual(['255ms', '1.5s']);
+		expect(durations).toEqual(['255ms', '1.5s', '31m 0s']);
 	});
 });

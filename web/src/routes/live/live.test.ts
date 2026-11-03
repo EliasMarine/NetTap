@@ -42,3 +42,17 @@ describe('Live Monitor — failed requests', () => {
 		expect(screen.queryByText('No alerts for this connection')).not.toBeInTheDocument();
 	});
 });
+
+describe('Live Monitor — duration', () => {
+	it('rounds before splitting, so 1 h 59.99 min reads "2h 0m", not "1h 60m"', () => {
+		const connection = { source_ip: '192.168.1.20', dest_ip: '8.8.8.8', dest_port: 443, protocol: 'tcp', duration: 7199.6 };
+		render(LiveConnectionDrawerContent, {
+			connection: connection as never,
+			detail: null,
+			detailLoading: false,
+			detailFailed: false,
+			activeTab: 'details',
+		});
+		expect(screen.getByText('2h 0m')).toBeInTheDocument();
+	});
+});
