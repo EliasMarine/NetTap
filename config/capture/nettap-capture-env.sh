@@ -7,10 +7,11 @@
 # The daemon writes /etc/nettap/capture.env when the capture mode changes
 # (DHCP gateway, mirror, bridge). This loader exports PCAP_IFACE and
 # PCAP_FILTER from it (plus CAPTURE_FILTER = PCAP_FILTER, which Suricata and
-# Zeek read), so the containers pick up the new settings on restart.
+# Zeek read), so the containers pick up the new settings on restart. It also
+# exports PCAP_ROTATE_MEGABYTES (netsniff's file size, set on the Settings page).
 #
 # The file is parsed line by line instead of sourced: sourcing would run any
-# shell code in it as root inside every capture container. Only the two
+# shell code in it as root inside every capture container. Only the
 # whitelisted keys are read, and values that are not a valid interface name
 # or a plain BPF expression are ignored (the compose env stays in effect).
 #
@@ -38,6 +39,21 @@ if [ -f "$_nettap_env_file" ] && [ -r "$_nettap_env_file" ]; then
                         ;;
                     *)
                         export PCAP_IFACE="$_nettap_val"
+                        ;;
+                esac
+                ;;
+            PCAP_ROTATE_MEGABYTES)
+                # netsniff rotation size from the settings page: 10-10000 MiB
+                case "$_nettap_val" in
+                    '' | *[!0-9]* | ??????*)
+                        echo "nettap-capture-env: ignoring invalid PCAP_ROTATE_MEGABYTES in $_nettap_env_file" >&2
+                        ;;
+                    *)
+                        if [ "$_nettap_val" -ge 10 ] && [ "$_nettap_val" -le 10000 ]; then
+                            export PCAP_ROTATE_MEGABYTES="$_nettap_val"
+                        else
+                            echo "nettap-capture-env: ignoring out-of-range PCAP_ROTATE_MEGABYTES in $_nettap_env_file" >&2
+                        fi
                         ;;
                 esac
                 ;;

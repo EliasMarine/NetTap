@@ -16,19 +16,35 @@ changes so the capture containers' entrypoints re-read it.
 
 import asyncio
 import logging
+import os
+from dataclasses import replace
 
 from aiohttp import web
 
 from api.settings import _load_env_file, _save_env_file
+from services.capture_config import (
+    capture_config_exists,
+    load_capture_config,
+    save_capture_config,
+    write_env_file_if_changed,
+)
 
 logger = logging.getLogger("nettap.api.capture_control")
 
 CONTAINER_NAME = "nettap-pcap-capture"
+# OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile
+# "arkime", tracking-fixes/2026-11-01-dashboard-data-accuracy.md #44)
+# CAPTURE_CONTAINERS = (
+#     "nettap-zeek-live",
+#     "nettap-suricata-live",
+#     "nettap-arkime-live",
+#     CONTAINER_NAME,
+# )
+# OLD CODE END
 # Containers whose entrypoint reads /etc/nettap/capture.env
 CAPTURE_CONTAINERS = (
     "nettap-zeek-live",
     "nettap-suricata-live",
-    "nettap-arkime-live",
     CONTAINER_NAME,
 )
 DEFAULT_ENV_FILE = "/opt/nettap/data/.env"
@@ -56,11 +72,28 @@ def _read_capture_config(env_file: str) -> dict:
     env = _load_env_file(env_file)
     enabled_str = env.get("PCAP_CAPTURE_ENABLED", "true").lower()
     enabled = enabled_str != "false"
+    # OLD CODE START — 2026-11-02: read a value pcap-capture never sees, so the page
+    # showed 100 MB while netsniff rotated at 4096 MiB (docker/.env)
+    # try:
+    #     max_file_size = int(env.get("PCAP_ROTATE_MB", str(DEFAULT_MAX_FILE_SIZE_MB)))
+    # except (ValueError, TypeError):
+    #     max_file_size = DEFAULT_MAX_FILE_SIZE_MB
+    # OLD CODE END
+    return {"enabled": enabled, "maxFileSizeMB": _effective_rotate_mb()}
+
+
+def _env_int(name: str, default: int) -> int:
     try:
-        max_file_size = int(env.get("PCAP_ROTATE_MB", str(DEFAULT_MAX_FILE_SIZE_MB)))
-    except (ValueError, TypeError):
-        max_file_size = DEFAULT_MAX_FILE_SIZE_MB
-    return {"enabled": enabled, "maxFileSizeMB": max_file_size}
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def _effective_rotate_mb() -> int:
+    """The size netsniff rotates at: the saved setting, else the compose value
+    pcap-capture starts with (PCAP_ROTATE_MB, passed to the daemon the same way)."""
+    saved = load_capture_config().pcap_rotate_mb if capture_config_exists() else 0
+    return saved or _env_int("PCAP_ROTATE_MB", DEFAULT_MAX_FILE_SIZE_MB)
 
 
 async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
@@ -177,6 +210,8 @@ async def handle_capture_status(request: web.Request) -> web.Response:
         {
             "enabled": config["enabled"],
             "maxFileSizeMB": config["maxFileSizeMB"],
+            # netsniff-roll.sh also starts a new file after this many minutes
+            "rotateMinutes": _env_int("PCAP_ROTATE_MIN", 10),
             "containerRunning": container["running"],
             "containerStatus": container["status"],
         }
@@ -264,10 +299,21 @@ async def handle_capture_settings(request: web.Request) -> web.Response:
             status=400,
         )
 
-    env_file = _get_env_file(request.app)
-
-    # Persist to env file
-    _save_env_file(env_file, {"PCAP_ROTATE_MB": str(max_size)})
+    # OLD CODE START — 2026-11-02: saved where pcap-capture never reads it
+    # env_file = _get_env_file(request.app)
+    #
+    # # Persist to env file
+    # _save_env_file(env_file, {"PCAP_ROTATE_MB": str(max_size)})
+    # OLD CODE END
+    # capture.env is what pcap-capture's loader reads on (re)start
+    if not capture_config_exists():
+        return web.json_response(
+            {"error": "Finish the setup wizard first: no capture mode is saved yet."},
+            status=409,
+        )
+    config = replace(load_capture_config(), pcap_rotate_mb=max_size)
+    save_capture_config(config)
+    write_env_file_if_changed(config)
 
     # Restart container if it is currently running so it picks up the new size
     container = await _get_container_status(CONTAINER_NAME)

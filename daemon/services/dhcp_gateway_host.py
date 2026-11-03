@@ -1,7 +1,7 @@
 """
 NetTap DHCP Gateway — host-side helpers.
 
-Host network commands (``nsenter -t 1 -n``, ``ip -j``, iptables), the dnsmasq
+Host network commands (``ip -j``, iptables, run directly: network_mode: host), the dnsmasq
 child process supervisor, and small sysfs and file helpers used by
 DhcpGatewayManager. Split out to keep the manager focused on the
 enable / disable / reconcile flow.
@@ -37,12 +37,17 @@ class HostNetOps:
     _backend: str | None = None
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
-        """Run a command in the host network namespace via nsenter.
+        """Run a command in the host network namespace (network_mode: host).
 
         Returns:
             Tuple of (returncode, stdout, stderr).
         """
-        cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE START — replaced 2026-11-01: Ubuntu's docker-default AppArmor
+        # profile denies nsenter's ptrace read of PID 1, so every host command
+        # failed. The daemon runs with network_mode: host, so run them directly.
+        # cmd = ["nsenter", "-t", "1", "-n", "--"] + list(args)
+        # OLD CODE END
+        cmd = list(args)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -56,11 +61,11 @@ class HostNetOps:
                 stderr.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            logger.warning("nsenter command timed out: %s", " ".join(cmd))
+            logger.warning("Host command timed out: %s", " ".join(cmd))
             return (1, "", "timeout")
         except FileNotFoundError:
-            logger.debug("nsenter not available")
-            return (1, "", "nsenter not found")
+            logger.debug("%s not available", cmd[0])
+            return (1, "", f"{cmd[0]} not found")
 
     async def ip_json(self, *args: str) -> list:
         """``ip -j <args>`` parsed to a list; empty list on any failure."""

@@ -120,6 +120,38 @@ describe('setup wizard after account creation', () => {
 		expect(screen.getByRole('link', { name: 'Go Live Setup' })).toBeInTheDocument();
 	});
 
+	// the daemon answers 200 with status "partial" and warnings when e.g. retention.json wasn't written;
+	// the wizard only checked res.ok and read that as fully saved
+	it('says setup is only partly done and lists the warnings on a partial save', async () => {
+		mockFetch({
+			'POST /api/setup/configure': {
+				body: { status: 'partial', warnings: ['Retention settings were not saved: disk full'] },
+			},
+		});
+		await chooseBridgeModeThenCreateAccount();
+
+		await screen.findByText('System Verification');
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('Setup is only partly done.');
+		expect(alert).toHaveTextContent('Retention settings were not saved: disk full');
+		expect(alert).toHaveTextContent('Your capture settings were saved');
+
+		// a retry that saves everything clears the warning
+		mockFetch();
+		await fireEvent.click(screen.getByRole('button', { name: 'Try saving again' }));
+		await waitFor(() => expect(screen.queryByText('Setup is only partly done.')).not.toBeInTheDocument());
+	});
+
+	it('shows no warning when everything saved', async () => {
+		mockFetch();
+		await chooseBridgeModeThenCreateAccount();
+
+		await screen.findByText('System Verification');
+		await waitFor(() => expect(calls).toContain('GET /api/bridge/health'));
+		expect(screen.queryByText('Setup is only partly done.')).not.toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
 	it("passes the bridge row on health_status 'normal'", async () => {
 		mockFetch();
 		await chooseBridgeModeThenCreateAccount();
@@ -278,6 +310,25 @@ describe('setup wizard capture mode choice', () => {
 		expect(labels).toEqual([
 			'Welcome', 'Capture Mode', 'Interfaces', 'DHCP Gateway', 'Storage', 'Enrichment', 'Account', 'Verification',
 		]);
+	});
+});
+
+describe('setup wizard storage step', () => {
+	it('says alerts follow the Hot tier and PCAP records all traffic', async () => {
+		mockFetch({ 'GET /api/setup/storage': { body: { disk_used_gb: 128, disk_free_gb: 1626, disk_total_gb: 1830, disk_usage_percent: 7 } } });
+		render(SetupPage, { props: { form: null } });
+		const start = await screen.findByRole('button', { name: /Get Started/ });
+		await waitFor(() => expect(start).not.toBeDisabled());
+		await fireEvent.click(start);
+		await fireEvent.click(await screen.findByRole('button', { name: /Mirror \/ SPAN/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+		await fireEvent.change(await screen.findByLabelText(/Capture Interface/), { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+		expect(await screen.findByText(/and Suricata alerts, kept in one daily index/)).toBeInTheDocument();
+		expect(screen.getByText(/alerts follow the Hot tier/)).toBeInTheDocument();
+		expect(screen.getByText(/Raw PCAP files of all traffic/)).toBeInTheDocument();
+		expect(screen.queryByText(/alert-triggered/)).not.toBeInTheDocument();
 	});
 });
 

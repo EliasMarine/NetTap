@@ -76,9 +76,12 @@ export async function getTopDomains(
 	const query = buildQuery({ from: opts.from, to: opts.to, limit: opts.limit });
 	const res = await fetch(`/api/dns/top-domains${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', domains: [] };
-	}
+	// OLD CODE START — #96: a failed request read as "No domains recorded"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', domains: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Top domains failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -90,9 +93,12 @@ export async function getDeviceDns(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/device/${encodeURIComponent(ip)}${query}`);
 
-	if (!res.ok) {
-		return { device_ip: ip, from: '', to: '', domains: [] };
-	}
+	// OLD CODE START — #96: a failed request read as "No DNS records" for the device
+	// if (!res.ok) {
+	// 	return { device_ip: ip, from: '', to: '', domains: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Device DNS failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -103,9 +109,12 @@ export async function getNxdomains(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/nxdomain${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', nxdomains: [] };
-	}
+	// OLD CODE START — #96: a failed request read as "No NXDOMAIN errors detected"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', nxdomains: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`NXDOMAIN list failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -116,9 +125,12 @@ export async function getQueryTypes(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/types${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', types: [] };
-	}
+	// OLD CODE START — #96: a failed request read as no query types
+	// if (!res.ok) {
+	// 	return { from: '', to: '', types: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Query types failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -129,9 +141,12 @@ export async function getDnsTimeline(
 	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/dns/timeline${query}`);
 
-	if (!res.ok) {
-		return { from: '', to: '', interval: '1m', series: [] };
-	}
+	// OLD CODE START — #96: a failed request read as an empty timeline
+	// if (!res.ok) {
+	// 	return { from: '', to: '', interval: '1m', series: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`DNS timeline failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -142,8 +157,13 @@ export async function getSuspiciousDns(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/suspicious${query}`);
 
+	// OLD CODE START — #96: a failed check read as "No suspicious DNS patterns detected"
+	// if (!res.ok) {
+	// 	return { from: '', to: '', suspicious: [] };
+	// }
+	// OLD CODE END
 	if (!res.ok) {
-		return { from: '', to: '', suspicious: [] };
+		throw new Error(`Suspicious DNS check failed: HTTP ${res.status}`);
 	}
 
 	return res.json();
@@ -155,14 +175,17 @@ export async function getDnsStats(
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/stats${query}`);
 
-	if (!res.ok) {
-		return {
-			total_queries: 0,
-			unique_domains: 0,
-			nxdomain_count: 0,
-			avg_resolution_ms: 0,
-		};
-	}
+	// OLD CODE START — #96: a failed request read as 0 queries
+	// if (!res.ok) {
+	// 	return {
+	// 		total_queries: 0,
+	// 		unique_domains: 0,
+	// 		nxdomain_count: 0,
+	// 		avg_resolution_ms: 0,
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`DNS stats failed: HTTP ${res.status}`);
 
 	return res.json();
 }

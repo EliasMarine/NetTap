@@ -51,7 +51,11 @@
 	);
 
 	function formatBytes(bytes: number | undefined): string {
-		if (!bytes || bytes <= 0) return '--';
+		// OLD CODE START — a real 0 read as unknown
+		// if (!bytes || bytes <= 0) return '--';
+		// OLD CODE END
+		if (bytes === undefined || bytes < 0) return '--';
+		if (bytes === 0) return '0 B';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(1024));
 		const value = bytes / Math.pow(1024, i);

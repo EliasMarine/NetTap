@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getLiveConnections, getConnectionRate } from './live';
+import { getLiveConnections, getConnectionRate, getLiveDashboard, getLiveConnectionDetail } from './live';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -86,13 +86,10 @@ describe('live API client', () => {
 			expect(calledUrl).toContain('limit=50');
 		});
 
-		it('returns empty connections on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getLiveConnections();
-
-			expect(result.connections).toEqual([]);
-			expect(result.count).toBe(0);
+			await expect(getLiveConnections()).rejects.toThrow('HTTP 502');
 		});
 	});
 
@@ -114,13 +111,23 @@ describe('live API client', () => {
 			expect(result.total_in_window).toBe(750);
 		});
 
-		it('returns zero defaults on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
+			await expect(getConnectionRate()).rejects.toThrow('HTTP 500');
+		});
+	});
 
-			const result = await getConnectionRate();
+	// #96: the dashboard replaced the live view with zeros, and a failed detail read as "No alerts"
+	describe('getLiveDashboard / getLiveConnectionDetail', () => {
+		it('throws on HTTP error instead of a zero dashboard', async () => {
+			mockFetchFailure(503);
+			await expect(getLiveDashboard()).rejects.toThrow('HTTP 503');
+		});
 
-			expect(result.connections_per_second).toBe(0);
-			expect(result.total_in_window).toBe(0);
+		it('throws on HTTP error instead of a detail with no alerts', async () => {
+			mockFetchFailure(503);
+			await expect(getLiveConnectionDetail('10.0.0.5', '8.8.8.8', 53)).rejects.toThrow('HTTP 503');
 		});
 	});
 });

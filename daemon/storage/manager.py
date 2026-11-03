@@ -9,19 +9,32 @@ emergency pruning, and status reporting.
 """
 
 import json
+import os
 import re
 import logging
 import shutil
+import subprocess
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage.exact_terms import ExactTermsOpenSearch
+
+from api.capture_control import (
+    CONTAINER_NAME as CAPTURE_CONTAINER,
+    DEFAULT_ENV_FILE,
+    _read_capture_config,
+)
+
 logger = logging.getLogger("nettap.storage")
+
+# docker stop waits up to 10 s for a clean exit before killing
+_DOCKER_TIMEOUT_S = 60
 
 # ---------------------------------------------------------------------------
 # OLD CODE START — Original StorageManager (Phase 1 scaffold)
@@ -86,11 +99,41 @@ _DATE_PATTERN_COMPACT = re.compile(r"(\d{6})$")  # YYMMDD used by Arkime
 
 
 # Tier classification prefixes
+# OLD CODE START — every arkime* index was cold (30 days), but arkime_sessions3
+# holds all Zeek metadata and Suricata alerts, and malcolm_beats_* was unknown
+# so never pruned by age (CR-038).
+# _TIER_PREFIXES = {
+#     "cold": ["arkime", "sessions"],
+#     "warm": ["suricata"],
+#     "hot": ["zeek"],
+# }
+# OLD CODE END
+# Malcolm puts Zeek and Suricata in one daily arkime_sessions3 index, so all
+# network data follows hot_days, matching the nettap-hot-policy ISM policy.
+# Checked in order: hot must come before cold's broader "arkime" prefix.
 _TIER_PREFIXES = {
-    "cold": ["arkime", "sessions"],
+    "hot": ["arkime_sessions3", "malcolm_beats", "zeek"],
     "warm": ["suricata"],
-    "hot": ["zeek"],
+    "cold": ["arkime", "sessions"],
 }
+
+
+_DEFAULT_PCAP_MAX_DISK_PCT = 25.0
+
+
+def _pcap_cap_fraction() -> float:
+    """PCAP_MAX_DISK_PCT (0-100, 0 = no cap) as a fraction of the disk."""
+    raw = os.environ.get("PCAP_MAX_DISK_PCT", "")
+    try:
+        pct = float(raw) if raw.strip() else _DEFAULT_PCAP_MAX_DISK_PCT
+    except ValueError:
+        pct = -1.0
+    if not 0 <= pct <= 100:
+        logger.warning(
+            "Ignoring PCAP_MAX_DISK_PCT=%r; using %s%%", raw, _DEFAULT_PCAP_MAX_DISK_PCT
+        )
+        pct = _DEFAULT_PCAP_MAX_DISK_PCT
+    return pct / 100
 
 
 @dataclass
@@ -100,13 +143,27 @@ class RetentionConfig:
     hot_days: int = 90  # Zeek metadata retention (days)
     warm_days: int = 180  # Suricata alert retention (days)
     cold_days: int = 30  # Raw PCAP / Arkime retention (days)
+    # Owner decision 2026-11-02: full capture, but PCAP may use at most this share
+    # of the disk; the oldest files go first (tracking #37). 0 = no cap.
+    pcap_max_disk_fraction: float = field(default_factory=_pcap_cap_fraction)
     disk_threshold: float = 0.80  # Trigger pruning at 80%
     emergency_threshold: float = 0.90  # Aggressive pruning at 90%
     critical_threshold: float = 0.95  # Stop capture at 95%
     resume_threshold: float = 0.85  # Resume normal operation below 85%
     check_path: str = "/"  # Filesystem path for disk usage checks
-    pcap_dir: str = "/data/pcap"  # Directory containing PCAP files
-    capture_stop_flag: str = "/tmp/nettap-stop-capture"  # Flag file to stop capture
+    # OLD CODE START — CR-001: /data/pcap does not exist in the daemon container,
+    # so no PCAP was ever found or deleted. The volume is mounted at PCAP_DIR.
+    # pcap_dir: str = "/data/pcap"  # Directory containing PCAP files
+    # OLD CODE END
+    pcap_dir: str = field(
+        default_factory=lambda: os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
+    )  # Directory containing PCAP files (searched recursively)
+    # OLD CODE START — CR-018: /tmp is the daemon's private tmpfs, so the flag
+    # was read by nothing and lost on restart.
+    # capture_stop_flag: str = "/tmp/nettap-stop-capture"  # Flag file to stop capture
+    # OLD CODE END
+    # Set while the storage manager has stopped pcap-capture (nettap-appdata volume)
+    capture_stop_flag: str = "/opt/nettap/data/storage-stopped-capture"
     ilm_policy_path: str = ""  # Path to ILM policy JSON (auto-detected if empty)
 
 
@@ -121,6 +178,10 @@ class StorageManager:
 
     # Maximum number of disk usage samples to keep (24h at 5-min intervals)
     _USAGE_HISTORY_MAX = 288
+
+    # Most PCAP files the emergency cascade deletes per cycle: 500 x the
+    # default 100 MB rotation = 50 GB, 95% -> 90% on a 1 TB disk
+    _EMERGENCY_PCAP_DELETE_CAP = 500
 
     def __init__(
         self,
@@ -144,6 +205,8 @@ class StorageManager:
 
         # C3: Track whether ILM policy has been verified this session
         self._ilm_verified: bool = False
+        # #96: whether OpenSearch took the exact-counts setting (#90); retried each cycle
+        self._exact_counts: bool = False
 
         # Track last prune cycle timestamp for health status reporting
         self._last_prune_at: str | None = None
@@ -197,7 +260,10 @@ class StorageManager:
         if http_auth:
             kwargs["http_auth"] = http_auth
 
-        return OpenSearch(**kwargs)
+        # OLD CODE START — #93: terms top lists merged across daily indices lost counts
+        # return OpenSearch(**kwargs)
+        # OLD CODE END
+        return ExactTermsOpenSearch(**kwargs)
 
     # ------------------------------------------------------------------
     # Disk usage
@@ -226,16 +292,22 @@ class StorageManager:
           - creation_date: ISO-8601 creation date string or None
           - tier: one of "hot", "warm", "cold", "unknown"
           - parsed_date: datetime extracted from index name or None
+
+        Raises:
+            OpenSearchException: if OpenSearch can't be asked (not "no indices").
         """
-        try:
-            raw = self._client.cat.indices(
-                format="json",
-                h="index,store.size,pri.store.size,creation.date.string",
-                s="index",
-            )
-        except OpenSearchException as exc:
-            logger.error("Failed to list indices from OpenSearch: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed request read as "no indices" (0 on the page)
+        # try:
+        #     raw = self._client.cat.indices(...)
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to list indices from OpenSearch: %s", exc)
+        #     return []
+        # OLD CODE END
+        raw = self._client.cat.indices(
+            format="json",
+            h="index,store.size,pri.store.size,creation.date.string",
+            s="index",
+        )
 
         indices: list[dict] = []
         for entry in raw:
@@ -272,9 +344,10 @@ class StorageManager:
         Returns one of: "cold", "warm", "hot", "unknown".
 
         Tier mapping:
-          - cold: arkime-*, sessions* (PCAP indices)
+          - hot: arkime_sessions3-* (Zeek metadata and Suricata alerts),
+            malcolm_beats_*, zeek-*
           - warm: suricata-* (IDS alert indices)
-          - hot: zeek-* (metadata log indices)
+          - cold: other arkime*, sessions* indices
         """
         lower = index_name.lower()
         for tier, prefixes in _TIER_PREFIXES.items():
@@ -380,7 +453,11 @@ class StorageManager:
         Returns the number of indices deleted.
         """
         with self._cleanup_lock:
-            indices = self.list_indices()
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                logger.error("Failed to list indices from OpenSearch: %s", exc)
+                return 0
             if not indices:
                 logger.debug("No indices found; nothing to prune")
                 return 0
@@ -438,7 +515,8 @@ class StorageManager:
 
         Called when disk usage exceeds the emergency threshold.
         Deletes oldest-first across ALL tiers until usage drops below
-        the normal threshold or no more deletable indices remain.
+        the emergency threshold or only today's indices remain.  Indices
+        dated today (UTC) or later are never deleted: they are being written.
 
         Returns the number of indices deleted.
         """
@@ -448,13 +526,29 @@ class StorageManager:
         )
 
         with self._cleanup_lock:
-            indices = self.list_indices()
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                logger.error("Failed to list indices from OpenSearch: %s", exc)
+                return 0
             if not indices:
                 logger.warning("No indices available for emergency pruning")
                 return 0
 
-            # Collect all dated indices, sort oldest first globally
-            dated = [idx for idx in indices if idx["parsed_date"] is not None]
+            # OLD CODE START — CR-002: included today's live index, so every
+            # cycle deleted the index Logstash had just recreated.
+            # # Collect all dated indices, sort oldest first globally
+            # dated = [idx for idx in indices if idx["parsed_date"] is not None]
+            # OLD CODE END
+            # Collect dated indices from before today, sort oldest first globally
+            today = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            dated = [
+                idx
+                for idx in indices
+                if idx["parsed_date"] is not None and idx["parsed_date"] < today
+            ]
             dated.sort(key=lambda x: x["parsed_date"])
 
             deleted = 0
@@ -465,7 +559,12 @@ class StorageManager:
 
                 # Re-check disk after each deletion
                 usage = self.check_disk_usage()
-                if usage < self.config.disk_threshold:
+                # OLD CODE START — CR-002: aimed for disk_threshold (80%), which
+                # index deletion can't reach when PCAP fills the disk, so it
+                # deleted every index.
+                # if usage < self.config.disk_threshold:
+                # OLD CODE END
+                if usage < self.config.emergency_threshold:
                     logger.info(
                         "Emergency prune brought disk to %.1f%%; deleted %d indices total",
                         usage * 100,
@@ -473,12 +572,24 @@ class StorageManager:
                     )
                     return deleted
 
-            logger.warning(
-                "Emergency prune exhausted all deletable indices "
-                "(deleted %d); disk still at %.1f%%",
-                deleted,
-                self.check_disk_usage() * 100,
-            )
+            # OLD CODE START — CR-002: a warning hid that index deletion could
+            # not recover the space.
+            # logger.warning(
+            #     "Emergency prune exhausted all deletable indices "
+            #     "(deleted %d); disk still at %.1f%%",
+            #     deleted,
+            #     self.check_disk_usage() * 100,
+            # )
+            # OLD CODE END
+            usage = self.check_disk_usage()
+            if usage >= self.config.emergency_threshold:
+                logger.critical(
+                    "Emergency prune deleted %d indices and only today's indices "
+                    "are left; disk still at %.1f%%. Deleting indices cannot "
+                    "recover this space: something else is filling the disk.",
+                    deleted,
+                    usage * 100,
+                )
             return deleted
 
     # ------------------------------------------------------------------
@@ -605,8 +716,105 @@ class StorageManager:
     # C2: Emergency cascade deletion (90%/95% thresholds)
     # ------------------------------------------------------------------
 
+    def _pcaps_oldest_first(self) -> list[tuple[Path, os.stat_result]]:
+        """Return ``(path, stat)`` for every PCAP under ``pcap_dir``, oldest first.
+
+        Searches recursively: netsniff-ng writes to the volume root and
+        Arkime wrote to ``arkime-live/``.  Files that vanish while being
+        stat'ed (capture rotation) are skipped.
+        """
+        pcap_dir = Path(self.config.pcap_dir)
+        found: list[tuple[Path, os.stat_result]] = []
+        try:
+            # exists() raises on EACCES; run_cycle calls this every cycle
+            if not pcap_dir.exists():
+                logger.debug("PCAP directory %s does not exist", pcap_dir)
+                return []
+            for pcap_file in pcap_dir.rglob("*.pcap"):
+                try:
+                    found.append((pcap_file, pcap_file.stat()))
+                except OSError:
+                    continue  # rotated or deleted while we scanned
+        except OSError as exc:
+            logger.error("Failed to scan PCAP directory %s: %s", pcap_dir, exc)
+
+        found.sort(key=lambda item: item[1].st_mtime)
+        return found
+
+    @staticmethod
+    def _unlink_pcap(pcap_file: Path) -> None:
+        """Delete a PCAP and its checksum sidecars. Raises OSError on failure."""
+        for ext in (".xxh3", ".sha256"):
+            (pcap_file.parent / f"{pcap_file.name}{ext}").unlink(missing_ok=True)
+        pcap_file.unlink()
+
+    def prune_expired_pcaps(self) -> int:
+        """Delete PCAP older than ``cold_days``, whatever the disk usage (MS-002).
+
+        Returns the number of PCAP files deleted.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.cold_days)
+        deleted = 0
+        with self._cleanup_lock:
+            for pcap_file, stat in self._pcaps_oldest_first():
+                if stat.st_mtime >= cutoff.timestamp():
+                    break  # oldest first: the rest are newer
+                try:
+                    self._unlink_pcap(pcap_file)
+                    deleted += 1
+                except OSError as exc:
+                    logger.error("Failed to delete expired PCAP %s: %s", pcap_file, exc)
+
+        if deleted:
+            logger.info(
+                "Deleted %d PCAP files older than %d days",
+                deleted,
+                self.config.cold_days,
+            )
+        return deleted
+
+    def prune_pcaps_over_cap(self) -> int:
+        """Delete the oldest PCAP until all PCAP fits in its share of the disk.
+
+        The newest file is never deleted: netsniff may still be writing it.
+        Returns the number of PCAP files deleted.
+        """
+        fraction = self.config.pcap_max_disk_fraction
+        if fraction <= 0:
+            return 0
+        try:
+            cap = int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
+        except OSError as exc:
+            logger.error(
+                "Cannot size the PCAP disk at %s: %s", self.config.pcap_dir, exc
+            )
+            return 0
+
+        deleted = 0
+        with self._cleanup_lock:
+            pcaps = self._pcaps_oldest_first()
+            total = sum(st.st_size for _, st in pcaps)
+            for pcap_file, stat in pcaps[:-1]:
+                if total <= cap:
+                    break
+                try:
+                    self._unlink_pcap(pcap_file)
+                except OSError as exc:
+                    logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+                    continue
+                total -= stat.st_size
+                deleted += 1
+
+        if deleted:
+            logger.info(
+                "Deleted %d oldest PCAP files to keep PCAP under %.0f%% of the disk",
+                deleted,
+                fraction * 100,
+            )
+        return deleted
+
     def _delete_oldest_pcaps(self, max_delete: int = 10) -> int:
-        """Delete the oldest PCAP files from the PCAP directory.
+        """Delete the oldest PCAP files until usage is below the emergency threshold.
 
         Args:
             max_delete: Maximum number of PCAP files to delete per call.
@@ -614,31 +822,48 @@ class StorageManager:
         Returns:
             Number of PCAP files deleted.
         """
-        pcap_dir = Path(self.config.pcap_dir)
-        if not pcap_dir.exists():
-            logger.debug("PCAP directory %s does not exist", pcap_dir)
-            return 0
-
-        # Collect PCAP files sorted by modification time (oldest first)
-        pcap_files = sorted(
-            pcap_dir.glob("*.pcap"),
-            key=lambda p: p.stat().st_mtime,
-        )
-
+        # OLD CODE START — CR-001: top-level glob missed arkime-live/, and the
+        # stat() sort key raised FileNotFoundError when capture rotated a file.
+        # pcap_dir = Path(self.config.pcap_dir)
+        # if not pcap_dir.exists():
+        #     logger.debug("PCAP directory %s does not exist", pcap_dir)
+        #     return 0
+        #
+        # # Collect PCAP files sorted by modification time (oldest first)
+        # pcap_files = sorted(
+        #     pcap_dir.glob("*.pcap"),
+        #     key=lambda p: p.stat().st_mtime,
+        # )
+        #
+        # deleted = 0
+        # for pcap_file in pcap_files[:max_delete]:
+        #     try:
+        #         # Also remove the checksum sidecar if it exists
+        #         for ext in (".xxh3", ".sha256"):
+        #             sidecar = pcap_file.parent / f"{pcap_file.name}{ext}"
+        #             if sidecar.exists():
+        #                 sidecar.unlink()
+        #
+        #         pcap_file.unlink()
+        #         deleted += 1
+        #         logger.warning("Emergency deleted PCAP: %s", pcap_file.name)
+        #     except OSError as exc:
+        #         logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+        #
+        # return deleted
+        # OLD CODE END
         deleted = 0
-        for pcap_file in pcap_files[:max_delete]:
+        for pcap_file, _stat in self._pcaps_oldest_first()[:max_delete]:
             try:
-                # Also remove the checksum sidecar if it exists
-                for ext in (".xxh3", ".sha256"):
-                    sidecar = pcap_file.parent / f"{pcap_file.name}{ext}"
-                    if sidecar.exists():
-                        sidecar.unlink()
-
-                pcap_file.unlink()
+                self._unlink_pcap(pcap_file)
                 deleted += 1
                 logger.warning("Emergency deleted PCAP: %s", pcap_file.name)
             except OSError as exc:
                 logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+                continue
+            # CR-002: stop as soon as the emergency is over
+            if self.check_disk_usage() < self.config.emergency_threshold:
+                break
 
         return deleted
 
@@ -671,13 +896,68 @@ class StorageManager:
         """Check whether the capture stop flag is currently set."""
         return Path(self.config.capture_stop_flag).exists()
 
+    @staticmethod
+    def _docker_capture(action: str) -> bool:
+        """Run ``docker <action>`` on the PCAP capture container.
+
+        Synchronous because run_cycle runs in an executor thread.  Failures
+        are logged at ERROR and return False; they never raise.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", action, CAPTURE_CONTAINER],
+                capture_output=True,
+                text=True,
+                timeout=_DOCKER_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.error("docker %s %s failed: %s", action, CAPTURE_CONTAINER, exc)
+            return False
+        if result.returncode != 0:
+            logger.error(
+                "docker %s %s failed (rc=%d): %s",
+                action,
+                CAPTURE_CONTAINER,
+                result.returncode,
+                (result.stdout + result.stderr).strip(),
+            )
+            return False
+        return True
+
+    def _stop_capture(self) -> None:
+        """Stop pcap-capture at critical disk and record that we stopped it."""
+        if self._docker_capture("stop"):
+            self._set_capture_stop_flag()
+
+    def _resume_capture(self) -> None:
+        """Start pcap-capture again unless the user has turned capture off.
+
+        If ``docker start`` fails the flag stays, so the next cycle retries.
+        """
+        env_file = os.environ.get("NETTAP_ENV_FILE", DEFAULT_ENV_FILE)
+        try:
+            enabled = _read_capture_config(env_file)["enabled"]
+        except (OSError, ValueError) as exc:
+            logger.error("Cannot read %s, leaving capture stopped: %s", env_file, exc)
+            return
+        if not enabled:
+            logger.info(
+                "Not starting %s: PCAP capture is turned off in settings",
+                CAPTURE_CONTAINER,
+            )
+        elif not self._docker_capture("start"):
+            return
+        self._clear_capture_stop_flag()
+
     def emergency_cascade(self) -> int:
         """Execute emergency cascade deletion based on disk usage level.
 
-        At 90%: prune oldest OpenSearch indices regardless of retention,
-                then prune oldest PCAPs.
-        At 95%: additionally stop PCAP capture via flag file.
-        Below 85%: resume normal operation, clear stop-capture flag.
+        At 90%: delete the oldest PCAPs until usage is below 90%, then
+                prune the oldest OpenSearch indices only if still needed.
+        At 95%: additionally ``docker stop`` pcap-capture and set the flag.
+        Below 85%: ``docker start`` it again (if the user has capture on)
+                   and clear the flag.
 
         Returns:
             Total number of items (indices + PCAPs) deleted.
@@ -690,6 +970,30 @@ class StorageManager:
 
         total_deleted = 0
 
+        # OLD CODE START — CR-002: deleted every OpenSearch index before any
+        # PCAP, though PCAP is what fills the disk.
+        # if usage >= self.config.critical_threshold:
+        #     # 95%+ — stop capture AND aggressive pruning
+        #     logger.warning(
+        #         "CRITICAL: Disk at %.1f%% >= %.1f%% — stopping capture "
+        #         "and starting aggressive pruning",
+        #         usage * 100,
+        #         self.config.critical_threshold * 100,
+        #     )
+        #     self._set_capture_stop_flag()
+        #     total_deleted += self.prune_emergency()
+        #     total_deleted += self._delete_oldest_pcaps(max_delete=20)
+        #
+        # elif usage >= self.config.emergency_threshold:
+        #     # 90%+ — aggressive pruning (indices + PCAPs)
+        #     logger.warning(
+        #         "EMERGENCY: Disk at %.1f%% >= %.1f%% — starting cascade deletion",
+        #         usage * 100,
+        #         self.config.emergency_threshold * 100,
+        #     )
+        #     total_deleted += self.prune_emergency()
+        #     total_deleted += self._delete_oldest_pcaps(max_delete=10)
+        # OLD CODE END
         if usage >= self.config.critical_threshold:
             # 95%+ — stop capture AND aggressive pruning
             logger.warning(
@@ -698,19 +1002,24 @@ class StorageManager:
                 usage * 100,
                 self.config.critical_threshold * 100,
             )
-            self._set_capture_stop_flag()
-            total_deleted += self.prune_emergency()
-            total_deleted += self._delete_oldest_pcaps(max_delete=20)
-
+            # OLD CODE START — CR-018: only wrote a flag file nobody reads
+            # self._set_capture_stop_flag()
+            # OLD CODE END
+            self._stop_capture()
         elif usage >= self.config.emergency_threshold:
-            # 90%+ — aggressive pruning (indices + PCAPs)
             logger.warning(
                 "EMERGENCY: Disk at %.1f%% >= %.1f%% — starting cascade deletion",
                 usage * 100,
                 self.config.emergency_threshold * 100,
             )
-            total_deleted += self.prune_emergency()
-            total_deleted += self._delete_oldest_pcaps(max_delete=10)
+
+        if usage >= self.config.emergency_threshold:
+            # PCAP first: it is most of the disk and the cheapest data to lose
+            total_deleted += self._delete_oldest_pcaps(
+                max_delete=self._EMERGENCY_PCAP_DELETE_CAP
+            )
+            if self.check_disk_usage() >= self.config.emergency_threshold:
+                total_deleted += self.prune_emergency()
 
         # Check if we've recovered below resume threshold
         try:
@@ -725,7 +1034,10 @@ class StorageManager:
                     usage_after * 100,
                     self.config.resume_threshold * 100,
                 )
-                self._clear_capture_stop_flag()
+                # OLD CODE START — CR-018: only removed the flag file
+                # self._clear_capture_stop_flag()
+                # OLD CODE END
+                self._resume_capture()
 
         return total_deleted
 
@@ -807,6 +1119,10 @@ class StorageManager:
                 http_auth=self._http_auth,
             )
             self._ilm_verified = True
+            # OLD CODE START — #96: tried once; a failure was only logged and never retried
+            # self._exact_aggregation_counts()
+            # OLD CODE END
+            self._keep_ism_history_single_copy()
 
             # Log summary
             for name, status in results.items():
@@ -819,11 +1135,62 @@ class StorageManager:
                 else:
                     logger.info("ILM policy '%s': %s", name, status)
 
+            # The Settings health card reads this record; before, only a retention
+            # save wrote it, so a box that never saved showed "Out of sync" forever.
+            clean = not any(str(v).startswith("error") for v in results.values())
+            config_manager = getattr(self, "_retention_config_manager", None)
+            if clean and config_manager is not None:
+                try:
+                    config_manager.mark_ilm_applied(results)
+                except Exception as exc:  # the policies are applied either way
+                    logger.warning("Could not record ILM status: %s", exc)
+
             return results
 
         except Exception as exc:
             logger.error("ILM policy verification failed: %s", exc)
             return {"_error": f"error: {exc}"}
+
+    def _exact_aggregation_counts(self) -> None:
+        """Turn off concurrent segment search (#90).
+
+        OpenSearch 3.x defaults it to "auto", which splits each shard into up to 4 slices
+        for aggregations, and a terms top-N then counts like 4 shards: on the G11 a
+        device's top destinations read 106 for 112 and a top destination could go missing.
+        Every page's top lists come from terms aggregations, so they must count exactly.
+        Sets ``_exact_counts`` once OpenSearch takes it; run_cycle retries until then.
+        """
+        try:
+            self._client.cluster.put_settings(
+                body={"persistent": {"search.concurrent_segment_search.mode": "none"}}
+            )
+            self._exact_counts = True
+        except Exception as exc:
+            logger.warning("Could not turn off concurrent segment search: %s", exc)
+
+    def _keep_ism_history_single_copy(self) -> None:
+        """Stop ISM's history index asking for a replica.
+
+        NetTap is a single-node cluster, so a replica can never be placed and
+        the cluster reports yellow even though every shard is healthy.
+        """
+        try:
+            self._client.cluster.put_settings(
+                body={
+                    "persistent": {
+                        "plugins.index_state_management.history.number_of_replicas": 0
+                    }
+                }
+            )
+            # History indices created before the setting keep their replica count
+            self._client.indices.put_settings(
+                index=".opendistro-ism-managed-index-history-*",
+                body={"index": {"number_of_replicas": 0}},
+                expand_wildcards="all",
+                allow_no_indices=True,
+            )
+        except Exception as exc:
+            logger.warning("Could not set ISM history replicas to 0: %s", exc)
 
     # ------------------------------------------------------------------
     # C4: Per-tier disk accounting
@@ -864,16 +1231,19 @@ class StorageManager:
             logger.error("Failed to query index stats for tier accounting: %s", exc)
 
         # Add PCAP file sizes to cold tier
-        pcap_dir = Path(self.config.pcap_dir)
-        if pcap_dir.exists():
-            try:
-                for pcap_file in pcap_dir.glob("*.pcap"):
-                    try:
-                        tier_bytes["cold"] += pcap_file.stat().st_size
-                    except OSError:
-                        pass
-            except OSError as exc:
-                logger.error("Failed to scan PCAP directory: %s", exc)
+        # OLD CODE START — CR-001: top-level glob missed PCAP in subdirectories
+        # pcap_dir = Path(self.config.pcap_dir)
+        # if pcap_dir.exists():
+        #     try:
+        #         for pcap_file in pcap_dir.glob("*.pcap"):
+        #             try:
+        #                 tier_bytes["cold"] += pcap_file.stat().st_size
+        #             except OSError:
+        #                 pass
+        #     except OSError as exc:
+        #         logger.error("Failed to scan PCAP directory: %s", exc)
+        # OLD CODE END
+        tier_bytes["cold"] += sum(st.st_size for _, st in self._pcaps_oldest_first())
 
         total = sum(tier_bytes.values())
 
@@ -912,19 +1282,23 @@ class StorageManager:
         cutoff = now - timedelta(days=older_than_days)
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Get indices with date parsing
+        # Get indices with date parsing (a failed request raises: no "nothing to delete")
         indices = self.list_indices()
 
         # Get per-index byte sizes from stats API
         index_sizes: dict[str, int] = {}
-        try:
-            stats = self._client.indices.stats(metric="store")
-            for idx_name, idx_data in stats.get("indices", {}).items():
-                index_sizes[idx_name] = (
-                    idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
-                )
-        except OpenSearchException as exc:
-            logger.error("Failed to get index stats for cleanup preview: %s", exc)
+        # OLD CODE START — #96: a failed stats request previewed every index as 0 bytes
+        # try:
+        #     stats = self._client.indices.stats(metric="store")
+        #     ...
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to get index stats for cleanup preview: %s", exc)
+        # OLD CODE END
+        stats = self._client.indices.stats(metric="store")
+        for idx_name, idx_data in stats.get("indices", {}).items():
+            index_sizes[idx_name] = (
+                idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
+            )
 
         # Filter indices older than cutoff, protect today
         target_indices = []
@@ -951,28 +1325,41 @@ class StorageManager:
         # Scan PCAP files older than cutoff
         target_pcaps = []
         total_pcap_bytes = 0
-        pcap_dir = Path(self.config.pcap_dir)
-        if pcap_dir.exists():
-            try:
-                for pcap_file in pcap_dir.glob("*.pcap"):
-                    try:
-                        stat = pcap_file.stat()
-                        file_time = datetime.fromtimestamp(
-                            stat.st_mtime, tz=timezone.utc
-                        )
-                        if file_time < cutoff:
-                            target_pcaps.append(
-                                {
-                                    "name": pcap_file.name,
-                                    "size_bytes": stat.st_size,
-                                    "modified": file_time.isoformat(),
-                                }
-                            )
-                            total_pcap_bytes += stat.st_size
-                    except OSError:
-                        pass
-            except OSError as exc:
-                logger.error("Failed to scan PCAP dir for cleanup preview: %s", exc)
+        # OLD CODE START — CR-001: top-level glob missed PCAP in subdirectories
+        # pcap_dir = Path(self.config.pcap_dir)
+        # if pcap_dir.exists():
+        #     try:
+        #         for pcap_file in pcap_dir.glob("*.pcap"):
+        #             try:
+        #                 stat = pcap_file.stat()
+        #                 file_time = datetime.fromtimestamp(
+        #                     stat.st_mtime, tz=timezone.utc
+        #                 )
+        #                 if file_time < cutoff:
+        #                     target_pcaps.append(
+        #                         {
+        #                             "name": pcap_file.name,
+        #                             "size_bytes": stat.st_size,
+        #                             "modified": file_time.isoformat(),
+        #                         }
+        #                     )
+        #                     total_pcap_bytes += stat.st_size
+        #             except OSError:
+        #                 pass
+        #     except OSError as exc:
+        #         logger.error("Failed to scan PCAP dir for cleanup preview: %s", exc)
+        # OLD CODE END
+        for pcap_file, stat in self._pcaps_oldest_first():
+            file_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            if file_time < cutoff:
+                target_pcaps.append(
+                    {
+                        "name": pcap_file.name,
+                        "size_bytes": stat.st_size,
+                        "modified": file_time.isoformat(),
+                    }
+                )
+                total_pcap_bytes += stat.st_size
 
         return {
             "indices": target_indices,
@@ -1011,8 +1398,29 @@ class StorageManager:
             cutoff = now - timedelta(days=older_than_days)
             today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            # Get indices
-            indices = self.list_indices()
+            deleted_indices = 0
+            deleted_pcaps = 0
+            freed_bytes = 0
+            errors: list[str] = []
+
+            # OLD CODE START — #96: a failed index list read as "no indices" (deleted 0,
+            # no error) and failed stats read as 0 bytes freed, both silently
+            # # Get indices
+            # indices = self.list_indices()
+            # # Get byte sizes for reporting
+            # index_sizes: dict[str, int] = {}
+            # try:
+            #     stats = self._client.indices.stats(metric="store")
+            #     ...
+            # except OpenSearchException:
+            #     pass
+            # OLD CODE END
+            # PCAP cleanup still runs when OpenSearch is down; the errors say what didn't
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                indices = []
+                errors.append(f"Could not list indices, none deleted: {exc}")
 
             # Get byte sizes for reporting
             index_sizes: dict[str, int] = {}
@@ -1024,13 +1432,11 @@ class StorageManager:
                         .get("store", {})
                         .get("size_in_bytes", 0)
                     )
-            except OpenSearchException:
-                pass
-
-            deleted_indices = 0
-            deleted_pcaps = 0
-            freed_bytes = 0
-            errors: list[str] = []
+            except OpenSearchException as exc:
+                if indices:
+                    errors.append(
+                        f"Could not read index sizes; freed space excludes indices: {exc}"
+                    )
 
             # Delete indices older than cutoff
             for idx in indices:
@@ -1048,36 +1454,50 @@ class StorageManager:
                         errors.append(f"Failed to delete index: {idx['name']}")
 
             # Delete PCAP files older than cutoff
-            pcap_dir = Path(self.config.pcap_dir)
-            if pcap_dir.exists():
+            # OLD CODE START — CR-001: top-level glob missed PCAP in
+            # subdirectories, and the stat() sort key raised mid-sort when
+            # capture rotated a file.
+            # pcap_dir = Path(self.config.pcap_dir)
+            # if pcap_dir.exists():
+            #     try:
+            #         for pcap_file in sorted(
+            #             pcap_dir.glob("*.pcap"),
+            #             key=lambda p: p.stat().st_mtime,
+            #         ):
+            #             try:
+            #                 stat = pcap_file.stat()
+            #                 file_time = datetime.fromtimestamp(
+            #                     stat.st_mtime, tz=timezone.utc
+            #                 )
+            #                 if file_time < cutoff:
+            #                     file_size = stat.st_size
+            #                     # Remove checksum sidecars
+            #                     for ext in (".xxh3", ".sha256"):
+            #                         sidecar = (
+            #                             pcap_file.parent / f"{pcap_file.name}{ext}"
+            #                         )
+            #                         if sidecar.exists():
+            #                             sidecar.unlink()
+            #                     pcap_file.unlink()
+            #                     deleted_pcaps += 1
+            #                     freed_bytes += file_size
+            #             except OSError as exc:
+            #                 errors.append(
+            #                     f"Failed to delete PCAP {pcap_file.name}: {exc}"
+            #                 )
+            #     except OSError as exc:
+            #         errors.append(f"Failed to scan PCAP directory: {exc}")
+            # OLD CODE END
+            for pcap_file, stat in self._pcaps_oldest_first():
+                file_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+                if file_time >= cutoff:
+                    break  # oldest first: the rest are newer
                 try:
-                    for pcap_file in sorted(
-                        pcap_dir.glob("*.pcap"),
-                        key=lambda p: p.stat().st_mtime,
-                    ):
-                        try:
-                            stat = pcap_file.stat()
-                            file_time = datetime.fromtimestamp(
-                                stat.st_mtime, tz=timezone.utc
-                            )
-                            if file_time < cutoff:
-                                file_size = stat.st_size
-                                # Remove checksum sidecars
-                                for ext in (".xxh3", ".sha256"):
-                                    sidecar = (
-                                        pcap_file.parent / f"{pcap_file.name}{ext}"
-                                    )
-                                    if sidecar.exists():
-                                        sidecar.unlink()
-                                pcap_file.unlink()
-                                deleted_pcaps += 1
-                                freed_bytes += file_size
-                        except OSError as exc:
-                            errors.append(
-                                f"Failed to delete PCAP {pcap_file.name}: {exc}"
-                            )
+                    self._unlink_pcap(pcap_file)
+                    deleted_pcaps += 1
+                    freed_bytes += stat.st_size
                 except OSError as exc:
-                    errors.append(f"Failed to scan PCAP directory: {exc}")
+                    errors.append(f"Failed to delete PCAP {pcap_file.name}: {exc}")
 
             logger.info(
                 "Manual cleanup complete: deleted %d indices + %d PCAPs, "
@@ -1263,11 +1683,13 @@ class StorageManager:
 
         Decision flow:
           1. Verify ILM policies on first run (C3)
+          1b. Delete PCAP older than cold_days (MS-002)
+          1c. Delete the oldest PCAP while PCAP exceeds its disk share (#37)
           2. Check current disk usage and record for trending (C1)
           3. If above critical_threshold (95%) -> cascade with capture stop (C2)
           4. Elif above emergency_threshold (90%) -> cascade deletion (C2)
           5. Elif above disk_threshold (80%) -> ``prune_oldest_indices()``
-          6. Else check if capture can be resumed (C2)
+          6. Below resume_threshold (85%), restart capture we stopped (C2)
           7. Run predictive exhaustion check (C1)
         """
         # C3: Verify ILM policies on first run
@@ -1276,6 +1698,14 @@ class StorageManager:
                 self.verify_ilm_policy()
             except Exception:
                 logger.exception("ILM policy verification failed on startup")
+        # #96: until OpenSearch takes it, top lists can undercount (#90)
+        if not getattr(self, "_exact_counts", False):
+            self._exact_aggregation_counts()
+
+        # MS-002: age-based PCAP retention, before usage is measured
+        self.prune_expired_pcaps()
+        # #37: size cap, so full capture can't take more than its share of the disk
+        self.prune_pcaps_over_cap()
 
         try:
             usage = self.check_disk_usage()
@@ -1329,14 +1759,26 @@ class StorageManager:
                 usage * 100,
                 self.config.disk_threshold * 100,
             )
-            # C2: Resume capture if we're below resume threshold
-            if usage < self.config.resume_threshold and self.is_capture_stopped():
-                logger.info(
-                    "Disk at %.1f%% < resume threshold %.1f%% — resuming capture",
-                    usage * 100,
-                    self.config.resume_threshold * 100,
-                )
-                self._clear_capture_stop_flag()
+            # OLD CODE START — CR-018: only removed the flag file, and only
+            # below disk_threshold, so capture stayed off between 80% and 85%
+            # # C2: Resume capture if we're below resume threshold
+            # if usage < self.config.resume_threshold and self.is_capture_stopped():
+            #     logger.info(
+            #         "Disk at %.1f%% < resume threshold %.1f%% — resuming capture",
+            #         usage * 100,
+            #         self.config.resume_threshold * 100,
+            #     )
+            #     self._clear_capture_stop_flag()
+            # OLD CODE END
+
+        # C2: Resume capture if we stopped it and are below resume threshold
+        if usage < self.config.resume_threshold and self.is_capture_stopped():
+            logger.info(
+                "Disk at %.1f%% < resume threshold %.1f%% — resuming capture",
+                usage * 100,
+                self.config.resume_threshold * 100,
+            )
+            self._resume_capture()
 
         # C1: Predictive exhaustion check
         try:
@@ -1361,30 +1803,46 @@ class StorageManager:
           - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
           - estimated_daily_gb: estimated daily ingest size
           - source: "daemon"
-          - index_counts, total_indices: index metadata
-        """
-        try:
-            usage_frac = self.check_disk_usage()
-            disk = shutil.disk_usage(self.config.check_path)
-            disk_total_bytes = disk.total
-            disk_used_bytes = disk.used
-            disk_free_bytes = disk.free
-            disk_total_gb = round(disk.total / (1024**3), 2)
-            disk_used_gb = round(disk.used / (1024**3), 2)
-            disk_free_gb = round(disk.free / (1024**3), 2)
-        except OSError:
-            usage_frac = -1.0
-            disk_total_bytes = 0
-            disk_used_bytes = 0
-            disk_free_bytes = 0
-            disk_total_gb = 0
-            disk_used_gb = 0
-            disk_free_gb = 0
+          - index_counts, total_indices: index metadata, or None with
+            ``indices_error`` when OpenSearch couldn't be asked
 
+        Raises:
+            OSError: if the disk can't be read (there are no figures to show).
+        """
+        # OLD CODE START — #96: an unreadable disk showed as 0 bytes at -100% used
+        # try:
+        #     usage_frac = self.check_disk_usage()
+        #     disk = shutil.disk_usage(self.config.check_path)
+        #     ...
+        # except OSError:
+        #     usage_frac = -1.0
+        #     disk_total_bytes = 0
+        #     ... (every disk figure 0)
+        # OLD CODE END
+        usage_frac = self.check_disk_usage()
+        disk = shutil.disk_usage(self.config.check_path)
+        disk_total_bytes = disk.total
+        disk_used_bytes = disk.used
+        disk_free_bytes = disk.free
+        disk_total_gb = round(disk.total / (1024**3), 2)
+        disk_used_gb = round(disk.used / (1024**3), 2)
+        disk_free_gb = round(disk.free / (1024**3), 2)
+
+        # OLD CODE START — #96: OpenSearch down read as 0 indices in every tier
+        # try:
+        #     indices = self.list_indices()
+        # except Exception:
+        #     indices = []
+        # OLD CODE END
+        # The disk figures still matter when OpenSearch is down (often because the
+        # disk is full), so only the index counts become unknown
+        indices_error: str | None = None
         try:
             indices = self.list_indices()
-        except Exception:
+        except Exception as exc:
+            logger.error("Storage status: could not list indices: %s", exc)
             indices = []
+            indices_error = f"Could not list indices: {exc}"
 
         # Count indices per tier
         tier_counts: dict[str, int] = {
@@ -1397,6 +1855,15 @@ class StorageManager:
             tier = idx.get("tier", "unknown")
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
+        unknown_indices = (
+            {
+                "index_counts": None,
+                "total_indices": None,
+                "indices_error": indices_error,
+            }
+            if indices_error
+            else {}
+        )
         return {
             # Absolute disk values (bytes) — required by frontend formatBytes()
             "disk_total_bytes": disk_total_bytes,
@@ -1432,10 +1899,13 @@ class StorageManager:
             },
             # ILM sync status (populated when verify_ilm_policy() has run)
             "ilm_synced": getattr(self, "_ilm_verified", False),
+            # #96: false while top-N counts may be approximate (concurrent segment search on)
+            "exact_counts": getattr(self, "_exact_counts", False),
             # Last prune cycle timestamp for health reporting
             "last_prune_at": self._last_prune_at,
             # ILM policy application status from RetentionConfigManager
             "ilm_status": self._get_ilm_status(),
+            **unknown_indices,
         }
 
     def _get_ilm_status(self) -> dict:

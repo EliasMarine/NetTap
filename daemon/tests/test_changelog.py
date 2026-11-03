@@ -10,6 +10,9 @@ import sys
 import unittest
 from unittest.mock import MagicMock
 
+from aiohttp import web
+from aiohttp.test_utils import AioHTTPTestCase
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.changelog import ChangelogService, CHANGELOG_EVENT_TYPES
@@ -140,13 +143,13 @@ class TestChangelogServiceGetEvents(unittest.TestCase):
         call_body = self.mock_client.search.call_args[1]["body"]
         self.assertEqual(call_body["size"], 1000)
 
-    def test_get_events_opensearch_error(self):
-        """get_events() returns empty list on OpenSearch error."""
+    def test_get_events_opensearch_error_raises(self):
+        """#96: get_events() raises on OpenSearch error; [] read as "no changes recorded"."""
         from opensearchpy import OpenSearchException
 
         self.mock_client.search.side_effect = OpenSearchException("timeout")
-        events = self.service.get_events()
-        self.assertEqual(events, [])
+        with self.assertRaises(OpenSearchException):
+            self.service.get_events()
 
     def test_get_events_default_time_range(self):
         """get_events() uses 7-day default when no range provided."""
@@ -194,6 +197,26 @@ class TestChangelogServiceGetEventTypes(unittest.TestCase):
         self.mock_client.search.side_effect = OpenSearchException("timeout")
         types = self.service.get_event_types()
         self.assertEqual(types, sorted(CHANGELOG_EVENT_TYPES))
+
+
+class TestChangelogApiQueryFailure(AioHTTPTestCase):
+    """#96: a failed changelog query is a 502, not an empty timeline."""
+
+    async def get_application(self):
+        from opensearchpy import OpenSearchException
+
+        from api.changelog import register_changelog_routes
+
+        client = MagicMock()
+        client.search.side_effect = OpenSearchException("timeout")
+        app = web.Application()
+        register_changelog_routes(app, ChangelogService(client))
+        return app
+
+    async def test_events_answer_502(self):
+        resp = await self.client.request("GET", "/api/changelog")
+        self.assertEqual(resp.status, 502)
+        self.assertIn("error", await resp.json())
 
 
 if __name__ == "__main__":

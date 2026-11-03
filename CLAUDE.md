@@ -225,6 +225,8 @@ cd daemon && python3 main.py
 
 **CRITICAL: Every time the OpenSearch container is recreated** (`docker compose down` + `up`, `--force-recreate`, or any operation that resets the container filesystem), the `roles_mapping.yml` reverts to empty. This breaks ALL service authentication (logstash, filebeat, etc. get 403). You MUST re-run these commands. See Chain 11 in `Debugging/DEPLOYMENT-ISSUES.md` for full details.
 
+> **Update 2026-10-30 (MS-001, Chain 21):** the root cause was that the opensearch service had no `ROLE_*` env, so Malcolm rebuilt an empty mapping on every start. The compose file now sets them, so restarts and recreates should keep auth working on their own. **Not yet confirmed on the device.** Until it is, run Step 4 after a recreate. If it fails, run `bash scripts/remote/fix-opensearch.sh`, not Step 1: on a fixed container, Step 1 replaces the full mapping with a minimal one.
+
 ```bash
 # Step 1: Write roles_mapping.yml (admin → all_access)
 sudo docker exec nettap-opensearch python3 -c "open('/usr/share/opensearch/config/opensearch-security/roles_mapping.yml','w').write('---\n_meta:\n  type: \"rolesmapping\"\n  config_version: 2\n\nall_access:\n  reserved: false\n  backend_roles:\n  - \"admin\"\n  description: \"Maps admin backend role to all_access\"\n')"

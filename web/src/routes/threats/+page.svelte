@@ -31,6 +31,15 @@
 	let loading = $state(true);
 	let report = $state<ThreatReport | null>(null);
 	let threatIntel = $state<ThreatIntelInfo | null>(null);
+	// #96: a failed check must not read as "none detected"
+	let intelFailed = $state(false);
+	const BEACONS_SHOWN = 20;
+	const CHECK_NAMES: Record<string, string> = {
+		beaconing: 'beaconing',
+		dns_anomalies: 'DNS anomalies',
+		lateral_movement: 'lateral movement',
+		investigations: 'auto-investigations',
+	};
 	let selectedRange = $state('24h');
 	let lastUpdated = $state(new Date());
 	let expandedInvestigation = $state<number | null>(0);
@@ -38,10 +47,24 @@
 	// Derived
 	let summary = $derived(report?.summary);
 	let killChains = $derived(report?.kill_chains ?? []);
-	let beacons = $derived(report?.beaconing ?? []);
+	// OLD CODE START — #96: every scheduled pair counted as a suspect (283 of 366 were one laptop's BitTorrent peers)
+	// let beacons = $derived(report?.beaconing ?? []);
+	// OLD CODE END
+	let allBeacons = $derived(report?.beaconing ?? []);
+	let beacons = $derived(allBeacons.filter((b) => b.pattern !== 'many_hosts'));
+	// one row per device that contacts many internet hosts on schedules
+	let manyHostSources = $derived.by(() => {
+		const seen = new Map<string, number>();
+		for (const b of allBeacons) {
+			if (b.pattern === 'many_hosts') seen.set(b.source_ip, b.host_count ?? 0);
+		}
+		return [...seen].map(([ip, hosts]) => ({ ip, hosts }));
+	});
 	let dnsAnomalies = $derived(report?.dns_anomalies ?? { dga_suspects: [], tunnel_suspects: [], nxdomain_spikes: [], suspicious_tlds: [] });
 	let lateralMoves = $derived(report?.lateral_movement ?? []);
 	let investigations = $derived(report?.investigations ?? []);
+	let failedChecks = $derived(new Set(report?.failed_checks ?? []));
+	let incompleteChecks = $derived(new Set(report?.incomplete_checks ?? []));
 	let baseline = $derived(summary?.baseline);
 
 	let threatScore = $derived(summary?.threat_score ?? 0);
@@ -110,7 +133,12 @@
 		if (beacons.length > 0) parts.push(`${beacons.length} beaconing suspect${beacons.length > 1 ? 's' : ''}`);
 		const tiTotal = threatIntel?.total_indicators ?? 0;
 		if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`);
-		return parts.join(' \u00b7 ') || 'Scanning network activity...';
+		const failed = [...failedChecks].map((c) => CHECK_NAMES[c] ?? c);
+		if (failed.length > 0) parts.push(`Couldn't check ${failed.join(', ')}`);
+		// OLD CODE START — #96: shown after loading too, as if a scan were still running
+		// return parts.join(' \u00b7 ') || 'Scanning network activity...';
+		// OLD CODE END
+		return parts.join(' \u00b7 ') || 'No kill chains, beaconing or threat intel matches.';
 	});
 
 	// ---------------------------------------------------------------------------
@@ -137,20 +165,25 @@
 	async function fetchAll(range: string) {
 		loading = true;
 		const params = computeTimeParams(range);
-		try {
-			const [reportRes, tiRes] = await Promise.all([
-				getThreatReport(params),
-				getThreatIntel(params),
-			]);
-			report = reportRes;
-			threatIntel = tiRes;
-			lastUpdated = new Date();
-		} catch {
-			report = null;
-			threatIntel = null;
-		} finally {
-			loading = false;
-		}
+		// OLD CODE START — #96: one failure blanked both; the clients now throw instead of faking zeros
+		// try {
+		// 	const [reportRes, tiRes] = await Promise.all([getThreatReport(params), getThreatIntel(params)]);
+		// 	report = reportRes;
+		// 	threatIntel = tiRes;
+		// 	lastUpdated = new Date();
+		// } catch {
+		// 	report = null;
+		// 	threatIntel = null;
+		// } finally {
+		// 	loading = false;
+		// }
+		// OLD CODE END
+		const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]);
+		report = reportRes.status === 'fulfilled' ? reportRes.value : null;
+		threatIntel = tiRes.status === 'fulfilled' ? tiRes.value : null;
+		intelFailed = tiRes.status === 'rejected';
+		if (report) lastUpdated = new Date();
+		loading = false;
 	}
 
 	$effect(() => {
@@ -320,10 +353,12 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Beaconing Detection</span>
-					<span class="card-badge" class:danger={beacons.length > 0}>{beacons.length} suspects</span>
+					<span class="card-badge" class:danger={beacons.length > 0}>{failedChecks.has('beaconing') ? 'check failed' : `${beacons.length} suspects`}</span>
 				</div>
-				{#if beacons.length > 0}
-					{#each beacons as b, i (`${b.source_ip}-${b.destination_ip}-${i}`)}
+				{#if failedChecks.has('beaconing')}
+					<p class="empty-msg">Couldn't check for beaconing: the query failed.</p>
+				{:else if beacons.length > 0}
+					{#each beacons.slice(0, BEACONS_SHOWN) as b, i (`${b.source_ip}-${b.destination_ip}-${i}`)}
 						<div class="beacon-row">
 							<div class="beacon-pair">
 								<span class="beacon-src mono">{b.source_ip}</span>
@@ -337,8 +372,23 @@
 							<span class="beacon-confidence mono" style="color: {b.confidence > 80 ? 'var(--red)' : b.confidence > 50 ? 'var(--amber)' : 'var(--green)'};">{b.confidence}%</span>
 						</div>
 					{/each}
+					{#if beacons.length > BEACONS_SHOWN}
+						<p class="partial-note">Showing the {BEACONS_SHOWN} most confident of {beacons.length.toLocaleString('en-US')} suspects.</p>
+					{/if}
 				{:else}
 					<p class="empty-msg">No beaconing patterns detected.</p>
+				{/if}
+				{#if !failedChecks.has('beaconing')}
+					{#each manyHostSources as m (m.ip)}
+						<p class="partial-note">
+							<span class="mono">{m.ip}</span> contacts {m.hosts.toLocaleString('en-US')} internet hosts on regular schedules.
+							Malware usually calls one or a few servers; this many usually means peer-to-peer software (such as BitTorrent)
+							or a device syncing with many services, so these aren't counted as suspects.
+						</p>
+					{/each}
+				{/if}
+				{#if incompleteChecks.has('beaconing')}
+					<p class="partial-note">Not every connection pair was checked: this window has more than the scan's limit.</p>
 				{/if}
 			</div>
 
@@ -347,9 +397,12 @@
 				<div class="card-header">
 					<span class="card-title">DNS Anomalies</span>
 					<span class="card-badge" class:danger={(dnsAnomalies.dga_suspects?.length ?? 0) + (dnsAnomalies.nxdomain_spikes?.length ?? 0) > 0}>
-						{(dnsAnomalies.dga_suspects?.length ?? 0) + (dnsAnomalies.tunnel_suspects?.length ?? 0) + (dnsAnomalies.nxdomain_spikes?.length ?? 0)} findings
+						{failedChecks.has('dns_anomalies') ? 'check failed' : `${(dnsAnomalies.dga_suspects?.length ?? 0) + (dnsAnomalies.tunnel_suspects?.length ?? 0) + (dnsAnomalies.nxdomain_spikes?.length ?? 0)} findings`}
 					</span>
 				</div>
+				{#if failedChecks.has('dns_anomalies')}
+					<p class="empty-msg">Couldn't check for DNS anomalies: the query failed.</p>
+				{/if}
 				{#if dnsAnomalies.dga_suspects?.length}
 					<div class="anomaly-group-header">DGA Suspects <span class="anomaly-count-badge">{dnsAnomalies.dga_suspects.length}</span></div>
 					{#each dnsAnomalies.dga_suspects.slice(0, 5) as d, i (`dga-${i}`)}
@@ -381,8 +434,11 @@
 						</div>
 					{/each}
 				{/if}
-				{#if !dnsAnomalies.dga_suspects?.length && !dnsAnomalies.tunnel_suspects?.length && !dnsAnomalies.nxdomain_spikes?.length}
+				{#if !failedChecks.has('dns_anomalies') && !dnsAnomalies.dga_suspects?.length && !dnsAnomalies.tunnel_suspects?.length && !dnsAnomalies.nxdomain_spikes?.length}
 					<p class="empty-msg">No DNS anomalies detected.</p>
+				{/if}
+				{#if incompleteChecks.has('dns_anomalies')}
+					<p class="partial-note">Not every domain or client was checked: this window has more than the scan's limit.</p>
 				{/if}
 			</div>
 		</div>
@@ -395,9 +451,11 @@
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Lateral Movement</span>
-					<span class="card-badge">{lateralMoves.length} internal paths</span>
+					<span class="card-badge">{failedChecks.has('lateral_movement') ? 'check failed' : `${lateralMoves.length} internal paths`}</span>
 				</div>
-				{#if lateralMoves.length > 0}
+				{#if failedChecks.has('lateral_movement')}
+					<p class="empty-msg">Couldn't check for lateral movement: the query failed.</p>
+				{:else if lateralMoves.length > 0}
 					{#each lateralMoves.slice(0, 8) as lm, i (`${lm.source_ip}-${lm.destination_ip}-${i}`)}
 						<div class="lateral-row">
 							{#if lm.fan_out}
@@ -418,13 +476,16 @@
 				{:else}
 					<p class="empty-msg">No lateral movement detected.</p>
 				{/if}
+				{#if incompleteChecks.has('lateral_movement')}
+					<p class="partial-note">Not every connection pair was checked: this window has more than the scan's limit.</p>
+				{/if}
 			</div>
 
 			<!-- Threat Intel -->
 			<div class="card">
 				<div class="card-header">
 					<span class="card-title">Threat Intel Matches</span>
-					<span class="card-badge" class:danger={(threatIntel?.total_indicators ?? 0) > 0}>{threatIntel?.total_indicators ?? 0} indicators</span>
+					<span class="card-badge" class:danger={(threatIntel?.total_indicators ?? 0) > 0}>{intelFailed ? 'load failed' : `${threatIntel?.total_indicators ?? 0} indicators`}</span>
 				</div>
 				{#if threatIntel && Object.keys(threatIntel.feeds).length > 0}
 					{#each Object.entries(threatIntel.feeds) as [feedId, feed], i (`${feedId}-${i}`)}
@@ -436,6 +497,8 @@
 							</div>
 						</div>
 					{/each}
+				{:else if intelFailed}
+					<p class="empty-msg">Couldn't load threat intel: the request failed.</p>
 				{:else}
 					<p class="empty-msg">No threat intel indicators loaded. Feeds populate from Suricata detections.</p>
 				{/if}
@@ -445,6 +508,15 @@
 		<!-- ============================================================
 		     Auto-Investigations
 		     ============================================================ -->
+		{#if failedChecks.has('investigations')}
+			<div class="card">
+				<div class="card-header">
+					<span class="card-title">Auto-Investigations</span>
+					<span class="card-badge">check failed</span>
+				</div>
+				<p class="empty-msg">Couldn't investigate one or more critical alerts: a query failed.{investigations.length > 0 ? ` ${investigations.length} completed.` : ''}</p>
+			</div>
+		{/if}
 		{#if investigations.length > 0}
 			<div class="card">
 				<div class="card-header">
@@ -532,6 +604,7 @@
 	.loading-state { display: flex; align-items: center; justify-content: center; gap: var(--space-md); padding: var(--space-3xl); }
 	.empty-state { text-align: center; padding: var(--space-3xl); color: var(--text-muted); }
 	.empty-msg { padding: var(--space-lg); text-align: center; font-size: var(--text-sm); color: var(--text-muted); }
+	.partial-note { padding: var(--space-sm) var(--space-md); font-size: var(--text-xs); color: var(--text-muted); }
 
 	/* Threat Brief */
 	.threat-brief { display: grid; grid-template-columns: 280px 1fr; gap: var(--space-lg); padding: var(--space-lg); background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); position: relative; overflow: hidden; }

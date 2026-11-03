@@ -46,6 +46,7 @@ logger = logging.getLogger("nettap.services.capture_config")
 
 DEFAULT_CONFIG_PATH = "/etc/nettap/capture-mode.conf"
 DEFAULT_ENV_PATH = "/etc/nettap/capture.env"
+PCAP_ROTATE_MB_RANGE = (10, 10000)  # same bounds as the loader and the settings API
 
 
 @dataclass
@@ -62,6 +63,8 @@ class CaptureConfig:
     dhcp_upstream_address: str = ""  # NetTap's router-side CIDR, set by enable
     dhcp_upstream_gateway: str = ""  # the router's IP, set by enable
     dhcp_enabled: bool = False  # DHCP server on/off (routing stays on when off)
+    # netsniff rotation size in MiB; 0 = compose default (PCAP_ROTATE_MB in docker/.env)
+    pcap_rotate_mb: int = 0
 
 
 def _get_config_path(path: str | None = None) -> str:
@@ -76,6 +79,11 @@ def _get_env_path(path: str | None = None) -> str:
     if path:
         return path
     return os.environ.get("CAPTURE_ENV_PATH", DEFAULT_ENV_PATH)
+
+
+def capture_config_exists(path: str | None = None) -> bool:
+    """True once the setup wizard (or a mode change) has saved capture-mode.conf."""
+    return os.path.exists(_get_config_path(path))
 
 
 def load_capture_config(path: str | None = None) -> CaptureConfig:
@@ -143,6 +151,17 @@ def _load_from_file(config_path: str) -> CaptureConfig:
         )
         dhcp_enabled = False
 
+    try:
+        rotate_mb = parser.getint("pcap", "rotate_mb", fallback=0)
+    except ValueError:
+        rotate_mb = 0
+    low, high = PCAP_ROTATE_MB_RANGE
+    if rotate_mb and not low <= rotate_mb <= high:
+        logger.warning(
+            "Ignoring out-of-range pcap rotate_mb=%d in %s", rotate_mb, config_path
+        )
+        rotate_mb = 0
+
     config = CaptureConfig(
         mode=mode,
         interface=interface,
@@ -159,6 +178,7 @@ def _load_from_file(config_path: str) -> CaptureConfig:
             "dhcp_gateway", "upstream_gateway", fallback=""
         ).strip(),
         dhcp_enabled=dhcp_enabled,
+        pcap_rotate_mb=rotate_mb,
     )
 
     logger.info(
@@ -253,6 +273,10 @@ def save_capture_config(config: CaptureConfig, path: str | None = None) -> str:
     parser.set("dhcp_gateway", "upstream_gateway", config.dhcp_upstream_gateway)
     parser.set("dhcp_gateway", "dhcp_enabled", str(config.dhcp_enabled).lower())
 
+    if config.pcap_rotate_mb:
+        parser.add_section("pcap")
+        parser.set("pcap", "rotate_mb", str(config.pcap_rotate_mb))
+
     # OLD CODE START — replaced 2026-10-30: a plain write could leave a
     # half-written file for the capture containers / boot path to read
     # with open(config_path, "w") as f:
@@ -309,6 +333,9 @@ def write_env_file(config: CaptureConfig, path: str | None = None) -> str:
         f"PCAP_IFACE={pcap_iface}\n"
         f"PCAP_FILTER={pcap_filter}\n"
     )
+    # read by nettap-capture-env.sh in pcap-capture: netsniff's -F size
+    if config.pcap_rotate_mb:
+        contents += f"PCAP_ROTATE_MEGABYTES={config.pcap_rotate_mb}\n"
 
     # OLD CODE START — replaced 2026-10-30: a plain write could leave a
     # half-written file for the capture containers to read on restart

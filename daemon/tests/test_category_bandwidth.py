@@ -42,19 +42,36 @@ def _mock_bandwidth_response(time_buckets):
     }
 
 
+def _asn_page(*asns):
+    """The ASN listing page every category detail reads first (#96: Home's classify_asn decides)."""
+    return {
+        "aggregations": {
+            "all": {
+                "buckets": [
+                    {"key": {"asn": a}, "doc_count": 1, "total_bytes": {"value": 0}}
+                    for a in asns
+                ]
+            }
+        }
+    }
+
+
 class TestCategoryBandwidth(unittest.TestCase):
     """Tests for get_category_bandwidth()."""
 
     def test_returns_time_series_data(self):
         client = MagicMock()
         client.search = MagicMock(
-            return_value=_mock_bandwidth_response(
-                [
-                    ("2026-03-01T00:00:00Z", 10, 1_000_000, 200_000),
-                    ("2026-03-01T00:15:00Z", 20, 2_000_000, 400_000),
-                    ("2026-03-01T00:30:00Z", 15, 1_500_000, 300_000),
-                ]
-            )
+            side_effect=[
+                _asn_page("AS2906 Netflix Inc"),
+                _mock_bandwidth_response(
+                    [
+                        ("2026-03-01T00:00:00Z", 10, 1_000_000, 200_000),
+                        ("2026-03-01T00:15:00Z", 20, 2_000_000, 400_000),
+                        ("2026-03-01T00:30:00Z", 15, 1_500_000, 300_000),
+                    ]
+                ),
+            ]
         )
 
         result = asyncio.run(
@@ -87,28 +104,34 @@ class TestCategoryBandwidth(unittest.TestCase):
         self.assertEqual(result, [])
         client.search.assert_not_called()
 
-    def test_opensearch_error_returns_empty(self):
-        client = MagicMock()
-        client.search = MagicMock(side_effect=Exception("Connection refused"))
-
-        result = asyncio.run(
-            get_category_bandwidth(
-                client,
-                "streaming",
-                "2026-03-01T00:00:00Z",
-                "2026-03-02T00:00:00Z",
+    def test_opensearch_error_raises(self):
+        """#96: a failed query raises; [] would draw an empty, quiet chart."""
+        for failing in ("asn listing", "histogram"):
+            client = MagicMock()
+            client.search = MagicMock(
+                side_effect=[Exception("Connection refused")]
+                if failing == "asn listing"
+                else [_asn_page("AS2906 Netflix Inc"), Exception("Connection refused")]
             )
-        )
-        self.assertEqual(result, [])
+            with self.assertRaises(Exception, msg=failing):
+                asyncio.run(
+                    get_category_bandwidth(
+                        client,
+                        "streaming",
+                        "2026-03-01T00:00:00Z",
+                        "2026-03-02T00:00:00Z",
+                    )
+                )
 
     def test_series_includes_all_fields(self):
         client = MagicMock()
         client.search = MagicMock(
-            return_value=_mock_bandwidth_response(
-                [
-                    ("2026-03-01T00:00:00Z", 5, 500_000, 100_000),
-                ]
-            )
+            side_effect=[
+                _asn_page("AS2906 Netflix Inc"),
+                _mock_bandwidth_response(
+                    [("2026-03-01T00:00:00Z", 5, 500_000, 100_000)]
+                ),
+            ]
         )
 
         result = asyncio.run(

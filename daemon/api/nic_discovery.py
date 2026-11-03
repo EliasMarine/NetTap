@@ -3,8 +3,8 @@ NetTap NIC Discovery API Route
 
 Detects physical network interfaces on the host for the setup wizard.
 Reads from /sys/class/net/ (or a host-mounted path when running inside
-Docker) and optionally uses ``ip -j addr show`` (via nsenter into the
-host network namespace) to resolve IPv4 addresses.
+Docker) and optionally uses ``ip -j addr show`` (run directly; the daemon
+shares the host network namespace) to resolve IPv4 addresses.
 """
 
 import asyncio
@@ -123,16 +123,20 @@ def _get_speed(sys_path: Path, name: str) -> str:
 async def _get_ipv4_map() -> dict[str, str]:
     """Return {iface_name: ipv4_address} by running ``ip -j -4 addr show``.
 
-    Tries nsenter into host PID 1 first (Docker with pid: host), then
-    falls back to running ip directly (bare-metal or dev environment).
+    Runs ip directly: the daemon container uses network_mode: host, so it
+    already sees the host's interfaces.
 
-    NOTE: Both nsenter and ip are invoked via create_subprocess_exec with
-    arguments as a list (never shell=True) to prevent injection.
+    NOTE: ip is invoked via create_subprocess_exec with arguments as a list
+    (never shell=True) to prevent injection.
     """
     commands = [
-        ["nsenter", "-t", "1", "-n", "--", "ip", "-j", "-4", "addr", "show"],
+        # OLD CODE START — removed 2026-11-01: Ubuntu's AppArmor blocks nsenter
+        # (it only ever fell through to the direct ip call below)
+        # ["nsenter", "-t", "1", "-n", "--", "ip", "-j", "-4", "addr", "show"],
+        # OLD CODE END
         ["ip", "-j", "-4", "addr", "show"],
     ]
+    last_error = "no command to run"
     for cmd in commands:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -142,6 +146,7 @@ async def _get_ipv4_map() -> dict[str, str]:
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
             if proc.returncode != 0:
+                last_error = f"'{' '.join(cmd)}' exited with code {proc.returncode}"
                 continue
             data = json_mod.loads(stdout.decode())
             result: dict[str, str] = {}
@@ -151,9 +156,14 @@ async def _get_ipv4_map() -> dict[str, str]:
                 if addr_info:
                     result[ifname] = addr_info[0].get("local", "")
             return result
-        except Exception:
+        except Exception as exc:
+            last_error = f"'{' '.join(cmd)}' failed: {exc!r}"
             continue
-    return {}
+    # OLD CODE START — #96: a failed lookup showed every NIC as having no IP address,
+    # so the wizard couldn't tell which one carries the management address
+    # return {}
+    # OLD CODE END
+    raise RuntimeError(f"Could not read interface addresses: {last_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -170,15 +180,18 @@ async def discover_interfaces() -> list[dict]:
     sys_path = _get_sys_net_path()
     logger.info("Discovering NICs from %s", sys_path)
 
-    try:
-        iface_names = sorted(
-            entry.name
-            for entry in sys_path.iterdir()
-            if entry.is_dir() or entry.is_symlink()
-        )
-    except (OSError, IOError) as exc:
-        logger.error("Cannot read sysfs net dir %s: %s", sys_path, exc)
-        return []
+    # OLD CODE START — #96: an unreadable sysfs read as "no network interfaces"
+    # try:
+    #     iface_names = sorted(...)
+    # except (OSError, IOError) as exc:
+    #     logger.error("Cannot read sysfs net dir %s: %s", sys_path, exc)
+    #     return []
+    # OLD CODE END
+    iface_names = sorted(
+        entry.name
+        for entry in sys_path.iterdir()
+        if entry.is_dir() or entry.is_symlink()
+    )
 
     # Fetch IPv4 addresses concurrently while we iterate sysfs.
     ipv4_map = await _get_ipv4_map()
@@ -231,7 +244,13 @@ async def discover_interfaces() -> list[dict]:
 
 async def handle_nic_list(request: web.Request) -> web.Response:
     """GET /api/setup/nics — Return detected host network interfaces."""
-    interfaces = await discover_interfaces()
+    try:
+        interfaces = await discover_interfaces()
+    except Exception as exc:
+        logger.exception("NIC discovery failed")
+        return web.json_response(
+            {"error": f"Could not list network interfaces: {exc}"}, status=500
+        )
     return web.json_response(
         {
             "interfaces": interfaces,

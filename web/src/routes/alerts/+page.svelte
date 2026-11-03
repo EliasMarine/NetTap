@@ -84,6 +84,8 @@
 	let threatScore = $state(0);
 	let threatLevel = $state('none');
 	let smartSummary = $state<SmartAlertSummary | null>(null);
+	// #96: sections whose request failed; they say so instead of showing the last value or "none"
+	let failed = $state<Record<string, boolean>>({});
 
 	// Filters
 	let activeFilter = $state<SeverityFilter>('all');
@@ -411,6 +413,8 @@
 			threatScore = results[7].value.threat_score;
 			threatLevel = results[7].value.threat_level;
 		}
+		const sections = ['counts', 'timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
+		failed = Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected']));
 		loading = false;
 	}
 
@@ -431,10 +435,12 @@
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
 			currentPage = r.page;
+			failed = { ...failed, alerts: false };
 		} catch {
 			alerts = [];
 			totalPages = 0;
 			totalAlerts = 0;
+			failed = { ...failed, alerts: true };
 		} finally {
 			loading = false;
 		}
@@ -643,35 +649,35 @@
 			onclick={() => document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' })}
 		>
 			<span class="stat-label">Total Alerts</span>
-			<span class="stat-value text-primary-val">{formatNumber(alertCounts.total)}</span>
+			<span class="stat-value text-primary-val">{failed.counts ? '—' : formatNumber(alertCounts.total)}</span>
 		</button>
 		<button
 			class="stat-card stat-critical"
 			onclick={() => { activeFilter = 'high'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
 			<span class="stat-label">Critical</span>
-			<span class="stat-value text-red">{formatNumber(criticalCount)}</span>
+			<span class="stat-value text-red">{failed.summary ? '—' : formatNumber(criticalCount)}</span>
 		</button>
 		<button
 			class="stat-card stat-high"
 			onclick={() => { activeFilter = 'high'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
 			<span class="stat-label">High</span>
-			<span class="stat-value text-orange">{formatNumber(alertCounts.high)}</span>
+			<span class="stat-value text-orange">{failed.counts ? '—' : formatNumber(alertCounts.high)}</span>
 		</button>
 		<button
 			class="stat-card stat-medium"
 			onclick={() => { activeFilter = 'medium'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
 			<span class="stat-label">Medium</span>
-			<span class="stat-value text-amber">{formatNumber(alertCounts.medium)}</span>
+			<span class="stat-value text-amber">{failed.counts ? '—' : formatNumber(alertCounts.medium)}</span>
 		</button>
 		<button
 			class="stat-card stat-low"
 			onclick={() => { activeFilter = 'low'; fetchAlerts(1); document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' }); }}
 		>
 			<span class="stat-label">Low</span>
-			<span class="stat-value text-blue">{formatNumber(alertCounts.low)}</span>
+			<span class="stat-value text-blue">{failed.counts ? '—' : formatNumber(alertCounts.low)}</span>
 		</button>
 	</div>
 
@@ -765,6 +771,8 @@
 						<div class="tooltip-row"><span class="legend-dot" style="background: var(--blue);"></span> Low: <strong>{hb.low}</strong></div>
 					</div>
 				{/if}
+			{:else if failed.timeline && !loading}
+				<p class="text-muted" style="padding: var(--space-xl); text-align: center;">Couldn't load the alert timeline: the request failed.</p>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 2rem; text-align: center;">No timeline data available</p>
 			{/if}
@@ -777,7 +785,7 @@
 	<section class="card category-section">
 		<div class="card-header">
 			<h2>Alert Categories</h2>
-			<span class="card-badge">{enhancedCategories.length} categories</span>
+			<span class="card-badge">{failed.categories ? 'check failed' : `${enhancedCategories.length} categories`}</span>
 		</div>
 		{#if enhancedCategories.length > 0}
 			<div class="category-grid">
@@ -837,6 +845,10 @@
 					</a>
 				{/each}
 			</div>
+		{:else if failed.categories && !loading}
+			<div class="empty-state-inline">
+				<p class="text-muted">Couldn't load alert categories: the request failed.</p>
+			</div>
 		{:else if !loading}
 			<div class="empty-state-inline">
 				<p class="text-muted">No category data available</p>
@@ -856,7 +868,7 @@
 					onclick={() => handleSeverityChange(sf.value)}
 				>
 					{sf.label}
-					<span class="pill-count">{filterCountForTab(sf.value)}</span>
+					<span class="pill-count">{failed.counts ? '—' : filterCountForTab(sf.value)}</span>
 				</button>
 			{/each}
 		</div>
@@ -888,7 +900,7 @@
 		<section class="card" id="top-signatures">
 			<div class="card-header">
 				<h2>Top Signatures</h2>
-				<span class="text-muted text-sm">{topSignatures.length} rules</span>
+				<span class="text-muted text-sm">{failed.signatures ? 'check failed' : `${topSignatures.length} rules`}</span>
 			</div>
 			{#if filteredSignatures.length > 0}
 				<HorizontalBarList
@@ -907,6 +919,8 @@
 					activeKey={signatureFilter}
 					onclick={(item) => filterBySignature(item.key)}
 				/>
+			{:else if failed.signatures && !loading}
+				<p class="text-muted" style="padding: var(--space-md);">Couldn't load top signatures: the request failed.</p>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No signatures found</p>
 			{/if}
@@ -934,6 +948,8 @@
 					labelWidth={150}
 					barHeight={12}
 				/>
+			{:else if failed.destIps && !loading}
+				<p class="text-muted" style="padding: var(--space-md);">Couldn't load affected devices: the request failed.</p>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No destination IPs found</p>
 			{/if}
@@ -966,6 +982,8 @@
 					labelWidth={150}
 					barHeight={12}
 				/>
+			{:else if failed.srcIps && !loading}
+				<p class="text-muted" style="padding: var(--space-md);">Couldn't load source IPs: the request failed.</p>
 			{:else if !loading}
 				<p class="text-muted" style="padding: 1rem;">No source IPs found</p>
 			{/if}
@@ -982,6 +1000,11 @@
 		<div class="loading-state">
 			<div class="spinner"></div>
 			<p class="text-muted">Loading alerts...</p>
+		</div>
+	{:else if failed.alerts && !loading}
+		<div class="empty-state">
+			<h3>Couldn't load alerts</h3>
+			<p class="text-muted">The request failed. Use Refresh to try again.</p>
 		</div>
 	{:else if alerts.length === 0 && !loading}
 		<div class="empty-state">

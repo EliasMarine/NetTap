@@ -17,6 +17,7 @@
 	import { analyzeConnection } from '$lib/utils/tshark-analyze';
 	import type { AnalysisMode } from '$lib/utils/tshark-analyze';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
+	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { getRelatedConnections } from '$api/traffic';
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
@@ -66,10 +67,14 @@
 	let relatedData = $state<RelatedConnectionsResponse | null>(null);
 	let relatedLoading = $state(false);
 	let relatedTabLoaded = $state(false);
+	// #96: a failed load must not read as "No related connections found"
+	let relatedFailed = $state(false);
 
 	// Threat context state
 	let threatAlerts = $state<Alert[]>([]);
 	let threatLoading = $state(false);
+	// #96: a failed lookup must not read as "No associated alerts found"
+	let threatFailed = $state(false);
 	let threatLoaded = $state(false);
 
 	// Derived connection fields
@@ -198,8 +203,10 @@
 		try {
 			const result = await getAlerts({ ip: srcIp || dstIp, size: 10 });
 			threatAlerts = result.alerts || [];
+			threatFailed = false;
 		} catch {
 			threatAlerts = [];
+			threatFailed = true;
 		} finally {
 			threatLoading = false;
 		}
@@ -220,7 +227,10 @@
 				const status = await getTSharkStatus();
 				tsharkAvailable = status.available;
 			} catch {
-				tsharkAvailable = false;
+				// OLD CODE START — #96: a failed check read as "TShark is not available"
+				// tsharkAvailable = false;
+				// OLD CODE END
+				tsharkError = "Couldn't check whether TShark is available: the request failed.";
 			}
 		}
 		if (tsharkAvailable) {
@@ -335,10 +345,12 @@
 
 	async function loadRelated() {
 		relatedLoading = true;
+		relatedFailed = false;
 		try {
 			relatedData = await getRelatedConnections(srcIp, dstIp);
 		} catch {
 			relatedData = null;
+			relatedFailed = true;
 		} finally {
 			relatedLoading = false;
 		}
@@ -444,6 +456,8 @@
 						<p class="text-muted" style="margin-top: var(--space-xs);">+ {threatAlerts.length - 5} more alerts</p>
 					{/if}
 				</div>
+			{:else if threatFailed}
+				<p class="text-muted no-threats">Couldn't check for associated alerts: the request failed.</p>
 			{:else}
 				<p class="text-muted no-threats">No associated alerts found</p>
 			{/if}
@@ -478,6 +492,10 @@
 			<div class="empty-state">
 				<p class="text-muted">TShark is not available</p>
 				<p class="text-dim">The TShark container is not running or not configured.</p>
+			</div>
+		{:else if tsharkAvailable === null && tsharkError}
+			<div class="empty-state">
+				<p class="text-muted">{tsharkError}</p>
 			</div>
 		{:else if tsharkAvailable === null}
 			<div class="loading-state">
@@ -630,10 +648,17 @@
 						{/each}
 					</svg>
 					{#if relatedData.connections.length > 15}
+						<!-- OLD CODE START — #96: the list holds at most 200 rows; the total counts the whole window
 						<p class="text-muted" style="font-size: var(--text-xs);">Showing 15 of {relatedData.connections.length} connections</p>
+						OLD CODE END -->
+						<p class="text-muted" style="font-size: var(--text-xs);">Showing {partOfWhole(15, relatedData.total_connections ?? relatedData.connections.length)} connections</p>
 					{/if}
 				</div>
 			{/if}
+		{:else if relatedFailed}
+			<div class="empty-state">
+				<p class="text-warning">Couldn't load related connections: the request failed.</p>
+			</div>
 		{:else}
 			<div class="empty-state">
 				<p class="text-muted">No related connections found</p>

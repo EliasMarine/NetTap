@@ -58,25 +58,28 @@ Full storage status from the StorageManager.
 
 ```json
 {
-  "disk": {
-    "total": 1000204886016,
-    "used": 450000000000,
-    "free": 550204886016,
-    "percent": 45.0
-  },
-  "retention": {
-    "hot_days": 90,
-    "warm_days": 180,
-    "cold_days": 30,
-    "disk_threshold": 0.80
-  },
-  "indices": {
-    "zeek": 42,
-    "suricata": 85,
-    "arkime": 15
+  "disk_total_bytes": 1965172678656,
+  "disk_used_bytes": 137735389184,
+  "disk_free_bytes": 1746442457088,
+  "disk_usage_percent": 7.0,
+  "disk_threshold_percent": 80,
+  "emergency_threshold_percent": 90,
+  "estimated_daily_gb": 1.2,
+  "retention": { "hot_days": 90, "warm_days": 180, "cold_days": 30 },
+  "index_counts": { "hot": 1, "warm": 0, "cold": 0, "unknown": 4 },
+  "total_indices": 5,
+  "ilm_synced": true,
+  "last_prune_at": "2026-11-02T09:03:41.657206+00:00",
+  "ilm_status": {
+    "synced": true,
+    "last_applied": "2026-11-02T08:58:41.626210+00:00",
+    "pending_retry": false,
+    "policies": { "nettap-hot-policy": "updated" }
   }
 }
 ```
+
+Trimmed from a live reply; the full reply also repeats the sizes in GB and as 0–1 fractions (`disk_total_gb`, `disk_usage`, `disk_threshold`).
 
 ### `GET /api/storage/retention`
 

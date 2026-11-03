@@ -62,16 +62,15 @@ describe('certificates API client', () => {
 			expect(result.certificates[0].domain).toBe('example.com');
 		});
 
-		it('returns empty on HTTP error', async () => {
+		// #96: an empty list read as "No certificates found"
+		it('throws on HTTP error', async () => {
 			mockFetchFailure();
-			const result = await getCertificates();
-			expect(result.certificates).toEqual([]);
+			await expect(getCertificates()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns empty on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
-			const result = await getCertificates();
-			expect(result.certificates).toEqual([]);
+			await expect(getCertificates()).rejects.toThrow('network error');
 		});
 	});
 
@@ -91,16 +90,14 @@ describe('certificates API client', () => {
 			expect(result.certificates[0].status).toBe('expiring');
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on HTTP error', async () => {
 			mockFetchFailure();
-			const result = await getExpiringCerts();
-			expect(result.certificates).toEqual([]);
+			await expect(getExpiringCerts()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns empty on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
-			const result = await getExpiringCerts();
-			expect(result.certificates).toEqual([]);
+			await expect(getExpiringCerts()).rejects.toThrow('network error');
 		});
 	});
 
@@ -119,10 +116,9 @@ describe('certificates API client', () => {
 			expect(result.count).toBe(1);
 		});
 
-		it('returns empty on error', async () => {
+		it('throws on error', async () => {
 			mockFetchReject();
-			const result = await getSelfSignedCerts();
-			expect(result.certificates).toEqual([]);
+			await expect(getSelfSignedCerts()).rejects.toThrow('network error');
 		});
 	});
 
@@ -142,10 +138,10 @@ describe('certificates API client', () => {
 			expect(result.changes[0].issuer_count).toBe(2);
 		});
 
-		it('returns empty on error', async () => {
+		// #96: an empty list hid the MITM warning as if no issuer had changed
+		it('throws on error', async () => {
 			mockFetchFailure();
-			const result = await getIssuerChanges();
-			expect(result.changes).toEqual([]);
+			await expect(getIssuerChanges()).rejects.toThrow('HTTP 500');
 		});
 	});
 
@@ -156,6 +152,7 @@ describe('certificates API client', () => {
 			mockFetchSuccess({
 				total_certs: 42,
 				expiring_count: 3,
+				expired_count: 2,
 				self_signed_count: 1,
 				issuer_changes_count: 0,
 				from: '',
@@ -163,20 +160,20 @@ describe('certificates API client', () => {
 			});
 
 			const stats = await getCertStats();
-			expect(stats.total_certs).toBe(42);
-			expect(stats.expiring_count).toBe(3);
+			expect(stats?.total_certs).toBe(42);
+			expect(stats?.expiring_count).toBe(3);
+			expect(stats?.expired_count).toBe(2);
 		});
 
-		it('returns zeros on HTTP error', async () => {
+		// A failed query must not read as "0 certificates" (G11, 2026-11-02)
+		it('returns null on HTTP error', async () => {
 			mockFetchFailure();
-			const stats = await getCertStats();
-			expect(stats.total_certs).toBe(0);
+			expect(await getCertStats()).toBeNull();
 		});
 
-		it('returns zeros on network error', async () => {
+		it('returns null on network error', async () => {
 			mockFetchReject();
-			const stats = await getCertStats();
-			expect(stats.total_certs).toBe(0);
+			expect(await getCertStats()).toBeNull();
 		});
 	});
 });

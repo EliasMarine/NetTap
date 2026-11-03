@@ -139,3 +139,21 @@ EOF
     [ "$status" -eq 0 ]
     [ "$output" = "enp1s0|net 10.77.0.0/24 or udp port 67 or udp port 68" ]
 }
+
+@test "capture-env: exports a valid PCAP_ROTATE_MEGABYTES (netsniff file size)" {
+    printf 'PCAP_IFACE=enp4s0\nPCAP_ROTATE_MEGABYTES=750\n' > "${TEST_TMPDIR}/capture.env"
+    run env -i PATH="$PATH" NETTAP_CAPTURE_ENV="${TEST_TMPDIR}/capture.env" PCAP_ROTATE_MEGABYTES=4096 \
+        bash -c ". '${LOADER}' && echo \"ROTATE=\${PCAP_ROTATE_MEGABYTES}\""
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ROTATE=750"* ]]
+}
+
+@test "capture-env: junk or out-of-range PCAP_ROTATE_MEGABYTES keeps the compose value" {
+    for bad in 5 20000 123456 '4096; rm -rf /' '$(id)' ''; do
+        printf 'PCAP_ROTATE_MEGABYTES=%s\n' "$bad" > "${TEST_TMPDIR}/capture.env"
+        run env -i PATH="$PATH" NETTAP_CAPTURE_ENV="${TEST_TMPDIR}/capture.env" PCAP_ROTATE_MEGABYTES=4096 \
+            bash -c ". '${LOADER}' && echo \"ROTATE=\${PCAP_ROTATE_MEGABYTES}\""
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"ROTATE=4096"* ]]
+    done
+}
