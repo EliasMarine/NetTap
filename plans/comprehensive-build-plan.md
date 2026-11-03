@@ -977,6 +977,23 @@ An inline bridge between the modem and the router only sees the router's public 
 
 ---
 
+## Phase 4E: UI Redesign (pure black, Ember default)
+
+**Timeline:** started 2026-11-03
+**Status:** PR 1 in progress on `feature/ui-redesign-foundation`
+**Plan:** `PLAN.md` (Codex-approved, round 4). Visual reference: `mockups/redesign-2026-11/index.html`. Tracking: `tracking-fixes/2026-11-03-ui-redesign.md`. Linear: NET-144.
+
+The owner approved a full visual redesign: a pure-black background, Ember as the default variant (Graphite and Spectrum selectable), a grouped sidebar, and modern SVG charts. It is visual only: the same data, API calls and behaviour.
+
+| # | Task | Size | Status | Description |
+|---|------|------|--------|-------------|
+| 4E.1 | Foundation (PR 1) | L | [ ] In progress | Tokens + legacy mapping, severity audit, bundled fonts, theme picker, colour gate, visual harness (NET-145) |
+| 4E.2 | Shell (PR 2) | M | [ ] Todo | Grouped sidebar with the same 17 links, phone menu |
+| 4E.3 | Shared components (PR 3) | L | [ ] Todo | Charts, donuts, map, tables restyled with the same props; colour allowlist emptied |
+| 4E.4 | Page batches (PR 4a–4g) | XL | [ ] Todo | Home; Alerts/Threats; Devices; Traffic; Logs/DNS/PCAP; System/Settings/Tools; Setup/Login/other |
+
+---
+
 ## v2.0 Roadmap: Nice-to-Have Features
 
 **Status:** Planned for post-v1.0 release. These are ambitious features that push NetTap toward a unique market position.
