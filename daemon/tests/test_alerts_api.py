@@ -191,6 +191,44 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.assertEqual(data["total_pages"], 200)
 
     @unittest_run_loop
+    async def test_alerts_list_sorts_every_page_most_severe_first(self):
+        """#146: the pages ranked only the 50 newest alerts; severity desc = Suricata 1 first."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/alerts?sort=severity&order=desc")
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual(
+            body["sort"],
+            [
+                {"suricata.alert.severity": {"order": "asc", "missing": "_last"}},
+                {"@timestamp": {"order": "desc"}},
+            ],
+        )
+        await self.client.request("GET", "/api/alerts?sort=dest_port&order=asc")
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual(
+            body["sort"][0], {"destination.port": {"order": "asc", "missing": "_last"}}
+        )
+
+    @unittest_run_loop
+    async def test_alerts_list_default_is_newest_first(self):
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        await self.client.request("GET", "/api/alerts")
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual(body["sort"], [{"@timestamp": {"order": "desc"}}])
+
+    @unittest_run_loop
+    async def test_alerts_list_refuses_unknown_sort_or_order(self):
+        for query in ("sort=bogus", "order=up"):
+            resp = await self.client.request("GET", f"/api/alerts?{query}")
+            self.assertEqual(resp.status, 400, query)
+        self.mock_client.search.assert_not_called()
+
+    @unittest_run_loop
     async def test_alerts_list_with_severity_filter(self):
         """Severity filter is included in query."""
         self.mock_client.search.return_value = {

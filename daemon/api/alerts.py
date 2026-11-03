@@ -300,16 +300,56 @@ def _save_acks(acks: dict, ack_file: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def handle_alerts_list(request: web.Request) -> web.Response:
-    """GET /api/alerts?from=&to=&severity=&page=1&size=50
+# The alert tables' columns and the field behind each (#146): the pages sorted one page of rows.
+_ALERT_SORT_FIELDS = {
+    "time": "@timestamp",
+    "severity": "suricata.alert.severity",
+    "signature": "rule.name",
+    "source": "source.ip",
+    "destination": "destination.ip",
+    "dest_port": "destination.port",
+    "proto": "network.transport",
+    "category": "rule.category",
+}
 
-    Returns a paginated list of Suricata alerts with optional severity filter.
+
+def _alert_sort(sort_key: str, order: str) -> list[dict]:
+    """The OpenSearch sort for a column; newest first breaks ties so pages don't overlap.
+
+    Severity "desc" puts the most severe first, and Suricata's 1 is the most severe.
+    """
+    if sort_key == "time":
+        return [{"@timestamp": {"order": order}}]
+    if sort_key == "severity":
+        order = "asc" if order == "desc" else "desc"
+    return [
+        {_ALERT_SORT_FIELDS[sort_key]: {"order": order, "missing": "_last"}},
+        {"@timestamp": {"order": "desc"}},
+    ]
+
+
+async def handle_alerts_list(request: web.Request) -> web.Response:
+    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc
+
+    Returns a paginated list of Suricata alerts with optional severity filter,
+    sorted by any of the alert tables' columns across every page (#146).
     Severity: 1=high, 2=medium, 3=low.
     """
     from_ts, to_ts = _parse_time_range(request)
     page = _parse_int_param(request, "page", 1)
     size = min(_parse_int_param(request, "size", 50), 200)
     severity_raw = request.query.get("severity", "")
+    sort_key = request.query.get("sort", "time")
+    order = request.query.get("order", "desc")
+    if sort_key not in _ALERT_SORT_FIELDS or order not in ("asc", "desc"):
+        return web.json_response(
+            {
+                "error": "sort must be one of "
+                + ", ".join(_ALERT_SORT_FIELDS)
+                + " and order asc or desc"
+            },
+            status=400,
+        )
     client = _get_client(request)
 
     offset = (page - 1) * size
@@ -416,7 +456,10 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         # OLD CODE START — Zeek-native sort field: "timestamp"
         # "sort": [{"timestamp": {"order": "desc"}}],
         # OLD CODE END
-        "sort": [{"@timestamp": {"order": "desc"}}],
+        # OLD CODE START — #146: always newest first; the pages sorted only the rows they had
+        # "sort": [{"@timestamp": {"order": "desc"}}],
+        # OLD CODE END
+        "sort": _alert_sort(sort_key, order),
     }
 
     try:

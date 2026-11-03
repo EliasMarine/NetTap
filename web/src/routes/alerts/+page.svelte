@@ -23,6 +23,7 @@
 		AlertIpEntry,
 		AlertCategory,
 		SmartAlertSummary,
+		AlertSort,
 	} from '$api/alerts';
 	// OLD CODE START — AlertDetailPanel replaced by DetailDrawer
 	// import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
@@ -32,7 +33,9 @@
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	import { acknowledgeAlert } from '$api/alerts';
-	import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
+	// OLD CODE START — #146: the alert table sorts on the daemon now
+	// import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -126,6 +129,11 @@
 	type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip' | 'protocol' | 'category';
 	let sortKey = $state<SortKey>('timestamp');
 	let sortDir = $state<'asc' | 'desc'>('desc');
+	// Each column's name on the daemon, which sorts every page (#146)
+	const SERVER_SORT: Record<SortKey, AlertSort> = {
+		timestamp: 'time', severity: 'severity', signature: 'signature', src_ip: 'source',
+		dest_ip: 'destination', protocol: 'proto', category: 'category',
+	};
 
 	// ---------------------------------------------------------------------------
 	// Derived
@@ -153,55 +161,59 @@
 			: 0
 	);
 
-	let sortedAlerts = $derived.by(() => {
-		const list = [...alerts];
-		list.sort((a, b) => {
-			let cmp = 0;
-			switch (sortKey) {
-				case 'timestamp':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
-					// OLD CODE END
-					cmp = compareValues(a.timestamp || '', b.timestamp || '');
-					break;
-				case 'severity':
-					// OLD CODE START — Suricata's 1 is the most severe, so the first (descending) click put LOW on top
-					// cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
-					// OLD CODE END
-					cmp = severityRank(a.alert?.severity) - severityRank(b.alert?.severity);
-					break;
-				case 'protocol':
-					cmp = compareValues(a.proto ?? '', b.proto ?? '');
-					break;
-				case 'signature':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.alert?.signature || '').localeCompare(b.alert?.signature || '');
-					// OLD CODE END
-					cmp = compareValues(a.alert?.signature || '', b.alert?.signature || '');
-					break;
-				case 'src_ip':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.src_ip || '').localeCompare(b.src_ip || '');
-					// OLD CODE END
-					cmp = compareValues(a.src_ip || '', b.src_ip || '');
-					break;
-				case 'dest_ip':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
-					// OLD CODE END
-					cmp = compareValues(a.dest_ip || '', b.dest_ip || '');
-					break;
-				case 'category':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.alert?.category || '').localeCompare(b.alert?.category || '');
-					// OLD CODE END
-					cmp = compareValues(a.alert?.category || '', b.alert?.category || '');
-					break;
-			}
-			return sortDir === 'asc' ? cmp : -cmp;
-		});
-		return list;
-	});
+	// OLD CODE START — #146: ordered only the page of rows it had; the daemon sorts every page now
+	// let sortedAlerts = $derived.by(() => {
+	// 	const list = [...alerts];
+	// 	list.sort((a, b) => {
+	// 		let cmp = 0;
+	// 		switch (sortKey) {
+	// 			case 'timestamp':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.timestamp || '', b.timestamp || '');
+	// 				break;
+	// 			case 'severity':
+	// 				// OLD CODE START — Suricata's 1 is the most severe, so the first (descending) click put LOW on top
+	// 				// cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
+	// 				// OLD CODE END
+	// 				cmp = severityRank(a.alert?.severity) - severityRank(b.alert?.severity);
+	// 				break;
+	// 			case 'protocol':
+	// 				cmp = compareValues(a.proto ?? '', b.proto ?? '');
+	// 				break;
+	// 			case 'signature':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.alert?.signature || '').localeCompare(b.alert?.signature || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.alert?.signature || '', b.alert?.signature || '');
+	// 				break;
+	// 			case 'src_ip':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.src_ip || '').localeCompare(b.src_ip || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.src_ip || '', b.src_ip || '');
+	// 				break;
+	// 			case 'dest_ip':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.dest_ip || '', b.dest_ip || '');
+	// 				break;
+	// 			case 'category':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.alert?.category || '').localeCompare(b.alert?.category || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.alert?.category || '', b.alert?.category || '');
+	// 				break;
+	// 		}
+	// 		return sortDir === 'asc' ? cmp : -cmp;
+	// 	});
+	// 	return list;
+	// });
+	// OLD CODE END
+	// The daemon returns the rows in the table's order (#146)
+	let sortedAlerts = $derived(alerts);
 
 	function filterCountForTab(filter: SeverityFilter): number {
 		switch (filter) {
@@ -284,6 +296,7 @@
 			// OLD CODE END
 			sortDir = key === 'timestamp' || key === 'severity' ? 'desc' : 'asc';
 		}
+		fetchAlerts(1);
 	}
 
 	function sortIndicator(key: SortKey): string {
@@ -416,6 +429,8 @@
 				size: pageSize,
 				ip: ipFilter || undefined,
 				signature: signatureFilter || undefined,
+				sort: SERVER_SORT[sortKey],
+				order: sortDir,
 			}),
 			getSmartAlertSummary({ from, to }),
 		]);
@@ -458,6 +473,8 @@
 				size: pageSize,
 				ip: ipFilter || undefined,
 				signature: signatureFilter || undefined,
+				sort: SERVER_SORT[sortKey],
+				order: sortDir,
 			});
 			alerts = r.alerts;
 			totalPages = r.total_pages;

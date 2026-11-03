@@ -62,3 +62,26 @@ describe('Alert category page', () => {
 		await vi.waitFor(() => expect(screen.getByText(/No alerts in/)).toBeInTheDocument());
 	});
 });
+
+describe('Alert category page — sorting (#146)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("asks the daemon for the category's most severe alerts first, across every page", async () => {
+		const alerts = {
+			from: '', to: '', page: 1, size: 25, total: 400, total_pages: 16,
+			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
+		};
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': alerts });
+		const { container } = render(Page);
+		await vi.waitFor(() => expect(screen.getByText('Sig a')).toBeInTheDocument());
+		const severity = [...container.querySelectorAll('th')].find((th) => th.textContent?.trim().startsWith('Severity'))!;
+		severity.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await vi.waitFor(() => {
+			const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith('/api/alerts?'));
+			const last = new URLSearchParams(urls.at(-1)!.split('?')[1]);
+			expect([last.get('category'), last.get('page'), last.get('sort'), last.get('order')]).toEqual(['scan', '1', 'severity', 'desc']);
+		});
+	});
+});

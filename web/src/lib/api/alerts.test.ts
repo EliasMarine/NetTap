@@ -88,6 +88,12 @@ describe('alerts API client', () => {
 	// -- getAlerts -----------------------------------------------------------
 
 	describe('getAlerts', () => {
+		it('sends the sort and order so the daemon sorts every page (#146)', async () => {
+			mockFetchSuccess({ alerts: [] });
+			await getAlerts({ page: 2, size: 50, sort: 'severity', order: 'desc' });
+			expect(fetch).toHaveBeenCalledWith('/api/alerts?page=2&size=50&sort=severity&order=desc');
+		});
+
 		it('returns parsed alert list on success', async () => {
 			const expected = {
 				from: '',
