@@ -1,4 +1,6 @@
-FROM docker:27-cli AS docker-cli
+# 29.x is still patched (27.x shipped Go 1.22 with 26 HIGH/CRITICAL CVEs); its client
+# talks to engines down to API 1.40, so older Ubuntu docker.io hosts still work
+FROM docker:29-cli AS docker-cli
 FROM python:3.12-slim-bookworm
 
 # -- Metadata ----------------------------------------------------------------

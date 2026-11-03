@@ -11,6 +11,10 @@ RUN npm ci
 COPY web/ .
 RUN rm -rf .svelte-kit && npm run build
 
+# Ship runtime deps only: adapter-node bundles the rest, and dev tools (vitest, vite)
+# carried their own CVEs into the image
+RUN npm prune --omit=dev
+
 # Stage 2: Production runtime
 FROM node:22-bookworm-slim
 
