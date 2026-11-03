@@ -11,6 +11,7 @@
 
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
 	import DonutChart from '$components/charts/DonutChart.svelte';
+	import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTopTalkers, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TopTalker, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getAlerts, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
@@ -99,14 +100,20 @@
 
 	// Alert table sort state
 	let alertSortField = $state<'severity' | 'signature' | 'src_ip' | 'dest_ip'>('severity');
-	let alertSortDir = $state<'asc' | 'desc'>('asc');
+	// OLD CODE START — severity is now a rank (higher = worse): descending keeps the most severe first
+	// let alertSortDir = $state<'asc' | 'desc'>('asc');
+	// OLD CODE END
+	let alertSortDir = $state<'asc' | 'desc'>('desc');
 
 	function toggleAlertSort(field: typeof alertSortField) {
 		if (alertSortField === field) {
 			alertSortDir = alertSortDir === 'asc' ? 'desc' : 'asc';
 		} else {
 			alertSortField = field;
-			alertSortDir = 'asc';
+			// OLD CODE START — severity is now a rank, so it starts descending
+			// alertSortDir = 'asc';
+			// OLD CODE END
+			alertSortDir = field === 'severity' ? 'desc' : 'asc';
 		}
 	}
 
@@ -393,14 +400,24 @@
 		const dir = alertSortDir === 'asc' ? 1 : -1;
 		return [...alerts].sort((a, b) => {
 			switch (alertSortField) {
+				// OLD CODE START — severity 1 is the most severe, so descending put LOW on top; text order put 10.10.0.235 before 10.10.0.26
+				// case 'severity':
+				// 	return ((a.alert?.severity ?? 99) - (b.alert?.severity ?? 99)) * dir;
+				// case 'signature':
+				// 	return (a.alert?.signature ?? '').localeCompare(b.alert?.signature ?? '') * dir;
+				// case 'src_ip':
+				// 	return (a.src_ip ?? '').localeCompare(b.src_ip ?? '') * dir;
+				// case 'dest_ip':
+				// 	return (a.dest_ip ?? '').localeCompare(b.dest_ip ?? '') * dir;
+				// OLD CODE END
 				case 'severity':
-					return ((a.alert?.severity ?? 99) - (b.alert?.severity ?? 99)) * dir;
+					return (severityRank(a.alert?.severity) - severityRank(b.alert?.severity)) * dir;
 				case 'signature':
-					return (a.alert?.signature ?? '').localeCompare(b.alert?.signature ?? '') * dir;
+					return compareValues(a.alert?.signature ?? '', b.alert?.signature ?? '') * dir;
 				case 'src_ip':
-					return (a.src_ip ?? '').localeCompare(b.src_ip ?? '') * dir;
+					return compareValues(a.src_ip ?? '', b.src_ip ?? '') * dir;
 				case 'dest_ip':
-					return (a.dest_ip ?? '').localeCompare(b.dest_ip ?? '') * dir;
+					return compareValues(a.dest_ip ?? '', b.dest_ip ?? '') * dir;
 				default:
 					return 0;
 			}

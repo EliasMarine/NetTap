@@ -32,6 +32,23 @@ export function compareValues(a: unknown, b: unknown): number {
 	return collator.compare(String(a ?? ''), String(b ?? ''));
 }
 
+/**
+ * Suricata severity (1 = high … 3 = low, 4 = info) as a rank where higher is worse, so a
+ * table's first (descending) click puts the worst on top. No severity ranks lowest.
+ */
+export function severityRank(severity: number | null | undefined): number {
+	return severity ? 5 - severity : 0;
+}
+
+const SIZE_TEXT = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb|pb)$/i;
+const SIZE_POWER: Record<string, number> = { b: 0, kb: 1, mb: 2, gb: 3, tb: 4, pb: 5 };
+
+/** OpenSearch's human sizes ("512kb", "1.2gb", 1024-based) in bytes; null if not a size. */
+export function byteSize(text: string | null | undefined): number | null {
+	const m = SIZE_TEXT.exec((text ?? '').trim());
+	return m ? Number(m[1]) * 1024 ** SIZE_POWER[m[2].toLowerCase()] : null;
+}
+
 /** A sorted copy; blank values go last in both directions. */
 export function sortRows<T>(rows: readonly T[], value: (row: T) => unknown, dir: SortDir): T[] {
 	return [...rows].sort((x, y) => {

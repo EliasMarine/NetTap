@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TableSort, compareValues, sortRows } from './table-sort.svelte';
+import { TableSort, byteSize, compareValues, severityRank, sortRows } from './table-sort.svelte';
 
 describe('compareValues', () => {
 	it('orders IP addresses by number, not by text', () => {
@@ -75,5 +75,22 @@ describe('TableSort', () => {
 			'192.168.1.9',
 			'192.168.1.2',
 		]);
+	});
+});
+
+describe('severityRank', () => {
+	it('ranks Suricata 1 (high) worst and no severity lowest', () => {
+		expect([3, 1, undefined, 2].map(severityRank)).toEqual([2, 4, 0, 3]);
+	});
+});
+
+describe('byteSize', () => {
+	it("reads OpenSearch's 1024-based sizes", () => {
+		// as text, "100mb" sorted above "1.2gb" on the Infrastructure page
+		expect(byteSize('100mb')! < byteSize('1.2gb')!).toBe(true);
+		expect(byteSize('512kb')).toBe(512 * 1024);
+		expect(byteSize('208b')).toBe(208);
+		expect(byteSize('')).toBeNull();
+		expect(byteSize(undefined)).toBeNull();
 	});
 });
