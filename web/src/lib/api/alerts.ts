@@ -136,10 +136,35 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
+/** The alert tables' columns the daemon sorts on; severity "desc" is the most severe first (#146). */
+export type AlertSort = 'time' | 'severity' | 'signature' | 'source' | 'destination' | 'dest_port' | 'proto' | 'category';
+
 /**
  * Get paginated alert list with optional severity filter.
  * Severity: 1=high, 2=medium, 3=low.
  */
+// OLD CODE START — #146: no sort, so the alert tables ordered only the page of rows they had
+// export async function getAlerts(
+// 	opts: TimeRangeParams & {
+// 		severity?: number;
+// 		page?: number;
+// 		size?: number;
+// 		ip?: string;
+// 		signature?: string;
+// 		category?: string;
+// 	} = {}
+// ): Promise<AlertsListResponse> {
+// 	const query = buildQuery({
+// 		from: opts.from,
+// 		to: opts.to,
+// 		severity: opts.severity,
+// 		page: opts.page,
+// 		size: opts.size,
+// 		ip: opts.ip,
+// 		signature: opts.signature,
+// 		category: opts.category,
+// 	});
+// OLD CODE END
 export async function getAlerts(
 	opts: TimeRangeParams & {
 		severity?: number;
@@ -148,6 +173,10 @@ export async function getAlerts(
 		ip?: string;
 		signature?: string;
 		category?: string;
+		/** a sub-category of `category` (#147) */
+		sub?: string;
+		sort?: AlertSort;
+		order?: 'asc' | 'desc';
 	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
@@ -159,6 +188,9 @@ export async function getAlerts(
 		ip: opts.ip,
 		signature: opts.signature,
 		category: opts.category,
+		sub: opts.sub,
+		sort: opts.sort,
+		order: opts.order,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 

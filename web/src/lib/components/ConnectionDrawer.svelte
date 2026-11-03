@@ -10,6 +10,7 @@
 	import { getPcapFiles, getTSharkStatus } from '$api/tshark';
 	import type { TSharkPacket, PcapFile } from '$api/tshark';
 	import { analyzeConnection } from '$lib/utils/tshark-analyze';
+	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
 
 	// ---------------------------------------------------------------------------
@@ -64,17 +65,24 @@
 	);
 
 	// Duration: computed from event.start / event.end, fallback to zeek.conn.duration
+	// OLD CODE START — #144: epoch-ms event.start/end read as Invalid Date, and the fallback read
+	// event.duration's nanoseconds as seconds
+	// let duration = $derived.by(() => {
+	// 	if (!connection) return null;
+	// 	const start = asString(getField(connection, 'event.start'));
+	// 	const end = asString(getField(connection, 'event.end'));
+	// 	if (start && end) {
+	// 		const ms = new Date(end).getTime() - new Date(start).getTime();
+	// 		if (!isNaN(ms)) return ms / 1000;
+	// 	}
+	// 	const zeekDur = getField(connection, 'zeek.conn.duration') || getField(connection, 'event.duration');
+	// 	if (zeekDur != null) return Number(zeekDur);
+	// 	return null;
+	// });
+	// OLD CODE END
 	let duration = $derived.by(() => {
-		if (!connection) return null;
-		const start = asString(getField(connection, 'event.start'));
-		const end = asString(getField(connection, 'event.end'));
-		if (start && end) {
-			const ms = new Date(end).getTime() - new Date(start).getTime();
-			if (!isNaN(ms)) return ms / 1000;
-		}
-		const zeekDur = getField(connection, 'zeek.conn.duration') || getField(connection, 'event.duration');
-		if (zeekDur != null) return Number(zeekDur);
-		return null;
+		const ms = connection ? connectionDurationMs(connection) : null;
+		return ms === null ? null : ms / 1000;
 	});
 
 	let downloadBytes = $derived(

@@ -8,6 +8,7 @@
 		getConnectionSankey,
 		getConnectionTimeline,
 	} from '$api/traffic';
+	import type { ConnectionSort } from '$api/traffic';
 	import type {
 		Connection,
 		ConnectionsResponse,
@@ -30,7 +31,10 @@
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
-	import { compareValues } from '$lib/utils/table-sort.svelte';
+	// OLD CODE START — #145: the client-side sort is gone
+	// import { compareValues } from '$lib/utils/table-sort.svelte';
+	// OLD CODE END
+	import { connectionDurationMs } from '$lib/utils/connection-duration';
 
 	// ---------------------------------------------------------------------------
 	// Types & Constants
@@ -132,60 +136,71 @@
 
 	captureMode.subscribe((mode) => { isMirrorMode = mode === 'mirror'; });
 
-	// Sort
-	type SortKey = 'timestamp' | 'src' | 'dst' | 'protocol' | 'service' | 'duration' | 'bytesIn' | 'bytesOut' | 'state';
-	let sortKey = $state<SortKey | null>(null);
+	// OLD CODE START — #145: the page sorted only the 50 rows it had
+	// // Sort
+	// type SortKey = 'timestamp' | 'src' | 'dst' | 'protocol' | 'service' | 'duration' | 'bytesIn' | 'bytesOut' | 'state';
+	// let sortKey = $state<SortKey | null>(null);
+	// let sortDir = $state<'asc' | 'desc'>('desc');
+	// OLD CODE END
+	// Sort: on the daemon, so a header orders every page of results, not just the one shown (#145)
+	type SortKey = ConnectionSort;
+	let sortKey = $state<SortKey>('time');
 	let sortDir = $state<'asc' | 'desc'>('desc');
 
 	// ---------------------------------------------------------------------------
 	// Derived
 	// ---------------------------------------------------------------------------
 
-	/** A port as text (asString drops numbers); '' when missing. */
-	function portText(conn: Connection, field: string): string {
-		const v = getField(conn, field);
-		const first = Array.isArray(v) ? v[0] : v;
-		return first === undefined || first === null ? '' : String(first);
-	}
+	// OLD CODE START — #145: sorting moved to the daemon; this ordered one page of 50 rows
+	// /** A port as text (asString drops numbers); '' when missing. */
+	// function portText(conn: Connection, field: string): string {
+	// 	const v = getField(conn, field);
+	// 	const first = Array.isArray(v) ? v[0] : v;
+	// 	return first === undefined || first === null ? '' : String(first);
+	// }
 
-	function sortValue(conn: Connection, key: SortKey): string | number {
-		switch (key) {
-			case 'timestamp': return conn['@timestamp'] as string ?? '';
-			// OLD CODE START — IP only, so one device's connections kept their ports out of order
-			// case 'src': return asString(getField(conn, 'source.ip'));
-			// case 'dst': return asString(getField(conn, 'destination.ip'));
-			// OLD CODE END
-			// IP, then port: compareValues reads both numbers ("192.168.1.9 443" before "192.168.1.10 80")
-			case 'src': return `${asString(getField(conn, 'source.ip'))} ${portText(conn, 'source.port')}`.trim();
-			case 'dst': return `${asString(getField(conn, 'destination.ip'))} ${portText(conn, 'destination.port')}`.trim();
-			case 'protocol': return asString(getField(conn, 'network.transport'));
-			case 'service': return asString(getField(conn, 'protocol'));
-			case 'duration': {
-				const start = getField(conn, 'event.start') as string | undefined;
-				const end = getField(conn, 'event.end') as string | undefined;
-				if (!start || !end) return 0;
-				return new Date(end).getTime() - new Date(start).getTime();
-			}
-			case 'bytesIn': return (getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes') ?? 0) as number;
-			case 'bytesOut': return (getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes') ?? 0) as number;
-			case 'state': return connState(conn);
-		}
-	}
+	// function sortValue(conn: Connection, key: SortKey): string | number {
+	// 	switch (key) {
+	// 		case 'timestamp': return conn['@timestamp'] as string ?? '';
+	// 		// OLD CODE START — IP only, so one device's connections kept their ports out of order
+	// 		// case 'src': return asString(getField(conn, 'source.ip'));
+	// 		// case 'dst': return asString(getField(conn, 'destination.ip'));
+	// 		// OLD CODE END
+	// 		// IP, then port: compareValues reads both numbers ("192.168.1.9 443" before "192.168.1.10 80")
+	// 		case 'src': return `${asString(getField(conn, 'source.ip'))} ${portText(conn, 'source.port')}`.trim();
+	// 		case 'dst': return `${asString(getField(conn, 'destination.ip'))} ${portText(conn, 'destination.port')}`.trim();
+	// 		case 'protocol': return asString(getField(conn, 'network.transport'));
+	// 		case 'service': return asString(getField(conn, 'protocol'));
+	// 		// OLD CODE START — #144: NaN for every epoch-ms record, so the sort did nothing
+	// 		// case 'duration': {
+	// 		// 	const start = getField(conn, 'event.start') as string | undefined;
+	// 		// 	const end = getField(conn, 'event.end') as string | undefined;
+	// 		// 	if (!start || !end) return 0;
+	// 		// 	return new Date(end).getTime() - new Date(start).getTime();
+	// 		// }
+	// 		// OLD CODE END
+	// 		case 'duration': return connectionDurationMs(conn) ?? -1;
+	// 		case 'bytesIn': return (getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes') ?? 0) as number;
+	// 		case 'bytesOut': return (getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes') ?? 0) as number;
+	// 		case 'state': return connState(conn);
+	// 	}
+	// }
 
-	let sortedConnections = $derived.by(() => {
-		if (!sortKey) return connections;
-		const key = sortKey;
-		const dir = sortDir;
-		return [...connections].sort((a, b) => {
-			const va = sortValue(a, key);
-			const vb = sortValue(b, key);
-			if (typeof va === 'number' && typeof vb === 'number') return dir === 'asc' ? va - vb : vb - va;
-			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-			// return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
-			// OLD CODE END
-			return dir === 'asc' ? compareValues(va, vb) : compareValues(vb, va);
-		});
-	});
+	// let sortedConnections = $derived.by(() => {
+	// 	if (!sortKey) return connections;
+	// 	const key = sortKey;
+	// 	const dir = sortDir;
+	// 	return [...connections].sort((a, b) => {
+	// 		const va = sortValue(a, key);
+	// 		const vb = sortValue(b, key);
+	// 		if (typeof va === 'number' && typeof vb === 'number') return dir === 'asc' ? va - vb : vb - va;
+	// 		// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 		// return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+	// 		// OLD CODE END
+	// 		return dir === 'asc' ? compareValues(va, vb) : compareValues(vb, va);
+	// 	});
+	// });
+	// OLD CODE END
 
 	// Bar list items for analytics row
 	let sourceBarItems = $derived<BarItem[]>(
@@ -246,11 +261,15 @@
 	}
 
 	function formatDuration(conn: Connection): string {
-		const start = getField(conn, 'event.start') as string | undefined;
-		const end = getField(conn, 'event.end') as string | undefined;
-		if (!start || !end) return '--';
-		const ms = new Date(end).getTime() - new Date(start).getTime();
-		if (isNaN(ms) || ms < 0) return '--';
+		// OLD CODE START — #144: event.start/end are epoch-ms text on Malcolm 26.x, so every row read "--"
+		// const start = getField(conn, 'event.start') as string | undefined;
+		// const end = getField(conn, 'event.end') as string | undefined;
+		// if (!start || !end) return '--';
+		// const ms = new Date(end).getTime() - new Date(start).getTime();
+		// if (isNaN(ms) || ms < 0) return '--';
+		// OLD CODE END
+		const ms = connectionDurationMs(conn);
+		if (ms === null) return '--';
 		const seconds = ms / 1000;
 		if (seconds < 1) return `${ms}ms`;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -356,14 +375,21 @@
 		const { from, to } = getTimeRange();
 		const q = buildSearchQuery();
 		try {
+			// OLD CODE START — #145: filtered one page of 50 rows, while the total and pages counted all
+			// const response: ConnectionsResponse = await getConnections({
+			// 	from, to, page: pg, size: pageSize, q: q || undefined,
+			// });
+			// let filtered = response.connections;
+			// if (stateFilter !== 'all') {
+			// 	filtered = filtered.filter((c) => connState(c) === stateFilter);
+			// }
+			// connections = filtered;
+			// OLD CODE END
 			const response: ConnectionsResponse = await getConnections({
 				from, to, page: pg, size: pageSize, q: q || undefined,
+				sort: sortKey, order: sortDir, state: stateFilter === 'all' ? undefined : stateFilter,
 			});
-			let filtered = response.connections;
-			if (stateFilter !== 'all') {
-				filtered = filtered.filter((c) => connState(c) === stateFilter);
-			}
-			connections = filtered;
+			connections = response.connections;
 			currentPage = response.page;
 			totalPages = response.total_pages;
 			totalConnections = response.total;
@@ -386,8 +412,12 @@
 			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
 		} else {
 			sortKey = key;
-			sortDir = key === 'timestamp' ? 'desc' : 'asc';
+			// OLD CODE START — #145: page key names
+			// sortDir = key === 'timestamp' ? 'desc' : 'asc';
+			// OLD CODE END
+			sortDir = key === 'time' ? 'desc' : 'asc';
 		}
+		fetchConnections(1);
 	}
 
 	function handleTimeRangeChange(range: TimeRange) {
@@ -733,14 +763,14 @@
 					<thead>
 						<tr>
 							{#each [
-								{ key: 'timestamp', label: 'Timestamp' },
-								{ key: 'src', label: 'Source' },
-								{ key: 'dst', label: 'Destination' },
-								{ key: 'protocol', label: 'Protocol' },
+								{ key: 'time', label: 'Timestamp' },
+								{ key: 'source', label: 'Source' },
+								{ key: 'destination', label: 'Destination' },
+								{ key: 'proto', label: 'Protocol' },
 								{ key: 'service', label: 'Service' },
 								{ key: 'duration', label: 'Duration' },
-								{ key: 'bytesIn', label: 'Bytes In' },
-								{ key: 'bytesOut', label: 'Bytes Out' },
+								{ key: 'ul', label: 'Bytes In' },
+								{ key: 'dl', label: 'Bytes Out' },
 								{ key: 'state', label: 'State' },
 							] as col}
 								<th class="sortable" onclick={() => toggleSort(col.key as SortKey)}>
@@ -753,7 +783,8 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each sortedConnections as conn (conn._id)}
+						<!-- OLD CODE START: {#each sortedConnections as conn (conn._id)} OLD CODE END -->
+						{#each connections as conn (conn._id)}
 							{@const srcAsn = asString(getField(conn, 'destination.as.full'))}
 							<tr
 								class="conn-row"
@@ -785,7 +816,8 @@
 										{asString(getField(conn, 'network.transport')).toUpperCase() || '--'}
 									</span>
 								</td>
-								<td>{asString(getField(conn, 'protocol')) || '--'}</td>
+								<!-- OLD CODE START: <td>{asString(getField(conn, 'protocol')) || '--'}</td> (#145: protocol's first entry is the transport, so Service read udp/tcp) OLD CODE END -->
+								<td>{asString(getField(conn, 'network.protocol')) || '--'}</td>
 								<td class="mono">{formatDuration(conn)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined)}</td>
 								<td class="mono">{formatBytes((getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes')) as number | undefined)}</td>

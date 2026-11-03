@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types.js';
 import { daemonFetch } from '$lib/server/daemon.js';
 
 /**
- * GET /api/alerts?from=&to=&severity=&page=1&size=50
+ * GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=&order=
  * Proxies to the daemon's GET /api/alerts endpoint,
  * forwarding all query parameters for paginated alert listing.
  */
@@ -25,6 +25,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (signature) params.set('signature', signature);
 	const category = url.searchParams.get('category');
 	if (category) params.set('category', category);
+	// #146: the alert tables' sort; #147: a category's sub-category. The daemon validates them
+	for (const key of ['sort', 'order', 'sub']) {
+		const value = url.searchParams.get(key);
+		if (value) params.set(key, value);
+	}
 
 	const query = params.toString() ? `?${params.toString()}` : '';
 	const res = await daemonFetch(`/api/alerts${query}`);

@@ -41,6 +41,32 @@ def _flatten(value: Any) -> str:
     return value if isinstance(value, str) else str(value) if value else ""
 
 
+def _epoch_ms(value: Any) -> float | None:
+    """Epoch ms from Malcolm's epoch-ms text ("1793613468348"), a number, or an ISO date."""
+    text = str(value)
+    if text.isdigit():
+        return float(text)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp() * 1000
+    except ValueError:
+        return None
+
+
+def _duration_seconds(source: dict[str, Any], event: dict[str, Any]) -> float:
+    """A session's duration: `length` (end minus start, ms) when present, else end minus start (#144)."""
+    length = source.get("length")
+    if (
+        isinstance(length, (int, float))
+        and not isinstance(length, bool)
+        and length >= 0
+    ):
+        return length / 1000
+    start, end = _epoch_ms(event.get("start")), _epoch_ms(event.get("end"))
+    if start is None or end is None or end < start:
+        return 0.0
+    return (end - start) / 1000
+
+
 class LiveConnectionTracker:
     """Tracks active connections from OpenSearch with in-memory caching."""
 
@@ -240,19 +266,23 @@ class LiveConnectionTracker:
         if total_bytes == 0:
             total_bytes = (src.get("bytes", 0) or 0) + (dst.get("bytes", 0) or 0)
 
-        # Calculate duration
-        duration = 0.0
-        event_start = event.get("start")
-        event_end = event.get("end")
-        if event_start and event_end:
-            try:
-                start_dt = datetime.fromisoformat(
-                    str(event_start).replace("Z", "+00:00")
-                )
-                end_dt = datetime.fromisoformat(str(event_end).replace("Z", "+00:00"))
-                duration = (end_dt - start_dt).total_seconds()
-            except (ValueError, TypeError):
-                pass
+        # OLD CODE START — #144: Malcolm 26.x writes event.start/end as epoch-ms text, which
+        # fromisoformat refuses, so every live connection read 0 s
+        # # Calculate duration
+        # duration = 0.0
+        # event_start = event.get("start")
+        # event_end = event.get("end")
+        # if event_start and event_end:
+        #     try:
+        #         start_dt = datetime.fromisoformat(
+        #             str(event_start).replace("Z", "+00:00")
+        #         )
+        #         end_dt = datetime.fromisoformat(str(event_end).replace("Z", "+00:00"))
+        #         duration = (end_dt - start_dt).total_seconds()
+        #     except (ValueError, TypeError):
+        #         pass
+        # OLD CODE END
+        duration = _duration_seconds(source, event)
 
         # Extract geo coordinates for map visualization
         location = geo.get("location", {}) or {}

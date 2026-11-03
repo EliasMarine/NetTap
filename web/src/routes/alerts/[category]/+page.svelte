@@ -14,7 +14,7 @@
 	 */
 
 	import { page } from '$app/stores';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import {
 		getAlertCategoryDetail,
 		getAlertCategoryTimeline,
@@ -30,11 +30,15 @@
 		CategoryTimelinePoint,
 		SubCategory,
 		Alert,
+		AlertSort,
 	} from '$api/alerts';
 	import IPAddress from '$components/IPAddress.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
-	import { TableSort, compareValues, severityRank } from '$lib/utils/table-sort.svelte';
+	// OLD CODE START — #146: the alert table sorts on the daemon now
+	// import { TableSort, compareValues, severityRank } from '$lib/utils/table-sort.svelte';
+	// OLD CODE END
+	import { TableSort } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -102,6 +106,11 @@
 	// type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip';
 	// OLD CODE END
 	type SortKey = 'timestamp' | 'severity' | 'signature' | 'src_ip' | 'dest_ip' | 'dest_port';
+	// Each column's name on the daemon, which sorts every page (#146)
+	const SERVER_SORT: Record<SortKey, AlertSort> = {
+		timestamp: 'time', severity: 'severity', signature: 'signature', src_ip: 'source',
+		dest_ip: 'destination', dest_port: 'dest_port',
+	};
 
 	// Affected Devices table: most alerts first
 	const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
@@ -178,49 +187,53 @@
 		return Math.max(...categoryData.sub_categories.map((s) => s.count), 1);
 	});
 
-	let sortedAlerts = $derived.by(() => {
-		const list = [...alerts];
-		list.sort((a, b) => {
-			let cmp = 0;
-			switch (sortKey) {
-				case 'timestamp':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
-					// OLD CODE END
-					cmp = compareValues(a.timestamp || '', b.timestamp || '');
-					break;
-				case 'severity':
-					// OLD CODE START — Suricata's 1 is the most severe, so the first (descending) click put LOW on top
-					// cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
-					// OLD CODE END
-					cmp = severityRank(a.alert?.severity) - severityRank(b.alert?.severity);
-					break;
-				case 'signature':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.alert?.signature || '').localeCompare(b.alert?.signature || '');
-					// OLD CODE END
-					cmp = compareValues(a.alert?.signature || '', b.alert?.signature || '');
-					break;
-				case 'src_ip':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.src_ip || '').localeCompare(b.src_ip || '');
-					// OLD CODE END
-					cmp = compareValues(a.src_ip || '', b.src_ip || '');
-					break;
-				case 'dest_ip':
-					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-					// cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
-					// OLD CODE END
-					cmp = compareValues(a.dest_ip || '', b.dest_ip || '');
-					break;
-				case 'dest_port':
-					cmp = compareValues(a.dest_port ?? -1, b.dest_port ?? -1);
-					break;
-			}
-			return sortDir === 'asc' ? cmp : -cmp;
-		});
-		return list;
-	});
+	// OLD CODE START — #146: ordered only the page of rows it had; the daemon sorts every page now
+	// let sortedAlerts = $derived.by(() => {
+	// 	const list = [...alerts];
+	// 	list.sort((a, b) => {
+	// 		let cmp = 0;
+	// 		switch (sortKey) {
+	// 			case 'timestamp':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.timestamp || '').localeCompare(b.timestamp || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.timestamp || '', b.timestamp || '');
+	// 				break;
+	// 			case 'severity':
+	// 				// OLD CODE START — Suricata's 1 is the most severe, so the first (descending) click put LOW on top
+	// 				// cmp = (a.alert?.severity ?? 4) - (b.alert?.severity ?? 4);
+	// 				// OLD CODE END
+	// 				cmp = severityRank(a.alert?.severity) - severityRank(b.alert?.severity);
+	// 				break;
+	// 			case 'signature':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.alert?.signature || '').localeCompare(b.alert?.signature || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.alert?.signature || '', b.alert?.signature || '');
+	// 				break;
+	// 			case 'src_ip':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.src_ip || '').localeCompare(b.src_ip || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.src_ip || '', b.src_ip || '');
+	// 				break;
+	// 			case 'dest_ip':
+	// 				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 				// cmp = (a.dest_ip || '').localeCompare(b.dest_ip || '');
+	// 				// OLD CODE END
+	// 				cmp = compareValues(a.dest_ip || '', b.dest_ip || '');
+	// 				break;
+	// 			case 'dest_port':
+	// 				cmp = compareValues(a.dest_port ?? -1, b.dest_port ?? -1);
+	// 				break;
+	// 		}
+	// 		return sortDir === 'asc' ? cmp : -cmp;
+	// 	});
+	// 	return list;
+	// });
+	// OLD CODE END
+	// The daemon returns the rows in the table's order (#146)
+	let sortedAlerts = $derived(alerts);
 
 	// Timeline chart derived data
 	let chartHeight = 200;
@@ -276,7 +289,7 @@
 		const [detail, timeline, alertsResult] = await Promise.allSettled([
 			getAlertCategoryDetail(cat, { from, to }),
 			getAlertCategoryTimeline(cat, { from, to, interval }),
-			getAlerts({ from, to, page: 1, size: pageSize, category: cat }),
+			getAlerts({ from, to, page: 1, size: pageSize, category: cat, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir }),
 		]);
 		categoryData = detail.status === 'fulfilled' ? detail.value : null;
 		detailFailed = detail.status === 'rejected';
@@ -295,7 +308,7 @@
 		alertsLoading = true;
 		const { from, to } = getTimeRange();
 		try {
-			const r = await getAlerts({ from, to, page: pg, size: pageSize, category });
+			const r = await getAlerts({ from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir });
 			alerts = r.alerts;
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
@@ -311,11 +324,25 @@
 		}
 	}
 
-	// Refetch when category or time range changes
+	// OLD CODE START — #146/#147: fetchData now reads the sort and sub-category, which would make
+	// every header click reload the whole page from here as well
+	// // Refetch when category or time range changes
+	// $effect(() => {
+	// 	const cat = category;
+	// 	const range = selectedRange;
+	// 	fetchData(cat, range);
+	// });
+	// OLD CODE END
+	// Refetch when category or time range changes; a new category drops the old one's sub-category
+	let loadedCategory = '';
 	$effect(() => {
 		const cat = category;
 		const range = selectedRange;
-		fetchData(cat, range);
+		untrack(() => {
+			if (cat !== loadedCategory) subCatFilter = null;
+			loadedCategory = cat;
+			fetchData(cat, range);
+		});
 	});
 
 	// Auto-refresh
@@ -350,6 +377,7 @@
 			// OLD CODE END
 			sortDir = key === 'timestamp' || key === 'severity' ? 'desc' : 'asc';
 		}
+		fetchAlerts(1);
 	}
 
 	function sortIndicator(key: SortKey): string {
@@ -359,6 +387,8 @@
 
 	function toggleSubFilter(id: string) {
 		subCatFilter = subCatFilter === id ? null : id;
+		// #147: the bar said "Filtered" while the table still listed the whole category
+		fetchAlerts(1);
 	}
 
 	function formatTimestamp(ts: string): string {
@@ -624,7 +654,8 @@
 				{#if subCatFilter}
 					<div class="sub-cat-filter-bar">
 						<span class="filter-text">Filtered: <strong>{categoryData.sub_categories.find(s => s.id === subCatFilter)?.label ?? subCatFilter}</strong></span>
-						<button class="clear-filter-btn" onclick={() => (subCatFilter = null)}>Clear filter</button>
+						<!-- OLD CODE START: <button class="clear-filter-btn" onclick={() => (subCatFilter = null)}>Clear filter</button> OLD CODE END -->
+						<button class="clear-filter-btn" onclick={() => { subCatFilter = null; fetchAlerts(1); }}>Clear filter</button>
 					</div>
 				{/if}
 			</section>

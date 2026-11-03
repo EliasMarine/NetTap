@@ -30,6 +30,7 @@
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
+	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
 	import type {
@@ -402,12 +403,17 @@
 		return '';
 	}
 
-	function formatDuration(startVal: unknown, endVal: unknown): string {
-		const s = asString(startVal);
-		const e = asString(endVal);
-		if (!s || !e) return '--';
-		const diffMs = new Date(e).getTime() - new Date(s).getTime();
-		if (isNaN(diffMs) || diffMs < 0) return '--';
+	// OLD CODE START — #144: event.start/end are epoch-ms text on Malcolm 26.x, so every row read "--"
+	// function formatDuration(startVal: unknown, endVal: unknown): string {
+	// 	const s = asString(startVal);
+	// 	const e = asString(endVal);
+	// 	if (!s || !e) return '--';
+	// 	const diffMs = new Date(e).getTime() - new Date(s).getTime();
+	// 	if (isNaN(diffMs) || diffMs < 0) return '--';
+	// OLD CODE END
+	function formatDuration(conn: Record<string, unknown>): string {
+		const diffMs = connectionDurationMs(conn);
+		if (diffMs === null) return '--';
 		if (diffMs < 1000) return `${Math.round(diffMs)}ms`;
 		const sec = diffMs / 1000;
 		if (sec < 60) return `${sec.toFixed(1)}s`;
@@ -877,7 +883,8 @@
 									<td class="mono td-sm">{asString(getField(conn, 'destination.ip'))}:{asString(getField(conn, 'destination.port'))}</td>
 									<td><span class="proto-tag">{asString(getField(conn, 'network.transport'))}</span></td>
 									<td class="td-sm">{asString(getField(conn, 'network.protocol')) || asString(getField(conn, 'network.transport'))}</td>
-									<td class="mono td-sm">{formatDuration(getField(conn, 'event.start'), getField(conn, 'event.end'))}</td>
+									<!-- OLD CODE START: <td class="mono td-sm">{formatDuration(getField(conn, 'event.start'), getField(conn, 'event.end'))}</td> OLD CODE END -->
+									<td class="mono td-sm">{formatDuration(conn)}</td>
 									<td class="mono td-sm dl-col">{formatBytes(Number(asString(getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes'))) || 0)}</td>
 									<td class="mono td-sm ul-col">{formatBytes(Number(asString(getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes'))) || 0)}</td>
 								</tr>

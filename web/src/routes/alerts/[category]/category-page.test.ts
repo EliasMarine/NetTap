@@ -62,3 +62,51 @@ describe('Alert category page', () => {
 		await vi.waitFor(() => expect(screen.getByText(/No alerts in/)).toBeInTheDocument());
 	});
 });
+
+describe('Alert category page — sorting (#146)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("asks the daemon for the category's most severe alerts first, across every page", async () => {
+		const alerts = {
+			from: '', to: '', page: 1, size: 25, total: 400, total_pages: 16,
+			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
+		};
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': alerts });
+		const { container } = render(Page);
+		await vi.waitFor(() => expect(screen.getByText('Sig a')).toBeInTheDocument());
+		const severity = [...container.querySelectorAll('th')].find((th) => th.textContent?.trim().startsWith('Severity'))!;
+		severity.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await vi.waitFor(() => {
+			const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith('/api/alerts?'));
+			const last = new URLSearchParams(urls.at(-1)!.split('?')[1]);
+			expect([last.get('category'), last.get('page'), last.get('sort'), last.get('order')]).toEqual(['scan', '1', 'severity', 'desc']);
+		});
+	});
+});
+
+describe('Alert category page — sub-category filter (#147)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('really filters the alert table when a sub-category is picked, and clears back', async () => {
+		const detail = { ...DETAIL, sub_categories: [{ id: 'port_scan', label: 'Port Scan', count: 3 }] };
+		const alerts = { from: '', to: '', page: 1, size: 25, total: 3, total_pages: 1, alerts: [] };
+		stubDaemon({ '/api/alerts/categories/scan': detail, '/api/alerts': alerts });
+		render(Page);
+		const listCalls = () => vi.mocked(fetch).mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('/api/alerts?'));
+		const lastParams = () => new URLSearchParams(listCalls().at(-1)!.split('?')[1]);
+		await vi.waitFor(() => expect(screen.getByText('Port Scan')).toBeInTheDocument());
+		const before = listCalls().length;
+
+		screen.getByText('Port Scan').closest('button')!.click();
+		await vi.waitFor(() => expect(lastParams().get('sub')).toBe('port_scan'));
+		expect(lastParams().get('category')).toBe('scan');
+		expect(listCalls().length).toBe(before + 1); // the list only, not the whole page again
+
+		screen.getByText('Clear filter').click();
+		await vi.waitFor(() => expect(lastParams().get('sub')).toBeNull());
+	});
+});
