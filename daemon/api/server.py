@@ -107,6 +107,7 @@ from services.network_diag_service import NetworkDiagService
 from services.ssl_cert_service import SslCertService
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
+from services.malcolm_upgrade import MalcolmUpgrade
 from services.update_executor import UpdateExecutor
 from services.device_registry import DeviceRegistry
 from services.unifi_integration import UnifiIntegration
@@ -912,7 +913,9 @@ def _management_interface() -> str:
     try:
         return load_capture_config().management
     except Exception as exc:  # a broken capture config must not stop the API starting
-        logger.warning("Could not read the management NIC from the capture config: %s", exc)
+        logger.warning(
+            "Could not read the management NIC from the capture config: %s", exc
+        )
         return ""
 
 
@@ -1060,7 +1063,9 @@ def create_app(
         app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
         logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
     elif not appliance_ip:
-        logger.warning("Appliance management IP not found; NetTap's own traffic is counted")
+        logger.warning(
+            "Appliance management IP not found; NetTap's own traffic is counted"
+        )
 
     # Auto-detect LAN subnets from OpenSearch traffic data
     # Priority: LAN_SUBNETS env var > auto-detect from traffic > RFC1918 fallback
@@ -1115,7 +1120,14 @@ def create_app(
 
     version_manager = VersionManager(compose_file=compose_file)
     update_checker = UpdateChecker(github_repo=github_repo)
-    update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
+    # OLD CODE START — the Malcolm update needs the OpenSearch client to see records arrive
+    # update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
+    # OLD CODE END
+    update_executor = UpdateExecutor(
+        compose_file=compose_file,
+        backup_dir=backup_dir,
+        malcolm_upgrade=MalcolmUpgrade(client=storage._client),
+    )
 
     # Wire up cross-service references
     update_checker.set_version_manager(version_manager)

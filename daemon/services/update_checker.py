@@ -16,6 +16,13 @@ from typing import Any
 
 import aiohttp
 
+from services.malcolm_upgrade import (
+    MALCOLM_ROW_APPLIES_WITH,
+    TESTED_MALCOLM_TAG,
+    malcolm_changelog,
+    newer,
+)
+from services.os_updates import os_update_fields
 from services.suricata_rules import SuricataRuleManager
 
 logger = logging.getLogger("nettap.services.update_checker")
@@ -23,23 +30,39 @@ logger = logging.getLogger("nettap.services.update_checker")
 # Where the deployed images come from (docker/docker-compose.yml)
 _MALCOLM_REGISTRY = "ghcr.io/idaholab/malcolm/"
 _MALCOLM_RELEASE_URL = "https://api.github.com/repos/idaholab/Malcolm/releases/latest"
-_NETTAP_IMAGE_PREFIX = "nettap/"  # built by NetTap; the NetTap release check covers them
+_NETTAP_IMAGE_PREFIX = (
+    "nettap/"  # built by NetTap; the NetTap release check covers them
+)
 # NetTap pins Malcolm's images to a tested release, so it can't apply a newer one itself
-MALCOLM_APPLIES_WITH = "Comes with NetTap's pinned Malcolm release: update NetTap to get it."
+MALCOLM_APPLIES_WITH = (
+    "Comes with NetTap's pinned Malcolm release: update NetTap to get it."
+)
+# zeek-live is NetTap's build on Malcolm's Zeek image, with the same tag
+_MALCOLM_TAGGED = (_MALCOLM_REGISTRY, "nettap/zeek-live:")
+# a newer Malcolm than the release this NetTap was tested with: offered only once tested
+MALCOLM_UNTESTED_APPLIES_WITH = (
+    "Not tested with NetTap yet: a NetTap release brings it once it has been."
+)
 
 # With no local database, enrichment uses the one bundled in Malcolm's Logstash image
 _LOGSTASH_CONTAINER = os.environ.get("LOGSTASH_CONTAINER_NAME", "nettap-logstash")
+# the package rows read inside Malcolm's containers (Zeek, Suricata) or NetTap's (TShark)
+_UPDATES_WITH_MALCOLM = ("zeek", "suricata")
+_UPDATES_WITH_NETTAP = ("tshark",)
 _LOGSTASH_GEOIP_DB = (  # the jruby and gem versions vary between images
     "/usr/share/logstash/vendor/bundle/jruby/*/gems/logstash-filter-geoip-*"
     "/vendor/GeoLite2-City.mmdb"
 )
+# OLD CODE START — Malcolm (and its Logstash) can be updated from the page now
+# _LOGSTASH_GEOIP_APPLIES_WITH = (
+#     "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+# )
+# OLD CODE END
 _LOGSTASH_GEOIP_APPLIES_WITH = (
-    "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+    "Comes with Malcolm's Logstash image, so it updates with the Malcolm row."
 )
 # the update executor has no way to replace the running daemon and web containers
-NETTAP_APPLIES_WITH = (
-    "NetTap can't replace itself from this page: get the new release and rerun its install script."
-)
+NETTAP_APPLIES_WITH = "NetTap can't replace itself from this page: get the new release and rerun its install script."
 
 
 @dataclass
@@ -82,6 +105,10 @@ class UpdateChecker:
         self._checking: bool = False
         # Components the last check could not ask about (#96): unknown, not "up to date"
         self._failed_checks: list[str] = []
+        self._malcolm_known = (
+            False  # Malcolm's latest release was read in the last check
+        )
+        self._os_checked = False  # update-notifier said how many OS updates are pending
         # components the last check looked at; anything else has no update source here
         self._checked: list[str] = []
         self._version_manager = None  # Set externally after init
@@ -118,6 +145,8 @@ class UpdateChecker:
         self._checking = True
         now = datetime.now(timezone.utc).isoformat()
         self._failed_checks = []
+        self._malcolm_known = False
+        self._os_checked = False
 
         try:
             all_updates: list[AvailableUpdate] = []
@@ -133,7 +162,9 @@ class UpdateChecker:
                         if v.get("category") != "docker":
                             continue
                         if v.get("status") == "ok":
-                            images[v["name"]] = (v.get("details") or {}).get("image", "")
+                            # the malcolm row has no image of its own: it's checked with them
+                            if (v.get("details") or {}).get("image"):
+                                images[v["name"]] = v["details"]["image"]
                         else:  # docker couldn't be asked: container updates unknown
                             self._failed_checks.append(v["name"])
                 except Exception as exc:
@@ -174,6 +205,11 @@ class UpdateChecker:
             if geoip_update is not None:
                 all_updates.append(geoip_update)
 
+            # Ubuntu's own count of pending package updates (shown, not installed)
+            os_update = self._check_os_updates(current_versions.get("os", "unknown"))
+            if os_update is not None:
+                all_updates.append(os_update)
+
             self._available_updates = all_updates
             self._last_check = now
             # OLD CODE START — NetTap's images counted as checked even when the release check
@@ -184,14 +220,42 @@ class UpdateChecker:
             nettap_current = "nettap-daemon" not in self._failed_checks and not any(
                 u.component == "nettap-daemon" for u in all_updates
             )
-            own_images = (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX) if nettap_current else (_MALCOLM_REGISTRY,)
+            own_images = (
+                (_MALCOLM_REGISTRY, _NETTAP_IMAGE_PREFIX)
+                if nettap_current
+                else (_MALCOLM_REGISTRY,)
+            )
             # OLD CODE START — a source that couldn't be read was still listed as checked
             # self._checked = sorted(
             #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
             # )
             # OLD CODE END
+            # OLD CODE START — the Malcolm row, the package rows and the OS weren't checked by anything
+            # self._checked = sorted(
+            #     {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+            #     - set(self._failed_checks)
+            # )
+            # OLD CODE END
+            follows = (
+                list(_UPDATES_WITH_MALCOLM) + ["malcolm"] if self._malcolm_known else []
+            )
+            follows += list(_UPDATES_WITH_NETTAP) if nettap_current else []
+            follows += ["os"] if self._os_checked else []
+            follows = [
+                c for c in follows if c in current_versions
+            ]  # only rows that exist
             self._checked = sorted(
-                {"nettap-daemon", "suricata-rules", "geoip-db", *(c for c, i in images.items() if i.startswith(own_images))}
+                {
+                    "nettap-daemon",
+                    "suricata-rules",
+                    "geoip-db",
+                    *follows,
+                    *(
+                        c
+                        for c, i in images.items()
+                        if i.startswith((*own_images, *_MALCOLM_TAGGED))
+                    ),
+                }
                 - set(self._failed_checks)
             )
 
@@ -205,7 +269,7 @@ class UpdateChecker:
                 "last_check": self._last_check,
                 "count": len(all_updates),
                 "has_updates": len(all_updates) > 0,
-                "failed_checks": list(self._failed_checks),
+                "failed_checks": list(dict.fromkeys(self._failed_checks)),
                 "checked": list(self._checked),
             }
         finally:
@@ -223,7 +287,7 @@ class UpdateChecker:
             "last_check": self._last_check,
             "count": len(self._available_updates),
             "has_updates": len(self._available_updates) > 0,
-            "failed_checks": list(self._failed_checks),
+            "failed_checks": list(dict.fromkeys(self._failed_checks)),
             "checked": list(self._checked),
         }
 
@@ -327,68 +391,202 @@ class UpdateChecker:
     #             self._failed_checks.append(component)
     #     return results
     # OLD CODE END
+    # OLD CODE START — every Malcolm image was its own row, each told to "update NetTap",
+    # and the release compared was Malcolm's latest, which NetTap may not have tested
+    # async def _check_docker_updates(
+    #     self, current_versions: dict[str, str], images: dict[str, str]
+    # ) -> list[AvailableUpdate]:
+    #     """Check the running containers' images for newer versions.
+    #
+    #     Malcolm images (ghcr.io/idaholab/malcolm/*) all carry the Malcolm release
+    #     tag (docker/docker-compose.yml), so they are compared with Malcolm's latest
+    #     GitHub release. NetTap's own images (nettap/*) follow the NetTap release
+    #     check. Any other image has no source to ask, so it goes in failed_checks
+    #     rather than reading as up to date.
+    #
+    #     Args:
+    #         current_versions: Component name -> running image tag.
+    #         images: Component name -> running image reference (from docker ps).
+    #
+    #     Returns:
+    #         List of AvailableUpdate for components with a newer release.
+    #     """
+    #     results: list[AvailableUpdate] = []
+    #     malcolm: list[str] = []
+    #     for component, image in sorted(images.items()):
+    #         if image.startswith(_MALCOLM_REGISTRY):
+    #             malcolm.append(component)
+    #         elif not image.startswith(_NETTAP_IMAGE_PREFIX):
+    #             # shortcut: no registry lookup for third-party images (grafana, nginx);
+    #             # add one if NetTap ever updates them itself
+    #             self._failed_checks.append(component)
+    #     if not malcolm:
+    #         return results
+    #
+    #     try:
+    #         data = await self._fetch_json(_MALCOLM_RELEASE_URL)
+    #     except Exception as exc:
+    #         logger.warning("Malcolm release check failed: %s", exc)
+    #         self._failed_checks.extend(malcolm)
+    #         return results
+    #     latest = (data.get("tag_name") or "").lstrip("v")
+    #     if not latest:  # nothing to compare with is not "no update"
+    #         self._failed_checks.extend(malcolm)
+    #         return results
+    #
+    #     for component in malcolm:
+    #         current = current_versions.get(component, "")
+    #         update_type = await self._compare_versions(current.lstrip("v"), latest)
+    #         if update_type == "unknown":  # e.g. a "latest" or custom tag
+    #             self._failed_checks.append(component)
+    #         elif update_type != "same":
+    #             results.append(
+    #                 AvailableUpdate(
+    #                     component=component,
+    #                     current_version=current,
+    #                     latest_version=latest,
+    #                     update_type=update_type,
+    #                     release_url=data.get("html_url", ""),
+    #                     release_date=data.get("published_at", ""),
+    #                     changelog=f"Malcolm {latest}: {images[component].split(':')[0]}",
+    #                     size_mb=None,  # the image size isn't known from the release
+    #                     requires_restart=True,
+    #                     applies_with=MALCOLM_APPLIES_WITH,
+    #                 )
+    #             )
+    #     return results
+    # OLD CODE END
     async def _check_docker_updates(
         self, current_versions: dict[str, str], images: dict[str, str]
     ) -> list[AvailableUpdate]:
         """Check the running containers' images for newer versions.
 
-        Malcolm images (ghcr.io/idaholab/malcolm/*) all carry the Malcolm release
-        tag (docker/docker-compose.yml), so they are compared with Malcolm's latest
-        GitHub release. NetTap's own images (nettap/*) follow the NetTap release
-        check. Any other image has no source to ask, so it goes in failed_checks
-        rather than reading as up to date.
-
-        Args:
-            current_versions: Component name -> running image tag.
-            images: Component name -> running image reference (from docker ps).
-
-        Returns:
-            List of AvailableUpdate for components with a newer release.
+        Malcolm's images (and zeek-live, built on Malcolm's Zeek) share one tag, so they move
+        together through one "malcolm" row, to TESTED_MALCOLM_TAG: the release this NetTap
+        was tested with. Each image's own row points at that row. A Malcolm release newer
+        than the tested one is shown as not tested yet. NetTap's own images (nettap/*) follow
+        the NetTap release check; any other image has no source to ask (failed_checks).
         """
-        results: list[AvailableUpdate] = []
         malcolm: list[str] = []
         for component, image in sorted(images.items()):
-            if image.startswith(_MALCOLM_REGISTRY):
+            if image.startswith(_MALCOLM_TAGGED):
                 malcolm.append(component)
             elif not image.startswith(_NETTAP_IMAGE_PREFIX):
                 # shortcut: no registry lookup for third-party images (grafana, nginx);
                 # add one if NetTap ever updates them itself
                 self._failed_checks.append(component)
         if not malcolm:
-            return results
+            return []
 
+        data: dict = {}
         try:
             data = await self._fetch_json(_MALCOLM_RELEASE_URL)
         except Exception as exc:
             logger.warning("Malcolm release check failed: %s", exc)
-            self._failed_checks.extend(malcolm)
-            return results
         latest = (data.get("tag_name") or "").lstrip("v")
-        if not latest:  # nothing to compare with is not "no update"
-            self._failed_checks.extend(malcolm)
-            return results
+        if latest:
+            self._malcolm_known = True
+        else:  # nothing newer can be ruled out: these rows aren't "up to date"
+            self._failed_checks.extend([*malcolm, "malcolm", *_UPDATES_WITH_MALCOLM])
 
+        # the malcolm row, or (from an older version scan) the one tag its images share
+        tags = {current_versions.get(c, "").lstrip("v") for c in malcolm}
+        running = current_versions.get("malcolm") or (
+            next(iter(tags)) if len(tags) == 1 else ""
+        )
+        target = TESTED_MALCOLM_TAG if newer(TESTED_MALCOLM_TAG, running) else ""
+        offered = target or (latest if newer(latest, running) else "")
+        how = MALCOLM_ROW_APPLIES_WITH if target else MALCOLM_UNTESTED_APPLIES_WITH
+        results: list[AvailableUpdate] = []
         for component in malcolm:
             current = current_versions.get(component, "")
-            update_type = await self._compare_versions(current.lstrip("v"), latest)
-            if update_type == "unknown":  # e.g. a "latest" or custom tag
-                self._failed_checks.append(component)
-            elif update_type != "same":
+            if (
+                await self._compare_versions(current.lstrip("v"), TESTED_MALCOLM_TAG)
+                == "unknown"
+            ):
+                self._failed_checks.append(component)  # e.g. a "latest" or custom tag
+            elif offered and newer(offered, current.lstrip("v")):
                 results.append(
-                    AvailableUpdate(
-                        component=component,
-                        current_version=current,
-                        latest_version=latest,
-                        update_type=update_type,
-                        release_url=data.get("html_url", ""),
-                        release_date=data.get("published_at", ""),
-                        changelog=f"Malcolm {latest}: {images[component].split(':')[0]}",
-                        size_mb=None,  # the image size isn't known from the release
-                        requires_restart=True,
-                        applies_with=MALCOLM_APPLIES_WITH,
+                    await self._malcolm_row(
+                        component,
+                        current,
+                        offered,
+                        how,
+                        data,
+                        f"Malcolm {offered}: {images[component].split(':')[0]}",
                     )
                 )
+        if offered:
+            for component in _UPDATES_WITH_MALCOLM:
+                if component in current_versions:
+                    results.append(
+                        await self._malcolm_row(
+                            component,
+                            current_versions[component],
+                            f"with Malcolm {offered}",
+                            how,
+                            data,
+                            f"Comes with Malcolm {offered}",
+                        )
+                    )
+            results.append(
+                await self._malcolm_row(
+                    "malcolm",
+                    running,
+                    offered,
+                    None if target else how,
+                    data,
+                    malcolm_changelog(offered, latest, bool(target)),
+                )
+            )
         return results
+
+    async def _malcolm_row(
+        self,
+        component: str,
+        current: str,
+        latest: str,
+        applies_with: str | None,
+        data: dict,
+        changelog: str,
+    ) -> AvailableUpdate:
+        """A row moving to Malcolm `latest` ("26.10.0", or "with Malcolm 26.10.0" for a package)."""
+        version = latest.rsplit(" ", 1)[-1]
+        is_latest = version == (data.get("tag_name") or "").lstrip("v")
+        same_scheme = (
+            latest == version
+        )  # a package row's own version isn't a Malcolm tag
+        return AvailableUpdate(
+            component=component,
+            current_version=current,
+            latest_version=latest,
+            update_type=await self._compare_versions(current.lstrip("v"), version)
+            if same_scheme
+            else "unknown",
+            release_url=data.get("html_url", "")
+            if is_latest
+            else f"https://github.com/idaholab/Malcolm/releases/tag/v{version}",
+            release_date=data.get("published_at", "") if is_latest else "",
+            changelog=changelog,
+            size_mb=None,  # the images' size isn't known from the release
+            requires_restart=True,
+            applies_with=applies_with,
+        )
+
+    def _check_os_updates(self, os_version: str) -> AvailableUpdate | None:
+        """Ubuntu's count of pending package updates: a row when there are any."""
+        try:
+            fields = os_update_fields(os_version)
+        except (OSError, ValueError) as exc:
+            logger.warning("Couldn't read the pending OS updates: %s", exc)
+            self._failed_checks.append("os")
+            return None
+        if (
+            fields is None
+        ):  # not mounted (an older compose file): the OS stays "Not checked"
+            return None
+        self._os_checked = True
+        return AvailableUpdate(**fields) if fields else None
 
     async def _check_suricata_rules(self) -> AvailableUpdate | None:
         """Check if Suricata ruleset has updates available.
@@ -425,7 +623,9 @@ class UpdateChecker:
         for rule_path in rule_paths:
             try:
                 if os.path.exists(rule_path):
-                    rule_date = datetime.fromtimestamp(os.path.getmtime(rule_path), tz=timezone.utc)
+                    rule_date = datetime.fromtimestamp(
+                        os.path.getmtime(rule_path), tz=timezone.utc
+                    )
                     break
             except OSError:
                 continue
@@ -433,7 +633,9 @@ class UpdateChecker:
         if rule_date is None:
             live = await SuricataRuleManager().get_live_status()
             if not live.get("last_updated"):
-                logger.warning("Could not read Suricata's rules date: %s", live.get("error"))
+                logger.warning(
+                    "Could not read Suricata's rules date: %s", live.get("error")
+                )
                 self._failed_checks.append("suricata-rules")
                 return None
             rule_date = datetime.fromisoformat(live["last_updated"])

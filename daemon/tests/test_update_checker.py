@@ -9,13 +9,20 @@ checking, version comparison, caching, and graceful error handling.
 import asyncio
 import os
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.update_checker import AvailableUpdate, UpdateChecker
+from services.malcolm_upgrade import MALCOLM_ROW_APPLIES_WITH, TESTED_MALCOLM_TAG
+from services.os_updates import os_update_fields
+from services.update_checker import (
+    MALCOLM_UNTESTED_APPLIES_WITH,
+    AvailableUpdate,
+    UpdateChecker,
+)
 
 
 class TestAvailableUpdateDataclass(unittest.TestCase):
@@ -447,11 +454,28 @@ class TestFailedChecksAreReported(unittest.TestCase):
             return {}
 
         uc = self._checker(fetch)
+        # OLD CODE START — one row per image, named by substring
+        # uc.set_version_manager(
+        #     self._vm(("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0"))
+        # )
+        # result = asyncio.run(uc.check_updates())
+        # self.assertEqual(result["failed_checks"], ["suricata"])
+        # OLD CODE END
         uc.set_version_manager(
-            self._vm(("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0"))
+            self._vm(
+                ("nettap-suricata-live", "ghcr.io/idaholab/malcolm/suricata:26.02.0")
+            )
         )
         result = asyncio.run(uc.check_updates())
-        self.assertEqual(result["failed_checks"], ["suricata"])
+        self.assertIn("nettap-suricata-live", result["failed_checks"])
+        self.assertIn(
+            "malcolm", result["failed_checks"]
+        )  # a newer, untested one can't be ruled out
+        # the tested release is known without asking GitHub, so it's still offered
+        (offer,) = [u for u in result["updates"] if u["component"] == "malcolm"]
+        self.assertEqual(
+            (offer["latest_version"], offer["applies_with"]), (TESTED_MALCOLM_TAG, None)
+        )
 
     def test_docker_unavailable_listed(self):
         async def not_found(url):
@@ -461,8 +485,13 @@ class TestFailedChecksAreReported(unittest.TestCase):
             async def get_versions(self):
                 return {
                     "versions": [
-                        {"name": "docker", "category": "docker", "status": "error",
-                         "current_version": "unknown", "details": {"error": "x"}}
+                        {
+                            "name": "docker",
+                            "category": "docker",
+                            "status": "error",
+                            "current_version": "unknown",
+                            "details": {"error": "x"},
+                        }
                     ]
                 }
 
@@ -507,7 +536,8 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         uc.set_version_manager(TestFailedChecksAreReported._vm(*containers))
         return asyncio.run(uc.check_updates()), urls
 
-    def test_newer_malcolm_release_is_an_update(self):
+    # OLD CODE START — compared with Malcolm's latest, which NetTap may not have tested
+    def _old_test_newer_malcolm_release_is_an_update(self):
         result, urls = self._run(
             {"tag_name": "v26.03.0", "html_url": "https://github.com/idaholab/Malcolm"},
             [
@@ -523,12 +553,93 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         self.assertEqual(result["failed_checks"], [])
         self.assertFalse(any("hub.docker.com" in u for u in urls))
 
-    def test_same_release_is_up_to_date(self):
+    def _old_test_same_release_is_up_to_date(self):
         result, _ = self._run(
             {"tag_name": "v26.02.0"},
             [("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0")],
         )
         self.assertEqual((result["updates"], result["failed_checks"]), ([], []))
+
+    # OLD CODE END
+
+    def test_the_tested_release_is_offered_as_one_malcolm_update(self):
+        result, urls = self._run(
+            {
+                "tag_name": f"v{TESTED_MALCOLM_TAG}",
+                "html_url": "https://github.com/idaholab/Malcolm/releases/x",
+            },
+            [
+                ("nettap-suricata-live", "ghcr.io/idaholab/malcolm/suricata:26.02.0"),
+                ("nettap-opensearch", "ghcr.io/idaholab/malcolm/opensearch:26.02.0"),
+            ],
+        )
+        by_component = {u["component"]: u for u in result["updates"]}
+        self.assertEqual(
+            set(by_component), {"nettap-suricata-live", "nettap-opensearch", "malcolm"}
+        )
+        malcolm = by_component["malcolm"]
+        self.assertEqual(
+            (
+                malcolm["latest_version"],
+                malcolm["update_type"],
+                malcolm["applies_with"],
+            ),
+            (TESTED_MALCOLM_TAG, "minor", None),
+        )
+        self.assertIn("backed up first", malcolm["changelog"])
+        self.assertEqual(
+            by_component["nettap-opensearch"]["applies_with"], MALCOLM_ROW_APPLIES_WITH
+        )
+        self.assertIsNone(by_component["nettap-opensearch"]["size_mb"])
+        self.assertEqual(result["failed_checks"], [])
+        self.assertFalse(any("hub.docker.com" in u for u in urls))
+
+    def test_a_newer_untested_release_is_shown_but_not_offered(self):
+        result, _ = self._run(
+            {"tag_name": "v99.01.0"},
+            [
+                (
+                    "nettap-logstash",
+                    f"ghcr.io/idaholab/malcolm/logstash-oss:{TESTED_MALCOLM_TAG}",
+                )
+            ],
+        )
+        by_component = {u["component"]: u for u in result["updates"]}
+        self.assertEqual(by_component["malcolm"]["latest_version"], "99.01.0")
+        self.assertEqual(
+            by_component["malcolm"]["applies_with"], MALCOLM_UNTESTED_APPLIES_WITH
+        )
+        self.assertEqual(
+            by_component["nettap-logstash"]["applies_with"],
+            MALCOLM_UNTESTED_APPLIES_WITH,
+        )
+
+    def test_tested_and_latest_is_up_to_date(self):
+        result, _ = self._run(
+            {"tag_name": f"v{TESTED_MALCOLM_TAG}"},
+            [
+                (
+                    "nettap-suricata-live",
+                    f"ghcr.io/idaholab/malcolm/suricata:{TESTED_MALCOLM_TAG}",
+                )
+            ],
+        )
+        self.assertEqual((result["updates"], result["failed_checks"]), ([], []))
+
+    def test_package_rows_follow_malcolm(self):
+        """The Zeek and Suricata package rows read inside Malcolm's containers."""
+        result, _ = self._run(
+            {"tag_name": f"v{TESTED_MALCOLM_TAG}"},
+            [("nettap-zeek-live", "nettap/zeek-live:26.02.0"), ("zeek", "zeek")],
+        )
+        by_component = {u["component"]: u for u in result["updates"]}
+        self.assertEqual(
+            by_component["nettap-zeek-live"]["latest_version"], TESTED_MALCOLM_TAG
+        )
+        self.assertEqual(
+            by_component["zeek"]["latest_version"], f"with Malcolm {TESTED_MALCOLM_TAG}"
+        )
+        self.assertEqual(by_component["zeek"]["update_type"], "unknown")
 
     def test_nettap_images_skipped_others_cant_be_checked(self):
         result, _ = self._run(
@@ -548,17 +659,19 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
         self.assertEqual(result["failed_checks"], ["arkime"])
         self.assertEqual(result["updates"], [])
 
-    def test_malcolm_update_comes_with_nettap_release(self):
-        """Malcolm's images are pinned: NetTap can't apply a newer release itself."""
-        result, _ = self._run(
-            {"tag_name": "v26.03.0"},
-            [("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0")],
-        )
-        (update,) = result["updates"]
-        self.assertEqual(
-            update["applies_with"],
-            "Comes with NetTap's pinned Malcolm release: update NetTap to get it.",
-        )
+    # OLD CODE START — every Malcolm image said "update NetTap"; the Malcolm row applies them now
+    # def test_malcolm_update_comes_with_nettap_release(self):
+    #     """Malcolm's images are pinned: NetTap can't apply a newer release itself."""
+    #     result, _ = self._run(
+    #         {"tag_name": "v26.03.0"},
+    #         [("suricata", "ghcr.io/idaholab/malcolm/suricata:26.02.0")],
+    #     )
+    #     (update,) = result["updates"]
+    #     self.assertEqual(
+    #         update["applies_with"],
+    #         "Comes with NetTap's pinned Malcolm release: update NetTap to get it.",
+    #     )
+    # OLD CODE END
 
     def test_says_which_components_it_checked(self):
         """The Updates page read "Up to Date" for the OS, Docker and Python, which nothing checks."""
@@ -570,7 +683,10 @@ class TestContainerImagesCheckedAtTheirSource(unittest.TestCase):
                 ("nettap-nginx", "nginx:stable-alpine"),
             ],
         )
-        self.assertEqual(result["checked"], ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"])
+        self.assertEqual(
+            result["checked"],
+            ["geoip-db", "logstash", "nettap-daemon", "nettap-web", "suricata-rules"],
+        )
         self.assertNotIn("nettap-nginx", result["checked"])
 
 
@@ -592,17 +708,23 @@ class TestNetTapImagesFollowTheRelease(unittest.TestCase):
         uc._fetch_json = fetch
         uc._check_suricata_rules = none
         uc._check_geoip_update = none
-        uc.set_version_manager(TestFailedChecksAreReported._vm(("nettap-web", "nettap/web:latest")))
+        uc.set_version_manager(
+            TestFailedChecksAreReported._vm(("nettap-web", "nettap/web:latest"))
+        )
         return asyncio.run(uc.check_updates())["checked"]
 
     def test_no_newer_release_means_checked(self):
         self.assertIn("nettap-web", self._checked({}))
 
     def test_a_newer_release_is_not_up_to_date(self):
-        self.assertNotIn("nettap-web", self._checked({"tag_name": "v99.0.0", "html_url": ""}))
+        self.assertNotIn(
+            "nettap-web", self._checked({"tag_name": "v99.0.0", "html_url": ""})
+        )
 
     def test_a_failed_release_check_is_not_up_to_date(self):
-        self.assertNotIn("nettap-web", self._checked(RuntimeError("HTTP 403 rate limited")))
+        self.assertNotIn(
+            "nettap-web", self._checked(RuntimeError("HTTP 403 rate limited"))
+        )
 
 
 class TestNetTapUpdatesStayApplicable(unittest.TestCase):
@@ -648,18 +770,27 @@ class TestRulesAreReadInTheSuricataContainer(unittest.TestCase):
         uc = UpdateChecker()
         with (
             patch("os.path.exists", return_value=False),
-            patch("services.update_checker.SuricataRuleManager.get_live_status", AsyncMock(return_value=live)),
+            patch(
+                "services.update_checker.SuricataRuleManager.get_live_status",
+                AsyncMock(return_value=live),
+            ),
         ):
             return asyncio.run(uc._check_suricata_rules()), uc._failed_checks
 
     def test_stale_rules_in_the_container_are_an_update(self):
-        update, failed = self._check({"available": True, "last_updated": "2026-01-02T00:00:00+00:00"})
-        self.assertEqual((update.component, update.current_version), ("suricata-rules", "2026-01-02"))
+        update, failed = self._check(
+            {"available": True, "last_updated": "2026-01-02T00:00:00+00:00"}
+        )
+        self.assertEqual(
+            (update.component, update.current_version), ("suricata-rules", "2026-01-02")
+        )
         self.assertFalse(update.requires_restart)  # the update reloads them
         self.assertEqual(failed, [])
 
     def test_unreadable_rules_are_a_failed_check(self):
-        update, failed = self._check({"available": False, "error": "Could not reach the Suricata container."})
+        update, failed = self._check(
+            {"available": False, "error": "Could not reach the Suricata container."}
+        )
         self.assertIsNone(update)
         self.assertEqual(failed, ["suricata-rules"])
 
@@ -763,13 +894,23 @@ class TestGeoIPDatabaseInLogstash(unittest.TestCase):
     def test_old_bundled_database_is_an_update_that_comes_with_nettap(self):
         update, failed, argv = self._check(mtime=self.G11_DB_MTIME)
         self.assertEqual(argv[:5], ("docker", "exec", "nettap-logstash", "sh", "-c"))
-        self.assertIn("stat -c %Y /usr/share/logstash/vendor/bundle/jruby/*/gems/", argv[5])
-        self.assertTrue(argv[5].endswith("logstash-filter-geoip-*/vendor/GeoLite2-City.mmdb"))
+        self.assertIn(
+            "stat -c %Y /usr/share/logstash/vendor/bundle/jruby/*/gems/", argv[5]
+        )
+        self.assertTrue(
+            argv[5].endswith("logstash-filter-geoip-*/vendor/GeoLite2-City.mmdb")
+        )
         self.assertEqual(update.component, "geoip-db")
         self.assertEqual(update.current_version, "2026-01-27")
+        # OLD CODE START — Malcolm (and its Logstash) can be updated from the page now
+        # self.assertEqual(
+        #     update.applies_with,
+        #     "Comes with Malcolm's Logstash image: update NetTap to get a newer one.",
+        # )
+        # OLD CODE END
         self.assertEqual(
             update.applies_with,
-            "Comes with Malcolm's Logstash image: update NetTap to get a newer one.",
+            "Comes with Malcolm's Logstash image, so it updates with the Malcolm row.",
         )
         self.assertEqual(failed, [])
 
@@ -822,3 +963,46 @@ class TestGeoIPDatabaseInLogstash(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPendingOSUpdatesAreShown(unittest.TestCase):
+    """The OS row read "Not checked" forever: Ubuntu's update-notifier count is read now.
+    Installing stays on the box (owner decision 2026-11-02)."""
+
+    def _fields(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "updates-available")
+            if text is not None:
+                with open(path, "w") as fh:
+                    fh.write(text)
+            return os_update_fields("24.04", path)
+
+    def test_none_pending_is_up_to_date(self):
+        self.assertEqual(
+            self._fields(
+                "\nExpanded Security Maintenance for Applications is not enabled.\n\n0 updates can be applied immediately.\n"
+            ),
+            {},
+        )
+
+    def test_pending_updates_are_a_row_that_says_how_to_install_them(self):
+        fields = self._fields(
+            "12 updates can be applied immediately.\n5 of these updates are standard security updates.\nTo see these additional updates run: apt list --upgradable\n"
+        )
+        self.assertEqual(fields["latest_version"], "12 package updates")
+        self.assertIn("5 of them security updates", fields["changelog"])
+        self.assertIn("sudo apt upgrade", fields["applies_with"])
+
+    def test_one_pending(self):
+        fields = self._fields(
+            "1 update can be applied immediately.\n1 of these updates is a standard security update.\n"
+        )
+        self.assertEqual(fields["latest_version"], "1 package update")
+        self.assertIn("1 of them security update ", fields["changelog"])
+
+    def test_not_mounted_is_not_checked(self):
+        self.assertIsNone(self._fields(None))
+
+    def test_unreadable_is_an_error_not_up_to_date(self):
+        with self.assertRaises(ValueError):
+            self._fields("something else entirely")

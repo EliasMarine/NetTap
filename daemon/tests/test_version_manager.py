@@ -459,8 +459,95 @@ class TestDockerScanFailure(unittest.TestCase):
             return "nettap-zeek-live\tghcr.io/idaholab/malcolm/zeek:26.02.0\tabc\n"
 
         vm._run_command = listing
-        (zeek,) = asyncio.run(vm._scan_docker_images())
-        self.assertEqual((zeek.name, zeek.current_version, zeek.status), ("zeek", "26.02.0", "ok"))
+        # OLD CODE START — rows were named by substring ("zeek"), and collided
+        # (zeek,) = asyncio.run(vm._scan_docker_images())
+        # self.assertEqual((zeek.name, zeek.current_version, zeek.status), ("zeek", "26.02.0", "ok"))
+        # OLD CODE END
+        zeek, malcolm = asyncio.run(vm._scan_docker_images())
+        self.assertEqual(
+            (zeek.name, zeek.current_version, zeek.status),
+            ("nettap-zeek-live", "26.02.0", "ok"),
+        )
+        self.assertEqual(
+            (malcolm.name, malcolm.current_version), ("malcolm", "26.02.0")
+        )
+
+
+class TestEveryRowIsItsOwn(unittest.TestCase):
+    """On the G11 one "dashboards" row hid the other, and the Docker rows for suricata, zeek
+    and opensearch were replaced by the same-named package and database rows."""
+
+    LISTING = (
+        "nettap-dashboards-helper\tghcr.io/idaholab/malcolm/dashboards-helper:26.02.0\ta\n"
+        "nettap-dashboards\tghcr.io/idaholab/malcolm/dashboards:26.02.0\tb\n"
+        "nettap-suricata-live\tghcr.io/idaholab/malcolm/suricata:26.02.0\tc\n"
+        "nettap-opensearch\tghcr.io/idaholab/malcolm/opensearch:26.02.0\td\n"
+        "nettap-zeek-live\tnettap/zeek-live:26.02.0\te\n"
+        "nettap-web\tnettap/web:latest\tf\n"
+    )
+
+    def _rows(self, listing):
+        vm = VersionManager()
+
+        async def run(cmd):
+            return listing
+
+        vm._run_command = run
+        return {r.name: r for r in asyncio.run(vm._scan_docker_images())}
+
+    def test_no_two_containers_share_a_row(self):
+        rows = self._rows(self.LISTING)
+        self.assertEqual(len(rows), 7)  # six containers and the malcolm row
+        self.assertIn("nettap-dashboards-helper", rows)
+        self.assertNotIn("suricata", rows)  # free for the package row
+
+    def test_the_malcolm_row_is_the_release_they_share(self):
+        malcolm = self._rows(self.LISTING)["malcolm"]
+        self.assertEqual((malcolm.current_version, malcolm.status), ("26.02.0", "ok"))
+        self.assertNotIn("nettap-web", malcolm.details["containers"])
+
+    def test_mixed_releases_are_an_error_not_a_version(self):
+        listing = self.LISTING.replace("dashboards:26.02.0", "dashboards:26.10.0")
+        malcolm = self._rows(listing)["malcolm"]
+        self.assertEqual(malcolm.status, "error")
+        self.assertEqual(malcolm.current_version, "mixed: 26.02.0, 26.10.0")
+
+
+class TestSystemPackagesAreReadWhereTheyRun(unittest.TestCase):
+    """The daemon container has no zeek, suricata or tshark, and its own python3 and Docker
+    CLI read as the box's packages."""
+
+    def test_each_version_comes_from_its_container_or_the_host_engine(self):
+        vm = VersionManager()
+        calls = []
+        answers = {
+            "zeek": "zeek version 9.0.1",
+            "suricata": "This is Suricata version 8.0.2 RELEASE",
+            "tshark": "TShark (Wireshark) 4.4.6.",
+            "{{.Server.Version}}": "28.1.1",
+            "com.docker.compose.version": "2.40.3",
+        }
+
+        async def run(cmd):
+            calls.append(cmd)
+            return next(
+                (v for k, v in answers.items() if any(k in part for part in cmd)), ""
+            )
+
+        vm._run_command = run
+        rows = {r.name: r for r in asyncio.run(vm._scan_system_packages())}
+        self.assertEqual(
+            set(rows), {"zeek", "suricata", "tshark", "docker", "docker-compose"}
+        )
+        self.assertEqual(rows["zeek"].current_version, "9.0.1")
+        self.assertEqual(rows["suricata"].current_version, "8.0.2")
+        self.assertEqual(rows["docker"].current_version, "28.1.1")
+        self.assertEqual(rows["docker-compose"].current_version, "2.40.3")
+        self.assertIn(
+            ["docker", "exec", "nettap-zeek-live", "zeek", "--version"], calls
+        )
+        self.assertEqual(rows["zeek"].install_type, "docker")
+        self.assertEqual(rows["docker"].install_type, "apt")
 
 
 class TestOpenSearchVersionLogsIn(unittest.TestCase):
@@ -478,16 +565,29 @@ class TestOpenSearchVersionLogsIn(unittest.TestCase):
             if cmd[0] == "curl":
                 if "--config" not in cmd:
                     return "Unauthorized"
-                return json.dumps({"cluster_name": "malcolm", "version": {"number": "3.5.0", "distribution": "opensearch"}})
+                return json.dumps(
+                    {
+                        "cluster_name": "malcolm",
+                        "version": {"number": "3.5.0", "distribution": "opensearch"},
+                    }
+                )
             return ""
 
         vm._run_command = run
-        with patch.dict(os.environ, {"OPENSEARCH_CREDS_CONFIG_FILE": "/var/local/curlrc/.opensearch.primary.curlrc"}):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENSEARCH_CREDS_CONFIG_FILE": "/var/local/curlrc/.opensearch.primary.curlrc"
+            },
+        ):
             rows = asyncio.run(vm._scan_databases())
         row = next(r for r in rows if r.name == "opensearch")
         self.assertEqual((row.current_version, row.status), ("3.5.0", "ok"))
         curl = next(c for c in calls if c[0] == "curl")
-        self.assertEqual(curl[curl.index("--config") + 1], "/var/local/curlrc/.opensearch.primary.curlrc")
+        self.assertEqual(
+            curl[curl.index("--config") + 1],
+            "/var/local/curlrc/.opensearch.primary.curlrc",
+        )
 
 
 class TestRulesVersionIsMeasured(unittest.TestCase):
@@ -501,7 +601,11 @@ class TestRulesVersionIsMeasured(unittest.TestCase):
         async def suricata_update_answers(cmd):
             if cmd[:2] == ["docker", "exec"]:
                 return container_mtime
-            return "et/open  Emerging Threats Open\n" if cmd[0] == "suricata-update" else ""
+            return (
+                "et/open  Emerging Threats Open\n"
+                if cmd[0] == "suricata-update"
+                else ""
+            )
 
         vm._run_command = suricata_update_answers
         month_old = datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp()
@@ -520,10 +624,15 @@ class TestRulesVersionIsMeasured(unittest.TestCase):
         """The G11: the daemon has no rules file, Suricata's container does; it read "unknown"."""
         rules = self._rules(rule_file_exists=False, container_mtime="1793577600\n")
         self.assertEqual((rules.current_version, rules.status), ("2026-11-02", "ok"))
-        self.assertEqual(rules.details["rule_file"], "nettap-suricata-live:/var/lib/suricata/rules/suricata.rules")
+        self.assertEqual(
+            rules.details["rule_file"],
+            "nettap-suricata-live:/var/lib/suricata/rules/suricata.rules",
+        )
 
     def test_a_container_that_cant_be_asked_stays_unknown(self):
-        rules = self._rules(rule_file_exists=False, container_mtime="Error: No such container\n")
+        rules = self._rules(
+            rule_file_exists=False, container_mtime="Error: No such container\n"
+        )
         self.assertEqual((rules.current_version, rules.status), ("unknown", "unknown"))
 
     def test_rules_file_date_is_reported(self):
@@ -540,7 +649,11 @@ class TestGeoipVersionIsTheEnrichmentDatabase(unittest.TestCase):
         vm = VersionManager()
 
         async def run(cmd):
-            return logstash_reply if cmd[:3] == ["docker", "exec", "nettap-logstash"] else ""
+            return (
+                logstash_reply
+                if cmd[:3] == ["docker", "exec", "nettap-logstash"]
+                else ""
+            )
 
         vm._run_command = run
         with patch("os.path.exists", return_value=False):
@@ -651,7 +764,9 @@ class TestOsVersionIsTheHosts(unittest.TestCase):
         from unittest.mock import patch
 
         vm = VersionManager()
-        vm._run_command = MagicMock(side_effect=lambda cmd: asyncio.sleep(0, result="6.8.0-147-generic"))
+        vm._run_command = MagicMock(
+            side_effect=lambda cmd: asyncio.sleep(0, result="6.8.0-147-generic")
+        )
         with patch.dict(os.environ, {"HOST_OS_RELEASE": path}):
             rows = asyncio.run(vm._scan_os_info())
         return next(r for r in rows if r.name == "os")

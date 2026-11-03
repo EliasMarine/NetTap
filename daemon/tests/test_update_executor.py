@@ -13,12 +13,13 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
 
 # Ensure the daemon package is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from services.malcolm_upgrade import TESTED_MALCOLM_TAG
 from services.update_executor import UpdateResult, UpdateExecutor
 
 
@@ -601,7 +602,9 @@ class TestRollbackOnlyWithABackup(unittest.TestCase):
             ue = UpdateExecutor(backup_dir=os.path.join(tmp, "backups"))
             with (
                 patch.dict(os.environ, {"GEOIP_DB_PATH": db}),
-                patch("shutil.copy2", side_effect=OSError(28, "No space left on device")),
+                patch(
+                    "shutil.copy2", side_effect=OSError(28, "No space left on device")
+                ),
             ):
                 path = asyncio.run(ue._create_backup("geoip-db"))
             self.assertFalse(os.path.exists(path))
@@ -613,9 +616,16 @@ class TestPinnedMalcolmContainers(unittest.TestCase):
     and a compose file the daemon container doesn't have, and the rollback never used the
     saved image ID, so apply and rollback answer with the reason and run nothing."""
 
-    REASON = (
-        "NetTap pins Malcolm's container images to a tested release, so they can't be "
-        "updated from here: update NetTap to get a newer Malcolm."
+    # OLD CODE START — Malcolm's images now update together through the "malcolm" row
+    # REASON = (
+    #     "NetTap pins Malcolm's container images to a tested release, so they can't be "
+    #     "updated from here: update NetTap to get a newer Malcolm."
+    # )
+    # OLD CODE END
+    REASON = "Updates with the Malcolm row: Malcolm's images move together."
+    ROLLBACK_REASON = (
+        "A Malcolm update rolls itself back when its checks fail, restoring OpenSearch's data "
+        "from before it; there's no separate rollback afterwards."
     )
 
     def _executor(self, tmp):
@@ -632,7 +642,9 @@ class TestPinnedMalcolmContainers(unittest.TestCase):
     def test_apply_runs_no_docker_and_says_why(self):
         with tempfile.TemporaryDirectory() as tmp:
             ue = self._executor(tmp)
-            result = asyncio.run(ue.apply_update(["suricata", "arkime", "pcap-capture"]))
+            result = asyncio.run(
+                ue.apply_update(["suricata", "arkime", "pcap-capture"])
+            )
 
         self.assertEqual(ue.ran, [])
         self.assertEqual(result["failed"], 3)
@@ -652,11 +664,13 @@ class TestPinnedMalcolmContainers(unittest.TestCase):
 
         self.assertEqual(ue.ran, [])
         self.assertFalse(result["success"])
-        self.assertEqual(result["message"], self.REASON)
+        self.assertEqual(result["message"], self.ROLLBACK_REASON)
 
     def test_update_the_checker_says_comes_with_nettap_is_not_applied(self):
         """e.g. Logstash's bundled GeoIP database, or a Malcolm container with no short name."""
-        sentence = "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+        sentence = (
+            "Comes with Malcolm's Logstash image: update NetTap to get a newer one."
+        )
 
         class Checker:
             async def get_update_for(self, component):
@@ -692,7 +706,11 @@ class TestPinnedMalcolmContainers(unittest.TestCase):
 class FakeRuleManager:
     """Stands in for SuricataRuleManager: the rules file is dated by each update."""
 
-    def __init__(self, result=None, dates=("2026-11-01T00:00:00+00:00", "2026-11-02T22:30:00+00:00")):
+    def __init__(
+        self,
+        result=None,
+        dates=("2026-11-01T00:00:00+00:00", "2026-11-02T22:30:00+00:00"),
+    ):
         self.result = result or {"success": True, "output": "", "reload_output": "OK"}
         self.dates = list(dates)
         self.updates = 0
@@ -718,18 +736,135 @@ class TestRulesUpdateRunsInTheSuricataContainer(unittest.TestCase):
     def test_versions_are_the_rules_file_before_and_after(self):
         result = self._update(FakeRuleManager())
         self.assertTrue(result.success)
-        self.assertEqual((result.old_version, result.new_version), ("2026-11-01", "2026-11-02"))
+        self.assertEqual(
+            (result.old_version, result.new_version), ("2026-11-01", "2026-11-02")
+        )
 
     def test_a_failed_reload_is_a_failure_that_says_why(self):
-        manager = FakeRuleManager({"success": False, "output": "x" * 5000, "reload_output": "NOK: reload failed"})
+        manager = FakeRuleManager(
+            {
+                "success": False,
+                "output": "x" * 5000,
+                "reload_output": "NOK: reload failed",
+            }
+        )
         result = self._update(manager)
         self.assertFalse(result.success)
-        self.assertEqual(result.error, "Suricata's rule update failed: NOK: reload failed")
+        self.assertEqual(
+            result.error, "Suricata's rule update failed: NOK: reload failed"
+        )
 
     def test_unreadable_rules_date_is_unknown(self):
         result = self._update(FakeRuleManager(dates=(None,)))
-        self.assertEqual((result.old_version, result.new_version), ("unknown", "unknown"))
+        self.assertEqual(
+            (result.old_version, result.new_version), ("unknown", "unknown")
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeMalcolm:
+    """Stands in for MalcolmUpgrade: reports one step, then waits for release()."""
+
+    def __init__(self, unfinished=None, success=True):
+        self.unfinished = unfinished
+        self.success = success
+        self.targets = []
+        self.gate = None
+
+    def take_unfinished(self):
+        found, self.unfinished = self.unfinished, None
+        return found
+
+    async def apply(self, target, on_step=None):
+        self.targets.append(target)
+        on_step("Downloading Malcolm 26.10.0's images", 1, 9)
+        if self.gate is not None:
+            await self.gate.wait()
+        error = (
+            None
+            if self.success
+            else "Not every container was running. NetTap rolled back to Malcolm 26.02.0."
+        )
+        return {
+            "success": self.success,
+            "old_version": "26.02.0",
+            "new_version": target if self.success else "26.02.0",
+            "error": error,
+            "rolled_back": not self.success,
+        }
+
+
+class TestUpdatesRunInTheBackground(unittest.TestCase):
+    """A Malcolm update takes 10-40 minutes and the web proxy waits 10 s: apply answers at
+    once and the page follows the status, which must be the shape the page reads."""
+
+    def test_idle_status_is_the_shape_the_page_reads(self):
+        ue = UpdateExecutor(malcolm_upgrade=FakeMalcolm())
+        status = asyncio.run(ue.get_status())
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["results"], [])
+        self.assertEqual(status["progress_percent"], 0)
+
+    def test_malcolm_runs_in_the_background_and_reports_its_step(self):
+        async def scenario():
+            fake = FakeMalcolm()
+            fake.gate = asyncio.Event()
+            ue = UpdateExecutor(malcolm_upgrade=fake)
+            started, code = await ue.start_update(["malcolm"])
+            await asyncio.sleep(0)
+            running = await ue.get_status()
+            again, again_code = await ue.start_update(["malcolm"])
+            fake.gate.set()
+            await ue._task
+            return fake, started, code, running, again_code, await ue.get_status()
+
+        fake, started, code, running, again_code, done = asyncio.run(scenario())
+        self.assertEqual((code, started["state"]), (202, "in_progress"))
+        self.assertEqual(
+            running["current_step"], "Downloading Malcolm 26.10.0's images"
+        )
+        self.assertEqual(running["components"], ["malcolm"])
+        self.assertGreater(running["progress_percent"], 0)
+        self.assertEqual(again_code, 409)
+        self.assertEqual(fake.targets, [TESTED_MALCOLM_TAG])
+        self.assertEqual(done["state"], "completed")
+        self.assertTrue(done["results"][0]["success"])
+        self.assertEqual(done["results"][0]["new_version"], TESTED_MALCOLM_TAG)
+
+    def test_a_rolled_back_update_is_a_failed_result_that_says_so(self):
+        ue = UpdateExecutor(malcolm_upgrade=FakeMalcolm(success=False))
+        result = asyncio.run(ue.apply_update(["malcolm"]))
+        self.assertFalse(result["results"][0]["success"])
+        self.assertIn("rolled back", result["results"][0]["error"])
+
+    def test_a_successful_update_rescans_what_the_page_shows(self):
+        vm, uc = MagicMock(), MagicMock()
+        vm.scan_versions = AsyncMock()
+        uc.check_updates = AsyncMock()
+        uc.get_update_for = AsyncMock(return_value=None)
+        ue = UpdateExecutor(malcolm_upgrade=FakeMalcolm())
+        ue.set_version_manager(vm)
+        ue.set_update_checker(uc)
+        asyncio.run(ue.apply_update(["malcolm"]))
+        vm.scan_versions.assert_awaited_once()
+        uc.check_updates.assert_awaited_once()
+
+    def test_an_update_the_daemon_didnt_see_finish_is_reported_once(self):
+        state = {
+            "old_version": "26.02.0",
+            "new_version": "26.10.0",
+            "step": "starting",
+            "backup_volume": "docker_opensearch-data-before-update",
+            "at": "2026-11-03T00:00:00+00:00",
+        }
+        ue = UpdateExecutor(malcolm_upgrade=FakeMalcolm(unfinished=state))
+        status = asyncio.run(ue.get_status())
+        self.assertEqual(status["state"], "completed")
+        self.assertFalse(status["results"][0]["success"])
+        self.assertIn("interrupted", status["results"][0]["error"])
+        self.assertIn(
+            "docker_opensearch-data-before-update", status["results"][0]["error"]
+        )

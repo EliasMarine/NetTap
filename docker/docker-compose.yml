@@ -834,7 +834,11 @@ services:
       # Without this, StorageManager gets 403 on all API calls.
       - ./curlrc:/var/local/curlrc:ro
       # Docker socket — daemon uses docker exec for TShark PCAP analysis.
+      # OLD CODE START — no longer true: System → Updates runs docker compose through it
       # Read-only: daemon only inspects/execs, never creates/removes containers.
+      # OLD CODE END
+      # :ro only keeps the socket file from being replaced; the Docker API through it is
+      # full access (root on the host). System → Updates recreates Malcolm's containers.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Host sysfs — mount ALL of /sys so that symlinks resolve correctly.
       # /sys/class/net/<iface> is a symlink to /sys/devices/pci.../net/<iface>;
@@ -842,6 +846,8 @@ services:
       - /sys:/host/sys:ro
       # Host OS version for System → Updates (the container's own file names the image's OS)
       - /etc/os-release:/host/etc/os-release:ro
+      # Ubuntu's own count of pending package updates, for System → Updates' OS row
+      - /var/lib/update-notifier:/host/var/lib/update-notifier:ro
       # Writable overlay for igc NIC LED blink (sysfs timer trigger writes)
       - /sys/class/leds:/host/sys/class/leds
       # Bridge persistence — daemon writes config to host filesystem

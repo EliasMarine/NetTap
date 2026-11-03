@@ -15,6 +15,16 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
 
+# where the System Packages rows read their versions (docker/docker-compose.yml names)
+ZEEK_CONTAINER = os.environ.get("ZEEK_CONTAINER_NAME", "nettap-zeek-live")
+SURICATA_CONTAINER = os.environ.get("SURICATA_CONTAINER_NAME", "nettap-suricata-live")
+TSHARK_CONTAINER = os.environ.get("TSHARK_CONTAINER_NAME", "nettap-tshark")
+DAEMON_CONTAINER = os.environ.get("DAEMON_CONTAINER_NAME", "nettap-storage-daemon")
+_MALCOLM_IMAGES = (
+    "ghcr.io/idaholab/malcolm/",
+    "nettap/zeek-live:",
+)  # all on MALCOLM_IMAGE_TAG
+
 logger = logging.getLogger("nettap.services.version_manager")
 
 # Current NetTap daemon version
@@ -253,20 +263,22 @@ class VersionManager:
         now = datetime.now(timezone.utc).isoformat()
         results: list[ComponentVersion] = []
 
-        # Malcolm container name-to-component mapping
-        malcolm_containers = [
-            "zeek",
-            "suricata",
-            "arkime",
-            "opensearch",
-            "dashboards",
-            "logstash",
-            "file-monitor",
-            "pcap-capture",
-            "freq",
-            "htadmin",
-            "nginx-proxy",
-        ]
+        # OLD CODE START — substring names (see below); rows are named by container now
+        # # Malcolm container name-to-component mapping
+        # malcolm_containers = [
+        #     "zeek",
+        #     "suricata",
+        #     "arkime",
+        #     "opensearch",
+        #     "dashboards",
+        #     "logstash",
+        #     "file-monitor",
+        #     "pcap-capture",
+        #     "freq",
+        #     "htadmin",
+        #     "nginx-proxy",
+        # ]
+        # OLD CODE END
 
         # Try to get running container versions via docker
         try:
@@ -297,16 +309,23 @@ class VersionManager:
                     if ":" in image:
                         tag = image.split(":")[-1]
 
-                    # Match to known Malcolm containers
-                    component_name = None
-                    for mc in malcolm_containers:
-                        if mc in container_name.lower():
-                            component_name = mc
-                            break
-
-                    if component_name is None:
-                        # Use container name as-is for non-Malcolm containers
-                        component_name = container_name
+                    # OLD CODE START — names by substring collided: nettap-dashboards-helper and
+                    # nettap-dashboards were both "dashboards", and "suricata", "zeek" and
+                    # "opensearch" were replaced by the same-named package and database rows
+                    # # Match to known Malcolm containers
+                    # component_name = None
+                    # for mc in malcolm_containers:
+                    #     if mc in container_name.lower():
+                    #         component_name = mc
+                    #         break
+                    #
+                    # if component_name is None:
+                    #     # Use container name as-is for non-Malcolm containers
+                    #     component_name = container_name
+                    # OLD CODE END
+                    component_name = (
+                        container_name  # unique, and what `docker ps` shows
+                    )
 
                     results.append(
                         ComponentVersion(
@@ -323,6 +342,9 @@ class VersionManager:
                             },
                         )
                     )
+            malcolm = _malcolm_row(results, now)
+            if malcolm is not None:
+                results.append(malcolm)
         except Exception as exc:
             logger.debug("Docker scan failed: %s", exc)
             # Return a single entry indicating Docker is unavailable
@@ -349,21 +371,62 @@ class VersionManager:
         now = datetime.now(timezone.utc).isoformat()
         results: list[ComponentVersion] = []
 
-        # Package -> (command, version_regex)
+        # OLD CODE START — ran each --version in the daemon container, which has no zeek,
+        # suricata, tshark or node ("unknown"), and its own python3 and docker CLI read as the
+        # box's packages
+        # # Package -> (command, version_regex)
+        # packages: list[tuple[str, list[str], str]] = [
+        #     ("zeek", ["zeek", "--version"], r"(\d+\.\d+(?:\.\d+)?)"),
+        #     (
+        #         "suricata",
+        #         ["suricata", "--build-info"],
+        #         r"Suricata\s+(\d+\.\d+(?:\.\d+)?)",
+        #     ),
+        #     ("tshark", ["tshark", "--version"], r"TShark.*?(\d+\.\d+(?:\.\d+)?)"),
+        #     ("python3", ["python3", "--version"], r"Python\s+(\d+\.\d+(?:\.\d+)?)"),
+        #     ("node", ["node", "--version"], r"v?(\d+\.\d+(?:\.\d+)?)"),
+        #     ("docker", ["docker", "--version"], r"(\d+\.\d+(?:\.\d+)?)"),
+        #     (
+        #         "docker-compose",
+        #         ["docker", "compose", "version"],
+        #         r"(\d+\.\d+(?:\.\d+)?)",
+        #     ),
+        # ]
+
+        # OLD CODE END
+        # Package -> (command, version_regex): each read where it runs
         packages: list[tuple[str, list[str], str]] = [
-            ("zeek", ["zeek", "--version"], r"(\d+\.\d+(?:\.\d+)?)"),
+            (
+                "zeek",
+                ["docker", "exec", ZEEK_CONTAINER, "zeek", "--version"],
+                r"(\d+\.\d+(?:\.\d+)?)",
+            ),
             (
                 "suricata",
-                ["suricata", "--build-info"],
-                r"Suricata\s+(\d+\.\d+(?:\.\d+)?)",
+                ["docker", "exec", SURICATA_CONTAINER, "suricata", "-V"],
+                r"version\s+(\d+\.\d+(?:\.\d+)?)",
             ),
-            ("tshark", ["tshark", "--version"], r"TShark.*?(\d+\.\d+(?:\.\d+)?)"),
-            ("python3", ["python3", "--version"], r"Python\s+(\d+\.\d+(?:\.\d+)?)"),
-            ("node", ["node", "--version"], r"v?(\d+\.\d+(?:\.\d+)?)"),
-            ("docker", ["docker", "--version"], r"(\d+\.\d+(?:\.\d+)?)"),
+            (
+                "tshark",
+                ["docker", "exec", TSHARK_CONTAINER, "tshark", "--version"],
+                r"TShark.*?(\d+\.\d+(?:\.\d+)?)",
+            ),
+            # the host's Docker engine, which the daemon talks to through the socket
+            (
+                "docker",
+                ["docker", "version", "--format", "{{.Server.Version}}"],
+                r"(\d+\.\d+(?:\.\d+)?)",
+            ),
+            # the compose that started the stack (its label), not a plugin in this container
             (
                 "docker-compose",
-                ["docker", "compose", "version"],
+                [
+                    "docker",
+                    "inspect",
+                    DAEMON_CONTAINER,
+                    "--format",
+                    '{{index .Config.Labels "com.docker.compose.version"}}',
+                ],
                 r"(\d+\.\d+(?:\.\d+)?)",
             ),
         ]
@@ -392,7 +455,8 @@ class VersionManager:
                     name=pkg_name,
                     category="system",
                     current_version=version,
-                    install_type="apt",
+                    # zeek, suricata and tshark live in their containers; Docker is a host package
+                    install_type="apt" if pkg_name.startswith("docker") else "docker",
                     last_checked=now,
                     status=status,
                     details=details,
@@ -450,11 +514,19 @@ class VersionManager:
 
         if rules_version == "unknown":
             # the daemon holds no copy of the rules; the file lives in the Suricata container
-            container = os.environ.get("SURICATA_CONTAINER_NAME", "nettap-suricata-live")
+            container = os.environ.get(
+                "SURICATA_CONTAINER_NAME", "nettap-suricata-live"
+            )
             live_path = "/var/lib/suricata/rules/suricata.rules"
-            mtime = (await self._run_command(["docker", "exec", container, "stat", "-c", "%Y", live_path])).strip()
+            mtime = (
+                await self._run_command(
+                    ["docker", "exec", container, "stat", "-c", "%Y", live_path]
+                )
+            ).strip()
             if mtime.isdigit():
-                rules_version = datetime.fromtimestamp(int(mtime), tz=timezone.utc).strftime("%Y-%m-%d")
+                rules_version = datetime.fromtimestamp(
+                    int(mtime), tz=timezone.utc
+                ).strftime("%Y-%m-%d")
                 rules_status = "ok"
                 rules_details = {"rule_file": f"{container}:{live_path}"}
 
@@ -497,11 +569,20 @@ class VersionManager:
         if geoip_version == "unknown":
             # the daemon holds no GeoIP file; enrichment uses the Logstash geoip filter's bundled one
             container = os.environ.get("LOGSTASH_CONTAINER_NAME", "nettap-logstash")
-            found = (await self._run_command(["docker", "exec", container, "sh", "-c", _BUNDLED_GEOIP_SCRIPT])).split(maxsplit=1)
+            found = (
+                await self._run_command(
+                    ["docker", "exec", container, "sh", "-c", _BUNDLED_GEOIP_SCRIPT]
+                )
+            ).split(maxsplit=1)
             if len(found) == 2 and found[0].isdigit():
-                geoip_version = datetime.fromtimestamp(int(found[0]), tz=timezone.utc).strftime("%Y-%m-%d")
+                geoip_version = datetime.fromtimestamp(
+                    int(found[0]), tz=timezone.utc
+                ).strftime("%Y-%m-%d")
                 geoip_status = "ok"
-                geoip_details = {"db_file": f"{container}:{found[1].strip()}", "source": "Logstash geoip filter (bundled)"}
+                geoip_details = {
+                    "db_file": f"{container}:{found[1].strip()}",
+                    "source": "Logstash geoip filter (bundled)",
+                }
 
         results.append(
             ComponentVersion(
@@ -524,7 +605,9 @@ class VersionManager:
         # OLD CODE START — no login: OpenSearch answered "Unauthorized", so the version was unknown
         # output = await self._run_command(["curl", "-sk", opensearch_url, "--connect-timeout", "5"])
         # OLD CODE END
-        creds = os.environ.get("OPENSEARCH_CREDS_CONFIG_FILE")  # Malcolm's curlrc (user: ...)
+        creds = os.environ.get(
+            "OPENSEARCH_CREDS_CONFIG_FILE"
+        )  # Malcolm's curlrc (user: ...)
         login = ["--config", creds] if creds else []
         try:
             output = await self._run_command(
@@ -600,7 +683,9 @@ class VersionManager:
                 os_status = "ok"
                 os_details = {"pretty_name": os_name}
             else:  # the container's own file would name the image's OS, not the host's
-                os_details = {"error": f"the host's os-release isn't mounted at {host_file}"}
+                os_details = {
+                    "error": f"the host's os-release isn't mounted at {host_file}"
+                }
         except (OSError, PermissionError) as exc:
             os_details = {"error": str(exc)}
 
@@ -690,3 +775,41 @@ class VersionManager:
             return elapsed > _CACHE_TTL_SECONDS
         except (ValueError, TypeError):
             return True
+
+
+def _malcolm_row(rows: list["ComponentVersion"], now: str) -> "ComponentVersion | None":
+    """One "malcolm" row: the release every Malcolm container runs, or "mixed" if they differ."""
+    tags = sorted(
+        {
+            r.current_version
+            for r in rows
+            if r.details.get("image", "").startswith(_MALCOLM_IMAGES)
+        }
+    )
+    if not tags:
+        return None
+    containers = sorted(
+        r.name for r in rows if r.details.get("image", "").startswith(_MALCOLM_IMAGES)
+    )
+    if len(tags) == 1:
+        return ComponentVersion(
+            name="malcolm",
+            category="docker",
+            current_version=tags[0],
+            install_type="docker",
+            last_checked=now,
+            status="ok",
+            details={"containers": containers},
+        )
+    return ComponentVersion(
+        name="malcolm",
+        category="docker",
+        current_version="mixed: " + ", ".join(tags),
+        install_type="docker",
+        last_checked=now,
+        status="error",
+        details={
+            "containers": containers,
+            "error": "Malcolm's containers run different releases",
+        },
+    )
