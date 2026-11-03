@@ -571,6 +571,39 @@ class TestLanSubnetsFollowTheNetwork:
             lan_filter
         ]  # the same dict every handler reads, updated before the pass
 
+    def test_the_filter_is_never_empty_while_it_changes(self, monkeypatch):
+        """#139: slow handlers now read this dict from worker threads; clear() then update()
+        left it empty in between, and a query built then had an empty clause."""
+        from services import excluded_ips
+
+        sizes: list[int] = []
+
+        class Recording(dict):
+            def clear(self):
+                super().clear()
+                sizes.append(len(self))
+
+            def update(self, *args, **kwargs):
+                super().update(*args, **kwargs)
+                sizes.append(len(self))
+
+            def __delitem__(self, key):
+                super().__delitem__(key)
+                sizes.append(len(self))
+
+        lan_filter = Recording(excluded_ips.build_lan_filter([(192, 168, 1)]))
+        new = excluded_ips.build_lan_filter([(192, 168, 1), (10, 10, 0)])
+        monkeypatch.setattr(main, "changed_lan_filter", lambda client, current: new)
+
+        async def scenario() -> None:
+            app = {"lan_filter": lan_filter, "storage": MagicMock()}
+            await main._redetect_lan(app, asyncio.get_running_loop())
+
+        asyncio.run(scenario())
+
+        assert lan_filter == new
+        assert sizes and min(sizes) > 0
+
     def test_failed_detection_keeps_the_subnets(self, monkeypatch):
         before, lan_filter, _ = self._run(
             monkeypatch, []
