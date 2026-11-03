@@ -41,15 +41,18 @@ export async function executeSearch(query: string): Promise<SearchResponse> {
 		body: JSON.stringify({ query }),
 	});
 
-	if (!res.ok) {
-		return {
-			query,
-			description: '',
-			index: '',
-			total: 0,
-			results: [],
-		};
-	}
+	// OLD CODE START — #96: a failed search read as "No results found"
+	// if (!res.ok) {
+	// 	return {
+	// 		query,
+	// 		description: '',
+	// 		index: '',
+	// 		total: 0,
+	// 		results: [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Search failed: HTTP ${res.status}`);
 
 	return res.json();
 }

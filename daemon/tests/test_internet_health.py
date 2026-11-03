@@ -39,6 +39,7 @@ class TestHealthCheckDataclass(unittest.TestCase):
             "dns_resolve_ms",
             "packet_loss_pct",
             "status",
+            "error",  # #96: why ping couldn't measure
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -487,6 +488,82 @@ class TestInitialization(unittest.TestCase):
         """Custom history size should be stored."""
         monitor = InternetHealthMonitor(history_size=100)
         self.assertEqual(monitor._history_size, 100)
+
+
+class _Ping:
+    def __init__(self, rc, out=b"", err=b""):
+        self.returncode, self._out, self._err = rc, out, err
+
+    async def communicate(self):
+        return self._out, self._err
+
+
+class TestPingThatCouldNotRunIsUnknown(unittest.TestCase):
+    """#96: ping that couldn't run read as 100% loss, so the internet showed as down."""
+
+    def _loss(self, proc_or_exc):
+        from unittest.mock import patch
+
+        async def fake_exec(*argv, **kwargs):
+            if isinstance(proc_or_exc, Exception):
+                raise proc_or_exc
+            return proc_or_exc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            return asyncio.run(InternetHealthMonitor().check_packet_loss("8.8.8.8"))
+
+    def test_ping_without_permission_raises_its_error(self):
+        with self.assertRaisesRegex(RuntimeError, "Operation not permitted"):
+            self._loss(_Ping(2, err=b"ping: socket: Operation not permitted\n"))
+
+    def test_missing_ping_raises(self):
+        with self.assertRaisesRegex(RuntimeError, "ping couldn't run"):
+            self._loss(FileNotFoundError(2, "No such file or directory", "ping"))
+
+    def test_no_replies_is_still_measured_loss(self):
+        out = b"--- 8.8.8.8 ping statistics ---\n10 packets transmitted, 0 received, 100% packet loss, time 9200ms\n"
+        self.assertEqual(self._loss(_Ping(1, out=out)), 100.0)
+
+    def test_run_check_reports_unknown_with_the_error(self):
+        monitor = InternetHealthMonitor(
+            ping_targets=["8.8.8.8"], dns_targets=["example.com"]
+        )
+
+        async def no_latency(target, timeout=5.0):
+            return None
+
+        async def dns_ok(domain, timeout=5.0):
+            return 20.0
+
+        async def ping_fails(target, count=10, timeout=10.0):
+            raise RuntimeError("ping: socket: Operation not permitted")
+
+        monitor.check_latency, monitor.check_dns = no_latency, dns_ok
+        monitor.check_packet_loss = ping_fails
+        check = asyncio.run(monitor.run_check())
+        self.assertEqual(check.status, "unknown")
+        self.assertIsNone(check.packet_loss_pct)
+        self.assertEqual(check.error, "ping: socket: Operation not permitted")
+
+    def test_unknown_checks_are_left_out_of_uptime_and_loss(self):
+        monitor = InternetHealthMonitor()
+        monitor._history.append(HealthCheck("ts1", 10.0, 20.0, 0.0, "healthy"))
+        monitor._history.append(HealthCheck("ts2", None, None, 100.0, "down"))
+        monitor._history.append(
+            HealthCheck("ts3", None, 20.0, None, "unknown", "no ping")
+        )
+        stats = monitor.get_statistics()
+        self.assertEqual(stats["uptime_pct"], 50.0)
+        self.assertEqual(stats["avg_packet_loss_pct"], 50.0)
+
+    def test_only_unknown_checks_give_no_uptime(self):
+        monitor = InternetHealthMonitor()
+        monitor._history.append(
+            HealthCheck("ts1", None, 20.0, None, "unknown", "no ping")
+        )
+        stats = monitor.get_statistics()
+        self.assertIsNone(stats["uptime_pct"])
+        self.assertIsNone(stats["avg_packet_loss_pct"])
 
 
 if __name__ == "__main__":

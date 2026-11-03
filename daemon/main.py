@@ -67,7 +67,7 @@ import os
 import signal
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from storage.manager import StorageManager
@@ -82,6 +82,8 @@ from services.bridge_manager import BridgeManager
 from services.dhcp_gateway import DhcpGatewayManager
 from services.mirror_manager import MirrorManager
 from api.server import start_api
+from api.devices_v2 import REGISTRY_REFRESH_INTERVAL_S, refresh_device_registry
+from services.excluded_ips import changed_lan_filter
 from api.setup import _nic_in_use_problem
 from api.capture_control import enforce_capture_state
 from api.dhcp_gateway import ensure_capture_lock
@@ -290,6 +292,77 @@ async def smart_loop(
             pass
 
     logger.info("SMART monitor loop stopped")
+
+
+# detection reads every stored connection (0.9 s on the G11 with two days kept), so hourly
+LAN_REDETECT_INTERVAL_S = 3600
+
+
+async def _redetect_lan(
+    app: Mapping[str, Any], loop: asyncio.AbstractEventLoop
+) -> None:
+    """Pick up a LAN subnet first seen since startup before the registry pass (#116)."""
+    current, storage = app.get("lan_filter"), app.get("storage")
+    if current is None or storage is None:
+        return
+    try:
+        new = await loop.run_in_executor(
+            None, changed_lan_filter, storage._client, current
+        )
+    except Exception:
+        logger.exception("LAN re-detection failed; keeping the current LAN subnets")
+        return
+    if new is not None:
+        # in place, on the event loop: the started app is frozen and every handler reads this dict
+        # OLD CODE START — #139: since slow handlers run in threads, one could read the dict
+        # between clear() and update(), see it empty and send OpenSearch an empty clause
+        # current.clear()
+        # current.update(new)
+        # OLD CODE END
+        current.update(new)  # replaces the "script" key in one step: never seen empty
+        for stale in [key for key in current if key not in new]:
+            del current[stale]
+        logger.info("LAN subnets changed since startup; the LAN filter is updated")
+
+
+async def device_registry_loop(
+    app: Mapping[str, Any],
+    interval: int,
+    shutdown_event: asyncio.Event,
+) -> None:
+    """Refresh the device registry from recent traffic: once at startup, then every *interval* s.
+
+    Exits cleanly when *shutdown_event* is set.
+    """
+    logger.info("Device registry loop started (interval=%ds)", interval)
+    loop = asyncio.get_running_loop()
+    registry = app.get("device_registry")
+    if registry is not None:
+        try:
+            fixed = await loop.run_in_executor(None, registry.correct_last_seen)
+            logger.info(
+                "Device registry: %d last-seen times were later than the last record; corrected",
+                fixed,
+            )
+        except Exception:
+            logger.exception("Device registry: last-seen correction failed")
+    next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S  # startup just detected them
+    while not shutdown_event.is_set():
+        if loop.time() >= next_lan_check:
+            await _redetect_lan(app, loop)
+            next_lan_check = loop.time() + LAN_REDETECT_INTERVAL_S
+        try:
+            await loop.run_in_executor(None, refresh_device_registry, app)
+        except Exception:
+            logger.exception("Unhandled error in device registry refresh")
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            pass
+
+    logger.info("Device registry loop stopped")
 
 
 async def bridge_loop(
@@ -621,6 +694,12 @@ async def async_main() -> None:
         smart_loop(smart, cfg["smart_check_interval"], shutdown_event),
         name="smart-loop",
     )
+    registry_task = asyncio.create_task(
+        device_registry_loop(
+            api_runner.app, REGISTRY_REFRESH_INTERVAL_S, shutdown_event
+        ),
+        name="device-registry-loop",
+    )
 
     # --- Enforce persisted PCAP capture state ---
     env_file = os.environ.get("NETTAP_ENV_FILE", "/opt/nettap/data/.env")
@@ -671,7 +750,10 @@ async def async_main() -> None:
         ),
         name="capture-health-loop",
     )
-    all_tasks = (storage_task, smart_task, capture_health_task)
+    # OLD CODE START — 2026-11-01: the device registry loop is cancelled with the others
+    # all_tasks = (storage_task, smart_task, capture_health_task)
+    # OLD CODE END
+    all_tasks = (storage_task, smart_task, registry_task, capture_health_task)
     # Bridge mode keeps its dedicated bridge health loop as well
     if bridge_health is not None:
         bridge_task = asyncio.create_task(

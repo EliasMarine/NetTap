@@ -153,8 +153,9 @@ async def handle_get_update_for_component(
 async def handle_apply_updates(request: web.Request) -> web.Response:
     """POST /api/system/updates/apply
 
-    Apply updates to specified components.
-    Body: {"components": ["zeek", "suricata"]}
+    Start updating the specified components in the background: 202 with the status
+    (follow GET /api/system/updates/status), 409 if an update is already running.
+    Body: {"components": ["malcolm", "suricata-rules"]}
     """
     ue: UpdateExecutor = request.app["update_executor"]
 
@@ -173,9 +174,19 @@ async def handle_apply_updates(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # OLD CODE START — ran the whole batch inside the request: the web proxy gives up after
+    # 10 s, and a Malcolm update takes 10-40 minutes (rules about a minute)
+    # try:
+    #     result = await ue.apply_update(components)
+    #     return web.json_response(result)
+    # OLD CODE END
+    if not all(isinstance(c, str) and c for c in components):
+        return web.json_response(
+            {"error": "components must be non-empty strings"}, status=400
+        )
     try:
-        result = await ue.apply_update(components)
-        return web.json_response(result)
+        result, status = await ue.start_update(components)
+        return web.json_response(result, status=status)
     except Exception as exc:
         logger.exception("Error applying updates")
         return web.json_response(

@@ -202,7 +202,7 @@ sudo scripts/generate-secrets.sh [OPTIONS]
 | `-v, --verbose` | Debug output |
 | `-h, --help` | Show help |
 
-Generates secrets for: OpenSearch admin password, Redis password, Arkime secret, Grafana admin password, and other service credentials.
+Generates `OPENSEARCH_ADMIN_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`, `JWT_SECRET` and `API_KEY_SALT`. `ARKIME_SECRET`, which compose still requires even with Arkime off, is written to `docker/.env` by `scripts/install/malcolm-config.sh`.
 
 ---
 

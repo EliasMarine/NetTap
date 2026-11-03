@@ -1,127 +1,158 @@
 # Backup & Restore
 
-NetTap stores network telemetry data in OpenSearch and configuration in files on disk. This page covers how to back up and restore both.
+NetTap keeps network telemetry in OpenSearch, its own settings and records in Docker volumes, and its configuration and secrets in files next to the code. This page covers how to back up and restore all three.
+
+Every command runs on the NetTap box. Set `NETTAP_DIR` to wherever you cloned NetTap first. The examples use `/opt/nettap`; some installs use `/home/nettap/NetTap`:
+
+```bash
+NETTAP_DIR=/opt/nettap
+```
 
 ---
 
 ## What to Back Up
 
-| Data | Location | Importance |
+| Data | Where it lives | Importance |
 |---|---|---|
-| **Configuration** | `/opt/nettap/.env` | Critical --- contains all settings and secrets |
-| **OpenSearch data** | `opensearch-data` Docker volume | High --- all Zeek/Suricata logs and alert history |
-| **Investigation notes** | `/opt/nettap/data/investigations.json` | Medium --- bookmarked investigations |
-| **Device baseline** | `/opt/nettap/data/device_baseline.json` | Medium --- known device registry |
-| **Detection packs** | `/opt/nettap/data/detection-packs/` | Low --- can be re-downloaded |
-| **Grafana dashboards** | `grafana-data` Docker volume | Low --- can be reprovisioned from config |
-| **TLS certificates** | `docker/ssl/` | Medium --- can be regenerated |
+| **Configuration and secrets** | `$NETTAP_DIR/.env`, `$NETTAP_DIR/docker/.env`, and the `docker/auth/`, `docker/curlrc/`, `docker/certs/` and `docker/ssl/` folders | Critical. `docker/.env` is the file Docker Compose reads, and the folders hold the OpenSearch logins and TLS keys |
+| **OpenSearch data** | `docker_opensearch-data` Docker volume | High. All Zeek and Suricata records and the device registry |
+| **NetTap records** | `docker_nettap-appdata` volume (`/opt/nettap/data` inside `nettap-storage-daemon`) | Medium. Investigations, device baseline, detection packs, retention settings and excluded IPs |
+| **Dashboard logins** | `docker_web-data` volume (`/var/lib/nettap-web` inside `nettap-web`) | Medium. The web UI's user accounts and session key |
+| **Grafana dashboards** | `docker_grafana-data` volume | Low. Grafana is off by default |
+| **Raw PCAP** | `docker_pcap-data` volume | Usually skipped. It's large and rotates on its own |
+
+!!! note "Volume names start with `docker_`"
+    Docker Compose names volumes after the folder that holds `docker-compose.yml`, which is `docker/`. Check the real names with `sudo docker volume ls`. A command that names a volume that doesn't exist (for example `opensearch-data` without the prefix) silently creates a new, empty one.
+
+Store backups somewhere other than the NetTap disk. The commands below write to `/var/backups/nettap`; copy that folder off the box afterwards.
 
 ---
 
-## Backing Up Configuration
-
-The simplest and most important backup is the `.env` file and data directory:
+## Backing Up Configuration and Secrets
 
 ```bash
-# Create a backup directory
-mkdir -p /opt/nettap/backups
+sudo mkdir -p /var/backups/nettap
+sudo tar czf /var/backups/nettap/config-$(date +%Y%m%d).tar.gz -C "$NETTAP_DIR" \
+  .env docker/.env docker/auth docker/curlrc docker/certs docker/ssl
+sudo chmod 600 /var/backups/nettap/config-*.tar.gz
+```
 
-# Back up configuration
-cp /opt/nettap/.env /opt/nettap/backups/.env.$(date +%Y%m%d)
+The archive holds passwords and private keys, so keep it private.
 
-# Back up data files
-tar czf /opt/nettap/backups/data-$(date +%Y%m%d).tar.gz \
-  -C /opt/nettap data/ 2>/dev/null || true
+## Backing Up NetTap Records and Logins
+
+These volumes are read through the running containers, so nothing needs to stop:
+
+```bash
+sudo sh -c 'docker exec nettap-storage-daemon tar czf - -C /opt/nettap/data . > /var/backups/nettap/appdata-$(date +%Y%m%d).tar.gz'
+sudo sh -c 'docker exec nettap-web tar czf - -C /var/lib/nettap-web . > /var/backups/nettap/webdata-$(date +%Y%m%d).tar.gz'
+sudo chmod 600 /var/backups/nettap/webdata-*.tar.gz
+
+# Check what went in
+sudo tar tzf /var/backups/nettap/appdata-$(date +%Y%m%d).tar.gz
+```
+
+To restore one, copy it back in and restart the container:
+
+```bash
+sudo sh -c 'docker exec -i nettap-storage-daemon tar xzf - -C /opt/nettap/data < /var/backups/nettap/appdata-20261102.tar.gz'
+sudo docker restart nettap-storage-daemon
 ```
 
 ---
 
 ## OpenSearch Snapshots
 
-OpenSearch supports snapshot-based backups that capture the full state of all indices.
+OpenSearch snapshots capture indices while NetTap keeps running. OpenSearch only answers with a login. The `osapi` helper below runs each call inside the OpenSearch container with the login NetTap already stores there, so you never type the password:
+
+```bash
+osapi() { sudo docker exec nettap-opensearch curl -sk --config /var/local/curlrc/.opensearch.primary.curlrc "$@"; }
+```
+
+A plain `curl -sk https://localhost:9200/...` from the host answers `401 Unauthorized`.
 
 ### Setting Up a Snapshot Repository
 
-First, register a snapshot repository (filesystem-based):
+Register a filesystem repository once:
 
 ```bash
-curl -sk -X PUT "https://localhost:9200/_snapshot/nettap_backup" \
+osapi -X PUT "https://localhost:9200/_snapshot/nettap_backup" \
   -H "Content-Type: application/json" \
-  -d '{
-    "type": "fs",
-    "settings": {
-      "location": "/opt/opensearch/backup",
-      "compress": true
-    }
-  }'
+  -d '{"type": "fs", "settings": {"location": "/opt/opensearch/backup/nettap", "compress": true}}'
 ```
 
-The `opensearch-backup` Docker volume is already mounted at `/opt/opensearch/backup` in the OpenSearch container.
+It answers `{"acknowledged":true}`. `/opt/opensearch/backup` is the `docker_opensearch-backup` volume, already allowed as `path.repo` in the compose file. On the host, the files live in `/var/lib/docker/volumes/docker_opensearch-backup/_data/nettap`.
 
 ### Creating a Snapshot
 
 ```bash
-# Create a named snapshot
-curl -sk -X PUT "https://localhost:9200/_snapshot/nettap_backup/snapshot_$(date +%Y%m%d)" \
+osapi -X PUT "https://localhost:9200/_snapshot/nettap_backup/snapshot_$(date +%Y%m%d)?wait_for_completion=true" \
   -H "Content-Type: application/json" \
-  -d '{
-    "indices": "zeek-*,suricata-*,arkime-*",
-    "ignore_unavailable": true,
-    "include_global_state": false
-  }'
+  -d '{"indices": "arkime_sessions3-*,malcolm_beats_*,nettap-*", "ignore_unavailable": true, "include_global_state": false}'
 ```
 
-### Checking Snapshot Status
+The reply ends with `"state":"SUCCESS"` and `"failed":0`. Zeek logs and Suricata alerts are both in the daily `arkime_sessions3-*` indices; `nettap-*` holds the device registry and change log.
+
+To take the snapshots off the box:
+
+```bash
+sudo tar czf /var/backups/nettap/snapshots-$(date +%Y%m%d).tar.gz \
+  -C /var/lib/docker/volumes/docker_opensearch-backup/_data nettap
+```
+
+### Checking Snapshots
 
 ```bash
 # List all snapshots
-curl -sk "https://localhost:9200/_snapshot/nettap_backup/_all" | python3 -m json.tool
+osapi "https://localhost:9200/_cat/snapshots/nettap_backup?v"
 
-# Check status of a specific snapshot
-curl -sk "https://localhost:9200/_snapshot/nettap_backup/snapshot_20260226/_status"
+# Which indices one snapshot holds
+osapi "https://localhost:9200/_snapshot/nettap_backup/snapshot_20261102" | python3 -m json.tool
 ```
 
 ### Restoring from a Snapshot
 
-!!! danger "Restoration overwrites existing data"
-    Restoring indices will replace any existing data in those indices.
+Try a restore under a new name first. It leaves the live data alone:
 
 ```bash
-# Close the indices first (if they exist)
-curl -sk -X POST "https://localhost:9200/zeek-*/_close"
-curl -sk -X POST "https://localhost:9200/suricata-*/_close"
-
-# Restore from snapshot
-curl -sk -X POST "https://localhost:9200/_snapshot/nettap_backup/snapshot_20260226/_restore" \
+osapi -X POST "https://localhost:9200/_snapshot/nettap_backup/snapshot_20261102/_restore?wait_for_completion=true" \
   -H "Content-Type: application/json" \
-  -d '{
-    "indices": "zeek-*,suricata-*",
-    "ignore_unavailable": true,
-    "include_global_state": false
-  }'
+  -d '{"indices": "nettap-devices", "rename_pattern": "(.+)", "rename_replacement": "restored-$1", "include_global_state": false}'
+
+osapi "https://localhost:9200/_cat/indices/nettap-devices,restored-nettap-devices?v&h=index,docs.count"
+osapi -X DELETE "https://localhost:9200/restored-nettap-devices"
 ```
+
+!!! danger "A full restore overwrites existing data"
+    Restoring into the original names replaces what is in those indices now.
+
+An open index can't be restored over, so close the ones you restore first:
+
+```bash
+osapi -X POST "https://localhost:9200/arkime_sessions3-*,nettap-*/_close"
+
+osapi -X POST "https://localhost:9200/_snapshot/nettap_backup/snapshot_20261102/_restore?wait_for_completion=true" \
+  -H "Content-Type: application/json" \
+  -d '{"indices": "arkime_sessions3-*,malcolm_beats_*,nettap-*", "ignore_unavailable": true, "include_global_state": false}'
+```
+
+Restored indices open on their own once the restore finishes.
 
 ---
 
 ## Docker Volume Backup
 
-For a complete backup of all Docker volumes:
+A copy of the whole OpenSearch volume needs NetTap stopped. Snapshots (above) are the tested path and need no downtime.
 
 ```bash
 # Stop services first
 sudo systemctl stop nettap
 
-# Back up OpenSearch data volume
-docker run --rm \
-  -v opensearch-data:/data:ro \
-  -v /opt/nettap/backups:/backup \
+# Back up the OpenSearch data volume
+sudo docker run --rm \
+  -v docker_opensearch-data:/data:ro \
+  -v /var/backups/nettap:/backup \
   alpine tar czf /backup/opensearch-data-$(date +%Y%m%d).tar.gz -C /data .
-
-# Back up Grafana data volume
-docker run --rm \
-  -v grafana-data:/data:ro \
-  -v /opt/nettap/backups:/backup \
-  alpine tar czf /backup/grafana-data-$(date +%Y%m%d).tar.gz -C /data .
 
 # Restart services
 sudo systemctl start nettap
@@ -130,62 +161,68 @@ sudo systemctl start nettap
 ### Restoring Docker Volumes
 
 ```bash
-# Stop services
 sudo systemctl stop nettap
 
-# Restore OpenSearch data
-docker run --rm \
-  -v opensearch-data:/data \
-  -v /opt/nettap/backups:/backup \
-  alpine sh -c "rm -rf /data/* && tar xzf /backup/opensearch-data-20260226.tar.gz -C /data"
+sudo docker run --rm \
+  -v docker_opensearch-data:/data \
+  -v /var/backups/nettap:/backup \
+  alpine sh -c "rm -rf /data/* && tar xzf /backup/opensearch-data-20261102.tar.gz -C /data"
 
-# Restart services
 sudo systemctl start nettap
 ```
+
+After a volume restore, run the OpenSearch security bootstrap from the project README. Recreating the OpenSearch container resets its role mapping.
 
 ---
 
 ## Automated Backups
 
-Create a cron job for automated daily backups:
+Create a cron job for daily backups:
 
 ```bash
 sudo crontab -e
 ```
 
-Add:
+Add (change the path to your `NETTAP_DIR`):
 
 ```cron
 # Daily NetTap backup at 2 AM
 0 2 * * * /opt/nettap/scripts/backup.sh >> /var/log/nettap-backup.log 2>&1
 ```
 
-Example backup script:
+Example backup script. Save it as `$NETTAP_DIR/scripts/backup.sh` and `chmod 700` it. Cron runs it as root, so it needs no `sudo`:
 
 ```bash title="/opt/nettap/scripts/backup.sh"
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
-BACKUP_DIR="/opt/nettap/backups"
+NETTAP_DIR=/opt/nettap
+BACKUP_DIR=/var/backups/nettap
 DATE=$(date +%Y%m%d)
 KEEP_DAYS=7
 
+osapi() { docker exec nettap-opensearch curl -sk --config /var/local/curlrc/.opensearch.primary.curlrc "$@"; }
+
 mkdir -p "$BACKUP_DIR"
 
-# Back up configuration
-cp /opt/nettap/.env "$BACKUP_DIR/.env.$DATE"
+# Configuration and secrets
+tar czf "$BACKUP_DIR/config-$DATE.tar.gz" -C "$NETTAP_DIR" \
+  .env docker/.env docker/auth docker/curlrc docker/certs docker/ssl
 
-# Back up data files
-tar czf "$BACKUP_DIR/data-$DATE.tar.gz" -C /opt/nettap data/ 2>/dev/null || true
+# NetTap records and dashboard logins
+docker exec nettap-storage-daemon tar czf - -C /opt/nettap/data . > "$BACKUP_DIR/appdata-$DATE.tar.gz"
+docker exec nettap-web tar czf - -C /var/lib/nettap-web . > "$BACKUP_DIR/webdata-$DATE.tar.gz"
+chmod 600 "$BACKUP_DIR"/*.tar.gz
 
-# Create OpenSearch snapshot
-curl -sk -X PUT "https://localhost:9200/_snapshot/nettap_backup/snapshot_$DATE" \
+# OpenSearch snapshot (the nettap_backup repository must be registered once, see above)
+osapi -X PUT "https://localhost:9200/_snapshot/nettap_backup/snapshot_$DATE?wait_for_completion=true" \
   -H "Content-Type: application/json" \
-  -d '{"indices":"zeek-*,suricata-*","ignore_unavailable":true,"include_global_state":false}'
+  -d '{"indices":"arkime_sessions3-*,malcolm_beats_*,nettap-*","ignore_unavailable":true,"include_global_state":false}' \
+  | grep -q '"state":"SUCCESS"' || echo "Snapshot $DATE did not succeed"
 
-# Clean up old backups
+# Drop the snapshot and archives from KEEP_DAYS ago
+osapi -X DELETE "https://localhost:9200/_snapshot/nettap_backup/snapshot_$(date -d "$KEEP_DAYS days ago" +%Y%m%d)" >/dev/null
 find "$BACKUP_DIR" -name "*.tar.gz" -mtime +$KEEP_DAYS -delete
-find "$BACKUP_DIR" -name ".env.*" -mtime +$KEEP_DAYS -delete
 
 echo "Backup completed: $DATE"
 ```
@@ -196,8 +233,9 @@ echo "Backup completed: $DATE"
 
 If the system needs a complete rebuild:
 
-1. Install a fresh Ubuntu Server
-2. Clone NetTap and restore `.env` from backup
-3. Run `scripts/install/install.sh`
-4. Restore OpenSearch data from snapshot or Docker volume backup
-5. Verify data integrity via the dashboard
+1. Install a fresh Ubuntu Server.
+2. Clone NetTap to the same path and unpack the config archive into it: `sudo tar xzf config-YYYYMMDD.tar.gz -C "$NETTAP_DIR"`.
+3. Run `sudo scripts/install/install.sh`. It keeps the restored `docker/.env` and secrets.
+4. Restore OpenSearch from a snapshot (register the repository, then restore) or from a volume backup.
+5. Restore the NetTap records and dashboard logins archives.
+6. Verify the data on the dashboard.

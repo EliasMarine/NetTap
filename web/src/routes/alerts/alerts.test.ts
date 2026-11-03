@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
-import { getAlerts } from '$api/alerts';
+import {
+	getAlerts,
+	getAlertCount,
+	getAlertTimeline,
+	getAlertTopSignatures,
+	getAlertTopIps,
+	getEnhancedCategories,
+	getSmartAlertSummary,
+} from '$api/alerts';
 import Page from './+page.svelte';
 
 vi.mock('$app/stores', () => ({
@@ -96,5 +104,52 @@ describe('Alerts — auto-refresh', () => {
 		expect(getAlerts).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
 		expect(getAlerts).not.toHaveBeenCalledWith(expect.objectContaining({ page: 1 }));
 		expect(screen.getByText('Sig on page 2')).toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// #96: a failed request returned an empty list or zero counts, so the page said "No Alerts",
+// "No signatures found" and showed 0 in every stat card when nothing had loaded.
+// ---------------------------------------------------------------------------
+
+describe('Alerts — failed requests', () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('says each section could not be loaded instead of showing none or 0', async () => {
+		// every other getter is mocked to reject (notUnderTest)
+		vi.mocked(getAlerts).mockRejectedValue(new Error('Alerts failed: HTTP 502'));
+		render(Page);
+		await flush();
+
+		expect(screen.getByText("Couldn't load alerts")).toBeInTheDocument();
+		expect(screen.queryByText('No Alerts')).not.toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load the alert timeline/)).toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load alert categories/)).toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load top signatures/)).toBeInTheDocument();
+		expect(screen.queryByText('No signatures found')).not.toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load affected devices/)).toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load source IPs/)).toBeInTheDocument();
+		expect(screen.queryByText('0')).not.toBeInTheDocument();
+	});
+
+	it('still says there are none when every request succeeds empty', async () => {
+		const range = { from: '', to: '' };
+		vi.mocked(getAlerts).mockResolvedValue({ ...range, page: 1, size: 50, total: 0, total_pages: 0, alerts: [] });
+		vi.mocked(getAlertCount).mockResolvedValue({ ...range, counts: { total: 0, high: 0, medium: 0, low: 0 } });
+		vi.mocked(getAlertTimeline).mockResolvedValue({ ...range, interval: '1h', buckets: [] });
+		vi.mocked(getAlertTopSignatures).mockResolvedValue({ ...range, signatures: [] });
+		vi.mocked(getAlertTopIps).mockResolvedValue({ ...range, direction: 'dest', ips: [] });
+		vi.mocked(getEnhancedCategories).mockResolvedValue({ ...range, categories: [] });
+		vi.mocked(getSmartAlertSummary).mockResolvedValue({
+			...range, threat_score: 0, threat_level: 'none', total_groups: 0, total_events: 0, categories: {}, top_threats: [],
+		});
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('No Alerts')).toBeInTheDocument();
+		expect(screen.getByText('No signatures found')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
 });

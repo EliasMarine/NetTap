@@ -12,12 +12,54 @@ Endpoints:
 
 import asyncio
 import logging
+import time
 
 from aiohttp import web
+from opensearchpy import OpenSearchException
 
 from services.live_connections import LiveConnectionTracker
 
 logger = logging.getLogger("nettap.api.live")
+
+# A sample older than this is too stale to rate against; take a fresh pair instead
+_MAX_SAMPLE_AGE_S = 60.0
+_FIRST_SAMPLE_GAP_S = 1.0
+
+
+class ThroughputSampler:
+    """Bytes/sec on the capture interface, from its counters between two reads.
+
+    Conn records credit a connection's bytes to its start time and arrive when it
+    ends, so summing them under-reports live throughput (148 KB/s against a
+    measured 301 KB/s on the G11). The NIC counters are the real line rate.
+    """
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self._clock = clock
+        self._last: tuple[float, int] | None = None
+
+    async def _read(self, capture_manager) -> tuple[float, int]:
+        stats = await capture_manager.get_stats()
+        return self._clock(), stats.rx_bytes + stats.tx_bytes
+
+    async def rate(self, capture_manager) -> float | None:
+        """Bytes per second since the previous call, or None when unavailable."""
+        if capture_manager is None:
+            return None
+        try:
+            now = await self._read(capture_manager)
+            last = self._last
+            if last is None or now[0] - last[0] > _MAX_SAMPLE_AGE_S:
+                await asyncio.sleep(_FIRST_SAMPLE_GAP_S)
+                last, now = now, await self._read(capture_manager)
+        except Exception as exc:
+            logger.warning("Capture throughput unavailable: %s", exc)
+            return None
+        self._last = now
+        elapsed, delta = now[0] - last[0], now[1] - last[1]
+        if elapsed <= 0 or delta < 0:  # counter reset or wrap
+            return None
+        return delta / elapsed
 
 
 # ---------------------------------------------------------------------------
@@ -42,12 +84,17 @@ async def handle_live_connections(request: web.Request) -> web.Response:
         limit = 100
 
     # Fetch fresh data from OpenSearch and update cache
-    connections = tracker.fetch_from_opensearch(
-        device=device,
-        proto=proto,
-        country=country,
-        limit=limit,
-    )
+    try:
+        connections = tracker.fetch_from_opensearch(
+            device=device,
+            proto=proto,
+            country=country,
+            limit=limit,
+        )
+    except OpenSearchException as exc:
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
 
     return web.json_response(
         {
@@ -109,6 +156,7 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
                 country=country,
                 limit=limit,
                 excluded_ips=excluded_ips,
+                lan_filter=request.app.get("lan_filter"),
             ),
         )
     except Exception as exc:
@@ -122,6 +170,15 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
     geoip = request.app.get("geoip")
     if geoip:
         _enrich_connections_geoip(dashboard.get("connections", []), geoip)
+
+    sampler: ThroughputSampler = request.app["live_throughput"]
+    line_rate = await sampler.rate(request.app.get("capture_manager"))
+    if line_rate is not None:
+        stats = {
+            **dashboard.get("stats", {}),
+            "bandwidth_bytes_per_second": round(line_rate, 2),
+        }
+        dashboard = {**dashboard, "stats": stats}
 
     return web.json_response(dashboard)
 
@@ -238,6 +295,7 @@ def register_live_routes(
 ) -> None:
     """Register live connection API routes on the aiohttp application."""
     app["live_tracker"] = tracker
+    app["live_throughput"] = ThroughputSampler()
 
     app.router.add_get("/api/live/connections", handle_live_connections)
     app.router.add_get("/api/live/rate", handle_live_rate)

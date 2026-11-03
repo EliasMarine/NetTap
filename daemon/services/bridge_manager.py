@@ -239,8 +239,13 @@ class BridgeManager:
         )
 
         # Persist configuration to host filesystem
+        # OLD CODE START — #96: write failures were only logged; setup still said created
+        # if persist:
+        #     persistence_files = self._write_persistence(wan, lan)
+        # OLD CODE END
+        persist_failures: list[str] = []
         if persist:
-            persistence_files = self._write_persistence(wan, lan)
+            persistence_files = self._write_persistence(wan, lan, persist_failures)
 
         state = "reconfigured" if bridge_existed else "created"
         logger.info(
@@ -259,8 +264,13 @@ class BridgeManager:
             "lan": lan,
             "state": state,
             "errors": errors,
-            "warnings": warnings,
+            # OLD CODE START — #96: persistence write failures weren't in the response
+            # "warnings": warnings,
+            # OLD CODE END
+            "warnings": [*warnings, *persist_failures],
             "persistence_files": persistence_files,
+            # #96: false when the bridge won't come back after a reboot as configured
+            "persisted": bool(persistence_files) and not persist_failures,
         }
 
     async def teardown_bridge(self) -> dict:
@@ -557,7 +567,9 @@ class BridgeManager:
         except ValueError:
             return False
 
-    def _write_persistence(self, wan: str, lan: str) -> list[str]:
+    def _write_persistence(
+        self, wan: str, lan: str, failures: list[str] | None = None
+    ) -> list[str]:
         """Write bridge persistence files to mounted host directories.
 
         Writes:
@@ -565,10 +577,13 @@ class BridgeManager:
         2. Systemd unit for bridge bring-up at boot
         3. Sysctl config for bridge netfilter disable
 
+        Each write that fails is appended to ``failures`` when given (#96).
+
         Returns:
             List of file paths written.
         """
         files_written: list[str] = []
+        failures = [] if failures is None else failures
 
         # 1. Netplan YAML
         if self._netplan_dir:
@@ -603,6 +618,7 @@ class BridgeManager:
                 logger.info("Wrote netplan config: %s", netplan_path)
             except OSError as exc:
                 logger.warning("Could not write netplan config: %s", exc)
+                failures.append(f"Could not write netplan config {netplan_path}: {exc}")
 
         # 2. Systemd unit
         if self._systemd_dir:
@@ -655,8 +671,12 @@ class BridgeManager:
                         logger.info("Created systemd symlink: %s", symlink_path)
                     except OSError as exc:
                         logger.warning("Could not create systemd symlink: %s", exc)
+                        failures.append(
+                            f"Could not enable nettap-bridge.service at boot: {exc}"
+                        )
             except OSError as exc:
                 logger.warning("Could not write systemd unit: %s", exc)
+                failures.append(f"Could not write systemd unit {unit_path}: {exc}")
 
         # 3. Sysctl config
         if self._sysctl_dir:
@@ -674,6 +694,7 @@ class BridgeManager:
                 logger.info("Wrote sysctl config: %s", sysctl_path)
             except OSError as exc:
                 logger.warning("Could not write sysctl config: %s", exc)
+                failures.append(f"Could not write sysctl config {sysctl_path}: {exc}")
 
         return files_written
 

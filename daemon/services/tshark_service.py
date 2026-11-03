@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import shlex
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -32,6 +32,23 @@ MAX_PACKETS = 1000
 DEFAULT_MAX_PACKETS = 100
 EXECUTION_TIMEOUT = 30  # seconds
 MAX_OUTPUT_BYTES = 5 * 1024 * 1024  # 5MB
+# A filtered analysis first scans for its matches (#64); the scan stops here and keeps
+# what it found, leaving the rest of the web proxy's 60 s for the JSON and Info passes.
+MATCH_SCAN_SECONDS = 15
+# "<matches found> <frame number of the last>" for up to N matches (fewer if the file or
+# the time runs out). Filter and path are positional args, never parsed by the shell.
+# -l flushes each line: piped tshark otherwise buffers 4 KB, never notices head has quit, and
+# reads the rest of the file, so every scan ran the full MATCH_SCAN_SECONDS (#78)
+_LAST_MATCH_SCRIPT = (
+    'timeout -k 2 "$4" tshark -l -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
+    " | head -n \"$3\" | awk 'END { print NR, $1 }'"
+)
+# OLD CODE START — #78: without -l the scan always used the whole 15 s budget
+# _LAST_MATCH_SCRIPT = (
+#     'timeout -k 2 "$4" tshark -r "$1" -Y "$2" -T fields -e frame.number 2>/dev/null'
+#     ' | head -n "$3" | awk \'END { print NR, $1 }\''
+# )
+# OLD CODE END
 ALLOWED_FIELD_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 # Shell metacharacters that must NOT appear in display filters.
 # Note: & and | are allowed because TShark uses && (AND) and || (OR)
@@ -45,9 +62,67 @@ ALLOWED_OUTPUT_FORMATS = {"json", "text", "pdml"}
 ALLOWED_FOLLOW_PROTOCOLS = {"", "tcp", "udp", "tls", "http"}
 
 # Max concurrent TShark docker exec operations.  The nettap-tshark container
-# is capped at 0.5 CPU; more than 2 simultaneous analyses thrash that budget
+# is capped at 1 CPU (0.5 before #137); more than 2 simultaneous analyses thrash it
 # and increase the chance of hitting the 30s timeout.
 MAX_CONCURRENT_ANALYSES = 2
+
+
+def bounded_exec(cmd: list[str], seconds: int) -> list[str]:
+    """Run a ``docker exec <container> ...`` argv under coreutils ``timeout`` inside it.
+
+    Giving up on the docker exec client (asyncio timeout, kill) leaves the process
+    running in the container: on the G11 seven orphaned full-file tshark reads held it
+    at its 1 GiB limit and every analysis took minutes. ``-k 5`` follows up with KILL.
+    """
+    if cmd[:2] != ["docker", "exec"] or len(cmd) < 4:
+        return cmd
+    return [*cmd[:3], "timeout", "-k", "5", str(seconds), *cmd[3:]]
+
+
+_ROOT_WARNING = (
+    'Running as user "root"'  # tshark prints this on every run in the container
+)
+
+
+def filter_check_cmd(pcap_path: str, display_filter: str) -> list[str]:
+    """tshark reads one packet with the filter: exit 0 when the filter compiles (#96).
+
+    The match scan and the filtered preview pipe tshark into head, so their exit status
+    is head's. pipefail can't help: TShark 4.0 also exits 2 when head quits early, the
+    same code it gives a filter it refuses.
+    """
+    return [
+        "docker",
+        "exec",
+        TSHARK_CONTAINER,
+        "tshark",
+        "-r",
+        pcap_path,
+        "-Y",
+        display_filter,
+        "-c",
+        "1",
+        "-T",
+        "fields",
+        "-e",
+        "frame.number",
+    ]
+
+
+def raise_filter_check_failure(
+    returncode: int, stderr: str, refused: type[Exception]
+) -> None:
+    """Return if the check passed. Raise `refused` carrying tshark's message when tshark
+    refused the filter (or file), RuntimeError when docker exec itself failed."""
+    if returncode == 0:
+        return
+    lines = [
+        line
+        for line in stderr.strip().splitlines()
+        if not line.startswith(_ROOT_WARNING)
+    ]
+    message = "\n".join(lines).strip() or f"tshark exited with code {returncode}"
+    raise (refused if message.startswith("tshark:") else RuntimeError)(message)
 
 
 @dataclass
@@ -269,6 +344,7 @@ class TSharkService:
         Uses asyncio.create_subprocess_exec (argument-list form, no shell
         interpolation) for safety. Returns (stdout, stderr, returncode).
         """
+        cmd = bounded_exec(cmd, EXECUTION_TIMEOUT)
         logger.info("Running: %s", " ".join(shlex.quote(c) for c in cmd))
 
         try:
@@ -318,7 +394,38 @@ class TSharkService:
             return [data]
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse TShark JSON output: %s", e)
-            return []
+            # OLD CODE START — #96: unparsable output (e.g. cut at the size limit) read as 0 packets
+            # return []
+            # OLD CODE END
+            raise RuntimeError(f"TShark output could not be parsed: {e}") from e
+
+    def _info_column_command(self, request: TSharkRequest) -> list[str]:
+        """Same packets as the JSON pass, printing only frame number and Info."""
+        cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-r", request.pcap_path]
+        cmd.extend(["-c", str(request.max_packets)])
+        if request.display_filter:
+            cmd.extend(["-Y", request.display_filter])
+        # TShark 4.0 names the column _ws.col.Info (4.2+ renamed it _ws.col.info)
+        cmd.extend(["-T", "fields", "-e", "frame.number", "-e", "_ws.col.Info"])
+        return cmd
+
+    @staticmethod
+    def _with_info_column(packets: list[dict], stdout: str) -> list[dict]:
+        """Copy each packet with the Wireshark Info text added to its layers."""
+        info_by_frame = dict(
+            line.split("\t", 1) for line in stdout.splitlines() if "\t" in line
+        )
+        merged = []
+        for pkt in packets:
+            layers = pkt.get("_source", {}).get("layers")
+            number = (layers or {}).get("frame", {}).get("frame.number")
+            info = info_by_frame.get(str(number))
+            if info is None:
+                merged.append(pkt)
+                continue
+            source = {**pkt["_source"], "layers": {**layers, "_ws.col.Info": info}}
+            merged.append({**pkt, "_source": source})
+        return merged
 
     def _parse_text_output(self, stdout: str) -> list[dict]:
         """Parse TShark text output into structured dicts."""
@@ -329,6 +436,49 @@ class TSharkService:
         return packets
 
     # --- Public API ---
+
+    async def _last_match_frame(self, request: TSharkRequest) -> tuple[int, bool]:
+        """(frame number of the request's Nth filter match or 0 for none, scan timed out).
+
+        -c counts packets read, not matches, so "-c 100 -Y dns" only searched the first
+        100 packets of a file (#64). Reading up to this frame returns the first N matches.
+        """
+        cmd = [
+            "docker",
+            "exec",
+            TSHARK_CONTAINER,
+            "sh",
+            "-c",
+            _LAST_MATCH_SCRIPT,
+            "_",
+            request.pcap_path,
+            request.display_filter,
+            str(request.max_packets),
+            str(MATCH_SCAN_SECONDS),
+        ]
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        # OLD CODE START — #96: a failed docker exec (container down) read as "no matches"
+        # stdout, _, _ = await self._exec_tshark(cmd)
+        # OLD CODE END
+        # The pipeline's status is awk's, so non-zero means docker exec itself failed
+        stdout, stderr, rc = await self._exec_tshark(cmd)
+        if rc != 0:
+            raise RuntimeError(stderr.strip() or f"TShark scan exited with code {rc}")
+        found, _, last = stdout.strip().partition(" ")
+        found_n = int(found) if found.isdigit() else 0
+        if not found_n:
+            # a filter tshark refused also prints "0" here: its error went to /dev/null (#96)
+            await self.validate_filter_dry_run(
+                request.display_filter, request.pcap_path
+            )
+        # Cut short = fewer than N matches and the whole time budget used. shortcut: a file
+        # that really ends right at the budget is reported the same way
+        timed_out = (
+            found_n < request.max_packets
+            and loop.time() - started >= MATCH_SCAN_SECONDS
+        )
+        return (int(last) if found_n and last.isdigit() else 0), timed_out
 
     async def analyze(self, request: TSharkRequest) -> TSharkResult:
         """Run TShark analysis on a PCAP file.
@@ -341,8 +491,12 @@ class TSharkService:
         # Validate (before acquiring semaphore -- fast, no I/O)
         request = self.validate_request(request)
 
-        # Build command
-        cmd = self._build_tshark_command(request)
+        # OLD CODE START — #64: the command is built after the match scan below, which may
+        # raise the -c limit to the frame number of the Nth match
+        # # Build command
+        # cmd = self._build_tshark_command(request)
+        # OLD CODE END
+        scan_timed_out = False
 
         # Acquire semaphore to limit concurrent docker exec processes.
         # Queued requests still respect the overall EXECUTION_TIMEOUT
@@ -353,7 +507,33 @@ class TSharkService:
                 MAX_CONCURRENT_ANALYSES - self._semaphore._value,
                 MAX_CONCURRENT_ANALYSES,
             )
+            if request.display_filter and not request.follow_stream:
+                last_frame, scan_timed_out = await self._last_match_frame(request)
+                if not last_frame:
+                    return TSharkResult(
+                        packets=[],
+                        packet_count=0,
+                        truncated=scan_timed_out,  # more of the file was left unsearched
+                        tshark_version=await self.get_version(),
+                    )
+                request = replace(request, max_packets=last_frame)
+            cmd = self._build_tshark_command(request)
             stdout, stderr, returncode = await self._exec_tshark(cmd)
+            # -T json has no column data, so the Info column comes from a second,
+            # fields-only pass over the same packets
+            info_stdout = ""
+            wants_info = (
+                request.output_format == "json"
+                and not (request.fields or request.verbose or request.follow_stream)
+                and stdout.strip()
+            )
+            if wants_info:
+                try:
+                    info_stdout, _, _ = await self._exec_tshark(
+                        self._info_column_command(request)
+                    )
+                except TSharkValidationError as exc:
+                    logger.warning("TShark Info column pass failed: %s", exc)
 
         if returncode != 0 and not stdout:
             return TSharkResult(
@@ -369,11 +549,16 @@ class TSharkService:
             # Follow stream and verbose modes return raw text
             packets = self._parse_text_output(stdout)
         elif request.output_format == "json":
-            packets = self._parse_json_output(stdout)
+            packets = self._with_info_column(
+                self._parse_json_output(stdout), info_stdout
+            )
         else:
             packets = self._parse_text_output(stdout)
 
-        truncated = len(stdout.encode()) >= MAX_OUTPUT_BYTES
+        # OLD CODE START — #64: a filter scan cut short by time also means more matches may exist
+        # truncated = len(stdout.encode()) >= MAX_OUTPUT_BYTES
+        # OLD CODE END
+        truncated = len(stdout.encode()) >= MAX_OUTPUT_BYTES or scan_timed_out
 
         return TSharkResult(
             packets=packets,
@@ -402,57 +587,68 @@ class TSharkService:
         """Get supported protocol dissectors (cached)."""
         if self._protocols_cache is not None:
             return self._protocols_cache
-        try:
-            cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "protocols"]
-            stdout, _, rc = await self._exec_tshark(cmd)
-            if rc == 0:
-                protocols = []
-                for line in stdout.strip().split("\n"):
-                    parts = line.split("\t")
-                    if len(parts) >= 3:
-                        protocols.append(
-                            {
-                                "name": parts[0],
-                                "short_name": parts[1],
-                                "filter_name": parts[2],
-                            }
-                        )
-                self._protocols_cache = protocols
-                return protocols
-        except Exception as e:
-            logger.error("Failed to get protocols: %s", e)
-        return []
+        # OLD CODE START — #96: a failure (container down) read as "no protocols"
+        # try:
+        #     ...
+        #     if rc == 0:
+        #         ...
+        #         return protocols
+        # except Exception as e:
+        #     logger.error("Failed to get protocols: %s", e)
+        # return []
+        # OLD CODE END
+        cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "protocols"]
+        stdout, stderr, rc = await self._exec_tshark(cmd)
+        if rc != 0:
+            raise RuntimeError(stderr.strip() or f"tshark -G exited with code {rc}")
+        protocols = []
+        for line in stdout.strip().split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                protocols.append(
+                    {
+                        "name": parts[0],
+                        "short_name": parts[1],
+                        "filter_name": parts[2],
+                    }
+                )
+        self._protocols_cache = protocols
+        return protocols
 
     async def get_fields(self, protocol: str = "") -> list[dict]:
         """Get display filter fields, optionally filtered by protocol (cached)."""
         cache_key = protocol or "__all__"
         if cache_key in self._fields_cache:
             return self._fields_cache[cache_key]
-        try:
-            cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "fields"]
-            stdout, _, rc = await self._exec_tshark(cmd)
-            if rc == 0:
-                fields = []
-                for line in stdout.strip().split("\n"):
-                    parts = line.split("\t")
-                    if len(parts) >= 4:
-                        entry = {
-                            "name": parts[2] if len(parts) > 2 else "",
-                            "filter_name": parts[2] if len(parts) > 2 else "",
-                            "type": parts[3] if len(parts) > 3 else "",
-                            "protocol": parts[1] if len(parts) > 1 else "",
-                            "description": parts[0] if len(parts) > 0 else "",
-                        }
-                        if (
-                            not protocol
-                            or entry["protocol"].lower() == protocol.lower()
-                        ):
-                            fields.append(entry)
-                self._fields_cache[cache_key] = fields
-                return fields
-        except Exception as e:
-            logger.error("Failed to get fields: %s", e)
-        return []
+        # OLD CODE START — #96: a failure (container down) read as "no fields"
+        # try:
+        #     ...
+        #     if rc == 0:
+        #         ...
+        #         return fields
+        # except Exception as e:
+        #     logger.error("Failed to get fields: %s", e)
+        # return []
+        # OLD CODE END
+        cmd = ["docker", "exec", TSHARK_CONTAINER, "tshark", "-G", "fields"]
+        stdout, stderr, rc = await self._exec_tshark(cmd)
+        if rc != 0:
+            raise RuntimeError(stderr.strip() or f"tshark -G exited with code {rc}")
+        fields = []
+        for line in stdout.strip().split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                entry = {
+                    "name": parts[2] if len(parts) > 2 else "",
+                    "filter_name": parts[2] if len(parts) > 2 else "",
+                    "type": parts[3] if len(parts) > 3 else "",
+                    "protocol": parts[1] if len(parts) > 1 else "",
+                    "description": parts[0] if len(parts) > 0 else "",
+                }
+                if not protocol or entry["protocol"].lower() == protocol.lower():
+                    fields.append(entry)
+        self._fields_cache[cache_key] = fields
+        return fields
 
     async def is_available(self) -> dict:
         """Check if TShark container is running and accessible."""
@@ -517,26 +713,36 @@ class TSharkService:
         pcaps.sort(key=lambda p: p["modified"], reverse=True)
         return pcaps
 
-    async def validate_filter_dry_run(self, display_filter: str) -> bool:
-        """Validate a display filter by running tshark -Y <filter> -r /dev/null.
+    async def validate_filter_dry_run(
+        self, display_filter: str, pcap_path: str
+    ) -> None:
+        """Raise TSharkValidationError carrying tshark's message if it refuses the filter.
 
-        Returns True if the filter is syntactically valid.
+        Reads one packet of pcap_path (a path inside the container) with the filter.
         """
+        # OLD CODE START — #96: tshark refuses /dev/null as "a special file" (exit 2, TShark
+        # 4.0), so every filter came back invalid; nothing called it
+        # self.validate_display_filter(display_filter)  # Basic sanitization first
+        # try:
+        #     cmd = [
+        #         "docker",
+        #         "exec",
+        #         TSHARK_CONTAINER,
+        #         "tshark",
+        #         "-Y",
+        #         display_filter,
+        #         "-r",
+        #         "/dev/null",
+        #     ]
+        #     _, stderr, rc = await self._exec_tshark(cmd)
+        #     # tshark returns 0 for valid filters (even with no packets)
+        #     # and non-zero for invalid filter syntax
+        #     return rc == 0
+        # except Exception:
+        #     return False
+        # OLD CODE END
         self.validate_display_filter(display_filter)  # Basic sanitization first
-        try:
-            cmd = [
-                "docker",
-                "exec",
-                TSHARK_CONTAINER,
-                "tshark",
-                "-Y",
-                display_filter,
-                "-r",
-                "/dev/null",
-            ]
-            _, stderr, rc = await self._exec_tshark(cmd)
-            # tshark returns 0 for valid filters (even with no packets)
-            # and non-zero for invalid filter syntax
-            return rc == 0
-        except Exception:
-            return False
+        _, stderr, rc = await self._exec_tshark(
+            filter_check_cmd(pcap_path, display_filter)
+        )
+        raise_filter_check_failure(rc, stderr, TSharkValidationError)

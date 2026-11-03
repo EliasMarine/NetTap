@@ -115,3 +115,17 @@ export const CONN_STATE_DESC: Record<string, string> = {
 	SHR: 'Responder sent SYN ACK then FIN, originator never replied',
 	OTH: 'No SYN seen, midstream traffic',
 };
+
+// ---------------------------------------------------------------------------
+// getRawHex — packet bytes for the hex dump
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw frame bytes as hex from a TShark `-T json -x` packet, or null.
+ * With -x, TShark adds `frame_raw: [hex, offset, length, bitmask, type]` to the layers.
+ */
+export function getRawHex(pkt: TSharkPacket | null | undefined): string | null {
+	const raw = pkt?._source?.layers?.frame_raw;
+	const hex = Array.isArray(raw) ? raw[0] : raw;
+	return typeof hex === 'string' && hex.length > 0 ? hex : null;
+}

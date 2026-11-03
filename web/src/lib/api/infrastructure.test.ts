@@ -93,23 +93,16 @@ describe('infrastructure API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/opensearch/cluster');
 		});
 
-		it('returns red defaults on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting the cluster red', async () => {
 			mockFetchFailure(503);
 
-			const result = await getOpenSearchCluster();
-
-			expect(result.status).toBe('red');
-			expect(result.number_of_nodes).toBe(0);
-			expect(result.total_docs).toBe(0);
+			await expect(getOpenSearchCluster()).rejects.toThrow('HTTP 503');
 		});
 
-		it('returns red defaults on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getOpenSearchCluster();
-
-			expect(result.status).toBe('red');
-			expect(result.number_of_nodes).toBe(0);
+			await expect(getOpenSearchCluster()).rejects.toThrow('network error');
 		});
 	});
 
@@ -149,22 +142,16 @@ describe('infrastructure API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/opensearch/indices');
 		});
 
-		it('returns empty array on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting no indices', async () => {
 			mockFetchFailure(500);
 
-			const result = await getOpenSearchIndices();
-
-			expect(result.indices).toEqual([]);
-			expect(result.count).toBe(0);
+			await expect(getOpenSearchIndices()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns empty array on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getOpenSearchIndices();
-
-			expect(result.indices).toEqual([]);
-			expect(result.count).toBe(0);
+			await expect(getOpenSearchIndices()).rejects.toThrow('network error');
 		});
 	});
 
@@ -302,24 +289,16 @@ describe('infrastructure API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/logstash/stats');
 		});
 
-		it('returns zeros on HTTP error', async () => {
+		it('throws on HTTP error instead of reporting zero events', async () => {
 			mockFetchFailure(500);
 
-			const result = await getLogstashStats();
-
-			expect(result.events_in).toBe(0);
-			expect(result.events_out).toBe(0);
-			expect(result.heap_used_bytes).toBe(0);
-			expect(result.cpu_percent).toBe(0);
+			await expect(getLogstashStats()).rejects.toThrow('HTTP 500');
 		});
 
-		it('returns zeros on network error', async () => {
+		it('throws on network error', async () => {
 			mockFetchReject();
 
-			const result = await getLogstashStats();
-
-			expect(result.events_in).toBe(0);
-			expect(result.heap_used_bytes).toBe(0);
+			await expect(getLogstashStats()).rejects.toThrow('network error');
 		});
 	});
 

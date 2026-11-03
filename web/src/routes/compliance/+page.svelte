@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { getProtocolDistribution } from '$api/traffic';
 	import { getAlertCount } from '$api/alerts';
-	import { getDevices } from '$api/devices';
+	// OLD CODE START — #96: the device list is its top 100 by bytes, not every device
+	// import { getDevices } from '$api/devices';
+	// OLD CODE END
+	import { getDeviceCount } from '$api/devices';
 	import { getRiskScores } from '$api/risk';
 	import { getInvestigationStats } from '$api/investigations';
 	import type { ProtocolsResponse } from '$api/traffic';
 	import type { AlertCountResponse } from '$api/alerts';
-	import type { DeviceListResponse } from '$api/devices';
+	// OLD CODE START — #96: see the getDevices import
+	// import type { DeviceListResponse } from '$api/devices';
+	// OLD CODE END
+	import type { DeviceCountResponse } from '$api/devices';
 	import type { RiskScoresResponse } from '$api/risk';
 	import type { InvestigationStats } from '$api/investigations';
 	import Collapsible from '$components/Collapsible.svelte';
@@ -15,15 +21,38 @@
 	// Types
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — #96: every category had a number, even when its input never loaded
+	// interface CategoryScore {
+	// 	name: string;
+	// 	icon: string;
+	// 	score: number;
+	// 	status: 'Good' | 'Needs Attention' | 'Poor';
+	// 	statusClass: string;
+	// 	description: string;
+	// 	findings: string[];
+	// }
+	// OLD CODE END
+	/** The page's five requests; a category built on one that failed has no score. */
+	type Input = 'protocols' | 'alerts' | 'devices' | 'risk' | 'investigations';
+
 	interface CategoryScore {
 		name: string;
 		icon: string;
-		score: number;
-		status: 'Good' | 'Needs Attention' | 'Poor';
+		score: number | null;
+		status: 'Good' | 'Needs Attention' | 'Poor' | "Couldn't compute";
 		statusClass: string;
 		description: string;
 		findings: string[];
+		needs: Input[];
 	}
+
+	const INPUT_NAMES: Record<Input, string> = {
+		protocols: 'traffic protocols',
+		alerts: 'alert counts',
+		devices: 'the device count',
+		risk: 'risk scores',
+		investigations: 'investigation stats',
+	};
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -32,9 +61,14 @@
 	let loading = $state(true);
 	let protocols = $state<ProtocolsResponse>({ from: '', to: '', protocols: [], services: [] });
 	let alertCounts = $state<AlertCountResponse>({ from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } });
-	let deviceList = $state<DeviceListResponse>({ from: '', to: '', limit: 100, devices: [] });
+	// OLD CODE START — #96: see the getDevices import
+	// let deviceList = $state<DeviceListResponse>({ from: '', to: '', limit: 100, devices: [] });
+	// OLD CODE END
+	let deviceCount = $state<DeviceCountResponse>({ from: '', to: '', count: 0 });
 	let riskScores = $state<RiskScoresResponse>({ scores: [] });
 	let investigationStats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
+	// #96: requests that failed; the defaults above stand in for them only so the other scores compute
+	let failed = $state<Input[]>([]);
 
 	// ---------------------------------------------------------------------------
 	// Scoring constants
@@ -53,42 +87,67 @@
 	// Computed scores
 	// ---------------------------------------------------------------------------
 
-	let encryptionScore = $derived.by(() => {
-		const services = protocols.services;
-		if (services.length === 0) return 100;
+	// OLD CODE START — #86: Zeek service names only. QUIC and TLS Zeek didn't parse (G11: ~44k
+	// connections on port 443) counted as plaintext, pings and discovery sat in the denominator
+	// (G11: 19%), and DNS could never pass 0% (Zeek has no dns_over_tls service; DoT is ssl on 853)
+	// let encryptionScore = $derived.by(() => {
+	// 	const services = protocols.services;
+	// 	if (services.length === 0) return 100;
+	// 	const totalConnections = services.reduce((sum, s) => sum + s.count, 0);
+	// 	if (totalConnections === 0) return 100;
+	// 	const encryptedNames = ['ssl', 'tls', 'https', 'imaps', 'smtps', 'ldaps', 'ftps', 'ssh', 'dns_over_tls', 'dns_over_https'];
+	// 	const encryptedCount = services
+	// 		.filter((s) => encryptedNames.some((n) => s.name.toLowerCase().includes(n)))
+	// 		.reduce((sum, s) => sum + s.count, 0);
+	// 	return Math.round((encryptedCount / totalConnections) * 100);
+	// });
+	// let dnsScore = $derived.by(() => {
+	// 	const services = protocols.services;
+	// 	if (services.length === 0) return 100;
+	// 	const totalDns = services
+	// 		.filter((s) => s.name.toLowerCase().includes('dns'))
+	// 		.reduce((sum, s) => sum + s.count, 0);
+	// 	if (totalDns === 0) return 100;
+	// 	const plainDns = services
+	// 		.filter((s) => s.name.toLowerCase() === 'dns')
+	// 		.reduce((sum, s) => sum + s.count, 0);
+	// 	return Math.round(100 - (plainDns / totalDns) * 100);
+	// });
+	// OLD CODE END
 
-		const totalConnections = services.reduce((sum, s) => sum + s.count, 0);
-		if (totalConnections === 0) return 100;
+	// The daemon applies the IoT pages' encryption rule (#42) to the whole network
+	let encrypted = $derived(protocols.encryption?.encrypted ?? 0);
+	let encryptionEligible = $derived(protocols.encryption?.eligible ?? 0);
+	let encryptionScore = $derived(
+		encryptionEligible === 0 ? 100 : Math.round((encrypted / encryptionEligible) * 100),
+	);
 
-		const encryptedNames = ['ssl', 'tls', 'https', 'imaps', 'smtps', 'ldaps', 'ftps', 'ssh', 'dns_over_tls', 'dns_over_https'];
-		const encryptedCount = services
-			.filter((s) => encryptedNames.some((n) => s.name.toLowerCase().includes(n)))
-			.reduce((sum, s) => sum + s.count, 0);
+	let plainDns = $derived(protocols.dns?.plain ?? 0);
+	let dnsOverTls = $derived(protocols.dns?.over_tls ?? 0);
+	let dnsScore = $derived(
+		plainDns + dnsOverTls === 0 ? 100 : Math.round((dnsOverTls / (plainDns + dnsOverTls)) * 100),
+	);
 
-		return Math.round((encryptedCount / totalConnections) * 100);
-	});
-
-	let dnsScore = $derived.by(() => {
-		const services = protocols.services;
-		if (services.length === 0) return 100;
-
-		const totalDns = services
-			.filter((s) => s.name.toLowerCase().includes('dns'))
-			.reduce((sum, s) => sum + s.count, 0);
-		if (totalDns === 0) return 100;
-
-		const plainDns = services
-			.filter((s) => s.name.toLowerCase() === 'dns')
-			.reduce((sum, s) => sum + s.count, 0);
-
-		return Math.round(100 - (plainDns / totalDns) * 100);
-	});
+	// Devices on the list that have a score. OLD CODE: each figure used riskScores.scores.length,
+	// which counts per IP: a second address of one device (G11: an AP's VLAN 40 IP) gave
+	// "55 of 54 devices" and coverage above 100% (#81)
+	// OLD CODE START — #96: the device list's top 100 by bytes against the risk list's top 100 by
+	// connections; on a network with more devices each one in only one list cost 10 points
+	// let scoredIps = $derived(new Set(riskScores.scores.map((s) => s.ip)));
+	// let scoredDevices = $derived(deviceList.devices.filter((d) => scoredIps.has(d.ip)).length);
+	// OLD CODE END
+	// Both are every device, by the same rules: the daemon scores each device /api/devices/count
+	// counts. min() keeps coverage at most 100% if one crosses the threshold between the two requests.
+	let totalDevices = $derived(deviceCount.count);
+	let scoredDevices = $derived(Math.min(riskScores.scores.length, totalDevices));
 
 	let networkScore = $derived.by(() => {
-		const totalDevices = deviceList.devices.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
 		if (totalDevices === 0) return 100;
 
-		const devicesWithRisk = riskScores.scores.length;
+		const devicesWithRisk = scoredDevices;
 		const unbaselined = totalDevices - devicesWithRisk;
 		const penalty = unbaselined * 10;
 		return Math.max(0, 100 - penalty);
@@ -126,10 +185,12 @@
 	});
 
 	let monitoringScore = $derived.by(() => {
-		const totalDevices = deviceList.devices.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
 		if (totalDevices === 0) return 100;
 
-		const devicesWithRisk = riskScores.scores.length;
+		const devicesWithRisk = scoredDevices;
 		return Math.round((devicesWithRisk / totalDevices) * 100);
 	});
 
@@ -183,18 +244,25 @@
 		const httpCount = services
 			.filter((s) => s.name.toLowerCase() === 'http')
 			.reduce((sum, s) => sum + s.count, 0);
-		const httpsCount = services
-			.filter((s) => s.name.toLowerCase() === 'ssl' || s.name.toLowerCase() === 'https')
-			.reduce((sum, s) => sum + s.count, 0);
+		// OLD CODE START — #86: TLS by service name only, and "% of total traffic" was a share of connections
+		// const httpsCount = services
+		// 	.filter((s) => s.name.toLowerCase() === 'ssl' || s.name.toLowerCase() === 'https')
+		// 	.reduce((sum, s) => sum + s.count, 0);
+		// if (httpsCount > 0) {
+		// 	findings.push(`${httpsCount.toLocaleString()} encrypted HTTPS/TLS connections`);
+		// }
+		// if (totalConnections > 0) {
+		// 	findings.push(`${encryptionScore}% of total traffic is encrypted`);
+		// }
+		// OLD CODE END
 
 		if (httpCount > 0) {
 			findings.push(`${httpCount.toLocaleString()} unencrypted HTTP connections detected`);
 		}
-		if (httpsCount > 0) {
-			findings.push(`${httpsCount.toLocaleString()} encrypted HTTPS/TLS connections`);
-		}
-		if (totalConnections > 0) {
-			findings.push(`${encryptionScore}% of total traffic is encrypted`);
+		if (totalConnections > 0 && encryptionEligible > 0) {
+			findings.push(
+				`${encrypted.toLocaleString()} of ${encryptionEligible.toLocaleString()} connections encrypted (${encryptionScore}%)`,
+			);
 		} else {
 			findings.push('No traffic data available yet');
 		}
@@ -203,20 +271,22 @@
 
 	function getDnsFindings(): string[] {
 		const findings: string[] = [];
-		const services = protocols.services;
 
-		const plainDns = services
-			.filter((s) => s.name.toLowerCase() === 'dns')
-			.reduce((sum, s) => sum + s.count, 0);
-		const encryptedDns = services
-			.filter((s) => ['dns_over_tls', 'dns_over_https', 'doh', 'dot'].some((n) => s.name.toLowerCase().includes(n)))
-			.reduce((sum, s) => sum + s.count, 0);
+		// OLD CODE START — #86: looked for service names Zeek never emits, so encrypted DNS was always 0
+		// const plainDns = services
+		// 	.filter((s) => s.name.toLowerCase() === 'dns')
+		// 	.reduce((sum, s) => sum + s.count, 0);
+		// const encryptedDns = services
+		// 	.filter((s) => ['dns_over_tls', 'dns_over_https', 'doh', 'dot'].some((n) => s.name.toLowerCase().includes(n)))
+		// 	.reduce((sum, s) => sum + s.count, 0);
+		// OLD CODE END
+		const encryptedDns = dnsOverTls;
 
 		if (plainDns > 0) {
-			findings.push(`${plainDns.toLocaleString()} plain-text DNS queries observed`);
+			findings.push(`${plainDns.toLocaleString()} plain-text DNS lookups observed`);
 		}
 		if (encryptedDns > 0) {
-			findings.push(`${encryptedDns.toLocaleString()} encrypted DNS queries (DoH/DoT)`);
+			findings.push(`${encryptedDns.toLocaleString()} DNS-over-TLS connections`);
 		}
 		if (plainDns === 0 && encryptedDns === 0) {
 			findings.push('No DNS traffic data available yet');
@@ -228,8 +298,10 @@
 
 	function getNetworkFindings(): string[] {
 		const findings: string[] = [];
-		const totalDevices = deviceList.devices.length;
-		const baselinedDevices = riskScores.scores.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
+		const baselinedDevices = scoredDevices;
 		const unbaselined = totalDevices - baselinedDevices;
 
 		findings.push(`${totalDevices} device(s) discovered on your network`);
@@ -282,8 +354,10 @@
 
 	function getMonitoringFindings(): string[] {
 		const findings: string[] = [];
-		const totalDevices = deviceList.devices.length;
-		const scored = riskScores.scores.length;
+		// OLD CODE START — #96: the device list's length, at most 100
+		// const totalDevices = deviceList.devices.length;
+		// OLD CODE END
+		const scored = scoredDevices;
 
 		if (totalDevices === 0) {
 			findings.push('No devices discovered yet');
@@ -299,15 +373,34 @@
 		return findings;
 	}
 
-	let categories = $derived<CategoryScore[]>([
+	/** #96: a category whose input failed says so instead of scoring the stand-in defaults. */
+	function withFailures(cats: CategoryScore[]): CategoryScore[] {
+		return cats.map((cat) => {
+			const missing = cat.needs.filter((n) => failed.includes(n));
+			if (missing.length === 0) return cat;
+			return {
+				...cat,
+				score: null,
+				status: "Couldn't compute",
+				statusClass: 'badge-muted',
+				findings: [`Couldn't load ${missing.map((n) => INPUT_NAMES[n]).join(' or ')}: the request failed.`],
+			};
+		});
+	}
+
+	// OLD CODE START — #96: scored every category, including ones whose input failed
+	// let categories = $derived<CategoryScore[]>([
+	// OLD CODE END
+	let categories = $derived<CategoryScore[]>(withFailures([
 		{
 			name: 'Encryption',
 			icon: 'lock',
 			score: encryptionScore,
 			status: getStatus(encryptionScore),
 			statusClass: getStatusClass(encryptionScore),
-			description: 'Percentage of network traffic using TLS/HTTPS encryption vs unencrypted protocols.',
+			description: 'Share of connections that use encryption (TLS/HTTPS, QUIC, SSH, VPN). Local chatter that is never encrypted (DNS, DHCP, NTP, discovery, pings) is left out.',
 			findings: getEncryptionFindings(),
+			needs: ['protocols'],
 		},
 		{
 			name: 'DNS Security',
@@ -315,8 +408,9 @@
 			score: dnsScore,
 			status: getStatus(dnsScore),
 			statusClass: getStatusClass(dnsScore),
-			description: 'How much of your DNS traffic uses encrypted transports like DNS-over-HTTPS or DNS-over-TLS.',
+			description: 'Share of DNS lookups sent over DNS-over-TLS instead of plain text. DNS-over-HTTPS looks like any other HTTPS, so it is not counted.',
 			findings: getDnsFindings(),
+			needs: ['protocols'],
 		},
 		{
 			name: 'Network Segmentation',
@@ -326,6 +420,7 @@
 			statusClass: getStatusClass(networkScore),
 			description: 'Whether all devices have been baselined and communicate with expected destinations.',
 			findings: getNetworkFindings(),
+			needs: ['devices', 'risk'],
 		},
 		{
 			name: 'Patch Currency',
@@ -335,6 +430,7 @@
 			statusClass: getStatusClass(patchScore),
 			description: 'Usage of modern protocol versions (TLS 1.3, HTTP/2+) vs legacy unencrypted protocols.',
 			findings: getPatchFindings(),
+			needs: ['protocols'],
 		},
 		{
 			name: 'Alert Response',
@@ -344,6 +440,8 @@
 			statusClass: getStatusClass(alertScore),
 			description: 'How effectively alerts are being acknowledged and investigated.',
 			findings: getAlertFindings(),
+			// with no alerts the score is 100 whatever the investigations; with some it needs them
+			needs: alertCounts.counts.total > 0 ? ['alerts', 'investigations'] : ['alerts'],
 		},
 		{
 			name: 'Monitoring Coverage',
@@ -353,8 +451,12 @@
 			statusClass: getStatusClass(monitoringScore),
 			description: 'Proportion of discovered devices that have been risk-scored and are actively monitored.',
 			findings: getMonitoringFindings(),
+			needs: ['devices', 'risk'],
 		},
-	]);
+	]));
+
+	/** Categories that couldn't be computed: the overall score needs all six. */
+	let uncomputed = $derived(categories.filter((c) => c.score === null).map((c) => c.name));
 
 	// ---------------------------------------------------------------------------
 	// Recommendations
@@ -362,44 +464,59 @@
 
 	let recommendations = $derived.by(() => {
 		const recs: { text: string; priority: 'high' | 'medium' | 'low' }[] = [];
+		// OLD CODE START — #96: a category that couldn't be computed was judged on its stand-in score
+		// if (encryptionScore < 80) {
+		// if (dnsScore < 80) {
+		// if (networkScore < 80) {
+		// if (patchScore < 80) {
+		// if (alertScore < 80) {
+		// if (monitoringScore < 80) {
+		// if (recs.length === 0) {
+		// OLD CODE END
+		const low = (name: string, score: number) => !uncomputed.includes(name) && score < 80;
 
-		if (encryptionScore < 80) {
+		if (low('Encryption', encryptionScore)) {
 			recs.push({
 				text: 'Reduce unencrypted HTTP traffic by enabling HTTPS on internal services and ensuring browser HSTS is active.',
 				priority: encryptionScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (dnsScore < 80) {
+		if (low('DNS Security', dnsScore)) {
 			recs.push({
 				text: 'Enable DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT) on your router or devices to encrypt DNS queries.',
 				priority: dnsScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (networkScore < 80) {
+		if (low('Network Segmentation', networkScore)) {
 			recs.push({
 				text: 'Review un-baselined devices on the Devices page and mark them as known to improve segmentation visibility.',
 				priority: 'medium',
 			});
 		}
-		if (patchScore < 80) {
+		if (low('Patch Currency', patchScore)) {
 			recs.push({
 				text: 'Replace legacy protocols (FTP, Telnet, plain HTTP) with encrypted alternatives (SFTP, SSH, HTTPS).',
 				priority: patchScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (alertScore < 80) {
+		if (low('Alert Response', alertScore)) {
 			recs.push({
 				text: 'Investigate and resolve open alerts. Create investigations for high-severity alerts to improve response tracking.',
 				priority: alertScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (monitoringScore < 80) {
+		if (low('Monitoring Coverage', monitoringScore)) {
 			recs.push({
 				text: 'Ensure all devices are being monitored. Visit the Devices page to trigger risk scoring for un-scored devices.',
 				priority: 'medium',
 			});
 		}
-		if (recs.length === 0) {
+		if (uncomputed.length > 0) {
+			recs.push({
+				text: `Couldn't compute ${uncomputed.join(', ')}: a request failed. Refresh to try again.`,
+				priority: 'medium',
+			});
+		} else if (recs.length === 0) {
 			recs.push({
 				text: 'Your network security posture looks excellent. Keep monitoring for changes and new devices.',
 				priority: 'low',
@@ -414,18 +531,52 @@
 
 	async function fetchAll() {
 		loading = true;
+		// #96: each input on its own, so one failure marks only the categories built on it
+		const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([
+			getProtocolDistribution(),
+			getAlertCount(),
+			getDeviceCount(),
+			getRiskScores(),
+			getInvestigationStats(),
+		]);
+		if (protocolsRes.status === 'fulfilled') protocols = protocolsRes.value;
+		if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
+		if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
+		if (riskRes.status === 'fulfilled') riskScores = riskRes.value;
+		if (statsRes.status === 'fulfilled') investigationStats = statsRes.value;
+		const settled: Record<Input, PromiseSettledResult<unknown>> = {
+			protocols: protocolsRes,
+			alerts: alertsRes,
+			devices: devicesRes,
+			risk: riskRes,
+			investigations: statsRes,
+		};
+		failed = (Object.keys(settled) as Input[]).filter((k) => settled[k].status === 'rejected');
+		loading = false;
+	}
+
+	// OLD CODE START — #96: any failure left the defaults in place, so it scored as a clean network
+	/*
+	async function fetchAll() {
+		loading = true;
 		try {
 			const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.all([
 				getProtocolDistribution(),
 				getAlertCount(),
-				getDevices(),
+				// OLD CODE START — #96: see the getDevices import
+				// getDevices(),
+				// OLD CODE END
+				getDeviceCount(),
 				getRiskScores(),
 				getInvestigationStats(),
 			]);
 
 			protocols = protocolsRes;
 			alertCounts = alertsRes;
-			deviceList = devicesRes;
+			// OLD CODE START — #96: see the getDevices import
+			// deviceList = devicesRes;
+			// OLD CODE END
+			deviceCount = devicesRes;
 			riskScores = riskRes;
 			investigationStats = statsRes;
 		} catch {
@@ -434,6 +585,8 @@
 			loading = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Initial fetch
@@ -475,6 +628,21 @@
 	{:else}
 		<!-- Overall score card -->
 		<div class="overall-score-card card">
+			{#if uncomputed.length > 0}
+				<!-- #96: a weighted score over the categories that loaded would read as the whole picture -->
+				<div class="overall-score-content">
+					<div class="grade-circle grade-unknown">
+						<span class="grade-letter">?</span>
+					</div>
+					<div class="overall-score-info">
+						<h3 class="overall-score-title">Overall Security Posture</h3>
+						<p class="overall-score-summary text-muted">
+							Couldn't compute the overall score: {uncomputed.join(', ')}
+							{uncomputed.length === 1 ? 'has' : 'have'} no score because a request failed. Refresh to try again.
+						</p>
+					</div>
+				</div>
+			{:else}
 			<div class="overall-score-content">
 				<div class="grade-circle {gradeColorClass}">
 					<span class="grade-letter">{overallGrade}</span>
@@ -505,6 +673,7 @@
 					</p>
 				</div>
 			</div>
+			{/if}
 		</div>
 
 		<!-- Category cards grid (2x3) -->
@@ -535,15 +704,23 @@
 						<span class="badge {cat.statusClass}">{cat.status}</span>
 					</div>
 
-					<div class="category-score-row">
-						<span class="category-score-value">{cat.score}%</span>
-						<div class="progress-bar-track">
-							<div
-								class="progress-bar-fill {cat.score >= 80 ? 'fill-success' : cat.score >= 50 ? 'fill-warning' : 'fill-danger'}"
-								style="width: {cat.score}%"
-							></div>
+					{#if cat.score === null}
+						<!-- #96: no score for a category whose input failed -->
+						<div class="category-score-row">
+							<span class="category-score-value text-muted">—</span>
+							<span class="category-unavailable text-muted">{cat.findings[0]}</span>
 						</div>
-					</div>
+					{:else}
+						<div class="category-score-row">
+							<span class="category-score-value">{cat.score}%</span>
+							<div class="progress-bar-track">
+								<div
+									class="progress-bar-fill {cat.score >= 80 ? 'fill-success' : cat.score >= 50 ? 'fill-warning' : 'fill-danger'}"
+									style="width: {cat.score}%"
+								></div>
+							</div>
+						</div>
+					{/if}
 
 					<p class="category-description text-muted">{cat.description}</p>
 
@@ -710,6 +887,20 @@
 
 	.grade-df .grade-letter {
 		color: var(--danger);
+	}
+
+	.grade-circle.grade-unknown {
+		background-color: var(--bg-tertiary);
+		border-color: var(--border-default);
+	}
+
+	.grade-unknown .grade-letter,
+	.category-score-value.text-muted {
+		color: var(--text-muted);
+	}
+
+	.category-unavailable {
+		font-size: var(--text-sm);
 	}
 
 	.overall-score-info {

@@ -50,6 +50,20 @@ describe('FilterInput component', () => {
 		expect(input.value).toBe('tcp.port == 80');
 	});
 
+	it('reports each edit and preset through onchange (#65)', async () => {
+		const onchange = vi.fn();
+		render(FilterInput, { props: { onsubmit: vi.fn(), onchange } });
+
+		await fireEvent.input(screen.getByPlaceholderText(/enter display filter/i), {
+			target: { value: ' dns ' },
+		});
+		expect(onchange).toHaveBeenLastCalledWith('dns');
+
+		await fireEvent.click(screen.getByRole('button', { name: /presets/i }));
+		await fireEvent.click(screen.getByText('ARP traffic'));
+		expect(onchange).toHaveBeenLastCalledWith('arp');
+	});
+
 	it('calls onsubmit with the filter text when Apply is clicked', async () => {
 		const onsubmit = vi.fn();
 		render(FilterInput, { props: { onsubmit } });

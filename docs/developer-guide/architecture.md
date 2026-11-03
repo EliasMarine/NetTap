@@ -18,7 +18,7 @@ Router ─────────────────┤  └────�
                         │    ┌────────────┼────────────┐             │
                         │    │            │            │             │
                         │    ▼            ▼            ▼             │
-                        │  Zeek       Suricata      Arkime           │
+                        │  Zeek       Suricata      netsniff-ng      │
                         │  (metadata)  (IDS)       (PCAP)           │
                         │    │            │            │             │
                         │    ▼            ▼            ▼             │
@@ -79,7 +79,6 @@ Three capture engines run simultaneously with `network_mode: host` to directly a
 | **Zeek** | `nettap-zeek-live` | Generates structured metadata logs for every connection |
 | **Suricata** | `nettap-suricata-live` | IDS alerting using Emerging Threats ruleset |
 | **netsniff-ng** | `nettap-pcap-capture` | Raw PCAP file capture |
-| **Arkime** | `nettap-arkime-live` | Full packet capture with session indexing |
 
 ### 2. Log Collection
 
@@ -105,9 +104,11 @@ Enriched events are indexed into OpenSearch.
 
 **OpenSearch** (`nettap-opensearch`) stores all indexed data:
 
-- `zeek-*` indices --- connection metadata
-- `suricata-*` indices --- IDS alerts and protocol logs
-- `arkime-*` / `pcap-*` indices --- packet capture session metadata
+- `arkime_sessions3-YYMMDD` --- one daily index holding every Zeek log and Suricata alert (Malcolm's name; hot tier, deleted after `RETENTION_HOT` days)
+- `malcolm_beats_*` --- host data, when present (hot tier)
+- `nettap-devices`, `nettap-changelog-*` --- NetTap's device registry and change log
+
+PCAP is not indexed: netsniff-ng writes files under `/opt/nettap/pcap`.
 
 ### 5. Visualization
 
@@ -141,7 +142,6 @@ Two visualization layers:
 │  ├── zeek-live           (Zeek metadata analysis)           │
 │  ├── suricata-live       (Suricata IDS)                     │
 │  ├── pcap-capture        (netsniff-ng raw capture)          │
-│  ├── arkime-live         (Arkime session indexer)           │
 │                                                              │
 │  INFRASTRUCTURE                                              │
 │  ├── redis               (Caching and queues)               │
@@ -172,7 +172,7 @@ opensearch (must be healthy first)
   └── nettap-web
 ```
 
-Capture containers (Zeek, Suricata, Arkime, pcap-capture) have no service dependencies --- they start immediately and write to shared volumes.
+Capture containers (Zeek, Suricata, pcap-capture) have no service dependencies --- they start immediately and write to shared volumes.
 
 ---
 
@@ -180,11 +180,11 @@ Capture containers (Zeek, Suricata, Arkime, pcap-capture) have no service depend
 
 ### Three-Tier Model
 
-| Tier | Index Pattern | Data Type | Retention | Daily Size |
-|---|---|---|---|---|
-| Hot | `zeek-*` | Zeek metadata | 90 days | 300--800 MB |
-| Warm | `suricata-*` | Suricata alerts | 180 days | 10--50 MB |
-| Cold | `arkime-*`, `pcap-*` | Raw PCAP | 30 days | Variable |
+| Tier | Where | Data Type | Retention |
+|---|---|---|---|
+| Hot | `arkime_sessions3-*` (one daily index) | Zeek logs and Suricata alerts | 90 days (`RETENTION_HOT`) |
+| Warm | `suricata-*` | Separate Suricata indices; a Malcolm install creates none | 180 days (`RETENTION_WARM`) |
+| Cold | `/opt/nettap/pcap` files | Raw PCAP of all traffic | 30 days (`RETENTION_COLD`) and `PCAP_MAX_DISK_PCT` |
 
 ### Lifecycle
 

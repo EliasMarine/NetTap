@@ -955,3 +955,69 @@ class TestNvmeCliHealthAssessment:
         assert isinstance(serialized, str)
         assert status["device_type"] == "nvme"
         assert status["temperature_c"] == 38
+
+
+# =========================================================================
+# #96: an unreadable drive is unknown, never healthy
+# =========================================================================
+
+
+class TestUnreadableDriveIsUnknown:
+    @patch.object(SmartMonitor, "get_raw_data", return_value={})
+    def test_no_data_reports_unknown_health(self, _mock_get_raw):
+        monitor = SmartMonitor(device="/dev/sda")
+        metrics = monitor.get_metrics()
+        assert metrics.healthy is None
+        assert any("could not be read" in w for w in metrics.warnings)
+
+    @patch.object(SmartMonitor, "_sysfs_fallback", return_value={})
+    @patch.object(SmartMonitor, "get_raw_data")
+    def test_permission_denied_status_has_error(self, mock_get_raw, _sysfs):
+        # smartctl's JSON when it can't open the device: no smart_status at all
+        mock_get_raw.return_value = {
+            "smartctl": {
+                "exit_status": 2,
+                "messages": [
+                    {
+                        "string": "Smartctl open device: /dev/sda failed: Permission denied",
+                        "severity": "error",
+                    }
+                ],
+            },
+            "device": {"name": "/dev/sda"},
+        }
+        status = SmartMonitor(device="/dev/sda").get_status()
+        assert status["healthy"] is None
+        assert "could not be read" in status["error"]
+        json.dumps(status)
+
+    @patch.object(SmartMonitor, "get_raw_data")
+    def test_readable_drive_has_no_error(self, mock_get_raw, mock_smartctl_nvme):
+        mock_get_raw.return_value = mock_smartctl_nvme
+        status = SmartMonitor(device="/dev/nvme0n1").get_status()
+        assert status["healthy"] is True
+        assert "error" not in status
+
+
+def test_system_health_not_healthy_when_smart_unknown():
+    import asyncio
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from api.server import handle_system_health
+
+    app = web.Application()
+    app["start_time"] = 0.0
+    app["storage"] = MagicMock()
+    app["storage"].get_status.return_value = {"disk_usage_percent": 10.0}
+    app["smart"] = SmartMonitor(device="/dev/sda")
+    req = make_mocked_request("GET", "/api/system/health", app=app)
+    with (
+        patch.object(SmartMonitor, "get_raw_data", return_value={}),
+        patch.object(SmartMonitor, "_sysfs_fallback", return_value={}),
+    ):
+        resp = asyncio.run(handle_system_health(req))
+    body = json.loads(resp.body)
+    assert body["smart"]["healthy"] is None
+    assert body["healthy"] is False

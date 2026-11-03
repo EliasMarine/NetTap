@@ -63,9 +63,12 @@ export async function getInvestigations(
 	const query = buildQuery({ status: opts?.status, severity: opts?.severity });
 	const res = await fetch(`/api/investigations${query}`);
 
-	if (!res.ok) {
-		return { investigations: [] };
-	}
+	// OLD CODE START — #96: a failure read as "No Investigations"
+	// if (!res.ok) {
+	// 	return { investigations: [] };
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Investigations failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -87,21 +90,24 @@ export async function createInvestigation(data: {
 		body: JSON.stringify(data),
 	});
 
-	if (!res.ok) {
-		return {
-			id: '',
-			title: data.title,
-			description: data.description || '',
-			status: 'open',
-			severity: data.severity || 'medium',
-			created_at: '',
-			updated_at: '',
-			alert_ids: data.alert_ids || [],
-			device_ips: data.device_ips || [],
-			notes: [],
-			tags: data.tags || [],
-		};
-	}
+	// OLD CODE START — #96: a failed create returned a made-up investigation, so it looked saved
+	// if (!res.ok) {
+	// 	return {
+	// 		id: '',
+	// 		title: data.title,
+	// 		description: data.description || '',
+	// 		status: 'open',
+	// 		severity: data.severity || 'medium',
+	// 		created_at: '',
+	// 		updated_at: '',
+	// 		alert_ids: data.alert_ids || [],
+	// 		device_ips: data.device_ips || [],
+	// 		notes: [],
+	// 		tags: data.tags || [],
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Creating the investigation failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -112,9 +118,13 @@ export async function createInvestigation(data: {
 export async function getInvestigation(id: string): Promise<Investigation | null> {
 	const res = await fetch(`/api/investigations/${encodeURIComponent(id)}`);
 
-	if (!res.ok) {
-		return null;
-	}
+	// OLD CODE START — #96: a failed request read the same as "no such investigation"
+	// if (!res.ok) {
+	// 	return null;
+	// }
+	// OLD CODE END
+	if (res.status === 404) return null;
+	if (!res.ok) throw new Error(`Investigation failed: HTTP ${res.status}`);
 
 	return res.json();
 }
@@ -291,13 +301,16 @@ export async function linkDevice(
 export async function getInvestigationStats(): Promise<InvestigationStats> {
 	const res = await fetch('/api/investigations/stats');
 
-	if (!res.ok) {
-		return {
-			total: 0,
-			by_status: {},
-			by_severity: {},
-		};
-	}
+	// OLD CODE START — #96: a failure read as zero investigations in every status
+	// if (!res.ok) {
+	// 	return {
+	// 		total: 0,
+	// 		by_status: {},
+	// 		by_severity: {},
+	// 	};
+	// }
+	// OLD CODE END
+	if (!res.ok) throw new Error(`Investigation stats failed: HTTP ${res.status}`);
 
 	return res.json();
 }

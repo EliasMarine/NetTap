@@ -156,6 +156,10 @@ jobs:
             dockerfile: docker/Dockerfile.tshark
           - image: cyberchef
             dockerfile: docker/Dockerfile.cyberchef
+          # Compiles and self-tests the RDRAND fix without pulling the 1.4 GB Malcolm base
+          - image: zeek-live
+            dockerfile: docker/Dockerfile.zeek-live
+            target: build
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -168,6 +172,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
           push: false
           tags: nettap/${{ matrix.image }}:ci
           cache-from: type=gha

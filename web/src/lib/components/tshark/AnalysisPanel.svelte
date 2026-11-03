@@ -18,6 +18,7 @@
 	// import ProtocolTree from './ProtocolTree.svelte';
 	// OLD CODE END
 	import PanelManager from './PanelManager.svelte';
+	import { getRawHex } from '$lib/utils/tshark-helpers';
 	import {
 		analyzePcap,
 		getTSharkStatus,
@@ -35,6 +36,7 @@
 	let outputFormat = $state<'json' | 'text'>('json');
 	let pcapFiles = $state<PcapFile[]>([]);
 	let pcapFilesLoading = $state(false);
+	let pcapFilesFailed = $state(false); // #96: a failed listing is not "no PCAP files"
 	let showPcapPicker = $state(false);
 
 	let loading = $state(false);
@@ -48,6 +50,7 @@
 
 	let status = $state<TSharkStatus | null>(null);
 	let statusLoading = $state(true);
+	let statusFailed = $state(false); // #96: a failed check is not "TShark Unavailable"
 
 	// ---- Read URL query params + auto-analyze on mount ----
 	let autoAnalyzeDone = false;
@@ -70,17 +73,27 @@
 	async function autoAnalyze(connTimestamp: string | null) {
 		// Load PCAP files, pick best match, run analysis
 		pcapFilesLoading = true;
+		pcapFilesFailed = false;
 		try {
 			const res = await getPcapFiles();
 			pcapFiles = res.pcaps;
 		} catch {
 			pcapFiles = [];
+			pcapFilesFailed = true;
 		} finally {
 			pcapFilesLoading = false;
 		}
 
+		if (pcapFilesFailed) {
+			errorMessage = "Couldn't load the PCAP file list: the request failed.";
+			return;
+		}
+
 		if (pcapFiles.length === 0) {
-			errorMessage = 'No PCAP files found. Arkime may not be capturing packets, or the PCAP volume is empty.';
+			// OLD CODE START — 2026-11-02: netsniff (pcap-capture) writes the PCAP; Arkime is off (#44)
+			// errorMessage = 'No PCAP files found. Arkime may not be capturing packets, or the PCAP volume is empty.';
+			// OLD CODE END
+			errorMessage = 'No PCAP files found. PCAP capture may be turned off, or the PCAP volume is empty.';
 			return;
 		}
 
@@ -95,9 +108,11 @@
 
 		// Try up to 5 PCAP files (closest first) until we find matching packets
 		const maxAttempts = Math.min(5, sortedPcaps.length);
+		let cutShort = 0; // searches TShark stopped before the end of the file
 		for (let i = 0; i < maxAttempts; i++) {
 			pcapPath = sortedPcaps[i].path;
 			await runAnalysis();
+			if (result?.truncated) cutShort++;
 
 			if (result && result.packet_count > 0) {
 				return; // Found matching packets
@@ -105,8 +120,15 @@
 		}
 
 		// If no packets matched with the filter, show helpful message
+		// OLD CODE START — 2026-11-03: said "none found" when the searches had stopped early
+		// if (result && result.packet_count === 0 && displayFilter) {
+		// 	errorMessage = `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
+		// }
+		// OLD CODE END
 		if (result && result.packet_count === 0 && displayFilter) {
-			errorMessage = `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
+			errorMessage = cutShort
+				? `No packets matching filter "${displayFilter}" in the parts of ${maxAttempts} PCAP file(s) TShark searched: it stopped before the end of ${cutShort} of them, so matches may be further in. Try a narrower filter.`
+				: `No packets matching filter "${displayFilter}" found across ${maxAttempts} PCAP file(s). The connection may have been captured in a different file, or try a broader filter.`;
 		}
 	}
 
@@ -117,10 +139,12 @@
 
 	async function fetchStatus() {
 		statusLoading = true;
+		statusFailed = false;
 		try {
 			status = await getTSharkStatus();
 		} catch {
 			status = null;
+			statusFailed = true;
 		} finally {
 			statusLoading = false;
 		}
@@ -141,6 +165,8 @@
 				display_filter: displayFilter || undefined,
 				max_packets: maxPackets,
 				output_format: outputFormat,
+				// raw bytes for the hex dump pane (frame_raw); only JSON carries them per packet
+				include_hex: outputFormat === 'json',
 			});
 
 			if (res.error) {
@@ -182,12 +208,14 @@
 			return;
 		}
 		pcapFilesLoading = true;
+		pcapFilesFailed = false;
 		showPcapPicker = true;
 		try {
 			const res = await getPcapFiles();
 			pcapFiles = res.pcaps;
 		} catch {
 			pcapFiles = [];
+			pcapFilesFailed = true;
 		} finally {
 			pcapFilesLoading = false;
 		}
@@ -224,6 +252,11 @@
 				<span class="badge badge-success">
 					<span class="status-dot online"></span>
 					TShark {status.version}
+				</span>
+			{:else if statusFailed}
+				<span class="badge" title="The status request failed">
+					<span class="status-dot checking"></span>
+					TShark status unknown
 				</span>
 			{:else}
 				<span class="badge badge-danger">
@@ -276,6 +309,8 @@
 					<div class="pcap-picker">
 						{#if pcapFilesLoading}
 							<div class="pcap-picker-loading">Loading PCAP files...</div>
+						{:else if pcapFilesFailed}
+							<div class="pcap-picker-empty">Couldn't load the PCAP file list: the request failed.</div>
 						{:else if pcapFiles.length === 0}
 							<div class="pcap-picker-empty">No PCAP files found in /opt/nettap/pcap</div>
 						{:else}
@@ -353,7 +388,15 @@
 			<!-- Display filter -->
 			<div class="form-group filter-group">
 				<span class="label">Display Filter</span>
+				<!-- OLD CODE START — Analyze ignored a filter typed but not yet applied, and showed unfiltered packets (#65)
 				<FilterInput onsubmit={handleFilterSubmit} disabled={loading} value={displayFilter} />
+				OLD CODE END -->
+				<FilterInput
+					onsubmit={handleFilterSubmit}
+					onchange={(f) => (displayFilter = f)}
+					disabled={loading}
+					value={displayFilter}
+				/>
 			</div>
 		</div>
 	</div>
@@ -371,9 +414,19 @@
 			<span class="badge badge-accent">
 				{result.packet_count} packet{result.packet_count !== 1 ? 's' : ''}
 			</span>
+			<!-- OLD CODE START — 2026-11-03: a filter search cut short at its time limit with 0 found
+			     read "more packets available" (batch 47's TShark check)
 			{#if result.truncated}
 				<span class="badge badge-warning">
 					Truncated — more packets available
+				</span>
+			{/if}
+			OLD CODE END -->
+			{#if result.truncated}
+				<span class="badge badge-warning">
+					{result.packet_count === 0
+						? 'Stopped before the end of the file: matches may be further in'
+						: 'Not the whole file: more packets may match'}
 				</span>
 			{/if}
 			{#if result.tshark_version}
@@ -407,6 +460,7 @@
 			selectedPacket={selectedPacket}
 			{selectedPacketIndex}
 			onPacketSelect={handlePacketSelect}
+			rawHex={getRawHex(selectedPacket)}
 		/>
 	</div>
 </div>

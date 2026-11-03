@@ -6,8 +6,10 @@ This service only monitors the container health and provides
 pre-built recipe URLs for common forensic operations.
 """
 
+import base64
 import logging
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import aiohttp
 
@@ -15,6 +17,9 @@ logger = logging.getLogger("nettap.cyberchef")
 
 CYBERCHEF_CONTAINER = "nettap-cyberchef"
 CYBERCHEF_INTERNAL_URL = "http://nettap-cyberchef:8443"
+# Browser links go through nginx (docker/nginx.conf "location /cyberchef/"); the
+# internal URL only resolves inside the Docker network.
+CYBERCHEF_PUBLIC_PATH = "/cyberchef"
 
 
 @dataclass
@@ -95,8 +100,13 @@ BUILTIN_RECIPES: list[CyberChefRecipe] = [
 class CyberChefService:
     """Manages CyberChef container status and recipe helpers."""
 
-    def __init__(self, base_url: str = CYBERCHEF_INTERNAL_URL):
+    def __init__(
+        self,
+        base_url: str = CYBERCHEF_INTERNAL_URL,
+        public_path: str = CYBERCHEF_PUBLIC_PATH,
+    ):
         self.base_url = base_url
+        self.public_path = public_path
 
     async def is_available(self) -> dict:
         """Check if the CyberChef container is running via its HTTP health endpoint."""
@@ -131,19 +141,41 @@ class CyberChefService:
                 "name": r.name,
                 "description": r.description,
                 "category": r.category,
-                "url": f"{self.base_url}/{r.recipe_fragment}",
+                # the web page posts this back to /api/cyberchef/url
+                "recipe_fragment": r.recipe_fragment,
+                # OLD CODE START — 2026-11-02: internal URL, unreachable from the browser
+                # "url": f"{self.base_url}/{r.recipe_fragment}",
+                # OLD CODE END
+                "url": f"{self.public_path}/{r.recipe_fragment}",
             }
             for r in recipes
         ]
 
-    def build_recipe_url(self, recipe_fragment: str, input_data: str = "") -> str:
-        """Build a full CyberChef URL with a recipe and optional input data."""
-        url = f"{self.base_url}/{recipe_fragment}"
-        if input_data:
-            # CyberChef accepts input via the &input= parameter (base64 encoded)
-            import base64
+    # OLD CODE START — 2026-11-02: linked to the internal container URL (the browser
+    # iframe cannot load it) and appended padded, unescaped base64, which CyberChef
+    # drops ("=" splits its hash params) or garbles ("+" becomes a space).
+    # def build_recipe_url(self, recipe_fragment: str, input_data: str = "") -> str:
+    #     """Build a full CyberChef URL with a recipe and optional input data."""
+    #     url = f"{self.base_url}/{recipe_fragment}"
+    #     if input_data:
+    #         # CyberChef accepts input via the &input= parameter (base64 encoded)
+    #         import base64
+    #
+    #         encoded = base64.b64encode(input_data.encode()).decode()
+    #         if "&input=" not in url:
+    #             url += f"&input={encoded}"
+    #         else:
+    #             url = url.replace("&input=", f"&input={encoded}")
+    #     return url
+    # OLD CODE END
 
-            encoded = base64.b64encode(input_data.encode()).decode()
+    def build_recipe_url(self, recipe_fragment: str, input_data: str = "") -> str:
+        """Build a browser link (via the /cyberchef proxy) with a recipe and optional input."""
+        url = f"{self.public_path}/{recipe_fragment}"
+        if input_data:
+            # CyberChef reads &input= as unpadded base64, the form its own links use
+            raw = base64.b64encode(input_data.encode()).decode().rstrip("=")
+            encoded = quote(raw, safe="")
             if "&input=" not in url:
                 url += f"&input={encoded}"
             else:

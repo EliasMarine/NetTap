@@ -5,6 +5,7 @@ import {
 	getInternetStats,
 	triggerHealthCheck,
 } from './internet-health';
+import type { HealthCheck, HealthStats } from './internet-health';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -78,14 +79,10 @@ describe('internet-health API client', () => {
 			expect(result.latency_ms).toBe(12.5);
 		});
 
-		it('returns down status on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getInternetHealth();
-
-			expect(result.status).toBe('down');
-			expect(result.latency_ms).toBeNull();
-			expect(result.packet_loss_pct).toBe(100);
+			await expect(getInternetHealth()).rejects.toThrow('HTTP 502');
 		});
 
 		it('returns dns_resolve_ms from the check', async () => {
@@ -94,6 +91,26 @@ describe('internet-health API client', () => {
 			const result = await getInternetHealth();
 
 			expect(result.dns_resolve_ms).toBe(5.2);
+		});
+
+		// a ping that couldn't run is "unknown" with no loss figure, not 100% loss and down.
+		// Typed as HealthCheck so svelte-check fails on the old type (no null loss, no error field).
+		it("passes on an unmeasured check as unknown, with the daemon's reason", async () => {
+			const unmeasured: HealthCheck = {
+				timestamp: '2026-11-02T12:00:00Z',
+				latency_ms: null,
+				dns_resolve_ms: 4.1,
+				packet_loss_pct: null,
+				status: 'unknown',
+				error: 'ping: socket: Operation not permitted',
+			};
+			mockFetchSuccess(unmeasured);
+
+			const result = await getInternetHealth();
+
+			expect(result.status).toBe('unknown');
+			expect(result.packet_loss_pct).toBeNull();
+			expect(result.error).toBe('ping: socket: Operation not permitted');
 		});
 	});
 
@@ -120,12 +137,10 @@ describe('internet-health API client', () => {
 			expect(url).toContain('limit=100');
 		});
 
-		it('returns empty history on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getInternetHistory();
-
-			expect(result.history).toEqual([]);
+			await expect(getInternetHistory()).rejects.toThrow('HTTP 500');
 		});
 
 		it('returns multiple history entries', async () => {
@@ -152,15 +167,29 @@ describe('internet-health API client', () => {
 			expect(result.total_checks).toBe(1440);
 		});
 
-		it('returns zeroed stats on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
+			await expect(getInternetStats()).rejects.toThrow('HTTP 502');
+		});
+
+		// no measured checks yet: uptime and average loss are null, not 0% / 100%
+		it('passes on stats with nothing measured as nulls', async () => {
+			const unmeasured: HealthStats = {
+				...sampleStats,
+				avg_latency_ms: null,
+				p95_latency_ms: null,
+				min_latency_ms: null,
+				max_latency_ms: null,
+				avg_packet_loss_pct: null,
+				uptime_pct: null,
+			};
+			mockFetchSuccess(unmeasured);
 
 			const result = await getInternetStats();
 
-			expect(result.avg_latency_ms).toBe(0);
-			expect(result.uptime_pct).toBe(0);
-			expect(result.total_checks).toBe(0);
-			expect(result.avg_packet_loss_pct).toBe(100);
+			expect(result.uptime_pct).toBeNull();
+			expect(result.avg_packet_loss_pct).toBeNull();
 		});
 
 		it('includes p95 and min/max latency', async () => {
@@ -187,13 +216,10 @@ describe('internet-health API client', () => {
 			expect(result.latency_ms).toBe(12.5);
 		});
 
-		it('returns down status on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await triggerHealthCheck();
-
-			expect(result.status).toBe('down');
-			expect(result.packet_loss_pct).toBe(100);
+			await expect(triggerHealthCheck()).rejects.toThrow('HTTP 500');
 		});
 	});
 });

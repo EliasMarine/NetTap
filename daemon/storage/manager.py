@@ -23,6 +23,8 @@ from typing import Optional
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage.exact_terms import ExactTermsOpenSearch
+
 from api.capture_control import (
     CONTAINER_NAME as CAPTURE_CONTAINER,
     DEFAULT_ENV_FILE,
@@ -116,6 +118,24 @@ _TIER_PREFIXES = {
 }
 
 
+_DEFAULT_PCAP_MAX_DISK_PCT = 25.0
+
+
+def _pcap_cap_fraction() -> float:
+    """PCAP_MAX_DISK_PCT (0-100, 0 = no cap) as a fraction of the disk."""
+    raw = os.environ.get("PCAP_MAX_DISK_PCT", "")
+    try:
+        pct = float(raw) if raw.strip() else _DEFAULT_PCAP_MAX_DISK_PCT
+    except ValueError:
+        pct = -1.0
+    if not 0 <= pct <= 100:
+        logger.warning(
+            "Ignoring PCAP_MAX_DISK_PCT=%r; using %s%%", raw, _DEFAULT_PCAP_MAX_DISK_PCT
+        )
+        pct = _DEFAULT_PCAP_MAX_DISK_PCT
+    return pct / 100
+
+
 @dataclass
 class RetentionConfig:
     """Configuration for tiered retention policies and disk thresholds."""
@@ -123,6 +143,9 @@ class RetentionConfig:
     hot_days: int = 90  # Zeek metadata retention (days)
     warm_days: int = 180  # Suricata alert retention (days)
     cold_days: int = 30  # Raw PCAP / Arkime retention (days)
+    # Owner decision 2026-11-02: full capture, but PCAP may use at most this share
+    # of the disk; the oldest files go first (tracking #37). 0 = no cap.
+    pcap_max_disk_fraction: float = field(default_factory=_pcap_cap_fraction)
     disk_threshold: float = 0.80  # Trigger pruning at 80%
     emergency_threshold: float = 0.90  # Aggressive pruning at 90%
     critical_threshold: float = 0.95  # Stop capture at 95%
@@ -182,6 +205,8 @@ class StorageManager:
 
         # C3: Track whether ILM policy has been verified this session
         self._ilm_verified: bool = False
+        # #96: whether OpenSearch took the exact-counts setting (#90); retried each cycle
+        self._exact_counts: bool = False
 
         # Track last prune cycle timestamp for health status reporting
         self._last_prune_at: str | None = None
@@ -235,7 +260,10 @@ class StorageManager:
         if http_auth:
             kwargs["http_auth"] = http_auth
 
-        return OpenSearch(**kwargs)
+        # OLD CODE START — #93: terms top lists merged across daily indices lost counts
+        # return OpenSearch(**kwargs)
+        # OLD CODE END
+        return ExactTermsOpenSearch(**kwargs)
 
     # ------------------------------------------------------------------
     # Disk usage
@@ -264,16 +292,22 @@ class StorageManager:
           - creation_date: ISO-8601 creation date string or None
           - tier: one of "hot", "warm", "cold", "unknown"
           - parsed_date: datetime extracted from index name or None
+
+        Raises:
+            OpenSearchException: if OpenSearch can't be asked (not "no indices").
         """
-        try:
-            raw = self._client.cat.indices(
-                format="json",
-                h="index,store.size,pri.store.size,creation.date.string",
-                s="index",
-            )
-        except OpenSearchException as exc:
-            logger.error("Failed to list indices from OpenSearch: %s", exc)
-            return []
+        # OLD CODE START — #96: a failed request read as "no indices" (0 on the page)
+        # try:
+        #     raw = self._client.cat.indices(...)
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to list indices from OpenSearch: %s", exc)
+        #     return []
+        # OLD CODE END
+        raw = self._client.cat.indices(
+            format="json",
+            h="index,store.size,pri.store.size,creation.date.string",
+            s="index",
+        )
 
         indices: list[dict] = []
         for entry in raw:
@@ -419,7 +453,11 @@ class StorageManager:
         Returns the number of indices deleted.
         """
         with self._cleanup_lock:
-            indices = self.list_indices()
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                logger.error("Failed to list indices from OpenSearch: %s", exc)
+                return 0
             if not indices:
                 logger.debug("No indices found; nothing to prune")
                 return 0
@@ -488,7 +526,11 @@ class StorageManager:
         )
 
         with self._cleanup_lock:
-            indices = self.list_indices()
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                logger.error("Failed to list indices from OpenSearch: %s", exc)
+                return 0
             if not indices:
                 logger.warning("No indices available for emergency pruning")
                 return 0
@@ -728,6 +770,46 @@ class StorageManager:
                 "Deleted %d PCAP files older than %d days",
                 deleted,
                 self.config.cold_days,
+            )
+        return deleted
+
+    def prune_pcaps_over_cap(self) -> int:
+        """Delete the oldest PCAP until all PCAP fits in its share of the disk.
+
+        The newest file is never deleted: netsniff may still be writing it.
+        Returns the number of PCAP files deleted.
+        """
+        fraction = self.config.pcap_max_disk_fraction
+        if fraction <= 0:
+            return 0
+        try:
+            cap = int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
+        except OSError as exc:
+            logger.error(
+                "Cannot size the PCAP disk at %s: %s", self.config.pcap_dir, exc
+            )
+            return 0
+
+        deleted = 0
+        with self._cleanup_lock:
+            pcaps = self._pcaps_oldest_first()
+            total = sum(st.st_size for _, st in pcaps)
+            for pcap_file, stat in pcaps[:-1]:
+                if total <= cap:
+                    break
+                try:
+                    self._unlink_pcap(pcap_file)
+                except OSError as exc:
+                    logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
+                    continue
+                total -= stat.st_size
+                deleted += 1
+
+        if deleted:
+            logger.info(
+                "Deleted %d oldest PCAP files to keep PCAP under %.0f%% of the disk",
+                deleted,
+                fraction * 100,
             )
         return deleted
 
@@ -1037,6 +1119,10 @@ class StorageManager:
                 http_auth=self._http_auth,
             )
             self._ilm_verified = True
+            # OLD CODE START — #96: tried once; a failure was only logged and never retried
+            # self._exact_aggregation_counts()
+            # OLD CODE END
+            self._keep_ism_history_single_copy()
 
             # Log summary
             for name, status in results.items():
@@ -1049,11 +1135,62 @@ class StorageManager:
                 else:
                     logger.info("ILM policy '%s': %s", name, status)
 
+            # The Settings health card reads this record; before, only a retention
+            # save wrote it, so a box that never saved showed "Out of sync" forever.
+            clean = not any(str(v).startswith("error") for v in results.values())
+            config_manager = getattr(self, "_retention_config_manager", None)
+            if clean and config_manager is not None:
+                try:
+                    config_manager.mark_ilm_applied(results)
+                except Exception as exc:  # the policies are applied either way
+                    logger.warning("Could not record ILM status: %s", exc)
+
             return results
 
         except Exception as exc:
             logger.error("ILM policy verification failed: %s", exc)
             return {"_error": f"error: {exc}"}
+
+    def _exact_aggregation_counts(self) -> None:
+        """Turn off concurrent segment search (#90).
+
+        OpenSearch 3.x defaults it to "auto", which splits each shard into up to 4 slices
+        for aggregations, and a terms top-N then counts like 4 shards: on the G11 a
+        device's top destinations read 106 for 112 and a top destination could go missing.
+        Every page's top lists come from terms aggregations, so they must count exactly.
+        Sets ``_exact_counts`` once OpenSearch takes it; run_cycle retries until then.
+        """
+        try:
+            self._client.cluster.put_settings(
+                body={"persistent": {"search.concurrent_segment_search.mode": "none"}}
+            )
+            self._exact_counts = True
+        except Exception as exc:
+            logger.warning("Could not turn off concurrent segment search: %s", exc)
+
+    def _keep_ism_history_single_copy(self) -> None:
+        """Stop ISM's history index asking for a replica.
+
+        NetTap is a single-node cluster, so a replica can never be placed and
+        the cluster reports yellow even though every shard is healthy.
+        """
+        try:
+            self._client.cluster.put_settings(
+                body={
+                    "persistent": {
+                        "plugins.index_state_management.history.number_of_replicas": 0
+                    }
+                }
+            )
+            # History indices created before the setting keep their replica count
+            self._client.indices.put_settings(
+                index=".opendistro-ism-managed-index-history-*",
+                body={"index": {"number_of_replicas": 0}},
+                expand_wildcards="all",
+                allow_no_indices=True,
+            )
+        except Exception as exc:
+            logger.warning("Could not set ISM history replicas to 0: %s", exc)
 
     # ------------------------------------------------------------------
     # C4: Per-tier disk accounting
@@ -1145,19 +1282,23 @@ class StorageManager:
         cutoff = now - timedelta(days=older_than_days)
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Get indices with date parsing
+        # Get indices with date parsing (a failed request raises: no "nothing to delete")
         indices = self.list_indices()
 
         # Get per-index byte sizes from stats API
         index_sizes: dict[str, int] = {}
-        try:
-            stats = self._client.indices.stats(metric="store")
-            for idx_name, idx_data in stats.get("indices", {}).items():
-                index_sizes[idx_name] = (
-                    idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
-                )
-        except OpenSearchException as exc:
-            logger.error("Failed to get index stats for cleanup preview: %s", exc)
+        # OLD CODE START — #96: a failed stats request previewed every index as 0 bytes
+        # try:
+        #     stats = self._client.indices.stats(metric="store")
+        #     ...
+        # except OpenSearchException as exc:
+        #     logger.error("Failed to get index stats for cleanup preview: %s", exc)
+        # OLD CODE END
+        stats = self._client.indices.stats(metric="store")
+        for idx_name, idx_data in stats.get("indices", {}).items():
+            index_sizes[idx_name] = (
+                idx_data.get("total", {}).get("store", {}).get("size_in_bytes", 0)
+            )
 
         # Filter indices older than cutoff, protect today
         target_indices = []
@@ -1257,8 +1398,29 @@ class StorageManager:
             cutoff = now - timedelta(days=older_than_days)
             today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            # Get indices
-            indices = self.list_indices()
+            deleted_indices = 0
+            deleted_pcaps = 0
+            freed_bytes = 0
+            errors: list[str] = []
+
+            # OLD CODE START — #96: a failed index list read as "no indices" (deleted 0,
+            # no error) and failed stats read as 0 bytes freed, both silently
+            # # Get indices
+            # indices = self.list_indices()
+            # # Get byte sizes for reporting
+            # index_sizes: dict[str, int] = {}
+            # try:
+            #     stats = self._client.indices.stats(metric="store")
+            #     ...
+            # except OpenSearchException:
+            #     pass
+            # OLD CODE END
+            # PCAP cleanup still runs when OpenSearch is down; the errors say what didn't
+            try:
+                indices = self.list_indices()
+            except OpenSearchException as exc:
+                indices = []
+                errors.append(f"Could not list indices, none deleted: {exc}")
 
             # Get byte sizes for reporting
             index_sizes: dict[str, int] = {}
@@ -1270,13 +1432,11 @@ class StorageManager:
                         .get("store", {})
                         .get("size_in_bytes", 0)
                     )
-            except OpenSearchException:
-                pass
-
-            deleted_indices = 0
-            deleted_pcaps = 0
-            freed_bytes = 0
-            errors: list[str] = []
+            except OpenSearchException as exc:
+                if indices:
+                    errors.append(
+                        f"Could not read index sizes; freed space excludes indices: {exc}"
+                    )
 
             # Delete indices older than cutoff
             for idx in indices:
@@ -1524,6 +1684,7 @@ class StorageManager:
         Decision flow:
           1. Verify ILM policies on first run (C3)
           1b. Delete PCAP older than cold_days (MS-002)
+          1c. Delete the oldest PCAP while PCAP exceeds its disk share (#37)
           2. Check current disk usage and record for trending (C1)
           3. If above critical_threshold (95%) -> cascade with capture stop (C2)
           4. Elif above emergency_threshold (90%) -> cascade deletion (C2)
@@ -1537,9 +1698,14 @@ class StorageManager:
                 self.verify_ilm_policy()
             except Exception:
                 logger.exception("ILM policy verification failed on startup")
+        # #96: until OpenSearch takes it, top lists can undercount (#90)
+        if not getattr(self, "_exact_counts", False):
+            self._exact_aggregation_counts()
 
         # MS-002: age-based PCAP retention, before usage is measured
         self.prune_expired_pcaps()
+        # #37: size cap, so full capture can't take more than its share of the disk
+        self.prune_pcaps_over_cap()
 
         try:
             usage = self.check_disk_usage()
@@ -1637,30 +1803,46 @@ class StorageManager:
           - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
           - estimated_daily_gb: estimated daily ingest size
           - source: "daemon"
-          - index_counts, total_indices: index metadata
-        """
-        try:
-            usage_frac = self.check_disk_usage()
-            disk = shutil.disk_usage(self.config.check_path)
-            disk_total_bytes = disk.total
-            disk_used_bytes = disk.used
-            disk_free_bytes = disk.free
-            disk_total_gb = round(disk.total / (1024**3), 2)
-            disk_used_gb = round(disk.used / (1024**3), 2)
-            disk_free_gb = round(disk.free / (1024**3), 2)
-        except OSError:
-            usage_frac = -1.0
-            disk_total_bytes = 0
-            disk_used_bytes = 0
-            disk_free_bytes = 0
-            disk_total_gb = 0
-            disk_used_gb = 0
-            disk_free_gb = 0
+          - index_counts, total_indices: index metadata, or None with
+            ``indices_error`` when OpenSearch couldn't be asked
 
+        Raises:
+            OSError: if the disk can't be read (there are no figures to show).
+        """
+        # OLD CODE START — #96: an unreadable disk showed as 0 bytes at -100% used
+        # try:
+        #     usage_frac = self.check_disk_usage()
+        #     disk = shutil.disk_usage(self.config.check_path)
+        #     ...
+        # except OSError:
+        #     usage_frac = -1.0
+        #     disk_total_bytes = 0
+        #     ... (every disk figure 0)
+        # OLD CODE END
+        usage_frac = self.check_disk_usage()
+        disk = shutil.disk_usage(self.config.check_path)
+        disk_total_bytes = disk.total
+        disk_used_bytes = disk.used
+        disk_free_bytes = disk.free
+        disk_total_gb = round(disk.total / (1024**3), 2)
+        disk_used_gb = round(disk.used / (1024**3), 2)
+        disk_free_gb = round(disk.free / (1024**3), 2)
+
+        # OLD CODE START — #96: OpenSearch down read as 0 indices in every tier
+        # try:
+        #     indices = self.list_indices()
+        # except Exception:
+        #     indices = []
+        # OLD CODE END
+        # The disk figures still matter when OpenSearch is down (often because the
+        # disk is full), so only the index counts become unknown
+        indices_error: str | None = None
         try:
             indices = self.list_indices()
-        except Exception:
+        except Exception as exc:
+            logger.error("Storage status: could not list indices: %s", exc)
             indices = []
+            indices_error = f"Could not list indices: {exc}"
 
         # Count indices per tier
         tier_counts: dict[str, int] = {
@@ -1673,6 +1855,15 @@ class StorageManager:
             tier = idx.get("tier", "unknown")
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
+        unknown_indices = (
+            {
+                "index_counts": None,
+                "total_indices": None,
+                "indices_error": indices_error,
+            }
+            if indices_error
+            else {}
+        )
         return {
             # Absolute disk values (bytes) — required by frontend formatBytes()
             "disk_total_bytes": disk_total_bytes,
@@ -1708,10 +1899,13 @@ class StorageManager:
             },
             # ILM sync status (populated when verify_ilm_policy() has run)
             "ilm_synced": getattr(self, "_ilm_verified", False),
+            # #96: false while top-N counts may be approximate (concurrent segment search on)
+            "exact_counts": getattr(self, "_exact_counts", False),
             # Last prune cycle timestamp for health reporting
             "last_prune_at": self._last_prune_at,
             # ILM policy application status from RetentionConfigManager
             "ilm_status": self._get_ilm_status(),
+            **unknown_indices,
         }
 
     def _get_ilm_status(self) -> dict:

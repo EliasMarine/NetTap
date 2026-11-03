@@ -78,13 +78,10 @@ describe('devices API client', () => {
 			expect(result.devices[0].manufacturer).toBe('Apple');
 		});
 
-		it('returns empty devices array on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getDevices();
-
-			expect(result.devices).toEqual([]);
-			expect(result.limit).toBe(100);
+			await expect(getDevices()).rejects.toThrow('HTTP 502');
 		});
 
 		it('passes sort, order, and limit parameters', async () => {
@@ -152,16 +149,10 @@ describe('devices API client', () => {
 			expect(result.device.bandwidth_series).toHaveLength(1);
 		});
 
-		it('returns empty device on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(502);
-
-			const result = await getDeviceDetail('192.168.1.100');
-
-			expect(result.device.ip).toBe('192.168.1.100');
-			expect(result.device.total_bytes).toBe(0);
-			expect(result.device.top_destinations).toEqual([]);
-			expect(result.device.dns_queries).toEqual([]);
-			expect(result.device.bandwidth_series).toEqual([]);
+			await expect(getDeviceDetail('192.168.1.100')).rejects.toThrow('HTTP 502');
 		});
 
 		it('passes time range parameters', async () => {
@@ -231,14 +222,10 @@ describe('devices API client', () => {
 			expect(result.connections).toHaveLength(1);
 		});
 
-		it('returns empty connections on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDeviceConnections('192.168.1.100');
-
-			expect(result.total).toBe(0);
-			expect(result.connections).toEqual([]);
-			expect(result.ip).toBe('192.168.1.100');
+			await expect(getDeviceConnections('192.168.1.100')).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes page and size parameters', async () => {
@@ -297,13 +284,10 @@ describe('devices API client', () => {
 			expect(result.categories[0].name).toBe('streaming');
 		});
 
-		it('returns empty categories on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDeviceCategories('192.168.1.100');
-
-			expect(result.categories).toEqual([]);
-			expect(result.ip).toBe('192.168.1.100');
+			await expect(getDeviceCategories('192.168.1.100')).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes time range parameters', async () => {
@@ -353,14 +337,10 @@ describe('devices API client', () => {
 			expect(result.alerts[0].signature).toBe('ET MALWARE Test');
 		});
 
-		it('returns empty alerts on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDeviceAlerts('192.168.1.100');
-
-			expect(result.total).toBe(0);
-			expect(result.alerts).toEqual([]);
-			expect(result.ip).toBe('192.168.1.100');
+			await expect(getDeviceAlerts('192.168.1.100')).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes time range and limit parameters', async () => {
@@ -402,13 +382,10 @@ describe('devices API client', () => {
 			expect(result.ports[1].suspicious).toBe(true);
 		});
 
-		it('returns empty ports on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDevicePorts('192.168.1.100');
-
-			expect(result.ports).toEqual([]);
-			expect(result.ip).toBe('192.168.1.100');
+			await expect(getDevicePorts('192.168.1.100')).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes time range parameters', async () => {
@@ -452,15 +429,10 @@ describe('devices API client', () => {
 			expect(result.connection_count).toBe(200);
 		});
 
-		it('returns zero-score fallback on HTTP error', async () => {
+		// #96: a fake-empty result on failure read as a real "none" or 0
+		it('throws on HTTP error so the page can say it failed', async () => {
 			mockFetchFailure(500);
-
-			const result = await getDeviceRiskScore('192.168.1.100');
-
-			expect(result.score).toBe(0);
-			expect(result.level).toBe('low');
-			expect(result.factors).toEqual([]);
-			expect(result.ip).toBe('192.168.1.100');
+			await expect(getDeviceRiskScore('192.168.1.100')).rejects.toThrow('HTTP 500');
 		});
 
 		it('passes time range parameters', async () => {

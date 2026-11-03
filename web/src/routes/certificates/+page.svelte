@@ -19,7 +19,13 @@
 
 	// State
 	let certificates = $state<Certificate[]>([]);
-	let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE START — 2026-11-01: stats now include expired_count
+	// let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE END
+	// OLD CODE START — 2026-11-02: null now means the stats couldn't be loaded (cards show a dash)
+	// let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE END
+	let stats = $state<CertStats | null>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
 	let issuerChanges = $state<IssuerChange[]>([]);
 	let loading = $state(true);
 	let statusFilter = $state('all');
@@ -81,32 +87,69 @@
 		loadData();
 	});
 
+	// OLD CODE START — #96: the getters returned [] on failure, read as "No certificates found"
+	// and no MITM warning; they now throw
+	// async function loadData() {
+	// 	loading = true;
+	// 	const [certsRes, statsRes, changesRes] = await Promise.all([
+	// 		getCertificates(),
+	// 		getCertStats(),
+	// 		getIssuerChanges(),
+	// 	]);
+	// 	certificates = certsRes.certificates;
+	// 	stats = statsRes;
+	// 	issuerChanges = changesRes.changes;
+	// 	loading = false;
+	// }
+	//
+	// async function filterByStatus(filter: string) {
+	// 	statusFilter = filter;
+	// 	loading = true;
+	//
+	// 	if (filter === 'expiring') {
+	// 		const res = await getExpiringCerts(30);
+	// 		certificates = res.certificates;
+	// 	} else if (filter === 'self-signed') {
+	// 		const res = await getSelfSignedCerts();
+	// 		certificates = res.certificates;
+	// 	} else {
+	// 		const res = await getCertificates();
+	// 		certificates = res.certificates;
+	// 	}
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	let certsFailed = $state(false);
+	let changesFailed = $state(false);
+
 	async function loadData() {
 		loading = true;
-		const [certsRes, statsRes, changesRes] = await Promise.all([
+		const [certsRes, statsRes, changesRes] = await Promise.allSettled([
 			getCertificates(),
 			getCertStats(),
 			getIssuerChanges(),
 		]);
-		certificates = certsRes.certificates;
-		stats = statsRes;
-		issuerChanges = changesRes.changes;
+		certificates = certsRes.status === 'fulfilled' ? certsRes.value.certificates : [];
+		certsFailed = certsRes.status === 'rejected';
+		stats = statsRes.status === 'fulfilled' ? statsRes.value : null;
+		issuerChanges = changesRes.status === 'fulfilled' ? changesRes.value.changes : [];
+		changesFailed = changesRes.status === 'rejected';
 		loading = false;
 	}
 
 	async function filterByStatus(filter: string) {
 		statusFilter = filter;
 		loading = true;
-
-		if (filter === 'expiring') {
-			const res = await getExpiringCerts(30);
+		try {
+			const res =
+				filter === 'expiring' ? await getExpiringCerts(30)
+				: filter === 'self-signed' ? await getSelfSignedCerts()
+				: await getCertificates();
 			certificates = res.certificates;
-		} else if (filter === 'self-signed') {
-			const res = await getSelfSignedCerts();
-			certificates = res.certificates;
-		} else {
-			const res = await getCertificates();
-			certificates = res.certificates;
+			certsFailed = false;
+		} catch {
+			certificates = [];
+			certsFailed = true;
 		}
 		loading = false;
 	}
@@ -143,30 +186,37 @@
 <div class="certificates-page">
 	<div class="page-header">
 		<h2>TLS Certificate Inventory</h2>
+		<!-- OLD CODE START — 2026-11-01: added the TLS 1.3 visibility note
 		<p class="text-muted">Track observed certificates, detect expiry, self-signed usage, and issuer changes.</p>
+		OLD CODE END -->
+		<p class="text-muted">Track observed certificates, detect expiry, self-signed usage, and issuer changes. TLS 1.3 encrypts certificates, so only those sent in TLS 1.2 or older connections appear here.</p>
 	</div>
 
 	<!-- Hero Stats -->
 	<div class="stats-grid">
 		<div class="stat-card">
 			<span class="stat-label">Total Certificates</span>
-			<span class="stat-value">{stats.total_certs}</span>
+			<span class="stat-value">{stats?.total_certs ?? '—'}</span>
 		</div>
-		<div class="stat-card" class:stat-warning={stats.expiring_count > 0}>
+		<div class="stat-card" class:stat-warning={(stats?.expiring_count ?? 0) > 0}>
 			<span class="stat-label">Expiring (30d)</span>
-			<span class="stat-value">{stats.expiring_count}</span>
+			<span class="stat-value">{stats?.expiring_count ?? '—'}</span>
+			<span class="stat-hint">{stats ? `${stats.expired_count} already expired` : 'Counts unavailable'}</span>
 		</div>
-		<div class="stat-card" class:stat-info={stats.self_signed_count > 0}>
+		<div class="stat-card" class:stat-info={(stats?.self_signed_count ?? 0) > 0}>
 			<span class="stat-label">Self-Signed</span>
-			<span class="stat-value">{stats.self_signed_count}</span>
+			<span class="stat-value">{stats?.self_signed_count ?? '—'}</span>
 		</div>
-		<div class="stat-card" class:stat-critical={stats.issuer_changes_count > 0}>
+		<div class="stat-card" class:stat-critical={(stats?.issuer_changes_count ?? 0) > 0}>
 			<span class="stat-label">Issuer Changes</span>
-			<span class="stat-value">{stats.issuer_changes_count}</span>
+			<span class="stat-value">{stats?.issuer_changes_count ?? '—'}</span>
 		</div>
 	</div>
 
 	<!-- Issuer Change Alerts -->
+	{#if changesFailed}
+		<div class="alert alert-warning">Couldn't check for issuer changes (possible MITM): the request failed.</div>
+	{/if}
 	{#if issuerChanges.length > 0}
 		<div class="alert alert-danger">
 			<strong>Potential MITM Warning:</strong> {issuerChanges.length} domain{issuerChanges.length !== 1 ? 's have' : ' has'} multiple certificate issuers.
@@ -189,6 +239,10 @@
 	{#if loading}
 		<div class="card">
 			<p class="text-muted" style="padding: var(--space-lg);">Loading certificates...</p>
+		</div>
+	{:else if certsFailed}
+		<div class="card">
+			<p class="text-muted" style="padding: var(--space-lg);">Couldn't load certificates: the request failed.</p>
 		</div>
 	{:else if certificates.length === 0}
 		<div class="card">
@@ -293,8 +347,32 @@
 						<span class="detail-value">{selectedCert.validation_status || '-'}</span>
 					</div>
 					<div class="detail-row">
+						<span class="detail-label">Server Names</span>
+						<span class="detail-value mono">{selectedCert.server_names?.join(', ') || '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">SAN DNS</span>
+						<span class="detail-value mono" style="word-break: break-all;">{selectedCert.san_dns?.join(', ') || '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">Clients</span>
+						<span class="detail-value mono">{selectedCert.clients?.join(', ') || '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">Key</span>
+						<span class="detail-value">{selectedCert.key_type ? `${selectedCert.key_type} ${selectedCert.key_length ?? ''}` : '-'}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">First Seen</span>
+						<span class="detail-value">{formatDate(selectedCert.first_seen)}</span>
+					</div>
+					<div class="detail-row">
 						<span class="detail-label">Observed</span>
 						<span class="detail-value">{formatDate(selectedCert.timestamp)}</span>
+					</div>
+					<div class="detail-row">
+						<span class="detail-label">Sessions</span>
+						<span class="detail-value">{selectedCert.times_seen ?? '-'}</span>
 					</div>
 				</div>
 			</div>
@@ -323,6 +401,13 @@
 	}
 
 	/* stat-card, stat-value, stat-label inherit from global.css */
+
+	.stat-hint {
+		display: block;
+		font-size: var(--text-xs);
+		color: var(--text-dim);
+		margin-top: var(--space-xs);
+	}
 
 	.stat-warning .stat-value { color: var(--amber); }
 	.stat-info .stat-value { color: var(--accent); }

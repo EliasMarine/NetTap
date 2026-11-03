@@ -339,7 +339,7 @@ Target: Suricata alerts appear in < 10 seconds.
 ping -c 1 8.8.8.8
 
 # Check for alert in OpenSearch (within 10 seconds)
-curl -sf 'http://localhost:9200/suricata-*/_search?size=1&sort=timestamp:desc' \
+curl -sf 'http://localhost:9200/arkime_sessions3-*/_search?size=1&sort=@timestamp:desc&q=event.provider:suricata' \
   | python3 -m json.tool | head -20
 ```
 

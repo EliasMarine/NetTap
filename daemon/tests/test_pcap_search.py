@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+import services.pcap_search as pcap_search_mod
 from services.pcap_search import PcapSearchService
 
 
@@ -258,7 +259,10 @@ class TestFilterArgvBoundary:
         await service.preview(
             str(pcap_dir / "capture_001.pcap"), bpf_filter=_DISPLAY_FILTER
         )
-        _assert_filter_is_one_arg(recorded_argv)
+        # filtered preview runs `sh -c <constant script> sh <file> <filter> <limit>`
+        (argv,) = recorded_argv
+        assert argv[-2] == _DISPLAY_FILTER
+        assert _DISPLAY_FILTER not in argv[argv.index("-c") + 1]
 
     @pytest.mark.asyncio
     async def test_download_passes_filter_as_single_arg(self, service, recorded_argv):
@@ -268,3 +272,388 @@ class TestFilterArgvBoundary:
         finally:
             if path:
                 os.unlink(path)
+
+
+def _assert_every_exec_is_bounded(calls):
+    """Each docker exec into the tshark container runs under coreutils timeout, so a
+    daemon-side timeout can't leave tshark/mergecap running (G11, 2026-11-02)."""
+    execs = [argv for argv in calls if argv[:2] == ["docker", "exec"]]
+    assert execs, "expected at least one docker exec"
+    for argv in execs:
+        assert argv[3:6] == ["timeout", "-k", "5"], argv
+        assert int(argv[6]) > 0
+
+
+class TestNoOrphanedTshark:
+    @pytest.mark.asyncio
+    async def test_search_is_bounded(self, service, recorded_argv):
+        await service.search(_DISPLAY_FILTER)
+        _assert_every_exec_is_bounded(recorded_argv)
+
+    @pytest.mark.asyncio
+    async def test_preview_is_bounded(self, service, pcap_dir, recorded_argv):
+        await service.preview(str(pcap_dir / "capture_001.pcap"))
+        _assert_every_exec_is_bounded(recorded_argv)
+
+    @pytest.mark.asyncio
+    async def test_merge_and_filter_download_are_bounded(self, service, recorded_argv):
+        path = await service.download_filtered(_DISPLAY_FILTER)
+        try:
+            # two files in the fixture: mergecap, then the filter pass
+            assert any("mergecap" in argv for argv in recorded_argv)
+            _assert_every_exec_is_bounded([a for a in recorded_argv if "rm" not in a])
+        finally:
+            if path:
+                os.unlink(path)
+
+
+class _Proc:
+    def __init__(self, out=b"1\n2\n", rc=0):
+        self._out, self.returncode = out, rc
+
+    async def communicate(self):
+        return self._out, b""
+
+
+@pytest.fixture
+def fake_tshark(monkeypatch):
+    """create_subprocess_exec stub; set .result = (stdout, returncode)."""
+    state = type("S", (), {"result": (b"1\n2\n", 0), "calls": []})()
+
+    async def fake_exec(*argv, **kwargs):
+        state.calls.append(list(argv))
+        return _Proc(*state.result)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    return state
+
+
+class TestBackgroundSearch:
+    """A search over many large files runs as a job the page polls (G11, 2026-11-02)."""
+
+    @pytest.mark.asyncio
+    async def test_first_call_starts_job_and_returns_at_once(
+        self, service, fake_tshark
+    ):
+        first = await service.search_progress("dns")
+        assert first["files_total"] == 3
+        assert first["files_checked"] == 0
+        assert first["complete"] is False
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["complete"] is True
+        assert done["files_checked"] == 3
+        assert done["count"] == 3
+        assert {r["matching_packets"] for r in done["results"]} == {2}
+
+    @pytest.mark.asyncio
+    async def test_progress_reports_sizes_and_time_for_the_estimate(
+        self, service, fake_tshark
+    ):
+        # #137: the page estimates what's left from this box's own pace, not an assumed rate
+        first = await service.search_progress("dns")
+        sizes = sum(p["size_bytes"] for p in service.get_available_pcaps())
+        assert first["bytes_total"] == sizes > 0
+        assert first["bytes_checked"] == 0
+        assert first["seconds_elapsed"] >= 0
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["bytes_checked"] == done["bytes_total"]
+        assert (
+            done["seconds_elapsed"]
+            == (await service.search_progress("dns"))["seconds_elapsed"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_params_poll_the_same_job(self, service, fake_tshark):
+        await service.search_progress("dns")
+        task = service._search_task
+        await service.search_progress("dns")
+        assert service._search_task is task
+        await task
+
+    @pytest.mark.asyncio
+    async def test_new_params_replace_the_job(self, service, fake_tshark):
+        await service.search_progress("dns")
+        old = service._search_task
+        await service.search_progress("http")
+        assert service._search_task is not old
+        await asyncio.sleep(0)
+        assert old.cancelled() or old.done()
+        await service._search_task
+        assert (await service.search_progress("http"))["complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_out_of_memory_is_reported_as_such_not_as_a_timeout(
+        self, service, fake_tshark
+    ):
+        # #137: the kernel's KILL (137) before timeout's deadline: a 787 MB file in a 1 GiB container
+        fake_tshark.result = (b"", 137)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["timed_out"] == 0
+        assert done["failed"] == 3
+        assert done["error"].startswith("tshark ran out of memory reading ")
+        assert done["error"].endswith(" MB)")
+
+    @pytest.mark.asyncio
+    async def test_kill_at_timeouts_deadline_is_still_a_timeout(
+        self, service, fake_tshark, monkeypatch
+    ):
+        # timeout -k 5 sends KILL 5 s after its deadline: that 137 is a timeout
+        clock = iter(range(0, 100_000, 400))
+        monkeypatch.setattr(pcap_search_mod.time, "monotonic", lambda: next(clock))
+        fake_tshark.result = (b"", 137)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert (done["timed_out"], done["failed"]) == (3, 0)
+
+    @pytest.mark.asyncio
+    async def test_timed_out_files_are_reported_not_counted_as_no_match(
+        self, service, fake_tshark
+    ):
+        fake_tshark.result = (b"", 124)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["timed_out"] == 3
+        assert done["count"] == 0
+        assert done["complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_cut_short_file_keeps_its_matches(self, service, fake_tshark):
+        fake_tshark.result = (b"7\n9\n", 2)  # file still being written
+        assert await service._count_matching_packets("/x.pcap", "dns") == 2
+
+    @pytest.mark.asyncio
+    async def test_invalid_filter_raises(self, service):
+        with pytest.raises(ValueError, match="Invalid display filter"):
+            await service.search_progress("")
+
+    @pytest.mark.asyncio
+    async def test_no_files_is_complete_at_once(self, tmp_path):
+        svc = PcapSearchService(pcap_dir=str(tmp_path / "empty"))
+        result = await svc.search_progress("dns")
+        assert result["complete"] is True
+        assert result["files_total"] == 0
+
+
+class TestFilteredPreview:
+    @pytest.mark.asyncio
+    async def test_filtered_preview_stops_after_limit_matches_not_packets(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"5|t|1.1.1.1|2.2.2.2|eth:ip:udp:dns|80|query\n", 0)
+        packets = await service.preview(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="dns", limit=50
+        )
+        assert packets[0]["frame_number"] == "5"
+        (argv,) = fake_tshark.calls
+        assert argv[3:6] == ["timeout", "-k", "5"]  # timeout kills the whole pipeline
+        assert argv[7:9] == ["sh", "-c"]
+        assert argv[-3:] == ["/pcap/capture_001.pcap", "dns", "50"]
+        assert '| head -n "$3"' in argv[9]
+        assert (
+            "tshark -l -r" in argv[9]
+        )  # #78: flushed lines let tshark stop when head quits
+        assert "-c" not in argv[10:]
+
+    @pytest.mark.asyncio
+    async def test_unfiltered_preview_still_uses_packet_count(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"", 0)
+        await service.preview(str(pcap_dir / "capture_001.pcap"), limit=100)
+        (argv,) = fake_tshark.calls
+        assert argv[argv.index("-c") + 1] == "100"
+
+
+@pytest.mark.asyncio
+async def test_search_reads_run_at_lowest_priority(service, fake_tshark):
+    """A background search must not starve previews of the container's 0.5 CPU."""
+    await service.search_progress("dns")
+    await service._search_task
+    for argv in fake_tshark.calls:
+        assert argv[7:10] == ["nice", "-n", "19"], argv
+
+
+class TestPreviewTimedOut:
+    """A busy 3.5 GB file can hold no match in the part 0.5 CPU reads (G11, #52)."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_reported_with_partial_matches(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"5|t|a|b|eth:ip:udp:dns|80|q\n", 124)
+        result = await service.preview_with_status(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
+        )
+        assert result["timed_out"] is True
+        assert len(result["packets"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_no_matches(self, service, pcap_dir, fake_tshark):
+        fake_tshark.result = (b"", 124)
+        result = await service.preview_with_status(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
+        )
+        assert result == {"packets": [], "timed_out": True}
+
+    @pytest.mark.asyncio
+    async def test_normal_preview_is_not_timed_out(
+        self, service, pcap_dir, fake_tshark
+    ):
+        fake_tshark.result = (b"1|t|a|b|eth:ip:tcp|60|x\n", 0)
+        result = await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
+        assert result["timed_out"] is False
+
+
+class TestFailuresAreErrors:
+    """#96: a tshark/docker failure is an error, never "no packets" or "no match"."""
+
+    @pytest.mark.asyncio
+    async def test_failed_preview_raises(self, service, pcap_dir, fake_tshark):
+        fake_tshark.result = (b"", 1)  # e.g. docker: container is not running
+        with pytest.raises(RuntimeError):
+            await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
+
+    @pytest.mark.asyncio
+    async def test_preview_without_docker_raises(self, service, pcap_dir, monkeypatch):
+        async def no_docker(*argv, **kwargs):
+            raise FileNotFoundError("docker")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", no_docker)
+        with pytest.raises(RuntimeError, match="docker not found"):
+            await service.preview_with_status(str(pcap_dir / "capture_001.pcap"))
+
+    @pytest.mark.asyncio
+    async def test_failed_count_raises(self, service, fake_tshark):
+        fake_tshark.result = (b"", 4)  # tshark: invalid display filter
+        with pytest.raises(RuntimeError):
+            await service._count_matching_packets("/x.pcap", "dns")
+
+    @pytest.mark.asyncio
+    async def test_background_search_reports_unreadable_files(
+        self, service, fake_tshark
+    ):
+        fake_tshark.result = (b"", 4)
+        await service.search_progress("dns")
+        await service._search_task
+        done = await service.search_progress("dns")
+        assert done["complete"] is True
+        assert done["failed"] == 3
+        assert done["error"]
+        assert done["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_failed_download_raises_not_no_match(self, service, fake_tshark):
+        fake_tshark.result = (b"", 1)
+        with pytest.raises(RuntimeError):
+            await service.download_filtered("dns")
+
+
+# stderr of TShark 4.0.17 (the debian:bookworm container) refusing a filter, exit code 2
+_ROOT_WARNING = b'Running as user "root" and group "root". This could be dangerous.\n'
+_BAD_FILTER_STDERR = _ROOT_WARNING + (
+    b'tshark: Left side of "==" expression must be a field or function, not ip.srcc.\n'
+    b"    ip.srcc == 1\n    ^~~~~~~\n"
+)
+
+
+class TestRefusedFilterInPreview:
+    """#96: the preview pipes tshark into head, so a refused filter read as no packets."""
+
+    @pytest.fixture
+    def tshark_runs(self, monkeypatch):
+        """Pipe run prints nothing (rc 0, head's); then the filter check gets `check`."""
+        state = type("S", (), {"check": (0, _ROOT_WARNING), "calls": []})()
+
+        class P:
+            def __init__(self, rc, out, err):
+                self.returncode, self._out, self._err = rc, out, err
+
+            async def communicate(self):
+                return self._out, self._err
+
+        async def fake_exec(*argv, **kwargs):
+            state.calls.append(list(argv))
+            if "sh" in argv:
+                return P(0, b"", _BAD_FILTER_STDERR)
+            return P(state.check[0], b"", state.check[1])
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        return state
+
+    @pytest.mark.asyncio
+    async def test_refused_filter_raises_tshark_message(
+        self, service, pcap_dir, tshark_runs
+    ):
+        tshark_runs.check = (2, _BAD_FILTER_STDERR)
+        with pytest.raises(ValueError, match="not ip.srcc") as exc:
+            await service.preview_with_status(
+                str(pcap_dir / "capture_001.pcap"), bpf_filter="ip.srcc == 1"
+            )
+        assert "Running as user" not in str(exc.value)
+        check = tshark_runs.calls[1]
+        assert check[3:6] == ["timeout", "-k", "5"]
+        assert check[7:] == [
+            "tshark",
+            "-r",
+            "/pcap/capture_001.pcap",
+            "-Y",
+            "ip.srcc == 1",
+            "-c",
+            "1",
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_valid_filter_without_matches_is_empty(
+        self, service, pcap_dir, tshark_runs
+    ):
+        result = await service.preview_with_status(
+            str(pcap_dir / "capture_001.pcap"), bpf_filter="udp.port == 7"
+        )
+        assert result == {"packets": [], "timed_out": False}
+
+    @pytest.mark.asyncio
+    async def test_docker_failure_in_check_is_not_a_filter_error(
+        self, service, pcap_dir, tshark_runs
+    ):
+        tshark_runs.check = (
+            1,
+            b"Error response from daemon: container is not running\n",
+        )
+        with pytest.raises(RuntimeError, match="not running"):
+            await service.preview_with_status(
+                str(pcap_dir / "capture_001.pcap"), bpf_filter="dns"
+            )
+
+
+class TestContains:
+    """The PCAP directory check resolves ".." and symlinks and rejects sibling directories."""
+
+    def test_paths(self, tmp_path):
+        root = tmp_path / "pcap"
+        root.mkdir()
+        (tmp_path / "pcap-old").mkdir()
+        (root / "a.pcap").write_bytes(b"")
+        (root / "link.pcap").symlink_to(tmp_path / "pcap-old")
+        svc = PcapSearchService(pcap_dir=str(root))
+
+        assert svc.contains(str(root / "a.pcap"))
+        assert not svc.contains(
+            str(tmp_path / "pcap-old" / "x.pcap")
+        )  # sibling with the same prefix
+        assert not svc.contains(str(root / ".." / ".." / "etc" / "passwd"))
+        assert not svc.contains(str(root / "link.pcap"))  # symlink out of the directory
+
+    @pytest.mark.asyncio
+    async def test_preview_rejects_dot_dot(self, service, pcap_dir):
+        with pytest.raises(ValueError, match="within the configured"):
+            await service.preview(str(pcap_dir / ".." / ".." / "etc" / "passwd"))

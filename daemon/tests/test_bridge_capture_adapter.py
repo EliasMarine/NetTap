@@ -219,6 +219,20 @@ class TestGetHealthMapping(unittest.TestCase):
         self.assertTrue(d["watchdog_active"])
         self.assertAlmostEqual(d["latency_us"], 50.0)
 
+    def test_unmeasured_latency_stays_unmeasured(self):
+        """#96: no latency is passed on as None with its reason, never 0 µs."""
+        adapter = _make_adapter()
+        health_dict = self._make_health_dict(
+            latency_us=None, latency_note="Not measured"
+        )
+        d = self._run_health(adapter, health_dict).to_dict()
+        self.assertIsNone(d["latency_us"])
+        self.assertEqual(d["latency_note"], "Not measured")
+
+        missing = self._make_health_dict()
+        del missing["latency_us"]
+        self.assertIsNone(self._run_health(adapter, missing).to_dict()["latency_us"])
+
 
 class TestGetStats(unittest.TestCase):
     """Tests for get_stats() sysfs reading."""
