@@ -30,6 +30,7 @@
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Types & Constants
@@ -167,7 +168,10 @@
 			const va = sortValue(a, key);
 			const vb = sortValue(b, key);
 			if (typeof va === 'number' && typeof vb === 'number') return dir === 'asc' ? va - vb : vb - va;
-			return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+			// return dir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+			// OLD CODE END
+			return dir === 'asc' ? compareValues(va, vb) : compareValues(vb, va);
 		});
 	});
 

@@ -16,7 +16,21 @@
 		selectedIndex?: number;
 	}
 
+	import { TableSort } from '$lib/utils/table-sort.svelte';
+
 	let { packets, loading = false, onselect, selectedIndex = -1 }: Props = $props();
+
+	type PacketColumn = 'no' | 'time' | 'src' | 'dst' | 'protocol' | 'length' | 'info';
+	const COLUMNS: [PacketColumn, string, string][] = [
+		['no', 'No.', 'col-no'], ['time', 'Time', 'col-time'], ['src', 'Source', 'col-src'],
+		['dst', 'Destination', 'col-dst'], ['protocol', 'Protocol', 'col-proto'],
+		['length', 'Length', 'col-len'], ['info', 'Info', 'col-info'],
+	];
+	// capture order first, the way Wireshark opens a file
+	const packetSort = new TableSort<PacketColumn>('no', 'asc');
+	let sortedPackets = $derived(packetSort.apply(packets, (pkt, key) => col(pkt, key)));
+	// selectedIndex counts in the caller's (capture-order) list, not the sorted rows
+	let captureIndex = $derived(new Map(packets.map((pkt, i) => [pkt, i])));
 
 	// ---- Helpers to extract common columns from a TShark packet object ----
 	function col(pkt: any, key: string): string {
@@ -88,6 +102,7 @@
 		<table class="packet-table">
 			<thead>
 				<tr>
+					<!-- OLD CODE START — the packet columns couldn't be sorted (design system: every column sorts)
 					<th class="col-no">No.</th>
 					<th class="col-time">Time</th>
 					<th class="col-src">Source</th>
@@ -95,6 +110,12 @@
 					<th class="col-proto">Protocol</th>
 					<th class="col-len">Length</th>
 					<th class="col-info">Info</th>
+					OLD CODE END -->
+					{#each COLUMNS as [key, label, cls] (key)}
+						<th class="{cls} sortable" class:sorted={packetSort.key === key} onclick={() => packetSort.toggle(key)}>
+							{label}<span class="sort-arrow">{packetSort.arrow(key)}</span>
+						</th>
+					{/each}
 				</tr>
 			</thead>
 			<tbody>
@@ -112,15 +133,15 @@
 						</td>
 					</tr>
 				{:else}
-					{#each packets as pkt, idx}
+					{#each sortedPackets as pkt, idx}
 						<tr
 							class="packet-row"
-							class:selected={idx === selectedIndex}
+							class:selected={captureIndex.get(pkt) === selectedIndex}
 							class:even={idx % 2 === 0}
 							onclick={() => handleRowClick(pkt)}
 							onkeydown={(e) => handleRowKeydown(e, pkt)}
 							tabindex="0"
-							aria-selected={idx === selectedIndex}
+							aria-selected={captureIndex.get(pkt) === selectedIndex}
 						>
 							<td class="col-no mono">{col(pkt, 'no')}</td>
 							<td class="col-time mono">{col(pkt, 'time')}</td>
@@ -208,6 +229,10 @@
 		border-bottom: 1px solid var(--border-default);
 		user-select: none;
 	}
+
+	.packet-table th.sortable { cursor: pointer; }
+	.packet-table th.sortable:hover { color: var(--text-primary); }
+	.packet-table th.sorted { color: var(--accent); }
 
 	.packet-table td {
 		padding: var(--space-xs) var(--space-md);

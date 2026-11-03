@@ -22,6 +22,7 @@
 		SuspiciousEntry,
 		DeviceDnsEntry,
 	} from '$lib/api/dns';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -89,12 +90,16 @@
 	let domainSortDir = $state<'asc' | 'desc'>('desc');
 
 	// Sorting — NXDOMAIN
-	type NxSortKey = 'domain' | 'count';
+	// OLD CODE START — Clients and Types couldn't be sorted (design system: every column sorts)
+	// type NxSortKey = 'domain' | 'count';
+	// type DeviceSortKey = 'domain' | 'count';
+	// OLD CODE END
+	type NxSortKey = 'domain' | 'count' | 'clients';
 	let nxSortKey = $state<NxSortKey>('count');
 	let nxSortDir = $state<'asc' | 'desc'>('desc');
 
 	// Sorting — Device DNS
-	type DeviceSortKey = 'domain' | 'count';
+	type DeviceSortKey = 'domain' | 'count' | 'types';
 	let deviceSortKey = $state<DeviceSortKey>('count');
 	let deviceSortDir = $state<'asc' | 'desc'>('desc');
 
@@ -115,7 +120,10 @@
 			const key = domainSortKey;
 			list.sort((a, b) => {
 				const cmp = key === 'domain'
-					? a.domain.localeCompare(b.domain)
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// ? a.domain.localeCompare(b.domain)
+					// OLD CODE END
+					? compareValues(a.domain, b.domain)
 					: (a[key] as number) - (b[key] as number);
 				return domainSortDir === 'asc' ? cmp : -cmp;
 			});
@@ -128,21 +136,35 @@
 			const list = [...nxdomains];
 			list.sort((a, b) => {
 				const cmp = nxSortKey === 'domain'
-					? a.domain.localeCompare(b.domain)
-					: a.count - b.count;
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// ? a.domain.localeCompare(b.domain)
+					// OLD CODE END
+					? compareValues(a.domain, b.domain)
+					: nxSortKey === 'clients'
+						? a.clients.length - b.clients.length
+						: a.count - b.count;
 				return nxSortDir === 'asc' ? cmp : -cmp;
 			});
 			return list;
 		})()
 	);
 
+	function typesOf(entry: { query_types: { type: string }[] }): string {
+		return entry.query_types.map((t) => t.type).join(', ');
+	}
+
 	let sortedDeviceDns = $derived(
 		(() => {
 			const list = [...deviceDns];
 			list.sort((a, b) => {
 				const cmp = deviceSortKey === 'domain'
-					? a.domain.localeCompare(b.domain)
-					: a.count - b.count;
+					// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+					// ? a.domain.localeCompare(b.domain)
+					// OLD CODE END
+					? compareValues(a.domain, b.domain)
+					: deviceSortKey === 'types'
+						? compareValues(typesOf(a), typesOf(b))
+						: a.count - b.count;
 				return deviceSortDir === 'asc' ? cmp : -cmp;
 			});
 			return list;
@@ -601,7 +623,11 @@
 											Queries{sortIndicator(deviceSortKey === 'count', deviceSortDir)}
 										</button>
 									</th>
-									<th>Types</th>
+									<th>
+										<button class="sort-btn" class:active-sort={deviceSortKey === 'types'} onclick={() => toggleDeviceSort('types')}>
+											Types{sortIndicator(deviceSortKey === 'types', deviceSortDir)}
+										</button>
+									</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -613,7 +639,7 @@
 									>
 										<td class="mono domain-cell">{entry.domain}</td>
 										<td class="mono">{entry.count.toLocaleString()}</td>
-										<td class="mono">{entry.query_types.map((t) => t.type).join(', ')}</td>
+										<td class="mono">{typesOf(entry)}</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -654,7 +680,11 @@
 										Count{sortIndicator(nxSortKey === 'count', nxSortDir)}
 									</button>
 								</th>
-								<th>Clients</th>
+								<th>
+									<button class="sort-btn" class:active-sort={nxSortKey === 'clients'} onclick={() => toggleNxSort('clients')}>
+										Clients{sortIndicator(nxSortKey === 'clients', nxSortDir)}
+									</button>
+								</th>
 							</tr>
 						</thead>
 						<tbody>

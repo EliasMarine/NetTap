@@ -273,15 +273,28 @@ export async function getDeviceDetail(
 /**
  * Get paginated connections for a specific device.
  */
+/** Recent Connections columns the daemon sorts on (#140). */
+export type DeviceConnectionSort = 'time' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
+
 export async function getDeviceConnections(
 	ip: string,
-	opts: TimeRangeParams & { page?: number; size?: number } = {}
+	// OLD CODE START — #140: no sort, so the device page's connection columns couldn't sort
+	// opts: TimeRangeParams & { page?: number; size?: number } = {}
+	// OLD CODE END
+	opts: TimeRangeParams & {
+		page?: number;
+		size?: number;
+		sort?: DeviceConnectionSort;
+		order?: 'asc' | 'desc';
+	} = {}
 ): Promise<DeviceConnectionsResponse> {
 	const query = buildQuery({
 		from: opts.from,
 		to: opts.to,
 		page: opts.page,
 		size: opts.size,
+		sort: opts.sort,
+		order: opts.order,
 	});
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/connections${query}`);
 

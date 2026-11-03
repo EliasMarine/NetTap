@@ -17,6 +17,7 @@
 		PcapPacket,
 	} from '$lib/api/pcap';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
+	import { TableSort } from '$lib/utils/table-sort.svelte';
 	// OLD CODE START — getCaptureStatus fakes enabled: true when the request fails
 	// import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	// OLD CODE END
@@ -191,6 +192,22 @@
 			const cmp = resultSortKey === 'name' ? a.name.localeCompare(b.name) : (a[resultSortKey] as number | string) < (b[resultSortKey] as number | string) ? -1 : 1;
 			return resultSortDir === 'asc' ? cmp : -cmp;
 		})
+	);
+
+	type PacketSortKey = 'frame_number' | 'timestamp' | 'source' | 'destination' | 'protocol' | 'length' | 'info';
+	const PACKET_COLUMNS: [PacketSortKey, string][] = [
+		['frame_number', '#'], ['timestamp', 'Time'], ['source', 'Source'], ['destination', 'Destination'],
+		['protocol', 'Protocol'], ['length', 'Length'], ['info', 'Info'],
+	];
+	// capture order first; every field is text, compareValues orders "10" after "9"
+	const packetSort = new TableSort<PacketSortKey>('frame_number', 'asc');
+
+	function packetProtocol(pkt: PcapPacket): string {
+		return pkt.protocol.split(':').at(-1)?.toUpperCase() ?? pkt.protocol;
+	}
+
+	let sortedPreviewPackets = $derived(
+		packetSort.apply(previewPackets, (pkt, key) => (key === 'protocol' ? packetProtocol(pkt) : pkt[key]))
 	);
 
 	let maxMatchingPackets = $derived(Math.max(1, ...searchResults.map((r) => r.matching_packets)));
@@ -712,6 +729,7 @@
 				<table class="data-table packet-table">
 					<thead>
 						<tr>
+							<!-- OLD CODE START — the packet columns couldn't be sorted (design system: every column sorts)
 							<th>#</th>
 							<th>Time</th>
 							<th>Source</th>
@@ -719,16 +737,20 @@
 							<th>Protocol</th>
 							<th>Length</th>
 							<th>Info</th>
+							OLD CODE END -->
+							{#each PACKET_COLUMNS as [key, label] (key)}
+								<th><button class="sort-btn" class:active-sort={packetSort.key === key} onclick={() => packetSort.toggle(key)}>{label}{sortIndicator(packetSort.key === key, packetSort.dir)}</button></th>
+							{/each}
 						</tr>
 					</thead>
 					<tbody>
-						{#each previewPackets as pkt}
+						{#each sortedPreviewPackets as pkt}
 							<tr>
 								<td class="mono">{pkt.frame_number}</td>
 								<td class="mono nowrap">{pkt.timestamp}</td>
 								<td class="mono">{pkt.source}</td>
 								<td class="mono">{pkt.destination}</td>
-								<td class="mono proto-cell">{pkt.protocol.split(':').at(-1)?.toUpperCase() ?? pkt.protocol}</td>
+								<td class="mono proto-cell">{packetProtocol(pkt)}</td>
 								<td class="mono">{pkt.length}</td>
 								<td class="info-cell">{pkt.info}</td>
 							</tr>

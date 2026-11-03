@@ -20,6 +20,7 @@
 		type DhcpStatus,
 	} from '$api/dhcpGateway';
 	import { staticAddressHint } from '$lib/utils/dhcpSubnet';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	type View = 'loading' | 'error' | 'blocked' | 'ready' | 'enabled' | 'disabled';
 	type LeaseSortKey = 'hostname' | 'ip' | 'mac' | 'expires';
@@ -210,7 +211,10 @@
 		[...(status?.leases ?? [])].sort((a, b) => {
 			const av = sortValue(a, sortField);
 			const bv = sortValue(b, sortField);
-			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+			// const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+			// OLD CODE END
+			const cmp = compareValues(av, bv);
 			return sortDir === 'asc' ? cmp : -cmp;
 		})
 	);

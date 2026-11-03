@@ -4,6 +4,7 @@
 	import TopConsumers from '$lib/components/TopConsumers.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { compareValues } from '$lib/utils/table-sort.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -137,7 +138,10 @@
 			if (typeof aVal === 'number' && typeof bVal === 'number') {
 				cmp = aVal - bVal;
 			} else {
-				cmp = String(aVal).localeCompare(String(bVal));
+				// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+				// cmp = String(aVal).localeCompare(String(bVal));
+				// OLD CODE END
+				cmp = compareValues(aVal, bVal);
 			}
 
 			return sortDirection === 'asc' ? cmp : -cmp;

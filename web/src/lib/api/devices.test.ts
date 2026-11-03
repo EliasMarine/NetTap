@@ -241,6 +241,20 @@ describe('devices API client', () => {
 			expect(url).toContain('size=25');
 		});
 
+		// the device page sorts all of a device's connections on the daemon, not just one page
+		it('passes the sort column and order', async () => {
+			mockFetchSuccess({
+				from: '', to: '', ip: '192.168.1.100',
+				page: 1, size: 50, total: 0, total_pages: 0, connections: [],
+			});
+
+			await getDeviceConnections('192.168.1.100', { sort: 'dl', order: 'asc' });
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toContain('sort=dl');
+			expect(url).toContain('order=asc');
+		});
+
 		it('passes time range with pagination parameters', async () => {
 			mockFetchSuccess({
 				from: '', to: '', ip: '192.168.1.100',
