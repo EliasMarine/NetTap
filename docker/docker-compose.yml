@@ -415,7 +415,11 @@ services:
       EXTRA_TAGS: ""
     volumes:
       - zeek-live-logs:/zeek/live
-      - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+      # OLD CODE START — 2026-11-03 (#122): Zeek runs /usr/local/zeek/share/zeek/site/local.zeek
+      # (Malcolm's), so this mount was never read. Don't point it there: nettap.zeek is the
+      # first scaffold and loads extract-all-files, which writes every transferred file to disk.
+      # - ../config/zeek/nettap.zeek:/opt/zeek/share/zeek/site/local.zeek:ro
+      # OLD CODE END
       # Capture settings written by the daemon (capture.env) + their loader
       - /etc/nettap:/etc/nettap:ro
       - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
