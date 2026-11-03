@@ -746,6 +746,53 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(body["size"], 25)
 
     @unittest_run_loop
+    async def test_connections_sort_by_any_column(self):
+        """#140: Recent Connections were always newest first; each column sorts server-side."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        expected = {
+            "time": [{"@timestamp": {"order": "asc"}}],
+            "duration": [
+                {"length": {"order": "asc", "missing": "_last"}},
+                {"@timestamp": {"order": "desc"}},
+            ],
+            "destination": [
+                {"destination.ip": {"order": "asc", "missing": "_last"}},
+                {"destination.port": {"order": "asc", "missing": "_last"}},
+                {"@timestamp": {"order": "desc"}},
+            ],
+        }
+        for key, sort in expected.items():
+            resp = await self.client.request(
+                "GET", f"/api/devices/192.168.1.100/connections?sort={key}&order=asc"
+            )
+            self.assertEqual(resp.status, 200)
+            body = self.mock_client.search.call_args.kwargs["body"]
+            self.assertEqual(body["sort"], sort)
+
+    @unittest_run_loop
+    async def test_connections_default_sort_is_newest_first(self):
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request(
+            "GET", "/api/devices/192.168.1.100/connections"
+        )
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual(body["sort"], [{"@timestamp": {"order": "desc"}}])
+
+    @unittest_run_loop
+    async def test_connections_unknown_sort_is_refused(self):
+        for query in ("sort=_id", "sort=time&order=sideways"):
+            resp = await self.client.request(
+                "GET", f"/api/devices/192.168.1.100/connections?{query}"
+            )
+            self.assertEqual(resp.status, 400)
+        self.mock_client.search.assert_not_called()
+
+    @unittest_run_loop
     async def test_connections_size_capped(self):
         """Page size is capped at 200."""
         self.mock_client.search.return_value = {

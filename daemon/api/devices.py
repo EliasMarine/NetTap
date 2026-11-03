@@ -1040,8 +1040,33 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     return web.json_response({"device": device})
 
 
+# Recent Connections columns the device page can sort on, and the field behind each (#140).
+# `length` is the session's end minus start: the duration the page shows, on every record.
+_CONNECTION_SORT_FIELDS = {
+    "time": "@timestamp",
+    "destination": "destination.ip",
+    "proto": "network.transport",
+    "service": "network.protocol",
+    "duration": "length",
+    "dl": "destination.bytes",
+    "ul": "source.bytes",
+}
+
+
+def _connection_sort(sort_key: str, order: str) -> list[dict]:
+    """The OpenSearch sort for a column; newest first breaks ties so pages don't overlap."""
+    if sort_key == "time":
+        return [{"@timestamp": {"order": order}}]
+    clauses = [
+        {_CONNECTION_SORT_FIELDS[sort_key]: {"order": order, "missing": "_last"}}
+    ]
+    if sort_key == "destination":
+        clauses.append({"destination.port": {"order": order, "missing": "_last"}})
+    return [*clauses, {"@timestamp": {"order": "desc"}}]
+
+
 async def handle_device_connections(request: web.Request) -> web.Response:
-    """GET /api/devices/{ip}/connections?page=1&size=50&from=&to=
+    """GET /api/devices/{ip}/connections?page=1&size=50&from=&to=&sort=time&order=desc
 
     Returns paginated connection logs for a specific device IP, where the
     device appears as either source or destination.
@@ -1050,6 +1075,17 @@ async def handle_device_connections(request: web.Request) -> web.Response:
     from_ts, to_ts = _parse_time_range(request)
     page = _parse_int_param(request, "page", 1)
     size = min(_parse_int_param(request, "size", 50), 200)  # Cap at 200
+    sort_key = request.query.get("sort", "time")
+    order = request.query.get("order", "desc")
+    if sort_key not in _CONNECTION_SORT_FIELDS or order not in ("asc", "desc"):
+        return web.json_response(
+            {
+                "error": "sort must be one of "
+                + ", ".join(_CONNECTION_SORT_FIELDS)
+                + " and order asc or desc"
+            },
+            status=400,
+        )
     client = _get_client(request)
 
     offset = (page - 1) * size
@@ -1076,7 +1112,10 @@ async def handle_device_connections(request: web.Request) -> web.Response:
                 ]
             }
         },
-        "sort": [{"@timestamp": {"order": "desc"}}],
+        # OLD CODE START — #140: always newest first, so the page's columns couldn't sort
+        # "sort": [{"@timestamp": {"order": "desc"}}],
+        # OLD CODE END
+        "sort": _connection_sort(sort_key, order),
     }
 
     try:
