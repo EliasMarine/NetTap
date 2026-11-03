@@ -68,14 +68,20 @@
 		if (seconds < 0.001) return '<1ms';
 		if (seconds < 1) return (seconds * 1000).toFixed(0) + 'ms';
 		if (seconds < 60) return seconds.toFixed(1) + 's';
-		if (seconds < 3600) {
-			const m = Math.floor(seconds / 60);
-			const s = Math.round(seconds % 60);
-			return `${m}m ${s}s`;
-		}
-		const h = Math.floor(seconds / 3600);
-		const m = Math.round((seconds % 3600) / 60);
-		return `${h}h ${m}m`;
+		// OLD CODE START — split before rounding, so 30 min 59.6 s read "30m 60s" and 1 h 59.6 min "1h 60m"
+		// if (seconds < 3600) {
+		// 	const m = Math.floor(seconds / 60);
+		// 	const s = Math.round(seconds % 60);
+		// 	return `${m}m ${s}s`;
+		// }
+		// const h = Math.floor(seconds / 3600);
+		// const m = Math.round((seconds % 3600) / 60);
+		// return `${h}h ${m}m`;
+		// OLD CODE END
+		const total = Math.round(seconds);
+		if (total < 3600) return `${Math.floor(total / 60)}m ${total % 60}s`;
+		const totalMin = Math.round(seconds / 60);
+		return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
 	}
 
 	/** Country code to flag emoji (regional indicator symbols). */

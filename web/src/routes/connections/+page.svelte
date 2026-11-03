@@ -273,9 +273,13 @@
 		const seconds = ms / 1000;
 		if (seconds < 1) return `${ms}ms`;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
-		const mins = Math.floor(seconds / 60);
-		const secs = (seconds % 60).toFixed(0);
-		return `${mins}m ${secs}s`;
+		// OLD CODE START — split before rounding, so 30 min 59.6 s read "30m 60s"
+		// const mins = Math.floor(seconds / 60);
+		// const secs = (seconds % 60).toFixed(0);
+		// return `${mins}m ${secs}s`;
+		// OLD CODE END
+		const total = Math.round(seconds);
+		return `${Math.floor(total / 60)}m ${total % 60}s`;
 	}
 
 	function connState(conn: Connection): string {

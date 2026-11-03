@@ -209,6 +209,11 @@ describe('formatDuration', () => {
 		expect(formatDuration(3661)).toBe('1h 1m');
 	});
 
+	it('rounds before splitting, so a minute never reads 60s', () => {
+		expect(formatDuration(1859.6)).toBe('31m 0s');
+		expect(formatDuration(3599.6)).toBe('1h 0m');
+	});
+
 	it('handles zero', () => {
 		expect(formatDuration(0)).toBe('0\u00b5s');
 	});

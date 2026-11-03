@@ -417,7 +417,11 @@
 		if (diffMs < 1000) return `${Math.round(diffMs)}ms`;
 		const sec = diffMs / 1000;
 		if (sec < 60) return `${sec.toFixed(1)}s`;
-		return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+		// OLD CODE START — split before rounding, so 30 min 59.6 s read "30m 60s"
+		// return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+		// OLD CODE END
+		const total = Math.round(sec);
+		return `${Math.floor(total / 60)}m ${total % 60}s`;
 	}
 
 	function riskColor(level: string): string {
