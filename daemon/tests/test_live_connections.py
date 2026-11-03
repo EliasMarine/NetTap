@@ -187,7 +187,9 @@ class TestLiveConnectionTracker(unittest.TestCase):
         tracker = LiveConnectionTracker()
         source = _make_opensearch_hit()
         source["length"] = 21313625
-        self.assertAlmostEqual(tracker._format_connection(source)["duration"], 21313.625)
+        self.assertAlmostEqual(
+            tracker._format_connection(source)["duration"], 21313.625
+        )
 
     def test_format_connection_missing_fields(self):
         """Format connection should handle missing fields gracefully."""

@@ -55,7 +55,11 @@ def _epoch_ms(value: Any) -> float | None:
 def _duration_seconds(source: dict[str, Any], event: dict[str, Any]) -> float:
     """A session's duration: `length` (end minus start, ms) when present, else end minus start (#144)."""
     length = source.get("length")
-    if isinstance(length, (int, float)) and not isinstance(length, bool) and length >= 0:
+    if (
+        isinstance(length, (int, float))
+        and not isinstance(length, bool)
+        and length >= 0
+    ):
         return length / 1000
     start, end = _epoch_ms(event.get("start")), _epoch_ms(event.get("end"))
     if start is None or end is None or end < start:

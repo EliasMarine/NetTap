@@ -655,7 +655,9 @@ async def handle_connections(request: web.Request) -> web.Response:
         *_ZEEK_CONN_FILTERS,
     ]
     if state != "all":
-        filter_clauses.append({"terms": {"zeek.conn.conn_state": _CONN_STATE_CODES[state]}})
+        filter_clauses.append(
+            {"terms": {"zeek.conn.conn_state": _CONN_STATE_CODES[state]}}
+        )
 
     if search_query:
         must_clauses.append(
