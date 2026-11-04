@@ -728,7 +728,7 @@
 							<div class="mono dim">{sa.source_ip} → {sa.destination_ip}{#if sa.destination_port}:{sa.destination_port}{/if}</div>
 							<p class="sa-plain">{sa.assessment}</p>
 							<div class="actions">
-								<a href="/alerts?ip={deviceIp}" class="btn">Investigate</a>
+								<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="btn">Investigate</a>
 								<!-- OLD CODE START — removed the row before the daemon answered; a failed suppress was an unhandled rejection -->
 								<!-- <button class="sa-action-btn" onclick={() => { suppressAlert(sa.signature_id, deviceIp); smartAlerts = smartAlerts.filter(a => a !== sa); }}>Suppress</button> -->
 								<!-- OLD CODE END -->
@@ -746,7 +746,7 @@
 							{alertsExpanded ? 'Show less' : `Show ${smartAlerts.length - ALERTS_COLLAPSED_COUNT} more alerts`}
 						</button>
 					{/if}
-					<a href="/alerts?ip={deviceIp}" class="link">View all alerts<Icon name="back" class="chev" /></a>
+					<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="link">View all alerts<Icon name="back" class="chev" /></a>
 				</div>
 			{:else if smartAlertsFailed}
 				<CardState state="error" title="Couldn't load alerts for this device: the request failed." onaction={() => refresh.run()} />
@@ -853,8 +853,8 @@
 			{/if}
 			{#snippet foot()}
 				<div class="actions">
-					<a href="/logs?filter={deviceIp}" class="link">View in Log Explorer<Icon name="back" class="chev" /></a>
-					<a href="/connections?ip={deviceIp}" class="link">Filter connections<Icon name="back" class="chev" /></a>
+					<a href="/logs?filter={encodeURIComponent(deviceIp)}" class="link">View in Log Explorer<Icon name="back" class="chev" /></a>
+					<a href="/connections?ip={encodeURIComponent(deviceIp)}" class="link">Filter connections<Icon name="back" class="chev" /></a>
 				</div>
 			{/snippet}
 		</Card>

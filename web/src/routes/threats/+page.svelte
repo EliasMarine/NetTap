@@ -485,7 +485,7 @@
 								<button class="btn primary" type="button" onclick={() => goto(`/devices/${encodeURIComponent(kc.source_ip)}`)}
 									>Investigate device</button
 								>
-								<button class="btn" type="button" onclick={() => goto(`/connections?ip=${kc.source_ip}`)}>View connections</button>
+								<button class="btn" type="button" onclick={() => goto(`/connections?ip=${encodeURIComponent(kc.source_ip)}`)}>View connections</button>
 							</div>
 						</section>
 					{/each}
