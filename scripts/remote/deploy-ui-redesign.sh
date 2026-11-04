@@ -2,8 +2,7 @@
 # Deploy the UI redesign branch to the device and check the new look is served.
 #
 # Only the web container changes: the redesign is the web UI (design system,
-# shell, every page). Set BRANCH to the open PR's branch; after it merges, set it
-# back to "main" (PLAN.md §6 step C.6).
+# shell, every page). BRANCH is "main" now that PR #166 has merged.
 #
 # Before updating, it records the deployed commit in $LAST_DEPLOY_FILE, so
 # rollback-ui-redesign.sh can go back to it.
@@ -15,7 +14,7 @@
 set -u
 
 REPO_DIR="${REPO_DIR:-/home/nettap/NetTap}"
-BRANCH="feature/ui-redesign-full"
+BRANCH="main"
 LAST_DEPLOY_FILE="${LAST_DEPLOY_FILE:-/home/nettap/.nettap-last-deploy}"
 TARGET_SHA="${TARGET_SHA:-}"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
@@ -45,12 +44,14 @@ if [ -n "$TARGET_SHA" ]; then
         exit 1
     fi
 else
-    # Record what is deployed now, unless this branch is already deployed (a re-run
-    # must not overwrite the pre-redesign commit with a redesign one)
-    if [ "$(git branch --show-current)" != "$BRANCH" ]; then
+    # Record the pre-redesign commit once. Never overwrite it: the first deploy of main
+    # runs from the redesign branch and would record a redesign commit instead.
+    if [ -s "$LAST_DEPLOY_FILE" ]; then
+        echo "   ✓ Keeping the recorded rollback commit $(cut -c1-8 "$LAST_DEPLOY_FILE") in $LAST_DEPLOY_FILE"
+    elif [ "$(git branch --show-current)" != "$BRANCH" ]; then
         git rev-parse HEAD > "$LAST_DEPLOY_FILE" && echo "   ✓ Recorded the deployed commit $(cut -c1-8 "$LAST_DEPLOY_FILE") in $LAST_DEPLOY_FILE"
     else
-        echo "   ✓ $BRANCH is already deployed; keeping the recorded rollback commit"
+        echo "   ✓ $BRANCH is already deployed and no rollback commit is recorded"
     fi
     # A failed checkout or pull would rebuild the old code, so stop here instead
     if ! git fetch origin || ! git checkout "$BRANCH" || ! git pull origin "$BRANCH"; then
