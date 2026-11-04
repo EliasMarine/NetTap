@@ -23,7 +23,14 @@
 - NET-146: Log Explorer field tooltips never showed (`f.field` vs the daemon's `name`), and the connection drawer read Suricata severity 2 as High while everything else read Medium.
 - The setup wizard spec, stale since the capture-mode step was added, is rewritten and passes.
 
-**Tests:** vitest 274 files / 2919 tests; svelte-check 0 errors; colour gate clean; visual harness 140 pass (3 themes × 1920/1440/390, empty and error modes, plus populated); behavioural Playwright 14 pass; deploy and rollback dry-run in a scratch clone with a stub `sudo`.
+**Found by the two-angle review, fixed (PR #166, `afe1427`…`1a435e0`)**
+- Global search showed blank suggestions: the daemon's `suggest()` returns strings, the top bar read `.text`. The tests mocked `{ text }`, so they stayed green. A late debounce timer could also reopen the list after Enter or Escape.
+- Auto-refresh on Alerts, an alert category, Logs, Devices and a device page cancelled its own slow load (each load cancels the one before), so it never landed. Timers now use `runIfIdle()`.
+- Both alerts tables showed Time as the sort after remounting, while the server sorted by the chosen column.
+- Home's Refresh re-used the old alert-count window, so its alert figures lagged the rest of Home by up to about 90 s.
+- Device and threat links now URL-encode the IP (security-angle LOW).
+
+**Tests:** vitest 270 files / 2845 tests; svelte-check 0 errors; colour gate clean; visual harness 180 pass, 44 skipped by design (3 themes × 1920/1440/390; empty, error and populated on every route); behavioural Playwright 14 pass; deploy and rollback dry-run in a scratch clone with a stub `sudo`.
 
 **Behaviour changes for the owner to confirm:** Home's Custom date range is dropped; a newly clicked table column sorts descending first; page Refresh buttons moved to the top bar. The full list goes in the PR body.
 
@@ -32,11 +39,13 @@
 - Redirect a long Playwright run to a file. Piping it through `tail` in the background shows nothing until it ends.
 - `{/regex/}` in Svelte markup is read as a closing block tag: the build fails, while vitest passed. Run svelte-check or a build after markup edits.
 - `.gitignore` ignores directories named `logs` and `pcap`, so stage `web/src/routes/logs` with `git add -u`.
+- Mock an API with the daemon's real wire shape, read from the daemon handler. A mock of the TypeScript type passes even when the type is wrong.
+- A timer that calls a "newest load wins" loader must skip while a load is running, or a load slower than the interval never lands.
 
 **Next steps**
-1. `/deep-review` and `/ponytail-review` on the branch; fix findings.
-2. Owner: `bash scripts/remote/deploy-ui-redesign.sh` on the G11, then a check of every page in all three themes.
-3. One PR into `main` (closes #165), `gh pr checks`, two-angle review, squash merge, then `BRANCH="main"` in the deploy script.
+1. ~~`/deep-review` and `/ponytail-review`~~ done. ~~Two-angle review~~ done, findings fixed. PR #166 is open (draft).
+2. Owner: `bash scripts/remote/deploy-ui-redesign.sh` on the G11, then a check of every page in all three themes, and a yes or no on the two behaviour changes.
+3. Mark #166 ready, `gh pr checks 166`, squash merge, then `BRANCH="main"` in the deploy script and close #165.
 
 **Plan:** `PLAN.md` (repo root). Codex approved it after 4 rounds (19 findings: 6 High, 13 Medium; all taken on, one narrowed). The review log is in `.codex-review/2026-11-03-144402-ui-redesign/` (gitignored).
 **Visual reference:** `mockups/redesign-2026-11/index.html` (owner-approved 2026-11-03).
