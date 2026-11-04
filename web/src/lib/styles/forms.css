@@ -35,7 +35,7 @@
 }
 .select option { background: var(--surface-1); color: var(--text-1); }
 
-input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; flex: none; }
+input[type="checkbox"]:not(.switch), input[type="radio"] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; flex: none; }
 .check-row { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-sm); color: var(--text-1); cursor: pointer; }
 
 /* On/off switch: <input type="checkbox" role="switch" class="switch"> */
