@@ -1,555 +1,139 @@
-# NetTap Design System
+# NetTap design system: how the web app uses it
 
-> **Canonical reference.** Every page must follow these rules. Tokens live in `web/src/lib/styles/global.css`. The approved visual reference is `mockups/redesign-2026-11/index.html`. The redesign lands in phases (`PLAN.md`): PR 1 changed the tokens, fonts and theme; the shell, shared components and page layouts follow. Until a page's phase lands, its layout still uses the patterns further down this file.
+> **Canonical reference for every page.** The design itself (voice, colour, type, layout, every component's look) is the owner's system in `nettap-design-system/`: start with its `README.md`, then `components/<Name>/README.md` and `preview.html` for each component you use. This file says how `web/` implements it, and which rules the build enforces. The full plan behind the 2026-11 redesign is `PLAN.md` at the repo root.
 
-## Design Philosophy
-
-**Pure black, warm accent, calm data.** The background is absolute black (#000) on every page. Cards are near-black with hairline borders and generous radius. Numbers are big and light. One accent colour marks what's interactive or selected. Severity has its own fixed colours, so it reads the same in every theme.
-
-### Three Pillars
+## Three pillars
 
 1. **Device-centric:** organise by "what are my devices doing?", not by log type.
-2. **Plain English:** every alert, metric and detection gets a human-readable explanation.
-3. **Immediate value:** big numbers first, details on click. Progressive disclosure: overview, then category, then raw data.
+2. **Plain English:** every alert, metric and detection gets a human-readable explanation, with the raw detail underneath in mono.
+3. **Immediate value:** big numbers first, details on click. Overview, then category, then raw data.
 
 ---
 
-## Design Tokens
+## Style files
 
-All values are defined in `web/src/lib/styles/global.css`. **Never hard-code colours, spacing or font sizes in components.** The colour gate enforces the colour part in CI (see "Colour gate" below).
+Imported once, in this order, by `src/routes/+layout.svelte`:
 
-### Variants
-
-| Variant | How it's set | Feel |
-|---|---|---|
-| **Ember** (default) | no attribute on `<html>` | Warm black, amber accent |
-| **Graphite** | `<html data-variant="graphite">` | Monochrome |
-| **Spectrum** | `<html data-variant="spectrum">` | Violet accent, multi-colour data |
-
-The user picks one in **Settings → Display** (`ThemePicker.svelte`). See "Theme protocol" below.
-
-### Surfaces, lines and text (change per variant)
-
-| Token | Use |
+| File | What it holds |
 |---|---|
-| `--bg` | Page background. Always `#000`, every variant. |
-| `--surface-1` | Cards, inputs, sidebar |
-| `--surface-2` | Raised areas inside cards, table header row, hover fills |
-| `--surface-3` | Popovers, tooltips, the highest layer |
-| `--line` | Hairline borders and dividers |
-| `--line-strong` | Emphasised borders, input borders on hover |
-| `--text-1` | Primary text, big numbers |
-| `--text-2` | Secondary text, labels |
-| `--text-3` | Muted text, hints, axis labels (still AA on every surface) |
-| `--accent` | Interactive, selected, focus, links, the brand |
-| `--accent-strong` | Accent hover, link text |
-| `--on-accent` | Text or icons on a solid accent or solid severity fill |
-| `--focus` | Focus rings |
-| `--scrim` | Modal and drawer backdrops |
-| `--data-1` … `--data-8` | Categorical chart and legend colours, in order |
+| `src/lib/styles/tokens.css` | The system's `tokens.css`, verbatim: every colour, size, radius, motion and font token, per theme. **The only file allowed colour literals.** |
+| `src/lib/styles/system.css` | The system's `components/bundle.css`, verbatim. All system classes are global: `.app`, `.shell`, `.sidebar`, `.page-head`, `.grid`, `.c-3`…`.c-12`, `.card`, `.pills`, `.btn`, `.chip`, `.tbl`, `.who`, … |
+| `src/lib/styles/forms.css` | **The one extension.** The system has no form controls, so this adds them from tokens only: `.input`, `.select`, `.textarea`, `.switch`, `.check-row`, `.field`, `.label`, `.field-help`, `.field-error`, `.form-grid`, `.form-group`, `.form-actions`, plus the shared `.notice` banner (`.is-ok`, `.is-warn`, `.is-error`) and `.chip.is-bad`. |
+| `src/lib/styles/a11y.css` | Numbered corrections to `system.css`, each naming the `bundle.css` line it corrects (see "Accessibility corrections"). New corrections go here, never in `system.css`. |
+| `src/lib/styles/global.css` | Only the app-wide base rules the system lacks: margins, `pre`/`code`, `::selection`, scrollbars. |
 
-### Severity and status (the same in every variant)
+Never edit `tokens.css` or `system.css` by hand: they are copies of the owner's files.
 
-| Token | Meaning |
-|---|---|
-| `--sev-critical` | Critical alerts; errors, failures, "down" |
-| `--sev-high` | High alerts |
-| `--sev-medium` | Medium alerts; warnings, "degraded" |
-| `--sev-low` | Low alerts |
-| `--sev-info` | Informational alerts |
-| `--ok` | Healthy, success, "up" |
-| `--sev-*-muted` | 12% tints of each, for badge backgrounds |
+## Tokens
 
-**Severity rules**
-- Each severity uses its own token. Never share one colour between two severities, and never show severity in the brand accent.
-- Never use colour alone: a severity badge always carries its label (and, where there's room, a shape or icon).
-- Informational states (`.badge-info`, `.alert-info`) use `--sev-info`, never the accent: in Ember the accent is orange and would read as high severity.
-- Traffic categories are decorative: their colours live in one map, `$lib/utils/category-colors.ts`, on `--data-*` tokens. Only "suspicious" uses a severity token.
-- Status that isn't alert severity (online/offline, success/failure) uses `--ok`, `--sev-medium` and `--sev-critical` by meaning.
+Use only the system names (all defined in `tokens.css`):
 
-### Tints and translucency
+- **Surfaces and lines:** `--bg`, `--surface-1`…`--surface-3`, `--line`, `--line-strong`, `--scrim`
+- **Text:** `--text-1` (primary), `--text-2`, `--text-3` (muted), `--on-accent`, `--on-light`
+- **Brand:** `--accent`, `--accent-strong`, `--focus`
+- **Severity and status:** `--sev-critical`, `--sev-high`, `--sev-medium`, `--sev-low`, `--sev-info`, `--ok`
+- **Data series:** `--data-1`…`--data-6`. More than six series go through `topSeries()` (`src/lib/utils/series.ts`), which folds the rest into "Other".
+- **Spacing:** `--sp-1` (4 px), `--sp-2` (8), `--sp-3` (12), `--sp-4` (16), `--sp-5` (20), `--sp-6` (24), `--sp-8` (32)
+- **Radius:** `--r-xs`, `--r-sm`, `--r-md`, `--r-lg`, `--r-xl`, `--r-pill`
+- **Type sizes:** `--text-xs`, `--text-sm`, `--text-base`, `--text-md`, `--text-lg`, `--text-xl`; fonts `--font-body`, `--font-mono`
+- **Motion:** `--dur-fast`, `--ease`
 
-Build translucent colours from tokens with `color-mix`, never `rgba()`:
+The old names (`--bg-tertiary`, `--text-primary`, `--cyan`, `--red`, `--space-md`, `--radius-md`, …) are gone. The colour gate fails on any `var(--x)` that nothing defines, so a legacy name or a typo can't slip back in.
 
-```css
-background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-```
+## Themes
 
-### Legacy token names
+- Three themes: **Ember** (default), **Graphite** and **Spectrum**. The attribute is `<html data-theme="graphite|spectrum">`; Ember is no attribute.
+- `src/app.html` has an inline script that reads `localStorage['nettap-theme']` and sets the attribute **before first paint**, so a saved theme never flashes Ember.
+- `$lib/stores/theme` starts from that attribute. `setTheme(v)` is the only writer: attribute, then store, then storage. If storage is blocked, the theme still applies for the session.
+- The picker is `ThemePicker.svelte` in **Settings → Display**. It renders Ember on the server and adopts the stored theme in `onMount`.
 
-Pages written before the redesign use the old names. They still work: each one is mapped onto a new token in `global.css`. Use the new names in new code.
+## Shell
 
-| Legacy | Maps to |
-|---|---|
-| `--bg-void`, `--bg-primary` | `--bg` |
-| `--bg-secondary`, `--bg-input` / `--bg-tertiary` / `--bg-elevated` | `--surface-1` / `--surface-2` / `--surface-3` |
-| `--bg-overlay` | `--scrim` |
-| `--border-dim`, `--border-muted`, `--border-default` / `--border-bright` | `--line` / `--line-strong` |
-| `--text-primary` / `--text-secondary` / `--text-muted`, `--text-dim` | `--text-1` / `--text-2` / `--text-3` |
-| `--accent`, `--cyan`, `--info`, `--border-accent` / `--accent-hover`, `--text-link` | `--accent` / `--accent-strong` |
-| `--red`, `--danger` / `--orange` / `--amber`, `--warning` / `--blue` / `--green`, `--success` | `--sev-critical` / `--sev-high` / `--sev-medium` / `--sev-low` / `--ok` |
-| `--purple` / `--pink` / `--teal` | `--data-4` / `--data-6` / `--data-3` |
-| `--chart-1` … `--chart-8` | `--data-1` … `--data-8` |
-| every `*-dim` / `*-muted` | a 12% `color-mix` of its mapped colour |
+`+layout.svelte` draws the system shell: skip link, `.app > .shell`, `Sidebar`, then `main#main` with `TopBar` and the page. Components live in `src/lib/components/shell/`.
 
-### Spacing (4px base)
+- **Sidebar:** 17 links in 4 groups (`nav.ts`), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form).
+- **TopBar:** search combobox (Ctrl-K), Refresh (runs the page's registered loader), the "Updated" time and the notification bell. **Pages have no Refresh button or "Updated" text of their own.**
+- **Phone (≤ 760 px app width):** a top bar with a menu button opens the sidebar as a drawer: focus moves in, Tab is trapped, and Escape, the scrim or a link closes it.
+- `/login` and `/setup` render bare (no shell).
 
-| Variable | Value |
-|---|---|
-| `--space-xs` | 4px |
-| `--space-sm` | 8px |
-| `--space-md` | 16px |
-| `--space-lg` | 24px |
-| `--space-xl` | 32px |
-| `--space-2xl` | 48px |
-| `--space-3xl` | 64px |
+## Page recipe
 
-### Typography
+Top to bottom:
 
-Fonts are bundled in `web/static/fonts/` (OFL 1.1) and never loaded from a CDN.
+1. **`.page-head`:** `<div><h1 class="page-title">…</h1><p class="page-sub">…</p></div>` plus head actions, including time-range `Pills` wherever the page has a time range. **Exactly one `h1.page-title` per page**, inside `<main>`.
+2. **KPI row:** at most four `KpiCard`s in `c-3`, or three in `c-4`.
+3. **Hero chart and side card:** one hero card in `c-8` (or `c-7`) beside one in `c-4` (or `c-5`). At most two hero cards per screen.
+4. **Detail cards and tables.**
 
-| Variable | Font | Use |
-|---|---|---|
-| `--font-display` | Sora | Page titles, big numbers |
-| `--font-sans` | Manrope | All UI text |
-| `--font-mono` | JetBrains Mono | IPs, ports, MACs, hashes, timestamps |
+Every card has a title and a sub that states the unit and the window ("GB per hour · last 24 hours"). Pages are always full width: never set `max-width` on a page container.
 
-| Size | Value |
-|---|---|
-| `--text-xs` | 0.75rem (12px) |
-| `--text-sm` | 0.8125rem (13px) |
-| `--text-base` | 0.875rem (14px) |
-| `--text-lg` | 1rem (16px) |
-| `--text-xl` | 1.125rem (18px) |
-| `--text-2xl` | 1.375rem (22px) |
-| `--text-3xl` | 1.75rem (28px) |
-| `--text-4xl` | 2.25rem (36px) |
+## Components (`src/lib/components/ui/`)
 
-### Radius
+Build pages from these; read each file for its props.
 
-| Variable | Value | Use |
-|---|---|---|
-| `--r-xs` | 6px | Tiny chips |
-| `--r-sm` (`--radius-sm`) | 8px | Inputs, small buttons |
-| `--r-md` (`--radius-md`) | 12px | Buttons, pills, small cards |
-| `--r-lg` (`--radius-lg`) | 20px | Cards |
-| `--r-xl` (`--radius-xl`) | 26px | Hero cards |
-| `--r-pill` (`--radius-full`) | 999px | Pills, dots |
+- **Layout and state:** `Card`, `CardState` (loading, empty, error; "Try again" only when `onaction` is set), `KpiCard`, `StatStrip`, `Pipeline`
+- **Controls:** `Pills` (toggle, tabs or nav mode), `SearchField`, `LiveChip`
+- **Data:** `DataTable`, `BarList`, `Meter`, `Bytes`, `Who`, `ConnResult`, `SeverityPill`, `DeviceList`, `DeviceTile` (with `deviceIcon()` from `device-icon.ts`), `AlertRow`, `AlertGroup`, `Icon` (the system's 48 icons; a test fails if they drift from `nettap-design-system/assets/Icons/`)
+- **Charts (`ui/charts/`):** `AreaChart`, `Donut`, `SeverityGauge` (fed by `severityBuckets()` from `utils/severity.ts`), `Ring`, `Sparkline`, `StackBar`, `Radar`, `DotMap`. Chart maths lives in `ui/charts/geometry.ts`.
 
-### Motion
+Every chart has `role="img"` and an `aria-label` that states its headline, for example "Busiest hour 21:00, with 4.7 GB downloaded".
 
-| Variable | Value |
-|---|---|
-| `--transition-fast` | 150ms ease |
-| `--transition-normal` | 250ms ease |
-| `--transition-slow` | 400ms ease |
-| `--ease` | `cubic-bezier(0.2, 0.7, 0.2, 1)` |
+## Data on a page
 
-Respect `prefers-reduced-motion`: CSS animations stop, and JavaScript animation keeps drawing the static frame and drops only the movement. `GeoMap` + `arc-scheduler.ts` are the pattern.
+- **Only show numbers the page loads.** Never invent, default or estimate a figure. A failed request shows its error state, never `0`, `0 B` or "No data".
+- **Keep the last figures on a failed refresh** and say so: `loadFailed(what, true)` gives "Couldn't refresh … ; showing the last figures loaded." (#96).
+- **One source per number.** A number on two screens comes from one place. The alert count is `alertSnapshots` (`stores/alertSnapshot.ts`): Home, Alerts and the sidebar read the same snapshot per window.
+- **Refresh contract** (`stores/pageRefresh.ts`): a page that loads data calls `registerPageRefresh(loader)`. The loader awaits every request behind visible data and returns `'ok' | 'partial' | 'failed' | 'skipped'`; `outcome(results)` computes that from `Promise.allSettled`. Auto-refresh loops call the same loader.
+- **Load guard:** `const g = guard.begin()`, copy the query (range, filters, page, sort) into locals before the first `await`, and check `guard.current(g)` before every state write after an `await`. A slow, older response then never overwrites a newer one.
 
----
+## Tables
+
+- Use `DataTable`. **Every column sorts, both directions.** A newly clicked column sorts descending first.
+- Server-sorted tables pass `onsortchange` and keep sorting on the daemon.
+- Numbers are right-aligned and tabular (`numeric: true`). Machine values (IPs, MACs, ports, hashes, signatures) use mono.
+- A column can take a `title`, shown as hover text on its header (Log Explorer uses it for field descriptions).
+
+## Voice
+
+From the system README: sentence case everywhere (titles, buttons, labels), UK spelling, `…` not `...`, no exclamation marks, **no emoji**. Errors say what failed and how to fix it: "Couldn't load alerts: the request failed." Severity is always colour + shape + word (`SeverityPill`), never colour alone.
+
+## Accessibility corrections (`a11y.css`)
+
+1. The search field shows the focus ring on `.search:focus-within` (bundle.css removes the input's outline).
+2. A selected tab in Pills tabs mode (`aria-selected`) gets the selected-pill look.
+3. `DeviceList` select mode: a pressed row gets the selected-row look.
+4. While the phone drawer is open the page doesn't scroll, and the drawer is one screen tall and scrolls inside itself.
+5. On phones a long pill group scrolls inside its track instead of pushing the page sideways.
+
+Every `<button>` sets an explicit text colour (the browser default is black). Focus rings use `--focus`.
 
 ## Colour gate
 
-`npm run check:colors` (`web/scripts/check-colors.mjs`) fails on any colour literal in `web/src`: `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()`, and `white`/`black` used as colours. It runs in CI.
+`npm run check:colors` (`web/scripts/check-colors.mjs`) checks every non-test file in `web/src` and fails on:
 
-- **Where it looks:** all CSS (`.css` files and `<style>` blocks), and quoted strings in TypeScript, `<script>` and markup. Plain text like "PR #147" and `white-space` never trip it.
-- **What it skips:** test files, the `/* TOKENS START */` … `/* TOKENS END */` block in `global.css` (the only place literals live), and comments. Commented-out `OLD CODE` is skipped as a comment; live code between `OLD CODE` markers is still checked.
-- **One-line exemption:** `// colour-gate: allow-next-line <reason>` on the line before, only for output that can never read CSS variables (for example email HTML in `lib/server/notifications.ts`). The reason is required.
-- **Allowlist:** `web/scripts/check-colors.allowlist` holds only files scheduled for a later redesign phase. It must be empty once the shared components phase lands.
+- **Colour literals:** `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`/`rgba()`, `hsl()`/`hsla()`, and `white`/`black` used as colours. It reads all CSS (`.css` files and `<style>` blocks) and quoted strings in TypeScript, `<script>` and markup, so "PR #147" and `white-space` never trip it. `tokens.css` is skipped.
+- **Tokens nothing defines:** a `var(--x)` with no `--x:` declaration, `style:--x` or `setProperty('--x')` anywhere in `web/src`. Names built in markup (`var(--sev-{level})`) are skipped.
+- **Emoji** anywhere outside comments.
 
-### Colours in JavaScript
+Comments are skipped, so commented-out `OLD CODE` never trips it. `// colour-gate: allow-next-line <reason>` exempts one line, only for output that can't read CSS variables (for example email HTML in `lib/server/notifications.ts`). `scripts/check-colors.allowlist` is empty and should stay that way.
 
-- For `style=` attributes and SVG `fill`/`stroke`, use `var(--token)` strings: `fill="var(--data-2)"`.
-- Canvas and libraries that can't take `var()` read the real value with `resolveToken('--accent')` (`web/src/lib/utils/tokens.ts`), and read it again when the theme changes (subscribe to `theme` from `$lib/stores/theme`).
-
-## Theme protocol
-
-- `src/app.html` has a tiny inline script that reads `localStorage['nettap-theme']` and sets `<html data-variant>` **before first paint**, so a saved theme never flashes Ember.
-- `$lib/stores/theme` starts from that attribute and never reads storage itself. `setTheme(v)` is the only writer: attribute first, then the store (so subscribers read the new tokens), then storage. If storage is blocked, the theme still applies for the session.
-- Components that render the current theme (the picker) render Ember on the server and adopt the store value in `onMount`, so server and client markup never disagree.
-- To preview a variant on one element, add `data-theme-preview="graphite"`: that element gets the variant's tokens.
+**Colours in JavaScript:** for `style=` and SVG `fill`/`stroke`, use `var(--token)` strings (`fill="var(--data-2)"`). Code that can't take `var()` reads the real value with `resolveToken('--accent')` (`src/lib/utils/tokens.ts`) and reads it again when the theme changes.
 
 ## Testing the look
 
-- `npm run test:visual` runs the visual harness (`web/e2e/visual/`, `playwright.visual.config.ts`) against a fixture daemon. It logs in for real, opens every route in empty and error mode, and checks the black background, horizontal scroll and console errors in all three variants at 1920, 1440 and 390 px. A redirect to Login or Setup fails the test.
-- `npm run check:e2e` type-checks the harness and its fixtures against the API interfaces.
-- `src/tests/token-contrast.test.ts` checks every text and severity token is AA (4.5:1) on every surface, in every variant.
-
----
-
-## Page Layout Rules
-
-### Full-Width Layout (REQUIRED)
-
-Every page uses a full-width layout. **No `max-width` constraints on the page container.** The content should breathe and fill the available space.
-
-```css
-/* CORRECT — full width */
-.page-container {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
-
-/* WRONG — do NOT constrain width */
-.page-container {
-  max-width: 1400px;  /* NEVER do this */
-  margin: 0 auto;     /* NEVER do this */
-}
-```
-
-The root layout (`+layout.svelte`) handles overall padding. Individual pages should NOT add their own page-level padding.
-
-### Page Header Pattern
-
-Every page starts with a header containing the title, subtitle, and action buttons.
-
-```html
-<header class="page-header">
-  <div class="header-left">
-    <h1>Page Title</h1>
-    <p class="subtitle">Brief description of what this page shows</p>
-  </div>
-  <div class="header-right">
-    <!-- Time range pills, refresh button, export, etc. -->
-  </div>
-</header>
-```
-
-```css
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-}
-
-h1 {
-  font-size: var(--text-2xl);
-  font-weight: 700;
-  margin-bottom: var(--space-xs);
-}
-
-.subtitle {
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-```
-
----
-
-## Component Patterns
-
-### Stat Cards (4-column grid)
-
-```html
-<div class="stats-grid">
-  <button class="stat-card clickable">
-    <span class="stat-label">LABEL</span>
-    <span class="stat-value">1,234</span>
-    <span class="stat-hint">Description text</span>
-  </button>
-  <!-- repeat 3 more -->
-</div>
-```
-
-```css
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-md);
-}
-
-/* Use global .stat-card from global.css */
-
-.stat-hint {
-  display: block;
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  margin-top: 2px;
-}
-
-@media (max-width: 1024px) {
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (max-width: 768px) {
-  .stats-grid { grid-template-columns: 1fr; }
-}
-```
-
-### Cards
-
-Use the global `.card` class. Always include a `.card-header` with title.
-
-```html
-<section class="card">
-  <div class="card-header">
-    <h2>Section Title</h2>
-    <span class="card-badge">SUBTITLE</span>
-  </div>
-  <!-- content -->
-</section>
-```
-
-### Sortable Data Tables (REQUIRED for ALL tables)
-
-**Every table in the application MUST be sortable** — every column, both directions. Use the shared helper in `web/src/lib/utils/table-sort.svelte.ts`:
-
-```typescript
-import { TableSort } from '$lib/utils/table-sort.svelte';
-
-// starts on 'bytes', descending; clicking the same column flips it, a new column starts descending
-const sort = new TableSort<'name' | 'ip' | 'bytes'>('bytes');
-
-// value(row, key) returns what to sort by; blanks (null, undefined, '') go last both ways
-let sorted = $derived(sort.apply(items, (row, key) => row[key]));
-```
-
-```html
-<div class="table-wrap">
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th class="sortable" class:sorted={sort.key === 'name'} onclick={() => sort.toggle('name')}>
-          Name<span class="sort-arrow">{sort.arrow('name')}</span>
-        </th>
-        <!-- more columns -->
-      </tr>
-    </thead>
-    <tbody>
-      {#each sorted as item}
-        <tr><!-- cells --></tr>
-      {/each}
-    </tbody>
-  </table>
-</div>
-```
-
-**Comparing values:** a hand-written comparator must use `compareValues(a, b)` from the same file, never `localeCompare` or `<`. Those order text character by character, so `10.10.0.235` lands before `10.10.0.26`, port `80` before `8`, and tshark's `0.000123` after `0.01`. `compareValues` compares numbers (and numeric text) by value and orders the numbers inside text as numbers.
-
-**Sort the rows that exist, not the rows on screen:** when a table is paginated by the daemon, sorting one page is wrong. Send `sort`/`order` to the API and sort in the OpenSearch query instead (see `_connection_sort` in `daemon/api/devices.py` and the Connections table on the device page).
-
-**Rank labels, don't spell them:** severity and risk columns sort by a rank map (`{ critical: 4, high: 3, medium: 2, low: 1 }`), so the first (descending) click puts the worst on top.
-
-<details>
-<summary>Previous pattern (kept for reference; text compare was wrong for IPs and numbers)</summary>
-
-```typescript
-let sortField = $state('column_name');
-let sortDir = $state<'asc' | 'desc'>('desc');
-
-function toggleSort(field: string) {
-  if (sortField === field) {
-    sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-  } else {
-    sortField = field;
-    sortDir = 'desc';
-  }
-}
-
-// For client-side sorting:
-let sorted = $derived(
-  [...items].sort((a, b) => {
-    const av = a[sortField], bv = b[sortField];
-    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-    return sortDir === 'asc' ? cmp : -cmp;
-  })
-);
-```
-
-```html
-<div class="table-wrap">
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th class="sortable" class:sorted={sortField === 'name'}
-            onclick={() => toggleSort('name')}>
-          Name
-          {#if sortField === 'name'}
-            <span class="sort-arrow">{sortDir === 'desc' ? '↓' : '↑'}</span>
-          {/if}
-        </th>
-        <!-- more columns -->
-      </tr>
-    </thead>
-    <tbody>
-      {#each sorted as item}
-        <tr><!-- cells --></tr>
-      {/each}
-    </tbody>
-  </table>
-</div>
-```
-
-</details>
-
-```css
-.table-wrap {
-  overflow-x: auto;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-}
-
-/* Use global .data-table styles */
-
-.data-table th.sortable {
-  cursor: pointer;
-  user-select: none;
-}
-
-.data-table th.sortable:hover {
-  color: var(--text-primary);
-}
-
-.data-table th.sorted {
-  color: var(--accent);
-}
-
-.sort-arrow {
-  color: var(--accent);
-  margin-left: var(--space-xs);
-}
-```
-
-### Two-Column Layout
-
-```css
-.two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-md);
-}
-
-@media (max-width: 1024px) {
-  .two-col { grid-template-columns: 1fr; }
-}
-```
-
-### Time Range Pills
-
-```html
-<div class="pills">
-  {#each TIME_RANGES as tr}
-    <button class="pill" class:active={selected === tr.value}
-            onclick={() => setRange(tr.value)}>
-      {tr.label}
-    </button>
-  {/each}
-</div>
-```
-
-### Bar List (Horizontal Bars) — `HorizontalBarList.svelte`
-
-**Canonical component:** `$components/HorizontalBarList.svelte`
-
-Used for top-N rankings (IPs, domains, protocols, categories). All horizontal bar
-graphs MUST use this shared component for consistent alignment, sizing, and drill-down.
-
-**Props:**
-
-| Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `items` | `BarItem[]` | `[]` | Array of bar data items |
-| `maxValue` | `number?` | auto | Override max for width calculation |
-| `showRank` | `boolean` | `false` | Show 1, 2, 3… rank numbers |
-| `showDot` | `boolean` | `false` | Show colored dot before label |
-| `labelWidth` | `number` | `140` | Fixed px width for label column |
-| `barHeight` | `number` | `12` | Bar track height in px |
-| `activeKey` | `string?` | — | Highlight row matching this key |
-| `onclick` | `(item, i) => void` | — | Click handler (in-page filtering) |
-| `emptyMessage` | `string` | `'No data available.'` | Empty state text |
-
-**BarItem interface:**
-
-```ts
-interface BarItem {
-  key: string;           // Unique key for {#each} block
-  label: string;         // Display label
-  value: number;         // Numeric value for bar width
-  formattedValue: string;// Display string (e.g., "1.2K", "3.5 GB")
-  color?: string;        // CSS colour token (e.g., "var(--data-1)")
-  gradient?: string;     // CSS background (overrides color)
-  secondaryValue?: string;// Optional secondary display (e.g., "12.3%")
-  href?: string;         // Navigation link — row becomes <a>
-  mono?: boolean;        // Monospace label font
-  isIp?: boolean;        // Render label with IPAddress component
-  badgeText?: string;    // Badge between rank and label
-  badgeClass?: string;   // Badge CSS class
-}
-```
-
-**Row rendering:** `<a>` when `href` is set, `<button>` when `onclick` is set, `<div>` otherwise.
-
-**Layout:** CSS grid with a fixed-width label column so all bars start at the
-same horizontal position regardless of label content:
-
-```css
-grid-template-columns: var(--hbar-label-width) 1fr auto;
-/* With secondary values, adds a 4th auto column */
-```
-
-**Usage examples:**
-
-```svelte
-<!-- Static bars with colored dots -->
-<HorizontalBarList items={protocols} showDot={true} labelWidth={100} />
-
-<!-- Ranked list with IP drill-down links -->
-<HorizontalBarList items={topIps} showRank={true} labelWidth={130} />
-
-<!-- In-page filtering with active highlight -->
-<HorizontalBarList
-  items={signatures}
-  activeKey={currentFilter}
-  onclick={(item) => filterBy(item.key)}
-/>
-```
-
-**Standard bar height:** 12px (consistent across all pages). Override with
-`barHeight` prop only when justified.
-
-### Loading & Empty States
-
-```html
-<!-- Loading -->
-<div class="loading-state">
-  <div class="loading-spinner"></div>
-  <p class="text-muted">Loading data...</p>
-</div>
-
-<!-- Empty -->
-<div class="empty-state">
-  <div class="empty-icon"><!-- SVG --></div>
-  <p class="empty-text">No data found</p>
-  <p class="empty-hint">Try adjusting your filters</p>
-</div>
-```
-
----
+- `npm run test:visual` runs the visual harness (`e2e/visual/`, `playwright.visual.config.ts`) against a fixture daemon. It logs in for real, opens every route in empty and error mode (and the routes in `populated.visual.ts` with data), and in all three themes at 1920, 1440 and 390 px checks the accent token, the shell, one `h1.page-title`, horizontal scroll and console errors. Each route's heading marker is in `e2e/visual/routes.ts`.
+- `npm run test:e2e` runs the behavioural specs (`e2e/*.spec.ts`).
+- `npm run check:e2e` type-checks every spec and fixture against the API interfaces.
+- `src/tests/token-contrast.test.ts` checks every text and severity token is AA (4.5:1) on every surface, in every theme.
 
 ## Rules
 
-1. **Never hard-code colours.** Use tokens (`var(--sev-critical)`, not `#ff4d6d`). The colour gate fails the build otherwise.
-2. **The background is always `--bg` (pure black).** Never put a coloured or gradient background on `body` or a page container.
-3. **Severity uses `--sev-*` only,** one token per severity, and is never shown by colour alone.
-4. **Never hard-code spacing.** Use spacing vars (`var(--space-md)`, not `16px`).
-5. **Never hard-code font sizes.** Use text vars (`var(--text-sm)`, not `0.8125rem`).
-6. **Never set max-width on page containers.** Pages are always full width.
-7. **Every table is sortable:** every column, both directions.
-8. **Global classes first:** `.card`, `.stat-card`, `.data-table`, `.btn`, `.pill` and `.badge` are in `global.css`.
-9. **Monospace for data:** IPs, ports, hashes, counts and timestamps use `var(--font-mono)`.
-10. **Responsive:** every page works at 1920, 1440 and 390 px with no horizontal scroll.
-11. **Hover and focus states on everything interactive.** Focus rings use `--focus`.
-12. **Accent for active and sorted:** `var(--accent)` for sorted columns, active pills and focused inputs. `<button>` elements always get an explicit text colour (the browser default is black).
+1. Use system classes first; scoped CSS only for layout glue the system lacks.
+2. Only system tokens: no colour literals, no hard-coded spacing or font sizes, no legacy names. The colour gate fails the build otherwise.
+3. Follow the page recipe: one `h1.page-title`, KPI row, hero, details. Full width.
+4. Every data card shows `CardState` for loading, empty and error.
+5. Every table sorts on every column.
+6. Severity is colour + shape + word.
+7. Sentence case, UK spelling, no emoji.
+8. Every page works at 1920, 1440 and 390 px with no horizontal page scroll.
+9. Every loader follows the refresh contract and the load guard.
