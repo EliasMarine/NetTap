@@ -29,11 +29,11 @@ interface DeviceData {
 }
 
 const RISK_COLORS: Record<string, string> = {
-	critical: 'var(--red)',
-	high: 'var(--orange)',
-	medium: 'var(--amber)',
-	low: 'var(--green)',
-	none: 'var(--text-muted)',
+	critical: 'var(--sev-critical)',
+	high: 'var(--sev-high)',
+	medium: 'var(--sev-medium)',
+	low: 'var(--sev-low)',
+	none: 'var(--text-3)',
 };
 
 function getRiskLevel(score: number | undefined): string {
@@ -146,11 +146,11 @@ describe('DeviceDrawerContent logic', () => {
 
 	describe('RISK_COLORS', () => {
 		it('has correct color for each risk level', () => {
-			expect(RISK_COLORS['critical']).toBe('var(--red)');
-			expect(RISK_COLORS['high']).toBe('var(--orange)');
-			expect(RISK_COLORS['medium']).toBe('var(--amber)');
-			expect(RISK_COLORS['low']).toBe('var(--green)');
-			expect(RISK_COLORS['none']).toBe('var(--text-muted)');
+			expect(RISK_COLORS['critical']).toBe('var(--sev-critical)');
+			expect(RISK_COLORS['high']).toBe('var(--sev-high)');
+			expect(RISK_COLORS['medium']).toBe('var(--sev-medium)');
+			expect(RISK_COLORS['low']).toBe('var(--sev-low)');
+			expect(RISK_COLORS['none']).toBe('var(--text-3)');
 		});
 	});
 

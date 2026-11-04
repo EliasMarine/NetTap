@@ -9,6 +9,7 @@
 	import type { LiveConnection, ConnectionDetailResponse } from '$lib/api/live';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -74,6 +75,7 @@
 		}
 	}
 
+	// Unused since the restyle: the design system allows no emoji, so the Country row no longer shows a flag.
 	function countryFlag(code: string): string {
 		if (!code || code.length !== 2) return '';
 		const base = 0x1F1E6; // Regional Indicator Symbol Letter A
@@ -95,19 +97,19 @@
 
 	function severityLabel(sev: number): string {
 		switch (sev) {
-			case 1: return 'HIGH';
-			case 2: return 'MEDIUM';
-			case 3: return 'LOW';
-			default: return 'INFO';
+			case 1: return 'High';
+			case 2: return 'Medium';
+			case 3: return 'Low';
+			default: return 'Info';
 		}
 	}
 
 	function severityClass(sev: number): string {
 		switch (sev) {
-			case 1: return 'severity-high';
-			case 2: return 'severity-medium';
-			case 3: return 'severity-low';
-			default: return 'severity-info';
+			case 1: return 'sev-high';
+			case 2: return 'sev-medium';
+			case 3: return 'sev-low';
+			default: return 'sev-info';
 		}
 	}
 
@@ -133,11 +135,20 @@
 	let geoOrg = $derived(detail?.geo?.organization || connection.dest_org || '--');
 </script>
 
+{#snippet sevShape(level: string)}
+	<svg viewBox="0 0 10 10" aria-hidden="true">
+		{#if level === 'High'}<path d="M5 1 9.4 9H.6z" />
+		{:else if level === 'Medium'}<rect x="1" y="1" width="8" height="8" rx="1.5" />
+		{:else if level === 'Low'}<circle cx="5" cy="5" r="4" />
+		{:else}<circle cx="5" cy="5" r="3.4" class="hollow" />{/if}
+	</svg>
+{/snippet}
+
 <!-- ======================================================================= -->
-<!-- DETAILS TAB                                                             -->
+<!-- DETAILS TAB                                                            -->
 <!-- ======================================================================= -->
 {#if activeTab === 'details'}
-	<DrawerSection title="Connection Info">
+	<DrawerSection title="Connection info">
 		<KVRow label="Source IP" value={`${connection.source_ip}:${connection.source_port}`} mono copyable />
 		<KVRow label="Destination IP" value={`${connection.dest_ip}:${connection.dest_port}`} mono copyable />
 		<KVRow label="Protocol" value={String(connection.service || connection.protocol || '').toUpperCase()} />
@@ -148,18 +159,21 @@
 		<KVRow label="Timestamp" value={formatTimestamp(connection.timestamp)} mono />
 	</DrawerSection>
 
-	<DrawerSection title="GeoIP Information">
+	<DrawerSection title="GeoIP information">
 		{#if detailLoading}
 			<div class="loading-row">
 				<span class="loading-spinner"></span>
-				<span class="loading-text">Loading GeoIP data...</span>
+				<span class="loading-text">Loading GeoIP data…</span>
 			</div>
 		{:else}
+			<!-- OLD CODE START — no emoji in the design system, so the flag prefix is dropped:
 			<KVRow label="Country" value={geoCountryCode ? `${countryFlag(geoCountryCode)} ${geoCountry}` : geoCountry} />
+			OLD CODE END -->
+			<KVRow label="Country" value={geoCountry} />
 			<KVRow label="City" value={geoCity} />
 			<KVRow label="Coordinates" value={formatCoordinates(geoLat, geoLon)} mono />
 			<KVRow label="ASN" value={geoAsn != null ? `AS${geoAsn}` : null} mono />
-			<KVRow label="Organization" value={geoOrg} />
+			<KVRow label="Organisation" value={geoOrg} />
 		{/if}
 	</DrawerSection>
 
@@ -167,11 +181,11 @@
 <!-- ALERTS TAB                                                              -->
 <!-- ======================================================================= -->
 {:else if activeTab === 'alerts'}
-	<DrawerSection title="Related Suricata Alerts">
+	<DrawerSection title="Related Suricata alerts">
 		{#if detailLoading}
 			<div class="loading-row">
 				<span class="loading-spinner"></span>
-				<span class="loading-text">Loading alerts...</span>
+				<span class="loading-text">Loading alerts…</span>
 			</div>
 		{:else if detailFailed}
 			<div class="empty-section">
@@ -179,7 +193,7 @@
 			</div>
 		{:else if !detail?.alerts?.length}
 			<div class="empty-section">
-				<span class="empty-icon">&#x2714;</span>
+				<span class="empty-icon"><Icon name="check" /></span>
 				<span class="empty-label">No alerts for this connection</span>
 			</div>
 		{:else}
@@ -187,7 +201,7 @@
 				{#each detail.alerts as alert}
 					<div class="alert-card">
 						<div class="alert-header">
-							<span class="badge {severityClass(alert.severity)}">{severityLabel(alert.severity)}</span>
+							<span class="sev {severityClass(alert.severity)}">{@render sevShape(severityLabel(alert.severity))}{severityLabel(alert.severity)}</span>
 							<span class="alert-time">{formatTimestamp(alert.timestamp)}</span>
 						</div>
 						<div class="alert-sig">{alert.signature}</div>
@@ -198,11 +212,11 @@
 		{/if}
 	</DrawerSection>
 
-	<DrawerSection title="24h History">
+	<DrawerSection title="24h history">
 		{#if detailLoading}
 			<div class="loading-row">
 				<span class="loading-spinner"></span>
-				<span class="loading-text">Loading history...</span>
+				<span class="loading-text">Loading history…</span>
 			</div>
 		{:else if detailFailed}
 			<div class="empty-section">
@@ -214,12 +228,12 @@
 			</div>
 		{:else}
 			<div class="history-summary">
-				<KVRow label="Total Bytes (24h)" value={formatBytes(detail.history.total_bytes)} mono />
+				<KVRow label="Total bytes (24h)" value={formatBytes(detail.history.total_bytes)} mono />
 				<KVRow label="Connections (24h)" value={String(detail.history.connection_count)} mono />
 			</div>
 
 			<div class="sparkline-wrap">
-				<div class="sparkline">
+				<div class="sparkline" role="img" aria-label="Bytes per interval over the last 24 hours">
 					{#each detail.history.timeline as bucket}
 						{@const heightPct = Math.max((bucket.bytes / timelineMax) * 100, 2)}
 						<div
@@ -247,6 +261,20 @@
 		padding: var(--sp-4) 0;
 	}
 
+	.loading-spinner {
+		width: 16px;
+		height: 16px;
+		flex: none;
+		border: 2px solid var(--line);
+		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
 	.loading-text {
 		font-size: var(--text-sm);
 		color: var(--text-3);
@@ -263,8 +291,8 @@
 	}
 
 	.empty-icon {
+		display: inline-flex;
 		color: var(--ok);
-		font-size: var(--text-lg);
 	}
 
 	.empty-label {
@@ -281,8 +309,8 @@
 	.alert-card {
 		background: var(--surface-2);
 		border: 1px solid var(--line);
-		border-radius: var(--r-sm);
-		padding: var(--sp-2) var(--sp-4);
+		border-radius: var(--r-md);
+		padding: var(--sp-3) var(--sp-4);
 	}
 
 	.alert-header {
@@ -294,14 +322,14 @@
 
 	.alert-time {
 		font-size: var(--text-xs);
-		font-family: var(--font-mono);
 		color: var(--text-3);
 	}
 
 	.alert-sig {
+		font-family: var(--font-mono);
 		font-size: var(--text-sm);
 		color: var(--text-1);
-		font-weight: 500;
+		overflow-wrap: anywhere;
 		margin-bottom: 2px;
 	}
 

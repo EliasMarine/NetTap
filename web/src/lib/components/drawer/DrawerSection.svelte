@@ -1,9 +1,10 @@
 <!--
-  DrawerSection.svelte — UniFi-style collapsible section for the detail drawer.
+  DrawerSection.svelte — Collapsible section for the detail drawer, headed by a system eyebrow.
   Click the header to collapse/expand the content.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let {
 		title,
@@ -19,11 +20,9 @@
 </script>
 
 <div class="drawer-section" class:collapsed={!isOpen}>
-	<button class="section-header" onclick={() => isOpen = !isOpen}>
-		<span class="section-title">{title}</span>
-		<svg class="section-chevron" class:rotated={isOpen} viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<polyline points="6 4 10 8 6 12" />
-		</svg>
+	<button class="section-header" type="button" onclick={() => isOpen = !isOpen}>
+		<span class="section-title eyebrow">{title}</span>
+		<span class="section-chevron" class:rotated={isOpen}><Icon name="chevdown" /></span>
 	</button>
 
 	{#if isOpen}
@@ -47,32 +46,33 @@
 		align-items: center;
 		justify-content: space-between;
 		width: 100%;
-		padding: var(--sp-2) 0;
+		padding: var(--sp-3) 0;
 		background: none;
 		border: none;
 		cursor: pointer;
-		color: var(--text-2);
+		color: var(--text-3);
 		transition: color var(--dur-fast);
 	}
 
-	.section-header:hover {
+	.section-header:hover,
+	.section-header:hover .section-title {
 		color: var(--text-1);
 	}
 
-	.section-title {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+	.section-chevron {
+		display: inline-flex;
+		flex-shrink: 0;
+		transform: rotate(-90deg);
+		transition: transform var(--dur-fast);
 	}
 
-	.section-chevron {
-		transition: transform var(--dur-fast);
-		flex-shrink: 0;
+	.section-chevron :global(.ic) {
+		width: 14px;
+		height: 14px;
 	}
 
 	.section-chevron.rotated {
-		transform: rotate(90deg);
+		transform: none;
 	}
 
 	.section-body {

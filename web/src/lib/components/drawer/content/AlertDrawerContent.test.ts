@@ -36,22 +36,22 @@ interface AlertData {
 }
 
 function severityLabel(alert: AlertData): string {
-	if (!alert?.alert?.severity) return 'INFO';
+	if (!alert?.alert?.severity) return 'Info';
 	switch (alert.alert.severity) {
-		case 1: return 'HIGH';
-		case 2: return 'MEDIUM';
-		case 3: return 'LOW';
-		default: return 'INFO';
+		case 1: return 'High';
+		case 2: return 'Medium';
+		case 3: return 'Low';
+		default: return 'Info';
 	}
 }
 
 function severityClass(alert: AlertData): string {
-	if (!alert?.alert?.severity) return 'badge';
+	if (!alert?.alert?.severity) return 'sev sev-info';
 	switch (alert.alert.severity) {
-		case 1: return 'badge badge-danger';
-		case 2: return 'badge badge-warning';
-		case 3: return 'badge badge-accent';
-		default: return 'badge';
+		case 1: return 'sev sev-high';
+		case 2: return 'sev sev-medium';
+		case 3: return 'sev sev-low';
+		default: return 'sev sev-info';
 	}
 }
 
@@ -105,58 +105,58 @@ describe('AlertDrawerContent logic', () => {
 	// -- Severity badge -------------------------------------------------------
 
 	describe('severity badge', () => {
-		it('returns "HIGH" for severity 1', () => {
+		it('returns "High" for severity 1', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 1 } };
-			expect(severityLabel(alert)).toBe('HIGH');
+			expect(severityLabel(alert)).toBe('High');
 		});
 
-		it('returns "MEDIUM" for severity 2', () => {
+		it('returns "Medium" for severity 2', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 2 } };
-			expect(severityLabel(alert)).toBe('MEDIUM');
+			expect(severityLabel(alert)).toBe('Medium');
 		});
 
-		it('returns "LOW" for severity 3', () => {
+		it('returns "Low" for severity 3', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 3 } };
-			expect(severityLabel(alert)).toBe('LOW');
+			expect(severityLabel(alert)).toBe('Low');
 		});
 
-		it('returns "INFO" when severity is missing', () => {
+		it('returns "Info" when severity is missing', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: {} };
-			expect(severityLabel(alert)).toBe('INFO');
+			expect(severityLabel(alert)).toBe('Info');
 		});
 
-		it('returns "INFO" when alert object is missing', () => {
+		it('returns "Info" when alert object is missing', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false };
-			expect(severityLabel(alert)).toBe('INFO');
+			expect(severityLabel(alert)).toBe('Info');
 		});
 
-		it('returns "INFO" for unknown severity values', () => {
+		it('returns "Info" for unknown severity values', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 99 } };
-			expect(severityLabel(alert)).toBe('INFO');
+			expect(severityLabel(alert)).toBe('Info');
 		});
 	});
 
 	// -- Severity CSS class ---------------------------------------------------
 
 	describe('severity CSS class', () => {
-		it('returns badge-danger for severity 1 (HIGH)', () => {
+		it('returns sev-high for severity 1 (High)', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 1 } };
-			expect(severityClass(alert)).toBe('badge badge-danger');
+			expect(severityClass(alert)).toBe('sev sev-high');
 		});
 
-		it('returns badge-warning for severity 2 (MEDIUM)', () => {
+		it('returns sev-medium for severity 2 (Medium)', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 2 } };
-			expect(severityClass(alert)).toBe('badge badge-warning');
+			expect(severityClass(alert)).toBe('sev sev-medium');
 		});
 
-		it('returns badge-accent for severity 3 (LOW)', () => {
+		it('returns sev-low for severity 3 (Low)', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false, alert: { severity: 3 } };
-			expect(severityClass(alert)).toBe('badge badge-accent');
+			expect(severityClass(alert)).toBe('sev sev-low');
 		});
 
-		it('returns plain badge for missing severity', () => {
+		it('returns sev-info for missing severity', () => {
 			const alert: AlertData = { _id: '1', _index: 'x', timestamp: '', acknowledged: false };
-			expect(severityClass(alert)).toBe('badge');
+			expect(severityClass(alert)).toBe('sev sev-info');
 		});
 	});
 
@@ -269,7 +269,7 @@ describe('AlertDrawerContent logic', () => {
 
 			expect(alert.alert?.signature).toBe('ET POLICY HTTP Binary Download');
 			expect(alert.alert?.signature_id).toBe(2020076);
-			expect(severityLabel(alert)).toBe('MEDIUM');
+			expect(severityLabel(alert)).toBe('Medium');
 			expect(alert.alert?.category).toBe('Potentially Bad Traffic');
 		});
 

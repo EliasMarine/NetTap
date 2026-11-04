@@ -9,6 +9,7 @@
 	import { goto } from '$app/navigation';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 	import { getWhois } from '$api/lookup';
 	import type { WhoisResult } from '$api/lookup';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
@@ -379,12 +380,20 @@
 	}
 </script>
 
+{#snippet sevShape(level: string)}
+	<svg viewBox="0 0 10 10" aria-hidden="true">
+		{#if level === 'High'}<path d="M5 1 9.4 9H.6z" />
+		{:else if level === 'Medium'}<rect x="1" y="1" width="8" height="8" rx="1.5" />
+		{:else}<circle cx="5" cy="5" r="4" />{/if}
+	</svg>
+{/snippet}
+
 <!-- ======================================================================= -->
 <!-- Tab 1: Summary + Threat Context                                          -->
 <!-- ======================================================================= -->
 {#if activeTab === 'summary'}
 	<div class="details-content">
-		<DrawerSection title="Connection Identity" defaultExpanded>
+		<DrawerSection title="Connection identity" defaultExpanded>
 			<KVRow label="UID" value={uid} mono copyable />
 			<KVRow label="Community ID" value={communityId} mono copyable />
 			<KVRow label="Timestamp" value={formatTimestamp(timestamp)} mono />
@@ -412,29 +421,29 @@
 			{/if}
 		</DrawerSection>
 
-		<DrawerSection title="Traffic Metrics" defaultExpanded>
+		<DrawerSection title="Traffic metrics" defaultExpanded>
 			<KVRow label="Protocol" value={proto?.toUpperCase()} />
 			<KVRow label="Service" value={service} />
 			<KVRow label="Duration" value={formatDuration(duration)} mono />
-			<KVRow label="Bytes In (Orig)" value={formatBytes(origBytes)} mono />
-			<KVRow label="Bytes Out (Resp)" value={formatBytes(respBytes)} mono />
-			<KVRow label="Packets In" value={origPkts} mono />
-			<KVRow label="Packets Out" value={respPkts} mono />
+			<KVRow label="Bytes in (orig)" value={formatBytes(origBytes)} mono />
+			<KVRow label="Bytes out (resp)" value={formatBytes(respBytes)} mono />
+			<KVRow label="Packets in" value={origPkts} mono />
+			<KVRow label="Packets out" value={respPkts} mono />
 			<!-- Traffic ratio bar -->
 			{#if totalBytes > 0}
 				<div class="ratio-row">
-					<span class="ratio-label">Traffic Ratio</span>
+					<span class="ratio-label">Traffic ratio</span>
 					<div class="ratio-bar">
 						<div class="ratio-in" style="width: {origPct}%;" title="Inbound: {origPct}%"></div>
 						<div class="ratio-out" style="width: {100 - origPct}%;" title="Outbound: {100 - origPct}%"></div>
 					</div>
-					<span class="ratio-text">{origPct}% in</span>
+					<span class="ratio-text num">{origPct}% in</span>
 				</div>
 			{/if}
 		</DrawerSection>
 
 		<DrawerSection title="State" defaultExpanded={false}>
-			<KVRow label="Conn State" value={connState} mono />
+			<KVRow label="Conn state" value={connState} mono />
 			{#if connState && CONN_STATE_DESC[connState]}
 				<KVRow label="Description" value={CONN_STATE_DESC[connState]} />
 			{/if}
@@ -443,38 +452,38 @@
 		</DrawerSection>
 
 		<!-- Threat Context -->
-		<DrawerSection title="Threat Context" defaultExpanded>
+		<DrawerSection title="Threat context" defaultExpanded>
 			{#if threatLoading}
 				<div class="loading-state">
 					<div class="loading-spinner"></div>
-					<p class="text-muted">Checking for alerts...</p>
+					<p class="dim">Checking for alerts…</p>
 				</div>
 			{:else if threatAlerts.length > 0}
 				<div class="threat-list">
 					{#each threatAlerts.slice(0, 5) as alert}
+						{@const level = alert.alert?.severity === 1 || alert.alert?.severity === 2 ? 'High' : alert.alert?.severity === 3 ? 'Medium' : 'Low'}
+						<!-- Same mapping as before: severity 1 and 2 read High, 3 Medium, anything else Low -->
 						<div class="threat-item">
-							<span class="threat-severity" class:sev-high={alert.alert?.severity === 1 || alert.alert?.severity === 2} class:sev-med={alert.alert?.severity === 3}>
-								{alert.alert?.severity === 1 ? 'HIGH' : alert.alert?.severity === 2 ? 'HIGH' : alert.alert?.severity === 3 ? 'MED' : 'LOW'}
-							</span>
+							<span class="sev sev-{level.toLowerCase()}">{@render sevShape(level)}{level}</span>
 							<span class="threat-sig">{alert.alert?.signature || alert.rule_name || 'Unknown alert'}</span>
 						</div>
 					{/each}
 					{#if threatAlerts.length > 5}
-						<p class="text-muted" style="margin-top: var(--sp-1);">+ {threatAlerts.length - 5} more alerts</p>
+						<p class="dim more-note">+ {threatAlerts.length - 5} more alerts</p>
 					{/if}
 				</div>
 			{:else if threatFailed}
-				<p class="text-muted no-threats">Couldn't check for associated alerts: the request failed.</p>
+				<p class="dim no-threats">Couldn't check for associated alerts: the request failed.</p>
 			{:else}
-				<p class="text-muted no-threats">No associated alerts found</p>
+				<p class="dim no-threats">No associated alerts found</p>
 			{/if}
 		</DrawerSection>
 
 		<!-- WHOIS inline result -->
 		{#if whoisResult}
-			<DrawerSection title="WHOIS \u2014 {whoisIp}" defaultExpanded>
+			<DrawerSection title="WHOIS — {whoisIp}" defaultExpanded>
 				{#if whoisResult.error}
-					<p class="text-danger">{whoisResult.error}</p>
+					<p class="error-text">{whoisResult.error}</p>
 				{:else}
 					{#each Object.entries(whoisResult.parsed) as [key, val]}
 						<KVRow label={key} value={val} copyable />
@@ -497,17 +506,17 @@
 	<div class="tshark-content">
 		{#if tsharkAvailable === false}
 			<div class="empty-state">
-				<p class="text-muted">TShark is not available</p>
-				<p class="text-dim">The TShark container is not running or not configured.</p>
+				<p class="state-head">TShark is not available</p>
+				<p class="dim">The TShark container is not running or not configured.</p>
 			</div>
 		{:else if tsharkAvailable === null && tsharkError}
 			<div class="empty-state">
-				<p class="text-muted">{tsharkError}</p>
+				<p class="dim">{tsharkError}</p>
 			</div>
 		{:else if tsharkAvailable === null}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Checking TShark...</p>
+				<p class="dim">Checking TShark…</p>
 			</div>
 		{:else}
 			<div class="filter-preview">
@@ -515,45 +524,51 @@
 				<code class="filter-code">{displayFilter || '(none)'}</code>
 			</div>
 
-			<!-- Mode buttons + Analyze -->
+			<!-- Mode buttons + Analyse -->
 			<div class="tshark-controls">
 				<button
-					class="tshark-btn tshark-btn-primary"
+					class="btn primary"
+					type="button"
 					onclick={() => runAnalysis()}
 					disabled={analyzing}
 				>
-					{analyzing ? 'Analyzing...' : '\u25B6 Analyze'}
+					{#if analyzing}Analysing…{:else}<Icon name="play" />Analyse{/if}
 				</button>
-				<button
-					class="tshark-btn tshark-btn-mode"
-					class:active={tsharkMode === 'summary'}
-					onclick={() => tsharkMode = 'summary'}
-				>Summary</button>
-				<button
-					class="tshark-btn tshark-btn-mode"
-					class:active={tsharkMode === 'verbose'}
-					onclick={() => tsharkMode = 'verbose'}
-				>Verbose (-V)</button>
-				<button
-					class="tshark-btn tshark-btn-mode"
-					class:active={tsharkMode === 'follow'}
-					onclick={() => tsharkMode = 'follow'}
-				>Follow Stream</button>
-				<a href={tsharkToolUrl} class="tshark-btn tshark-btn-mode">Open in TShark Tool &rarr;</a>
+				<div class="pills" role="group" aria-label="Output mode">
+					<button
+						class="pill"
+						type="button"
+						aria-pressed={tsharkMode === 'summary'}
+						onclick={() => tsharkMode = 'summary'}
+					>Summary</button>
+					<button
+						class="pill"
+						type="button"
+						aria-pressed={tsharkMode === 'verbose'}
+						onclick={() => tsharkMode = 'verbose'}
+					>Verbose (-V)</button>
+					<button
+						class="pill"
+						type="button"
+						aria-pressed={tsharkMode === 'follow'}
+						onclick={() => tsharkMode = 'follow'}
+					>Follow stream</button>
+				</div>
+				<a href={tsharkToolUrl} class="btn">Open in TShark tool</a>
 			</div>
 
 			{#if analyzing}
 				<div class="loading-state">
 					<div class="loading-spinner"></div>
-					<p class="text-muted">Analyzing packets...</p>
+					<p class="dim">Analysing packets…</p>
 				</div>
 			{:else if tsharkError}
 				<div class="error-state">
-					<p class="text-muted">{tsharkError}</p>
-					<button class="btn btn-secondary btn-sm" onclick={() => runAnalysis()}>Retry</button>
+					<p class="dim">{tsharkError}</p>
+					<button class="btn" type="button" onclick={() => runAnalysis()}>Retry</button>
 				</div>
 			{:else if tsharkMode === 'summary' && packets.length > 0}
-				<div class="packet-table-wrap">
+				<div class="tbl-wrap packet-table-wrap">
 					<table class="packet-table">
 						<thead>
 							<tr><th>No.</th><th>Time</th><th>Source</th><th>Destination</th><th>Proto</th><th>Len</th></tr>
@@ -571,11 +586,11 @@
 					</table>
 				</div>
 				<div class="hex-section">
-					<h4 class="hex-title">Hex Dump</h4>
+					<h4 class="eyebrow hex-title">Hex dump</h4>
 					{#if selectedPacketIdx === null}
-						<p class="text-muted">Click a packet row to view hex dump</p>
+						<p class="dim">Click a packet row to view hex dump</p>
 					{:else if hexLoading}
-						<div class="loading-state"><div class="loading-spinner"></div><p class="text-muted">Loading hex...</p></div>
+						<div class="loading-state"><div class="loading-spinner"></div><p class="dim">Loading hex…</p></div>
 					{:else}
 						<pre class="raw-block hex-block">{hexContent}</pre>
 					{/if}
@@ -583,13 +598,13 @@
 			{:else if (tsharkMode === 'verbose' || tsharkMode === 'follow') && tsharkTextOutput}
 				<pre class="raw-block tshark-text-block">{tsharkTextOutput}</pre>
 			{:else if pcapLoading}
-				<div class="loading-state"><div class="loading-spinner"></div><p class="text-muted">Loading PCAP files...</p></div>
+				<div class="loading-state"><div class="loading-spinner"></div><p class="dim">Loading PCAP files…</p></div>
 			{:else if pcapFiles.length === 0}
-				<div class="empty-state"><p class="text-muted">No PCAP files available</p></div>
+				<div class="empty-state"><p class="dim">No PCAP files available</p></div>
 			{:else if !analyzing && packets.length === 0 && !tsharkTextOutput && !tsharkError}
 				<div class="empty-state">
-					<p class="text-muted">Click "Analyze" to inspect packets for this connection.</p>
-					<p class="text-dim">{pcapFiles.length} PCAP file{pcapFiles.length !== 1 ? 's' : ''} available.</p>
+					<p class="dim">Click "Analyse" to inspect packets for this connection.</p>
+					<p class="dim small">{pcapFiles.length} PCAP file{pcapFiles.length !== 1 ? 's' : ''} available.</p>
 				</div>
 			{/if}
 		{/if}
@@ -603,23 +618,23 @@
 		{#if relatedLoading}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Loading related connections...</p>
+				<p class="dim">Loading related connections…</p>
 			</div>
 		{:else if relatedData}
 			<!-- Summary stats -->
 			<div class="related-summary">
 				<div class="related-stat">
-					<span class="stat-value">{relatedData.total_connections}</span>
-					<span class="stat-label">Total Sessions</span>
+					<span class="stat-value num">{relatedData.total_connections}</span>
+					<span class="stat-label">Total sessions</span>
 				</div>
 				<div class="related-stat">
-					<span class="stat-value">{formatBytes(relatedData.total_bytes)}</span>
-					<span class="stat-label">Total Bytes</span>
+					<span class="stat-value num">{formatBytes(relatedData.total_bytes)}</span>
+					<span class="stat-label">Total bytes</span>
 				</div>
 				<div class="related-stat">
-					<span class="stat-value">
+					<span class="stat-protos">
 						{#each relatedData.protocols as p}
-							<span class="proto-badge" style="background: {protoColor(p)};">{p.toUpperCase()}</span>
+							<span class="tag proto-tag"><span class="sw" style="--c: {protoColor(p)};"></span>{p.toUpperCase()}</span>
 						{/each}
 					</span>
 					<span class="stat-label">Protocols</span>
@@ -627,16 +642,22 @@
 			</div>
 			{#if relatedData.first_seen && relatedData.last_seen}
 				<div class="related-timerange">
-					<KVRow label="First Seen" value={formatTimestamp(relatedData.first_seen)} mono />
-					<KVRow label="Last Seen" value={formatTimestamp(relatedData.last_seen)} mono />
+					<KVRow label="First seen" value={formatTimestamp(relatedData.first_seen)} mono />
+					<KVRow label="Last seen" value={formatTimestamp(relatedData.last_seen)} mono />
 				</div>
 			{/if}
 
 			<!-- Mini timeline SVG -->
 			{#if relatedData.connections.length > 0}
 				<div class="related-timeline">
-					<h4 class="section-title">Connection Timeline</h4>
-					<svg viewBox="0 0 400 {Math.min(200, relatedData.connections.length * 12 + 20)}" width="100%" height={Math.min(200, relatedData.connections.length * 12 + 20)}>
+					<h4 class="eyebrow section-title">Connection timeline</h4>
+					<svg
+						viewBox="0 0 400 {Math.min(200, relatedData.connections.length * 12 + 20)}"
+						width="100%"
+						height={Math.min(200, relatedData.connections.length * 12 + 20)}
+						role="img"
+						aria-label="Bytes per connection, latest {Math.min(15, relatedData.connections.length)} connections, coloured by protocol"
+					>
 						{#each relatedData.connections.slice(0, 15) as conn, i}
 							{@const sb = ((conn as Record<string, unknown>)?.source as { bytes?: number })?.bytes || 0}
 							{@const db = ((conn as Record<string, unknown>)?.destination as { bytes?: number })?.bytes || 0}
@@ -649,7 +670,7 @@
 								fill={protoColor(connProto)}
 								opacity="0.7"
 							/>
-							<text x="0" y={i * 12 + 11} fill="var(--text-3)" font-size="9" font-family="var(--font-mono)">
+							<text class="ax" x="0" y={i * 12 + 11}>
 								{formatTimestamp((conn as Record<string, unknown>)?.['@timestamp'] as string || '').split(',')[1]?.trim() || ''}
 							</text>
 						{/each}
@@ -658,17 +679,17 @@
 						<!-- OLD CODE START — #96: the list holds at most 200 rows; the total counts the whole window
 						<p class="text-muted" style="font-size: var(--text-xs);">Showing 15 of {relatedData.connections.length} connections</p>
 						OLD CODE END -->
-						<p class="text-muted" style="font-size: var(--text-xs);">Showing {partOfWhole(15, relatedData.total_connections ?? relatedData.connections.length)} connections</p>
+						<p class="dim small">Showing {partOfWhole(15, relatedData.total_connections ?? relatedData.connections.length)} connections</p>
 					{/if}
 				</div>
 			{/if}
 		{:else if relatedFailed}
 			<div class="empty-state">
-				<p class="text-warning">Couldn't load related connections: the request failed.</p>
+				<p class="error-text">Couldn't load related connections: the request failed.</p>
 			</div>
 		{:else}
 			<div class="empty-state">
-				<p class="text-muted">No related connections found</p>
+				<p class="dim">No related connections found</p>
 			</div>
 		{/if}
 	</div>
@@ -678,42 +699,52 @@
 <!-- ======================================================================= -->
 {:else if activeTab === 'flow'}
 	<div class="flow-content">
-		<svg viewBox="0 0 380 160" width="100%" height="160">
+		<svg
+			class="flow-svg"
+			viewBox="0 0 380 160"
+			width="100%"
+			height="160"
+			role="img"
+			aria-label="{srcIp || 'Source'} to {dstIp || 'destination'} over {proto?.toUpperCase() || 'an unknown protocol'}, {formatBytes(totalBytes)} in total"
+		>
 			<!-- Source node -->
-			<rect x="10" y="50" width="100" height="60" rx="8" fill="var(--accent)" opacity="0.2" stroke="var(--accent)" stroke-width="1.5" />
-			<text x="60" y="72" text-anchor="middle" fill="var(--text-1)" font-size="11" font-weight="600">
+			<rect class="node node-src" x="10" y="50" width="100" height="60" rx="8" />
+			<text class="n-title" x="60" y="72" text-anchor="middle">
 				{srcIp || 'Source'}
 			</text>
 			{#if srcPort}
-				<text x="60" y="88" text-anchor="middle" fill="var(--text-3)" font-size="10">:{srcPort}</text>
+				<text class="n-meta" x="60" y="88" text-anchor="middle">:{srcPort}</text>
 			{/if}
 			{#if srcCountry}
-				<text x="60" y="102" text-anchor="middle" fill="var(--text-3)" font-size="9">{srcCountry}</text>
+				<text class="n-meta" x="60" y="102" text-anchor="middle">{srcCountry}</text>
 			{/if}
 
 			<!-- Protocol node -->
-			<rect x="150" y="55" width="80" height="50" rx="8" fill={protoColor(proto)} opacity="0.2" stroke={protoColor(proto)} stroke-width="1.5" />
-			<text x="190" y="78" text-anchor="middle" fill="var(--text-1)" font-size="12" font-weight="600">
+			<rect class="node" x="150" y="55" width="80" height="50" rx="8" style="--c: {protoColor(proto)};" />
+			<text class="n-title" x="190" y="78" text-anchor="middle">
 				{proto?.toUpperCase() || '?'}
 			</text>
 			{#if service}
-				<text x="190" y="94" text-anchor="middle" fill="var(--text-3)" font-size="10">{service}</text>
+				<text class="n-meta" x="190" y="94" text-anchor="middle">{service}</text>
 			{/if}
 
 			<!-- Destination node -->
-			<rect x="270" y="50" width="100" height="60" rx="8" fill="var(--ok)" opacity="0.2" stroke="var(--ok)" stroke-width="1.5" />
-			<text x="320" y="72" text-anchor="middle" fill="var(--text-1)" font-size="11" font-weight="600">
+			<rect class="node node-dst" x="270" y="50" width="100" height="60" rx="8" />
+			<text class="n-title" x="320" y="72" text-anchor="middle">
 				{dstIp || 'Dest'}
 			</text>
 			{#if dstPort}
-				<text x="320" y="88" text-anchor="middle" fill="var(--text-3)" font-size="10">:{dstPort}</text>
+				<text class="n-meta" x="320" y="88" text-anchor="middle">:{dstPort}</text>
 			{/if}
 			{#if dstCountry}
-				<text x="320" y="102" text-anchor="middle" fill="var(--text-3)" font-size="9">{dstCountry}</text>
+				<text class="n-meta" x="320" y="102" text-anchor="middle">{dstCountry}</text>
 			{/if}
 			{#if dstAsn}
-				<text x="320" y="130" text-anchor="middle" fill="var(--text-3)" font-size="8">
-					{dstAsn.length > 25 ? dstAsn.slice(0, 24) + '\u2026' : dstAsn}
+				<text class="n-meta" x="320" y="130" text-anchor="middle">
+					<!-- OLD CODE START — 24 characters fit at the old 8 px; the 11 px token fits 16
+					{dstAsn.length > 25 ? dstAsn.slice(0, 24) + '…' : dstAsn}
+					OLD CODE END -->
+					{dstAsn.length > 17 ? dstAsn.slice(0, 16) + '…' : dstAsn}
 				</text>
 			{/if}
 
@@ -729,21 +760,21 @@
 			</defs>
 
 			<!-- Bytes labels on arrows -->
-			<text x="129" y="72" text-anchor="middle" fill="var(--accent)" font-size="9" font-weight="500">{formatBytes(origBytes)}</text>
-			<text x="249" y="72" text-anchor="middle" fill="var(--accent)" font-size="9" font-weight="500">{formatBytes(respBytes)}</text>
+			<text class="n-bytes" x="129" y="72" text-anchor="middle">{formatBytes(origBytes)}</text>
+			<text class="n-bytes" x="249" y="72" text-anchor="middle">{formatBytes(respBytes)}</text>
 
-			<!-- Alert indicator -->
+			<!-- Alert indicator: the critical diamond, the count and the word -->
 			{#if threatAlerts.length > 0}
-				<circle cx="190" cy="35" r="8" fill="var(--sev-critical)" opacity="0.8" />
-				<text x="190" y="38" text-anchor="middle" fill="var(--text-1)" font-size="9" font-weight="700">{threatAlerts.length}</text>
-				<text x="210" y="38" fill="var(--sev-critical)" font-size="8">alerts</text>
+				<path class="alert-mark" d="M190 26 199 35 190 44 181 35z" />
+				<text class="alert-count" x="190" y="38.5" text-anchor="middle">{threatAlerts.length}</text>
+				<text class="alert-word" x="204" y="38.5">alerts</text>
 			{/if}
 		</svg>
 
 		<!-- Connection details below diagram -->
 		<div class="flow-details">
 			<KVRow label="Duration" value={formatDuration(duration)} mono />
-			<KVRow label="Total Bytes" value={formatBytes(totalBytes)} mono />
+			<KVRow label="Total bytes" value={formatBytes(totalBytes)} mono />
 			<KVRow label="State" value={connState} mono />
 			{#if communityId}
 				<KVRow label="Community ID" value={communityId} mono copyable />
@@ -758,35 +789,27 @@
 		flex-direction: column;
 	}
 
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: var(--sp-2);
-		padding: var(--sp-8) 0;
-	}
-
-	.error-state, .empty-state {
+	.loading-state, .error-state, .empty-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: var(--sp-2);
 		padding: var(--sp-8) 0;
 		text-align: center;
+		font-size: var(--text-sm);
 	}
+
+	.state-head { color: var(--text-2); }
+	.small { font-size: var(--text-xs); }
+	.error-text { color: var(--sev-critical); font-size: var(--text-sm); }
 
 	.raw-content { gap: var(--sp-2); }
 	.raw-header { display: flex; justify-content: flex-end; }
 
+	/* Global pre styles give the surface, border, radius and padding. */
 	.raw-block {
-		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		color: var(--text-1);
-		background-color: var(--surface-1);
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
-		padding: var(--sp-4);
-		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
 		max-height: 600px;
@@ -794,34 +817,30 @@
 		line-height: 1.5;
 	}
 
-	/* Traffic ratio bar */
+	/* Traffic ratio bar: two series, labelled by the row text */
 	.ratio-row {
 		display: flex;
 		align-items: center;
-		gap: var(--sp-2);
+		gap: var(--sp-3);
 		padding: var(--sp-1) 0;
+		font-size: var(--text-sm);
 	}
 
 	.ratio-label {
 		flex-shrink: 0;
-		width: 160px;
-		font-size: var(--text-xs);
-		font-weight: 600;
 		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 
 	.ratio-bar {
 		flex: 1;
 		display: flex;
-		height: 10px;
-		border-radius: var(--r-sm);
-		overflow: hidden;
+		gap: 2px;
+		height: 8px;
 	}
 
-	.ratio-in { background: var(--accent); }
-	.ratio-out { background: var(--sev-medium); }
+	.ratio-in, .ratio-out { border-radius: var(--r-pill); }
+	.ratio-in { background: var(--data-1); }
+	.ratio-out { background: var(--data-2); }
 
 	.ratio-text {
 		font-size: var(--text-xs);
@@ -841,32 +860,21 @@
 		display: flex;
 		align-items: center;
 		gap: var(--sp-2);
-		padding: var(--sp-1);
-		border-radius: var(--r-sm);
+		padding: var(--sp-2);
+		border-radius: var(--r-md);
 		background: var(--surface-2);
 	}
 
-	.threat-severity {
-		flex-shrink: 0;
-		padding: 2px 6px;
-		border-radius: var(--r-sm);
-		font-size: 10px;
-		font-weight: 700;
-		letter-spacing: 0.05em;
-		background: color-mix(in srgb, var(--sev-low) 12%, transparent);
-		color: var(--sev-low);
-	}
-
-	.threat-severity.sev-high { background: var(--sev-high); color: var(--on-accent); }
-	.threat-severity.sev-med { background: var(--sev-medium); color: var(--on-accent); }
-
 	.threat-sig {
+		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		color: var(--text-2);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+
+	.more-note { margin-top: var(--sp-1); font-size: var(--text-xs); }
 
 	.no-threats {
 		font-size: var(--text-xs);
@@ -876,118 +884,42 @@
 	/* TShark controls */
 	.tshark-controls {
 		display: flex;
-		gap: var(--sp-1);
+		align-items: center;
+		gap: var(--sp-2);
 		margin-bottom: var(--sp-4);
 		flex-wrap: wrap;
 	}
 
-	.tshark-btn {
-		padding: 5px 12px;
-		border-radius: var(--r-sm);
-		font-family: var(--font-body);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		cursor: pointer;
-		transition: all var(--dur-fast);
-		border: 1px solid;
-		text-decoration: none;
-		display: inline-flex;
-		align-items: center;
-		white-space: nowrap;
-	}
-
-	.tshark-btn-primary {
-		background: var(--accent);
-		color: var(--bg);
-		border-color: var(--accent);
-	}
-
-	.tshark-btn-primary:hover { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent); }
-	.tshark-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
-
-	.tshark-btn-mode {
-		background: transparent;
-		color: var(--text-2);
-		border-color: var(--line);
-	}
-
-	.tshark-btn-mode:hover {
-		border-color: var(--line-strong);
-		color: var(--text-1);
-	}
-
-	.tshark-btn-mode.active {
-		border-color: var(--accent);
-		color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 12%, transparent);
-	}
-
-	.tshark-text-block {
-		font-size: 11px;
+	.tshark-text-block, .hex-block {
+		font-size: var(--text-micro);
 		line-height: 1.6;
-		max-height: 500px;
 	}
 
-	/* TShark styles */
+	.tshark-text-block { max-height: 500px; }
+
 	.filter-preview {
 		display: flex;
 		align-items: center;
 		gap: var(--sp-2);
 		padding: var(--sp-2) var(--sp-4);
-		background-color: var(--surface-1);
+		background-color: var(--surface-2);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
 		margin-bottom: var(--sp-4);
 	}
 
 	.filter-label { font-size: var(--text-xs); color: var(--text-3); white-space: nowrap; }
-	.filter-code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); word-break: break-all; }
+	.filter-code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent-strong); word-break: break-all; }
 
-	.packet-table-wrap {
-		overflow-x: auto;
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
-		margin-bottom: var(--sp-4);
-	}
-
-	.packet-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
-
-	.packet-table th {
-		padding: var(--sp-1) var(--sp-2);
-		text-align: left;
-		font-weight: 600;
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		background-color: var(--surface-2);
-		border-bottom: 1px solid var(--line);
-		white-space: nowrap;
-	}
-
-	.packet-table td {
-		padding: var(--sp-1) var(--sp-2);
-		border-bottom: 1px solid var(--line);
-		color: var(--text-1);
-		white-space: nowrap;
-	}
-
-	.packet-row { cursor: pointer; transition: background-color var(--dur-fast); }
-	.packet-row:hover { background-color: var(--surface-2); }
-	.packet-row.selected { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
-	.packet-row.selected td { color: var(--accent); }
+	/* Packet table: the system table, compacted for packet rows */
+	.packet-table-wrap { margin-bottom: var(--sp-4); }
+	.packet-table { font-size: var(--text-xs); }
+	.packet-table th, .packet-table td { padding: var(--sp-1) var(--sp-2); }
+	.packet-row { cursor: pointer; }
+	.packet-row.selected td { background-color: var(--surface-2); color: var(--text-1); }
 
 	.hex-section { margin-top: var(--sp-2); }
-
-	.hex-title {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin-bottom: var(--sp-2);
-	}
-
-	.hex-block { font-size: 11px; line-height: 1.6; }
+	.hex-title, .section-title { margin-bottom: var(--sp-2); }
 
 	/* Related connections */
 	.related-summary {
@@ -1001,34 +933,32 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 2px;
+		gap: var(--sp-1);
+		text-align: center;
 	}
 
 	.stat-value {
-		font-size: var(--text-lg);
-		font-weight: 700;
+		font: 300 var(--text-xl)/1.15 var(--font-display);
+		letter-spacing: -0.03em;
 		color: var(--text-1);
-		font-family: var(--font-mono);
+	}
+
+	.stat-protos {
 		display: flex;
 		gap: var(--sp-1);
 		flex-wrap: wrap;
 		justify-content: center;
 	}
 
+	.proto-tag {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--sp-1);
+	}
+
 	.stat-label {
 		font-size: var(--text-xs);
 		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.proto-badge {
-		display: inline-block;
-		padding: 1px 6px;
-		border-radius: var(--r-sm);
-		font-size: 10px;
-		font-weight: 600;
-		color: var(--bg);
 	}
 
 	.related-timerange {
@@ -1040,18 +970,55 @@
 		padding-top: var(--sp-4);
 	}
 
-	.section-title {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin-bottom: var(--sp-2);
-	}
-
 	/* Flow diagram */
 	.flow-content {
 		gap: var(--sp-4);
+	}
+
+	.flow-svg .node {
+		--c: var(--data-3);
+		fill: color-mix(in srgb, var(--c) 20%, transparent);
+		stroke: var(--c);
+		stroke-width: 1.5;
+	}
+
+	.flow-svg .node-src { --c: var(--data-1); }
+	.flow-svg .node-dst { --c: var(--data-2); }
+
+	.flow-svg .n-title {
+		fill: var(--text-1);
+		font-family: var(--font-mono);
+		font-size: var(--text-micro);
+		font-weight: 600;
+	}
+
+	.flow-svg .n-meta {
+		fill: var(--text-3);
+		font-family: var(--font-body);
+		font-size: var(--text-micro);
+	}
+
+	.flow-svg .n-bytes {
+		fill: var(--accent-strong);
+		font-family: var(--font-body);
+		font-size: var(--text-micro);
+		font-weight: 600;
+	}
+
+	.flow-svg .alert-mark { fill: var(--sev-critical); }
+
+	.flow-svg .alert-count {
+		fill: var(--bg);
+		font-family: var(--font-body);
+		font-size: var(--text-micro);
+		font-weight: 700;
+	}
+
+	.flow-svg .alert-word {
+		fill: var(--sev-critical);
+		font-family: var(--font-body);
+		font-size: var(--text-micro);
+		font-weight: 700;
 	}
 
 	.flow-details {
@@ -1062,10 +1029,6 @@
 	/* Utility */
 	.whois-raw { margin-top: var(--sp-2); }
 	.whois-raw summary { font-size: var(--text-xs); color: var(--text-3); cursor: pointer; padding: var(--sp-1) 0; }
-	.mono { font-family: var(--font-mono); }
-	.text-danger { color: var(--sev-critical); }
-	.text-muted { color: var(--text-3); font-size: var(--text-sm); }
-	.text-dim { color: var(--text-3); font-size: var(--text-xs); }
 
 	.loading-spinner {
 		width: 24px;

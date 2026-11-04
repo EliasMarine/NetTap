@@ -148,21 +148,21 @@
 	<div class="overview-content">
 		<DrawerSection title="Identity" defaultExpanded>
 			{#if device.unifi_name}
-				<KVRow label="UniFi Name" value={device.unifi_name} />
+				<KVRow label="UniFi name" value={device.unifi_name} />
 			{/if}
-			<KVRow label="IP Address" value={device.ip} mono copyable />
-			<KVRow label="MAC Address" value={device.mac} mono copyable />
+			<KVRow label="IP address" value={device.ip} mono copyable />
+			<KVRow label="MAC address" value={device.mac} mono copyable />
 			<KVRow label="Hostname" value={device.hostname} />
 			<KVRow label="Manufacturer" value={device.manufacturer} />
 			{#if device.os_hint}
-				<KVRow label="OS Hint" value={device.os_hint} />
+				<KVRow label="OS hint" value={device.os_hint} />
 			{/if}
 		</DrawerSection>
 
 		<DrawerSection title="Activity" defaultExpanded>
-			<KVRow label="First Seen" value={device.first_seen ? timeAgo(device.first_seen) : null} />
-			<KVRow label="Last Seen" value={device.last_seen ? timeAgo(device.last_seen) : null} />
-			<KVRow label="Total Bytes" value={formatBytes(device.total_bytes)} mono />
+			<KVRow label="First seen" value={device.first_seen ? timeAgo(device.first_seen) : null} />
+			<KVRow label="Last seen" value={device.last_seen ? timeAgo(device.last_seen) : null} />
+			<KVRow label="Total bytes" value={formatBytes(device.total_bytes)} mono />
 			<KVRow label="Connections" value={device.connection_count} mono />
 			<KVRow label="Alerts" value={device.alert_count} mono />
 		</DrawerSection>
@@ -171,7 +171,7 @@
 			<DrawerSection title="Protocols" defaultExpanded={false}>
 				<div class="protocol-pills">
 					{#each device.protocols as proto}
-						<span class="badge badge-muted">{proto}</span>
+						<span class="tag">{proto}</span>
 					{/each}
 				</div>
 			</DrawerSection>
@@ -181,7 +181,7 @@
 		{#if whoisResult}
 			<DrawerSection title="WHOIS — {device.ip}" defaultExpanded>
 				{#if whoisResult.error}
-					<p class="text-danger">{whoisResult.error}</p>
+					<p class="error-text">{whoisResult.error}</p>
 				{:else}
 					{#each Object.entries(whoisResult.parsed) as [key, val]}
 						<KVRow label={key} value={val} copyable />
@@ -196,16 +196,16 @@
 		{#if connLoading}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Loading connections...</p>
+				<p class="dim">Loading connections…</p>
 			</div>
 		{:else if connError}
 			<div class="error-state">
-				<p class="text-danger">{connError}</p>
-				<button class="btn btn-secondary btn-sm" onclick={fetchConnections}>Retry</button>
+				<p class="error-text">{connError}</p>
+				<button class="btn" type="button" onclick={fetchConnections}>Retry</button>
 			</div>
 		{:else if connections.length === 0}
 			<div class="empty-state">
-				<p class="text-muted">No recent connections found</p>
+				<p class="dim">No recent connections found</p>
 			</div>
 		{:else}
 			<div class="conn-list">
@@ -214,10 +214,10 @@
 						<div class="conn-time">{conn.ts ? timeAgo(conn.ts) : '--'}</div>
 						<div class="conn-detail">
 							{#if conn.proto}
-								<span class="badge badge-muted">{String(conn.proto).toUpperCase()}</span>
+								<span class="tag">{String(conn.proto).toUpperCase()}</span>
 							{/if}
 							{#if conn.service}
-								<span class="badge">{conn.service}</span>
+								<span class="tag">{conn.service}</span>
 							{/if}
 							<span class="conn-dest mono">
 								→ {conn['destination.ip'] || conn['resp_h'] || '--'}
@@ -234,22 +234,22 @@
 		{#if trafficLoading}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Loading traffic data...</p>
+				<p class="dim">Loading traffic data…</p>
 			</div>
 		{:else if trafficData.length < 2}
 			<div class="empty-state">
-				<p class="text-muted">No bandwidth data available</p>
+				<p class="dim">No bandwidth data available</p>
 			</div>
 		{:else}
 			<DrawerSection title="Bandwidth (recent)" defaultExpanded>
 				<div class="sparkline-container">
-					<svg viewBox="0 0 400 60" preserveAspectRatio="none" class="sparkline-svg">
-						<path d={buildSparklinePath(trafficData)} fill="none" stroke="var(--accent)" stroke-width="2" />
+					<svg viewBox="0 0 400 60" preserveAspectRatio="none" class="sparkline-svg" role="img" aria-label="Recent bandwidth, peak {formatBytes(Math.max(...trafficData.map(d => d.bytes)))}">
+						<path d={buildSparklinePath(trafficData)} fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
 					</svg>
 				</div>
 				<div class="traffic-stats">
 					<span class="traffic-stat">
-						Peak: <strong>{formatBytes(Math.max(...trafficData.map(d => d.bytes)))}</strong>
+						Peak: <strong class="num">{formatBytes(Math.max(...trafficData.map(d => d.bytes)))}</strong>
 					</span>
 				</div>
 			</DrawerSection>
@@ -311,7 +311,7 @@
 	}
 
 	.sparkline-container {
-		background-color: var(--surface-1);
+		background-color: var(--surface-2);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
 		padding: var(--sp-2);
@@ -332,11 +332,12 @@
 
 	.traffic-stat strong {
 		color: var(--text-1);
-		font-family: var(--font-mono);
+		font-weight: 600;
 	}
 
 	/* Common */
 	.loading-state {
+		font-size: var(--text-sm);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -345,6 +346,7 @@
 	}
 
 	.error-state, .empty-state {
+		font-size: var(--text-sm);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -353,9 +355,7 @@
 		text-align: center;
 	}
 
-	.mono { font-family: var(--font-mono); }
-	.text-danger { color: var(--sev-critical); font-size: var(--text-sm); }
-	.text-muted { color: var(--text-3); font-size: var(--text-sm); }
+	.error-text { color: var(--sev-critical); font-size: var(--text-sm); }
 
 	.loading-spinner {
 		width: 24px;

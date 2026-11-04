@@ -38,7 +38,7 @@
 			tabindex={copyable ? 0 : undefined}
 			onclick={handleCopy}
 			onkeydown={(e) => { if (copyable && (e.key === 'Enter' || e.key === ' ')) handleCopy(); }}
-			title={copyable ? (copied ? 'Copied!' : 'Click to copy') : undefined}
+			title={copyable ? (copied ? 'Copied' : 'Click to copy') : undefined}
 		>
 			{value}
 			{#if copied}
@@ -49,29 +49,20 @@
 </div>
 
 <style>
+	/* One row of the system's .facts list: key in text-3, value right-aligned in text-1. */
 	.kv-row {
 		display: flex;
-		align-items: flex-start;
-		gap: var(--sp-2);
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--sp-4);
 		padding: var(--sp-1) 0;
-		border-bottom: 1px solid var(--line);
 		font-size: var(--text-sm);
 	}
 
-	.kv-row:last-child {
-		border-bottom: none;
-	}
-
 	.kv-label {
-		flex-shrink: 0;
-		width: 160px;
-		min-width: 160px;
-		font-size: var(--text-xs);
-		font-weight: 600;
+		flex: 0 0 auto;
+		max-width: 45%;
 		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding-top: 2px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -79,22 +70,19 @@
 
 	.kv-value {
 		flex: 1;
+		min-width: 0;
+		text-align: right;
 		color: var(--text-1);
-		word-break: break-all;
+		overflow-wrap: anywhere;
 		line-height: 1.4;
-	}
-
-	.kv-value.mono {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
 	}
 
 	.kv-value.copyable {
 		cursor: pointer;
-		border-radius: var(--r-sm);
+		border-radius: var(--r-xs);
 		transition: background-color var(--dur-fast);
-		padding: 1px 4px;
-		margin: -1px -4px;
+		padding: 1px var(--sp-1);
+		margin: -1px calc(var(--sp-1) * -1);
 		position: relative;
 	}
 
@@ -110,9 +98,8 @@
 		display: inline-flex;
 		align-items: center;
 		margin-left: var(--sp-1);
-		font-size: 10px;
+		font-size: var(--text-micro);
 		color: var(--ok);
 		font-weight: 600;
-		letter-spacing: 0.02em;
 	}
 </style>

@@ -12,6 +12,7 @@
 	import { analyzeConnection } from '$lib/utils/tshark-analyze';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -357,17 +358,19 @@
 		<!-- ====== Header ====== -->
 		<div class="drawer-header">
 			<div class="drawer-title-area">
-				<span class="drawer-title">Connection Detail</span>
-				<span class="drawer-subtitle">{subtitle}</span>
+				<span class="drawer-title type-drawer-title">Connection detail</span>
+				<span class="drawer-subtitle mono">{subtitle}</span>
 			</div>
-			<button class="drawer-close" onclick={onclose} aria-label="Close panel">&times;</button>
+			<button class="icon-btn" type="button" onclick={onclose} aria-label="Close panel"><Icon name="close" /></button>
 		</div>
 
 		<!-- ====== Tabs ====== -->
 		<div class="drawer-tabs">
-			<button class="drawer-tab" class:active={activeTab === 'detail'} onclick={() => activeTab = 'detail'}>Detail</button>
-			<button class="drawer-tab" class:active={activeTab === 'tshark'} onclick={() => activeTab = 'tshark'}>TShark Analysis</button>
-			<button class="drawer-tab" class:active={activeTab === 'related'} onclick={() => activeTab = 'related'}>Related Activity</button>
+			<div class="pills">
+				<button class="pill" type="button" aria-pressed={activeTab === 'detail'} onclick={() => activeTab = 'detail'}>Detail</button>
+				<button class="pill" type="button" aria-pressed={activeTab === 'tshark'} onclick={() => activeTab = 'tshark'}>TShark analysis</button>
+				<button class="pill" type="button" aria-pressed={activeTab === 'related'} onclick={() => activeTab = 'related'}>Related activity</button>
+			</div>
 		</div>
 
 		<!-- ====== Scrollable body ====== -->
@@ -398,11 +401,11 @@
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">Download</span>
-							<span class="detail-value detail-value--download">{formatBytes(downloadBytes)}</span>
+							<span class="detail-value">{formatBytes(downloadBytes)}</span>
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">Upload</span>
-							<span class="detail-value detail-value--upload">{formatBytes(uploadBytes)}</span>
+							<span class="detail-value">{formatBytes(uploadBytes)}</span>
 						</div>
 						<div class="detail-item">
 							<span class="detail-label">Session ID</span>
@@ -413,7 +416,7 @@
 							<span class="detail-value">{communityId || '--'}</span>
 						</div>
 						<div class="detail-item">
-							<span class="detail-label">Conn State</span>
+							<span class="detail-label">Conn state</span>
 							<span class="detail-value">
 								{#if connState}
 									{connState}{#if CONN_STATE_DESC[connState]} ({CONN_STATE_DESC[connState].split(',')[0]}){/if}
@@ -430,7 +433,7 @@
 
 					<!-- Destination Enrichment -->
 					{#if dstAsn || dstCountry}
-						<div class="detail-section-title">Destination Enrichment</div>
+						<div class="detail-section-title eyebrow">Destination enrichment</div>
 						<div class="detail-grid">
 							{#if dstAsn}
 								<div class="detail-item">
@@ -449,11 +452,11 @@
 
 					<!-- TLS Details -->
 					{#if hasTls}
-						<div class="detail-section-title">TLS Details</div>
+						<div class="detail-section-title eyebrow">TLS details</div>
 						<div class="detail-grid">
 							{#if tlsVersion}
 								<div class="detail-item">
-									<span class="detail-label">TLS Version</span>
+									<span class="detail-label">TLS version</span>
 									<span class="detail-value">{tlsVersion}</span>
 								</div>
 							{/if}
@@ -479,39 +482,45 @@
 			{:else if activeTab === 'tshark'}
 				<div class="tshark-tab">
 					<!-- BPF filter display box -->
-					<div class="tshark-filter-label">Auto-Generated BPF Filter</div>
+					<div class="tshark-filter-label eyebrow">Auto-generated BPF filter</div>
 					<div class="tshark-filter">{bpfFilter || '(none)'}</div>
 
 					{#if displayFilter && displayFilter !== bpfFilter}
-						<div class="tshark-filter-label">Display Filter</div>
+						<div class="tshark-filter-label eyebrow">Display filter</div>
 						<div class="tshark-filter">{displayFilter}</div>
 					{/if}
 
-					<!-- Mode buttons + Analyze -->
+					<!-- Mode buttons + Analyse -->
 					<div class="tshark-controls">
 						<button
-							class="tshark-btn tshark-btn-primary"
+							class="btn primary"
+							type="button"
 							onclick={runAnalysis}
 							disabled={analyzing || tsharkAvailable === false}
 						>
-							{analyzing ? 'Analyzing...' : '\u25B6 Analyze'}
+							{#if analyzing}Analysing…{:else}<Icon name="play" />Analyse{/if}
 						</button>
-						<button
-							class="tshark-btn tshark-btn-secondary"
-							class:active={tsharkMode === 'summary'}
-							onclick={() => tsharkMode = 'summary'}
-						>Summary</button>
-						<button
-							class="tshark-btn tshark-btn-secondary"
-							class:active={tsharkMode === 'verbose'}
-							onclick={() => tsharkMode = 'verbose'}
-						>Verbose (-V)</button>
-						<button
-							class="tshark-btn tshark-btn-secondary"
-							class:active={tsharkMode === 'follow'}
-							onclick={() => tsharkMode = 'follow'}
-						>Follow Stream</button>
-						<a href={tsharkToolUrl} class="tshark-btn tshark-btn-secondary">Open in TShark Tool &rarr;</a>
+						<div class="pills" role="group" aria-label="Output mode">
+							<button
+								class="pill"
+								type="button"
+								aria-pressed={tsharkMode === 'summary'}
+								onclick={() => tsharkMode = 'summary'}
+							>Summary</button>
+							<button
+								class="pill"
+								type="button"
+								aria-pressed={tsharkMode === 'verbose'}
+								onclick={() => tsharkMode = 'verbose'}
+							>Verbose (-V)</button>
+							<button
+								class="pill"
+								type="button"
+								aria-pressed={tsharkMode === 'follow'}
+								onclick={() => tsharkMode = 'follow'}
+							>Follow stream</button>
+						</div>
+						<a href={tsharkToolUrl} class="btn">Open in TShark tool</a>
 					</div>
 
 					<!-- Status / output -->
@@ -523,17 +532,17 @@
 					{:else if tsharkAvailable === null && !tsharkChecked}
 						<div class="tshark-status">
 							<div class="spinner"></div>
-							<p class="status-text">Checking TShark availability...</p>
+							<p class="status-text">Checking TShark availability…</p>
 						</div>
 					{:else if pcapLoading}
 						<div class="tshark-status">
 							<div class="spinner"></div>
-							<p class="status-text">Loading PCAP files...</p>
+							<p class="status-text">Loading PCAP files…</p>
 						</div>
 					{:else if analyzing}
 						<div class="tshark-status">
 							<div class="spinner"></div>
-							<p class="status-text">Analyzing packets...</p>
+							<p class="status-text">Analysing packets…</p>
 						</div>
 					{:else if tsharkError}
 						<div class="tshark-status">
@@ -553,7 +562,7 @@
 						<div class="tshark-terminal">{tsharkTextOutput}</div>
 					{:else if !analyzing && tsharkAvailable && pcapFiles.length > 0}
 						<div class="tshark-status">
-							<p class="status-text">Click "Analyze" to inspect packets for this connection.</p>
+							<p class="status-text">Click "Analyse" to inspect packets for this connection.</p>
 							<p class="status-hint">{pcapFiles.length} PCAP file{pcapFiles.length !== 1 ? 's' : ''} available.</p>
 						</div>
 					{:else if !analyzing && tsharkAvailable && pcapFiles.length === 0}
@@ -568,36 +577,36 @@
 			<!-- ======================================= -->
 			{:else if activeTab === 'related'}
 				<div class="related-tab">
-					<div class="detail-section-title">Related Activity</div>
+					<div class="detail-section-title eyebrow">Related activity</div>
 
 					<div class="related-list">
 						{#if dstIp}
 							<a href="/connections?ip={encodeURIComponent(dstIp)}" class="related-item">
-								<span class="related-type rt-conn">CONN</span>
+								<span class="tag related-type">Conn</span>
 								<span class="related-text">Other connections to {dstIp}</span>
-								<span class="related-arrow">&rsaquo;</span>
+								<Icon name="back" class="chev related-arrow" />
 							</a>
 						{/if}
 
 						{#if deviceIp}
 							<a href="/logs?filter={encodeURIComponent(deviceIp)}" class="related-item">
-								<span class="related-type rt-dns">DNS</span>
+								<span class="tag related-type">DNS</span>
 								<span class="related-text">DNS queries for {deviceIp}</span>
-								<span class="related-arrow">&rsaquo;</span>
+								<Icon name="back" class="chev related-arrow" />
 							</a>
 
 							<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="related-item">
-								<span class="related-type rt-alert">ALERT</span>
+								<span class="tag related-type">Alert</span>
 								<span class="related-text">Alerts for {deviceIp}</span>
-								<span class="related-arrow">&rsaquo;</span>
+								<Icon name="back" class="chev related-arrow" />
 							</a>
 						{/if}
 
 						{#if srcIp && srcIp !== deviceIp}
 							<a href="/devices/{encodeURIComponent(srcIp)}" class="related-item">
-								<span class="related-type rt-conn">CONN</span>
+								<span class="tag related-type">Conn</span>
 								<span class="related-text">Device: {srcIp}</span>
-								<span class="related-arrow">&rsaquo;</span>
+								<Icon name="back" class="chev related-arrow" />
 							</a>
 						{/if}
 					</div>
@@ -630,7 +639,7 @@
 	}
 
 	/* ================================================================== */
-	/* Drawer panel                                                       */
+	/* Drawer panel: a surface-1 card docked to the right edge            */
 	/* ================================================================== */
 
 	.conn-drawer {
@@ -641,13 +650,13 @@
 		width: 560px;
 		max-width: 100vw;
 		z-index: 999;
-		background: var(--bg);
+		background: var(--surface-1);
 		border-left: 1px solid var(--line);
+		box-shadow: var(--sheen), var(--shadow-pop);
 		display: flex;
 		flex-direction: column;
 		transform: translateX(100%);
-		transition: transform 0.25s ease;
-		box-shadow: -8px 0 32px color-mix(in srgb, var(--bg) 50%, transparent);
+		transition: transform 0.25s var(--ease);
 	}
 
 	.conn-drawer.open {
@@ -655,101 +664,39 @@
 	}
 
 	/* ================================================================== */
-	/* Header                                                             */
+	/* Header and tabs                                                    */
 	/* ================================================================== */
 
 	.drawer-header {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: space-between;
-		padding: var(--sp-4) var(--sp-6);
-		border-bottom: 1px solid var(--line);
-		background: var(--surface-1);
+		gap: var(--sp-3);
+		padding: var(--sp-5) var(--sp-5) var(--sp-4);
 		flex-shrink: 0;
 	}
 
 	.drawer-title-area {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--sp-1);
+		min-width: 0;
 	}
 
 	.drawer-title {
-		font-size: var(--text-lg);
-		font-weight: 600;
 		color: var(--text-1);
 	}
 
 	.drawer-subtitle {
 		font-size: var(--text-xs);
 		color: var(--text-3);
-		font-family: var(--font-mono);
-		word-break: break-all;
+		overflow-wrap: anywhere;
 	}
-
-	.drawer-close {
-		width: 32px;
-		height: 32px;
-		border: 1px solid var(--line);
-		border-radius: var(--r-sm);
-		background: var(--surface-2);
-		color: var(--text-3);
-		font-size: 18px;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all var(--dur-fast);
-		flex-shrink: 0;
-	}
-
-	.drawer-close:hover {
-		border-color: var(--line-strong);
-		color: var(--text-1);
-	}
-
-	/* ================================================================== */
-	/* Tabs                                                               */
-	/* ================================================================== */
 
 	.drawer-tabs {
-		display: flex;
-		background: var(--surface-1);
-		border-bottom: 1px solid var(--line);
+		padding: 0 var(--sp-5) var(--sp-4);
 		flex-shrink: 0;
-	}
-
-	.drawer-tab {
-		padding: var(--sp-2) var(--sp-6);
-		font-family: var(--font-body);
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-3);
-		background: none;
-		border: none;
-		cursor: pointer;
-		position: relative;
-		transition: color var(--dur-fast);
-		white-space: nowrap;
-	}
-
-	.drawer-tab:hover {
-		color: var(--text-2);
-	}
-
-	.drawer-tab.active {
-		color: var(--accent);
-	}
-
-	.drawer-tab.active::after {
-		content: '';
-		position: absolute;
-		bottom: 0;
-		left: var(--sp-6);
-		right: var(--sp-6);
-		height: 2px;
-		background: var(--accent);
-		border-radius: 1px;
+		overflow-x: auto;
 	}
 
 	/* ================================================================== */
@@ -759,12 +706,9 @@
 	.drawer-body {
 		flex: 1;
 		overflow-y: auto;
-		padding: var(--sp-6);
+		padding: var(--sp-5);
+		border-top: 1px solid var(--line);
 	}
-
-	.drawer-body::-webkit-scrollbar { width: 6px; }
-	.drawer-body::-webkit-scrollbar-track { background: transparent; }
-	.drawer-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
 
 	/* ================================================================== */
 	/* Detail tab — 2-column grid layout                                  */
@@ -773,7 +717,7 @@
 	.detail-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: var(--sp-2) var(--sp-6);
+		gap: var(--sp-3) var(--sp-6);
 		margin-bottom: var(--sp-6);
 	}
 
@@ -781,44 +725,30 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		min-width: 0;
 	}
 
 	.detail-label {
-		font-size: 10px;
+		font-size: var(--text-xs);
 		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		font-weight: 500;
 	}
 
 	.detail-value {
 		font-size: var(--text-sm);
 		color: var(--text-1);
 		font-family: var(--font-mono);
-		word-break: break-all;
-	}
-
-	.detail-value--download {
-		color: var(--accent);
-	}
-
-	.detail-value--upload {
-		color: var(--data-4);
+		overflow-wrap: anywhere;
 	}
 
 	.detail-value--small {
-		font-size: 10px;
+		font-size: var(--text-micro);
 	}
 
 	.detail-section-title {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--text-3);
-		margin-bottom: var(--sp-2);
+		display: block;
+		margin-bottom: var(--sp-3);
 		margin-top: var(--sp-6);
-		padding-bottom: var(--sp-1);
+		padding-bottom: var(--sp-2);
 		border-bottom: 1px solid var(--line);
 	}
 
@@ -832,14 +762,8 @@
 		gap: 0;
 	}
 
-	/* Filter display box */
 	.tshark-filter-label {
-		font-size: 10px;
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		margin-bottom: 4px;
-		font-weight: 500;
+		margin-bottom: var(--sp-1);
 	}
 
 	.tshark-filter {
@@ -848,66 +772,18 @@
 		padding: var(--sp-2) var(--sp-4);
 		background: var(--surface-2);
 		border: 1px solid var(--line);
-		border-radius: var(--r-sm);
-		color: var(--accent);
+		border-radius: var(--r-md);
+		color: var(--accent-strong);
 		margin-bottom: var(--sp-4);
-		word-break: break-all;
+		overflow-wrap: anywhere;
 	}
 
-	/* TShark control buttons */
 	.tshark-controls {
 		display: flex;
+		align-items: center;
 		gap: var(--sp-2);
 		margin-bottom: var(--sp-4);
 		flex-wrap: wrap;
-	}
-
-	.tshark-btn {
-		padding: 6px 14px;
-		border-radius: var(--r-sm);
-		font-family: var(--font-body);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		cursor: pointer;
-		transition: all var(--dur-fast);
-		border: 1px solid;
-		text-decoration: none;
-		display: inline-flex;
-		align-items: center;
-		white-space: nowrap;
-	}
-
-	.tshark-btn-primary {
-		background: var(--accent);
-		color: var(--bg);
-		border-color: var(--accent);
-	}
-
-	.tshark-btn-primary:hover {
-		box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
-	}
-
-	.tshark-btn-primary:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-		box-shadow: none;
-	}
-
-	.tshark-btn-secondary {
-		background: transparent;
-		color: var(--text-2);
-		border-color: var(--line);
-	}
-
-	.tshark-btn-secondary:hover {
-		border-color: var(--line-strong);
-		color: var(--text-1);
-	}
-
-	.tshark-btn-secondary.active {
-		border-color: var(--accent);
-		color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 12%, transparent);
 	}
 
 	/* TShark status messages */
@@ -947,14 +823,14 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* Terminal output — matches mockup exactly */
+	/* Terminal output: machine text on the page black */
 	.tshark-terminal {
 		background: var(--bg);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
 		padding: var(--sp-4);
 		font-family: var(--font-mono);
-		font-size: 11px;
+		font-size: var(--text-micro);
 		line-height: 1.7;
 		color: var(--text-2);
 		max-height: 400px;
@@ -963,11 +839,6 @@
 		tab-size: 4;
 	}
 
-	.tshark-terminal::-webkit-scrollbar { width: 6px; height: 6px; }
-	.tshark-terminal::-webkit-scrollbar-track { background: transparent; }
-	.tshark-terminal::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
-
-	/* Terminal line color coding */
 	.tshark-line {
 		display: block;
 	}
@@ -977,29 +848,26 @@
 		user-select: none;
 	}
 
-	.tshark-timestamp {
+	.tshark-timestamp,
+	.tshark-arrow {
 		color: var(--text-3);
 	}
 
 	.tshark-src {
-		color: var(--accent);
+		color: var(--accent-strong);
 	}
 
 	.tshark-dst {
-		color: var(--data-4);
+		color: var(--data-2);
 	}
 
 	.tshark-proto {
-		color: var(--sev-medium);
+		color: var(--data-3);
 		font-weight: 600;
 	}
 
 	.tshark-info {
 		color: var(--text-2);
-	}
-
-	.tshark-arrow {
-		color: var(--text-3);
 	}
 
 	.packet-count {
@@ -1010,7 +878,7 @@
 	}
 
 	/* ================================================================== */
-	/* Related tab — badge-based list                                     */
+	/* Related tab — tagged link list                                     */
 	/* ================================================================== */
 
 	.related-list {
@@ -1021,8 +889,8 @@
 	.related-item {
 		display: flex;
 		align-items: center;
-		gap: var(--sp-4);
-		padding: var(--sp-2) 0;
+		gap: var(--sp-3);
+		padding: var(--sp-3) 0;
 		border-bottom: 1px solid var(--line);
 		font-size: var(--text-sm);
 		text-decoration: none;
@@ -1039,29 +907,9 @@
 	}
 
 	.related-type {
-		font-size: 10px;
-		font-weight: 600;
-		text-transform: uppercase;
-		padding: 2px 6px;
-		border-radius: var(--r-sm);
-		min-width: 40px;
+		min-width: 44px;
 		text-align: center;
 		flex-shrink: 0;
-	}
-
-	.rt-conn {
-		background: color-mix(in srgb, var(--accent) 12%, transparent);
-		color: var(--accent);
-	}
-
-	.rt-dns {
-		background: color-mix(in srgb, var(--data-4) 12%, transparent);
-		color: var(--data-4);
-	}
-
-	.rt-alert {
-		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-		color: var(--sev-critical);
 	}
 
 	.related-text {
@@ -1069,15 +917,15 @@
 		color: inherit;
 	}
 
-	.related-arrow {
+	.related-item :global(.related-arrow) {
+		width: 16px;
+		height: 16px;
 		color: var(--text-3);
-		font-size: var(--text-lg);
-		flex-shrink: 0;
 		transition: color var(--dur-fast);
 	}
 
-	.related-item:hover .related-arrow {
-		color: var(--accent);
+	.related-item:hover :global(.related-arrow) {
+		color: var(--accent-strong);
 	}
 
 	/* ================================================================== */

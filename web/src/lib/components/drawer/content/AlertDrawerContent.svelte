@@ -30,22 +30,22 @@
 
 	// Derived
 	let severityLabel = $derived.by(() => {
-		if (!alert?.alert?.severity) return 'INFO';
+		if (!alert?.alert?.severity) return 'Info';
 		switch (alert.alert.severity) {
-			case 1: return 'HIGH';
-			case 2: return 'MEDIUM';
-			case 3: return 'LOW';
-			default: return 'INFO';
+			case 1: return 'High';
+			case 2: return 'Medium';
+			case 3: return 'Low';
+			default: return 'Info';
 		}
 	});
 
 	let severityClass = $derived.by(() => {
-		if (!alert?.alert?.severity) return 'badge severity-info';
+		if (!alert?.alert?.severity) return 'sev sev-info';
 		switch (alert.alert.severity) {
-			case 1: return 'badge severity-high';
-			case 2: return 'badge severity-medium';
-			case 3: return 'badge severity-low';
-			default: return 'badge severity-info';
+			case 1: return 'sev sev-high';
+			case 2: return 'sev sev-medium';
+			case 3: return 'sev sev-low';
+			default: return 'sev sev-info';
 		}
 	});
 
@@ -128,19 +128,28 @@
 	}
 </script>
 
+{#snippet sevShape(level: string)}
+	<svg viewBox="0 0 10 10" aria-hidden="true">
+		{#if level === 'High'}<path d="M5 1 9.4 9H.6z" />
+		{:else if level === 'Medium'}<rect x="1" y="1" width="8" height="8" rx="1.5" />
+		{:else if level === 'Low'}<circle cx="5" cy="5" r="4" />
+		{:else}<circle cx="5" cy="5" r="3.4" class="hollow" />{/if}
+	</svg>
+{/snippet}
+
 {#if activeTab === 'summary'}
 	<div class="summary-content">
 		<!-- Severity and category -->
 		<div class="alert-badges">
-			<span class={severityClass}>{severityLabel}</span>
+			<span class={severityClass}>{@render sevShape(severityLabel)}{severityLabel}</span>
 			{#if alert.alert?.category}
-				<span class="badge">{alert.alert.category}</span>
+				<span class="chip">{alert.alert.category}</span>
 			{/if}
 		</div>
 
 		<!-- Signature -->
 		<DrawerSection title="Alert" defaultExpanded>
-			<h3 class="alert-signature">{alert.alert?.signature || 'Unknown Alert'}</h3>
+			<h3 class="alert-signature">{alert.alert?.signature || 'Unknown alert'}</h3>
 			<KVRow label="Timestamp" value={formatTimestamp(alert.timestamp)} mono />
 			<KVRow label="Signature ID" value={alert.alert?.signature_id} mono />
 			<KVRow label="Severity" value={severityLabel} />
@@ -163,7 +172,7 @@
 		<!-- Recommendation -->
 		{#if alert.recommendation}
 			<DrawerSection title="Recommendation" defaultExpanded={false}>
-				<p class="section-body">{alert.recommendation}</p>
+				<div class="todo"><b>What to do</b>{alert.recommendation}</div>
 			</DrawerSection>
 		{/if}
 
@@ -171,12 +180,12 @@
 		<DrawerSection title="Network flow" defaultExpanded>
 			<div class="flow-visualization">
 				<div class="flow-endpoint">
-					<span class="flow-label">Source</span>
+					<span class="eyebrow">Source</span>
 					<span class="flow-ip">
 						{#if alert.src_ip}
 							<IPAddress ip={alert.src_ip} />
 						{:else}
-							<span class="text-muted">--</span>
+							<span class="dim">--</span>
 						{/if}
 					</span>
 					{#if alert.src_port}
@@ -185,22 +194,22 @@
 				</div>
 
 				<div class="flow-arrow">
-					<svg viewBox="0 0 48 24" width="48" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg viewBox="0 0 48 24" width="48" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<line x1="4" y1="12" x2="40" y2="12" />
 						<polyline points="34 6 40 12 34 18" />
 					</svg>
 					{#if alert.proto}
-						<span class="badge flow-proto-badge">{protoLabel(alert.proto)}</span>
+						<span class="tag">{protoLabel(alert.proto)}</span>
 					{/if}
 				</div>
 
 				<div class="flow-endpoint">
-					<span class="flow-label">Destination</span>
+					<span class="eyebrow">Destination</span>
 					<span class="flow-ip">
 						{#if alert.dest_ip}
 							<IPAddress ip={alert.dest_ip} />
 						{:else}
-							<span class="text-muted">--</span>
+							<span class="dim">--</span>
 						{/if}
 					</span>
 					{#if alert.dest_port}
@@ -216,7 +225,7 @@
 			<KVRow label="Index" value={alert._index} mono />
 			<KVRow label="Status" value={alert.acknowledged ? 'Acknowledged' : 'Unacknowledged'} />
 			{#if alert.acknowledged_at}
-				<KVRow label="Ack Time" value={formatTimestamp(alert.acknowledged_at)} mono />
+				<KVRow label="Acknowledged at" value={formatTimestamp(alert.acknowledged_at)} mono />
 			{/if}
 		</DrawerSection>
 	</div>
@@ -226,20 +235,20 @@
 		{#if relatedLoading}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Searching related events...</p>
+				<p class="dim">Searching related events…</p>
 			</div>
 		{:else if relatedError}
 			<div class="error-state">
-				<p class="text-danger">{relatedError}</p>
-				<button class="btn btn-secondary btn-sm" onclick={fetchRelated}>Retry</button>
+				<p class="error-text">{relatedError}</p>
+				<button class="btn" type="button" onclick={fetchRelated}>Retry</button>
 			</div>
 		{:else if relatedLogs.length === 0}
 			<div class="empty-state">
-				<p class="text-muted">No related events found</p>
+				<p class="dim">No related events found</p>
 			</div>
 		{:else}
-			<div class="related-table-wrap">
-				<table class="related-table">
+			<div class="tbl-wrap">
+				<table>
 					<thead>
 						<tr>
 							<th>Timestamp</th>
@@ -266,8 +275,8 @@
 {:else if activeTab === 'raw'}
 	<div class="raw-content">
 		<div class="raw-header">
-			<button class="btn btn-secondary btn-sm" onclick={copyJson}>
-				{copied ? 'Copied!' : 'Copy JSON'}
+			<button class="btn" type="button" onclick={copyJson}>
+				{copied ? 'Copied' : 'Copy JSON'}
 			</button>
 		</div>
 		<pre class="raw-block">{rawJson}</pre>
@@ -282,21 +291,24 @@
 
 	.alert-badges {
 		display: flex;
+		flex-wrap: wrap;
 		gap: var(--sp-2);
 		margin-bottom: var(--sp-4);
 	}
 
 	.alert-signature {
-		font-size: var(--text-lg);
-		font-weight: 700;
+		font-family: var(--font-mono);
+		font-size: var(--text-sm);
+		font-weight: 500;
 		color: var(--text-1);
-		line-height: 1.3;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
 		margin-bottom: var(--sp-2);
 	}
 
 	.section-body {
 		font-size: var(--text-sm);
-		color: var(--text-1);
+		color: var(--text-2);
 		line-height: 1.6;
 	}
 
@@ -304,9 +316,9 @@
 	.flow-visualization {
 		display: flex;
 		align-items: center;
-		gap: var(--sp-2);
+		gap: var(--sp-3);
 		padding: var(--sp-4);
-		background-color: var(--surface-1);
+		background-color: var(--surface-2);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
 		flex-wrap: wrap;
@@ -320,24 +332,16 @@
 		gap: 2px;
 	}
 
-	.flow-label {
-		font-size: var(--text-xs);
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		font-weight: 600;
-	}
-
 	.flow-ip {
 		font-size: var(--text-sm);
-		color: var(--accent);
-		word-break: break-all;
+		color: var(--text-1);
+		overflow-wrap: anywhere;
 		text-align: center;
 	}
 
 	.flow-port {
 		font-size: var(--text-xs);
-		color: var(--text-2);
+		color: var(--text-3);
 	}
 
 	.flow-arrow {
@@ -349,68 +353,23 @@
 		flex-shrink: 0;
 	}
 
-	.flow-proto-badge {
-		font-size: 10px;
-		padding: 1px 6px;
-	}
-
-	/* Related events table */
-	.related-table-wrap {
-		overflow-x: auto;
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
-	}
-
-	.related-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--text-xs);
-	}
-
-	.related-table th {
-		padding: var(--sp-1) var(--sp-2);
-		text-align: left;
-		font-weight: 600;
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		background-color: var(--surface-2);
-		border-bottom: 1px solid var(--line);
-		white-space: nowrap;
-	}
-
-	.related-table td {
-		padding: var(--sp-1) var(--sp-2);
-		border-bottom: 1px solid var(--line);
-		color: var(--text-1);
-	}
-
+	/* Related events table (system table styles) */
 	.related-row {
 		cursor: pointer;
-		transition: background-color var(--dur-fast);
-	}
-
-	.related-row:hover {
-		background-color: var(--surface-2);
 	}
 
 	/* Common */
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: var(--sp-2);
-		padding: var(--sp-8) 0;
-	}
-
-	.error-state, .empty-state {
+	.loading-state, .error-state, .empty-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: var(--sp-2);
 		padding: var(--sp-8) 0;
 		text-align: center;
+		font-size: var(--text-sm);
 	}
+
+	.error-text { color: var(--sev-critical); }
 
 	.raw-content { gap: var(--sp-2); }
 
@@ -420,24 +379,14 @@
 	}
 
 	.raw-block {
-		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		color: var(--text-1);
-		background-color: var(--surface-1);
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
-		padding: var(--sp-4);
-		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
 		max-height: 600px;
 		overflow-y: auto;
 		line-height: 1.5;
 	}
-
-	.mono { font-family: var(--font-mono); }
-	.text-danger { color: var(--sev-critical); font-size: var(--text-sm); }
-	.text-muted { color: var(--text-3); font-size: var(--text-sm); }
 
 	.loading-spinner {
 		width: 24px;

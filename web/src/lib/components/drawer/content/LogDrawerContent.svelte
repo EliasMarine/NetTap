@@ -166,12 +166,12 @@
 		{#if fullDocLoading}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Loading fields...</p>
+				<p class="dim">Loading fields…</p>
 			</div>
 		{:else if fullDocError}
 			<div class="error-state">
-				<p class="text-danger">{fullDocError}</p>
-				<button class="btn btn-secondary btn-sm" onclick={fetchFullDocument}>Retry</button>
+				<p class="error-text">{fullDocError}</p>
+				<button class="btn" type="button" onclick={fetchFullDocument}>Retry</button>
 			</div>
 		{:else}
 			{#each groupedFields as { label, fields }, i}
@@ -187,7 +187,7 @@
 		{#if whoisResult}
 			<DrawerSection title="WHOIS — {whoisIp}" defaultExpanded>
 				{#if whoisResult.error}
-					<p class="text-danger" style="font-size: var(--text-sm);">{whoisResult.error}</p>
+					<p class="error-text">{whoisResult.error}</p>
 				{:else}
 					{#each Object.entries(whoisResult.parsed) as [key, val]}
 						<KVRow label={key} value={val} copyable />
@@ -205,8 +205,8 @@
 {:else if activeTab === 'raw'}
 	<div class="raw-content">
 		<div class="raw-header">
-			<button class="btn btn-secondary btn-sm" onclick={copyJson}>
-				{copied ? 'Copied!' : 'Copy JSON'}
+			<button class="btn" type="button" onclick={copyJson}>
+				{copied ? 'Copied' : 'Copy JSON'}
 			</button>
 		</div>
 		<pre class="raw-block">{rawJson}</pre>
@@ -220,6 +220,7 @@
 	}
 
 	.loading-state {
+		font-size: var(--text-sm);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -246,15 +247,10 @@
 		justify-content: flex-end;
 	}
 
+	/* Global pre styles give the surface, border, radius and padding. */
 	.raw-block {
-		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		color: var(--text-1);
-		background-color: var(--surface-1);
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
-		padding: var(--sp-4);
-		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
 		max-height: 600px;
@@ -273,12 +269,9 @@
 		padding: var(--sp-1) 0;
 	}
 
-	.text-danger {
+	.error-text {
 		color: var(--sev-critical);
-	}
-
-	.text-muted {
-		color: var(--text-3);
+		font-size: var(--text-sm);
 	}
 
 	.loading-spinner {

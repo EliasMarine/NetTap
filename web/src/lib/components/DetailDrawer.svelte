@@ -1,10 +1,11 @@
 <!--
-  DetailDrawer.svelte — Unified slide-out side panel (UniFi-style).
+  DetailDrawer.svelte — Unified slide-out side panel, styled as the system's AlertDrawer card.
   Shared across all pages. 480px wide, slides from right with backdrop.
-  Renders configurable tabs, scrollable content area, and footer actions.
+  Renders configurable tabs (system pills), scrollable content area, and footer actions.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	export interface DrawerTab {
 		id: string;
@@ -63,33 +64,34 @@
 		<!-- Header -->
 		<div class="drawer-header">
 			<div class="drawer-header-text">
-				<h3 class="drawer-title">{title}</h3>
+				<h3 class="drawer-title type-drawer-title">{title}</h3>
 				{#if subtitle}
 					<p class="drawer-subtitle mono">{subtitle}</p>
 				{/if}
 			</div>
-			<button class="drawer-close-btn" onclick={onclose} aria-label="Close panel">
-				<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-				</svg>
+			<button class="icon-btn" type="button" onclick={onclose} aria-label="Close panel">
+				<Icon name="close" />
 			</button>
 		</div>
 
 		<!-- Tab bar -->
 		{#if tabs.length > 1}
 			<div class="drawer-tabs">
-				{#each tabs as tab}
-					<button
-						class="drawer-tab"
-						class:active={activeTab === tab.id}
-						onclick={() => ontabchange(tab.id)}
-					>
-						{tab.label}
-						{#if tab.badge != null}
-							<span class="tab-badge">{tab.badge}</span>
-						{/if}
-					</button>
-				{/each}
+				<div class="pills">
+					{#each tabs as tab}
+						<button
+							class="pill"
+							type="button"
+							aria-pressed={activeTab === tab.id}
+							onclick={() => ontabchange(tab.id)}
+						>
+							{tab.label}
+							{#if tab.badge != null}
+								<span class="tab-badge num">{tab.badge}</span>
+							{/if}
+						</button>
+					{/each}
+				</div>
 			</div>
 		{/if}
 
@@ -124,7 +126,7 @@
 		to { opacity: 1; }
 	}
 
-	/* ----- Panel ----- */
+	/* ----- Panel: a surface-1 card docked to the right edge ----- */
 	.detail-drawer {
 		position: fixed;
 		top: 0;
@@ -133,13 +135,13 @@
 		width: 480px;
 		max-width: 100vw;
 		z-index: 999;
-		background-color: var(--bg);
+		background: var(--surface-1);
 		border-left: 1px solid var(--line);
+		box-shadow: var(--sheen), var(--shadow-pop);
 		display: flex;
 		flex-direction: column;
 		transform: translateX(100%);
 		transition: transform 250ms var(--ease);
-		box-shadow: -4px 0 24px color-mix(in srgb, var(--bg) 40%, transparent);
 	}
 
 	.detail-drawer.open {
@@ -151,11 +153,9 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		padding: var(--sp-4) var(--sp-6);
-		border-bottom: 1px solid var(--line);
-		background-color: var(--surface-1);
+		gap: var(--sp-3);
+		padding: var(--sp-5) var(--sp-5) var(--sp-4);
 		flex-shrink: 0;
-		gap: var(--sp-2);
 	}
 
 	.drawer-header-text {
@@ -164,115 +164,55 @@
 	}
 
 	.drawer-title {
-		font-size: var(--text-lg);
-		font-weight: 700;
 		color: var(--text-1);
-		line-height: 1.3;
-		word-break: break-word;
+		overflow-wrap: anywhere;
 	}
 
 	.drawer-subtitle {
+		margin-top: var(--sp-1);
 		font-size: var(--text-xs);
 		color: var(--text-3);
-		margin-top: 2px;
+		overflow-wrap: anywhere;
 	}
 
-	.drawer-close-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		background: none;
-		border: none;
-		border-radius: var(--r-sm);
-		color: var(--text-2);
-		cursor: pointer;
-		transition: all var(--dur-fast);
-		flex-shrink: 0;
-	}
-
-	.drawer-close-btn:hover {
-		background-color: var(--surface-2);
-		color: var(--text-1);
-	}
-
-	/* ----- Tabs ----- */
+	/* ----- Tabs (system pills) ----- */
 	.drawer-tabs {
-		display: flex;
-		border-bottom: 1px solid var(--line);
-		background-color: var(--surface-1);
+		padding: 0 var(--sp-5) var(--sp-4);
 		flex-shrink: 0;
-		padding: 0 var(--sp-6);
-		gap: 0;
-	}
-
-	.drawer-tab {
-		position: relative;
-		padding: var(--sp-2) var(--sp-4);
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-3);
-		background: none;
-		border: none;
-		cursor: pointer;
-		transition: color var(--dur-fast);
-		white-space: nowrap;
-		display: flex;
-		align-items: center;
-		gap: var(--sp-1);
-	}
-
-	.drawer-tab:hover {
-		color: var(--text-1);
-	}
-
-	.drawer-tab.active {
-		color: var(--accent);
-	}
-
-	.drawer-tab.active::after {
-		content: '';
-		position: absolute;
-		bottom: -1px;
-		left: var(--sp-4);
-		right: var(--sp-4);
-		height: 2px;
-		background-color: var(--accent);
-		border-radius: 1px;
+		overflow-x: auto;
 	}
 
 	.tab-badge {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
+		display: inline-grid;
+		place-items: center;
 		min-width: 18px;
 		height: 18px;
+		margin-left: var(--sp-1);
 		padding: 0 5px;
-		font-size: 10px;
-		font-weight: 600;
 		border-radius: var(--r-pill);
-		background-color: var(--surface-2);
+		font-size: var(--text-micro);
+		font-weight: 700;
+		background: var(--surface-3);
 		color: var(--text-2);
 	}
 
-	.drawer-tab.active .tab-badge {
-		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
-		color: var(--accent);
+	.pill[aria-pressed='true'] .tab-badge {
+		background: color-mix(in srgb, var(--on-light) 12%, transparent);
+		color: var(--on-light);
 	}
 
 	/* ----- Body ----- */
 	.drawer-body {
 		flex: 1;
 		overflow-y: auto;
-		padding: var(--sp-6);
+		padding: var(--sp-5);
+		border-top: 1px solid var(--line);
 	}
 
 	/* ----- Footer ----- */
 	.drawer-footer {
-		padding: var(--sp-4) var(--sp-6);
+		padding: var(--sp-4) var(--sp-5);
 		border-top: 1px solid var(--line);
-		background-color: var(--surface-1);
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
