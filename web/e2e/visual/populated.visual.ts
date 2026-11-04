@@ -3,7 +3,7 @@ import { test } from '@playwright/test';
 import { expectNoConsoleErrors, expectReached, setMode, sweep, VIEWPORTS, watchApi, watchConsole } from './harness.ts';
 
 const POPULATED = [
-	{ path: '/', marker: /^(Network|Device) Overview$/ },
+	{ path: '/', marker: 'Network overview' },
 	{ path: '/settings', marker: 'Settings' },
 ] as const;
 

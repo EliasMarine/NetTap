@@ -58,7 +58,7 @@ test('slow mode holds responses until the test releases them', async ({ page }, 
 	await page.setViewportSize(VIEWPORTS[0]);
 	// DNS Analytics loads everything in the browser, so the HTML arrives while its data is held.
 	await page.goto('/dns');
-	await expectReached(page, '/dns', 'DNS Analytics');
+	await expectReached(page, '/dns', 'DNS analytics');
 
 	await expect.poll(heldCount, { message: 'responses held by the fixture daemon' }).toBeGreaterThan(0);
 	await page.waitForTimeout(500);
