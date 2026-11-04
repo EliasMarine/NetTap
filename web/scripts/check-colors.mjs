@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Colour gate: fails when web/src uses a colour literal outside the token block.
+ * Colour gate: fails when web/src uses a colour literal outside the token block, a
+ * `var(--x)` that nothing defines (legacy names included), or an emoji.
  * Rules: web/DESIGN-SYSTEM.md ("Colour gate"). Run: npm run check:colors
  *
  * Where it looks (so prose like "PR #147" or `white-space` never trips it):
@@ -111,6 +112,30 @@ export function findColorLiterals(path, source) {
 		.filter((h) => !exempt.has(h.line));
 }
 
+const DEFINITION = /(--[a-zA-Z0-9-]+)\s*:|style:(--[a-zA-Z0-9-]+)|setProperty\(\s*['"](--[a-zA-Z0-9-]+)/g;
+// A name followed by `{` is built in markup (`var(--sev-{level})`), so it can't be checked here.
+const VAR_USE = /var\(\s*(--[a-zA-Z0-9-]+)(?![{\w-])/g;
+const EMOJI = /\p{Extended_Pictographic}/gu;
+
+/** Every custom property a source file defines (CSS declarations, `style:--x`, setProperty). @param {string} source */
+export function definedTokens(source) {
+	return [...source.matchAll(DEFINITION)].map((m) => m[1] ?? m[2] ?? m[3]);
+}
+
+/**
+ * `var(--x)` uses that nothing in web/src defines (a legacy name, a typo): they render as
+ * nothing. Emoji are flagged too: the system draws icons, never emoji (DESIGN-SYSTEM.md).
+ * @param {string} source @param {Set<string>} defined
+ */
+export function findTokenProblems(source, defined) {
+	const text = stripIgnored(source);
+	const undefinedHits = [...text.matchAll(VAR_USE)]
+		.filter((m) => !defined.has(m[1]))
+		.map((m) => ({ line: lineOf(source, m.index), match: `undefined ${m[1]}` }));
+	const emoji = [...text.matchAll(EMOJI)].map((m) => ({ line: lineOf(source, m.index), match: `emoji ${m[0]}` }));
+	return [...undefinedHits, ...emoji].sort((a, b) => a.line - b.line);
+}
+
 const isTest = (/** @type {string} */ p) =>
 	/\.(test|spec)\.(ts|js)$/.test(p) || relative(SRC_DIR, p).startsWith('tests/');
 
@@ -139,17 +164,21 @@ function readAllowlist() {
 
 function main() {
 	const allow = readAllowlist();
+	const files = walk(SRC_DIR);
+	const sources = new Map(files.map((f) => [f, readFileSync(f, 'utf8')]));
+	const defined = new Set([...sources.values()].flatMap(definedTokens));
 	let count = 0;
-	for (const file of walk(SRC_DIR)) {
+	for (const [file, source] of sources) {
 		const rel = relative(WEB_DIR, file);
-		if (allow.has(rel) || file === TOKEN_FILE) continue;
-		for (const hit of findColorLiterals(file, readFileSync(file, 'utf8'))) {
+		if (allow.has(rel)) continue;
+		const hits = [...(file === TOKEN_FILE ? [] : findColorLiterals(file, source)), ...findTokenProblems(source, defined)];
+		for (const hit of hits) {
 			console.error(`${rel}:${hit.line}: ${hit.match}`);
 			count++;
 		}
 	}
 	if (count > 0) {
-		console.error(`\n${count} colour literal(s) outside the token block. Use a token: see web/DESIGN-SYSTEM.md.`);
+		console.error(`\n${count} problem(s): a colour literal outside the token block, a token nothing defines, or an emoji. See web/DESIGN-SYSTEM.md.`);
 		process.exit(1);
 	}
 	console.log(`Colour gate: clean (${allow.size} file(s) allowlisted).`);

@@ -29,7 +29,7 @@ export interface Threshold {
  *
  * @example
  *   thresholdColor(85, DISK_USAGE_THRESHOLDS)
- *   // => 'var(--danger)'
+ *   // => 'var(--sev-critical)'
  */
 export function thresholdColor(value: number, thresholds: Threshold[]): string {
 	const level = resolveLevel(value, thresholds);
@@ -73,11 +73,11 @@ export function resolveLevel(value: number, thresholds: Threshold[]): ThresholdL
 function levelToCssVar(level: ThresholdLevel): string {
 	switch (level) {
 		case 'success':
-			return 'var(--success)';
+			return 'var(--ok)';
 		case 'warning':
-			return 'var(--warning)';
+			return 'var(--sev-medium)';
 		case 'danger':
-			return 'var(--danger)';
+			return 'var(--sev-critical)';
 		case 'high':
 			return 'var(--sev-high)';
 		case 'low':
@@ -85,7 +85,7 @@ function levelToCssVar(level: ThresholdLevel): string {
 		case 'accent':
 			return 'var(--accent)';
 		case 'muted':
-			return 'var(--text-muted)';
+			return 'var(--text-3)';
 	}
 }
 

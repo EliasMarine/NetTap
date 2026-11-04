@@ -48,27 +48,27 @@
 <style>
 	.theme-picker {
 		border: none;
-		margin-bottom: var(--space-lg);
+		margin-bottom: var(--sp-6);
 	}
 
 	.options {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--space-sm);
-		margin-top: var(--space-sm);
+		gap: var(--sp-2);
+		margin-top: var(--sp-2);
 	}
 
 	.option {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
+		gap: var(--sp-2);
+		padding: var(--sp-2) var(--sp-4);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
 		background: var(--surface-1);
 		color: var(--text-2);
 		cursor: pointer;
-		transition: border-color var(--transition-fast);
+		transition: border-color var(--dur-fast) var(--ease);
 	}
 
 	.option:hover {
@@ -95,16 +95,16 @@
 	.swatch {
 		display: grid;
 		place-items: center;
-		width: var(--space-xl);
-		height: var(--space-xl);
+		width: var(--sp-8);
+		height: var(--sp-8);
 		border-radius: var(--r-sm);
 		background: var(--surface-2);
 		border: 1px solid var(--line-strong);
 	}
 
 	.swatch-accent {
-		width: var(--space-md);
-		height: var(--space-md);
+		width: var(--sp-4);
+		height: var(--sp-4);
 		border-radius: var(--r-pill);
 		background: var(--accent);
 	}

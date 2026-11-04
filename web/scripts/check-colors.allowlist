@@ -1,4 +1,2 @@
 # Files the colour gate skips, relative to web/. Only files scheduled for a later PR.
 # Must be empty after PR 3 (shared components).
-src/lib/components/charts/NetworkMap.svelte
-src/lib/components/charts/SankeyDiagram.svelte

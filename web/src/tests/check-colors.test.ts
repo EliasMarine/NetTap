@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findColorLiterals } from '../../scripts/check-colors.mjs';
+import { definedTokens, findColorLiterals, findTokenProblems } from '../../scripts/check-colors.mjs';
 
 const find = (path: string, src: string) =>
 	(findColorLiterals(path, src) as { line: number; match: string }[]).map((h) => h.match);
@@ -85,5 +85,21 @@ describe('colour gate', () => {
 			'</style>',
 		].join('\n');
 		expect(find('a.svelte', svelte)).toEqual(['#00d4ff', '#ff0000', '#000']);
+	});
+
+	it('flags tokens nothing defines and emoji, but not built names or comments', () => {
+		const defined = new Set(definedTokens(':root { --text-1: x; } <b style:--w="1"></b>'));
+		expect(defined).toEqual(new Set(['--text-1', '--w']));
+		const src = [
+			'.a { color: var(--text-1); width: var(--w); }',
+			'.b { color: var(--text-primary); }',
+			'<span style:--c="var(--sev-{level})"></span>',
+			'<p>Streaming 🎬</p>',
+			'/* was var(--cyan) ⚠ */',
+		].join('\n');
+		expect(findTokenProblems(src, defined)).toEqual([
+			{ line: 2, match: 'undefined --text-primary' },
+			{ line: 4, match: 'emoji 🎬' },
+		]);
 	});
 });
