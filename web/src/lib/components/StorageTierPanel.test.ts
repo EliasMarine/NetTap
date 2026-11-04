@@ -19,9 +19,9 @@ function formatBytes(bytes: number): string {
 }
 
 function diskUsageColor(percent: number): string {
-	if (percent > 85) return 'var(--danger)';
-	if (percent > 70) return 'var(--warning)';
-	return 'var(--success)';
+	if (percent > 85) return 'var(--sev-critical)';
+	if (percent > 70) return 'var(--sev-medium)';
+	return 'var(--ok)';
 }
 
 interface TierConfig {
@@ -32,9 +32,9 @@ interface TierConfig {
 }
 
 const TIERS: TierConfig[] = [
-	{ key: 'hot', label: 'Hot (Zeek Metadata)', color: 'var(--red)', days: '90d' },
-	{ key: 'warm', label: 'Warm (Suricata Alerts)', color: 'var(--amber)', days: '180d' },
-	{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--blue)', days: '30d' },
+	{ key: 'hot', label: 'Hot (Zeek metadata)', color: 'var(--data-1)', days: '90d' },
+	{ key: 'warm', label: 'Warm (Suricata alerts)', color: 'var(--data-2)', days: '180d' },
+	{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--data-3)', days: '30d' },
 ];
 
 function computeTierData(indexCounts: Record<string, number>): Array<TierConfig & { indexCount: number }> {
@@ -81,27 +81,27 @@ describe('StorageTierPanel logic', () => {
 
 	describe('diskUsageColor', () => {
 		it('returns success for low usage', () => {
-			expect(diskUsageColor(50)).toBe('var(--success)');
+			expect(diskUsageColor(50)).toBe('var(--ok)');
 		});
 
 		it('returns success at 70%', () => {
-			expect(diskUsageColor(70)).toBe('var(--success)');
+			expect(diskUsageColor(70)).toBe('var(--ok)');
 		});
 
 		it('returns warning above 70%', () => {
-			expect(diskUsageColor(71)).toBe('var(--warning)');
+			expect(diskUsageColor(71)).toBe('var(--sev-medium)');
 		});
 
 		it('returns warning at 85%', () => {
-			expect(diskUsageColor(85)).toBe('var(--warning)');
+			expect(diskUsageColor(85)).toBe('var(--sev-medium)');
 		});
 
 		it('returns danger above 85%', () => {
-			expect(diskUsageColor(86)).toBe('var(--danger)');
+			expect(diskUsageColor(86)).toBe('var(--sev-critical)');
 		});
 
 		it('returns danger at 100%', () => {
-			expect(diskUsageColor(100)).toBe('var(--danger)');
+			expect(diskUsageColor(100)).toBe('var(--sev-critical)');
 		});
 	});
 

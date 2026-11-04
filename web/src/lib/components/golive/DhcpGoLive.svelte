@@ -21,6 +21,7 @@
 	} from '$api/dhcpGateway';
 	import { staticAddressHint } from '$lib/utils/dhcpSubnet';
 	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	type View = 'loading' | 'error' | 'blocked' | 'ready' | 'enabled' | 'disabled';
 	type LeaseSortKey = 'hostname' | 'ip' | 'mac' | 'expires';
@@ -230,9 +231,15 @@
 		return CHECK_LABELS[check.name] ?? check.name.replace(/_/g, ' ');
 	}
 
-	function checkIcon(check: DhcpCheck): string {
-		if (check.passed) return '✓';
-		return check.blocking ? '✗' : '!';
+	// OLD CODE START — the check glyphs (✓ ✗ !) are drawn with the system's icons now (checkIconName)
+	// function checkIcon(check: DhcpCheck): string {
+	// 	if (check.passed) return '✓';
+	// 	return check.blocking ? '✗' : '!';
+	// }
+	// OLD CODE END
+	function checkIconName(check: DhcpCheck): 'check' | 'close' | 'warn' {
+		if (check.passed) return 'check';
+		return check.blocking ? 'close' : 'warn';
 	}
 
 	function hostnameLabel(hostname: string): string {
@@ -277,34 +284,35 @@
 	{#if view === 'loading'}
 		<div class="card loading-card">
 			<div class="loading-spinner"></div>
-			<p class="text-muted">Checking your network. This takes a few seconds...</p>
+			<p class="dim">Checking your network. This takes a few seconds…</p>
 		</div>
 
 	<!-- ==================== Error ==================== -->
 	{:else if view === 'error'}
 		<div class="card">
-			<div class="alert alert-danger">
-				<strong>Couldn't check DHCP gateway mode.</strong>
-				{loadError}
+			<div class="notice is-error">
+				<Icon name="warn" />
+				<div><strong>Couldn't check DHCP gateway mode.</strong>
+				{loadError}</div>
 			</div>
 			<div class="action-buttons">
-				<button class="btn btn-secondary" onclick={load}>Retry</button>
+				<button class="btn" onclick={load}>Retry</button>
 			</div>
 		</div>
 
 	<!-- ==================== Blocked / Ready ==================== -->
 	{:else if (view === 'blocked' || view === 'ready') && preflight}
 		{#if actionError}
-			<div class="alert alert-danger">{actionError}</div>
+			<div class="notice is-error"><Icon name="warn" /><div>{actionError}</div></div>
 		{/if}
 
 		<div class="card">
-			<div class="card-header">
+			<div class="card-head">
 				<h2 class="card-title">Before you turn it on</h2>
 				{#if preflight.ready}
-					<span class="badge badge-success">Ready</span>
+					<span class="chip is-ok"><Icon name="check" />Ready</span>
 				{:else}
-					<span class="badge badge-warning">Not ready</span>
+					<span class="chip is-warn"><Icon name="warn" />Not ready</span>
 				{/if}
 			</div>
 
@@ -316,7 +324,7 @@
 						class:failed={!check.passed && check.blocking}
 						class:warn={!check.passed && !check.blocking}
 					>
-						<span class="check-icon">{checkIcon(check)}</span>
+						<span class="check-icon"><Icon name={checkIconName(check)} /></span>
 						<div class="check-content">
 							<span class="check-name">{checkLabel(check)}</span>
 							{#if check.message}
@@ -331,7 +339,7 @@
 				{#if otherBlockingFailures.length > 0}
 					<div class="guide">
 						<h3>Fix the problems above first</h3>
-						<p class="text-muted">
+						<p class="dim">
 							Leave your router's settings as they are for now. Don't turn off its DHCP server yet: until
 							NetTap is ready, your devices still need it.
 						</p>
@@ -339,7 +347,7 @@
 				{:else if probeFailed}
 					<div class="guide">
 						<h3>NetTap couldn't check for other DHCP servers</h3>
-						<p class="text-muted">
+						<p class="dim">
 							This is a problem on NetTap's side, not your router's. Click <strong>Check again</strong>. If it
 							keeps failing, restart NetTap and try again. Don't change your router's settings yet.
 						</p>
@@ -347,12 +355,12 @@
 				{:else if showRouterGuide}
 					<div class="guide">
 						<h3>Turn off your router's DHCP server</h3>
-						<p class="text-muted">
+						<p class="dim">
 							NetTap can't hand out addresses while your router is still doing it. Two DHCP servers
 							on one network give devices conflicting addresses.
 						</p>
 						{#if preflight.other_dhcp_servers.length > 0}
-							<p class="text-muted">
+							<p class="dim">
 								Still answering:
 								{#each preflight.other_dhcp_servers as server, i}
 									<span class="mono">{server.server_ip}</span>{i < preflight.other_dhcp_servers.length - 1 ? ', ' : ''}
@@ -370,11 +378,11 @@
 							<li>Turn the DHCP server off and save. Leave everything else as it is.</li>
 							<li>Come back here and click <strong>Check again</strong>.</li>
 						</ol>
-						<p class="text-muted">
+						<p class="dim">
 							Your devices keep their current addresses for a while, so carry straight on to the next
 							step once the check passes.
 						</p>
-						<p class="text-muted">
+						<p class="dim">
 							Can't turn it off? Some routers (often mesh systems and ISP-supplied routers) don't
 							allow it. NetTap's other capture modes (Mirror and inline bridge) are chosen during
 							first-time setup; switching modes after setup isn't available in the app yet.
@@ -383,8 +391,8 @@
 				{/if}
 
 				<div class="action-buttons">
-					<button class="btn btn-primary" onclick={checkAgain} disabled={checking}>
-						{checking ? 'Checking...' : 'Check again'}
+					<button class="btn primary" onclick={checkAgain} disabled={checking}>
+						{checking ? 'Checking…' : 'Check again'}
 					</button>
 				</div>
 			{/if}
@@ -392,10 +400,10 @@
 
 		{#if view === 'ready'}
 			<div class="card">
-				<div class="card-header">
+				<div class="card-head">
 					<h2 class="card-title">Turn on the DHCP gateway</h2>
 				</div>
-				<ul class="facts">
+				<ul class="fact-list">
 					<li>
 						NetTap starts handing out addresses in <span class="mono">{preflight.subnet}</span> and becomes
 						your devices' gateway (<span class="mono">{preflight.gateway_ip}</span>). Your router
@@ -418,8 +426,8 @@
 				</label>
 
 				<div class="action-buttons">
-					<button class="btn btn-primary btn-lg" onclick={enable} disabled={!confirmed || enabling}>
-						{enabling ? 'Turning on...' : 'Enable DHCP gateway'}
+					<button class="btn primary" onclick={enable} disabled={!confirmed || enabling}>
+						{enabling ? 'Turning on…' : 'Enable DHCP gateway'}
 					</button>
 				</div>
 			</div>
@@ -427,58 +435,60 @@
 
 	<!-- ==================== Enabled ==================== -->
 	{:else if view === 'enabled' && status}
-		<div class="alert alert-success">
-			<strong>NetTap is now your network's gateway.</strong>
-			Devices that get their address from NetTap show up in the dashboard with their own address.
+		<div class="notice is-ok">
+			<Icon name="check" />
+			<div><strong>NetTap is now your network's gateway.</strong>
+			Devices that get their address from NetTap show up in the dashboard with their own address.</div>
 		</div>
 
 		{#if enabledLate}
-			<div class="alert alert-info">
+			<div class="notice is-info">
 				Turning on took longer than expected, so the page lost track of it, but NetTap reports the DHCP
 				gateway is on. Check the status below.
 			</div>
 		{/if}
 
 		{#if captureRestartErrors.length > 0}
-			<div class="alert alert-warning">
-				Capture is still on the old settings: {captureRestartErrors.join(' ')}
+			<div class="notice is-warn">
+				<Icon name="warn" />
+				<div>Capture is still on the old settings: {captureRestartErrors.join(' ')}</div>
 			</div>
 		{/if}
 
 		<div class="card">
-			<div class="card-header">
+			<div class="card-head">
 				<h2 class="card-title">DHCP gateway</h2>
 				{#if status.dhcp_server_running}
-					<span class="badge badge-success">Running</span>
+					<span class="chip is-ok"><Icon name="check" />Running</span>
 				{:else}
-					<span class="badge badge-danger">Stopped</span>
+					<span class="chip is-bad"><Icon name="warn" />Stopped</span>
 				{/if}
 			</div>
 
 			{#if pollError}
-				<div class="alert alert-warning">Couldn't refresh the status: {pollError}</div>
+				<div class="notice is-warn"><Icon name="warn" /><div>Couldn't refresh the status: {pollError}</div></div>
 			{/if}
 
-			<div class="grid grid-cols-4 stat-grid">
+			<div class="stats stat-grid">
 				<div class="stat">
-					<span class="stat-label">DHCP server</span>
-					<span class="stat-value" class:text-success={status.dhcp_server_running} class:text-danger={!status.dhcp_server_running}>
-						{status.dhcp_server_running ? 'Running' : 'Stopped'}
-					</span>
+					<div class="stat-k">DHCP server</div>
+					<div class="stat-v" class:good={status.dhcp_server_running} class:bad={!status.dhcp_server_running}>
+						<Icon name={status.dhcp_server_running ? 'check' : 'warn'} />{status.dhcp_server_running ? 'Running' : 'Stopped'}
+					</div>
 				</div>
 				<div class="stat">
-					<span class="stat-label">Routing</span>
-					<span class="stat-value" class:text-success={status.routing_active} class:text-danger={!status.routing_active}>
-						{status.routing_active ? 'On' : 'Off'}
-					</span>
+					<div class="stat-k">Routing</div>
+					<div class="stat-v" class:good={status.routing_active} class:bad={!status.routing_active}>
+						<Icon name={status.routing_active ? 'check' : 'warn'} />{status.routing_active ? 'On' : 'Off'}
+					</div>
 				</div>
 				<div class="stat">
-					<span class="stat-label">Address range</span>
-					<span class="stat-value mono">{status.subnet}</span>
+					<div class="stat-k">Address range</div>
+					<div class="stat-v mono">{status.subnet}</div>
 				</div>
 				<div class="stat">
-					<span class="stat-label">Devices</span>
-					<span class="stat-value mono">{status.leases.length}</span>
+					<div class="stat-k">Devices</div>
+					<div class="stat-v num">{status.leases.length}</div>
 				</div>
 			</div>
 
@@ -487,7 +497,7 @@
 					<h3>Issues</h3>
 					<ul>
 						{#each status.issues as issue}
-							<li class="text-warning">{issue}</li>
+							<li class="issue-warn">{issue}</li>
 						{/each}
 					</ul>
 				</div>
@@ -495,18 +505,19 @@
 		</div>
 
 		{#if preflight?.ipv6_router_advertisements}
-			<div class="alert alert-warning">
-				<strong>Some traffic skips NetTap.</strong>
+			<div class="notice is-warn">
+				<Icon name="warn" />
+				<div><strong>Some traffic skips NetTap.</strong>
 				Your router hands out IPv6 addresses, so devices send IPv6 traffic straight to the router and NetTap
-				can't see it. For full visibility, turn off IPv6 in your router's settings.
+				can't see it. For full visibility, turn off IPv6 in your router's settings.</div>
 			</div>
 		{/if}
 
 		<div class="card">
-			<div class="card-header">
+			<div class="card-head">
 				<h2 class="card-title">Finish setup</h2>
 			</div>
-			<ul class="facts">
+			<ul class="fact-list">
 				<li>
 					<strong>Restart NetTap once.</strong> This makes NetTap's own address on your router's network
 					permanent. Until then NetTap's own updates (threat feeds, GeoIP) may briefly fail; your devices
@@ -525,9 +536,9 @@
 		</div>
 
 		<div class="card">
-			<div class="card-header">
+			<div class="card-head">
 				<h2 class="card-title">Devices with a NetTap address</h2>
-				<span class="badge badge-muted">{status.leases.length}</span>
+				<span class="chip">{status.leases.length}</span>
 			</div>
 			{#if status.leases.length === 0}
 				<div class="empty-state">
@@ -535,25 +546,25 @@
 					<p class="empty-hint">Devices appear here as they renew their address or reconnect.</p>
 				</div>
 			{:else}
-				<div class="table-wrap">
-					<table class="data-table">
+				<div class="tbl-wrap">
+					<table>
 						<thead>
 							<tr>
-								<th class="sortable" class:sorted={sortField === 'hostname'} aria-sort={ariaSort('hostname')} onclick={() => toggleSort('hostname')}>
+								<th class="sortable" aria-sort={ariaSort('hostname')} onclick={() => toggleSort('hostname')}>
 									Device
-									{#if sortField === 'hostname'}<span class="sort-arrow">{sortDir === 'desc' ? '↓' : '↑'}</span>{/if}
+									<Icon name="sort" class="s-none" /><Icon name="chevdown" class="s-dir" />
 								</th>
-								<th class="sortable" class:sorted={sortField === 'ip'} aria-sort={ariaSort('ip')} onclick={() => toggleSort('ip')}>
+								<th class="sortable" aria-sort={ariaSort('ip')} onclick={() => toggleSort('ip')}>
 									IP address
-									{#if sortField === 'ip'}<span class="sort-arrow">{sortDir === 'desc' ? '↓' : '↑'}</span>{/if}
+									<Icon name="sort" class="s-none" /><Icon name="chevdown" class="s-dir" />
 								</th>
-								<th class="sortable" class:sorted={sortField === 'mac'} aria-sort={ariaSort('mac')} onclick={() => toggleSort('mac')}>
+								<th class="sortable" aria-sort={ariaSort('mac')} onclick={() => toggleSort('mac')}>
 									MAC address
-									{#if sortField === 'mac'}<span class="sort-arrow">{sortDir === 'desc' ? '↓' : '↑'}</span>{/if}
+									<Icon name="sort" class="s-none" /><Icon name="chevdown" class="s-dir" />
 								</th>
-								<th class="sortable" class:sorted={sortField === 'expires'} aria-sort={ariaSort('expires')} onclick={() => toggleSort('expires')}>
+								<th class="sortable" aria-sort={ariaSort('expires')} onclick={() => toggleSort('expires')}>
 									Lease expires
-									{#if sortField === 'expires'}<span class="sort-arrow">{sortDir === 'desc' ? '↓' : '↑'}</span>{/if}
+									<Icon name="sort" class="s-none" /><Icon name="chevdown" class="s-dir" />
 								</th>
 							</tr>
 						</thead>
@@ -573,13 +584,13 @@
 		</div>
 
 		<div class="card">
-			<div class="card-header">
+			<div class="card-head">
 				<h2 class="card-title">If your devices lose internet</h2>
 			</div>
 			{@render recoverySteps()}
 
 			{#if actionError}
-				<div class="alert alert-danger">{actionError}</div>
+				<div class="notice is-error"><Icon name="warn" /><div>{actionError}</div></div>
 			{/if}
 
 			{#if disableConfirmOpen}
@@ -591,18 +602,18 @@
 						to the router.
 					</p>
 					<div class="action-buttons">
-						<button class="btn btn-secondary" onclick={() => { disableConfirmOpen = false; }} disabled={disabling}>
+						<button class="btn" onclick={() => { disableConfirmOpen = false; }} disabled={disabling}>
 							Cancel
 						</button>
-						<button class="btn btn-danger" onclick={disable} disabled={disabling}>
-							{disabling ? 'Turning off...' : 'Yes, turn off DHCP server'}
+						<button class="btn danger" onclick={disable} disabled={disabling}>
+							{disabling ? 'Turning off…' : 'Yes, turn off DHCP server'}
 						</button>
 					</div>
 				</div>
 			{:else}
 				<div class="action-buttons">
-					<a class="btn btn-primary" href="/">Go to Dashboard</a>
-					<button class="btn btn-danger" onclick={() => { disableConfirmOpen = true; }}>
+					<a class="btn primary" href="/">Go to dashboard</a>
+					<button class="btn danger" onclick={() => { disableConfirmOpen = true; }}>
 						Turn off DHCP server
 					</button>
 				</div>
@@ -611,18 +622,19 @@
 
 	<!-- ==================== Disabled (just turned off) ==================== -->
 	{:else if view === 'disabled'}
-		<div class="alert alert-warning">
-			<strong>NetTap's DHCP server is off.</strong>
+		<div class="notice is-warn">
+			<Icon name="warn" />
+			<div><strong>NetTap's DHCP server is off.</strong>
 			Routing through NetTap stays on, so devices with a NetTap address keep working until they move back
-			to your router.
+			to your router.</div>
 		</div>
 		<div class="card">
-			<div class="card-header">
+			<div class="card-head">
 				<h2 class="card-title">Hand your network back to the router</h2>
 			</div>
 			{@render recoverySteps()}
 			<div class="action-buttons">
-				<button class="btn btn-secondary" onclick={load}>Set up the DHCP gateway again</button>
+				<button class="btn" onclick={load}>Set up the DHCP gateway again</button>
 			</div>
 		</div>
 	{/if}
@@ -641,9 +653,24 @@
 		gap: var(--sp-4);
 	}
 
+	.loading-spinner {
+		width: 24px;
+		height: 24px;
+		flex: none;
+		border: 2px solid var(--line);
+		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
 	h3 {
-		font-size: var(--text-base);
-		font-weight: 600;
+		font: 500 var(--text-base)/1.3 var(--font-display);
 		color: var(--text-1);
 		margin-bottom: var(--sp-2);
 	}
@@ -658,6 +685,45 @@
 		color: var(--accent-strong);
 	}
 
+	/* ----- Notices: a tint plus an icon, never colour alone ----- */
+	.notice {
+		--tone: var(--accent);
+		display: flex;
+		align-items: flex-start;
+		gap: var(--sp-2);
+		padding: var(--sp-3) var(--sp-4);
+		border-radius: var(--r-md);
+		font-size: var(--text-sm);
+		line-height: 1.5;
+		color: var(--text-1);
+		background: color-mix(in srgb, var(--tone) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--tone) 26%, transparent);
+	}
+
+	.notice :global(.ic) {
+		width: 16px;
+		height: 16px;
+		margin-top: 2px;
+		color: var(--tone);
+	}
+
+	.notice.is-ok {
+		--tone: var(--ok);
+	}
+
+	.notice.is-warn {
+		--tone: var(--sev-medium);
+	}
+
+	.notice.is-error {
+		--tone: var(--sev-critical);
+	}
+
+	.chip.is-bad {
+		color: var(--sev-critical);
+		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
+	}
+
 	/* ----- Checklist ----- */
 	.checklist {
 		list-style: none;
@@ -668,7 +734,7 @@
 	.checklist-item {
 		display: flex;
 		align-items: flex-start;
-		gap: var(--sp-2);
+		gap: var(--sp-3);
 		padding: var(--sp-2) 0;
 		border-bottom: 1px solid var(--line);
 	}
@@ -678,11 +744,9 @@
 	}
 
 	.check-icon {
+		display: inline-flex;
 		flex-shrink: 0;
-		width: var(--sp-6);
-		text-align: center;
-		font-size: var(--text-lg);
-		line-height: 1.2;
+		padding-top: 2px;
 		color: var(--text-3);
 	}
 
@@ -714,7 +778,7 @@
 		color: var(--text-2);
 	}
 
-	/* ----- Guidance / facts ----- */
+	/* ----- Guidance / fact lists ----- */
 	.guide {
 		margin-top: var(--sp-4);
 		padding-top: var(--sp-4);
@@ -722,7 +786,7 @@
 	}
 
 	.steps,
-	.facts {
+	.fact-list {
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-2);
@@ -730,19 +794,19 @@
 		margin-bottom: var(--sp-4);
 	}
 
-	.facts {
+	.fact-list {
 		list-style: disc;
 	}
 
 	.steps li,
-	.facts li {
+	.fact-list li {
 		font-size: var(--text-sm);
 		line-height: 1.75;
 		color: var(--text-2);
 	}
 
 	.steps strong,
-	.facts strong {
+	.fact-list strong {
 		color: var(--text-1);
 	}
 
@@ -757,7 +821,7 @@
 		align-items: flex-start;
 		gap: var(--sp-2);
 		padding: var(--sp-4);
-		background-color: var(--bg);
+		background-color: var(--surface-1);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
 		font-size: var(--text-sm);
@@ -768,14 +832,13 @@
 
 	.confirm-box input {
 		margin-top: var(--sp-1);
-		accent-color: var(--accent);
 	}
 
 	.confirm-panel {
 		margin-top: var(--sp-4);
 		padding: var(--sp-4);
 		background-color: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-		border: 1px solid var(--sev-critical);
+		border: 1px solid color-mix(in srgb, var(--sev-critical) 26%, transparent);
 		border-radius: var(--r-md);
 		color: var(--text-1);
 	}
@@ -783,36 +846,36 @@
 	.action-buttons {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--sp-4);
+		gap: var(--sp-2);
 		margin-top: var(--sp-4);
 	}
 
-	/* ----- Status ----- */
+	.btn.danger {
+		color: var(--sev-critical);
+	}
+
+	/* ----- Status: the system's .stats strip ----- */
 	.stat-grid {
 		margin: var(--sp-4) 0;
 	}
 
-	.stat {
+	.stat-v {
 		display: flex;
-		flex-direction: column;
-		gap: var(--sp-1);
-		padding: var(--sp-2);
-		background-color: var(--bg);
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
+		align-items: center;
+		gap: var(--sp-2);
 	}
 
-	.stat-label {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		color: var(--text-3);
+	.stat-v.good {
+		color: var(--ok);
 	}
 
-	.stat-value {
-		font-size: var(--text-lg);
-		font-weight: 700;
-		color: var(--text-1);
+	.stat-v.bad {
+		color: var(--sev-critical);
+	}
+
+	.stat-v :global(.ic) {
+		width: 20px;
+		height: 20px;
 	}
 
 	.issues {
@@ -831,21 +894,40 @@
 		margin-bottom: var(--sp-1);
 	}
 
-	/* ----- Lease table ----- */
-	.table-wrap {
-		overflow-x: auto;
-		background: var(--surface-1);
-		border: 1px solid var(--line);
-		border-radius: var(--r-md);
+	.issue-warn {
+		color: var(--sev-medium);
 	}
 
-	.data-table th.sorted {
-		color: var(--accent);
+	/* ----- Empty lease list ----- */
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-1);
+		padding: var(--sp-4) 0;
 	}
 
-	.sort-arrow {
-		color: var(--accent);
+	.empty-text {
+		font: 500 var(--text-md)/1.3 var(--font-display);
+		color: var(--text-1);
+		margin: 0;
+	}
+
+	.empty-hint {
+		color: var(--text-2);
+		margin: 0;
+	}
+
+	/* ----- Lease table (system.css styles the table) ----- */
+	th.sortable {
+		cursor: pointer;
+	}
+
+	th.sortable :global(.ic) {
+		width: 12px;
+		height: 12px;
 		margin-left: var(--sp-1);
+		stroke-width: 2.2;
+		vertical-align: -1px;
 	}
 
 	@media (max-width: 768px) {

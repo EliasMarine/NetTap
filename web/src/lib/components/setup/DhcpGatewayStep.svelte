@@ -25,7 +25,7 @@
 	<div class="form-group">
 		<label for="dhcp-subnet" class="label">
 			Subnet for your devices
-			<span class="text-muted">(NetTap hands out addresses from this range)</span>
+			<span class="dim">(NetTap hands out addresses from this range)</span>
 		</label>
 		<input
 			id="dhcp-subnet"
@@ -37,7 +37,7 @@
 			aria-invalid={!check.valid}
 			aria-describedby="dhcp-subnet-hint"
 		/>
-		<p id="dhcp-subnet-hint" class="field-hint" class:error={!check.valid} aria-live="polite">
+		<p id="dhcp-subnet-hint" class="field-help field-hint" class:field-error={!check.valid} aria-live="polite">
 			{check.valid ? 'Looks good. The default works for almost every home network.' : check.error}
 		</p>
 	</div>
@@ -82,26 +82,25 @@
 		gap: var(--sp-6);
 	}
 
+	/* .field-help and .field-error (forms.css) set the type and colour. */
 	.field-hint {
 		margin-top: var(--sp-1);
-		font-size: var(--text-xs);
-		color: var(--text-2);
 	}
 
-	.field-hint.error {
-		color: var(--sev-critical);
+	.dim {
+		font-weight: 400;
 	}
 
 	.info-section {
 		background-color: var(--surface-2);
 		border: 1px solid var(--line);
 		border-radius: var(--r-md);
-		padding: var(--sp-6);
+		padding: var(--sp-5);
 	}
 
 	.info-section h3 {
-		font-size: var(--text-base);
-		font-weight: 600;
+		font: 500 var(--text-md)/1.3 var(--font-display);
+		letter-spacing: -0.01em;
 		color: var(--text-1);
 		margin-bottom: var(--sp-2);
 	}

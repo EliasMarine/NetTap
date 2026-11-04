@@ -6,15 +6,16 @@
 
 	import { getStorageStatus } from '$api/system';
 	import type { StorageStatus } from '$api/system';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let storage = $state<StorageStatus | null>(null);
 	let loading = $state(true);
 
-	// Tier configuration with colors
+	// Tier configuration: decorative series colours, always shown beside the tier's label
 	const TIER_DEFS = [
-		{ key: 'hot', label: 'Hot (Zeek Metadata)', color: 'var(--sev-critical)', defaultDays: 90, daysField: 'hot_days' as const },
-		{ key: 'warm', label: 'Warm (Suricata Alerts)', color: 'var(--sev-medium)', defaultDays: 180, daysField: 'warm_days' as const },
-		{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--sev-low)', defaultDays: 30, daysField: 'cold_days' as const },
+		{ key: 'hot', label: 'Hot (Zeek metadata)', color: 'var(--data-1)', defaultDays: 90, daysField: 'hot_days' as const },
+		{ key: 'warm', label: 'Warm (Suricata alerts)', color: 'var(--data-2)', defaultDays: 180, daysField: 'warm_days' as const },
+		{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--data-3)', defaultDays: 30, daysField: 'cold_days' as const },
 	] as const;
 
 	async function fetchData() {
@@ -66,10 +67,11 @@
 </script>
 
 <div class="card storage-tier-panel">
-	<div class="card-header">
-		<span class="card-title">Storage Tiers</span>
+	<div class="card-head">
+		<span class="card-title">Storage tiers</span>
 		{#if storage}
-			<span class="usage-pct mono" style="color: {diskUsageColor(storage.disk_usage_percent)}">
+			<span class="usage-pct num" style="color: {diskUsageColor(storage.disk_usage_percent)}">
+				{#if storage.disk_usage_percent > 70}<Icon name="warn" />{/if}
 				{storage.disk_usage_percent.toFixed(1)}% used
 			</span>
 		{/if}
@@ -77,31 +79,31 @@
 
 	{#if loading && !storage}
 		<div class="skeleton-rows">
-			<div class="skeleton skeleton-bar"></div>
-			<div class="skeleton skeleton-bar"></div>
-			<div class="skeleton skeleton-bar"></div>
+			<div class="skel skeleton-bar"></div>
+			<div class="skel skeleton-bar"></div>
+			<div class="skel skeleton-bar"></div>
 		</div>
 	{:else if storage}
 		<!-- Overall disk bar -->
-		<div class="disk-bar-container">
-			<div
+		<div class="meter">
+			<span
 				class="disk-bar-fill"
 				style="width: {Math.min(storage.disk_usage_percent, 100)}%; background-color: {diskUsageColor(storage.disk_usage_percent)}"
-			></div>
+			></span>
 		</div>
 
 		<div class="disk-summary">
 			<span class="disk-stat">
 				<span class="disk-label">Total</span>
-				<span class="mono">{formatBytes(storage.disk_total_bytes)}</span>
+				<span class="num">{formatBytes(storage.disk_total_bytes)}</span>
 			</span>
 			<span class="disk-stat">
 				<span class="disk-label">Used</span>
-				<span class="mono">{formatBytes(storage.disk_used_bytes)}</span>
+				<span class="num">{formatBytes(storage.disk_used_bytes)}</span>
 			</span>
 			<span class="disk-stat">
 				<span class="disk-label">Free</span>
-				<span class="mono">{formatBytes(storage.disk_free_bytes)}</span>
+				<span class="num">{formatBytes(storage.disk_free_bytes)}</span>
 			</span>
 		</div>
 
@@ -115,8 +117,8 @@
 							<span class="tier-label">{tier.label}</span>
 						</div>
 						<div class="tier-meta">
-							<span class="tier-retention mono">{tier.days}</span>
-							<span class="tier-count text-muted">{tier.indexCount} indices</span>
+							<span class="tier-retention num">{tier.days}</span>
+							<span class="tier-count dim">{tier.indexCount} indices</span>
 						</div>
 					</div>
 				{/each}
@@ -126,7 +128,7 @@
 		<!-- Retention policy details -->
 		{#if storage.retention && typeof storage.retention === 'object'}
 			<div class="retention-section">
-				<span class="section-label">Retention Policy</span>
+				<span class="eyebrow section-label">Retention policy</span>
 				{#each Object.entries(storage.retention) as [key, val]}
 					<div class="retention-item">
 						<span class="retention-key">{key}</span>
@@ -136,7 +138,7 @@
 			</div>
 		{/if}
 	{:else}
-		<p class="text-muted">Storage data unavailable</p>
+		<p class="dim">Couldn't load storage status.</p>
 	{/if}
 </div>
 
@@ -147,22 +149,24 @@
 		gap: var(--sp-2);
 	}
 
+	.storage-tier-panel .card-head {
+		margin-bottom: var(--sp-2);
+	}
+
 	.usage-pct {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--sp-1);
 		font-size: var(--text-sm);
 		font-weight: 600;
 	}
 
-	.disk-bar-container {
-		width: 100%;
-		height: 8px;
-		background-color: var(--surface-2);
-		border-radius: var(--r-pill);
-		overflow: hidden;
+	.usage-pct :global(.ic) {
+		width: 16px;
+		height: 16px;
 	}
 
 	.disk-bar-fill {
-		height: 100%;
-		border-radius: var(--r-pill);
 		transition: width 250ms var(--ease);
 	}
 
@@ -240,10 +244,6 @@
 	}
 
 	.section-label {
-		font-size: var(--text-xs);
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 		display: block;
 		margin-bottom: var(--sp-2);
 	}
@@ -270,20 +270,8 @@
 		gap: var(--sp-2);
 	}
 
-	.skeleton {
-		background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite;
-		border-radius: var(--r-sm);
-	}
-
 	.skeleton-bar {
 		height: 24px;
 		width: 100%;
-	}
-
-	@keyframes shimmer {
-		0% { background-position: 200% 0; }
-		100% { background-position: -200% 0; }
 	}
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getBridgeHealth, getBypassStatus, enableBypass, disableBypass } from '$api/bridge.js';
 	import type { BridgeHealth, BypassStatus } from '$api/bridge.js';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let health = $state<BridgeHealth | null>(null);
 	let bypassStatus = $state<BypassStatus | null>(null);
@@ -19,17 +20,17 @@
 	function healthBadgeClass(status: string): string {
 		switch (status) {
 			case 'normal':
-				return 'badge badge-success';
+				return 'chip is-ok';
 			case 'degraded':
-				return 'badge badge-warning';
+				return 'chip is-warn';
 			case 'bypass':
-				return 'badge badge-info';
+				return 'chip';
 			case 'not_configured':
-				return 'badge badge-info';
+				return 'chip';
 			case 'down':
-				return 'badge badge-danger';
+				return 'chip is-bad';
 			default:
-				return 'badge';
+				return 'chip';
 		}
 	}
 
@@ -42,7 +43,7 @@
 			case 'bypass':
 				return 'Bypass';
 			case 'not_configured':
-				return 'Not Configured';
+				return 'Not configured';
 			case 'down':
 				return 'Down';
 			default:
@@ -176,52 +177,49 @@
 </script>
 
 <div class="bridge-card card">
-	<div class="card-header">
-		<span class="card-title">Bridge & Failover</span>
+	<div class="card-head">
+		<span class="card-title">Bridge & failover</span>
 		{#if healthFailed}
-			<span class="badge badge-muted">Unknown</span>
+			<span class="chip">Unknown</span>
 		{:else if health}
 			<span class={healthBadgeClass(health.health_status)}>
+				{#if health.health_status === 'normal'}<Icon name="check" />{:else if health.health_status === 'degraded' || health.health_status === 'down'}<Icon name="warn" />{/if}
 				{healthBadgeLabel(health.health_status)}
 			</span>
 		{:else if loading}
-			<span class="badge">Loading...</span>
+			<span class="chip">Loading…</span>
 		{:else}
-			<span class="badge">Unknown</span>
+			<span class="chip">Unknown</span>
 		{/if}
 	</div>
 
 	{#if loading && !health}
 		<div class="bridge-loading">
 			<div class="spinner"></div>
-			<p class="text-muted">Checking bridge status...</p>
+			<p class="dim">Checking bridge status…</p>
 		</div>
 	{:else if healthFailed && !health}
-		<p class="empty-state">Couldn't check bridge health: the request failed.</p>
+		<p class="dim">Couldn't check bridge health: the request failed.</p>
 	{:else if health && health.health_status === 'not_configured'}
 		<!-- Not configured info state -->
-		<div class="not-configured-state">
-			<div class="info-icon">
-				<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
-				</svg>
-			</div>
-			<p class="not-configured-title">Bridge Not Configured</p>
-			<p class="not-configured-desc text-muted">
+		<div class="state not-configured-state">
+			<div class="state-ic"><Icon name="infra" /></div>
+			<p class="not-configured-title">Bridge not configured</p>
+			<p class="not-configured-desc">
 				The network bridge (br0) has not been set up yet. Run the setup wizard to configure your WAN and LAN interfaces.
 			</p>
-			<a href="/setup" class="btn btn-sm btn-primary">Open Setup Wizard</a>
+			<a href="/setup" class="btn primary">Open setup wizard</a>
 		</div>
 		{#if health.issues && health.issues.length > 0}
 			<div class="bridge-issues">
 				{#each health.issues as issue}
-					<div class="alert alert-info">{issue}</div>
+					<div class="notice is-info">{issue}</div>
 				{/each}
 			</div>
 		{/if}
 	{:else if health}
 		{#if healthFailed}
-			<div class="alert alert-warning">Couldn't refresh bridge health: showing the last reading.</div>
+			<div class="notice is-warn"><Icon name="warn" />Couldn't refresh bridge health: showing the last reading.</div>
 		{/if}
 		<!-- Network diagram -->
 		<div class="bridge-diagram">
@@ -234,7 +232,7 @@
 				</div>
 				<span class="nic-label">WAN</span>
 				<span class="nic-status" style="color: {linkColor(health.wan_link)}">
-					{health.wan_link ? 'Link Up' : 'Link Down'}
+					{health.wan_link ? 'Link up' : 'Link down'}
 				</span>
 			</div>
 
@@ -268,57 +266,57 @@
 				</div>
 				<span class="nic-label">LAN</span>
 				<span class="nic-status" style="color: {linkColor(health.lan_link)}">
-					{health.lan_link ? 'Link Up' : 'Link Down'}
+					{health.lan_link ? 'Link up' : 'Link down'}
 				</span>
 			</div>
 		</div>
 
 		<!-- Stats row -->
-		<div class="bridge-stats">
-			<div class="stat-item">
-				<span class="stat-label">Latency</span>
-				<span class="stat-value mono" title={health.latency_note || undefined}>{formatLatency(health.latency_us)}</span>
+		<div class="stats bridge-stats">
+			<div class="stat">
+				<div class="stat-k">Latency</div>
+				<div class="stat-v" title={health.latency_note || undefined}>{formatLatency(health.latency_us)}</div>
 			</div>
-			<div class="stat-item">
-				<span class="stat-label">RX Rate</span>
-				<span class="stat-value mono">{formatByteRate(health.rx_bytes_delta)}</span>
+			<div class="stat">
+				<div class="stat-k">RX rate</div>
+				<div class="stat-v">{formatByteRate(health.rx_bytes_delta)}</div>
 			</div>
-			<div class="stat-item">
-				<span class="stat-label">TX Rate</span>
-				<span class="stat-value mono">{formatByteRate(health.tx_bytes_delta)}</span>
+			<div class="stat">
+				<div class="stat-k">TX rate</div>
+				<div class="stat-v">{formatByteRate(health.tx_bytes_delta)}</div>
 			</div>
-			<div class="stat-item">
-				<span class="stat-label">Uptime</span>
-				<span class="stat-value mono">{formatUptime(health.uptime_seconds)}</span>
+			<div class="stat">
+				<div class="stat-k">Uptime</div>
+				<div class="stat-v">{formatUptime(health.uptime_seconds)}</div>
 			</div>
 		</div>
 
 		<!-- Bypass control section -->
 		<div class="bypass-section">
 			<div class="bypass-header">
-				<span class="bypass-title">Bypass Mode</span>
+				<span class="bypass-title">Bypass mode</span>
 				{#if bypassFailed}
-					<span class="badge badge-muted">Unknown</span>
+					<span class="chip">Unknown</span>
 				{:else if bypassStatus?.active}
-					<span class="badge badge-warning">Active</span>
+					<span class="chip is-warn"><Icon name="warn" />Active</span>
 				{:else}
-					<span class="badge badge-success">Inactive</span>
+					<span class="chip is-ok"><Icon name="check" />Inactive</span>
 				{/if}
 			</div>
 
 			{#if bypassStatus?.active}
-				<p class="bypass-warning">
-					Capture services are stopped. Traffic flows through without monitoring.
+				<p class="notice is-warn bypass-warning">
+					<Icon name="warn" />Capture services are stopped. Traffic flows through without monitoring.
 				</p>
 				{#if bypassStatus.activated_at}
-					<p class="bypass-since text-muted">
+					<p class="bypass-since dim">
 						Since: {new Date(bypassStatus.activated_at).toLocaleString()}
 					</p>
 				{/if}
 			{/if}
 
 			{#if bypassError}
-				<div class="alert alert-danger">{bypassError}</div>
+				<div class="notice is-error"><Icon name="warn" />{bypassError}</div>
 			{/if}
 
 			<div class="bypass-actions">
@@ -327,14 +325,14 @@
 						{bypassStatus?.active ? 'Disable bypass and resume capture?' : 'Enable bypass? Capture will stop.'}
 					</span>
 					<button
-						class="btn btn-sm btn-danger"
+						class="btn danger"
 						onclick={handleBypassToggle}
 						disabled={bypassLoading}
 					>
 						Confirm
 					</button>
 					<button
-						class="btn btn-sm btn-secondary"
+						class="btn"
 						onclick={cancelBypassToggle}
 						disabled={bypassLoading}
 					>
@@ -343,16 +341,16 @@
 				{:else}
 					<!-- #96: no toggle while the current bypass state is unknown -->
 					<button
-						class="btn btn-sm {bypassStatus?.active ? 'btn-primary' : 'btn-warning'}"
+						class="btn {bypassStatus?.active ? 'primary' : 'warning'}"
 						onclick={handleBypassToggle}
 						disabled={bypassLoading || !bypassStatus}
 					>
 						{#if bypassLoading}
-							Updating...
+							Updating…
 						{:else if bypassStatus?.active}
-							Disable Bypass
+							Disable bypass
 						{:else}
-							Enable Bypass
+							Enable bypass
 						{/if}
 					</button>
 				{/if}
@@ -363,55 +361,51 @@
 		{#if health.issues && health.issues.length > 0}
 			<div class="bridge-issues">
 				{#each health.issues as issue}
-					<div class="alert alert-warning">{issue}</div>
+					<div class="notice is-warn"><Icon name="warn" />{issue}</div>
 				{/each}
 			</div>
 		{/if}
 
 		<!-- Watchdog indicator -->
 		<div class="bridge-footer">
-			<span class="footer-item text-muted">
-				Watchdog: <span class={health.watchdog_active ? 'text-success' : 'text-danger'}>
+			<span class="footer-item dim">
+				Watchdog: <span class="res" class:is-live={health.watchdog_active} class:is-high={!health.watchdog_active}>
 					{health.watchdog_active ? 'Active' : 'Inactive'}
 				</span>
 			</span>
 			{#if health.last_check}
-				<span class="footer-item text-muted">
+				<span class="footer-item dim">
 					Last check: {new Date(health.last_check).toLocaleTimeString()}
 				</span>
 			{/if}
 		</div>
 	{:else}
-		<p class="text-muted">Bridge health data unavailable</p>
+		<p class="dim">No bridge health data yet.</p>
 	{/if}
 </div>
 
 <style>
-	/* Not configured state */
-	.not-configured-state {
-		display: flex;
-		flex-direction: column;
+	.bridge-card .card-head {
 		align-items: center;
-		justify-content: center;
-		padding: var(--sp-8);
-		gap: var(--sp-4);
-		text-align: center;
 	}
 
-	.info-icon {
-		opacity: 0.7;
+	/* Not configured: the system's empty state (.state) */
+	.not-configured-state {
+		min-height: 0;
+		padding: var(--sp-4) 0;
+	}
+
+	.not-configured-state .state-ic {
+		color: var(--accent);
 	}
 
 	.not-configured-title {
-		font-size: var(--text-lg);
-		font-weight: 600;
+		font: 500 var(--text-md)/1.3 var(--font-display);
 		color: var(--text-1);
 	}
 
 	.not-configured-desc {
-		font-size: var(--text-sm);
 		max-width: 360px;
-		line-height: 1.5;
 	}
 
 	/* Bridge card specific styles */
@@ -456,7 +450,7 @@
 		padding: var(--sp-4);
 		background-color: var(--surface-2);
 		border: 2px solid var(--line);
-		border-radius: var(--r-lg);
+		border-radius: var(--r-md);
 		min-width: 80px;
 		transition: border-color 250ms var(--ease);
 	}
@@ -469,13 +463,11 @@
 		font-size: var(--text-sm);
 		font-weight: 700;
 		color: var(--text-1);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.nic-status {
 		font-size: var(--text-xs);
-		font-weight: 500;
+		font-weight: 600;
 	}
 
 	.bridge-line-container {
@@ -496,44 +488,18 @@
 
 	.bridge-label {
 		font-size: var(--text-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+		font-weight: 700;
 	}
 
 	.bridge-icon {
 		margin-top: var(--sp-1);
 	}
 
-	/* Stats row */
+	/* Stats row: the system's .stats strip */
 	.bridge-stats {
-		display: flex;
-		gap: var(--sp-6);
-		flex-wrap: wrap;
 		padding: var(--sp-4) 0;
 		border-top: 1px solid var(--line);
 		border-bottom: 1px solid var(--line);
-	}
-
-	.stat-item {
-		display: flex;
-		flex-direction: column;
-		gap: var(--sp-1);
-		flex: 1;
-		min-width: 80px;
-	}
-
-	.stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-2);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.stat-value {
-		font-size: var(--text-sm);
-		color: var(--text-1);
-		font-weight: 600;
 	}
 
 	/* Bypass section */
@@ -554,19 +520,13 @@
 		color: var(--text-1);
 	}
 
-	.bypass-warning {
-		font-size: var(--text-sm);
-		color: var(--sev-medium);
+	.bypass-warning,
+	.bypass-since {
 		margin-bottom: var(--sp-2);
-		padding: var(--sp-2);
-		background-color: color-mix(in srgb, var(--sev-medium) 10%, transparent);
-		border-radius: var(--r-md);
-		border: 1px solid color-mix(in srgb, var(--sev-medium) 25%, transparent);
 	}
 
 	.bypass-since {
 		font-size: var(--text-xs);
-		margin-bottom: var(--sp-2);
 	}
 
 	.bypass-actions {
@@ -578,6 +538,48 @@
 	.confirm-text {
 		font-size: var(--text-sm);
 		color: var(--text-2);
+	}
+
+	.btn.danger {
+		color: var(--sev-critical);
+	}
+
+	.btn.warning {
+		color: var(--sev-medium);
+	}
+
+	/* Notices: a tint plus an icon, never colour alone */
+	.notice {
+		--tone: var(--accent);
+		display: flex;
+		align-items: flex-start;
+		gap: var(--sp-2);
+		padding: var(--sp-3) var(--sp-4);
+		border-radius: var(--r-md);
+		font-size: var(--text-sm);
+		color: var(--text-1);
+		background: color-mix(in srgb, var(--tone) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--tone) 26%, transparent);
+	}
+
+	.notice :global(.ic) {
+		width: 16px;
+		height: 16px;
+		margin-top: 2px;
+		color: var(--tone);
+	}
+
+	.notice.is-warn {
+		--tone: var(--sev-medium);
+	}
+
+	.notice.is-error {
+		--tone: var(--sev-critical);
+	}
+
+	.chip.is-bad {
+		color: var(--sev-critical);
+		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
 	}
 
 	/* Issues list */
@@ -614,11 +616,6 @@
 		.bridge-line-container {
 			transform: rotate(90deg);
 			padding: var(--sp-2) 0;
-		}
-
-		.bridge-stats {
-			flex-direction: column;
-			gap: var(--sp-2);
 		}
 
 		.bypass-actions {

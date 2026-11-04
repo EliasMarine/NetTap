@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let {
 		title = '',
@@ -29,20 +30,7 @@
 <div class="collapsible" class:collapsible-expanded={isExpanded}>
 	<button class="collapsible-header" onclick={toggle} aria-expanded={isExpanded}>
 		<div class="collapsible-header-left">
-			<svg
-				class="collapsible-chevron"
-				class:chevron-expanded={isExpanded}
-				viewBox="0 0 24 24"
-				width="16"
-				height="16"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-			>
-				<polyline points="9 18 15 12 9 6" />
-			</svg>
+			<span class="collapsible-chevron" class:chevron-expanded={isExpanded}><Icon name="chevdown" /></span>
 			<div class="collapsible-title-group">
 				<span class="collapsible-title">{title}</span>
 				{#if subtitle}
@@ -52,7 +40,7 @@
 		</div>
 		<div class="collapsible-header-right">
 			{#if badge}
-				<span class="badge">{badge}</span>
+				<span class="chip">{badge}</span>
 			{/if}
 		</div>
 	</button>
@@ -66,44 +54,40 @@
 
 <style>
 	.collapsible {
-		background-color: var(--surface-1);
+		background: var(--card-bg);
 		border: 1px solid var(--line);
 		border-radius: var(--r-lg);
+		box-shadow: var(--sheen);
 		overflow: hidden;
-		transition: border-color var(--dur-fast);
-	}
-
-	.collapsible:hover {
-		border-color: var(--accent);
 	}
 
 	.collapsible-expanded {
-		border-color: var(--accent);
+		border-color: var(--line-strong);
 	}
 
 	.collapsible-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: var(--sp-3);
 		width: 100%;
-		padding: var(--sp-4) var(--sp-6);
+		padding: var(--sp-4) var(--sp-5);
 		background: none;
 		border: none;
 		cursor: pointer;
-		font-family: var(--font-body);
 		text-align: left;
 		color: var(--text-1);
 		transition: background-color var(--dur-fast);
 	}
 
 	.collapsible-header:hover {
-		background-color: var(--surface-2);
+		background-color: var(--row-hover);
 	}
 
 	.collapsible-header-left {
 		display: flex;
 		align-items: center;
-		gap: var(--sp-2);
+		gap: var(--sp-3);
 		min-width: 0;
 	}
 
@@ -114,14 +98,17 @@
 		flex-shrink: 0;
 	}
 
+	/* The chevron points right when collapsed and down when open. */
 	.collapsible-chevron {
+		display: inline-flex;
 		flex-shrink: 0;
 		color: var(--text-3);
-		transition: transform 250ms var(--ease);
+		transform: rotate(-90deg);
+		transition: transform var(--dur-fast) var(--ease);
 	}
 
 	.chevron-expanded {
-		transform: rotate(90deg);
+		transform: rotate(0deg);
 	}
 
 	.collapsible-title-group {
@@ -132,20 +119,19 @@
 	}
 
 	.collapsible-title {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-1);
+		font: 500 var(--text-md)/1.3 var(--font-display);
+		letter-spacing: -0.01em;
 	}
 
 	.collapsible-subtitle {
 		font-size: var(--text-xs);
-		color: var(--text-2);
+		color: var(--text-3);
 	}
 
 	.collapsible-body {
 		max-height: 0;
 		overflow: hidden;
-		transition: max-height 0.3s ease;
+		transition: max-height 0.3s var(--ease);
 	}
 
 	.collapsible-body-expanded {
@@ -153,7 +139,7 @@
 	}
 
 	.collapsible-body-inner {
-		padding: 0 var(--sp-6) var(--sp-6) var(--sp-6);
+		padding: var(--sp-4) var(--sp-5) var(--sp-5);
 		border-top: 1px solid var(--line);
 	}
 </style>

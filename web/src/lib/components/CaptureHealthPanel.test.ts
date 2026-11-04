@@ -42,16 +42,16 @@ describe('CaptureHealthPanel mode badge', () => {
 		await vi.waitFor(() => expect(screen.getByText('enp1s0')).toBeInTheDocument());
 	}
 
-	it('labels dhcp_gateway as DHCP Gateway, not Inline Bridge', async () => {
+	it('labels dhcp_gateway as DHCP gateway, not Inline bridge', async () => {
 		await renderWithMode('dhcp_gateway');
 
-		expect(screen.getByText('DHCP Gateway')).toBeInTheDocument();
-		expect(screen.queryByText('Inline Bridge')).not.toBeInTheDocument();
+		expect(screen.getByText('DHCP gateway')).toBeInTheDocument();
+		expect(screen.queryByText('Inline bridge')).not.toBeInTheDocument();
 	});
 
-	it('still labels bridge as Inline Bridge', async () => {
+	it('still labels bridge as Inline bridge', async () => {
 		await renderWithMode('bridge');
-		expect(screen.getByText('Inline Bridge')).toBeInTheDocument();
+		expect(screen.getByText('Inline bridge')).toBeInTheDocument();
 	});
 });
 
@@ -92,7 +92,7 @@ describe('CaptureHealthPanel when a request fails', () => {
 
 		expect(await screen.findByText("Couldn't check capture health: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText('Down')).not.toBeInTheDocument();
-		expect(screen.queryByText('Inline Bridge')).not.toBeInTheDocument();
+		expect(screen.queryByText('Inline bridge')).not.toBeInTheDocument();
 	});
 
 	it('says the counters could not be loaded instead of a 0% drop rate', async () => {
@@ -123,11 +123,11 @@ describe('CaptureHealthPanel when a request fails', () => {
 
 function statusBadgeClass(status: string): string {
 	switch (status) {
-		case 'normal': return 'badge badge-success';
-		case 'degraded': return 'badge badge-warning';
-		case 'down': return 'badge badge-danger';
-		case 'not_configured': return 'badge badge-muted';
-		default: return 'badge';
+		case 'normal': return 'chip is-ok';
+		case 'degraded': return 'chip is-warn';
+		case 'down': return 'chip is-bad';
+		case 'not_configured': return 'chip';
+		default: return 'chip';
 	}
 }
 
@@ -136,18 +136,18 @@ function statusLabel(status: string): string {
 		case 'normal': return 'Normal';
 		case 'degraded': return 'Degraded';
 		case 'down': return 'Down';
-		case 'not_configured': return 'Not Configured';
+		case 'not_configured': return 'Not configured';
 		default: return 'Unknown';
 	}
 }
 
-function modeBadgeClass(mode: string): string {
-	return mode === 'mirror' ? 'badge badge-info' : 'badge badge-accent';
+function modeBadgeClass(_mode: string): string {
+	return 'chip';
 }
 
 function modeLabel(mode: string): string {
-	if (mode === 'dhcp_gateway') return 'DHCP Gateway';
-	return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline Bridge';
+	if (mode === 'dhcp_gateway') return 'DHCP gateway';
+	return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline bridge';
 }
 
 function formatBytes(bytes: number): string {
@@ -169,23 +169,23 @@ function formatNumber(n: number): string {
 describe('CaptureHealthPanel logic', () => {
 	describe('statusBadgeClass', () => {
 		it('returns success for normal', () => {
-			expect(statusBadgeClass('normal')).toBe('badge badge-success');
+			expect(statusBadgeClass('normal')).toBe('chip is-ok');
 		});
 
 		it('returns warning for degraded', () => {
-			expect(statusBadgeClass('degraded')).toBe('badge badge-warning');
+			expect(statusBadgeClass('degraded')).toBe('chip is-warn');
 		});
 
 		it('returns danger for down', () => {
-			expect(statusBadgeClass('down')).toBe('badge badge-danger');
+			expect(statusBadgeClass('down')).toBe('chip is-bad');
 		});
 
 		it('returns muted for not_configured', () => {
-			expect(statusBadgeClass('not_configured')).toBe('badge badge-muted');
+			expect(statusBadgeClass('not_configured')).toBe('chip');
 		});
 
-		it('returns plain badge for unknown status', () => {
-			expect(statusBadgeClass('something')).toBe('badge');
+		it('returns plain chip for unknown status', () => {
+			expect(statusBadgeClass('something')).toBe('chip');
 		});
 	});
 
@@ -202,8 +202,8 @@ describe('CaptureHealthPanel logic', () => {
 			expect(statusLabel('down')).toBe('Down');
 		});
 
-		it('returns Not Configured for not_configured', () => {
-			expect(statusLabel('not_configured')).toBe('Not Configured');
+		it('returns Not configured for not_configured', () => {
+			expect(statusLabel('not_configured')).toBe('Not configured');
 		});
 
 		it('returns Unknown for unrecognized status', () => {
@@ -212,16 +212,16 @@ describe('CaptureHealthPanel logic', () => {
 	});
 
 	describe('modeBadgeClass', () => {
-		it('returns info for mirror', () => {
-			expect(modeBadgeClass('mirror')).toBe('badge badge-info');
+		it('returns a neutral chip for mirror', () => {
+			expect(modeBadgeClass('mirror')).toBe('chip');
 		});
 
-		it('returns accent for bridge', () => {
-			expect(modeBadgeClass('bridge')).toBe('badge badge-accent');
+		it('returns a neutral chip for bridge', () => {
+			expect(modeBadgeClass('bridge')).toBe('chip');
 		});
 
-		it('returns accent for any non-mirror mode', () => {
-			expect(modeBadgeClass('unknown')).toBe('badge badge-accent');
+		it('returns a neutral chip for any non-mirror mode', () => {
+			expect(modeBadgeClass('unknown')).toBe('chip');
 		});
 	});
 
@@ -230,8 +230,8 @@ describe('CaptureHealthPanel logic', () => {
 			expect(modeLabel('mirror')).toBe('Mirror / SPAN');
 		});
 
-		it('returns Inline Bridge for bridge', () => {
-			expect(modeLabel('bridge')).toBe('Inline Bridge');
+		it('returns Inline bridge for bridge', () => {
+			expect(modeLabel('bridge')).toBe('Inline bridge');
 		});
 	});
 

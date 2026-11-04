@@ -176,17 +176,7 @@
 				role="menuitem"
 				onclick={() => handleItemClick(item)}
 			>
-				<svg
-					class="context-menu-icon"
-					viewBox="0 0 24 24"
-					width="14"
-					height="14"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
+				<svg class="ic context-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
 					<path d={iconPath(item.icon)} />
 				</svg>
 				<span class="context-menu-label">{item.label}</span>
@@ -206,7 +196,7 @@
 		border-radius: var(--r-md);
 		box-shadow: var(--shadow-pop);
 		padding: var(--sp-1);
-		animation: contextMenuFadeIn 120ms ease-out;
+		animation: contextMenuFadeIn 120ms var(--ease);
 	}
 
 	@keyframes contextMenuFadeIn {
@@ -225,32 +215,33 @@
 		align-items: center;
 		gap: var(--sp-2);
 		width: 100%;
-		padding: var(--sp-2) var(--sp-4);
-		font-family: var(--font-body);
+		min-height: 34px;
+		padding: 0 var(--sp-3);
 		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-1);
+		font-weight: 600;
+		color: var(--text-2);
 		background: none;
 		border: none;
 		border-radius: var(--r-sm);
 		cursor: pointer;
-		transition: background-color var(--dur-fast);
+		transition: background-color var(--dur-fast), color var(--dur-fast);
 		text-align: left;
 		white-space: nowrap;
 	}
 
 	.context-menu-item:hover {
-		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
-		color: var(--accent);
+		background-color: var(--surface-2);
+		color: var(--text-1);
 	}
 
 	.context-menu-icon {
-		flex-shrink: 0;
-		opacity: 0.7;
+		width: 16px;
+		height: 16px;
+		color: var(--text-3);
 	}
 
 	.context-menu-item:hover .context-menu-icon {
-		opacity: 1;
+		color: var(--text-2);
 	}
 
 	.context-menu-label {

@@ -8,6 +8,7 @@
 
 	import { getCaptureHealth, getCaptureStats } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let health = $state<CaptureHealthResponse | null>(null);
 	let stats = $state<CaptureStatsResponse | null>(null);
@@ -44,11 +45,11 @@
 	// Helpers
 	function statusBadgeClass(status: string): string {
 		switch (status) {
-			case 'normal': return 'badge badge-success';
-			case 'degraded': return 'badge badge-warning';
-			case 'down': return 'badge badge-danger';
-			case 'not_configured': return 'badge badge-muted';
-			default: return 'badge';
+			case 'normal': return 'chip is-ok';
+			case 'degraded': return 'chip is-warn';
+			case 'down': return 'chip is-bad';
+			case 'not_configured': return 'chip';
+			default: return 'chip';
 		}
 	}
 
@@ -57,18 +58,19 @@
 			case 'normal': return 'Normal';
 			case 'degraded': return 'Degraded';
 			case 'down': return 'Down';
-			case 'not_configured': return 'Not Configured';
+			case 'not_configured': return 'Not configured';
 			default: return 'Unknown';
 		}
 	}
 
-	function modeBadgeClass(mode: string): string {
-		return mode === 'mirror' ? 'badge badge-info' : 'badge badge-accent';
+	// Every mode is neutral metadata; the label tells them apart.
+	function modeBadgeClass(_mode: string): string {
+		return 'chip';
 	}
 
 	function modeLabel(mode: string): string {
-		if (mode === 'dhcp_gateway') return 'DHCP Gateway'; // CR-212: was labelled Inline Bridge
-		return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline Bridge';
+		if (mode === 'dhcp_gateway') return 'DHCP gateway'; // CR-212: was labelled Inline bridge
+		return mode === 'mirror' ? 'Mirror / SPAN' : 'Inline bridge';
 	}
 
 	function formatBytes(bytes: number): string {
@@ -85,8 +87,8 @@
 </script>
 
 <div class="card capture-health-panel">
-	<div class="card-header">
-		<span class="card-title">Capture Health</span>
+	<div class="card-head">
+		<span class="card-title">Capture health</span>
 		{#if health}
 			<span class={modeBadgeClass(health.mode)}>{modeLabel(health.mode)}</span>
 		{/if}
@@ -94,15 +96,18 @@
 
 	{#if loading && !health}
 		<div class="skeleton-rows">
-			<div class="skeleton skeleton-row"></div>
-			<div class="skeleton skeleton-row"></div>
-			<div class="skeleton skeleton-row"></div>
+			<div class="skel skeleton-row"></div>
+			<div class="skel skeleton-row"></div>
+			<div class="skel skeleton-row"></div>
 		</div>
 	{:else if health}
 		<div class="info-grid">
 			<div class="info-row">
 				<span class="info-label">Status</span>
-				<span class={statusBadgeClass(health.status)}>{statusLabel(health.status)}</span>
+				<span class={statusBadgeClass(health.status)}>
+					{#if health.status === 'normal'}<Icon name="check" />{:else if health.status === 'degraded' || health.status === 'down'}<Icon name="warn" />{/if}
+					{statusLabel(health.status)}
+				</span>
 			</div>
 			<div class="info-row">
 				<span class="info-label">Interface</span>
@@ -110,8 +115,7 @@
 			</div>
 			<div class="info-row">
 				<span class="info-label">Link</span>
-				<span class="info-value">
-					<span class="health-dot" class:green={health.link_up} class:red={!health.link_up}></span>
+				<span class="res" class:is-live={health.link_up} class:is-high={!health.link_up}>
 					{health.link_up ? 'Up' : 'Down'}
 				</span>
 			</div>
@@ -124,37 +128,39 @@
 		</div>
 
 		{#if statsFailed}
-			<p class="text-muted">Couldn't load capture counters: the request failed.</p>
+			<p class="dim">Couldn't load capture counters: the request failed.</p>
 		{:else if stats}
 			<div class="stats-section">
 				<div class="stat-row">
-					<span class="stat-label">RX Packets</span>
-					<span class="stat-value mono">{formatNumber(stats.rx_packets)}</span>
+					<span class="stat-label">RX packets</span>
+					<span class="stat-value num">{formatNumber(stats.rx_packets)}</span>
 				</div>
 				<div class="stat-row">
-					<span class="stat-label">TX Packets</span>
-					<span class="stat-value mono">{formatNumber(stats.tx_packets)}</span>
+					<span class="stat-label">TX packets</span>
+					<span class="stat-value num">{formatNumber(stats.tx_packets)}</span>
 				</div>
 				<div class="stat-row">
-					<span class="stat-label">RX Bytes</span>
-					<span class="stat-value mono">{formatBytes(stats.rx_bytes)}</span>
+					<span class="stat-label">RX bytes</span>
+					<span class="stat-value num">{formatBytes(stats.rx_bytes)}</span>
 				</div>
 				<div class="stat-row">
 					<span class="stat-label">Dropped</span>
-					<span class="stat-value mono" class:text-danger={stats.rx_dropped > 0}>
+					<span class="stat-value num" class:bad={stats.rx_dropped > 0}>
+						{#if stats.rx_dropped > 0}<Icon name="warn" />{/if}
 						{formatNumber(stats.rx_dropped)}
 					</span>
 				</div>
 				<div class="stat-row">
-					<span class="stat-label">Drop Rate</span>
-					<span class="stat-value mono" class:text-danger={stats.drop_rate_pct > 0.1}>
+					<span class="stat-label">Drop rate</span>
+					<span class="stat-value num" class:bad={stats.drop_rate_pct > 0.1}>
+						{#if stats.drop_rate_pct > 0.1}<Icon name="warn" />{/if}
 						{stats.drop_rate_pct.toFixed(3)}%
 					</span>
 				</div>
 				{#if stats.link_speed_mbps > 0}
 					<div class="stat-row">
-						<span class="stat-label">NIC Speed</span>
-						<span class="stat-value mono">{stats.link_speed_mbps} Mbps</span>
+						<span class="stat-label">NIC speed</span>
+						<span class="stat-value num">{stats.link_speed_mbps} Mbps</span>
 					</div>
 				{/if}
 			</div>
@@ -163,14 +169,14 @@
 		{#if health.issues.length > 0}
 			<div class="issues-section">
 				{#each health.issues as issue}
-					<div class="alert alert-warning issue-item">{issue}</div>
+					<div class="notice issue-item"><Icon name="warn" />{issue}</div>
 				{/each}
 			</div>
 		{/if}
 	{:else if healthFailed}
-		<p class="text-muted">Couldn't check capture health: the request failed.</p>
+		<p class="dim">Couldn't check capture health: the request failed.</p>
 	{:else}
-		<p class="text-muted">Capture health data unavailable</p>
+		<p class="dim">No capture health data yet.</p>
 	{/if}
 </div>
 
@@ -179,6 +185,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-2);
+	}
+
+	.capture-health-panel .card-head {
+		margin-bottom: var(--sp-2);
 	}
 
 	.info-grid {
@@ -207,10 +217,7 @@
 	.info-value {
 		font-size: var(--text-sm);
 		color: var(--text-1);
-		font-weight: 500;
-		display: flex;
-		align-items: center;
-		gap: 6px;
+		font-weight: 600;
 	}
 
 	.stats-section {
@@ -234,8 +241,25 @@
 	}
 
 	.stat-value {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--sp-1);
 		font-size: var(--text-xs);
 		color: var(--text-1);
+	}
+
+	.stat-value :global(.ic) {
+		width: 13px;
+		height: 13px;
+	}
+
+	.bad {
+		color: var(--sev-critical);
+	}
+
+	.chip.is-bad {
+		color: var(--sev-critical);
+		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
 	}
 
 	.issues-section {
@@ -245,9 +269,22 @@
 		gap: var(--sp-1);
 	}
 
-	.issue-item {
+	.notice {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--sp-2);
+		padding: var(--sp-2) var(--sp-3);
+		border-radius: var(--r-md);
 		font-size: var(--text-xs);
-		padding: var(--sp-1) var(--sp-2);
+		color: var(--text-1);
+		background: color-mix(in srgb, var(--sev-medium) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--sev-medium) 26%, transparent);
+	}
+
+	.notice :global(.ic) {
+		width: 14px;
+		height: 14px;
+		color: var(--sev-medium);
 	}
 
 	.skeleton-rows {
@@ -256,20 +293,8 @@
 		gap: var(--sp-2);
 	}
 
-	.skeleton {
-		background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite;
-		border-radius: var(--r-sm);
-	}
-
 	.skeleton-row {
 		height: 24px;
 		width: 100%;
-	}
-
-	@keyframes shimmer {
-		0% { background-position: 200% 0; }
-		100% { background-position: -200% 0; }
 	}
 </style>
