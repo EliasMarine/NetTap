@@ -27,7 +27,7 @@
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import type { SeverityLevel } from '$lib/utils/severity';
-	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
 	import type {
@@ -52,7 +52,6 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
-	import { outcome } from '../load-outcome';
 
 	// OLD CODE START — 2026-11-03 UI redesign: emoji by OS; the tile shows the device type's system icon
 	// const DEVICE_ICONS: Record<string, string> = {

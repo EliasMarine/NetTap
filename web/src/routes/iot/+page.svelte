@@ -29,8 +29,7 @@
 	import Donut from '$lib/components/ui/charts/Donut.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
 	import type { SeverityLevel } from '$lib/utils/severity';
-	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
-	import { outcome } from '../devices/load-outcome';
+	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	import {
 		getFleetSummary,

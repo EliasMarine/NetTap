@@ -18,7 +18,7 @@
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { withTraffic } from '$lib/utils/registry-traffic';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -31,7 +31,6 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { deviceIcon } from '$lib/components/ui/device-icon';
 	import { groupByType } from './device-types';
-	import { outcome } from './load-outcome';
 
 	// ---------------------------------------------------------------------------
 	// State

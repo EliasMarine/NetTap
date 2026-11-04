@@ -113,3 +113,10 @@ export function registerPageRefresh(
 export function refreshPage(): Promise<LoadResult> {
 	return active ? active.run() : Promise.resolve('skipped');
 }
+
+/** A loader's result from the requests that feed the page: every one succeeded, some failed, or all failed. */
+export function outcome(results: readonly PromiseSettledResult<unknown>[]): LoadResult {
+	const failed = results.filter((r) => r.status === 'rejected').length;
+	if (failed === 0) return 'ok';
+	return failed === results.length ? 'failed' : 'partial';
+}

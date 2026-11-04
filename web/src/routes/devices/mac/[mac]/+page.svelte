@@ -18,7 +18,7 @@
 	import IPAddress from '$components/IPAddress.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import type { SeverityLevel } from '$lib/utils/severity';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
@@ -28,7 +28,6 @@
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
-	import { outcome } from '../../load-outcome';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
 	type DnsQuery = NonNullable<DeviceTraffic['dns_queries']>[number];

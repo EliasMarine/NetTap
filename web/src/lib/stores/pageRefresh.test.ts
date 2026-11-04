@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { createLoadGuard, registerPageRefresh, refreshPage, pageRefresh, type LoadResult } from './pageRefresh';
+import { createLoadGuard, registerPageRefresh, refreshPage, pageRefresh, outcome, type LoadResult } from './pageRefresh';
 
 function deferred<T>() {
 	let resolve!: (v: T) => void;
@@ -117,4 +117,12 @@ describe('registerPageRefresh', () => {
 		next.unregister();
 		expect(get(pageRefresh).available).toBe(false);
 	});
+});
+
+describe('outcome', () => {
+	const ok: PromiseSettledResult<number> = { status: 'fulfilled', value: 1 };
+	const no: PromiseSettledResult<number> = { status: 'rejected', reason: new Error('HTTP 503') };
+	it('is ok when every request succeeded', () => expect(outcome([ok, ok])).toBe('ok'));
+	it('is partial when some failed', () => expect(outcome([ok, no])).toBe('partial'));
+	it('is failed when all failed', () => expect(outcome([no, no])).toBe('failed'));
 });
