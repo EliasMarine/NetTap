@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import SessionTimeline from './SessionTimeline.svelte';
+import type { ConnectionTimelineBucket } from '$api/traffic';
 
 // The restyle gives the chart role="img" and a headline label naming the busiest bucket.
 describe('SessionTimeline — chart headline', () => {
@@ -9,7 +10,7 @@ describe('SessionTimeline — chart headline', () => {
 	});
 
 	it('names the busiest bucket and its session count', () => {
-		const buckets = [
+		const buckets: ConnectionTimelineBucket[] = [
 			{ timestamp: '2026-11-03T10:00:00Z', total: 12, protocols: { tcp: 12 } },
 			{ timestamp: '2026-11-03T11:00:00Z', total: 30, protocols: { tcp: 20, udp: 10 } },
 			{ timestamp: '2026-11-03T12:00:00Z', total: 7, protocols: { udp: 7 } },
