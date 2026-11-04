@@ -159,8 +159,11 @@ describe('Home — page refresh contract', () => {
 	it('shows only the newest data when responses complete in reverse order', async () => {
 		const older = await firstLoad();
 		const newerRun = refreshPage();
-		// the alert snapshot joins the older load's request for the same window
-		await vi.waitFor(() => expect(calls.length).toBe(REQUESTS * 2 - 1));
+		// OLD CODE START — a refresh used to join the older load's snapshot request for the same window
+		// await vi.waitFor(() => expect(calls.length).toBe(REQUESTS * 2 - 1));
+		// OLD CODE END
+		// a refresh starts a new alert snapshot window, so the newer load asks for its own count
+		await vi.waitFor(() => expect(calls.length).toBe(REQUESTS * 2));
 		const newer = calls.slice(REQUESTS);
 
 		summaryReply(summaryCall(newer), 222);
@@ -201,6 +204,26 @@ describe('Home — page refresh contract', () => {
 		replyAll(calls);
 		expect(await recorded.runs[0]).toBe('skipped');
 		expect(get(pageRefresh)).toMatchObject({ available: false, updatedAt: null, status: null });
+	});
+
+	it('a Refresh moves the shared alert count to a new window, as Alerts does', async () => {
+		let clock = Date.parse('2026-11-03T12:00:30Z');
+		_configure({ now: () => clock });
+		try {
+			replyAll(await firstLoad());
+			await recorded.runs[0];
+			const snapshotTo = (batch: Call[]) => batch.filter((c) => c.path === '/api/alerts/count').map((c) => c.url.searchParams.get('to'));
+			expect(snapshotTo(calls)).toContain('2026-11-03T12:00:00.000Z');
+
+			clock += 2 * 60_000;
+			const again = refreshPage();
+			await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(REQUESTS * 2 - 1));
+			expect(snapshotTo(calls.slice(REQUESTS))).toContain('2026-11-03T12:02:00.000Z');
+			replyAll(calls.slice(REQUESTS));
+			expect(await again).toBe('ok');
+		} finally {
+			_configure({ now: Date.now });
+		}
 	});
 
 	it('runs the 30 s Auto refresh through the same loader, and stops it when paused', async () => {

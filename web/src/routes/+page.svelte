@@ -26,7 +26,7 @@
 	import { severityBuckets } from '$lib/utils/severity';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
-	import { alertSnapshots, loadAlertSnapshot, snapshotWindow } from '$lib/stores/alertSnapshot';
+	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, snapshotWindow } from '$lib/stores/alertSnapshot';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
@@ -130,10 +130,15 @@
 		);
 	}
 
+	let snapshotHoursLoaded: number | null = null;
+
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		// the query, fixed before the first await
 		const hours = span.hours;
+		// A repeat load moves every reader of the shared count (sidebar, Alerts) to a new window, as Alerts does
+		if (snapshotHoursLoaded === hours) void refreshAlertSnapshots();
+		snapshotHoursLoaded = hours;
 		const win = snapshotWindow(hours, Date.now());
 		const prev = computePreviousPeriod(win.from, win.to);
 		const since = localMidnight(new Date());
