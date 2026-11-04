@@ -92,4 +92,20 @@ describe('alert snapshot', () => {
 		const snap = await loadAlertSnapshot(24);
 		expect(snap).toMatchObject({ status: 'error', data: null });
 	});
+
+	it('keeps the last good counts through a failed refresh, marked as an error', async () => {
+		let fail = false;
+		_configure({
+			fetcher: async () => {
+				if (fail) throw new Error('503');
+				return counts(37);
+			},
+			now: () => clock,
+		});
+		await loadAlertSnapshot(24);
+		fail = true;
+		const [snap] = await refreshAlertSnapshots();
+		expect(snap.status).toBe('error');
+		expect(snap.data!.counts.total).toBe(37);
+	});
 });

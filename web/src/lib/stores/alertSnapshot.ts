@@ -14,6 +14,7 @@ export interface AlertSnapshot {
 	hours: number;
 	from: string;
 	to: string;
+	/** On 'error', the last good counts for this range (stale, #96), or null if none loaded yet. */
 	data: AlertCountResponse | null;
 }
 
@@ -66,7 +67,7 @@ export function loadAlertSnapshot(hours: number): Promise<AlertSnapshot> {
 
 	const promise = fetcher(range)
 		.then((data): AlertSnapshot => ({ status: 'ok', hours, ...range, data }))
-		.catch((): AlertSnapshot => ({ status: 'error', hours, ...range, data: null }))
+		.catch((): AlertSnapshot => ({ status: 'error', hours, ...range, data: get(state)[hours]?.data ?? null }))
 		.then((snap) => {
 			if (myGeneration === generation) state.update((s) => ({ ...s, [hours]: snap }));
 			if (inFlight.get(hours)?.promise === promise) inFlight.delete(hours);

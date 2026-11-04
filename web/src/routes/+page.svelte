@@ -95,7 +95,8 @@
 
 	// The Alerts KPI and the gauge read the shared snapshot, so Home, Alerts and the sidebar agree (§4.1)
 	const snapshot = $derived($alertSnapshots[span.hours]);
-	const alertCount = $derived(snapshot?.status === 'ok' ? snapshot.data : null);
+	// On error the snapshot keeps the last good counts (#96): show them with a stale note
+	const alertCount = $derived(snapshot?.data ?? null);
 	const alertCountFailed = $derived(snapshot?.status === 'error');
 
 	// ---------------------------------------------------------------------------
@@ -438,7 +439,7 @@
 	);
 	const alertsSub = $derived(
 		alertCountFailed
-			? loadFailed('the alert count')
+			? loadFailed('the alert count', alertCount !== null)
 			: alertCount
 				? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low`
 				: 'Loading…',
@@ -708,6 +709,7 @@ OLD CODE END -->
 
 	<Card title="Alert summary" sub="By severity · {windowText}{toReview}" class="c-4">
 		{#if alertCount}
+			{#if alertCountFailed}{@render staleNote('the severity summary')}{/if}
 			<SeverityGauge buckets={severityBuckets(alertCount.counts)} total={alertCount.counts.total} ariaLabel={gaugeAria} />
 		{:else if alertCountFailed}
 			<CardState state="error" title="Couldn't load the severity summary: the request failed." message="Check that the daemon is running on the System page, then try again." onaction={retry} />

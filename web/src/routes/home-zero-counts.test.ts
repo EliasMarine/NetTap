@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import HomePage from './+page.svelte';
+import { _configure } from '$lib/stores/alertSnapshot';
+import { refreshPage } from '$lib/stores/pageRefresh';
 
 // Home showed '--' for a real 0 alerts or 0 devices, and a failed alert count cleared the card.
 
@@ -23,6 +25,8 @@ function cardValue(label: string): string | undefined {
 }
 
 describe('Home — real zeros and failed counts', () => {
+	// the shared alert snapshot store outlives each render; start every test empty
+	beforeEach(() => _configure({}));
 	afterEach(() => vi.unstubAllGlobals());
 
 	it('shows 0 alerts and 0 devices as 0, not "--"', async () => {
@@ -45,5 +49,22 @@ describe('Home — real zeros and failed counts', () => {
 		render(HomePage);
 		expect(await screen.findByText("Couldn't load the alert count: the request failed.")).toBeInTheDocument();
 		expect(cardValue('Alerts')?.startsWith('—')).toBe(true);
+	});
+
+	it('keeps the last alert count on a failed refresh and says it is stale (#96)', async () => {
+		const summary = { from: '', to: '', total_bytes: 10, packets_total: 1, connection_count: 1, top_protocols: [] };
+		stubDaemon({
+			'/api/alerts/count': { from: '', to: '', counts: { total: 37, high: 1, medium: 6, low: 30 } },
+			'/api/traffic/summary': summary,
+		});
+		render(HomePage);
+		await screen.findByText('1 high, 6 med, 30 low');
+
+		stubDaemon({ '/api/traffic/summary': summary });
+		await refreshPage();
+
+		expect(await screen.findByText("Couldn't refresh the alert count; showing the last figures loaded.")).toBeInTheDocument();
+		expect(cardValue('Alerts')?.startsWith('37')).toBe(true);
+		expect(screen.getByText("Couldn't refresh the severity summary; showing the last figures loaded.")).toBeInTheDocument();
 	});
 });
