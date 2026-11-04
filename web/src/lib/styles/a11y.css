@@ -14,9 +14,13 @@
 button.dev { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .dev[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
-/* 4. bundle.css:449 opens the phone nav as position: absolute, which scrolls away on a long page.
-      In the app the drawer and scrim stay fixed to the viewport. */
+/* 4. bundle.css:449 opens the phone nav as position: absolute, so on a long page the drawer
+      scrolls away and leaves only the scrim. position: fixed can't help: .app is a size
+      container, which makes it the containing block for fixed descendants too. So the page
+      doesn't scroll while the drawer is open (opening it focuses the first link, which brings
+      the drawer's top into view), and the drawer is one screen tall and scrolls inside itself
+      (.sidebar has overflow-y: auto), so its foot and Sign out stay reachable. */
+html:has(.app.nav-open) { overflow: hidden; }
 @container app (max-width: 760px) {
-  .app.nav-open .sidebar { position: fixed; top: 0; bottom: 0; left: 0; max-height: none; border-radius: 0 var(--r-xl) var(--r-xl) 0; }
-  .app.nav-open .scrim { position: fixed; }
+  .app.nav-open .sidebar { height: 100dvh; border-radius: 0 var(--r-xl) var(--r-xl) 0; }
 }

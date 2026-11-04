@@ -94,6 +94,11 @@ test.describe('navigation', () => {
 		await expect(nav).toBeVisible();
 		expect(await nav.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 
+		// The page can't scroll the drawer away, and the drawer fits the screen (it scrolls inside)
+		const htmlOverflow = () => page.evaluate(() => getComputedStyle(document.documentElement).overflow);
+		expect(await htmlOverflow()).toBe('hidden');
+		expect((await nav.boundingBox())?.height).toBeLessThanOrEqual(844);
+
 		// Tab from the last control wraps to the first, still inside the drawer
 		await nav.getByRole('button', { name: 'Sign out' }).focus();
 		await page.keyboard.press('Tab');
@@ -102,6 +107,7 @@ test.describe('navigation', () => {
 		await page.keyboard.press('Escape');
 		await expect(nav).toBeHidden();
 		await expect(menu).toBeFocused();
+		expect(await htmlOverflow()).not.toBe('hidden');
 
 		// choosing a link closes it too
 		await menu.click();
