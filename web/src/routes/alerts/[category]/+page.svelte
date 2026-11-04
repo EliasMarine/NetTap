@@ -3,14 +3,13 @@
 	 * Alert Category Detail — Drill-down page for a single alert category.
 	 *
 	 * Features:
-	 *   1. Category header with icon, description, MITRE tactic badge
-	 *   2. Severity breakdown pills
-	 *   3. Stats strip (total, unique sources/targets, affected devices)
-	 *   4. Sub-category horizontal bar breakdown (clickable filter)
-	 *   5. SVG timeline chart (stacked bars by sub-category)
-	 *   6. Two-column: affected devices + top signatures
-	 *   7. MITRE ATT&CK technique grid
-	 *   8. Paginated alert table (pre-filtered to category)
+	 *   1. Back link, category title and description, time range
+	 *   2. KPI row (unique sources, unique targets, affected devices)
+	 *   3. Severity summary (sev-count tiles + gauge, from the category's own breakdown)
+	 *   4. Sub-category bars (clickable filter) beside the alert volume chart
+	 *   5. Two-column: affected devices + top signatures
+	 *   6. MITRE ATT&CK techniques
+	 *   7. Paginated, server-sorted alert table (pre-filtered to category) with the drawer column
 	 */
 
 	import { page } from '$app/stores';
@@ -20,37 +19,59 @@
 		getAlertCategoryTimeline,
 		getAlerts,
 		formatNumber,
-		severityLabel,
+		// OLD CODE START — severity shows as SeverityPill now
+		// severityLabel,
+		// OLD CODE END
 		suppressAlert,
 		markFalsePositive,
+		acknowledgeAlert,
 	} from '$api/alerts';
 	import type {
 		CategoryDetailResponse,
+		CategoryDetailDevice,
 		CategoryTimelineResponse,
-		CategoryTimelinePoint,
-		SubCategory,
+		MitreTechnique,
 		Alert,
+		AlertsListResponse,
 		AlertSort,
 	} from '$api/alerts';
 	import IPAddress from '$components/IPAddress.svelte';
-	import DetailDrawer from '$components/DetailDrawer.svelte';
-	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
+	// OLD CODE START — 2026-11-03 redesign: the drawer is the docked column beside the table
+	// import DetailDrawer from '$components/DetailDrawer.svelte';
+	// import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
+	// OLD CODE END
 	// OLD CODE START — #146: the alert table sorts on the daemon now
 	// import { TableSort, compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
-	import { TableSort } from '$lib/utils/table-sort.svelte';
+	// OLD CODE START — 2026-11-03: the affected devices table is the shared DataTable, which sorts itself
+	// import { TableSort } from '$lib/utils/table-sort.svelte';
+	// OLD CODE END
+	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
+	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import BarList from '$lib/components/ui/BarList.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
+	import SeverityGauge from '$lib/components/ui/charts/SeverityGauge.svelte';
+	import AlertDetail from '../AlertDetail.svelte';
+	import { alertLevel } from '../alert-view';
 
 	// ---------------------------------------------------------------------------
 	// Constants
 	// ---------------------------------------------------------------------------
 
 	const TIME_RANGES = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000 },
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000 },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000 },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000 },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
+		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' },
+		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
+		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
+		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
+		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
@@ -62,17 +83,19 @@
 		'30d': '12h',
 	};
 
-	/** Rotating sub-category bar colors. */
-	const SUB_CAT_COLORS = [
-		'var(--blue)',
-		'var(--cyan)',
-		'var(--purple)',
-		'var(--teal)',
-		'var(--amber)',
-		'var(--green)',
-		'var(--orange)',
-		'var(--pink)',
-	];
+	// OLD CODE START — 2026-11-03: bars use the system's data-1 (PLAN.md §4.1, bar lists keep one colour)
+	// /** Rotating sub-category bar colors. */
+	// const SUB_CAT_COLORS = [
+	// 	'var(--blue)',
+	// 	'var(--cyan)',
+	// 	'var(--purple)',
+	// 	'var(--teal)',
+	// 	'var(--amber)',
+	// 	'var(--green)',
+	// 	'var(--orange)',
+	// 	'var(--pink)',
+	// ];
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -114,18 +137,22 @@
 
 	// Affected Devices table: most alerts first
 	const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
-	const deviceSort = new TableSort<'ip' | 'count' | 'severity'>('count');
+	// OLD CODE START — 2026-11-03: the DataTable keeps its own sort (initialSort: count, descending)
+	// const deviceSort = new TableSort<'ip' | 'count' | 'severity'>('count');
+	// OLD CODE END
 	let sortKey = $state<SortKey>('timestamp');
 	let sortDir = $state<'asc' | 'desc'>('desc');
 
 	// Detail drawer
 	let drawerAlert = $state<Alert | null>(null);
-	let drawerTab = $state('summary');
-	const ALERT_DRAWER_TABS = [
-		{ id: 'summary', label: 'Summary' },
-		{ id: 'related', label: 'Related Events' },
-		{ id: 'raw', label: 'Raw JSON' },
-	];
+	// OLD CODE START — the drawer's tabs became its collapsible sections
+	// let drawerTab = $state('summary');
+	// const ALERT_DRAWER_TABS = [
+	// 	{ id: 'summary', label: 'Summary' },
+	// 	{ id: 'related', label: 'Related Events' },
+	// 	{ id: 'raw', label: 'Raw JSON' },
+	// ];
+	// OLD CODE END
 
 	// Auto-refresh
 	let autoRefresh = $state(false);
@@ -141,51 +168,41 @@
 		category.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
 	);
 
-	let catColor = $derived(categoryData?.category?.color ?? 'blue');
-
-	/** Resolve a color token to a CSS var, or pass through raw hex/rgb values. */
-	function catColorVar(color: string): string {
-		if (color === 'muted') return 'var(--text-muted)';
-		if (color.startsWith('#') || color.startsWith('rgb')) return color;
-		return `var(--${color})`;
-	}
-
-	function catColorDimVar(color: string): string {
-		if (color === 'muted') return 'var(--bg-tertiary)';
-		if (color.startsWith('#') || color.startsWith('rgb')) return `${color}33`;
-		return `var(--${color}-dim)`;
-	}
-
-	/** Map icon name from API to emoji — mirrors the hub page mapping. */
-	const ICON_EMOJI: Record<string, string> = {
-		'shield-alert': '\u{1F6E1}',
-		'shield': '\u{1F6E1}',
-		'upload-cloud': '\u{2601}',
-		'upload': '\u{2B06}',
-		'search': '\u{1F50D}',
-		'bug': '\u{1F41B}',
-		'gavel': '\u{2696}',
-		'alert-triangle': '\u{26A0}',
-		'alert': '\u{1F6A8}',
-		'warning': '\u{26A0}',
-		'key': '\u{1F511}',
-		'globe': '\u{1F310}',
-		'lock': '\u{1F512}',
-		'cpu': '\u{1F4BB}',
-		'zap': '\u{26A1}',
-		'eye': '\u{1F441}',
-		'eye-off': '\u{1F648}',
-		'info': '\u{2139}',
-	};
-
-	function catIconEmoji(icon: string): string {
-		return ICON_EMOJI[icon] ?? '\u{2139}';
-	}
-
-	let maxSubCount = $derived.by(() => {
-		if (!categoryData?.sub_categories?.length) return 1;
-		return Math.max(...categoryData.sub_categories.map((s) => s.count), 1);
-	});
+	// OLD CODE START — 2026-11-03 redesign: category colours, emoji icons and hand-scaled bars are gone
+	// (system tokens only, no emoji; BarList and AreaChart scale themselves)
+	// let catColor = $derived(categoryData?.category?.color ?? 'blue');
+	//
+	// /** Resolve a color token to a CSS var, or pass through raw hex/rgb values. */
+	// function catColorVar(color: string): string {
+	// 	if (color === 'muted') return 'var(--text-muted)';
+	// 	if (color.startsWith('#') || color.startsWith('rgb')) return color;
+	// 	return `var(--${color})`;
+	// }
+	//
+	// function catColorDimVar(color: string): string {
+	// 	if (color === 'muted') return 'var(--bg-tertiary)';
+	// 	if (color.startsWith('#') || color.startsWith('rgb')) return `${color}33`;
+	// 	return `var(--${color}-dim)`;
+	// }
+	//
+	// /** Map icon name from API to emoji — mirrors the hub page mapping. */
+	// const ICON_EMOJI: Record<string, string> = {
+	// 	'shield-alert': '\u{1F6E1}', 'shield': '\u{1F6E1}', 'upload-cloud': '\u{2601}', 'upload': '\u{2B06}',
+	// 	'search': '\u{1F50D}', 'bug': '\u{1F41B}', 'gavel': '\u{2696}', 'alert-triangle': '\u{26A0}',
+	// 	'alert': '\u{1F6A8}', 'warning': '\u{26A0}', 'key': '\u{1F511}', 'globe': '\u{1F310}',
+	// 	'lock': '\u{1F512}', 'cpu': '\u{1F4BB}', 'zap': '\u{26A1}', 'eye': '\u{1F441}',
+	// 	'eye-off': '\u{1F648}', 'info': '\u{2139}',
+	// };
+	//
+	// function catIconEmoji(icon: string): string {
+	// 	return ICON_EMOJI[icon] ?? '\u{2139}';
+	// }
+	//
+	// let maxSubCount = $derived.by(() => {
+	// 	if (!categoryData?.sub_categories?.length) return 1;
+	// 	return Math.max(...categoryData.sub_categories.map((s) => s.count), 1);
+	// });
+	// OLD CODE END
 
 	// OLD CODE START — #146: ordered only the page of rows it had; the daemon sorts every page now
 	// let sortedAlerts = $derived.by(() => {
@@ -235,12 +252,25 @@
 	// The daemon returns the rows in the table's order (#146)
 	let sortedAlerts = $derived(alerts);
 
-	// Timeline chart derived data
-	let chartHeight = 200;
-	let maxBucketTotal = $derived.by(() => {
-		if (!timelineData?.series?.length) return 1;
-		return Math.max(...timelineData.series.map((p) => p.total), 1);
-	});
+	// OLD CODE START — 2026-11-03: the AreaChart scales itself
+	// // Timeline chart derived data
+	// let chartHeight = 200;
+	// let maxBucketTotal = $derived.by(() => {
+	// 	if (!timelineData?.series?.length) return 1;
+	// 	return Math.max(...timelineData.series.map((p) => p.total), 1);
+	// });
+	// OLD CODE END
+
+	const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES[3]);
+	const buckets = $derived(
+		categoryData
+			? severityBuckets({ total: categoryData.stats.total, ...categoryData.severity_breakdown })
+			: [],
+	);
+	const series = $derived(timelineData?.series ?? []);
+	const busiest = $derived(series.reduce((best, p, i) => (p.total > series[best].total ? i : best), 0));
+	const fromRow = $derived(totalAlerts > 0 ? (currentPage - 1) * pageSize + 1 : 0);
+	const toRow = $derived(Math.min(totalAlerts, fromRow + alerts.length - 1));
 
 	// ---------------------------------------------------------------------------
 	// Time helpers
@@ -259,69 +289,133 @@
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchData(cat: string, range: string) {
-		if (!cat) return;
-		loading = true;
-		const { from, to } = getTimeRange();
-		const interval = INTERVAL_MAP[range] ?? '1h';
+	// OLD CODE START — PLAN.md §5.5: didn't report what loaded, and a slow older load could overwrite a newer one
+	// async function fetchData(cat: string, range: string) {
+	// 	if (!cat) return;
+	// 	loading = true;
+	// 	const { from, to } = getTimeRange();
+	// 	const interval = INTERVAL_MAP[range] ?? '1h';
+	//
+	// 	// OLD CODE START — #96: one failure blanked the page as "No alerts in <category>"
+	// 	// try {
+	// 	// 	const [detail, timeline, alertsResult] = await Promise.all([
+	// 	// 		getAlertCategoryDetail(cat, { from, to }),
+	// 	// 		getAlertCategoryTimeline(cat, { from, to, interval }),
+	// 	// 		getAlerts({ from, to, page: 1, size: pageSize, category: cat }),
+	// 	// 	]);
+	// 	// 	categoryData = detail;
+	// 	// 	timelineData = timeline;
+	// 	// 	alerts = alertsResult.alerts;
+	// 	// 	totalPages = alertsResult.total_pages;
+	// 	// 	totalAlerts = alertsResult.total;
+	// 	// 	currentPage = 1;
+	// 	// } catch (err) {
+	// 	// 	console.error('[alerts/category] fetchData error:', err);
+	// 	// 	categoryData = null;
+	// 	// 	timelineData = null;
+	// 	// } finally {
+	// 	// 	loading = false;
+	// 	// }
+	// 	// OLD CODE END
+	// 	const [detail, timeline, alertsResult] = await Promise.allSettled([
+	// 		getAlertCategoryDetail(cat, { from, to }),
+	// 		getAlertCategoryTimeline(cat, { from, to, interval }),
+	// 		getAlerts({ from, to, page: 1, size: pageSize, category: cat, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir }),
+	// 	]);
+	// 	categoryData = detail.status === 'fulfilled' ? detail.value : null;
+	// 	detailFailed = detail.status === 'rejected';
+	// 	timelineData = timeline.status === 'fulfilled' ? timeline.value : null;
+	// 	timelineFailed = timeline.status === 'rejected';
+	// 	alertsFailed = alertsResult.status === 'rejected';
+	// 	// a failure clears the table: the rows on screen may be another category's or range's
+	// 	alerts = alertsResult.status === 'fulfilled' ? alertsResult.value.alerts : [];
+	// 	totalPages = alertsResult.status === 'fulfilled' ? alertsResult.value.total_pages : 0;
+	// 	totalAlerts = alertsResult.status === 'fulfilled' ? alertsResult.value.total : 0;
+	// 	currentPage = 1;
+	// 	loading = false;
+	// }
+	//
+	// async function fetchAlerts(pg: number = 1) {
+	// 	alertsLoading = true;
+	// 	const { from, to } = getTimeRange();
+	// 	try {
+	// 		const r = await getAlerts({ from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir });
+	// 		alerts = r.alerts;
+	// 		totalPages = r.total_pages;
+	// 		totalAlerts = r.total;
+	// 		currentPage = r.page;
+	// 		alertsFailed = false;
+	// 	} catch (err) {
+	// 		console.error('[alerts/category] fetchAlerts error:', err);
+	// 		alerts = [];
+	// 		totalPages = 0;
+	// 		alertsFailed = true;
+	// 	} finally {
+	// 		alertsLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
 
-		// OLD CODE START — #96: one failure blanked the page as "No alerts in <category>"
-		// try {
-		// 	const [detail, timeline, alertsResult] = await Promise.all([
-		// 		getAlertCategoryDetail(cat, { from, to }),
-		// 		getAlertCategoryTimeline(cat, { from, to, interval }),
-		// 		getAlerts({ from, to, page: 1, size: pageSize, category: cat }),
-		// 	]);
-		// 	categoryData = detail;
-		// 	timelineData = timeline;
-		// 	alerts = alertsResult.alerts;
-		// 	totalPages = alertsResult.total_pages;
-		// 	totalAlerts = alertsResult.total;
-		// 	currentPage = 1;
-		// } catch (err) {
-		// 	console.error('[alerts/category] fetchData error:', err);
-		// 	categoryData = null;
-		// 	timelineData = null;
-		// } finally {
-		// 	loading = false;
-		// }
-		// OLD CODE END
+	function applyList(result: PromiseSettledResult<AlertsListResponse>, failedTotal: number) {
+		alertsFailed = result.status === 'rejected';
+		// a failure clears the table: the rows on screen may be another category's or range's
+		alerts = result.status === 'fulfilled' ? result.value.alerts : [];
+		totalPages = result.status === 'fulfilled' ? result.value.total_pages : 0;
+		totalAlerts = result.status === 'fulfilled' ? result.value.total : failedTotal;
+		if (result.status === 'fulfilled') currentPage = result.value.page;
+	}
+
+	// The list has its own generation too, so paging or sorting mid-refresh drops only the stale list
+	const listGuard = createLoadGuard();
+	/** The category and range on screen; a load for another one starts from page 1 and shows loading. */
+	let shownKey = '';
+
+	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const lg = listGuard.begin();
+		const cat = category;
+		if (!cat) return 'skipped';
+		const key = `${cat}|${selectedRange}`;
+		const fresh = key !== shownKey;
+		if (fresh) loading = true;
+		const { from, to } = getTimeRange();
+		const interval = INTERVAL_MAP[selectedRange] ?? '1h';
+		const pg = fresh ? 1 : currentPage;
+		const listQuery = { from, to, page: pg, size: pageSize, category: cat, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir };
+
 		const [detail, timeline, alertsResult] = await Promise.allSettled([
 			getAlertCategoryDetail(cat, { from, to }),
 			getAlertCategoryTimeline(cat, { from, to, interval }),
-			getAlerts({ from, to, page: 1, size: pageSize, category: cat, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir }),
+			getAlerts(listQuery),
 		]);
+		if (!guard.current(g)) return 'skipped';
 		categoryData = detail.status === 'fulfilled' ? detail.value : null;
 		detailFailed = detail.status === 'rejected';
 		timelineData = timeline.status === 'fulfilled' ? timeline.value : null;
 		timelineFailed = timeline.status === 'rejected';
-		alertsFailed = alertsResult.status === 'rejected';
-		// a failure clears the table: the rows on screen may be another category's or range's
-		alerts = alertsResult.status === 'fulfilled' ? alertsResult.value.alerts : [];
-		totalPages = alertsResult.status === 'fulfilled' ? alertsResult.value.total_pages : 0;
-		totalAlerts = alertsResult.status === 'fulfilled' ? alertsResult.value.total : 0;
-		currentPage = 1;
+		if (listGuard.current(lg)) applyList(alertsResult, 0);
+		shownKey = key;
 		loading = false;
+
+		const ok = [detail, timeline, alertsResult].filter((r) => r.status === 'fulfilled').length;
+		return ok === 3 ? 'ok' : ok === 0 ? 'failed' : 'partial';
 	}
 
+	const refresh = registerPageRefresh(loadAll);
+
 	async function fetchAlerts(pg: number = 1) {
+		const lg = listGuard.begin();
 		alertsLoading = true;
 		const { from, to } = getTimeRange();
-		try {
-			const r = await getAlerts({ from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir });
-			alerts = r.alerts;
-			totalPages = r.total_pages;
-			totalAlerts = r.total;
-			currentPage = r.page;
-			alertsFailed = false;
-		} catch (err) {
-			console.error('[alerts/category] fetchAlerts error:', err);
-			alerts = [];
-			totalPages = 0;
-			alertsFailed = true;
-		} finally {
-			alertsLoading = false;
-		}
+		const params = { from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir };
+		const result = await getAlerts(params).then(
+			(value): PromiseSettledResult<AlertsListResponse> => ({ status: 'fulfilled', value }),
+			(reason): PromiseSettledResult<AlertsListResponse> => ({ status: 'rejected', reason }),
+		);
+		if (!listGuard.current(lg)) return;
+		// the old fetchAlerts kept the total on failure
+		applyList(result, totalAlerts);
+		alertsLoading = false;
 	}
 
 	// OLD CODE START — #146/#147: fetchData now reads the sort and sub-category, which would make
@@ -341,7 +435,11 @@
 		untrack(() => {
 			if (cat !== loadedCategory) subCatFilter = null;
 			loadedCategory = cat;
-			fetchData(cat, range);
+			// OLD CODE START — loads go through the page refresh contract now
+			// fetchData(cat, range);
+			// OLD CODE END
+			void range;
+			refresh.run();
 		});
 	});
 
@@ -349,10 +447,13 @@
 	$effect(() => {
 		if (autoRefreshTimer) clearInterval(autoRefreshTimer);
 		if (autoRefresh) {
-			autoRefreshTimer = setInterval(
-				() => fetchData(category, selectedRange),
-				30_000,
-			);
+			// OLD CODE START — loads go through the page refresh contract now
+			// autoRefreshTimer = setInterval(
+			// 	() => fetchData(category, selectedRange),
+			// 	30_000,
+			// );
+			// OLD CODE END
+			autoRefreshTimer = setInterval(() => refresh.run(), 30_000);
 		}
 		return () => {
 			if (autoRefreshTimer) clearInterval(autoRefreshTimer);
@@ -361,33 +462,47 @@
 
 	onDestroy(() => {
 		if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+		refresh.unregister();
+		listGuard.invalidate();
 	});
 
 	// ---------------------------------------------------------------------------
 	// Helpers
 	// ---------------------------------------------------------------------------
 
-	function toggleSort(key: SortKey) {
-		if (sortKey === key) {
-			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-		} else {
-			sortKey = key;
-			// OLD CODE START — severity is now a rank (higher = worse), so it starts descending like time
-			// sortDir = key === 'timestamp' ? 'desc' : 'asc';
-			// OLD CODE END
-			sortDir = key === 'timestamp' || key === 'severity' ? 'desc' : 'asc';
-		}
+	// OLD CODE START — the DataTable owns the header buttons and reports the new sort (onsortchange)
+	// function toggleSort(key: SortKey) {
+	// 	if (sortKey === key) {
+	// 		sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+	// 	} else {
+	// 		sortKey = key;
+	// 		// OLD CODE START — severity is now a rank (higher = worse), so it starts descending like time
+	// 		// sortDir = key === 'timestamp' ? 'desc' : 'asc';
+	// 		// OLD CODE END
+	// 		sortDir = key === 'timestamp' || key === 'severity' ? 'desc' : 'asc';
+	// 	}
+	// 	fetchAlerts(1);
+	// }
+	//
+	// function sortIndicator(key: SortKey): string {
+	// 	if (sortKey !== key) return '';
+	// 	return sortDir === 'asc' ? ' ↑' : ' ↓';
+	// }
+	// OLD CODE END
+	function changeSort(key: string, dir: 'asc' | 'desc') {
+		sortKey = key as SortKey;
+		sortDir = dir;
 		fetchAlerts(1);
-	}
-
-	function sortIndicator(key: SortKey): string {
-		if (sortKey !== key) return '';
-		return sortDir === 'asc' ? ' \u2191' : ' \u2193';
 	}
 
 	function toggleSubFilter(id: string) {
 		subCatFilter = subCatFilter === id ? null : id;
 		// #147: the bar said "Filtered" while the table still listed the whole category
+		fetchAlerts(1);
+	}
+
+	function clearSubFilter() {
+		subCatFilter = null;
 		fetchAlerts(1);
 	}
 
@@ -400,6 +515,14 @@
 				minute: '2-digit',
 				second: '2-digit',
 			});
+		} catch {
+			return ts;
+		}
+	}
+
+	function formatShortTimestamp(ts: string): string {
+		try {
+			return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 		} catch {
 			return ts;
 		}
@@ -420,36 +543,38 @@
 		}
 	}
 
-	function severityClass(sev: number | undefined): string {
-		switch (sev) {
-			case 1: return 'sev-high';
-			case 2: return 'sev-medium';
-			case 3: return 'sev-low';
-			default: return 'sev-info';
-		}
-	}
-
-	function severityLabelLocal(sev: number | undefined): string {
-		switch (sev) {
-			case 1: return 'HIGH';
-			case 2: return 'MEDIUM';
-			case 3: return 'LOW';
-			default: return 'INFO';
-		}
-	}
-
-	function subCatColor(index: number): string {
-		return SUB_CAT_COLORS[index % SUB_CAT_COLORS.length];
-	}
-
-	/** Build sub-cat id-to-color map for timeline chart. */
-	let subCatColorMap = $derived.by(() => {
-		const map: Record<string, string> = {};
-		(categoryData?.sub_categories ?? []).forEach((sc, i) => {
-			map[sc.id] = subCatColor(i);
-		});
-		return map;
-	});
+	// OLD CODE START — 2026-11-03: severity shows as SeverityPill (colour, shape and word)
+	// function severityClass(sev: number | undefined): string {
+	// 	switch (sev) {
+	// 		case 1: return 'sev-high';
+	// 		case 2: return 'sev-medium';
+	// 		case 3: return 'sev-low';
+	// 		default: return 'sev-info';
+	// 	}
+	// }
+	//
+	// function severityLabelLocal(sev: number | undefined): string {
+	// 	switch (sev) {
+	// 		case 1: return 'HIGH';
+	// 		case 2: return 'MEDIUM';
+	// 		case 3: return 'LOW';
+	// 		default: return 'INFO';
+	// 	}
+	// }
+	//
+	// function subCatColor(index: number): string {
+	// 	return SUB_CAT_COLORS[index % SUB_CAT_COLORS.length];
+	// }
+	//
+	// /** Build sub-cat id-to-color map for timeline chart. */
+	// let subCatColorMap = $derived.by(() => {
+	// 	const map: Record<string, string> = {};
+	// 	(categoryData?.sub_categories ?? []).forEach((sc, i) => {
+	// 		map[sc.id] = subCatColor(i);
+	// 	});
+	// 	return map;
+	// });
+	// OLD CODE END
 
 	// Alert table action handlers
 	// OLD CODE START — no error handling; the helpers now throw when the daemon refuses
@@ -485,1312 +610,287 @@
 		if (sigId) await runAlertAction(() => markFalsePositive(sigId));
 	}
 
+	/** The drawer's actions: the same calls, with the error shown in the drawer. */
+	async function drawerAction(alert: Alert, action: (sigId: number) => Promise<void>) {
+		const sigId = alert.alert?.signature_id;
+		if (!sigId) return;
+		await action(sigId);
+		fetchAlerts(currentPage);
+	}
+
+	/** Acknowledge from the drawer (the category drawer had no actions before the redesign). */
+	async function acknowledge(alert: Alert) {
+		const result = await acknowledgeAlert(alert._id);
+		if (!result) throw new Error('the acknowledgement failed. Try again.');
+		alert.acknowledged = true;
+		alert.acknowledged_at = result.acknowledged_at;
+	}
+
 	function openDrawer(alert: Alert) {
 		drawerAlert = alert;
-		drawerTab = 'summary';
+		// OLD CODE START — the drawer has no tabs now
+		// drawerTab = 'summary';
+		// OLD CODE END
 	}
+
+	// ---------------------------------------------------------------------------
+	// View data
+	// ---------------------------------------------------------------------------
+
+	const fmt = (n: number) => n.toLocaleString('en-GB');
+	const rowKey = (a: Alert) => `${a._id}-${alerts.indexOf(a)}`;
+	// After a reload the open alert is a new object: find its row by id
+	const selectedRowKey = $derived.by(() => {
+		const open = drawerAlert && alerts.find((a) => a._id === drawerAlert?._id);
+		return open ? rowKey(open) : undefined;
+	});
+	const deviceLevel = (s: string | undefined): SeverityLevel | undefined =>
+		s && s in SEVERITY_RANK ? (s as SeverityLevel) : undefined;
+
+	const alertColumns: Column<Alert>[] = [
+		{ key: 'timestamp', label: 'Time', cell: timeCell },
+		{ key: 'severity', label: 'Severity', cell: severityCell },
+		{ key: 'signature', label: 'Signature', class: 'sig-cell', cell: signatureCell },
+		{ key: 'src_ip', label: 'Source', cell: srcCell },
+		{ key: 'dest_ip', label: 'Destination', cell: destCell },
+		// Suppress and False positive sit in the last column: every column sorts, so there is no "Actions" one
+		{ key: 'dest_port', label: 'Port', numeric: true, cell: portCell },
+	];
+
+	const deviceColumns: Column<CategoryDetailDevice>[] = [
+		{ key: 'ip', label: 'Device', cell: deviceCell },
+		{ key: 'count', label: 'Alerts', numeric: true, cell: deviceCountCell },
+		{ key: 'severity', label: 'Severity', sortValue: (d) => SEVERITY_RANK[d.severity ?? ''], cell: deviceSeverityCell },
+	];
+
+	const mitreColumns: Column<MitreTechnique>[] = [
+		{ key: 'id', label: 'Technique', cell: mitreIdCell },
+		{ key: 'name', label: 'Name', cell: mitreNameCell },
+		{ key: 'count', label: 'Matches', numeric: true, sortValue: (t) => t.count ?? 0, cell: mitreCountCell },
+	];
 </script>
+
+{#snippet timeCell(a: Alert)}
+	<span class="mono">{formatTimestamp(a.timestamp)}</span>{#if a.acknowledged}<span class="chip">Acknowledged</span>{/if}
+{/snippet}
+{#snippet severityCell(a: Alert)}<SeverityPill level={alertLevel(a.alert?.severity)} />{/snippet}
+{#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature ?? ''}>{a.alert?.signature ?? 'Unknown'}</span>{/snippet}
+{#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
+{#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
+{#snippet portCell(a: Alert)}
+	<span class="port-cell">
+		<span class="mono">{a.dest_port ?? '—'}</span>
+		<span class="row-actions">
+			<button class="btn" type="button" title="Suppress this signature" onclick={(e) => { e.stopPropagation(); handleSuppress(a); }}>Suppress</button>
+			<button class="btn" type="button" title="Mark as false positive" onclick={(e) => { e.stopPropagation(); handleFalsePositive(a); }}>False positive</button>
+		</span>
+	</span>
+{/snippet}
+{#snippet deviceCell(d: CategoryDetailDevice)}
+	<span class="device-cell">
+		<IPAddress ip={d.ip} />
+		{#if d.hostname}<span class="dim">{d.hostname}</span>{/if}
+		<a class="link" href="/devices/{encodeURIComponent(d.ip)}">View device</a>
+	</span>
+{/snippet}
+{#snippet deviceCountCell(d: CategoryDetailDevice)}{formatNumber(d.count)}{/snippet}
+{#snippet deviceSeverityCell(d: CategoryDetailDevice)}
+	{@const level = deviceLevel(d.severity)}
+	{#if level}<SeverityPill {level} />{:else}<span class="dim">—</span>{/if}
+{/snippet}
+{#snippet mitreIdCell(t: MitreTechnique)}
+	<a class="link mono" href="https://attack.mitre.org/techniques/{t.id.replace('.', '/')}/" target="_blank" rel="noopener noreferrer" title="View on MITRE ATT&CK">{t.id}</a>
+{/snippet}
+{#snippet mitreNameCell(t: MitreTechnique)}
+	<span class="mitre-name"><b>{t.name}</b>{#if t.description}<span class="dim">{t.description}</span>{/if}</span>
+{/snippet}
+{#snippet mitreCountCell(t: MitreTechnique)}{t.count ? formatNumber(t.count) : '—'}{/snippet}
 
 <svelte:head>
 	<title>{displayName} Alerts | NetTap</title>
 </svelte:head>
 
-<div class="category-detail">
-	<!-- ================================================================
-	     ROW 1: Page Header
-	     ================================================================ -->
-	<header class="page-header fade-up">
-		<div class="header-left">
-			<a href="/alerts" class="back-link">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-				Back to Alerts
-			</a>
-			<div class="cat-title-row">
-				<div class="cat-icon" style="background: {catColorDimVar(catColor)}; border-color: color-mix(in srgb, {catColorVar(catColor)} 25%, transparent);">
-					<span style="font-size: 1.5rem; line-height: 1;">
-						{catIconEmoji(categoryData?.category?.icon ?? 'info')}
+<header class="page-head">
+	<div>
+		<a href="/alerts" class="back"><Icon name="back" />Alerts</a>
+		<h1 class="page-title">{displayName}</h1>
+		<p class="page-sub">{categoryData?.category?.description || 'Alerts in this category'} · {range.words}</p>
+	</div>
+	<div class="head-actions">
+		{#if categoryData?.stats}
+			<span class="chip num">{formatNumber(categoryData.stats.total)} alerts</span>
+		{/if}
+		<Pills
+			options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))}
+			bind:value={selectedRange}
+			ariaLabel="Time range"
+		/>
+	</div>
+</header>
+
+{#if loading}
+	<Card title={displayName} sub={range.words}>
+		<CardState state="loading" title="Loading {displayName}" />
+	</Card>
+{:else if detailFailed || !categoryData}
+	<Card title={displayName} sub={range.words}>
+		<CardState state="error" title="Couldn't load {displayName}: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
+	</Card>
+{:else if categoryData.stats.total === 0}
+	<Card title={displayName} sub={range.words}>
+		<CardState state="empty" icon="alerts" title="No alerts in {displayName}" message="Try expanding the time range or check that IDS rules are active." />
+	</Card>
+{:else}
+	{@const data = categoryData}
+	<div class="grid">
+		<KpiCard class="c-4" label="Unique sources" icon="connections" value={formatNumber(data.stats.unique_sources)} note="Addresses that raised these alerts" />
+		<KpiCard class="c-4" label="Unique targets" icon="alerts" value={formatNumber(data.stats.unique_targets)} note="Addresses they were aimed at" />
+		<KpiCard class="c-4" label="Affected devices" icon="devices" value={formatNumber(data.stats.affected_devices)} note="Devices on your network" />
+
+		<Card class="c-12" title="Alerts by severity" sub="{fmt(data.stats.total)} alerts · {range.words}, by severity">
+			<div class="sev-sum">
+				<div class="sev-left">
+					<div class="sev-counts">
+						{#each buckets as b (b.level)}<SeverityPill level={b.level} count={b.count} />{/each}
+					</div>
+				</div>
+				<SeverityGauge
+					{buckets}
+					total={data.stats.total}
+					ariaLabel="{fmt(data.stats.total)} {displayName} alerts in the {range.words}: {buckets.map((b) => `${fmt(b.count)} ${b.level}`).join(', ')}"
+				/>
+			</div>
+		</Card>
+
+		<Card class="c-8" hero title="Alert volume over time" sub="Alerts per {INTERVAL_MAP[selectedRange] ?? '1h'} · {range.words}">
+			{#if timelineFailed}
+				<CardState state="error" title="Couldn't load the alert volume over time: the request failed." onaction={() => refresh.run()} />
+			{:else if series.length === 0}
+				<CardState state="empty" title="No alert volume yet" message="The chart fills in once this category has alerts in the window." />
+			{:else}
+				<AreaChart
+					series={[{ key: 'alerts', label: 'Alerts', colour: 1, points: series.map((p) => ({ t: p.timestamp, v: p.total })) }]}
+					formatX={(t) => formatShortTimestamp(String(t))}
+					formatY={(v) => fmt(v)}
+					formatTip={(i) => `${formatShortTimestamp(series[i].timestamp)} · ${fmt(series[i].total)} alerts`}
+					highlightIndex={busiest}
+					ariaLabel={series[busiest].total > 0 ? `Busiest ${formatShortTimestamp(series[busiest].timestamp)}, with ${fmt(series[busiest].total)} alerts` : `No ${displayName} alerts in the ${range.words}`}
+				/>
+			{/if}
+		</Card>
+
+		<Card class="c-4" title="Sub-categories" sub="{data.sub_categories.length} types · select one to filter the alerts">
+			{#snippet actions()}
+				{#if subCatFilter}<button class="btn" type="button" onclick={clearSubFilter}>Clear filter</button>{/if}
+			{/snippet}
+			{#if data.sub_categories.length === 0}
+				<CardState state="empty" title="No sub-categories" message="This category's alerts aren't split into types." />
+			{:else}
+				<BarList
+					items={data.sub_categories.map((sub) => ({
+						key: sub.id,
+						label: sub.label,
+						value: sub.count,
+						display: formatNumber(sub.count),
+						detail: `${((sub.count / (data.stats.total || 1)) * 100).toFixed(1)}%${subCatFilter === sub.id ? ' · filtered' : ''}`,
+						onclick: () => toggleSubFilter(sub.id),
+					}))}
+				/>
+			{/if}
+		</Card>
+
+		<Card class="c-6" title="Affected devices" sub="{data.affected_devices.length} devices · alerts per device · {range.words}">
+			{#if data.affected_devices.length === 0}
+				<CardState state="empty" title="No affected devices found" message="Devices appear here once alerts in this category name them." />
+			{:else}
+				<DataTable columns={deviceColumns} rows={data.affected_devices} ariaLabel="Affected devices" rowKey={(d) => d.ip} initialSort={{ key: 'count', dir: 'desc' }} />
+			{/if}
+		</Card>
+
+		<Card class="c-6 sig-bars" title="Top signatures" sub="{data.top_signatures.length} signatures · alerts per rule · last seen">
+			{#if data.top_signatures.length === 0}
+				<CardState state="empty" title="No signatures found" message="Rules appear here once this category has alerts." />
+			{:else}
+				<BarList
+					items={data.top_signatures.map((sig) => ({
+						key: sig.signature,
+						label: sig.signature,
+						value: sig.count,
+						display: formatNumber(sig.count),
+						detail: formatRelativeTime(sig.last_seen),
+					}))}
+				/>
+			{/if}
+		</Card>
+
+		{#if data.mitre_techniques.length > 0}
+			<Card class="c-12" title="MITRE ATT&CK techniques" sub="Mapped from this category's alerts">
+				<DataTable columns={mitreColumns} rows={data.mitre_techniques} ariaLabel="MITRE ATT&CK techniques" rowKey={(t) => t.id} />
+			</Card>
+		{/if}
+	</div>
+
+	<div class="grid alert-layout" class:no-drawer={!drawerAlert}>
+		<Card class="c-8 alert-list-card" title="Recent alerts" sub={alertsFailed ? 'Check failed' : `${fmt(totalAlerts)} matching · ${range.words}`}>
+			{#if subCatFilter}
+				<div class="toolbar">
+					<span class="chip">
+						Sub-category: {data.sub_categories.find((s) => s.id === subCatFilter)?.label ?? subCatFilter}
+						<button class="chip-x" type="button" onclick={clearSubFilter} aria-label="Clear sub-category filter"><Icon name="close" /></button>
 					</span>
 				</div>
-				<div>
-					<h1>{displayName}</h1>
-					{#if categoryData?.category?.description}
-						<p class="subtitle">{categoryData.category.description}</p>
-					{/if}
-					<!-- OLD CODE START — dead badge: the daemon never sends category.mitre_tactic
-					{#if categoryData?.category?.mitre_tactic}
-						<span class="mitre-badge">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-							{categoryData.category.mitre_tactic.id}: {categoryData.category.mitre_tactic.name}
-						</span>
-					{/if}
-					OLD CODE END -->
-				</div>
-			</div>
-		</div>
-		<div class="header-right">
-			{#if categoryData?.stats}
-				<div class="alert-count mono">{formatNumber(categoryData.stats.total)} alerts</div>
 			{/if}
-			{#if categoryData?.severity_breakdown}
-				<div class="severity-pills">
-					{#if categoryData.severity_breakdown.critical > 0}
-						<span class="severity-pill critical">
-							<span class="severity-dot"></span>
-							Critical: {formatNumber(categoryData.severity_breakdown.critical)}
-						</span>
-					{/if}
-					{#if categoryData.severity_breakdown.high > 0}
-						<span class="severity-pill high">
-							<span class="severity-dot"></span>
-							High: {formatNumber(categoryData.severity_breakdown.high)}
-						</span>
-					{/if}
-					{#if categoryData.severity_breakdown.medium > 0}
-						<span class="severity-pill medium">
-							<span class="severity-dot"></span>
-							Medium: {formatNumber(categoryData.severity_breakdown.medium)}
-						</span>
-					{/if}
-					{#if categoryData.severity_breakdown.low > 0}
-						<span class="severity-pill low">
-							<span class="severity-dot"></span>
-							Low: {formatNumber(categoryData.severity_breakdown.low)}
-						</span>
-					{/if}
-					{#if categoryData.severity_breakdown.info > 0}
-						<span class="severity-pill info">
-							<span class="severity-dot"></span>
-							Info: {formatNumber(categoryData.severity_breakdown.info)}
-						</span>
-					{/if}
-				</div>
-			{/if}
-			<div class="pills">
-				{#each TIME_RANGES as range}
-					<button
-						class="pill"
-						class:active={selectedRange === range.value}
-						onclick={() => (selectedRange = range.value)}
-					>
-						{range.label}
-					</button>
-				{/each}
-			</div>
-		</div>
-	</header>
-
-	<!-- Loading state -->
-	{#if loading}
-		<div class="loading-state">
-			<div class="loading-spinner"></div>
-			<span class="text-muted">Loading {displayName} data...</span>
-		</div>
-	{:else if detailFailed || !categoryData}
-		<div class="empty-state">
-			<p class="empty-text">Couldn't load {displayName}</p>
-			<p class="empty-hint">The request failed. Try again in a moment.</p>
-		</div>
-	{:else if categoryData.stats.total === 0}
-		<div class="empty-state">
-			<div class="empty-icon">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-			</div>
-			<p class="empty-text">No alerts in {displayName}</p>
-			<p class="empty-hint">Try expanding the time range or check that IDS rules are active.</p>
-		</div>
-	{:else}
-		<!-- ================================================================
-		     ROW 2: Stats Strip
-		     ================================================================ -->
-		<div class="stats-grid fade-up">
-			<div class="stat-card">
-				<div class="stat-label">Total Alerts</div>
-				<div class="stat-value" style="color: {catColorVar(catColor)};">{formatNumber(categoryData.stats.total)}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Unique Sources</div>
-				<div class="stat-value">{formatNumber(categoryData.stats.unique_sources)}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Unique Targets</div>
-				<div class="stat-value">{formatNumber(categoryData.stats.unique_targets)}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Affected Devices</div>
-				<div class="stat-value">{formatNumber(categoryData.stats.affected_devices)}</div>
-			</div>
-		</div>
-
-		<!-- ================================================================
-		     ROW 3: Sub-Category Breakdown
-		     ================================================================ -->
-		{#if categoryData.sub_categories.length > 0}
-			<section class="card fade-up">
-				<div class="card-header">
-					<span class="card-title">Sub-Categories</span>
-					<span class="card-badge">{categoryData.sub_categories.length} types</span>
-				</div>
-				<div class="card-body">
-					<div class="sub-cat-list">
-						{#each categoryData.sub_categories as sub, i (sub.id)}
-							<button
-								class="sub-cat-row"
-								class:active={subCatFilter === sub.id}
-								onclick={() => toggleSubFilter(sub.id)}
-							>
-								<span class="sub-cat-label">{sub.label}</span>
-								<div class="sub-cat-bar-track">
-									<div
-										class="sub-cat-bar-fill"
-										style="width: {(sub.count / maxSubCount) * 100}%; background: {subCatColor(i)};"
-									></div>
-								</div>
-								<span class="sub-cat-count mono">{formatNumber(sub.count)}</span>
-								<span class="sub-cat-pct mono">{((sub.count / (categoryData?.stats?.total || 1)) * 100).toFixed(1)}%</span>
-							</button>
-						{/each}
-					</div>
-				</div>
-				{#if subCatFilter}
-					<div class="sub-cat-filter-bar">
-						<span class="filter-text">Filtered: <strong>{categoryData.sub_categories.find(s => s.id === subCatFilter)?.label ?? subCatFilter}</strong></span>
-						<!-- OLD CODE START: <button class="clear-filter-btn" onclick={() => (subCatFilter = null)}>Clear filter</button> OLD CODE END -->
-						<button class="clear-filter-btn" onclick={() => { subCatFilter = null; fetchAlerts(1); }}>Clear filter</button>
-					</div>
-				{/if}
-			</section>
-		{/if}
-
-		<!-- ================================================================
-		     ROW 4: Category Timeline
-		     ================================================================ -->
-		{#if timelineData?.series?.length}
-			<section class="card fade-up">
-				<div class="card-header">
-					<span class="card-title">Alert Volume Over Time</span>
-					<span class="card-badge">{selectedRange} &middot; {INTERVAL_MAP[selectedRange] ?? '1h'} intervals</span>
-				</div>
-				<div class="chart-body">
-					<svg
-						class="chart-svg"
-						viewBox="0 0 {timelineData.series.length * 24} {chartHeight}"
-						preserveAspectRatio="none"
-					>
-						<!-- Grid lines -->
-						{#each [0, 0.25, 0.5, 0.75, 1] as frac}
-							<line
-								x1="0"
-								y1={frac * chartHeight}
-								x2={timelineData.series.length * 24}
-								y2={frac * chartHeight}
-								stroke="var(--border-dim)"
-								stroke-dasharray="4 4"
-							/>
-						{/each}
-
-						<!-- Stacked bars -->
-						{#each timelineData.series as point, idx (point.timestamp)}
-							{@const barX = idx * 24 + 2}
-							{@const barW = 20}
-							{@const totalH = (point.total / maxBucketTotal) * (chartHeight - 8)}
-							<rect
-								x={barX}
-								y={chartHeight - totalH - 4}
-								width={barW}
-								height={totalH}
-								rx="2"
-								fill={catColorVar(catColor)}
-								opacity="0.5"
-							>
-								<title>{new Date(point.timestamp).toLocaleString()} - {point.total} alerts</title>
-							</rect>
-						{/each}
-					</svg>
-				</div>
-			</section>
-		{:else if timelineFailed}
-			<section class="card fade-up">
-				<p class="card-empty">Couldn't load the alert volume over time: the request failed.</p>
-			</section>
-		{/if}
-
-		<!-- ================================================================
-		     ROW 5: Two-column — Affected Devices + Top Signatures
-		     ================================================================ -->
-		<div class="two-col fade-up">
-			<!-- Left: Affected Devices -->
-			<section class="card">
-				<div class="card-header">
-					<span class="card-title">Affected Devices</span>
-					<span class="card-badge">{categoryData.affected_devices.length} devices</span>
-				</div>
-				{#if categoryData.affected_devices.length > 0}
-					<div class="table-wrap">
-						<table class="data-table">
-							<thead>
-								<tr>
-									{#each [['ip', 'Device'], ['count', 'Alerts'], ['severity', 'Severity']] as const as [key, label] (key)}
-										<th class="sortable" class:sorted={deviceSort.key === key} onclick={() => deviceSort.toggle(key)}>
-											{label}<span class="sort-arrow">{deviceSort.arrow(key)}</span>
-										</th>
-									{/each}
-									<th></th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each deviceSort.apply(categoryData.affected_devices, (d, key) => (key === 'severity' ? SEVERITY_RANK[d.severity ?? ''] : d[key])) as device (device.ip)}
-									<tr>
-										<td>
-											<div class="device-cell">
-												<IPAddress ip={device.ip} />
-												{#if device.hostname}
-													<span class="device-hostname">{device.hostname}</span>
-												{/if}
-											</div>
-										</td>
-										<td class="mono">{formatNumber(device.count)}</td>
-										<td>
-											{#if device.severity}
-												<span class="sev-badge {device.severity}">{device.severity}</span>
-											{/if}
-										</td>
-										<td>
-											<a href="/devices/{encodeURIComponent(device.ip)}" class="view-link">View &rarr;</a>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{:else}
-					<div class="card-empty">No affected devices found.</div>
-				{/if}
-			</section>
-
-			<!-- Right: Top Signatures -->
-			<section class="card">
-				<div class="card-header">
-					<span class="card-title">Top Signatures</span>
-					<span class="card-badge">{categoryData.top_signatures.length} signatures</span>
-				</div>
-				{#if categoryData.top_signatures.length > 0}
-					{@const maxSigCount = categoryData.top_signatures[0]?.count ?? 1}
-					<div class="sig-list">
-						{#each categoryData.top_signatures as sig, i (sig.signature)}
-							<div class="sig-row">
-								<span class="sig-rank">{i + 1}</span>
-								<div class="sig-info">
-									<span class="sig-name" title={sig.signature}>{sig.signature}</span>
-									<div class="sig-bar-track">
-										<div
-											class="sig-bar-fill"
-											style="width: {(sig.count / maxSigCount) * 100}%; background: {catColorVar(catColor)};"
-										></div>
-									</div>
-								</div>
-								<span class="sig-count mono">{formatNumber(sig.count)}</span>
-								<span class="sig-time mono">{formatRelativeTime(sig.last_seen)}</span>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="card-empty">No signatures found.</div>
-				{/if}
-			</section>
-		</div>
-
-		<!-- ================================================================
-		     ROW 6: MITRE ATT&CK Mapping
-		     ================================================================ -->
-		{#if categoryData.mitre_techniques.length > 0}
-			<section class="card fade-up">
-				<div class="card-header">
-					<span class="card-title">MITRE ATT&CK Techniques</span>
-					<span class="card-badge">mapped from alerts</span>
-				</div>
-				<div class="card-body">
-					<div class="mitre-grid">
-						{#each categoryData.mitre_techniques as tech (tech.id)}
-							<div class="mitre-card">
-								<div class="mitre-card-top">
-									<span class="mitre-id mono">{tech.id}</span>
-									<a
-										href="https://attack.mitre.org/techniques/{tech.id.replace('.', '/')}/"
-										target="_blank"
-										rel="noopener noreferrer"
-										class="mitre-external"
-										title="View on MITRE ATT&CK"
-									>
-										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-									</a>
-								</div>
-								<div class="mitre-technique-name">{tech.name}</div>
-								<p class="mitre-desc">{tech.description}</p>
-								{#if tech.count}
-									<span class="mitre-count mono"><strong>{formatNumber(tech.count)}</strong> matches</span>
-								{/if}
-							</div>
-						{/each}
-					</div>
-				</div>
-			</section>
-		{/if}
-
-		<!-- ================================================================
-		     ROW 7: Alert Table
-		     ================================================================ -->
-		<section class="card fade-up">
-			<div class="card-header">
-				<span class="card-title">Recent Alerts</span>
-				<span class="card-badge">{alertsFailed ? 'check failed' : `${formatNumber(totalAlerts)} total`}</span>
-			</div>
 			{#if actionError}
-				<div class="alert alert-danger" role="alert">Not applied: {actionError}</div>
+				<p class="notice is-error" role="alert"><Icon name="warn" />Not applied: {actionError}</p>
 			{/if}
-			<div class="alert-table-wrap">
-				<table class="alert-table">
-					<thead>
-						<tr>
-							<th class:sorted={sortKey === 'timestamp'} onclick={() => toggleSort('timestamp')}>
-								Timestamp{sortIndicator('timestamp')}
-							</th>
-							<th class:sorted={sortKey === 'severity'} onclick={() => toggleSort('severity')}>
-								Severity{sortIndicator('severity')}
-							</th>
-							<th class:sorted={sortKey === 'signature'} onclick={() => toggleSort('signature')}>
-								Signature{sortIndicator('signature')}
-							</th>
-							<th class:sorted={sortKey === 'src_ip'} onclick={() => toggleSort('src_ip')}>
-								Source{sortIndicator('src_ip')}
-							</th>
-							<th class:sorted={sortKey === 'dest_ip'} onclick={() => toggleSort('dest_ip')}>
-								Destination{sortIndicator('dest_ip')}
-							</th>
-							<th class:sorted={sortKey === 'dest_port'} onclick={() => toggleSort('dest_port')}>
-								Port{sortIndicator('dest_port')}
-							</th>
-							<th>Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each sortedAlerts as alert, alertIdx (alert._id ? `${alert._id}-${alertIdx}` : `alert-${alertIdx}`)}
-							<tr onclick={() => openDrawer(alert)} class="clickable-row">
-								<td class="timestamp-cell mono">{formatTimestamp(alert.timestamp)}</td>
-								<td>
-									<span class="sev-badge {severityClass(alert.alert?.severity)}">
-										{severityLabelLocal(alert.alert?.severity)}
-									</span>
-								</td>
-								<td class="sig-cell" title={alert.alert?.signature ?? ''}>{alert.alert?.signature ?? 'Unknown'}</td>
-								<td>
-									{#if alert.src_ip}
-										<IPAddress ip={alert.src_ip} />
-									{:else}
-										<span class="text-muted">-</span>
-									{/if}
-								</td>
-								<td>
-									{#if alert.dest_ip}
-										<IPAddress ip={alert.dest_ip} />
-									{:else}
-										<span class="text-muted">-</span>
-									{/if}
-								</td>
-								<td class="port-cell mono">{alert.dest_port ?? '-'}</td>
-								<td>
-									<div class="actions-cell">
-										<button class="action-btn" onclick={(e) => { e.stopPropagation(); handleSuppress(alert); }} title="Suppress this signature">
-											Suppress
-										</button>
-										<button class="action-btn danger" onclick={(e) => { e.stopPropagation(); handleFalsePositive(alert); }} title="Mark as false positive">
-											FP
-										</button>
-									</div>
-								</td>
-							</tr>
-						{:else}
-							<tr>
-								<td colspan="7" class="table-empty-cell">{alertsFailed ? "Couldn't load alerts: the request failed." : 'No alerts found in this time range.'}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-
-			<!-- Pagination -->
-			{#if totalPages > 1}
-				<div class="pagination">
-					<span class="pagination-info mono">Page {currentPage} of {totalPages} ({formatNumber(totalAlerts)} alerts)</span>
-					<div class="pagination-buttons">
-						<button class="page-btn" disabled={currentPage <= 1} onclick={() => fetchAlerts(currentPage - 1)}>Prev</button>
-						{#each Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-							const start = Math.max(1, Math.min(currentPage - 3, totalPages - 6));
-							return start + i;
-						}) as pg (pg)}
-							<button
-								class="page-btn"
-								class:active={currentPage === pg}
-								onclick={() => fetchAlerts(pg)}
-							>
-								{pg}
-							</button>
-						{/each}
-						<button class="page-btn" disabled={currentPage >= totalPages} onclick={() => fetchAlerts(currentPage + 1)}>Next</button>
-					</div>
-				</div>
+			{#if alertsFailed}
+				<CardState state="error" title="Couldn't load alerts: the request failed." onaction={() => fetchAlerts(currentPage)} />
+			{:else if alerts.length === 0}
+				<CardState state="empty" icon="alerts" title="No alerts found in this time range." />
+			{:else}
+				<DataTable
+					columns={alertColumns}
+					rows={sortedAlerts}
+					ariaLabel="{displayName} alerts, newest first unless sorted"
+					{rowKey}
+					initialSort={{ key: 'timestamp', dir: 'desc' }}
+					onsortchange={changeSort}
+					onrowactivate={openDrawer}
+					rowLabel={(a) => `Open alert ${a.alert?.signature ?? 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
+					selectedKey={selectedRowKey}
+					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: (p) => fetchAlerts(p) } : undefined}
+				/>
 			{/if}
-		</section>
-	{/if}
-</div>
-
-<!-- Detail Drawer -->
-<DetailDrawer
-	open={!!drawerAlert}
-	title={drawerAlert?.alert?.signature ?? 'Alert Detail'}
-	subtitle={drawerAlert ? formatTimestamp(drawerAlert.timestamp) : ''}
-	tabs={ALERT_DRAWER_TABS}
-	activeTab={drawerTab}
-	onclose={() => (drawerAlert = null)}
-	ontabchange={(t) => (drawerTab = t)}
->
-	{#if drawerAlert}
-		<AlertDrawerContent alert={drawerAlert} activeTab={drawerTab} />
-	{/if}
-</DetailDrawer>
+		</Card>
+		{#if drawerAlert}
+			{@const open = drawerAlert}
+			{#key open._id}
+				<AlertDetail
+					alert={open}
+					onclose={() => (drawerAlert = null)}
+					onacknowledge={() => acknowledge(open)}
+					onsuppress={() => drawerAction(open, (sigId) => suppressAlert(sigId, open.src_ip))}
+					onfalsepositive={() => drawerAction(open, (sigId) => markFalsePositive(sigId))}
+				/>
+			{/key}
+		{/if}
+	</div>
+{/if}
 
 <style>
-	.category-detail {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* ----------------------------------------------------------------
-	   Header
-	   ---------------------------------------------------------------- */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		flex-wrap: wrap;
-		gap: var(--space-md);
-	}
-
-	.header-left {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.back-link {
-		font-size: var(--text-sm);
-		color: var(--text-link);
-		text-decoration: none;
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		transition: color var(--transition-fast);
-		margin-bottom: var(--space-xs);
-	}
-
-	.back-link:hover { color: var(--cyan); opacity: 0.8; }
-
-	.cat-title-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-	}
-
-	.cat-icon {
-		width: 48px;
-		height: 48px;
-		border-radius: var(--radius-lg);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid;
-		flex-shrink: 0;
-	}
-
-	.cat-icon :global(svg) {
-		width: 22px;
-		height: 22px;
-	}
-
-	.cat-title-row h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		color: var(--text-primary);
-		letter-spacing: -0.02em;
-		line-height: 1.2;
-	}
-
-	.subtitle {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		margin-top: 2px;
-	}
-
-	/* OLD CODE START — style for the removed mitre_tactic badge
-	.mitre-badge {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 4px 10px;
-		border-radius: var(--radius-sm);
-		background: var(--blue-dim);
-		color: var(--blue);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 500;
-		margin-top: var(--space-sm);
-		border: 1px solid rgba(68, 138, 255, 0.15);
-	}
-	OLD CODE END */
-
-	.header-right {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		gap: var(--space-sm);
-	}
-
-	.alert-count {
-		font-size: var(--text-lg);
-		font-weight: 600;
-		color: var(--text-primary);
-		letter-spacing: -0.02em;
-	}
-
-	/* Severity pills */
-	.severity-pills {
-		display: flex;
-		gap: 6px;
-		flex-wrap: wrap;
-		justify-content: flex-end;
-	}
-
-	.severity-pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		padding: 3px 10px;
-		border-radius: var(--radius-sm);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 500;
-		border: 1px solid transparent;
-	}
-
-	.severity-pill.critical { background: var(--sev-critical-muted); color: var(--sev-critical); border-color: color-mix(in srgb, var(--sev-critical) 20%, transparent); }
-	.severity-pill.high { background: var(--sev-high-muted); color: var(--sev-high); border-color: color-mix(in srgb, var(--sev-high) 20%, transparent); }
-	.severity-pill.medium { background: var(--sev-medium-muted); color: var(--sev-medium); border-color: color-mix(in srgb, var(--sev-medium) 20%, transparent); }
-	.severity-pill.low { background: var(--sev-low-muted); color: var(--sev-low); border-color: color-mix(in srgb, var(--sev-low) 20%, transparent); }
-	.severity-pill.info { background: var(--sev-info-muted); color: var(--sev-info); border-color: color-mix(in srgb, var(--sev-info) 20%, transparent); }
-
-	.severity-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-	}
-
-	.severity-pill.critical .severity-dot { background: var(--sev-critical); }
-	.severity-pill.high .severity-dot { background: var(--sev-high); }
-	.severity-pill.medium .severity-dot { background: var(--sev-medium); }
-	.severity-pill.low .severity-dot { background: var(--sev-low); }
-	.severity-pill.info .severity-dot { background: var(--sev-info); }
-
-	/* Time range pills */
-	.pills {
-		display: flex;
-		gap: 2px;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-md);
-		padding: 2px;
-		border: 1px solid var(--border-dim);
-	}
-
-	.pill {
-		padding: 5px 12px;
-		border: none;
-		background: transparent;
-		color: var(--text-secondary);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 500;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.pill:hover { color: var(--text-primary); background: var(--bg-elevated); }
-
-	.pill.active {
-		background: var(--accent);
-		color: var(--on-accent);
-		font-weight: 600;
-		box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
-	}
-
-	/* ----------------------------------------------------------------
-	   Loading / Empty
-	   ---------------------------------------------------------------- */
-	.loading-state {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-md);
-		padding: var(--space-3xl);
-	}
-
-	.empty-state {
-		text-align: center;
-		padding: var(--space-3xl);
-	}
-
-	.empty-icon {
-		margin-bottom: var(--space-md);
-		opacity: 0.4;
-		color: var(--text-muted);
-	}
-
-	.empty-text {
-		font-size: var(--text-lg);
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
-	}
-
-	.empty-hint {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-	}
-
-	/* ----------------------------------------------------------------
-	   Stats Grid
-	   ---------------------------------------------------------------- */
-	.stats-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: var(--space-md);
-	}
-
-	.stat-card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-md);
-		padding: var(--space-md) var(--space-lg);
-		position: relative;
-		overflow: hidden;
-		transition: border-color var(--transition-fast);
-	}
-
-	.stat-card:hover { border-color: var(--border-default); }
-
-	.stat-card::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		height: 2px;
-		background: var(--border-dim);
-		transition: background var(--transition-fast);
-	}
-
-	.stat-card:nth-child(1)::before { background: var(--data-1); box-shadow: 0 0 12px color-mix(in srgb, var(--data-1) 30%, transparent); }
-	.stat-card:nth-child(2)::before { background: var(--data-2); box-shadow: 0 0 12px color-mix(in srgb, var(--data-2) 30%, transparent); }
-	.stat-card:nth-child(3)::before { background: var(--data-3); box-shadow: 0 0 12px color-mix(in srgb, var(--data-3) 30%, transparent); }
-	.stat-card:nth-child(4)::before { background: var(--data-4); box-shadow: 0 0 12px color-mix(in srgb, var(--data-4) 30%, transparent); }
-
-	.stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		font-weight: 500;
-		margin-bottom: var(--space-sm);
-	}
-
-	.stat-value {
-		font-family: var(--font-mono);
-		font-size: var(--text-3xl);
-		font-weight: 600;
-		color: var(--text-primary);
-		letter-spacing: -0.03em;
-		line-height: 1;
-	}
-
-	/* ----------------------------------------------------------------
-	   Cards (shared)
-	   ---------------------------------------------------------------- */
-	.card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-md);
-		overflow: hidden;
-		transition: border-color var(--transition-fast);
-	}
-
-	.card:hover { border-color: var(--border-default); }
-
-	.card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-md) var(--space-lg);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.card-title {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.card-badge {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		background: var(--bg-tertiary);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-	}
-
-	.card-body {
-		padding: var(--space-lg);
-	}
-
-	.card-empty {
-		padding: var(--space-xl);
-		text-align: center;
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-
-	/* ----------------------------------------------------------------
-	   Sub-Category Bars
-	   ---------------------------------------------------------------- */
-	.sub-cat-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.sub-cat-row {
-		display: grid;
-		grid-template-columns: 200px 1fr 80px 70px;
-		align-items: center;
-		gap: var(--space-md);
-		cursor: pointer;
-		padding: var(--space-sm) var(--space-md);
-		border-radius: var(--radius-md);
-		border: 1px solid transparent;
-		background: none;
-		width: 100%;
-		text-align: left;
-		font: inherit;
-		color: inherit;
-		transition: all var(--transition-fast);
-	}
-
-	.sub-cat-row:hover { background: var(--bg-tertiary); }
-
-	.sub-cat-row.active {
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 4%, transparent);
-	}
-
-	.sub-cat-label {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.sub-cat-bar-track {
-		height: 24px;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-sm);
-		overflow: hidden;
-	}
-
-	.sub-cat-bar-fill {
-		height: 100%;
-		border-radius: var(--radius-sm);
-		transition: width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-	}
-
-	.sub-cat-count {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		text-align: right;
-	}
-
-	.sub-cat-pct {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		background: var(--bg-tertiary);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		text-align: center;
-	}
-
-	.sub-cat-filter-bar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-sm) var(--space-lg);
-		border-top: 1px solid var(--border-dim);
-		background: color-mix(in srgb, var(--accent) 3%, transparent);
-	}
-
-	.filter-text {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	.filter-text strong {
-		color: var(--cyan);
-	}
-
-	.clear-filter-btn {
-		border: none;
-		background: none;
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		cursor: pointer;
-		font-family: var(--font-sans);
-		transition: color var(--transition-fast);
-	}
-
-	.clear-filter-btn:hover { color: var(--accent); }
-
-	/* ----------------------------------------------------------------
-	   Timeline Chart
-	   ---------------------------------------------------------------- */
-	.chart-body {
-		padding: var(--space-md) var(--space-lg) var(--space-sm);
-		height: 240px;
-		position: relative;
-	}
-
-	.chart-svg {
-		width: 100%;
-		height: 100%;
-	}
-
-	/* ----------------------------------------------------------------
-	   Two-Column Layout
-	   ---------------------------------------------------------------- */
-	.two-col {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-lg);
-	}
-
-	/* Data Table */
-	.table-wrap { overflow-x: auto; }
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--text-sm);
-	}
-
-	.data-table th {
-		text-align: left;
-		padding: var(--space-sm) var(--space-md);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.data-table td {
-		padding: var(--space-sm) var(--space-md);
-		border-bottom: 1px solid var(--border-dim);
-		vertical-align: middle;
-		color: var(--text-secondary);
-	}
-
-	.data-table tbody tr { transition: background var(--transition-fast); }
-	.data-table tbody tr:hover { background: var(--bg-tertiary); }
-	.data-table tbody tr:last-child td { border-bottom: none; }
-
-	.device-cell {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.device-hostname {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.view-link {
-		font-size: var(--text-xs);
-		color: var(--text-link);
-		text-decoration: none;
-		transition: opacity var(--transition-fast);
-	}
-
-	.view-link:hover { opacity: 0.7; }
-
-	/* Severity badges */
-	.sev-badge {
-		display: inline-flex;
-		align-items: center;
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		font-size: var(--text-xs);
-		font-weight: 500;
-		text-transform: uppercase;
-	}
-
-	.sev-badge.critical { background: var(--sev-critical-muted); color: var(--sev-critical); }
-	.sev-badge.sev-high, .sev-badge.high { background: var(--sev-high-muted); color: var(--sev-high); }
-	.sev-badge.sev-medium, .sev-badge.medium { background: var(--sev-medium-muted); color: var(--sev-medium); }
-	.sev-badge.sev-low, .sev-badge.low { background: var(--sev-low-muted); color: var(--sev-low); }
-	.sev-badge.sev-info, .sev-badge.info { background: var(--sev-info-muted); color: var(--sev-info); }
-
-	/* ----------------------------------------------------------------
-	   Signatures List
-	   ---------------------------------------------------------------- */
-	.sig-list {
-		padding: var(--space-xs) 0;
-	}
-
-	.sig-row {
-		display: grid;
-		grid-template-columns: 28px 1fr 60px 80px;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-lg);
-		border-bottom: 1px solid var(--border-dim);
-		transition: background var(--transition-fast);
-	}
-
-	.sig-row:last-child { border-bottom: none; }
-	.sig-row:hover { background: var(--bg-tertiary); }
-
-	.sig-rank {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-align: center;
-		width: 24px;
-		height: 24px;
-		line-height: 24px;
-		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
-	}
-
-	.sig-info {
-		min-width: 0;
-	}
-
-	.sig-name {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		font-weight: 500;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		display: block;
-	}
-
-	.sig-bar-track {
-		height: 4px;
-		background: var(--bg-tertiary);
-		border-radius: 2px;
-		overflow: hidden;
-		margin-top: 4px;
-	}
-
-	.sig-bar-fill {
-		height: 100%;
-		border-radius: 2px;
-		opacity: 0.6;
-		transition: width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-	}
-
-	.sig-row:hover .sig-bar-fill { opacity: 1; }
-
-	.sig-count {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		text-align: right;
-	}
-
-	.sig-time {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-align: right;
-	}
-
-	/* ----------------------------------------------------------------
-	   MITRE Grid
-	   ---------------------------------------------------------------- */
-	.mitre-grid {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: var(--space-md);
-	}
-
-	.mitre-card {
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-dim);
-		border-left: 3px solid var(--blue);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		transition: all var(--transition-fast);
-	}
-
-	.mitre-card:hover {
-		border-color: var(--border-bright);
-		background: var(--bg-elevated);
-		transform: translateY(-1px);
-	}
-
-	.mitre-card-top {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: var(--space-sm);
-	}
-
-	.mitre-id {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--blue);
-		background: var(--blue-dim);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-	}
-
-	.mitre-external {
-		color: var(--text-dim);
-		transition: color var(--transition-fast);
-	}
-
-	.mitre-card:hover .mitre-external { color: var(--text-link); }
-
-	.mitre-technique-name {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: 6px;
-		line-height: 1.3;
-	}
-
-	.mitre-desc {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		line-height: 1.5;
-		margin-bottom: var(--space-sm);
-	}
-
-	.mitre-count {
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
-	.mitre-count strong {
-		color: var(--text-primary);
-		font-weight: 600;
-	}
-
-	/* ----------------------------------------------------------------
-	   Alert Table
-	   ---------------------------------------------------------------- */
-	.alert-table-wrap { overflow-x: auto; }
-
-	.alert-table {
-		width: 100%;
-		border-collapse: collapse;
-		min-width: 900px;
-	}
-
-	.alert-table th {
-		text-align: left;
-		padding: var(--space-sm) var(--space-md);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		border-bottom: 1px solid var(--border-dim);
-		cursor: pointer;
-		user-select: none;
-		white-space: nowrap;
-		background: var(--bg-secondary);
-		position: sticky;
-		top: 0;
-		z-index: 2;
-		transition: color var(--transition-fast);
-	}
-
-	.alert-table th:hover { color: var(--text-secondary); }
-	.alert-table th.sorted { color: var(--accent); }
-
-	.alert-table td {
-		padding: var(--space-sm) var(--space-md);
-		font-size: var(--text-sm);
-		border-bottom: 1px solid var(--border-dim);
-		color: var(--text-secondary);
-		white-space: nowrap;
-		transition: background var(--transition-fast);
-	}
-
-	.alert-table tr:hover td { background: var(--bg-tertiary); }
-	.alert-table tr:last-child td { border-bottom: none; }
-
-	.clickable-row { cursor: pointer; }
-
-	.timestamp-cell {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.sig-cell {
-		max-width: 280px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-weight: 500;
-		color: var(--text-primary);
-	}
-
-	.port-cell {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	.table-empty-cell {
-		text-align: center;
-		padding: var(--space-xl) !important;
-		color: var(--text-muted);
-		font-size: var(--text-sm);
-	}
-
-	/* Actions */
-	.actions-cell {
-		display: flex;
-		gap: 4px;
-	}
-
-	.action-btn {
-		padding: 3px 10px;
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
-		color: var(--text-secondary);
-		font-family: var(--font-sans);
-		font-size: var(--text-xs);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		white-space: nowrap;
-	}
-
-	.action-btn:hover {
-		border-color: var(--border-bright);
-		color: var(--text-primary);
-		background: var(--bg-elevated);
-	}
-
-	.action-btn.danger:hover {
-		border-color: color-mix(in srgb, var(--sev-critical) 30%, transparent);
-		color: var(--sev-critical);
-		background: var(--red-dim);
-	}
-
-	/* Pagination */
-	.pagination {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-md) var(--space-lg);
-		border-top: 1px solid var(--border-dim);
-	}
-
-	.pagination-info {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.pagination-buttons {
-		display: flex;
-		gap: 4px;
-	}
-
-	.page-btn {
-		padding: 4px 10px;
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
-		color: var(--text-secondary);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.page-btn:hover { border-color: var(--border-bright); color: var(--text-primary); }
-
-	.page-btn.active {
-		background: var(--blue);
-		color: var(--bg-void);
-		border-color: var(--blue);
-		font-weight: 600;
-	}
-
-	.page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-
-	/* ----------------------------------------------------------------
-	   Animations
-	   ---------------------------------------------------------------- */
-	@keyframes fadeUp {
-		from { opacity: 0; transform: translateY(16px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-
-	.fade-up {
-		opacity: 0;
-		animation: fadeUp 0.5s ease forwards;
-	}
-
-	.fade-up:nth-child(1) { animation-delay: 0.05s; }
-	.fade-up:nth-child(2) { animation-delay: 0.10s; }
-	.fade-up:nth-child(3) { animation-delay: 0.15s; }
-	.fade-up:nth-child(4) { animation-delay: 0.20s; }
-	.fade-up:nth-child(5) { animation-delay: 0.25s; }
-	.fade-up:nth-child(6) { animation-delay: 0.30s; }
-	.fade-up:nth-child(7) { animation-delay: 0.35s; }
-
-	/* ----------------------------------------------------------------
-	   Responsive
-	   ---------------------------------------------------------------- */
-	@media (max-width: 1024px) {
-		.stats-grid { grid-template-columns: repeat(2, 1fr); }
-		.two-col { grid-template-columns: 1fr; }
-		.mitre-grid { grid-template-columns: repeat(2, 1fr); }
-		.sub-cat-row { grid-template-columns: 140px 1fr 70px 60px; }
-	}
-
-	@media (max-width: 768px) {
-		.stats-grid { grid-template-columns: 1fr; }
-		.page-header { flex-direction: column; }
-		.header-right { align-items: flex-start; }
-		.mitre-grid { grid-template-columns: 1fr; }
-		.sub-cat-row { grid-template-columns: 120px 1fr 60px 50px; }
-	}
+	/* Layout glue the system lacks */
+	.alert-layout { align-items: start; }
+	.chip-x {
+		all: unset; display: inline-grid; place-items: center; cursor: pointer; color: var(--text-2); border-radius: var(--r-pill);
+	}
+	.chip-x:hover { color: var(--text-1); }
+	.chip-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+	.notice { margin-bottom: var(--sp-4); }
+	.port-cell { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
+	.row-actions { display: inline-flex; gap: var(--sp-1); }
+	.row-actions .btn { min-height: 28px; padding: 0 var(--sp-3); font-size: var(--text-xs); }
+	.device-cell { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+	.mitre-name { display: flex; flex-direction: column; gap: 2px; }
+	.mitre-name .dim { font-size: var(--text-xs); }
+	:global(.sig-bars) :global(.bars li > :first-child) { font-family: var(--font-mono); }
 </style>
