@@ -1,352 +1,520 @@
-# Plan: NetTap UI redesign (pure black, Ember default)
+# Plan: NetTap full redesign to the NetTap design system
 
-_Approved by Codex in round 4 (2026-11-03) and signed off by the owner. Review log: `.codex-review/2026-11-03-144402-ui-redesign/`._
+_Approved by Codex in round 4 (2026-11-03); review log: `.codex-review/2026-11-03-190850-ui-redesign-full/`. Replaces the 2026-11-03 staged plan (Codex round 4; still in git history at `c8267af:PLAN.md`). That plan's PR 1 is built and open as PR #165. Its PRs 2–4g were never built, and the owner rejected the staged approach on 2026-11-03: "you only changed the colors … I wanted a FULL REDESIGN."_
 
 ## 1. Goal
 
-Replace the web UI's look with the owner-approved design from `mockups/redesign-2026-11/index.html`:
+Rebuild the shell, the shared components and **every page** to the owner's design system in `nettap-design-system/`, which the owner supplied on 2026-11-03.
 
-- **Background:** pure black (#000) on every page.
-- **Surfaces:** near-black cards with hairline borders, large corner radius and big thin numbers.
-- **Charts:** smooth area charts with pill tooltips, rounded donuts and segmented gauges.
-- **Navigation:** a grouped sidebar.
+Done means a person opening any page sees the system's layout, components, type, icons, charts and copy, not just its colours.
 
-### Owner decisions (2026-11-03, final)
+## 2. Source of truth
 
-- **Variants:** Ember is the default. Graphite and Spectrum ship too, switchable in Settings.
-- **Navigation:** left sidebar grouped into Overview, Investigate, Devices and System. On phones it becomes a menu button.
-- **Replaced code:** replaced CSS and markup are deleted, with git history as the record. Replaced logic (TS or JS) still follows the OLD CODE START/END policy.
-- **Density:** balanced, tuned for a 1920 px monitor. It must still work at 1440 and 390.
+- **`nettap-design-system/` is the spec and is committed to the repo root unchanged.** It holds:
+  - `README.md`: voice, colour, type, layout, shape, severity, charts, icons, logo and motion rules
+  - `tokens.json` and `tokens.css`
+  - `components/*/README.md` and `preview.html` for 17 components, plus `components/bundle.css`
+  - `assets/Icons`: 48 outline icons
+  - `assets/Logos`: the mark
+- **`web/DESIGN-SYSTEM.md` is rewritten as a short implementation guide.** It covers:
+  - where the tokens and classes live in the app
+  - which Svelte component implements each system component
+  - the one documented extension, form controls (§5.1)
+  - the lint gates
+  - **Precedence:** where it and the system folder disagree, the folder wins.
+- **The Design System section of `CLAUDE.md` is updated.**
+  - Spacing becomes `--sp-*`, replacing `--space-*`.
+  - Type sizes use the system's `--text-*` scale.
+  - The reference implementation becomes Home (`web/src/routes/+page.svelte`), replacing Log Explorer.
 
-## 2. Hard constraints
+## 3. Owner decisions
 
-1. **No behaviour or data changes.** Same API calls, same numbers, same loading, empty and error messages, same sorting, filtering, drawers and actions. This is a visual and layout change only. The data-accuracy work (#144–#148) must not regress.
-2. **No new metrics, fetches or shell actions.** If a design idea needs data or behaviour the app lacks, it is dropped or logged as a follow-up, never faked.
-3. **No new runtime dependencies.** Charts stay hand-written SVG; Leaflet stays for maps.
-4. **Fonts are bundled, never loaded from a CDN.** Today `+layout.svelte` loads DM Sans and JetBrains Mono from fonts.googleapis.com. That goes away.
-5. **The rules in `web/DESIGN-SYSTEM.md` keep applying** (the file gets rewritten): tokens only, pages full width, every table column sortable, no hard-coded text colours.
-6. **Every PR must pass these locally before opening, and CI before merge:** `cd web && npx vitest run`, `npx svelte-check` (0 errors), the colour gate (§5), the visual harness for the PR's routes (§5), and `cd daemon && python -m pytest` (unchanged).
-7. **Gates per PR:**
-   - `/ponytail-review`
-   - `/deep-review` (each PR is ≥ 200 lines)
-   - `gh pr checks` before merge
-   - a squash merge
-   - Linear issue and tracking doc updated
+**New (2026-11-03):**
+- **All at once.** The whole redesign is built on one branch. The owner deploys it once to the G11 and checks it, and it merges only after that check.
+- **Home without device cards.** Home must look clean. The per-device card grid (`DeviceGrid`, its filter bar and the new-device banner) leaves Home. Owner: "They can be found under the devices page." See §5.6.
 
-## 3. Branches
+**Still in force from the earlier plan:**
+- **Background:** pure black.
+- **Themes:** Ember is the default; Graphite and Spectrum are available in a Settings picker.
+- **Sidebar groups:** Overview, Investigate, Devices and System.
+- **Replaced code:** replaced CSS and markup are deleted, with git as the record. Replaced logic follows OLD CODE START/END.
+- **Fonts and charts:** fonts are bundled, and charts are hand-drawn SVG.
+- **Density:** tuned for 1920 px, and it must also work at 1440 and 390.
 
-**Each phase gets a fresh branch from an updated `main`**, created only after the previous phase's PR has merged:
+## 4. Hard constraints
 
-| Phase | Branch |
+1. **Every number comes from data the app already fetches.**
+   - **No daemon changes and no new endpoints.** A shell or page may call an existing `web/src/lib/api/*` client it did not call before. Each such call is listed in the PR body.
+   - **Numbers agree across screens** (system README). Same code is not enough, because independent requests can return different totals. So one **alert snapshot store** (`web/src/lib/stores/alertSnapshot.ts`) owns the global count:
+     - **Contents:** `getAlertCount` results keyed by an absolute window. The window is built once per refresh generation as `{from, to}` ISO strings and rounded to the minute.
+     - **Callers:** the sidebar badge ("last 24 hours", stated in its `aria-label`), Home's Alerts KPI when Home's range is 24 h, and the Alerts page's severity summary at its default 24 h range. They all read the same snapshot object for the same window.
+     - **Deduplication:** concurrent callers share one in-flight request.
+     - **Ordering:** a generation counter drops out-of-order responses.
+     - **Other windows:** a different range on Home or Alerts gets its own snapshot entry, labelled with that range.
+     - **Filtered totals stay separate.** The Alerts table's filtered total and pagination keep their own request and their own label ("N matching"). They are never forced to equal the global count.
+     - **Tests:** two callers get one request; a stale response is dropped; a refresh moves every caller to the new generation; a filter change leaves the global count alone.
+   - **Missing data:**
+     - If a system element needs data that doesn't exist, it is left out and listed in the PR body as a follow-up. It is never faked.
+     - **KPI comparisons.** Where the KPI's endpoint takes `from/to`, the "vs previous 24 h" delta comes from the same endpoint over the previous window. Otherwise the card shows its window as a source note, which KpiCard's README allows.
+     - **Device-type icons.** Mapped from the existing `category` field. Anything unknown gets the generic `devices` icon.
+     - **Alert text.** The plain-language alert title, explanation and "What to do" come from fields the alert APIs already return: the enrichment description and recommendation. Where a field is absent, the row shows the category label over the raw signature, and the What-to-do box says "No specific advice for this alert yet." It never invents advice.
+     - **Severity buckets.** One pure adapter, `severityBuckets()` in `web/src/lib/utils/severity.ts`, feeds every severity summary and gauge.
+       - **Buckets:** taken only from severity fields the API returns. `getAlertCount` gives `high`, `medium` and `low`, and `info = max(0, total − high − medium − low)`. The buckets are mutually exclusive and sum to `total`.
+       - **Critical:** shown only where an API returns a critical severity field. It is never derived from a category: today's `criticalCount` comes from the `malware-c2` category (`alerts/+page.svelte:157`) and overlaps High.
+       - **Category counts stay categories.** "Malware / C2" remains a category figure on its own card.
+       - **Zero total:** the gauge draws 36 neutral `surface-3` ticks and the centre reads 0.
+       - **Failed request:** the card shows the error state, not a gauge.
+       - **Tests:** the partition sums to total, info is clamped at 0, the zero case, and the failure case.
+     - **Series aggregation.** One pure adapter, `topSeries(items, 6)` in `web/src/lib/utils/series.ts`. It applies only where colour must identify a series: donuts and stack bars.
+       - **Bar lists are never aggregated.** Every item keeps its own row, link and filter action, as Home's traffic categories do today (`+page.svelte:946`). Labels identify the bars, which use one colour (`data-1`) unless the page passes six or fewer coloured items.
+       - **Up to six items:** shown as-is, coloured `data-1..6` in order.
+       - **More than six:** the top five keep their identity (key, label and callbacks) and take `data-1..5`.
+       - **The remainder** gets the reserved key `__rest__`, the label "Everything else" and `data-6`. It can't be confused with a real `other` category.
+       - **The legend** lists the remainder's constituent items in an expandable `.kv` list, each with its original link or filter action.
+       - **Totals** are preserved, and ties break by label.
+       - **Tests:**
+         - more than six items, ties and zeros
+         - a real `other` category alongside the synthetic remainder
+         - the original keys reaching the callbacks, including from inside the expanded remainder
+2. **Behaviour is preserved.**
+   - Every request, action, filter, sort, drawer, form, route and redirect stays.
+   - **Dropped on purpose**, because the system has no such element. Each is listed in the PR body:
+     - the sidebar collapse toggle
+     - map zoom and pan
+     - the Home device grid and its filter bar, which move to Devices (§3)
+   - **Kept** even though the system's top bar lacks it: the daemon liveness status ("Can't reach NetTap"). It becomes a `sev-high` chip in the top bar, shown only while offline.
+   - Tests that assert behaviour stay green unchanged.
+   - Tests that asserted old markup, class names or old strings are updated, and each one is listed in the PR body.
+3. **Copy follows the system's Voice rules:**
+   - sentence case, UK spelling, the error and empty patterns, the `·` joiner, and card subtitles that state unit and window
+   - no emoji and no exclamation marks
+   - Daemon-supplied text (signatures, descriptions) is shown as received.
+4. **No new runtime dependencies, and nothing loaded from a CDN.**
+   - The Google Fonts `@import` at the top of `bundle.css` is dropped, since the fonts are already bundled by PR #165.
+   - Leaflet is removed, because its only consumer, `GeoMap`, is replaced (§5.3).
+5. **Accessibility follows the system:**
+   - every interactive element gets the focus outline
+   - `aria-sort` on sortable headers
+   - `aria-pressed` on pills
+   - `role="img"` and a headline `aria-label` on every chart
+   - an `aria-label` on every icon button
+   - severity always shown with colour, shape and word
+   - motion stops under reduced motion, and the live feed starts paused there
+   - text at 4.5:1 or better on every surface in every theme
+6. **Checks.**
+   - **Before opening the PR:**
+     - `cd web && npx vitest run`
+     - `npx svelte-check` (0 errors)
+     - `npm run check:colors`
+     - `npm run check:e2e`, which is a type check only
+     - `npm run test:visual`
+     - **`npx playwright test`**: the existing behavioural browser suite in `web/e2e/*.spec.ts` (login, dashboard, setup wizard), plus the new flows in §7. It is executed, not just type-checked.
+       - **Config fix:** `playwright.config.ts` gets `testMatch: '*.spec.ts'` and `testIgnore: ['visual/**', '**/*.test.ts']`. `e2e/fixtures.test.ts` is a Vitest file and must not be collected. Collection is verified with `npx playwright test --list`.
+       - **Isolation:** the suite is split into two projects, each with its own server instance and its own `mkdtemp` data directory, created when the config loads, following the visual harness:
+         - **`auth`**: an account is created in setup, then the login, logout and dashboard specs run.
+         - **`firstrun`**: the setup-wizard spec runs. Its directory reset touches only its own directory.
+         - Neither can delete or create the other's users.
+     - `cd daemon && python -m pytest` (failure set unchanged from the baseline)
+   - **Before merging:** CI.
+
+## 5. Architecture
+
+### 5.1 Styles
+
+| File | Content |
 |---|---|
-| PR 1 | `feature/ui-redesign-foundation` (the current `feature/ui-redesign` is renamed) |
-| PR 2 | `feature/ui-redesign-shell` |
-| PR 3 | `feature/ui-redesign-components` |
-| PR 4a–4g | `feature/ui-redesign-<batch>` |
+| `web/src/lib/styles/tokens.css` | The system's `tokens.css` verbatim. Its selectors are `:root, [data-theme="ember"]`, `[data-theme="graphite"]` and `[data-theme="spectrum"]`. The file also holds the `@font-face` rules. It is the only file allowed colour literals, and the colour gate exempts it by path (this replaces the `TOKENS START/END` marker). |
+| `web/src/lib/styles/system.css` | `components/bundle.css` verbatim, minus the font `@import`. All system classes are global: `.app`, `.shell`, `.sidebar`, `.card`, `.grid`, `.c-*`, `.pills`, `.btn`, `.sev`, `table`, and so on. |
+| `web/src/lib/styles/forms.css` | **The one extension.** The system has no inputs, selects, checkboxes, toggles, textareas or form layout, but Settings, Setup, Tools and the lookups need them. They are built only from tokens and system shapes: a 36 px `surface-1` field, a `line` border that brightens to `line-strong` on focus, `r-pill` single-line fields, `r-md` textareas, and labels in `type-label`. Tabs reuse Pills. It is documented in `DESIGN-SYSTEM.md` as an extension. |
+| `web/src/lib/styles/global.css` | **Rewritten in step A**, not just trimmed. Every legacy component class goes: they collide with system class names (`.card`, `.btn`, `.grid`, `.pill`, `.pills`, `.mono`, `.sr-only`, `.badge-*`, `.data-table`, `.stat-card`, `.page-header`, …). The legacy base and reset rules go too: the root `font-size: 14px` at `global.css:282` (the system's rem scale assumes the browser's 16 px root), and the legacy `a`, heading, scrollbar and selection rules. What stays: the legacy token aliases (`--bg-tertiary`, `--cyan`, `--space-*`, …), only until the last page is migrated and deleted in step C, and app-wide rules the system lacks (scrollbar colour from tokens, `::selection`). |
+| `web/src/lib/styles/a11y.css` | **Documented accessibility overrides.** The system wins on looks, but not where its CSS removes a required behaviour. Each override names the bundle line it corrects. The entries:<br>1. `bundle.css:148` sets `outline: 0` on the search input, so the system's focus rule moves to `.search:focus-within` (2 px `focus` outline).<br>2. `bundle.css:52` styles the selected pill only for `aria-pressed` or `aria-current`, so `.pill[role="tab"][aria-selected="true"]` gets the same `pill-active-bg` / `on-light` rule, and the Pills tabs mode shows its selected tab.<br>3. `DeviceList` select mode: `.dev[aria-pressed="true"]` gets the selected-row style (`surface-2` fill, `line-strong` ring, the AlertRow `aria-current` look).<br>Harness tests check the computed selected styles in all three themes. |
 
-Each branch name is recorded in the tracking doc, and the G11 deploy script points at the open PR's branch. No branch is reused after its squash merge.
+**Import order** (once, in `+layout.svelte`): `tokens.css` → `system.css` → `forms.css` → `a11y.css` → `global.css`. Step A checks the computed styles of representative elements against the system previews: body font-size 14 px from `--text-base` at a 16 px root, `h1.page-title` at 28 px Sora 500, `.card` padding 20 px, and table header 12 px.
 
-## 4. Strategy: alias first, then rebuild
+**Theme attribute.** It is renamed from `data-variant` to `data-theme` to match the system. This touches:
+- the bootstrap script in `app.html`
+- `stores/theme.ts` and its tests
+- `ThemePicker`: its swatches put `data-theme="…"` on the swatch element, which works because the system's selectors are not `:root`-only. `data-theme-preview` is dropped.
 
-The app has 42k lines of route markup across ~45 pages and 48 components. They use the existing token names heavily (`--bg-tertiary` 241×, `--text-muted` 405×, `--accent` 246×, `--cyan` 115× and so on).
+The storage key `nettap-theme`, the validation and the write order from PR #165 stay. Ember remains the fallback.
 
-- **PR 1 keeps every existing token name and remaps it onto the new palette.** It also moves every use whose meaning a remap would get wrong (severity, info, canvas colours) onto a semantic token. Every page turns black/Ember at once.
-- **PRs 2–4 then change structure:** the shell, shared components, then page layouts in batches.
+**Data colours.**
+- The system defines `data-1..6`. PR #165's `data-7/8` are dropped.
+- Charts with more than six series go through `topSeries()` (§4.1).
+- **`CATEGORY_COLORS`** stays a static map, used only where a page shows a fixed, small category set. Its entries become `data-1..6`, and any category past six uses `text-3` together with its label.
 
-`main` stays deployable after every PR.
+### 5.2 Icons
 
-## 5. Verification (applies to every PR)
+- **`web/src/lib/components/ui/Icon.svelte`.** Its `name` prop takes one of the 48 asset names. It renders `<svg class="ic" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">` with the path data copied from `nettap-design-system/assets/Icons/<name>.svg`.
+- **Drift test.** A unit test reads the asset folder and fails if the icon map and the folder differ in names or path data.
+- **What it replaces:** the layout's inline `{#if item.icon === …}` chain, and every emoji or ad-hoc icon in routes and components.
 
-### 5.1 Colour gate (`web/scripts/check-colors.mjs`, added in PR 1, run in the CI "Lint Web" job)
+### 5.3 Components (`web/src/lib/components/ui/`)
 
-**It scans** `web/src/**/*.{svelte,ts,css}`. It skips:
-- tests
-- the token blocks in `global.css`
-- comments (commented-out OLD CODE is skipped as a comment; live code between OLD CODE markers is still checked)
+- **Markup:** each component emits the system's markup and classes, with no scoped styles beyond layout glue the system lacks.
+- **Tests:** each gets a vitest + Testing Library test covering rendering, its ARIA attributes and its states. Plain buttons, links, chips and tags stay HTML with system classes (`.btn`, `.btn.primary`, `.icon-btn`, `.link`, `.chip`, `.tag`); there is no wrapper for those.
 
-**It fails on** `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(`/`rgba(`, `hsl(`/`hsla(`, and the named colours `white` and `black` used as colour values.
+| System component | Svelte | Notes |
+|---|---|---|
+| Card | `Card.svelte` | Props: `title`, `sub`, `hero`, `col`. Snippets for the head-right area, the body and the foot. |
+| CardStates | `CardState.svelte` | **Loading:** skeleton, `aria-busy` and `role="status"`. **Empty:** icon tile, heading, sentence, one action. **Error:** `role="alert"` and a "Try again" button wired to a retry callback. Minimum height 230 px. |
+| KpiCard | `KpiCard.svelte` | Label, icon, value and unit, an optional delta chip (with a "bad when up" flag), a sub line, and a foot snippet (Sparkline or StackBar). |
+| Pills | `Pills.svelte` | Options, value and `onchange`, inside `role="group"` with an `aria-label`; the selected option has `aria-pressed`. There are two other modes. **`mode="tabs"`** (in-page sections such as Settings) follows the WAI-ARIA tabs pattern: `role="tablist"`, `tab` and `tabpanel`, `aria-selected`, `aria-controls` and `aria-labelledby`, a roving tabindex and arrow, Home and End keys. **`mode="nav"`** links between routes with `aria-current="page"`. |
+| SeverityPill | `SeverityPill.svelte` | Level → shape SVG + word. `.sev-count` tile variant. |
+| Chip | `LiveChip.svelte` only | Live / Paused with the dot. Other chips are HTML. |
+| SearchField | `SearchField.svelte` | Top-bar (40 px) and toolbar (36 px) sizes, with a visually hidden label and a stable id. |
+| DataTable | `DataTable.svelte` | Columns (label, numeric flag, sort key, cell snippet), rows, initial sort and `aria-label`. Sorting reuses `utils/table-sort.svelte.ts`, which keeps the rule that every column sorts. Optional `.tbl-foot` pager with the light current page. Optional `onrowactivate` for drawers. A row that opens something has a real `<button>` in its first cell, carrying the row's accessible name, so Tab, Enter and Space work.
+- **Forwarding:** a mouse click elsewhere on the row is forwarded to that button **only** when every one of these holds:
+  - the event's `defaultPrevented` is false
+  - the target is not inside the activation button itself, which already fires
+  - the target is not inside a nested interactive element (`a`, `button`, `input`, `select`, `textarea`, `label`, `[role=button]`, `[role=link]`, `[tabindex]`)
+  - the current text selection is empty
+- So Suppress and False-positive buttons (`alerts/+page.svelte:1141`), links and context menus in cells keep working on their own.
+- **Tests:**
+  - each nested control fires only its own action
+  - a row click activates exactly once
+  - keyboard activation of the button activates exactly once
+  - selecting text in a cell does not activate Wrapped in `.tbl-wrap`. Server-sorted tables (Connections, Alerts) pass a sort-change callback and keep their current server-side behaviour. |
+| BarList | `BarList.svelte`, `Meter.svelte` | `.bars` scaled to the largest value; `.meter` with `role="meter"`; `.kv` legend list. |
+| DeviceList | `DeviceList.svelte`, `DeviceTile.svelte` | Two row modes. **`mode="link"`** (default) links each row to the device page. **`mode="select"`** makes each row a `<button aria-pressed>` that calls `onselect(item)`. It is used by Live's top talkers, which filter the feed today through `setDeviceFilter` (`live/+page.svelte:310`) instead of navigating. Rows show a mini bar, or a sparkline variant for Live. The tile maps the device category to an icon. |
+| StatStrip | `StatStrip.svelte`, `Pipeline.svelte` | `.stats`; `.pipe`, with a healthy or failing state per stage (a failing stage shows a `sev-high` warn icon in place of the `ok` check). |
+| AlertRow | `AlertRow.svelte`, `AlertGroup.svelte` | A six-column button with `aria-current`, group head and plain sentence, and `.hide-sm` columns. |
+| AlertDrawer | `AlertDrawer.svelte` | **Fixed order:** pill and close, title and wrapped signature, explanation, `.todo`, `.facts`, actions. Escape closes it. **Migration source:** the drawer that is rendered today, `DetailDrawer` + `drawer/content/AlertDrawerContent` (`alerts/+page.svelte:1183`) and that page's action handlers. `AlertDetailPanel` is already replaced there and is not the source. **Preservation checklist**, written into the PR body and covered by interaction tests (each tab or section, every copy button, every action and its error state, every destination link):<br>• Related Events<br>• Raw JSON<br>• copy buttons<br>• acknowledge / suppress / false-positive<br>• the device, connections, PCAP and lookup links<br>The system's fixed order covers the summary. The extra sections sit below the actions, as collapsible `.eyebrow` sections. |
+| Charts | `AreaChart`, `Donut`, `SeverityGauge`, `Ring`, `Sparkline`, `StackBar`, `Radar`, `DotMap` (all in `ui/charts/`) | Rules in §5.4. |
+| Sidebar, top bar | `Sidebar.svelte`, `TopBar.svelte` | §5.5. |
 
-- **Script palettes** (for example `SERVICE_COLORS` in `routes/+page.svelte:384`) must use `var(--data-*)` strings, or `resolveToken()` for canvas.
-- **Allowlist:** a checked-in allowlist holds only the files scheduled for a later PR (`charts/NetworkMap.svelte` and `charts/SankeyDiagram.svelte`, both PR 3). It must be empty after PR 3.
+**Existing components replaced.** Markup and CSS are deleted; logic is moved, and replaced logic keeps OLD CODE markers:
+- **Charts:** `TimeSeriesChart`, `DualSeriesChart`, `DonutChart`, `ProtocolDonut`, `TopTalkersChart`, `HorizontalBarList`, `TopConsumers`
+- **Live:** `LiveStatsRibbon`, `LiveConnectionTable`
+- **Map:** `GeoMap` (Leaflet), replaced by `DotMap`
+- **Other:** `DashboardFilters`, `DeviceGrid`, `Breadcrumb` (replaced by the system's `.back` link)
 
-### 5.2 Visual harness (`web/e2e/visual/`, added in PR 1)
+Consumers move to the new components.
 
-It runs the production build against a fixture daemon, using its own config (`web/playwright.visual.config.ts`).
+**Restyled in place to the chart rules** (the system has no spec for these): `DetailDrawer` and `drawer/*` (they become cards in the AlertDrawer style), `ConnectionDrawer`, `Collapsible`, `NotificationBell` (an `icon-btn` with `badge-dot`), `SankeyDiagram`, `NetworkMap`, `SessionTimeline`, `setup/*`, `golive/*`, `tshark/*`, `ContextMenu`, `IPAddress`, `NewDeviceBanner`, `BridgeStatus`, `CaptureHealthPanel`, `StorageTierPanel`.
 
-**Fixtures:**
-- Typed TS modules in `web/e2e/visual/fixtures/*.ts`. Each response is declared `satisfies` the matching interface from `web/src/lib/api/*.ts`.
-- Synthetic data only, never data captured from the G11, because the repo is public.
+### 5.4 Chart rules (from the system README and the Charts README)
 
-**Type check:**
-- `web/e2e/tsconfig.json` has `"extends": "../tsconfig.json"` and `"include": ["visual/**/*.ts", "../playwright.visual.config.ts"]`. Includes resolve relative to that file. The scope is the new harness only, so existing E2E specs aren't pulled into a new check.
-- Relative imports carry the `.ts` extension, which Node's type stripping needs. The inherited `rewriteRelativeImportExtensions` lets `tsc` accept them.
-- A new `npm run check:e2e` (`svelte-kit sync && tsc -p e2e/tsconfig.json --noEmit`) runs locally and in the CI "Lint Web" job. PR 1 first confirms it reports zero inputs as an error, not a pass, and that a deliberately wrong fixture fails it.
-- Fixture drift fails that command. It does not rely on `svelte-check` finding the files.
+- **Area.**
+  - 2 px lines with round caps.
+  - **Curve:** monotone cubic (Fritsch–Carlson), so it never overshoots below zero or above neighbouring peaks.
+  - **Fill:** the series colour, from 32 % at the top to 0 at the baseline.
+  - **Grid:** gridlines in `line`; every one above the baseline is dashed `2 5`.
+  - **Axis:** labels in `type-axis` and `text-3`, on round steps of 1, 2, 2.5 or 5 × 10ⁿ.
+  - **Headline point:** marked with a `band` column, dots ringed in `bg`, and a pill tooltip.
+  - **Hover:** the tooltip follows the pointer, with a dashed `line-strong` guide.
+  - **Width:** redraws to its container's width (`ResizeObserver`).
+- **Donut.**
+  - 12 px strokes with gaps between segments, and the total in `type-stat` at the centre.
+  - The geometry rules and the regression matrix are carried over from the old plan (`c8267af:PLAN.md` §6, PR 3):
+    - each gap is bounded by its own share
+    - butt caps on short segments
+    - zero values not drawn but keeping their original index
+    - a single segment draws the full ring
+- **Severity gauge:**
+  - **Input:** the buckets from `severityBuckets()` (§4.1).
+  - **Ticks:** 36 over 270°, allocated by share with largest-remainder rounding, so they sum to 36. Any non-zero bucket gets at least one tick.
+  - **Zero total:** 36 neutral ticks.
+- **Ring:** one accent arc over a `surface-3` track.
+- **Sparkline:** an accent line, with an optional band window and ring dots at both ends.
+- **StackBar:** rounded segments with a 6 px minimum and a legend.
+- **Radar:** used only where a page already has scored factors.
+- **DotMap** (contract):
+  - **Land dots:** a dot grid of `map-dot`. The dots are computed once on mount from the already-bundled `static/geo/countries-110m.geojson` (point-in-polygon on a fixed lat/lon grid, equirectangular projection).
+  - **Destinations:** a hotspot per destination country, from the data Live already has. Its size scales with that country's share.
+  - **Home ring and arcs:**
+    - **Shown only when a real home location is supplied.** The prop is `home: {lat, lng} | null`.
+    - **Today nothing supplies one.** Live's `DEFAULT_HOME` (`live/+page.svelte:33`) is a hard-coded centre of the continental US, so it is deleted (OLD CODE) and Live passes `null`. The map then shows hotspots only, with no "Your network" marker and no arcs.
+    - **Follow-up:** auto-detecting the home location is listed in the PR body, not built.
+  - **Country selection is preserved:**
+    - **Mouse:** clicking a hotspot calls the same `onclick(country)` toggle that `GeoMap.svelte:274` calls today.
+    - **Keyboard:** each hotspot is a focusable SVG element (`role="button"`, `tabindex="0"`, an `aria-label` with the country and connection count, `aria-pressed` for the selected state) and activates on Enter and Space.
+    - **Selected state:** an `accent-strong` ring.
+    - **Tests** cover mouse, keyboard and toggling.
+  - **Reduced motion:** the arcs, when there are any, are static. The `arc-scheduler` split from PR #165 is reused.
+  - **Accessibility:** it is SVG, so `aria-label` works.
+  - **Leaflet:** the package is removed.
+- **Every chart:** `role="img"` and an `aria-label` that states the headline, for example "Busiest hour 21:00, with 4.7 GB downloaded".
+- **Chart maths** lives in `ui/charts/geometry.ts`, as pure functions with unit tests.
 
-**Start-up order.** Playwright starts `webServer` entries before `globalSetup` (`node_modules/playwright/lib/runner/tasks.js:104–108`, Playwright 1.58.2), so nothing the servers need may come from `globalSetup`:
-- The temp dirs are created when the config module loads (`mkdtempSync` in `playwright.visual.config.ts`) and passed to each server through `env`. `globalTeardown` removes them.
-- The fixture daemon is the first `webServer` entry, so the web instances never start against a missing daemon.
+### 5.5 Shell (`+layout.svelte`)
 
-**Fixture daemon:**
-- A Node `http` server in `web/e2e/visual/fixture-daemon.ts`, run as `node --experimental-strip-types e2e/visual/fixture-daemon.ts` on port 3199 (Node 22, as used locally and in CI). Its `webServer.url` is `/__fixture/health`. It serves the typed fixtures by daemon path.
-- Type stripping only erases types, so the daemon and fixtures use erasable syntax only and `import type` for the API interfaces. `check:e2e` type-checks the same files.
-- Its mode is set through a control endpoint (`POST /__fixture/mode`) before each test. The modes:
-  - `populated`
-  - `empty`
-  - `error` (503)
-  - `slow` (delayed, so loading states can be captured)
-  - `stale`, where a page has a stale-data state
-- Because the mode is shared daemon state, the visual config runs serially (`workers: 1`, `fullyParallel: false`). The existing `playwright.config.ts` is unchanged.
+**Structure:** a skip link, then `.app` (the container-query root) holding `.shell` (`nav.sidebar` and `main.main#main`). There is no shell on `/login`, `/setup` or `/go-live`, as today.
 
-**Two isolated web-server instances.** Both are entries in the visual config's `webServer` array, and both point at the fixture daemon through `DAEMON_URL`, with `DAEMON_TOKEN_FILE` set to a temp file. `auth.ts` reads `DATA_DIR` once at module load, so each state needs its own process:
+**Sidebar (`Sidebar.svelte`):**
+- **Brand:** the SVG mark (accent square, `on-accent` tap line and dot) and "NetTap" in Sora 600.
+- **Mode chip:** "<Mode> mode · <interface>".
+  - **Mode and interface** come from `getCaptureMode`, which the shell already calls.
+  - **Health** comes from `getCaptureHealth` (`status`: `normal | degraded | down | not_configured`). This is an existing client the shell didn't call before, and it is listed in the PR body.
 
-| Instance | Port | Data dirs | Used for |
-|---|---|---|---|
-| `app` | 3101 | its own `DATA_DIR` and `NETTAP_DATA_DIR` (notifications live in `NETTAP_DATA_DIR`) | Every page except the first-run ones. |
-| `firstrun` | 3102 | its own `DATA_DIR` and `NETTAP_DATA_DIR`, never written to by the harness | `/setup` and `/go-live` |
+  | Health | Dot | Chip text |
+  |---|---|---|
+  | `normal` | `ok`, pulsing | "<Mode> mode · <iface>" |
+  | `degraded` | `sev-medium`, static | "<Mode> mode · degraded" |
+  | `down` | `sev-high`, static | "Capture stopped" |
+  | `not_configured` | `text-3`, static | "Capture not set up" |
+  | request failed or unknown value | `text-3`, static | "Capture status unknown" |
 
-**Getting a real session on `app`.** First run means an empty user store (`isFirstRun()` in `hooks.server.ts:53`), so `app` starts in first run too. A Playwright `auth-setup` project runs first; every other `app` project depends on it through `dependencies`. It:
-1. submits the real `createAdmin` action on `/setup` (`setup/+page.server.ts:25`) with a synthetic username and password, and checks it succeeded. The action also signs that context in.
-2. throws that context away and opens a fresh one with no cookies
-3. in the fresh context, checks that `/setup` redirects to `/login` (setup complete, not signed in)
-4. logs in through the `/login` form, checks it lands on `/`, and saves `storageState`
+  - Each call fails independently: a failed mode call still allows the health to show, and the other way round.
+  - Tests cover every row.
+- **Nav groups** with system icons and the same 17 hrefs:
+  - **Overview:** Home, Live Monitor, Bandwidth
+  - **Investigate:** Alerts, Threats, Connections, Log Explorer, DNS Analytics, Certificates, PCAP Search
+  - **Devices:** Devices, IoT & LAN, Changelog
+  - **System:** Infrastructure, System, Tools, Settings
+- **Current link:** `aria-current="page"`, including on nested routes.
+- **Alert count:** a `.count` badge on Alerts, from the shared alert-count helper (§4.1).
+- **Foot:**
+  - **Storage meter:** from `getStorageStatus`. It shows "N% used", then "X GB free · R-day retention", where the retention shown is the one that endpoint reports.
+  - **User:** the signed-in username.
+    - **Source:** a new root `web/src/routes/+layout.server.ts` that returns only `{ username: locals.user?.username ?? null }`. It never dereferences a missing user and never redirects. Authorisation stays entirely in `hooks.server.ts`.
+    - **Public and first-run routes** keep working: Login, public tools and lookups, Setup and Go Live.
+    - **No username:** the user row is hidden, and the sign-out button still shows for an authenticated shell.
+    - **Tests:** the load with an authenticated user, an anonymous user and a first-run state. It must never throw and must never return anything beyond the username.
+    - This is the only server change.
+  - **Sign out:** a ghost sign-out icon button inside the existing POST `/api/auth/logout` form.
 
-The harness adapts to the app. App behaviour is not changed for it.
+**Top bar (`TopBar.svelte`):**
+- **Search:** a `SearchField` wired to the existing `search.ts` client (`executeSearch`, `getSearchSuggestions`), reusing `SearchBar.svelte`'s logic, which has no consumer today.
+  - **Shortcut:** ⌘K / Ctrl-K focuses it.
+  - **ARIA:** the WAI-ARIA 1.2 combobox pattern: `role="combobox"`, `aria-expanded`, `aria-controls` pointing at a `role="listbox"`, and `aria-activedescendant`.
+  - **Keys:** Down and Up move through results, Enter opens one, and Escape closes the list and then clears the field.
+  - **States:** results, no results ("No matches for "x"") and error, each announced in a polite live region.
+  - **Tests:** keyboard flow and states.
+- **Page refresh contract** (`web/src/lib/stores/pageRefresh.ts`). Most pages fetch in `onMount` or effects, not in load functions, so `invalidateAll()` would not refresh them.
+  - **Registration:** a page calls `registerPageRefresh(fetchFn)` from its setup. The returned handle is cleared automatically on destroy.
+  - **Result contract.** "Resolved without throwing" is not success: Home uses `Promise.allSettled` and fires requests it doesn't await (`+page.svelte:186–282`), and Live's loader returns early while paused (`live/+page.svelte:137`). So `fetchFn` must return `'ok' | 'partial' | 'failed' | 'skipped'`, after awaiting **every** request that feeds the page's visible data.
+    - Each migrated page's loader is changed to await its requests and compute that result from what actually succeeded. This is a logic change, made with OLD CODE markers.
+    - **`ok`** advances `updatedAt`.
+    - **`partial`** advances nothing and shows "Some data failed to refresh" beside the timestamp.
+    - **`failed`** advances nothing and the page shows its error state.
+    - **`skipped`** (paused, hidden tab) changes nothing.
+  - **Request generations.** Today a slow 24 h request can land after a newer 1 h one and overwrite it (for example Connections, whose loads write state at `connections/+page.svelte:357` and `:396`, and whose range change starts a new load at `:427`). Every migrated loader therefore follows one contract, through a tiny helper `createLoadGuard()` in `pageRefresh.ts`:
+    1. **Snapshot first.** At the start of each load, `const g = guard.begin()` increments the generation, and the loader copies the immutable query parameters it needs (range, filters, page and sort) into locals before the first `await`.
+    2. **Check before writing.** Before **every** state write after an `await`, the loader checks `guard.current(g)`. A stale generation writes nothing and returns `'skipped'`. The check sits inside the loader, at each write, not only on the return value.
+    3. **Any new load invalidates older ones.** A query change starts a new load, which is a new `begin()`.
+    4. **Unregistering invalidates too.** `registerPageRefresh`'s cleanup (on destroy or navigation) calls `guard.invalidate()`, so a pending load can never update page state, `updatedAt` or the refresh status after the page has gone.
+    5. **The wrapper honours the guard.** It updates `updatedAt` and status only while the guard and the registration are both still current.
+  - **Tests,** with deferred promises against the real loaders of Home, Connections, Alerts and Live:
+    - responses completing in reverse order: only the newest data is shown
+    - a filter change during a refresh: the older result is dropped and the controls and data agree
+    - navigation before completion: no writes and no `updatedAt` change after destroy
+  - **Top-bar Refresh** calls the registered function. Filters, sort and pagination are untouched, because the page's own fetch function reads its current state.
+  - **"Updated N s ago"** shows that page's `updatedAt`. It is never the shell's poll time.
+  - **Pages without a registration** (forms, tools) hide both the button and the timestamp.
+  - **Existing page-level auto-refresh** (Home's 30 s Auto toggle, Live's 3 s loop) goes through the same wrapper, so the timestamp is honest.
+  - **Tests:**
+    - **Store:** Refresh calls the page's function once and keeps the current filters. Each result value moves `updatedAt` only as specified. Navigating away unregisters the function.
+    - **Integration, against the real page loaders** of Home, Live, Connections and Alerts with mocked API clients:
+      - all requests succeed → `ok`
+      - one request fails → `partial`
+      - all fail → `failed`
+      - a request still pending → the loader has not returned yet
+      - Live paused → `skipped`
+- **Notifications:** `NotificationBell`.
+- **Daemon status:** the existing liveness check (`/api/system/ping` every 30 s) stays. While it is offline, a `sev-high` chip reads "Can't reach NetTap".
 
-No users file is hand-written, so the harness can't drift from the real auth format.
+**Polling.**
+- The existing 30 s ping loop also refreshes the capture health, the alert snapshot (§4.1) and storage. The mode is fetched once, as today.
+- Each piece fails independently: a failed call hides that element's value and shows "—"; it never throws.
+- Polling pauses while the tab is hidden.
 
-**Each spec:**
-- Navigates to the route.
-- Fails unless `page.url()` is that route and the page's `h1` (or a route-specific marker) is visible. A redirect to Login or Setup is never accepted as coverage.
-- At 1920, 1440 and 390, in all three variants:
-  - asserts `getComputedStyle(body).backgroundColor === 'rgb(0, 0, 0)'`
-  - asserts no horizontal scroll and no console errors
-  - saves a screenshot
-- Also runs once with `reducedMotion: 'reduce'`.
+**Below the 760 px container width:**
+- `.m-top` shows the brand, the page title and a menu button (`aria-expanded`, `aria-controls`).
+- The sidebar opens as a drawer over the scrim.
+- **Focus:** opening moves focus to the first link, and Tab stays inside the drawer.
+- **Closing:** Escape, the scrim, choosing a link, or growing past 760 px all close it. Focus returns to the button.
 
-**Coverage grows by PR:**
-- **PR 1** (global tokens touch every page): every top-level route and every detail route with a fixture id, in `empty` and `error` mode. Also `/login` (logged out), and `/setup` and `/go-live` (first-run data dir).
-- **PR 1, populated fixtures:** Home, Settings and Live Monitor. Live is included because PR 1 changes `GeoMap`'s drawing logic; the spec asserts that arcs are drawn, both normally and under reduced motion.
-- **Each later PR** adds populated, slow and (where it applies) stale fixtures for the routes it restructures.
-- **PR 3** covers every consumer of each restyled shared component.
+### 5.6 Page recipe and mapping
 
-### 5.3 Real data on the G11
+**Recipe (system Layout section), top to bottom:**
+1. **`.page-head`:** the title (`type-page-title`), a one-line sub, and head actions, including time-range Pills wherever the page already has a time range.
+2. **KPI row:** at most four `KpiCard`s in `c-3`, or three in `c-4`.
+3. **Hero chart and side card:** one hero chart card in `c-8` (or `c-7`) beside a narrower card in `c-4` (or `c-5`).
+4. **Detail cards and tables.**
 
-- `scripts/remote/deploy-ui-redesign.sh` follows the CLAUDE.md template, rebuilds only `nettap-web`, and has `BRANCH` set to the PR's branch.
-- The owner runs it. I check the PR's pages in Chrome at the device URL in all three variants before merge.
-- After merge the script goes back to `BRANCH="main"`.
+**Per card:**
+- Every card has a title and a sub that states the unit and the window.
+- Every data card shows `CardState` for loading, empty and error.
+- At most two hero cards per screen.
 
-### 5.4 Contrast and motion
-
-- **Contrast:** text tokens are AA or better on every surface, checked per variant. `--text-3` is ≥ 4.5:1 on `--surface-2`.
-- **Motion:** CSS animations are disabled under reduced motion. JS animation (`GeoMap`) keeps drawing and animating separate: under reduced motion the static frame is still drawn, and only the moving parts stop (see PR 1).
-
-## 6. Phases
-
-### PR 1: Foundation (tokens, severity audit, fonts, theme picker, colour gate, harness)
-
-**New token layer in `web/src/lib/styles/global.css`, matching the mockup:**
-- surfaces: `--bg`, `--surface-1..3`, `--line`, `--line-strong`
-- text: `--text-1..3`
-- accents: `--accent`, `--accent-strong`, `--on-accent`
-- data: `--data-1..8` (8 per variant, so 8-series charts don't repeat colours)
-- severity: `--sev-critical|high|medium|low|info` (the same in every variant)
-- status: `--ok`
-- other: `--font-display`, `--r-*`, `--scrim`
-- blocks: `:root` holds Ember; `:root[data-variant="graphite"]` and `:root[data-variant="spectrum"]` override it.
-
-**Complete legacy mapping.** Every token currently in `global.css` gets a definition; none keeps its old literal:
-
-| Legacy | New |
+| Route(s) | Target layout |
 |---|---|
-| `--bg-void`, `--bg-primary` | `--bg` |
-| `--bg-secondary`, `--bg-input` | `--surface-1` |
-| `--bg-tertiary` | `--surface-2` |
-| `--bg-elevated` | `--surface-3` |
-| `--bg-overlay` | `--scrim` |
-| `--border-dim`, `--border-muted`, `--border-default` | `--line` |
-| `--border-bright` | `--line-strong` |
-| `--border-accent` | `--accent` |
-| `--text-primary` / `--text-secondary` | `--text-1` / `--text-2` |
-| `--text-muted`, `--text-dim` | `--text-3` (raises dim text to AA) |
-| `--text-link` | `--accent-strong` |
-| `--accent`, `--cyan`, `--info` | `--accent` (brand and "informational" use) |
-| `--accent-hover` | `--accent-strong` |
-| `--accent-muted`, `--cyan-dim`, `--info-muted` | `color-mix(in srgb, var(--accent) 12%, transparent)` |
-| `--accent-glow` | the same at 25% |
-| `--shadow-glow` | built from `--accent` |
-| `--red`, `--danger` | `--sev-critical` |
-| `--orange` | `--sev-high` |
-| `--amber`, `--warning` | `--sev-medium` |
-| `--blue` | `--sev-low` |
-| `--green`, `--success` | `--ok` |
-| `--purple`, `--pink`, `--teal` | `--data-4`, `--data-6`, `--data-3` (decorative category colours) |
-| each `*-dim` / `*-muted` | `color-mix` of its mapped colour at 12% |
-| `--chart-1..8` | `--data-1..8` |
-| `--radius-sm/md/lg/xl` | 8 / 12 / 20 / 26 px |
-| `--font-sans` | the Manrope stack |
+| `/` Home | **Clean, with no device cards (§3).** KPIs: Bandwidth, Connections, Alerts and Devices. These are four of today's five stat cards, using the deltas Home already computes from `prevTimeParams`. Devices shows "N new today" as an `is-ok` chip.
+  - **Source:** the existing `getNewDeviceCount(since)` client, with `since` set to local midnight. It is not the registry's `is_new` flag, which the daemon clears on later updates (`device_registry.py:203`), and not the capped registry list.
+  - **Zero:** no chip.
+  - **Failed request:** no chip and no number. The KPI value itself is unaffected.
+  - **Tests:** the midnight boundary (a device first seen at 23:59 yesterday vs 00:01 today), zero, failure, and that later updates to a device don't change the count. System Health moves into the Pipeline strip. Bandwidth-over-time AreaChart hero `c-8` + Network protocols Donut `c-4`; Traffic categories BarList; Top devices DeviceList, five rows, the system's compact list, with "View all devices" linking to `/devices`; Alert summary with the severity gauge; capture Pipeline strip (replaces `CaptureHealthPanel` on Home). Removed from Home: `DeviceGrid`, `DashboardFilters` (its time range becomes head Pills. Its device and protocol filters are stored but never applied to any request, since only `from/to` are read at `+page.svelte:175`, so they are dropped rather than moved, and listed), `NewDeviceBanner`, and the mirror-mode "Device Overview" header. |
+| `/devices` | Gains the device cards from Home: Pills "By type" / "All devices". **By type** is the redesigned `DeviceGrid`: system cards grouped by device type, with DeviceTile, name, IP in mono, traffic, and the same `deviceCards` data and `registry-traffic` merge Home used. **All devices** is the existing table as a DataTable. `NewDeviceBanner` moves here. By type loads the registry and traffic exactly as Home did, with the same calls, the same mirror-mode condition and the same failure messages. |
+| `/alerts`, `/alerts/[category]` | Severity summary (`.sev-sum`: sev-count tiles + gauge); Pills "By category" / "All alerts"; grouped AlertRows, sorted by severity then count; sticky AlertDrawer `c-4` (below the list under 1100 px) |
+| `/threats` | KPI row; threat cards and DataTable; SeverityPills |
+| `/connections` | Hero StatStrip (Sessions, Data, Destinations, Devices); toolbar (SearchField, protocol Pills, filter buttons); DataTable with `.who`, `.tag`, `.bytes`, `.res`; ConnectionDrawer |
+| `/live` | Page head with LiveChip and pause; StatStrip; DotMap hero + Top talkers (sparkline DeviceList in `select` mode); live feed DataTable (`tr.new` flash, paused under reduced motion). **All three existing filters are kept:**<br>• **Country:** DotMap hotspots.<br>• **Protocol:** protocol Pills in the feed toolbar, wired to the existing `setProtocolFilter` (`live/+page.svelte:296`). They replace the protocol donut's click-to-filter; the donut stays for display.<br>• **Device:** top-talker rows, wired to `setDeviceFilter`.<br>Active filters show as removable chips with "Clear filters". Tests cover each filter alone, all three combined, toggling one off, and clearing. |
+| `/bandwidth`, `/traffic/[category]` | KPIs; AreaChart hero; category BarList; top devices; DataTable |
+| `/dns` | KPIs; lookups AreaChart; top domains BarList; DataTable |
+| `/certificates`, `/logs`, `/pcap`, `/changelog` | Toolbar + DataTable (Changelog: event list in cards); actions as `.btn` |
+| `/iot` | KPIs; DataTable with `.who` and DeviceTile; IoT trust Ring and score-rows |
+| `/devices/[ip]`, `/devices/mac/[mac]` | `.back` link; identity hero (72 px tile, chips, `.ident-meta`); trust Ring + score-rows; charts; tables |
+| `/infrastructure`, `/system`, `/system/updates`, `/system/cyberchef` | Pipeline strip; cards with `.kv`, Meter and DataTable |
+| `/settings` (+ `backup`, `notifications`, `suricata-rules`) | Pills as section tabs; form cards (`forms.css`); ThemePicker |
+| `/tools` (+ 9 tools), `/lookup/*`, `/geoip/[ip]` | Tools index as a card grid (icon tile, title, one line); each tool is a form card plus a result card with `.facts` / DataTable |
+| `/investigations`, `/compliance` | KPIs; cards; DataTable |
+| `/login` | Centred card: brand, form, error state |
+| `/setup`, `/go-live` | Wizard in cards; Pills step indicator; same steps, actions and redirects |
 
-`--space-*` and the `--text-*` sizes are unchanged.
+The exact KPIs and cards per page are chosen from what each page already loads. A row in the table that names data a page doesn't have is dropped for that page under §4.1, not built.
 
-**Semantic audit.** This runs before the aliases go in and is listed file by file in the PR body:
-- **Severity:** every severity consumer is found by grepping for severity class maps (`badge-*`, `sev-*`, `critical|high|medium|low|info` → colour) across `routes/` and `components/`. Each one moves to the matching `--sev-*` token. Examples:
-  - Home's LOW badge (`+page.svelte:351–360`, now `badge-accent`) becomes `--sev-low`.
-  - Device detail (`devices/[ip]/+page.svelte:1045–1048`) splits critical and high onto `--sev-critical` and `--sev-high`.
-  - Info severity uses `--sev-info`.
-- **Brand cyan:** any remaining use of `--cyan` that means a state rather than the brand is moved to the right semantic token.
-- **Inline `rgba(...)` glows and backgrounds** (for example `devices/+page.svelte:493–510`) become `color-mix` with tokens.
-- **Script palettes** (`SERVICE_COLORS` and others the gate finds) become `var(--data-*)` strings.
+## 6. Work order
 
-**Canvas colours (`GeoMap`).** Canvas cannot use `var()`.
-- Add `web/src/lib/utils/tokens.ts` with `resolveToken(name)`, a `getComputedStyle` read on `documentElement`.
-- `GeoMap` resolves its marker, arc and label colours after mount, and again when the variant changes (it subscribes to the theme store, which notifies only after the root attribute has changed; see the theme protocol).
-- Split `GeoMap`'s current `animationLoop` (`GeoMap.svelte:241–313`), which draws the static arcs and the moving pulses together, into two functions:
-  - `drawFrame(t)`: draws the arcs, plus pulses at phase `t`.
-  - A scheduler that calls it from `requestAnimationFrame`.
-- Under reduced motion there is no scheduler. `drawFrame` is called once on mount and again on every data, viewport (Leaflet `move`/`zoom`/`resize`) and theme change. That draws the arcs with no pulses.
-- Unit tests:
-  - `resolveToken`
-  - under reduced motion, `drawFrame` runs on mount and on each trigger, with no rAF
-  - with motion allowed, the rAF loop runs
-- The harness checks the populated Live map in both modes (§5.2).
+**Branch:** `feature/ui-redesign-full`, cut from the tip of `feature/ui-redesign-foundation` (`c8267af`, PR #165). This is the only branch.
 
-**Fonts:**
-- Add variable woff2 files, latin subset, to `web/static/fonts/`: Sora, Manrope and JetBrains Mono (OFL 1.1), each with its `OFL.txt`.
-- Add `@font-face` rules with `font-display: swap`.
-- Remove the Google Fonts `<link>`s from `+layout.svelte`.
-- Add the fonts to `THIRD-PARTY-LICENSES.md`.
+**Step A — foundation, components and shell (lead):**
+1. Commit `nettap-design-system/` as-is.
+2. Add `tokens.css`, `system.css` and `forms.css`; rename the theme attribute; delete the legacy component classes; drop `data-7/8`.
+3. Build `Icon` and every `ui/` component, with tests.
+4. Restyle or replace **every shared component in `web/src/lib/components/**`** listed in §5.3. Move each helper off removed tokens (`category-colors.ts`, `api/logs.ts` `protocolColor`, `thresholds.ts`, and any others the gate finds). Add the adapters (`severity.ts`, `series.ts`) and the stores (`alertSnapshot.ts`, `pageRefresh.ts`).
+5. Build the shell and `+layout.server.ts`, with tests.
+6. Migrate the harness infrastructure (§7).
+7. Run vitest and svelte-check, then `/ponytail-review` and `/deep-review` on the staged diff, then commit.
 
-**Theme picker:**
+After step A, every shared contract is frozen before any page agent starts.
 
-| Part | Behaviour |
-|---|---|
-| Storage key | `nettap-theme`. Values: `ember`, `graphite`, `spectrum`. Anything else means Ember. |
-| Bootstrap (in `app.html` `<head>`, before `%sveltekit.head%`) | `try { const v = localStorage.getItem('nettap-theme'); if (v === 'graphite' \|\| v === 'spectrum') document.documentElement.dataset.variant = v; } catch {}` Ember is the absence of the attribute. |
-| `web/src/lib/stores/theme.ts` | On the server the value is always `ember`, with no browser access. In the browser it starts from `document.documentElement.dataset.variant` (the bootstrap result), never from its own storage read, and nothing writes on initialisation. |
-| `setTheme(v)` | Validates `v`, then, in this order: 1. sets or removes the root `data-variant` attribute; 2. publishes the store value, so subscribers such as `GeoMap` already read the new computed tokens; 3. tries the `localStorage` write. If the write throws, the theme still applies for the session. This is the only writer. |
-| Settings picker | Renders Ember on the server. Adopts the store value in `onMount`, so SSR and hydration never disagree on attributes. Changes go through `setTheme`. |
-| Unit tests | Server default; browser start from the attribute; invalid attribute; `setTheme` sets the attribute and storage; storage that throws still applies the theme; no write on init; a subscriber that reads a computed token during its notification sees the new variant's value. |
-| Harness tests | 1. Saved Graphite: only JavaScript is held back. `page.route` matches `/_app/immutable/**/*.js` and parks those requests until the test releases them. Stylesheets (`/_app/immutable/assets/*.css`) load normally. The test navigates with `waitUntil: 'commit'`, waits for the SSR body and for every `link[rel=stylesheet]` to finish loading, then checks that the root has `data-variant="graphite"`, that the body's computed background is black, and that a Graphite-only token (`--accent`) resolves to Graphite's value. Then it releases the JavaScript. 2. After release and hydration, the picker shows Graphite. 3. It survives client navigation and a reload. 4. With storage denied (an init script stubs a throwing `localStorage`), the page is Ember, switching works for the session, and there are no console errors. 5. The same for Spectrum. |
+**Step B — pages, in parallel:**
+- **Who:** agents in isolated worktrees branched from step A's commit. Each owns a disjoint set of route folders plus that folder's tests and visual fixtures:
+  - B1: Home
+  - B2: Alerts and Threats
+  - B3: Connections, Live, Bandwidth and traffic
+  - B4: DNS, Certificates, Logs, PCAP and Changelog
+  - B5: Devices and IoT
+  - B6: Infrastructure, System and Settings
+  - B7: Tools, lookups and GeoIP
+  - B8: Login, Setup, Go Live, Investigations and Compliance
+- **File ownership:**
 
-**Docs:** rewrite `web/DESIGN-SYSTEM.md` with the token tables, the severity rules, the colour gate, canvas guidance and the patterns from the mockup.
+  | Files | Owner |
+  |---|---|
+  | `web/src/lib/**` (components, `ui/`, styles, utils, api, stores) | lead only |
+  | `web/src/routes/+layout*` and `web/src/app.html` | lead only |
+  | `web/e2e/visual/{harness,routes,known-issues,fixture-daemon}.ts`, the configs, `web/scripts/` | lead only |
+  | `web/e2e/visual/fixtures/<route>.ts` and the specs for a batch's routes | that batch's agent |
+  | `web/src/routes/<batch folders>/**`, including their tests | that batch's agent |
+  | `nettap-design-system/` | nobody (the spec; read-only) |
 
-**Also:** the colour gate and the visual harness (§5), with PR 1 coverage.
+- **Rules for agents:**
+  - An agent that needs a shared change stops and reports it. The lead makes the change once on `feature/ui-redesign-full`.
+  - Every open agent branch then rebases onto that commit before its work is accepted.
+  - Agents don't run `git stash`.
+  - Each agent runs vitest for its routes plus `svelte-check` before it reports back.
+- **Merging:** the lead merges each worktree branch into `feature/ui-redesign-full` one at a time. After **each** merge, on the merged result, the lead:
+  1. runs the **full** vitest and `svelte-check`
+  2. runs the visual harness for that batch's routes
+  3. reviews the diff against the recipe and the conformance checklist (§7)
 
-### PR 2: Shell (sidebar, header, mobile menu); no new data or actions
+  A batch is accepted only when all three are green. `/ponytail-review` and `/deep-review` run per accepted batch.
 
-**`+layout.svelte` layout:**
-- Floating, grouped sidebar with the existing 17 hrefs:
-  - Overview: Home, Live Monitor, Bandwidth
-  - Investigate: Alerts, Threats, Connections, Log Explorer, DNS Analytics, Certificates, PCAP Search
-  - Devices: Devices, IoT & LAN, Changelog
-  - System: Infrastructure, System, Tools, Settings
-- Investigations and Security Posture stay out of the menu.
+**Step C — cleanup and verification (lead):**
+1. **Delete leftovers:** the legacy token aliases, the replaced components and the Leaflet dependency.
+2. **Extend the colour gate.** It fails on:
+   - legacy token names (`--bg-*`, `--cyan`, `--space-*`, `--radius-*`, …)
+   - emoji code points in `web/src`
+3. **Harness:** add populated, slow and stale fixtures for every route (every page changed).
+4. **Full checks:** the full check list (§4.6).
+5. **Docs:** update `DESIGN-SYSTEM.md`, `CLAUDE.md`, the tracking doc and Linear.
+6. **G11 deploy.** Update `scripts/remote/deploy-ui-redesign.sh`:
+   - **Branch:** `BRANCH="feature/ui-redesign-full"`.
+   - **Token check:** look for the new theme contract (`[data-theme="graphite"]` in the served CSS, plus the `nettap-theme` bootstrap). This replaces the `data-theme-preview` check at line 79.
+   - **Record the SHA first:** before updating, write the currently deployed SHA to `/home/nettap/.nettap-last-deploy`.
+   - **Rollback path:** add `scripts/remote/rollback-ui-redesign.sh`. It reads that file (or takes a SHA argument), runs `git fetch origin` and `git checkout --detach <sha>` with no `git pull`, rebuilds `nettap-web`, recreates it, and runs the same health checks.
+   - **Test the rollback before the real deploy.** `bash -n` both scripts, and check the rollback's SHA resolution and command sequence locally in a scratch clone.
 
-**Shell contents.** It keeps only what it owns today:
-- capture-mode badge
-- daemon-liveness status
-- `NotificationBell` (unread notifications, not alerts)
-- the POST `/api/auth/logout` form
+   The owner deploys, then I check every page in Chrome on the G11 with real data in all three themes.
 
-The mockup's global search, "updated" time, refresh button, storage meter and nav alert count are **not** added. Search, refresh and timestamps stay page-owned, as they are now. A global version of any of them is a separate follow-up with its own data contract.
+**Merge:**
+- One PR from `feature/ui-redesign-full` into `main`. It contains PR #165's commits, so PR #165 is closed as superseded.
+- **Pre-merge review:** a two-angle review (`security-engineer` + `typescript-reviewer`), because the shell touches the logout form and the layout's server load.
+- **Merge method:** squash, after `gh pr checks` and the owner's G11 approval.
+- **After merge:** the deploy script goes back to `BRANCH="main"`.
 
-**Mobile:** below 760 px a menu button (`aria-expanded`, `aria-controls`) opens the sidebar as an overlay with a scrim. Open moves focus to the first link and Tab stays inside the overlay. Escape, the scrim, choosing a link, or crossing the 760 px breakpoint (`matchMedia` change) closes it, and focus returns to the button.
+## 7. Verification
 
-**Tests:**
-- `layout.test.ts`: all 17 links with the right hrefs; the active state on nested routes (`/alerts/foo` highlights Alerts); no shell on `/login` and `/setup` (as today); the logout form posts to `/api/auth/logout`; the menu toggle's `aria-expanded`; Escape closes; focus moves in and back; choosing a link closes.
-- Harness: the menu at 390 (opens, contains focus, closes on Escape and on navigation), and a resize from 390 to 1440 with the menu open (the overlay is gone, the sidebar shows normally).
-
-### PR 3: Shared components restyled in place (props and callbacks unchanged)
-
-| Component | Change |
-|---|---|
-| `TimeSeriesChart`, `DualSeriesChart` | Monotone curves, gradient fill, dashed grid, peak marker, pill tooltip. |
-| `DonutChart`, `ProtocolDonut` | Rounded segmented ring. Geometry rules are below the table. `ProtocolDonut`'s centre still shows the supplied connection count, or `—`, and never a sum of percentages. |
-| `HorizontalBarList`, `TopConsumers`, `TopTalkersChart` | Gradient capsule bars. |
-| `SankeyDiagram`, `NetworkMap` | Palette (via tokens or `resolveToken`) and typography. Both leave the colour-gate allowlist. |
-| Drawers (`DetailDrawer`, `drawer/*`), `Breadcrumb`, `Collapsible`, `SearchBar`, `DashboardFilters`, `DeviceGrid` | Restyle only. |
-
-**Donut geometry.** Each segment `i` has a proportional length `pᵢ = C·vᵢ/Σv`, where `C` is the circumference. Its gap is bounded by its own share, `gᵢ = min(G, pᵢ/2)`, so `pᵢ − gᵢ ≥ pᵢ/2 > 0` for any non-zero value. The cap overhang is `c = strokeWidth/2` on each end.
-- If `pᵢ − gᵢ − 2c ≥ 0.5`, draw a round-capped dash of length `pᵢ − gᵢ − 2c`. Its visual extent is `pᵢ − gᵢ`.
-- Otherwise, draw a butt-capped dash of length `pᵢ − gᵢ`.
-- Where a dash starts depends on its caps. With `Oᵢ` as the cumulative offset:
-  - butt-capped dashes start at `Oᵢ + gᵢ/2`
-  - round-capped dashes start at `Oᵢ + gᵢ/2 + c`, because a round cap reaches `c` back from the dash start
-- Either way, the visual extent is exactly `[Oᵢ + gᵢ/2, Oᵢ + pᵢ − gᵢ/2]`, inside the segment's own share. Neighbours never overlap, including the last and first segments where the ring closes.
-- A zero value is not drawn, but it keeps its original index, so click and filter callbacks still receive the original item and index.
-- A single non-zero segment draws the full ring.
-
-**Global styles:** table header pill row, card, pills, severity pill with a shape plus the label.
-
-**New components, only when a PR 4 page needs them** (added in that PR, with tests): `Sparkline`, `SegmentedGauge`, `Radar`, `Ring`.
-
-**Chart regression matrix (vitest), in PR 3:**
-- **Donut geometry:** every dash length and offset is finite and ≥ 0. Each visual extent (dash ± `c` when round-capped) lies within its segment's share, so no two overlap, and their sum is ≤ the circumference. Covers:
-  - segments smaller than the gap
-  - segments smaller than the cap
-  - a butt-capped segment next to round-capped ones, on both sides
-  - overlap across the ring's start/end boundary
-  - zero segments mixed with non-zero ones (callbacks get the original indices)
-  - a single segment
-  - all-zero data (empty state)
-- **`ProtocolDonut` centre:** with a count it shows that count; with an unknown count it shows `—`.
-- **Callbacks:** segment and bar click and filter callbacks fire with the same arguments as before.
-- **Time series:** `[]` shows the empty state; `[x]` draws no NaN in path data; a constant series and a series with gaps are handled.
-- **Tooltips:** exact formatted values for a known point (bytes, counts, durations, using the fixed duration formatter).
-
-### PR 4a–4g: Pages in batches (layout per the mockup, data untouched)
-
-| PR | Pages |
-|---|---|
-| 4a | Home (`/`) |
-| 4b | Alerts, `alerts/[category]`, Threats |
-| 4c | Devices, `devices/[ip]`, `devices/mac/[mac]`, IoT & LAN |
-| 4d | Connections, Live Monitor, Bandwidth, `traffic/[category]` |
-| 4e | DNS Analytics, Certificates, Changelog, Log Explorer, PCAP Search |
-| 4f | Infrastructure, System (+ updates, cyberchef), Settings (+ subpages), Tools (+ 9 tools), lookup and geoip pages |
-| 4g | Setup wizard, Go Live, Login, Investigations, Security Posture |
-
-**For each batch:**
-- Restructure into the card grid: page header, KPI row, main chart plus side card, detail cards and tables.
-- Keep every request, state, message and action.
-- Add populated, slow and stale fixtures plus harness specs for its routes.
-- Run vitest and svelte-check.
-- Do the G11 real-data check.
-- If a batch exceeds ~1.5k changed lines, its biggest page goes in its own PR. The candidates are setup (2.9k), infrastructure (2.9k) and settings (2.5k).
-
-## 7. Tracking
-
-- **Linear:** a parent issue "feat(ui): pure-black redesign" plus one issue per PR. Each moves to Done when merged.
-- **Tracking doc:** `tracking-fixes/2026-11-03-ui-redesign.md`, with one row per PR (branch, what changed, files, tests, harness and G11 results, status).
-- **Build plan:** `plans/comprehensive-build-plan.md` gets a Phase 4 task entry, ticked off per PR.
+- **Unit (vitest):**
+  - every `ui/` component (render, ARIA, states, callbacks)
+  - the Icon drift test
+  - chart geometry:
+    - the monotone cubic never goes below 0 for non-negative data
+    - axis steps are always 1, 2, 2.5 or 5 × 10ⁿ, and cover the max
+    - the donut matrix (carried over)
+    - gauge ticks sum to 36, and every non-zero severity gets ≥1
+    - DotMap point-in-polygon on known points
+    - empty, single-point, constant and gapped series draw no NaN
+  - **shell:**
+    - all 17 hrefs and the active state on nested routes
+    - the mobile menu's ARIA, focus behaviour and every close path
+    - the logout form posts to `/api/auth/logout`
+    - each shell value degrades to "—" when its call fails
+  - **adapters and stores:** `severityBuckets`, `topSeries`, `alertSnapshot` and `pageRefresh` (the cases in §4.1 and §5.5)
+  - **the root layout load:** authenticated, anonymous and first-run
+  - **interaction contracts:** DataTable row activation by keyboard, the search combobox, the Pills tabs mode, and DotMap hotspots
+- **Behavioural browser suite (`npx playwright test`), executed:**
+  - the existing `login.spec.ts`, `dashboard.spec.ts` and `setup-wizard.spec.ts`, with selectors updated only where markup changed
+  - **new flows:**
+    - **Logout:** a real login, then sign out from the sidebar. Check the session cookie is gone and a protected page (`/alerts`) then redirects to `/login`.
+    - **First-run (current behaviour, unchanged):** on an empty user store, `/` redirects to `/setup` and `/setup` is reachable. Anonymous `/login` stays reachable, because it is a public path (`hooks.server.ts:21`) and is excluded from the first-run redirect (line 105).
+    - **Navigation:** sidebar navigation to each group, and the phone menu opening, trapping focus and closing.
+  - Weak existing assertions found along the way are tightened, not deleted.
+- **Colour gate:**
+  - exempts `tokens.css`
+  - fails on literals, legacy token names and emoji
+- **Harness migration (step A, before any page work):**
+  - **Theme switching:** `harness.ts:102` sets `data-variant`; it moves to `data-theme`. Each theme run asserts a theme-only computed token (`--accent`) before it takes a screenshot, so mislabelled screenshots fail.
+  - **Overflow:** the blanket 390 px overflow exemption in `known-issues.ts:8` is removed. Any remaining exemption names one route and one reason.
+  - **Slow mode:** the fixture daemon holds `slow`-mode responses until the test releases them, instead of a fixed 2 s delay. The loading-state assertion and screenshot happen while they are held.
+  - **Stale mode:** a success-then-failure sequence. The page loads populated, the next refresh fails, and the assertion checks the stale or error state over the old data.
+- **Visual harness** (from PR #165, extended):
+  - **Coverage:** every route × Ember, Graphite and Spectrum × 1920, 1440 and 390, in the populated, empty, error and slow modes.
+  - **It asserts:**
+    - a black body, no horizontal scroll and no console errors
+    - the sidebar is visible at 1920 and 1440
+    - `.m-top` is visible at 390
+    - every page has an `h1.page-title`
+  - **Reduced motion:** one pass with reduced motion (Live feed paused, no animations).
+- **Design conformance:** I compare every route's 1920 and 390 screenshots against the system rules and previews, using a written checklist:
+  - the recipe order
+  - card heads with their subs
+  - KPI count
+  - hero count ≤ 2
+  - mono for machine values
+  - tabular, right-aligned numbers
+  - the light selected pill
+  - severity shown three ways
+  - copy voice
+- **G11 real data:** every page in all three themes, with Home, Alerts and sidebar alert counts equal.
+- **Daemon:** pytest failure set unchanged (no daemon files touched).
 
 ## 8. Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
-| A legacy alias reads wrong for a use the audit missed | The audit runs before aliasing, and the PR 1 harness screenshots every route in all variants. Fix it by pointing the consumer at the semantic token, not by changing the alias. |
-| Severity colours drift by theme | `--sev-*` are identical in every variant, and every severity consumer uses them after PR 1. |
-| Tests assert class names or inline styles | Change a test only when it asserted styling, never behaviour. Note each one in the PR body. |
-| PR size and review fatigue | One PR per batch, and the biggest pages are split out (§6). |
-| Theme bootstrap blocked or storage denied | No CSP today. The script is try/catch and Ember is the fallback. Covered by harness test 4. |
-| Canvas map ignores tokens | `resolveToken` plus re-resolving on variant change (PR 1). |
-| Fixture drift from real API shapes | Fixtures are TS modules that `satisfies` the `web/src/lib/api/*.ts` interfaces, checked by `npm run check:e2e` locally and in CI. The G11 check covers real data. |
-| Setup wizard regressions block first-run installs | Restyled only by tokens in PR 1 (harness-covered on a first-run data dir) and restructured last (4g). |
+| Scale: ~42k lines of route markup and 45 pages | Components and shell first, then a fixed recipe, parallel page agents with disjoint ownership, and a conformance checklist per page. |
+| Deleting the legacy classes breaks un-migrated pages mid-branch | Expected and acceptable: nothing is deployed until step C, and every page is migrated before the harness and the G11 check. |
+| Behaviour regressions while rewriting markup | Behaviour tests stay unchanged and green; the harness covers every route in four modes; the G11 check. Logic moves keep OLD CODE markers. |
+| Copy changes break string assertions | Only styling and string assertions change, and each is listed in the PR body. Behaviour assertions never change. |
+| Data the system shows doesn't exist (deltas, device types, alert advice) | §4.1: it is left out or shown as a source note, and listed. Never faked. |
+| Numbers disagree across screens | One alert-count helper plus a test; the G11 count check. |
+| Leaflet removal loses map interaction (zoom, pan) | The system's map is a static dot grid with arcs. Zoom and pan are dropped by design, and that is listed in the PR body. |
+| Huge single PR is hard to review | `/deep-review` and `/ponytail-review` per step and per batch, a two-angle review before merge, and one revertible squash commit. |
+| The forms extension drifts from the system | Built only from system tokens and shapes, and documented as the only extension. |
 
 ## 9. Rollback
 
-The PRs form a dependency chain: PR 2 and later use PR 1's tokens, `resolveToken`, theme store and harness. Rollback is therefore dependency-aware:
+- **Fastest:** `bash scripts/remote/rollback-ui-redesign.sh`. It checks out the SHA recorded in `/home/nettap/.nettap-last-deploy` (detached, no pull), then rebuilds and verifies (§6 step C.6).
+- **On `main`:** revert the single squash commit. PR #165's work is inside it, so nothing is left half-applied.
 
-1. **Fastest:** redeploy the last verified revision to the G11. Set `BRANCH`/commit in the deploy script to the previous squash commit on `main`. This needs no git surgery.
-2. **Undoing one phase on `main`:** revert dependent phases in reverse order (4g … 4a, 3, 2), then PR 1. Never revert PR 1 alone while later phases are on `main`.
-3. **Old palette only, keeping later phases:** do not revert PR 1. Change the token values in `global.css`. The legacy and new token names, `resolveToken`, the theme store and `setTheme` all stay, so nothing that depends on them breaks.
-
-The theme picker only writes `localStorage`. After any rollback an unknown or stale value is ignored (Ember).
+The theme key ignores unknown values, so a stale `nettap-theme` falls back to Ember.
 
 ## 10. Out of scope
 
-- Backend or daemon changes
-- New metrics, endpoints or shell features
-- Light mode (tokens keep it possible)
-- Behaviour changes on any page
-- The DNS, IoT and certificate totals audit (resumes after the redesign)
+- daemon changes and new endpoints
+- light mode
+- features the system doesn't show
+- the DNS, IoT and certificate totals audit (resumes after the redesign)

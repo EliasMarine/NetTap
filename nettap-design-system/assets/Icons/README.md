@@ -1,0 +1,3 @@
+# Icons
+
+NetTap's outline icon set: 24px viewBox, 1.7px stroke, round caps and joins, no fill. These files are drawn in a fixed grey (#938a80, the Ember `text-3`) because an `<img>` cannot inherit colour. In the product, inline the path data in `<svg class="ic" viewBox="0 0 24 24">` with `stroke="currentColor"` so the icon takes its text colour. Navigation icons: home, live, bandwidth, alerts, threats, connections, logs, dns, certs, pcap, devices, iot, changelog, infra, system, tools, settings. Device types: tv, laptop, nas, gamepad, phone, tablet, camera, speaker, printer. Actions and states: search, refresh, menu, close, up, down, sort, chevdown, pause, play, back, download, filter, check, warn, empty, user, logout.
