@@ -1,20 +1,17 @@
 <script lang="ts">
 	/**
-	 * DNS Lookup — Displays reverse DNS and forward lookup data for an IP address.
-	 *
-	 * Layout:
-	 *   - Back button
-	 *   - Search bar to look up any IP
-	 *   - Results card with hostname, aliases, and addresses
-	 *   - Quick action links to related lookups
+	 * DNS lookup: reverse DNS and forward lookup data for an IP address.
+	 * A form card to look up another address, then a result card with .facts and
+	 * links to the related lookups. The lookup runs through the page refresh contract.
 	 */
 
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-
-	// ---------------------------------------------------------------------------
-	// State
-	// ---------------------------------------------------------------------------
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	let ip = $derived($page.params.ip);
 	let result = $state<{ ip: string; hostname: string | null; aliases: string[]; addresses: string[]; error: string | null } | null>(null);
@@ -22,25 +19,50 @@
 	let error = $state('');
 	let searchIp = $state('');
 
-	// ---------------------------------------------------------------------------
-	// Lookup
-	// ---------------------------------------------------------------------------
+	// OLD CODE START — the lookup now goes through the page refresh contract (PLAN.md §5.5):
+	// it reports its result and a load guard drops a response that a newer load replaced
+	// async function lookup(targetIp: string) {
+	// 	loading = true;
+	// 	error = '';
+	// 	try {
+	// 		const res = await fetch(`/api/lookup/dns/${encodeURIComponent(targetIp)}`);
+	// 		if (!res.ok) throw new Error('Lookup failed');
+	// 		result = await res.json();
+	// 		if (result?.error) error = result.error;
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : 'Lookup failed';
+	// 		result = null;
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// }
+	// OLD CODE END
 
-	async function lookup(targetIp: string) {
+	async function lookup(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const targetIp = decodeURIComponent(ip ?? '');
 		loading = true;
 		error = '';
 		try {
 			const res = await fetch(`/api/lookup/dns/${encodeURIComponent(targetIp)}`);
 			if (!res.ok) throw new Error('Lookup failed');
-			result = await res.json();
+			const data = await res.json();
+			if (!guard.current(g)) return 'skipped';
+			result = data;
 			if (result?.error) error = result.error;
+			return error ? 'failed' : 'ok';
 		} catch (e) {
+			if (!guard.current(g)) return 'skipped';
 			error = e instanceof Error ? e.message : 'Lookup failed';
 			result = null;
+			return 'failed';
 		} finally {
-			loading = false;
+			if (guard.current(g)) loading = false;
 		}
 	}
+
+	const refresh = registerPageRefresh(lookup);
+	onDestroy(refresh.unregister);
 
 	function handleSearch() {
 		const trimmed = searchIp.trim();
@@ -55,321 +77,71 @@
 		}
 	}
 
-	// ---------------------------------------------------------------------------
-	// Reactive fetch on route param change
-	// ---------------------------------------------------------------------------
-
+	// Look up again whenever the route's IP changes
 	$effect(() => {
 		if (ip) {
 			searchIp = decodeURIComponent(ip);
-			lookup(decodeURIComponent(ip));
+			refresh.run();
 		}
 	});
 </script>
 
 <svelte:head>
-	<title>DNS Lookup — {ip ? decodeURIComponent(ip) : ''} | NetTap</title>
+	<title>DNS lookup — {ip ? decodeURIComponent(ip) : ''} | NetTap</title>
 </svelte:head>
 
-<div class="dns-page">
-	<!-- Back button -->
-	<div class="back-nav">
-		<button class="btn btn-secondary btn-sm" onclick={() => history.back()}>
-			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-			</svg>
-			Back
-		</button>
+<div class="page-head">
+	<div>
+		<button class="back" type="button" onclick={() => history.back()}><Icon name="back" />Back</button>
+		<h1 class="page-title">DNS lookup</h1>
+		<p class="page-sub">The host name behind an IP address, and the addresses that name points to.</p>
 	</div>
+</div>
 
-	<!-- Page header + search -->
-	<div class="page-header">
-		<h1>DNS Lookup</h1>
-		<div class="search-bar">
-			<input
-				type="text"
-				class="input"
-				placeholder="Enter an IP address..."
-				bind:value={searchIp}
-				onkeydown={handleKeydown}
-			/>
-			<button class="btn btn-primary btn-sm" onclick={handleSearch}>
-				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-				</svg>
-				Lookup
-			</button>
+<div class="grid">
+	<Card title="Look up an address" sub="One IPv4 or IPv6 address" class="c-4">
+		<div class="field">
+			<label class="label" for="dns-ip">IP address</label>
+			<input id="dns-ip" type="text" class="input mono" placeholder="Enter an IP address…" bind:value={searchIp} onkeydown={handleKeydown} />
 		</div>
-	</div>
+		<div class="form-actions">
+			<button class="btn primary" type="button" onclick={handleSearch}><Icon name="search" />Lookup</button>
+		</div>
+	</Card>
 
-	<!-- Loading state -->
-	{#if loading}
-		<div class="card loading-card">
-			<div class="skeleton skeleton-block"></div>
-			<div class="skeleton-grid">
-				{#each Array(3) as _}
-					<div class="skeleton skeleton-field"></div>
-				{/each}
+	<Card title="Result" sub="Reverse (PTR) and forward lookup" class="c-8">
+		{#if loading}
+			<CardState state="loading" title="Looking up DNS records" />
+		{:else if error}
+			<CardState state="error" title="Lookup failed" message={error} />
+		{:else if result}
+			<dl class="facts">
+				<dt>IP address</dt>
+				<dd class="mono">{result.ip}</dd>
+				<dt>Reverse DNS (PTR)</dt>
+				<dd>
+					{#if result.hostname}<span class="mono">{result.hostname}</span>{:else}<span class="dim">No reverse DNS record</span>{/if}
+				</dd>
+				<dt>Aliases</dt>
+				<dd>
+					{#if result.aliases && result.aliases.length > 0}<span class="mono">{result.aliases.join(', ')}</span>{:else}<span class="dim">None</span>{/if}
+				</dd>
+				<dt>Forward lookup addresses</dt>
+				<dd>
+					{#if result.addresses && result.addresses.length > 0}<span class="mono">{result.addresses.join(', ')}</span>{:else}<span class="dim">None</span>{/if}
+				</dd>
+			</dl>
+			<div class="actions result-actions">
+				<a class="btn" href="/devices/{encodeURIComponent(result.ip ?? '')}">View device details</a>
+				<a class="btn" href="/geoip/{encodeURIComponent(result.ip ?? '')}">GeoIP lookup</a>
+				<a class="btn" href="/lookup/whois/{encodeURIComponent(result.ip ?? '')}">WHOIS lookup</a>
 			</div>
-		</div>
-	{:else if error}
-		<!-- Error state -->
-		<div class="empty-state">
-			<div class="empty-icon">
-				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-				</svg>
-			</div>
-			<h3>Lookup Failed</h3>
-			<p class="text-muted">{error}</p>
-		</div>
-	{:else if result}
-		<!-- Results -->
-		<div class="card result-card">
-			<!-- IP header -->
-			<div class="result-header">
-				<h2 class="mono">{result.ip}</h2>
-			</div>
-
-			<!-- DNS fields -->
-			<div class="result-grid">
-				<!-- Reverse DNS -->
-				<div class="result-field">
-					<span class="field-label">Reverse DNS (PTR)</span>
-					<span class="field-value">
-						{#if result.hostname}
-							<span class="mono">{result.hostname}</span>
-						{:else}
-							<span class="text-muted">No reverse DNS record</span>
-						{/if}
-					</span>
-				</div>
-
-				<!-- Aliases -->
-				<div class="result-field">
-					<span class="field-label">Aliases</span>
-					<span class="field-value">
-						{#if result.aliases && result.aliases.length > 0}
-							<span class="mono">{result.aliases.join(', ')}</span>
-						{:else}
-							<span class="text-muted">None</span>
-						{/if}
-					</span>
-				</div>
-
-				<!-- Forward Lookup Addresses -->
-				<div class="result-field">
-					<span class="field-label">Forward Lookup Addresses</span>
-					<span class="field-value">
-						{#if result.addresses && result.addresses.length > 0}
-							<span class="mono">{result.addresses.join(', ')}</span>
-						{:else}
-							<span class="text-muted">None</span>
-						{/if}
-					</span>
-				</div>
-			</div>
-		</div>
-
-		<!-- Quick actions -->
-		<div class="actions-row">
-			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(result?.ip ?? '')}`)}>
-				View Device Details
-			</button>
-			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/geoip/${encodeURIComponent(result?.ip ?? '')}`)}>
-				GeoIP Lookup
-			</button>
-			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/lookup/whois/${encodeURIComponent(result?.ip ?? '')}`)}>
-				WHOIS Lookup
-			</button>
-		</div>
-	{/if}
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.dns-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Back nav */
-	.back-nav {
-		display: flex;
-	}
-
-	/* Page header */
-	.page-header {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.page-header h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		color: var(--text-primary);
-	}
-
-	.search-bar {
-		display: flex;
-		gap: var(--space-sm);
-		max-width: 480px;
-	}
-
-	.search-bar .input {
-		flex: 1;
-		padding: var(--space-sm) var(--space-md);
-		font-size: var(--text-sm);
-		font-family: var(--font-mono);
-		color: var(--text-primary);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		outline: none;
-		transition: border-color var(--transition-fast);
-	}
-
-	.search-bar .input:focus {
-		border-color: var(--accent);
-	}
-
-	.search-bar .input::placeholder {
-		color: var(--text-muted);
-	}
-
-	/* Result card */
-	.result-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.result-header {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.result-header h2 {
-		font-size: var(--text-3xl);
-		font-weight: 700;
-		color: var(--accent);
-	}
-
-	/* Data grid */
-	.result-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-		gap: var(--space-lg);
-	}
-
-	.result-field {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.field-label {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.field-value {
-		font-size: var(--text-md);
-		color: var(--text-primary);
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	/* Actions row */
-	.actions-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-sm);
-	}
-
-	/* Loading state */
-	.loading-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.skeleton {
-		background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--border-muted) 50%, var(--bg-tertiary) 75%);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite;
-		border-radius: var(--radius-sm);
-	}
-
-	.skeleton-block {
-		height: 48px;
-		width: 240px;
-	}
-
-	.skeleton-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-		gap: var(--space-lg);
-	}
-
-	.skeleton-field {
-		height: 56px;
-		width: 100%;
-	}
-
-	@keyframes shimmer {
-		0% { background-position: 200% 0; }
-		100% { background-position: -200% 0; }
-	}
-
-	/* Empty / error state */
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		text-align: center;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-	}
-
-	.empty-icon {
-		color: var(--text-muted);
-		margin-bottom: var(--space-md);
-	}
-
-	.empty-state h3 {
-		font-size: var(--text-xl);
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
-	}
-
-	.empty-state p {
-		max-width: 480px;
-		line-height: var(--leading-relaxed);
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.result-header h2 {
-			font-size: var(--text-2xl);
-		}
-
-		.result-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.search-bar {
-			max-width: 100%;
-		}
-	}
+	.result-actions { margin-top: var(--sp-4); }
+	/* .back is styled for a link; this one is a button (it goes back in history) */
+	button.back { background: none; border: 0; padding: 0; cursor: pointer; }
 </style>

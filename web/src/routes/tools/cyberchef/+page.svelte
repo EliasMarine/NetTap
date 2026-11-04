@@ -1,6 +1,15 @@
 <script lang="ts">
+	/**
+	 * CyberChef: the quick-recipe card, then the CyberChef workspace in an iframe.
+	 * The status and recipe requests run through the page refresh contract.
+	 */
+	import { onDestroy, onMount } from 'svelte';
 	import { getCyberChefStatus, getRecipes, buildRecipeUrl } from '$api/cyberchef.js';
 	import type { CyberChefStatus, CyberChefRecipe } from '$api/cyberchef.js';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	let status = $state<CyberChefStatus | null>(null);
 	let recipes = $state<CyberChefRecipe[]>([]);
@@ -13,7 +22,31 @@
 
 	const CYBERCHEF_BASE_URL = '/cyberchef/';
 
-	async function fetchStatus() {
+	// OLD CODE START — the load now goes through the page refresh contract (PLAN.md §5.5):
+	// it reports its result and a load guard drops a response that a newer load replaced
+	// async function fetchStatus() {
+	// 	loading = true;
+	// 	errorMessage = '';
+	// 	try {
+	// 		const [statusResult, recipesResult] = await Promise.all([
+	// 			getCyberChefStatus(),
+	// 			getRecipes(),
+	// 		]);
+	// 		status = statusResult;
+	// 		recipes = recipesResult.recipes;
+	//
+	// 		if (statusResult.available && !iframeUrl) {
+	// 			iframeUrl = CYBERCHEF_BASE_URL;
+	// 		}
+	// 	} catch {
+	// 		errorMessage = 'Failed to fetch CyberChef status';
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	async function fetchStatus(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
 		loading = true;
 		errorMessage = '';
 		try {
@@ -21,18 +54,26 @@
 				getCyberChefStatus(),
 				getRecipes(),
 			]);
+			if (!guard.current(g)) return 'skipped';
 			status = statusResult;
 			recipes = recipesResult.recipes;
 
 			if (statusResult.available && !iframeUrl) {
 				iframeUrl = CYBERCHEF_BASE_URL;
 			}
+			return 'ok';
 		} catch {
+			if (!guard.current(g)) return 'skipped';
 			errorMessage = 'Failed to fetch CyberChef status';
+			return 'failed';
 		} finally {
-			loading = false;
+			if (guard.current(g)) loading = false;
 		}
 	}
+
+	const refresh = registerPageRefresh(fetchStatus);
+	onDestroy(refresh.unregister);
+	const retry = () => refresh.run();
 
 	function selectRecipe(recipe: CyberChefRecipe) {
 		selectedRecipe = recipe;
@@ -75,8 +116,13 @@
 		}, {})
 	);
 
-	$effect(() => {
-		fetchStatus();
+	// OLD CODE START — the first load runs once on mount, through the refresh contract
+	// $effect(() => {
+	// 	fetchStatus();
+	// });
+	// OLD CODE END
+	onMount(() => {
+		refresh.run();
 	});
 </script>
 
@@ -84,373 +130,110 @@
 	<title>CyberChef | NetTap</title>
 </svelte:head>
 
-<div class="cyberchef-page">
-	<!-- Header -->
-	<div class="page-header">
-		<div class="header-left">
-			<div class="header-title-row">
-				<a href="/tools" class="back-link" aria-label="Back to Tools">
-					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<polyline points="15 18 9 12 15 6" />
-					</svg>
-				</a>
-				<h2>CyberChef</h2>
-				{#if status}
-					<span class={status.available ? 'badge badge-success' : 'badge badge-danger'}>
-						{status.available ? 'Running' : 'Offline'}
-					</span>
-				{:else if loading}
-					<span class="badge">Checking...</span>
-				{:else}
-					<span class="badge">Unknown</span>
-				{/if}
-			</div>
-			<p class="text-muted">Data encoding, decoding, and analysis toolkit</p>
-		</div>
-		<div class="header-actions">
-			{#if iframeUrl && iframeUrl !== CYBERCHEF_BASE_URL}
-				<button class="btn btn-secondary btn-sm" onclick={resetView}>Reset</button>
-			{/if}
-			{#if iframeUrl}
-				<button class="btn btn-secondary btn-sm" onclick={openInNewTab}>
-					<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-						<polyline points="15 3 21 3 21 9" />
-						<line x1="10" y1="14" x2="21" y2="3" />
-					</svg>
-					New Tab
-				</button>
-			{/if}
-		</div>
+<div class="page-head">
+	<div>
+		<a class="back" href="/tools"><Icon name="back" />Tools</a>
+		<h1 class="page-title">CyberChef</h1>
+		<p class="page-sub">Data encoding, decoding and analysis toolkit, running on your NetTap.</p>
 	</div>
-
-	{#if loading && !status}
-		<div class="loading-state">
-			<div class="spinner"></div>
-			<p class="text-muted">Checking CyberChef status...</p>
-		</div>
-	{:else if !status}
-		<!-- #96: a failed status request is not "the container is not running" -->
-		<div class="unavailable-state">
-			<h3>CyberChef Status Unknown</h3>
-			<p class="text-muted">Couldn't check CyberChef status: the request failed.</p>
-			<button class="btn btn-primary btn-sm" onclick={fetchStatus}>Retry</button>
-		</div>
-	{:else if !status?.available}
-		<div class="unavailable-state">
-			<div class="empty-icon">
-				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<polyline points="16 18 22 12 16 6" />
-					<polyline points="8 6 2 12 8 18" />
-					<line x1="1" y1="1" x2="23" y2="23" />
-				</svg>
-			</div>
-			<h3>CyberChef Unavailable</h3>
-			<p class="text-muted">
-				The CyberChef container is not running. Make sure the Docker Compose stack is started and the CyberChef service is healthy.
-			</p>
-			<button class="btn btn-primary btn-sm" onclick={fetchStatus}>Retry</button>
-		</div>
-	{:else}
-		<div class="recipe-panel">
-			{#if recipes.length > 0}
-				<div class="recipe-section">
-					<span class="section-label">Quick Recipes</span>
-					<div class="recipe-categories">
-						{#each Object.entries(recipesByCategory) as [category, categoryRecipes]}
-							<div class="recipe-category">
-								<span class="category-label">{category}</span>
-								<div class="recipe-buttons">
-									{#each categoryRecipes as recipe}
-										<button
-											class="recipe-btn"
-											class:recipe-selected={selectedRecipe?.name === recipe.name}
-											onclick={() => selectRecipe(recipe)}
-											title={recipe.description}
-										>
-											{recipe.name}
-										</button>
-									{/each}
-								</div>
-							</div>
-						{/each}
-					</div>
-				</div>
+	<div class="head-actions">
+		{#if status}
+			{#if status.available}
+				<span class="chip is-ok"><Icon name="check" />Running</span>
+			{:else}
+				<span class="chip is-bad"><Icon name="warn" />Offline</span>
 			{/if}
-
-			{#if selectedRecipe}
-				<div class="input-section">
-					<div class="input-header">
-						<span class="section-label">
-							Recipe: <strong>{selectedRecipe.name}</strong>
-						</span>
-						<span class="text-muted">{selectedRecipe.description}</span>
-					</div>
-					<div class="input-row">
-						<textarea
-							class="input data-input"
-							bind:value={inputData}
-							placeholder="Paste data to analyze..."
-							rows="3"
-						></textarea>
-						<button
-							class="btn btn-primary"
-							onclick={applyRecipe}
-							disabled={buildingUrl || !inputData.trim()}
-						>
-							{buildingUrl ? 'Building...' : 'Apply Recipe'}
-						</button>
-					</div>
-				</div>
-			{/if}
-
-			{#if errorMessage}
-				<div class="alert alert-danger">{errorMessage}</div>
-			{/if}
-		</div>
-
-		<div class="iframe-container">
-			<iframe
-				src={iframeUrl}
-				title="CyberChef"
-				class="cyberchef-iframe"
-				sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-			></iframe>
-		</div>
-	{/if}
+		{:else if loading}
+			<span class="chip">Checking…</span>
+		{:else}
+			<span class="chip">Unknown</span>
+		{/if}
+		{#if iframeUrl && iframeUrl !== CYBERCHEF_BASE_URL}
+			<button class="btn" type="button" onclick={resetView}>Reset</button>
+		{/if}
+		{#if iframeUrl}
+			<button class="btn" type="button" onclick={openInNewTab}><Icon name="up" />New tab</button>
+		{/if}
+	</div>
 </div>
 
+{#if loading && !status}
+	<Card title="CyberChef" sub="Container status">
+		<CardState state="loading" title="Checking CyberChef status…" />
+	</Card>
+{:else if !status}
+	<!-- #96: a failed status request is not "the container is not running" -->
+	<Card title="CyberChef status unknown" sub="Container status">
+		<CardState state="error" title="Couldn't check CyberChef status: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={retry} />
+	</Card>
+{:else if !status?.available}
+	<Card title="CyberChef unavailable" sub="Container status">
+		<CardState
+			state="error"
+			title="CyberChef isn't running"
+			message="The CyberChef container is not running. Make sure the Docker Compose stack is started and the CyberChef service is healthy."
+			onaction={retry}
+		/>
+	</Card>
+{:else}
+	{#if recipes.length > 0}
+		<Card title="Quick recipes" sub="{recipes.length} ready-made recipes, by category">
+			<div class="recipes">
+				{#each Object.entries(recipesByCategory) as [category, categoryRecipes] (category)}
+					<div class="recipe-group">
+						<h3 class="eyebrow" id="recipes-{category}">{category}</h3>
+						<div class="pills recipe-pills" role="group" aria-labelledby="recipes-{category}">
+							{#each categoryRecipes as recipe (recipe.name)}
+								<button
+									class="pill"
+									type="button"
+									aria-pressed={selectedRecipe?.name === recipe.name}
+									onclick={() => selectRecipe(recipe)}
+									title={recipe.description}
+								>
+									{recipe.name}
+								</button>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			{#if selectedRecipe}
+				<div class="field recipe-input">
+					<label class="label" for="cyberchef-input">Recipe: {selectedRecipe.name}</label>
+					<span class="field-help">{selectedRecipe.description}</span>
+					<textarea id="cyberchef-input" class="textarea mono" bind:value={inputData} placeholder="Paste data to analyse…" rows="3"></textarea>
+				</div>
+				<div class="form-actions">
+					<button class="btn primary" type="button" onclick={applyRecipe} disabled={buildingUrl || !inputData.trim()}>
+						{buildingUrl ? 'Building…' : 'Apply recipe'}
+					</button>
+				</div>
+			{/if}
+		</Card>
+	{/if}
+
+	{#if errorMessage}
+		<p class="notice is-error" role="alert"><Icon name="warn" />{errorMessage}</p>
+	{/if}
+
+	<Card title="Workspace" sub="CyberChef {status.version} · served by your NetTap">
+		<iframe
+			src={iframeUrl}
+			title="CyberChef"
+			class="workspace"
+			sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+		></iframe>
+	</Card>
+{/if}
+
 <style>
-	.cyberchef-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-		height: calc(100vh - var(--topbar-height) - var(--space-lg) * 2);
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-		flex-shrink: 0;
-	}
-
-	.header-title-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-xs);
-	}
-
-	.header-title-row h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-	}
-
-	.back-link {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
-		transition: all var(--transition-fast);
-	}
-
-	.back-link:hover {
-		background-color: var(--bg-tertiary);
-		color: var(--text-primary);
-		text-decoration: none;
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.loading-state,
-	.unavailable-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-		text-align: center;
-		flex: 1;
-	}
-
-	.unavailable-state {
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-	}
-
-	.empty-icon {
-		color: var(--text-muted);
-	}
-
-	.unavailable-state h3 {
-		font-size: var(--text-xl);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.unavailable-state p {
-		max-width: 480px;
-		line-height: var(--leading-relaxed);
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	.recipe-panel {
-		flex-shrink: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.section-label {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		font-weight: 500;
-	}
-
-	.recipe-section {
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-	}
-
-	.recipe-categories {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		margin-top: var(--space-sm);
-	}
-
-	.recipe-category {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.category-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		font-weight: 600;
-	}
-
-	.recipe-buttons {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-xs);
-	}
-
-	.recipe-btn {
-		padding: var(--space-xs) var(--space-sm);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		white-space: nowrap;
-	}
-
-	.recipe-btn:hover {
-		color: var(--text-primary);
-		border-color: var(--accent);
-	}
-
-	.recipe-selected {
-		background-color: var(--accent-muted);
-		color: var(--accent);
-		border-color: var(--accent);
-	}
-
-	.input-section {
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-	}
-
-	.input-header {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-		margin-bottom: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	.input-row {
-		display: flex;
-		gap: var(--space-sm);
-		align-items: flex-end;
-	}
-
-	.data-input {
-		flex: 1;
-		resize: vertical;
-		font-family: var(--font-mono);
-		min-height: 60px;
-	}
-
-	.iframe-container {
-		flex: 1;
-		min-height: 400px;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		overflow: hidden;
-		background-color: var(--bg-secondary);
-	}
-
-	.cyberchef-iframe {
-		width: 100%;
-		height: 100%;
-		border: none;
-		background-color: var(--text-1);
-	}
-
-	@media (max-width: 768px) {
-		.cyberchef-page {
-			height: auto;
-		}
-
-		.iframe-container {
-			min-height: 500px;
-		}
-
-		.input-row {
-			flex-direction: column;
-		}
-
-		.input-row :global(.btn) {
-			width: 100%;
-		}
-	}
+	.recipes { display: flex; flex-direction: column; gap: var(--sp-4); }
+	.recipe-group { display: flex; flex-direction: column; gap: var(--sp-2); }
+	/* Layout glue: a category's recipes wrap onto more rows */
+	.recipe-pills { flex-wrap: wrap; align-self: flex-start; border-radius: var(--r-lg); }
+	.recipe-input { margin-top: var(--sp-5); }
+	/* Layout glue: the workspace fills most of the screen; CyberChef draws its own light page */
+	.workspace { display: block; width: 100%; height: 70vh; min-height: 400px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--text-1); }
 </style>
