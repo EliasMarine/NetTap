@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/svelte';
 import InfrastructurePage from './+page.svelte';
+import { refreshPage } from '$lib/stores/pageRefresh';
 
 // #96: a failed UniFi status read showed "Connect your UniFi controller", and failed lists read
 // "No UniFi devices found" / 0 firewall policies
@@ -130,5 +131,31 @@ describe('Infrastructure — UniFi tables', () => {
 				expect(within(th).getByRole('button')).toBeInTheDocument();
 			}
 		}
+	});
+});
+
+describe('Infrastructure — a refresh while the UniFi lists load', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('does not leave the cards loading when the next status read fails', async () => {
+		let statusUp = true;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) => {
+				if (url === `${UNIFI}/status`) {
+					return Promise.resolve(statusUp ? { ok: true, status: 200, json: async () => CONFIGURED } : { ok: false, status: 503, json: async () => ({}) });
+				}
+				if (url.startsWith(UNIFI)) return new Promise(() => {}); // the lists never answer
+				return Promise.resolve(url in SYSTEM_READINGS ? { ok: true, status: 200, json: async () => SYSTEM_READINGS[url] } : { ok: false, status: 503, json: async () => ({}) });
+			}),
+		);
+		render(InfrastructurePage);
+		expect(await screen.findByText('Loading UniFi devices')).toBeInTheDocument();
+
+		statusUp = false;
+		void refreshPage();
+
+		expect(await screen.findByText(/Couldn't (load|refresh) the UniFi status/)).toBeInTheDocument();
+		expect(screen.queryByText('Loading UniFi devices')).not.toBeInTheDocument();
 	});
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { byteSize, compareValues } from '$lib/utils/table-sort.svelte';
-	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
@@ -455,6 +455,8 @@
 	async function loadUnifi(gen: number): Promise<Settled[] | null> {
 		const [statusResult] = await Promise.allSettled([getUnifiStatus()]);
 		if (!guards.unifi.current(gen)) return null;
+		// an older load that went stale mid-lists returned without clearing this
+		unifiLoading = false;
 		if (statusResult.status === 'rejected') {
 			// keep the last status (and the cards it shows); the notice says it is stale
 			unifiFailed = { ...unifiFailed, 'the UniFi status': true };
@@ -532,8 +534,11 @@
 		const outcomes = await Promise.all(due.map((k) => runGroup(k)));
 		if (outcomes.every((o) => o === null)) return 'skipped';
 		const settled = outcomes.flatMap((o) => o ?? []);
-		const failed = settled.filter((r) => r.status === 'rejected').length;
-		return failed === 0 ? 'ok' : failed === settled.length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failed = settled.filter((r) => r.status === 'rejected').length;
+		// return failed === 0 ? 'ok' : failed === settled.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(settled);
 	}
 
 	// the groups' own guards gate every write, so the loader doesn't take the shared guard
