@@ -107,14 +107,18 @@ export async function expectReached(
 	await expect(target.first()).toBeVisible();
 }
 
-/** Upstreams nginx proxies on the device that are not the daemon. /infrastructure probes
- * Grafana (an optional compose profile) at /grafana/api/health; nothing serves it here. */
-export async function stubGrafana(page: Page, mode: FixtureMode): Promise<void> {
+/** What the page reaches that the fixture daemon doesn't serve:
+ * - upstreams nginx proxies on the device: /infrastructure probes Grafana (an optional compose
+ *   profile) at /grafana/api/health, and CyberChef pages frame /cyberchef/ once it reports running
+ * - other hosts (the GeoIP page's OpenStreetMap embed): the harness never uses the internet */
+export async function stubUpstreams(page: Page, mode: FixtureMode): Promise<void> {
+	await page.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, (route) => route.fulfill({ contentType: 'text/html', body: '' }));
 	await page.route('**/grafana/api/health', (route) =>
 		mode === 'error'
 			? route.fulfill({ status: 503, json: { error: 'fixture error mode' } })
 			: route.fulfill({ json: { database: 'ok', version: '10.4.0' } })
 	);
+	await page.route('**/cyberchef/', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>CyberChef</title>' }));
 }
 
 export async function setVariant(page: Page, variant: Variant): Promise<void> {
