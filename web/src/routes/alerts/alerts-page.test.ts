@@ -546,4 +546,19 @@ describe('Alerts — drawer', () => {
 		expect(screen.getByRole('complementary', { name: 'Alert details' })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Open alert ET MALWARE CnC Checkin from 192.168.1.42' })).toHaveAttribute('aria-current', 'true');
 	});
+
+	it('keeps the sorted column marked after switching views and back', async () => {
+		succeedAll([enriched]);
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const table = () => screen.getByRole('table', { name: /Alerts, newest first/ });
+		await fireEvent.click(within(table()).getByRole('button', { name: /Severity/ }));
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'By category' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		await flush();
+		expect(within(table()).getByRole('columnheader', { name: /Severity/ })).toHaveAttribute('aria-sort');
+		expect(within(table()).getByRole('columnheader', { name: /Time/ })).toHaveAttribute('aria-sort', 'none');
+	});
 });

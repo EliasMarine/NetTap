@@ -1039,7 +1039,7 @@
 					rows={sortedAlerts}
 					ariaLabel="Alerts, newest first unless sorted"
 					{rowKey}
-					initialSort={{ key: 'timestamp', dir: 'desc' }}
+					initialSort={{ key: sortKey, dir: sortDir }}
 					onsortchange={changeSort}
 					onrowactivate={openDrawer}
 					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
